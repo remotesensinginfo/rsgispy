@@ -51,6 +51,7 @@ Contents
    rsgispy_imagecalc
    rsgispy_imageutils
    rsgispy_imageprocess
+   rsgispy_tools
 
 Indices and tables
 ==================
