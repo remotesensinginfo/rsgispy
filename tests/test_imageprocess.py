@@ -239,3 +239,79 @@ def test_open_output_dataset_existing_mismatch(tmp_path):
                 grid=grid,
                 output_exists=True,
             )
+
+
+def test_runtime_default_block_size_override(tmp_path, monkeypatch):
+    """Test overriding and resetting DEFAULT_BLOCK_SIZE at runtime via env vars and helpers."""
+    monkeypatch.delenv("RSGISPY_BLOCK_SIZE", raising=False)
+    monkeypatch.delenv("RSGISLIB_BLOCK_SIZE", raising=False)
+
+    assert (
+        rsgispy.imageprocess.get_default_block_size()
+        == rsgispy.imageprocess.DEFAULT_BLOCK_SIZE
+    )
+
+    in_img = tmp_path / "block_test.tif"
+    _create_test_raster(in_img, np.ones((1, 10, 10), dtype=np.float32))
+
+    # 1. Override via set_default_block_size (sets RSGISPY_BLOCK_SIZE env var)
+    rsgispy.imageprocess.set_default_block_size(4)
+    assert rsgispy.imageprocess.get_default_block_size() == 4
+    blocks = list(
+        rsgispy.imageprocess.iter_single_image_band_blocks(
+            str(in_img), use_pbar=False
+        )
+    )
+    # 10x10 image with block size 4 -> 3x3 = 9 blocks, first block is 4x4
+    assert len(blocks) == 9
+    assert blocks[0][0].width == 4
+    assert blocks[0][0].height == 4
+
+    # 2. Reset removes env var override and restores DEFAULT_BLOCK_SIZE (512)
+    rsgispy.imageprocess.reset_default_block_size()
+    assert rsgispy.imageprocess.get_default_block_size() == 512
+    blocks_default = list(
+        rsgispy.imageprocess.iter_single_image_band_blocks(
+            str(in_img), use_pbar=False
+        )
+    )
+    assert len(blocks_default) == 1
+
+    # 3. Override directly via RSGISLIB_BLOCK_SIZE env var
+    monkeypatch.setenv("RSGISLIB_BLOCK_SIZE", "5")
+    assert rsgispy.imageprocess.get_default_block_size() == 5
+    blocks_rsgislib = list(
+        rsgispy.imageprocess.iter_single_image_band_blocks(
+            str(in_img), use_pbar=False
+        )
+    )
+    assert len(blocks_rsgislib) == 4  # 2x2 grid of 5x5 blocks
+
+    # 4. RSGISPY_BLOCK_SIZE takes precedence over RSGISLIB_BLOCK_SIZE
+    monkeypatch.setenv("RSGISPY_BLOCK_SIZE", "3")
+    assert rsgispy.imageprocess.get_default_block_size() == 3
+
+    # 5. Direct mutation of DEFAULT_BLOCK_SIZE works when env vars are unset
+    rsgispy.imageprocess.reset_default_block_size()
+    monkeypatch.setattr(rsgispy.imageprocess, "DEFAULT_BLOCK_SIZE", 5)
+    assert rsgispy.imageprocess.get_default_block_size() == 5
+    blocks_mutated = list(
+        rsgispy.imageprocess.iter_single_image_band_blocks(
+            str(in_img), use_pbar=False
+        )
+    )
+    assert len(blocks_mutated) == 4
+
+    # 6. Validation errors for invalid block sizes
+    for bad_val in (0, -4, True, 3.5):
+        with pytest.raises(rsgispy.RSGISPyException):
+            rsgispy.imageprocess.set_default_block_size(bad_val)
+
+    monkeypatch.setenv("RSGISPY_BLOCK_SIZE", "not_an_int")
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageprocess.get_default_block_size()
+
+    monkeypatch.setenv("RSGISPY_BLOCK_SIZE", "0")
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageprocess.get_default_block_size()
+

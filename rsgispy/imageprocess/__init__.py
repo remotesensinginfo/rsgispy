@@ -30,7 +30,74 @@ from rasterio.windows import transform as window_transform
 
 import rsgispy
 
-DEFAULT_BLOCK_SIZE = 256
+DEFAULT_BLOCK_SIZE = 512  # Match COG
+ENV_VAR_BLOCK_SIZE = "RSGISPY_BLOCK_SIZE"
+ENV_VAR_RSGISLIB_BLOCK_SIZE = "RSGISLIB_BLOCK_SIZE"
+_INT_DTYPES = {"uint8", "int8", "uint16", "int16", "uint32", "int32"}
+
+
+def get_default_block_size() -> int:
+    """
+    Return the default processing block size in pixels.
+
+    Checks the ``RSGISPY_BLOCK_SIZE`` (and fallback ``RSGISLIB_BLOCK_SIZE``)
+    environment variables at runtime, falling back to :data:`DEFAULT_BLOCK_SIZE`.
+
+    :return: Positive integer block size in pixels.
+    """
+    raw_val = os.environ.get(ENV_VAR_BLOCK_SIZE) or os.environ.get(
+        ENV_VAR_RSGISLIB_BLOCK_SIZE
+    )
+    if raw_val is not None and raw_val.strip() != "":
+        try:
+            block_size = int(raw_val.strip())
+        except ValueError as err:
+            raise rsgispy.RSGISPyException(
+                f"Invalid block size in environment variable: '{raw_val}'. "
+                "Must be a positive integer."
+            ) from err
+        if block_size <= 0:
+            raise rsgispy.RSGISPyException(
+                f"Invalid block size in environment variable: '{raw_val}'. "
+                "Must be a positive integer."
+            )
+        return block_size
+
+    if not isinstance(DEFAULT_BLOCK_SIZE, int) or isinstance(
+        DEFAULT_BLOCK_SIZE, bool
+    ) or DEFAULT_BLOCK_SIZE <= 0:
+        raise rsgispy.RSGISPyException(
+            f"DEFAULT_BLOCK_SIZE must be a positive integer, got {DEFAULT_BLOCK_SIZE!r}."
+        )
+    return DEFAULT_BLOCK_SIZE
+
+
+def set_default_block_size(block_size: int) -> None:
+    """
+    Override the default processing block size at runtime by setting the
+    ``RSGISPY_BLOCK_SIZE`` environment variable.
+
+    :param block_size: Positive integer block size in pixels.
+    """
+    if (
+        isinstance(block_size, bool)
+        or not isinstance(block_size, (int, np.integer))
+        or int(block_size) <= 0
+    ):
+        raise rsgispy.RSGISPyException(
+            f"block_size must be a positive integer, got {block_size!r}."
+        )
+    os.environ[ENV_VAR_BLOCK_SIZE] = str(int(block_size))
+
+
+def reset_default_block_size() -> None:
+    """
+    Clear any runtime block size override from the ``RSGISPY_BLOCK_SIZE`` and
+    ``RSGISLIB_BLOCK_SIZE`` environment variables so :data:`DEFAULT_BLOCK_SIZE`
+    is used again.
+    """
+    os.environ.pop(ENV_VAR_BLOCK_SIZE, None)
+    os.environ.pop(ENV_VAR_RSGISLIB_BLOCK_SIZE, None)
 
 
 def get_gdal_img_creation_opts(gdalformat: str) -> Dict[str, str]:
@@ -410,7 +477,7 @@ def iter_image_blocks(
     datasets: Dict[str, DatasetReader],
     norm_defs: Sequence[BandDefn],
     grid: IntersectionGrid,
-    block_size: int = DEFAULT_BLOCK_SIZE,
+    block_size: Optional[int] = None,
     read_dtype: Any = np.float64,
     use_pbar: bool = True,
 ) -> Iterator[Tuple[Window, Dict[str, np.ndarray]]]:
@@ -421,12 +488,20 @@ def iter_image_blocks(
     :param datasets: Mapping of file path to opened rasterio DatasetReader.
     :param norm_defs: Sequence of BandDefn objects specifying bands to read.
     :param grid: IntersectionGrid describing the output extent and input pixel offsets.
-    :param block_size: Window block size in pixels (Default = 256).
+    :param block_size: Window block size in pixels. If ``None``, resolved at runtime
+                       via :func:`get_default_block_size`.
     :param read_dtype: NumPy dtype to cast input bands into when reading (Default = float64).
     :param use_pbar: If True, display a tqdm progress bar during iteration (Default = True).
     :return: Iterator yielding ``(out_win, block_vars)``.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if block_size is None:
+        block_size = get_default_block_size()
+    elif block_size <= 0:
+        raise rsgispy.RSGISPyException(
+            f"block_size must be a positive integer, got {block_size}."
+        )
+
     tqdm_cls = rsgispy.get_tqdm()
     total_blocks = math.ceil(grid.height / block_size) * math.ceil(
         grid.width / block_size
@@ -457,7 +532,7 @@ def iter_image_blocks(
 
 def iter_single_image_band_blocks(
     input_img: str,
-    block_size: int = DEFAULT_BLOCK_SIZE,
+    block_size: Optional[int] = None,
     read_dtype: Any = np.float64,
     use_pbar: bool = True,
 ) -> Iterator[Tuple[Window, List[np.ndarray]]]:
@@ -467,7 +542,8 @@ def iter_single_image_band_blocks(
     each block.
 
     :param input_img: Path to the input image file.
-    :param block_size: Window block size in pixels (Default = 256).
+    :param block_size: Window block size in pixels. If ``None``, resolved at runtime
+                       via :func:`get_default_block_size`.
     :param read_dtype: NumPy dtype to cast bands into when reading (Default = float64).
     :param use_pbar: If True, display a tqdm progress bar during iteration (Default = True).
     :return: Iterator yielding ``(out_win, [band_1_arr, ..., band_n_arr])`` tuples.
@@ -499,7 +575,7 @@ def process_blocks(
     grid: IntersectionGrid,
     block_func: Callable[[Dict[str, np.ndarray]], Union[np.ndarray, float, int]],
     out_np_dtype: np.dtype,
-    block_size: int = DEFAULT_BLOCK_SIZE,
+    block_size: Optional[int] = None,
     read_dtype: Any = np.float64,
     use_pbar: bool = True,
 ) -> None:
@@ -513,7 +589,8 @@ def process_blocks(
     :param block_func: Callable accepting ``Dict[str, np.ndarray]`` of band arrays for
                        the current window and returning a 2D/3D array or scalar.
     :param out_np_dtype: Target NumPy dtype for the output raster.
-    :param block_size: Window block size in pixels (Default = 256).
+    :param block_size: Window block size in pixels. If ``None``, resolved at runtime
+                       via :func:`get_default_block_size`.
     :param read_dtype: NumPy dtype to cast input bands into when reading (Default = float64).
     :param use_pbar: If True, display a tqdm progress bar during processing (Default = True).
     """

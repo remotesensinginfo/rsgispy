@@ -24,14 +24,20 @@ from rasterio.windows import Window
 import rsgispy
 from rsgispy.imagecalc import calc_basic_img_band_stats
 from rsgispy.imageprocess import (
-    DEFAULT_BLOCK_SIZE,
+    _INT_DTYPES,
     IntersectionGrid,
+    get_default_block_size,
     get_gdal_img_creation_opts,
     iter_single_image_band_blocks,
     open_output_dataset,
+    reset_default_block_size,
+    set_default_block_size,
 )
 
 __all__ = [
+    "get_default_block_size",
+    "set_default_block_size",
+    "reset_default_block_size",
     "get_gdal_img_creation_opts",
     "set_img_creation_opts",
     "set_env_vars_lzw_gtiff_outs",
@@ -204,9 +210,6 @@ def build_img_pyramids(
                 dst.build_overviews(pyd_lvls, resampling_method)
         else:
             dst.build_overviews(pyd_lvls, resampling_method)
-
-
-_INT_DTYPES = {"uint8", "int8", "uint16", "int16", "uint32", "int32"}
 
 
 def _calc_int_band_hists(
@@ -722,10 +725,11 @@ def create_blank_img(
         if no_data_val is not None:
             dst.nodata = no_data_val
 
-        for row_off in range(0, grid.height, DEFAULT_BLOCK_SIZE):
-            win_h = min(DEFAULT_BLOCK_SIZE, grid.height - row_off)
-            for col_off in range(0, grid.width, DEFAULT_BLOCK_SIZE):
-                win_w = min(DEFAULT_BLOCK_SIZE, grid.width - col_off)
+        block_size = get_default_block_size()
+        for row_off in range(0, grid.height, block_size):
+            win_h = min(block_size, grid.height - row_off)
+            for col_off in range(0, grid.width, block_size):
+                win_w = min(block_size, grid.width - col_off)
                 win = Window(col_off, row_off, win_w, win_h)
                 block = np.full(
                     (int(n_bands), win_h, win_w), pxl_val, dtype=out_np_dtype
