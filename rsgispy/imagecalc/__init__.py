@@ -68,6 +68,7 @@ def band_maths(
     band_defs: Sequence[BandDefn],
     exp_band_name: bool = False,
     output_exists: bool = False,
+    use_pbar: bool = True,
 ) -> None:
     """
     Performs band math calculation using pymu-eval and rasterio.
@@ -84,6 +85,8 @@ def band_maths(
                           should be set to the expression string (Default = False).
     :param output_exists: Optional bool specifying whether the output image already exists
                           and should be updated in place rather than overwritten (Default = False).
+    :param use_pbar: Optional bool specifying whether to display a tqdm progress bar
+                     during processing (Default = True).
 
     .. code:: python
 
@@ -105,7 +108,7 @@ def band_maths(
             band_defs=band_defns,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
     norm_defs = normalise_band_defs(band_defs)
@@ -134,6 +137,7 @@ def band_maths(
             grid=grid,
             block_func=parser.eval,
             out_np_dtype=out_np_dtype,
+            use_pbar=use_pbar,
         )
 
 

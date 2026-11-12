@@ -159,3 +159,39 @@ def get_rsgis_datatype_str(rsgislib_datatype: int) -> str:
             f"The data type '{rsgislib_datatype}' is unknown / not supported."
         )
     return _RSGIS_TO_STR_DTYPE[rsgislib_datatype]
+
+
+def is_notebook() -> bool:
+    """
+    Determine whether code is executing inside a Jupyter notebook environment.
+
+    :return: True if running within a Jupyter notebook or qtconsole, False otherwise.
+    """
+    try:
+        shell = get_ipython().__class__.__name__  # type: ignore[name-defined]
+        if shell == "ZMQInteractiveShell":
+            return True
+        return False
+    except NameError:
+        return False
+
+
+def get_tqdm():
+    """
+    Return the appropriate tqdm progress bar callable for the current environment
+    (Jupyter notebook widget when inside a notebook and ipywidgets is available,
+    or standard terminal tqdm otherwise).
+
+    :return: tqdm class/callable.
+    """
+    if is_notebook():
+        try:
+            import ipywidgets  # noqa: F401  # pylint: disable=unused-import,import-outside-toplevel
+            import tqdm.notebook  # pylint: disable=import-outside-toplevel
+
+            return tqdm.notebook.tqdm
+        except ImportError:
+            pass
+    import tqdm  # pylint: disable=import-outside-toplevel
+
+    return tqdm.tqdm

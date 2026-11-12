@@ -299,3 +299,53 @@ def test_band_maths_validation_errors(tmp_path):
                 rsgispy.imagecalc.BandDefn("b2", str(diff_res_img), 1),
             ],
         )
+
+
+def test_tqdm_progress_bar_and_notebook_detection(tmp_path, capsys, monkeypatch):
+    """Test tqdm progress bar suppression (use_pbar=False) and notebook detection."""
+    in_img = tmp_path / "img.tif"
+    out_img_quiet = tmp_path / "out_quiet.tif"
+    out_img_pbar = tmp_path / "out_pbar.tif"
+
+    _create_test_raster(in_img, np.ones((1, 5, 5), dtype=np.float32))
+    band_defns = [
+        rsgispy.imagecalc.BandDefn(band_name="b1", input_img=str(in_img), img_band=1)
+    ]
+
+    assert rsgispy.is_notebook() is False
+
+    # Suppress progress bar with use_pbar=False
+    capsys.readouterr()
+    rsgispy.imagecalc.band_maths(
+        output_img=str(out_img_quiet),
+        exp="b1 * 2",
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+        band_defs=band_defns,
+        use_pbar=False,
+    )
+    captured_quiet = capsys.readouterr()
+    assert captured_quiet.err == ""
+
+    # Enable progress bar with use_pbar=True
+    rsgispy.imagecalc.band_maths(
+        output_img=str(out_img_pbar),
+        exp="b1 * 2",
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+        band_defs=band_defns,
+        use_pbar=True,
+    )
+    captured_pbar = capsys.readouterr()
+    assert "100%" in captured_pbar.err or "1/1" in captured_pbar.err
+
+    # Simulate ZMQInteractiveShell (Jupyter notebook)
+    class ZMQInteractiveShell:  # pylint: disable=too-few-public-methods
+        """Dummy Jupyter shell class."""
+
+    monkeypatch.setattr(
+        rsgispy, "get_ipython", ZMQInteractiveShell, raising=False
+    )
+    assert rsgispy.is_notebook() is True
+    assert callable(rsgispy.get_tqdm())
+

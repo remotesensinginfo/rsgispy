@@ -364,6 +364,7 @@ def process_blocks(
     out_np_dtype: np.dtype,
     block_size: int = DEFAULT_BLOCK_SIZE,
     read_dtype: Any = np.float64,
+    use_pbar: bool = True,
 ) -> None:
     """
     Read input bands in blocks, apply ``block_func``, and write results to ``dst``.
@@ -377,29 +378,37 @@ def process_blocks(
     :param out_np_dtype: Target NumPy dtype for the output raster.
     :param block_size: Window block size in pixels (Default = 256).
     :param read_dtype: NumPy dtype to cast input bands into when reading (Default = float64).
+    :param use_pbar: If True, display a tqdm progress bar during processing (Default = True).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    for row_off in range(0, grid.height, block_size):
-        win_h = min(block_size, grid.height - row_off)
-        for col_off in range(0, grid.width, block_size):
-            win_w = min(block_size, grid.width - col_off)
-            out_win = Window(col_off, row_off, win_w, win_h)
+    tqdm_cls = rsgispy.get_tqdm()
+    total_blocks = math.ceil(grid.height / block_size) * math.ceil(
+        grid.width / block_size
+    )
 
-            block_vars: Dict[str, np.ndarray] = {}
-            for b_def in norm_defs:
-                assert b_def.input_img is not None
-                assert b_def.band_name is not None
-                base_col, base_row = grid.offsets[b_def.input_img]
-                in_win = Window(
-                    base_col + col_off, base_row + row_off, win_w, win_h
-                )
-                block_vars[b_def.band_name] = datasets[b_def.input_img].read(
-                    b_def.img_band, window=in_win, out_dtype=read_dtype
-                )
+    with tqdm_cls(total=total_blocks, disable=not use_pbar) as pbar:
+        for row_off in range(0, grid.height, block_size):
+            win_h = min(block_size, grid.height - row_off)
+            for col_off in range(0, grid.width, block_size):
+                win_w = min(block_size, grid.width - col_off)
+                out_win = Window(col_off, row_off, win_w, win_h)
 
-            res = block_func(block_vars)
-            out_arr = cast_result_block(res, win_h, win_w, out_np_dtype)
-            if out_arr.ndim == 3:
-                dst.write(out_arr, window=out_win)
-            else:
-                dst.write(out_arr, 1, window=out_win)
+                block_vars: Dict[str, np.ndarray] = {}
+                for b_def in norm_defs:
+                    assert b_def.input_img is not None
+                    assert b_def.band_name is not None
+                    base_col, base_row = grid.offsets[b_def.input_img]
+                    in_win = Window(
+                        base_col + col_off, base_row + row_off, win_w, win_h
+                    )
+                    block_vars[b_def.band_name] = datasets[b_def.input_img].read(
+                        b_def.img_band, window=in_win, out_dtype=read_dtype
+                    )
+
+                res = block_func(block_vars)
+                out_arr = cast_result_block(res, win_h, win_w, out_np_dtype)
+                if out_arr.ndim == 3:
+                    dst.write(out_arr, window=out_win)
+                else:
+                    dst.write(out_arr, 1, window=out_win)
+                pbar.update(1)
