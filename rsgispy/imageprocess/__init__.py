@@ -7,7 +7,18 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 import math
 import os
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
 
 import numpy as np
 import rasterio
@@ -18,9 +29,35 @@ from rasterio.windows import from_bounds as window_from_bounds
 from rasterio.windows import transform as window_transform
 
 import rsgispy
-import rsgispy.imageutils
 
 DEFAULT_BLOCK_SIZE = 256
+
+
+def get_gdal_img_creation_opts(gdalformat: str) -> Dict[str, str]:
+    """
+    Retrieve image creation options for a given GDAL driver format from
+    environment variables ``RSGISPY_IMG_CRT_OPTS_<GDAL_FORMAT>`` or
+    ``RSGISLIB_IMG_CRT_OPTS_<GDAL_FORMAT>``, where options are specified as
+    colon-separated ``KEY=VALUE`` pairs.
+
+    :param gdalformat: GDAL format string (e.g., 'GTIFF', 'COG', 'KEA').
+    :return: Dictionary of creation option key-value strings.
+    """
+    fmt_upper = gdalformat.upper().strip()
+    rsgispy_var = f"RSGISPY_IMG_CRT_OPTS_{fmt_upper}"
+    rsgislib_var = f"RSGISLIB_IMG_CRT_OPTS_{fmt_upper}"
+
+    raw_opts = os.environ.get(rsgispy_var) or os.environ.get(rsgislib_var)
+    opts_dict: Dict[str, str] = {}
+    if raw_opts:
+        for item in raw_opts.split(":"):
+            item = item.strip()
+            if not item:
+                continue
+            if "=" in item:
+                key, val = item.split("=", 1)
+                opts_dict[key.strip()] = val.strip()
+    return opts_dict
 
 
 @dataclass
@@ -352,9 +389,7 @@ def open_output_dataset(
             )
         return dst
 
-    img_creation_opts: Dict[str, Any] = (
-        rsgispy.imageutils.get_gdal_img_creation_opts(gdalformat)
-    )
+    img_creation_opts: Dict[str, Any] = get_gdal_img_creation_opts(gdalformat)
     if creation_opts is not None:
         img_creation_opts.update(creation_opts)
 
@@ -369,6 +404,92 @@ def open_output_dataset(
         **img_creation_opts,
     }
     return stack.enter_context(rasterio.open(output_img, "w", **profile))
+
+
+def iter_image_blocks(
+    datasets: Dict[str, DatasetReader],
+    norm_defs: Sequence[BandDefn],
+    grid: IntersectionGrid,
+    block_size: int = DEFAULT_BLOCK_SIZE,
+    read_dtype: Any = np.float64,
+    use_pbar: bool = True,
+) -> Iterator[Tuple[Window, Dict[str, np.ndarray]]]:
+    """
+    Iterate over spatial intersection windows, yielding the output window and a
+    dictionary of band arrays for each block.
+
+    :param datasets: Mapping of file path to opened rasterio DatasetReader.
+    :param norm_defs: Sequence of BandDefn objects specifying bands to read.
+    :param grid: IntersectionGrid describing the output extent and input pixel offsets.
+    :param block_size: Window block size in pixels (Default = 256).
+    :param read_dtype: NumPy dtype to cast input bands into when reading (Default = float64).
+    :param use_pbar: If True, display a tqdm progress bar during iteration (Default = True).
+    :return: Iterator yielding ``(out_win, block_vars)``.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    tqdm_cls = rsgispy.get_tqdm()
+    total_blocks = math.ceil(grid.height / block_size) * math.ceil(
+        grid.width / block_size
+    )
+
+    with tqdm_cls(total=total_blocks, disable=not use_pbar) as pbar:
+        for row_off in range(0, grid.height, block_size):
+            win_h = min(block_size, grid.height - row_off)
+            for col_off in range(0, grid.width, block_size):
+                win_w = min(block_size, grid.width - col_off)
+                out_win = Window(col_off, row_off, win_w, win_h)
+
+                block_vars: Dict[str, np.ndarray] = {}
+                for b_def in norm_defs:
+                    assert b_def.input_img is not None
+                    assert b_def.band_name is not None
+                    base_col, base_row = grid.offsets[b_def.input_img]
+                    in_win = Window(
+                        base_col + col_off, base_row + row_off, win_w, win_h
+                    )
+                    block_vars[b_def.band_name] = datasets[b_def.input_img].read(
+                        b_def.img_band, window=in_win, out_dtype=read_dtype
+                    )
+
+                yield out_win, block_vars
+                pbar.update(1)
+
+
+def iter_single_image_band_blocks(
+    input_img: str,
+    block_size: int = DEFAULT_BLOCK_SIZE,
+    read_dtype: Any = np.float64,
+    use_pbar: bool = True,
+) -> Iterator[Tuple[Window, List[np.ndarray]]]:
+    """
+    Iterate over blocks of a single raster dataset, yielding ``(out_win, band_arrays)``
+    where ``band_arrays`` is a list of 2D band arrays ``[band_1, ..., band_n]`` for
+    each block.
+
+    :param input_img: Path to the input image file.
+    :param block_size: Window block size in pixels (Default = 256).
+    :param read_dtype: NumPy dtype to cast bands into when reading (Default = float64).
+    :param use_pbar: If True, display a tqdm progress bar during iteration (Default = True).
+    :return: Iterator yielding ``(out_win, [band_1_arr, ..., band_n_arr])`` tuples.
+    """
+    with rasterio.open(input_img, "r") as src:
+        n_bands = src.count
+        norm_defs = [
+            BandDefn(band_name=f"b{idx + 1}", input_img=input_img, img_band=idx + 1)
+            for idx in range(n_bands)
+        ]
+        datasets = {input_img: src}
+        grid = compute_spatial_intersection(datasets)
+
+        for out_win, block_vars in iter_image_blocks(
+            datasets=datasets,
+            norm_defs=norm_defs,
+            grid=grid,
+            block_size=block_size,
+            read_dtype=read_dtype,
+            use_pbar=use_pbar,
+        ):
+            yield out_win, [block_vars[f"b{idx + 1}"] for idx in range(n_bands)]
 
 
 def process_blocks(
@@ -396,35 +517,20 @@ def process_blocks(
     :param read_dtype: NumPy dtype to cast input bands into when reading (Default = float64).
     :param use_pbar: If True, display a tqdm progress bar during processing (Default = True).
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    tqdm_cls = rsgispy.get_tqdm()
-    total_blocks = math.ceil(grid.height / block_size) * math.ceil(
-        grid.width / block_size
-    )
-
-    with tqdm_cls(total=total_blocks, disable=not use_pbar) as pbar:
-        for row_off in range(0, grid.height, block_size):
-            win_h = min(block_size, grid.height - row_off)
-            for col_off in range(0, grid.width, block_size):
-                win_w = min(block_size, grid.width - col_off)
-                out_win = Window(col_off, row_off, win_w, win_h)
-
-                block_vars: Dict[str, np.ndarray] = {}
-                for b_def in norm_defs:
-                    assert b_def.input_img is not None
-                    assert b_def.band_name is not None
-                    base_col, base_row = grid.offsets[b_def.input_img]
-                    in_win = Window(
-                        base_col + col_off, base_row + row_off, win_w, win_h
-                    )
-                    block_vars[b_def.band_name] = datasets[b_def.input_img].read(
-                        b_def.img_band, window=in_win, out_dtype=read_dtype
-                    )
-
-                res = block_func(block_vars)
-                out_arr = cast_result_block(res, win_h, win_w, out_np_dtype)
-                if out_arr.ndim == 3:
-                    dst.write(out_arr, window=out_win)
-                else:
-                    dst.write(out_arr, 1, window=out_win)
-                pbar.update(1)
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    for out_win, block_vars in iter_image_blocks(
+        datasets=datasets,
+        norm_defs=norm_defs,
+        grid=grid,
+        block_size=block_size,
+        read_dtype=read_dtype,
+        use_pbar=use_pbar,
+    ):
+        res = block_func(block_vars)
+        out_arr = cast_result_block(
+            res, int(out_win.height), int(out_win.width), out_np_dtype
+        )
+        if out_arr.ndim == 3:
+            dst.write(out_arr, window=out_win)
+        else:
+            dst.write(out_arr, 1, window=out_win)

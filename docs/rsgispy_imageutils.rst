@@ -27,6 +27,19 @@ Configuring Output Creation Options
        band_defs=band_defns,
    )
 
+Populating Image Statistics and Pyramids
+----------------------------------------
+
+.. code-block:: python
+
+   import rsgispy.imageutils
+
+   # Populate statistics and overview pyramids on a continuous raster
+   rsgispy.imageutils.pop_img_stats("continuous_img.tif", no_data_val=-999.0)
+
+   # Populate thematic statistics, colour table, and overview pyramids on a uint8 raster
+   rsgispy.imageutils.pop_thmt_img_stats("land_cover_cls_img.tif", ignore_zero=True)
+
 API Reference
 -------------
 
