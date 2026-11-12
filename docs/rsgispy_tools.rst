@@ -15,3 +15,25 @@ API Reference
    :members:
    :undoc-members:
    :show-inheritance:
+
+.. automodule:: rsgispy.tools.filetools
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: rsgispy.tools.geometrytools
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: rsgispy.tools.utils
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: rsgispy.tools.stats
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
