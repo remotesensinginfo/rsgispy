@@ -3,7 +3,7 @@ The imagecalc module contains functions for performing calculations on raster im
 """
 
 from contextlib import ExitStack
-from typing import Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 import numpy as np
 import pymu_eval
@@ -69,6 +69,7 @@ def band_maths(
     exp_band_name: bool = False,
     output_exists: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """
     Performs band math calculation using pymu-eval and rasterio.
@@ -87,6 +88,9 @@ def band_maths(
                           and should be updated in place rather than overwritten (Default = False).
     :param use_pbar: Optional bool specifying whether to display a tqdm progress bar
                      during processing (Default = True).
+    :param creation_opts: Optional mapping of GDAL creation options (e.g.,
+                          ``{'COMPRESS': 'DEFLATE', 'TILED': 'YES'}``) overriding or
+                          supplementing any options set via :mod:`rsgispy.imageutils`.
 
     .. code:: python
 
@@ -125,6 +129,7 @@ def band_maths(
             grid=grid,
             count=1,
             output_exists=output_exists,
+            creation_opts=creation_opts,
         )
 
         if exp_band_name:

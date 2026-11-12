@@ -7,7 +7,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 import math
 import os
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import rasterio
@@ -18,6 +18,7 @@ from rasterio.windows import from_bounds as window_from_bounds
 from rasterio.windows import transform as window_transform
 
 import rsgispy
+import rsgispy.imageutils
 
 DEFAULT_BLOCK_SIZE = 256
 
@@ -319,9 +320,15 @@ def open_output_dataset(
     grid: IntersectionGrid,
     count: int = 1,
     output_exists: bool = False,
+    creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> DatasetWriter:
     """
     Open an existing output raster for update or create a new output raster.
+
+    Automatically applies any format creation options configured via
+    :func:`rsgispy.imageutils.get_gdal_img_creation_opts` (such as
+    ``RSGISLIB_IMG_CRT_OPTS_<GDAL_FORMAT>``) as well as any explicit
+    ``creation_opts`` dictionary passed to this function.
 
     :param stack: Contextlib ExitStack managing open dataset handles.
     :param output_img: Path to the output raster file.
@@ -330,6 +337,8 @@ def open_output_dataset(
     :param grid: IntersectionGrid defining output dimensions, transform, and CRS.
     :param count: Number of output bands when creating a new file (Default = 1).
     :param output_exists: If True and the file exists, open in 'r+' mode.
+    :param creation_opts: Optional mapping of GDAL creation options (e.g.,
+                          ``{'COMPRESS': 'DEFLATE', 'TILED': 'YES'}``).
     :return: Opened rasterio DatasetWriter.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -343,7 +352,13 @@ def open_output_dataset(
             )
         return dst
 
-    profile = {
+    img_creation_opts: Dict[str, Any] = (
+        rsgispy.imageutils.get_gdal_img_creation_opts(gdalformat)
+    )
+    if creation_opts is not None:
+        img_creation_opts.update(creation_opts)
+
+    profile: Dict[str, Any] = {
         "driver": gdalformat,
         "height": grid.height,
         "width": grid.width,
@@ -351,6 +366,7 @@ def open_output_dataset(
         "dtype": out_rio_dtype,
         "crs": grid.crs,
         "transform": grid.transform,
+        **img_creation_opts,
     }
     return stack.enter_context(rasterio.open(output_img, "w", **profile))
 
