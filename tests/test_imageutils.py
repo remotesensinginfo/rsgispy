@@ -492,3 +492,142 @@ def test_resample_img_to_match_and_reproject_image(tmp_path, monkeypatch):
         valid = data[data != -999.0]
         assert valid.size > 0
         np.testing.assert_allclose(valid, 42.0, rtol=1e-4)
+
+
+def test_create_stack_mosaic_and_band_subset_vrts(tmp_path):
+    """Test create_stack_images_vrt, create_mosaic_images_vrt, and create_vrt_band_subset."""
+    img1 = tmp_path / "img1.tif"
+    img2 = tmp_path / "img2.tif"
+    stack_vrt = tmp_path / "stack.vrt"
+    mosaic_vrt = tmp_path / "mosaic.vrt"
+    mosaic_pf_vrt = tmp_path / "mosaic_pf.vrt"
+    subset_vrt = tmp_path / "subset.vrt"
+
+    # img1: 10x10 at x=[500000, 500100], y=[5199900, 5200000], 2 bands (values 10, 20)
+    with rasterio.open(
+        img1,
+        "w",
+        driver="GTiff",
+        width=10,
+        height=10,
+        count=2,
+        dtype="uint16",
+        crs="EPSG:32630",
+        transform=from_origin(500000.0, 5200000.0, 10.0, 10.0),
+        nodata=0,
+    ) as dst:
+        dst.write(np.full((10, 10), 10, dtype="uint16"), 1)
+        dst.write(np.full((10, 10), 20, dtype="uint16"), 2)
+        dst.descriptions = ("b1_a", "b2_a")
+
+    # img2: 10x10 overlapping half of img1 at x=[500050, 500150], y=[5199900, 5200000], 2 bands (values 30, 40)
+    with rasterio.open(
+        img2,
+        "w",
+        driver="GTiff",
+        width=10,
+        height=10,
+        count=2,
+        dtype="uint16",
+        crs="EPSG:32630",
+        transform=from_origin(500050.0, 5200000.0, 10.0, 10.0),
+        nodata=0,
+    ) as dst:
+        dst.write(np.full((10, 10), 30, dtype="uint16"), 1)
+        dst.write(np.full((10, 10), 40, dtype="uint16"), 2)
+        dst.descriptions = ("b1_b", "b2_b")
+
+    # 1. create_stack_images_vrt with custom band_names, options, and resolution
+    rsgispy.imageutils.create_stack_images_vrt(
+        input_imgs=[str(img1), str(img2)],
+        out_vrt_file=str(stack_vrt),
+        resolution="highest",
+        interp_method=rsgispy.INTERP_NEAREST_NEIGHBOUR,
+        band_names=["S1", "S2", "S3", "S4"],
+        options={"BLOCKXSIZE": 128, "BLOCKYSIZE": 128},
+    )
+
+    with rasterio.open(stack_vrt) as src:
+        assert src.count == 4
+        assert src.width == 15
+        assert src.height == 10
+        assert src.crs.to_epsg() == 32630
+        assert src.descriptions == ("S1", "S2", "S3", "S4")
+        assert src.block_shapes[0] == (128, 128)
+        data = src.read()
+        # Left 5 columns: only img1 present
+        assert np.all(data[0, :, :5] == 10)
+        assert np.all(data[1, :, :5] == 20)
+        assert np.all(data[2, :, :5] == 0)
+        # Right 5 columns: only img2 present
+        assert np.all(data[0, :, 10:] == 0)
+        assert np.all(data[2, :, 10:] == 30)
+        assert np.all(data[3, :, 10:] == 40)
+
+    # 2. create_mosaic_images_vrt with custom extent, resolution, align_out_pxls, and add_alpha
+    rsgispy.imageutils.create_mosaic_images_vrt(
+        input_imgs=[str(img1), str(img2)],
+        out_vrt_file=str(mosaic_vrt),
+        vrt_extent=(500000.0, 5199900.0, 500150.0, 5200000.0),
+        vrt_out_res_x=10.0,
+        vrt_out_res_y=10.0,
+        interp_method=rsgispy.INTERP_BILINEAR,
+        align_out_pxls=True,
+        add_alpha=True,
+    )
+
+    with rasterio.open(mosaic_vrt) as src:
+        assert src.count == 3  # 2 bands (uint16) + 1 alpha band (Byte)
+        assert src.width == 15
+        assert src.height == 10
+        band1_data = src.read(1)
+        alpha_data = src.read(3)
+        # Left 5 cols from img1 (10), right 10 cols overwritten by img2 (30)
+        assert np.all(band1_data[:, :5] == 10)
+        assert np.all(band1_data[:, 5:] == 30)
+        assert np.all(alpha_data == 255)
+
+    # 3. create_mosaic_images_vrt with pixel_function="sum" and band_list=[1]
+    rsgispy.imageutils.create_mosaic_images_vrt(
+        input_imgs=[str(img1), str(img2)],
+        out_vrt_file=str(mosaic_pf_vrt),
+        band_list=[1],
+        pixel_function="sum",
+        hide_nodata=True,
+    )
+
+    with rasterio.open(mosaic_pf_vrt) as src:
+        assert src.count == 1
+        assert src.nodata is None
+        data = src.read(1)
+        assert np.all(data[:, :5] == 10)
+        assert np.all(data[:, 5:10] == 40)  # 10 + 30 in overlap region
+        assert np.all(data[:, 10:] == 30)
+
+    # 4. create_vrt_band_subset with reversed band order [2, 1] and custom band_names
+    rsgispy.imageutils.create_vrt_band_subset(
+        input_img=str(img1),
+        img_bands=[2, 1],
+        out_vrt_img=str(subset_vrt),
+        band_names=["SecondBand", "FirstBand"],
+        vrt_nodata=999,
+        write_abs_path=True,
+    )
+
+    with rasterio.open(subset_vrt) as src:
+        assert src.count == 2
+        assert src.width == 10
+        assert src.height == 10
+        assert src.nodata == 999.0
+        assert src.descriptions == ("SecondBand", "FirstBand")
+        assert np.all(src.read(1) == 20)
+        assert np.all(src.read(2) == 10)
+
+    # Verify validation error on out-of-range band
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageutils.create_vrt_band_subset(
+            input_img=str(img1),
+            img_bands=[3],
+            out_vrt_img=str(subset_vrt),
+        )
+
