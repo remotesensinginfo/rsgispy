@@ -184,37 +184,85 @@ def build_img_pyramids(
             dst.build_overviews(pyd_lvls, resampling_method)
 
 
-def _calc_byte_band_hists(
-    input_img: str, use_pbar: bool = True
-) -> List[np.ndarray]:
+_INT_DTYPES = {"uint8", "int8", "uint16", "int16", "uint32", "int32"}
+
+
+def _calc_int_band_hists(
+    input_img: str, dtype_str: str, use_pbar: bool = True
+) -> List[Tuple[np.ndarray, int, int]]:
     """
-    Accumulate 256-bin direct histograms across blocks for a uint8 image.
+    Accumulate direct integer histograms ``(hist, hist_min, hist_max)`` across
+    blocks for an integer image (``uint8``, ``uint16``, ``int16``, etc.).
     """
+    # pylint: disable=too-many-locals
     with rasterio.open(input_img, "r") as src:
         n_bands = src.count
 
-    hists = [np.zeros(256, dtype=np.int64) for _ in range(n_bands)]
+    if dtype_str == "uint8":
+        bounds = [(0, 255) for _ in range(n_bands)]
+    else:
+        band_mins = [0 for _ in range(n_bands)]
+        band_maxs = [0 for _ in range(n_bands)]
+        first_seen = [True for _ in range(n_bands)]
+        for _, block_arrays in iter_single_image_band_blocks(
+            input_img=input_img,
+            read_dtype=np.int64,
+            use_pbar=use_pbar,
+        ):
+            for idx, band_arr in enumerate(block_arrays):
+                if band_arr.size == 0:
+                    continue
+                b_min = int(band_arr.min())
+                b_max = int(band_arr.max())
+                if first_seen[idx]:
+                    band_mins[idx] = min(0, b_min)
+                    band_maxs[idx] = max(0, b_max)
+                    first_seen[idx] = False
+                else:
+                    band_mins[idx] = min(band_mins[idx], b_min)
+                    band_maxs[idx] = max(band_maxs[idx], b_max)
+        bounds = [
+            (
+                band_mins[idx],
+                min(band_maxs[idx], band_mins[idx] + 65535),
+            )
+            for idx in range(n_bands)
+        ]
+
+    hists = [
+        np.zeros((h_max - h_min) + 1, dtype=np.int64)
+        for h_min, h_max in bounds
+    ]
     for _, block_arrays in iter_single_image_band_blocks(
         input_img=input_img,
-        read_dtype=np.uint8,
+        read_dtype=np.int64,
         use_pbar=use_pbar,
     ):
         for idx, band_arr in enumerate(block_arrays):
-            hists[idx] += np.bincount(band_arr.ravel(), minlength=256)
+            h_min, h_max = bounds[idx]
+            n_bins = (h_max - h_min) + 1
+            shifted = band_arr.ravel() - h_min
+            valid = shifted[(shifted >= 0) & (shifted < n_bins)]
+            if valid.size > 0:
+                hists[idx] += np.bincount(valid, minlength=n_bins)
 
-    return hists
+    return [
+        (hists[idx], bounds[idx][0], bounds[idx][1]) for idx in range(n_bands)
+    ]
 
 
-def _stats_from_byte_hist(
-    hist: np.ndarray, ignore_zero: bool
+def _stats_from_int_hist(
+    hist: np.ndarray, hist_min: int, hist_max: int, ignore_zero: bool
 ) -> Tuple[int, int, float, float, int, int]:
     """
-    Compute (min, max, mean, stddev, mode, median) from a 256-bin uint8 histogram.
+    Compute ``(min, max, mean, stddev, mode, median)`` from a direct integer
+    histogram covering ``[hist_min, hist_max]``.
     """
-    vals = np.arange(256, dtype=np.float64)
+    # pylint: disable=too-many-locals
+    vals = np.arange(hist_min, hist_max + 1, dtype=np.float64)
     stat_counts = hist.copy()
-    if ignore_zero:
-        stat_counts[0] = 0
+    if ignore_zero and hist_min <= 0 <= hist_max:
+        stat_counts[0 - hist_min] = 0
 
     total_valid = int(stat_counts.sum())
     if total_valid == 0:
@@ -224,18 +272,19 @@ def _stats_from_byte_hist(
         stddev_val = 0.0
     else:
         nz_indices = np.nonzero(stat_counts)[0]
-        min_val = int(nz_indices[0])
-        max_val = int(nz_indices[-1])
+        min_val = int(vals[nz_indices[0]])
+        max_val = int(vals[nz_indices[-1]])
         mean_val = float(np.sum(vals * stat_counts) / total_valid)
         variance = float(
             np.sum(((vals - mean_val) ** 2) * stat_counts) / total_valid
         )
         stddev_val = float(np.sqrt(variance))
 
-    mode_val = int(np.argmax(hist))
+    mode_val = int(vals[int(np.argmax(hist))])
     if int(hist.sum()) > 0:
         mid_num = hist.sum() / 2.0
-        median_val = int(np.nonzero(hist.cumsum() >= mid_num)[0][0])
+        median_idx = int(np.nonzero(hist.cumsum() >= mid_num)[0][0])
+        median_val = int(vals[median_idx])
     else:
         median_val = 0
 
@@ -250,8 +299,9 @@ def pop_thmt_img_stats(
     use_pbar: bool = True,
 ) -> None:
     """
-    Populate a byte (``uint8``) thematic input image (e.g., classification) with
-    header statistics, a colour table, and overview pyramids using ``rasterio``.
+    Populate an integer thematic input image (e.g., ``uint8``, ``uint16``, ``int16``
+    classification) with header statistics, a colour table, and overview pyramids
+    using ``rasterio``.
 
     :param input_img: Path to the input thematic image file.
     :param add_clr_tab: Whether to compute statistics and add a colour table (Default = True).
@@ -271,27 +321,27 @@ def pop_thmt_img_stats(
         )
 
     with rasterio.open(input_img, "r") as src:
-        if src.dtypes[0] != "uint8":
+        dtype_str = src.dtypes[0]
+        if dtype_str not in _INT_DTYPES:
             raise rsgispy.RSGISPyException(
-                "This function only supports byte datasets"
-            )
-        if src.driver and src.driver.upper() == "KEA":
-            print(
-                "Recommend using rsgislib.rastergis.pop_rat_img_stats for KEA files"
+                "This function only supports integer datasets"
             )
 
     set_img_thematic(input_img)
 
     if add_clr_tab:
-        hists = _calc_byte_band_hists(input_img, use_pbar=use_pbar)
+        hist_info = _calc_int_band_hists(
+            input_img, dtype_str=dtype_str, use_pbar=use_pbar
+        )
         with rasterio.open(input_img, "r+") as dst:
             if ignore_zero:
                 dst.nodata = 0
 
-            for idx, hist in enumerate(hists):
+            for idx, (hist, h_min, h_max) in enumerate(hist_info):
                 bidx = idx + 1
+                n_bins = (h_max - h_min) + 1
                 min_v, max_v, mean_v, std_v, mode_v, med_v = (
-                    _stats_from_byte_hist(hist, ignore_zero)
+                    _stats_from_int_hist(hist, h_min, h_max, ignore_zero)
                 )
                 tags: Dict[str, str] = {
                     "STATISTICS_MINIMUM": f"{min_v}",
@@ -306,16 +356,21 @@ def pop_thmt_img_stats(
                     "STATISTICS_HISTOBINVALUES": (
                         "|".join(map(str, hist.tolist())) + "|"
                     ),
-                    "STATISTICS_HISTOMIN": "0",
-                    "STATISTICS_HISTOMAX": "255",
-                    "STATISTICS_HISTONUMBINS": "256",
+                    "STATISTICS_HISTOMIN": f"{h_min}",
+                    "STATISTICS_HISTOMAX": f"{h_max}",
+                    "STATISTICS_HISTONUMBINS": f"{n_bins}",
                 }
                 if ignore_zero:
                     tags["STATISTICS_EXCLUDEDVALUES"] = "0"
                 dst.update_tags(bidx, **tags)
 
+                n_clr_entries = (
+                    256
+                    if dtype_str == "uint8"
+                    else min(max(h_max, 0) + 1, 65536)
+                )
                 clr_tab: Dict[int, Tuple[int, int, int, int]] = {}
-                for val_i in range(256):
+                for val_i in range(n_clr_entries):
                     if val_i == 0 and ignore_zero:
                         clr_tab[0] = (0, 0, 0, 0)
                     else:

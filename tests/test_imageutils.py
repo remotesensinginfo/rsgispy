@@ -135,26 +135,28 @@ def test_band_maths_with_creation_options(tmp_path, monkeypatch):
 
 
 def test_pop_thmt_img_stats(tmp_path):
-    """Test pop_thmt_img_stats on a byte thematic raster with pyramids and colour table."""
-    thmt_img = tmp_path / "thematic.tif"
+    """Test pop_thmt_img_stats on uint8, uint16, and int16 thematic rasters."""
+    thmt_u8_img = tmp_path / "thematic_u8.tif"
+    thmt_u16_img = tmp_path / "thematic_u16.tif"
+    thmt_i16_img = tmp_path / "thematic_i16.tif"
     float_img = tmp_path / "float.tif"
 
-    # 200x200 image so overview level 4 ((200 // 4) = 50 > 33) is built
-    arr = np.zeros((200, 200), dtype=np.uint8)
-    arr[10:100, 10:100] = 1
-    arr[100:190, 100:190] = 2
-    arr[50:80, 120:160] = 3
-    _create_simple_raster(thmt_img, arr, dtype="uint8")
+    # 1. uint8 thematic image (200x200 so overview level 4 is built)
+    arr_u8 = np.zeros((200, 200), dtype=np.uint8)
+    arr_u8[10:100, 10:100] = 1
+    arr_u8[100:190, 100:190] = 2
+    arr_u8[50:80, 120:160] = 3
+    _create_simple_raster(thmt_u8_img, arr_u8, dtype="uint8")
 
     rsgispy.imageutils.pop_thmt_img_stats(
-        str(thmt_img),
+        str(thmt_u8_img),
         add_clr_tab=True,
         calc_pyramids=True,
         ignore_zero=True,
         use_pbar=False,
     )
 
-    with rasterio.open(thmt_img) as src:
+    with rasterio.open(thmt_u8_img) as src:
         tags = src.tags(1)
         assert tags["LAYER_TYPE"] == "thematic"
         assert tags["STATISTICS_MINIMUM"] == "1"
@@ -169,7 +171,60 @@ def test_pop_thmt_img_stats(tmp_path):
         assert cmap[1][3] == 255
         assert src.overviews(1) == [4]
 
-    # Non-byte dataset should raise RSGISPyException
+    # 2. uint16 thematic image with class ID > 255
+    arr_u16 = np.zeros((200, 200), dtype=np.uint16)
+    arr_u16[10:100, 10:100] = 5
+    arr_u16[100:190, 100:190] = 300
+    _create_simple_raster(thmt_u16_img, arr_u16, dtype="uint16")
+
+    rsgispy.imageutils.pop_thmt_img_stats(
+        str(thmt_u16_img),
+        add_clr_tab=True,
+        calc_pyramids=True,
+        ignore_zero=True,
+        use_pbar=False,
+    )
+
+    with rasterio.open(thmt_u16_img) as src:
+        tags = src.tags(1)
+        assert tags["LAYER_TYPE"] == "thematic"
+        assert tags["STATISTICS_MINIMUM"] == "5"
+        assert tags["STATISTICS_MAXIMUM"] == "300"
+        assert tags["STATISTICS_HISTOMIN"] == "0"
+        assert tags["STATISTICS_HISTOMAX"] == "300"
+        assert tags["STATISTICS_HISTONUMBINS"] == "301"
+        assert src.nodata == 0.0
+        assert src.colorinterp == (ColorInterp.palette,)
+        cmap = src.colormap(1)
+        assert cmap[300][3] == 255
+        assert src.overviews(1) == [4]
+
+    # 3. int16 thematic image
+    arr_i16 = np.zeros((200, 200), dtype=np.int16)
+    arr_i16[10:100, 10:100] = 2
+    arr_i16[100:190, 100:190] = 450
+    _create_simple_raster(thmt_i16_img, arr_i16, dtype="int16")
+
+    rsgispy.imageutils.pop_thmt_img_stats(
+        str(thmt_i16_img),
+        add_clr_tab=True,
+        calc_pyramids=True,
+        ignore_zero=True,
+        use_pbar=False,
+    )
+
+    with rasterio.open(thmt_i16_img) as src:
+        tags = src.tags(1)
+        assert tags["LAYER_TYPE"] == "thematic"
+        assert tags["STATISTICS_MINIMUM"] == "2"
+        assert tags["STATISTICS_MAXIMUM"] == "450"
+        assert tags["STATISTICS_HISTOMIN"] == "0"
+        assert tags["STATISTICS_HISTOMAX"] == "450"
+        assert tags["STATISTICS_HISTONUMBINS"] == "451"
+        assert src.nodata == 0.0
+        assert src.overviews(1) == [4]
+
+    # 4. Non-integer dataset should raise RSGISPyException
     _create_simple_raster(float_img, np.ones((10, 10), dtype=np.float32), dtype="float32")
     with pytest.raises(rsgispy.RSGISPyException):
         rsgispy.imageutils.pop_thmt_img_stats(str(float_img), use_pbar=False)
