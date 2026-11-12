@@ -52,6 +52,7 @@ Contents
    rsgispy_imageutils
    rsgispy_imageprocess
    rsgispy_tools
+   rsgispy_zonalstats
 
 Indices and tables
 ==================
