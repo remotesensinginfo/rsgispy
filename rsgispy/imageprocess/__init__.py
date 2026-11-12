@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import rasterio
+from rasterio.io import DatasetReader, DatasetWriter
 from rasterio.transform import Affine
 from rasterio.windows import Window
 from rasterio.windows import from_bounds as window_from_bounds
@@ -137,8 +138,8 @@ def normalise_band_defs(
 
 
 def validate_crs_and_res(
-    datasets: Dict[str, rasterio.DatasetReader],
-    first_ds: Optional[rasterio.DatasetReader] = None,
+    datasets: Dict[str, DatasetReader],
+    first_ds: Optional[DatasetReader] = None,
 ) -> None:
     """
     Validate that all datasets share the same CRS and pixel resolution.
@@ -174,7 +175,7 @@ def validate_crs_and_res(
 
 
 def compute_spatial_intersection(
-    datasets: Dict[str, rasterio.DatasetReader]
+    datasets: Dict[str, DatasetReader]
 ) -> IntersectionGrid:
     """
     Compute the spatial intersection grid and per-dataset pixel offsets.
@@ -279,7 +280,7 @@ def cast_result_block(
 
 def open_input_datasets(
     stack: ExitStack, norm_defs: Sequence[BandDefn]
-) -> Dict[str, rasterio.DatasetReader]:
+) -> Dict[str, DatasetReader]:
     """
     Open and validate all unique input raster datasets within an ExitStack.
 
@@ -287,7 +288,7 @@ def open_input_datasets(
     :param norm_defs: Validated sequence of BandDefn objects.
     :return: Mapping of file path to opened rasterio DatasetReader.
     """
-    datasets: Dict[str, rasterio.DatasetReader] = {}
+    datasets: Dict[str, DatasetReader] = {}
     for b_def in norm_defs:
         assert b_def.input_img is not None
         assert b_def.img_band is not None
@@ -318,7 +319,7 @@ def open_output_dataset(
     grid: IntersectionGrid,
     count: int = 1,
     output_exists: bool = False,
-) -> rasterio.DatasetWriter:
+) -> DatasetWriter:
     """
     Open an existing output raster for update or create a new output raster.
 
@@ -355,8 +356,8 @@ def open_output_dataset(
 
 
 def process_blocks(
-    dst: rasterio.DatasetWriter,
-    datasets: Dict[str, rasterio.DatasetReader],
+    dst: DatasetWriter,
+    datasets: Dict[str, DatasetReader],
     norm_defs: Sequence[BandDefn],
     grid: IntersectionGrid,
     block_func: Callable[[Dict[str, np.ndarray]], Union[np.ndarray, float, int]],
