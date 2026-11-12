@@ -48,6 +48,7 @@ Contents
    :caption: API Reference
 
    rsgispy
+   rsgispy_elevation
    rsgispy_imagecalc
    rsgispy_imageutils
    rsgispy_imageprocess

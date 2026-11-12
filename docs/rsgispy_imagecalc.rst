@@ -57,3 +57,8 @@ API Reference
    :members:
    :undoc-members:
    :show-inheritance:
+
+.. automodule:: rsgispy.imagecalc.calc_pt_win_smpls
+   :members:
+   :undoc-members:
+   :show-inheritance:
