@@ -2,6 +2,7 @@
 Tests for rsgispy.tools.stats.
 """
 
+import importlib.util
 import sys
 import types
 from unittest.mock import MagicMock, patch
@@ -26,13 +27,6 @@ def test_feature_selection_and_vif():
 
     df = pd.DataFrame({"y": y, "x1": x1, "x2": x2, "x3": x3, "x_const": x_const})
 
-    vifs = rstats.calc_pandas_vif(df, cols=["x1", "x2", "x3"])
-    assert vifs["x1"] > 10.0
-    assert vifs["x3"] > 10.0
-    assert vifs["x2"] < 5.0
-    with pytest.raises(rsgispy.RSGISPyException):
-        rstats.calc_pandas_vif(df, cols=["x1"])
-
     cqv_cols = rstats.cqv_threshold(df, cols=["x1", "x2", "x_const"], lowthreshold=0.1, highthreshold=0.9)
     assert "x1" in cqv_cols
     assert "x2" in cqv_cols
@@ -40,19 +34,28 @@ def test_feature_selection_and_vif():
     with pytest.raises(rsgispy.RSGISPyException):
         rstats.cqv_threshold(df, cols=["x1"])
 
-    corr_cols = rstats.corr_feature_selection(
-        df, dep_vars=["y"], ind_vars=["x1", "x2", "x3", "x_const"], n_min_clusters=2, n_max_clusters=4
-    )
-    assert len(corr_cols) >= 2
-    assert set(corr_cols).issubset({"x1", "x2", "x3", "x_const"})
+    if rstats.HAVE_SKLEARN:
+        vifs = rstats.calc_pandas_vif(df, cols=["x1", "x2", "x3"])
+        assert vifs["x1"] > 10.0
+        assert vifs["x3"] > 10.0
+        assert vifs["x2"] < 5.0
+        with pytest.raises(rsgispy.RSGISPyException):
+            rstats.calc_pandas_vif(df, cols=["x1"])
 
-    lasso_cols = rstats.lassolars_feature_selection(df, dep_vars=["y"], ind_vars=["x1", "x2", "x3"])
-    assert "x1" in lasso_cols or "x3" in lasso_cols
+        lasso_cols = rstats.lassolars_feature_selection(df, dep_vars=["y"], ind_vars=["x1", "x2", "x3"])
+        assert "x1" in lasso_cols or "x3" in lasso_cols
 
-    lasso_alpha = rstats.lassolars_feature_selection(
-        df, dep_vars=["y"], ind_vars=["x1", "x2", "x3"], alpha_val=0.01
-    )
-    assert isinstance(lasso_alpha, list)
+        lasso_alpha = rstats.lassolars_feature_selection(
+            df, dep_vars=["y"], ind_vars=["x1", "x2", "x3"], alpha_val=0.01
+        )
+        assert isinstance(lasso_alpha, list)
+
+    if rstats.HAVE_SCIPY and rstats.HAVE_SKLEARN:
+        corr_cols = rstats.corr_feature_selection(
+            df, dep_vars=["y"], ind_vars=["x1", "x2", "x3", "x_const"], n_min_clusters=2, n_max_clusters=4
+        )
+        assert len(corr_cols) >= 2
+        assert set(corr_cols).issubset({"x1", "x2", "x3", "x_const"})
 
 
 def test_regression_and_classification_metrics():
@@ -60,29 +63,32 @@ def test_regression_and_classification_metrics():
     rng = np.random.default_rng(7)
     x = rng.normal(size=(80, 2))
     y = 2.0 * x[:, 0] - x[:, 1] + rng.normal(0.0, 0.5, size=80)
-    lm_stat, pval, msg = rstats.breusch_pagan_test(x, y)
-    assert lm_stat >= 0.0
-    assert 0.0 <= pval <= 1.0
-    assert isinstance(msg, str)
-    with pytest.raises(rsgispy.RSGISPyException):
-        rstats.breusch_pagan_test(x[:10], y)
+
+    if rstats.HAVE_SCIPY and rstats.HAVE_SKLEARN:
+        lm_stat, pval, msg = rstats.breusch_pagan_test(x, y)
+        assert lm_stat >= 0.0
+        assert 0.0 <= pval <= 1.0
+        assert isinstance(msg, str)
+        with pytest.raises(rsgispy.RSGISPyException):
+            rstats.breusch_pagan_test(x[:10], y)
 
     y_true = np.array([0, 0, 0, 1, 1, 1, 0, 1])
     y_prob = np.array([0.1, 0.2, 0.7, 0.8, 0.9, 0.3, 0.1, 0.85])
     y_pred = np.array([0, 0, 1, 1, 1, 0, 0, 1])
 
-    prob_names, prob_scores = rstats.bin_accuracy_scores_prob(y_true, y_prob)
-    assert len(prob_names) == len(prob_scores) == 5
-    assert prob_scores[0] > 0.7  # AUC
+    if rstats.HAVE_SCIPY and rstats.HAVE_SKLEARN:
+        prob_names, prob_scores = rstats.bin_accuracy_scores_prob(y_true, y_prob)
+        assert len(prob_names) == len(prob_scores) == 5
+        assert prob_scores[0] > 0.7  # AUC
+        with pytest.raises(rsgispy.RSGISPyException):
+            rstats.bin_accuracy_scores_prob(y_true[:3], y_prob)
 
-    bin_names, bin_scores = rstats.accuracy_scores_binary(y_true, y_pred)
-    assert len(bin_names) == len(bin_scores) == 16
-    assert bin_scores[6] == pytest.approx(0.75)  # Accuracy
-
-    with pytest.raises(rsgispy.RSGISPyException):
-        rstats.bin_accuracy_scores_prob(y_true[:3], y_prob)
-    with pytest.raises(rsgispy.RSGISPyException):
-        rstats.accuracy_scores_binary(y_true, np.array([0, 2, 1, 1, 1, 0, 0, 1]))
+    if rstats.HAVE_SKLEARN:
+        bin_names, bin_scores = rstats.accuracy_scores_binary(y_true, y_pred)
+        assert len(bin_names) == len(bin_scores) == 16
+        assert bin_scores[6] == pytest.approx(0.75)  # Accuracy
+        with pytest.raises(rsgispy.RSGISPyException):
+            rstats.accuracy_scores_binary(y_true, np.array([0, 2, 1, 1, 1, 0, 0, 1]))
 
     yt = np.array([[10.0, 20.0], [20.0, 40.0], [30.0, 60.0]])
     yp = np.array([[12.0, 18.0], [22.0, 38.0], [32.0, 58.0]])
@@ -125,12 +131,13 @@ def test_thresholding_masking_normalisation_and_variogram(tmp_path):
     ce = rstats.calc_hist_cross_entropy(bimodal, 20.0)
     assert np.isfinite(ce)
 
-    kurt_thres = rstats.calc_kurt_skew_threshold(
-        bimodal, max_val=25.0, min_val=5.0, init_thres=15.0, low_thres=True, contamination=20.0
-    )
-    assert np.isfinite(kurt_thres)
-    with pytest.raises(rsgispy.RSGISPyException):
-        rstats.calc_kurt_skew_threshold(bimodal, max_val=25.0, min_val=5.0, init_thres=15.0, contamination=0.5)
+    if rstats.HAVE_SCIPY:
+        kurt_thres = rstats.calc_kurt_skew_threshold(
+            bimodal, max_val=25.0, min_val=5.0, init_thres=15.0, low_thres=True, contamination=20.0
+        )
+        assert np.isfinite(kurt_thres)
+        with pytest.raises(rsgispy.RSGISPyException):
+            rstats.calc_kurt_skew_threshold(bimodal, max_val=25.0, min_val=5.0, init_thres=15.0, contamination=0.5)
 
     raw = np.array([[1.0, 2.0], [np.nan, 3.0], [0.0, 5.0], [4.0, 12.0], [3.0, 6.0]])
     masked = rstats.mask_data_to_valid(raw, lower_limit=0.5, upper_limit=10.0)
@@ -182,3 +189,68 @@ def test_thresholding_masking_normalisation_and_variogram(tmp_path):
     assert list(vario_df["count"]) == [2, 3, 1]
     assert out_csv.exists()
     assert out_png.exists()
+
+
+def test_optional_scipy_and_sklearn_missing():
+    """Verify dependent functions are omitted when scipy and/or scikit-learn are unavailable."""
+    import rsgispy.tools as rtools
+
+    scipy_only = {"calc_kurt_skew_threshold"}
+    sklearn_only = {"calc_pandas_vif", "lassolars_feature_selection", "accuracy_scores_binary"}
+    both_deps = {"corr_feature_selection", "breusch_pagan_test", "bin_accuracy_scores_prob"}
+    always_avail = {"cqv_threshold", "calc_otsu_threshold", "bias_score", "normalise_img_data"}
+
+    blocked_scipy = {"scipy": None, "scipy.optimize": None, "scipy.stats": None}
+    blocked_sklearn = {
+        "sklearn": None,
+        "sklearn.cluster": None,
+        "sklearn.exceptions": None,
+        "sklearn.feature_selection": None,
+        "sklearn.linear_model": None,
+        "sklearn.metrics": None,
+    }
+
+    def _fresh_import(blocked):
+        with patch.dict(sys.modules, blocked):
+            sys.modules.pop("rsgispy.tools.stats", None)
+            return importlib.import_module("rsgispy.tools.stats")
+
+    orig_mod = rstats
+    try:
+        # Missing both scipy and sklearn
+        mod = _fresh_import({**blocked_scipy, **blocked_sklearn})
+        assert not mod.HAVE_SCIPY
+        assert not mod.HAVE_SKLEARN
+        for fn_name in scipy_only | sklearn_only | both_deps:
+            assert not hasattr(mod, fn_name)
+            assert fn_name not in mod.__all__
+        for fn_name in always_avail:
+            assert hasattr(mod, fn_name)
+            assert fn_name in mod.__all__
+
+        # Missing scipy only (when sklearn is installed)
+        if orig_mod.HAVE_SKLEARN or importlib.util.find_spec("sklearn") is not None:
+            mod = _fresh_import(blocked_scipy)
+            assert not mod.HAVE_SCIPY
+            assert mod.HAVE_SKLEARN
+            for fn_name in scipy_only | both_deps:
+                assert not hasattr(mod, fn_name)
+                assert fn_name not in mod.__all__
+            for fn_name in sklearn_only | always_avail:
+                assert hasattr(mod, fn_name)
+                assert fn_name in mod.__all__
+
+        # Missing sklearn only (when scipy is installed)
+        if orig_mod.HAVE_SCIPY or importlib.util.find_spec("scipy") is not None:
+            mod = _fresh_import(blocked_sklearn)
+            assert mod.HAVE_SCIPY
+            assert not mod.HAVE_SKLEARN
+            for fn_name in sklearn_only | both_deps:
+                assert not hasattr(mod, fn_name)
+                assert fn_name not in mod.__all__
+            for fn_name in scipy_only | always_avail:
+                assert hasattr(mod, fn_name)
+                assert fn_name in mod.__all__
+    finally:
+        sys.modules["rsgispy.tools.stats"] = orig_mod
+        rtools.stats = orig_mod

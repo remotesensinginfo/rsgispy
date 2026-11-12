@@ -1,6 +1,9 @@
 """
 The tools.stats module provides statistical analysis, feature selection,
 accuracy assessment, thresholding, and data normalisation utilities.
+
+Functions requiring ``scipy`` and/or ``scikit-learn`` are only defined and
+exported when those optional dependencies are installed.
 """
 
 # pylint: disable=too-many-lines
@@ -12,14 +15,27 @@ import numpy
 
 import rsgispy
 
+try:
+    import scipy.optimize  # pylint: disable=import-error
+    import scipy.stats  # pylint: disable=import-error
+
+    HAVE_SCIPY = True
+except ImportError:
+    HAVE_SCIPY = False
+
+try:
+    import sklearn.cluster  # pylint: disable=import-error
+    import sklearn.exceptions  # pylint: disable=import-error
+    import sklearn.feature_selection  # pylint: disable=import-error
+    import sklearn.linear_model  # pylint: disable=import-error
+    import sklearn.metrics  # pylint: disable=import-error
+
+    HAVE_SKLEARN = True
+except ImportError:
+    HAVE_SKLEARN = False
+
 __all__ = [
-    "calc_pandas_vif",
     "cqv_threshold",
-    "corr_feature_selection",
-    "lassolars_feature_selection",
-    "breusch_pagan_test",
-    "bin_accuracy_scores_prob",
-    "accuracy_scores_binary",
     "get_nbins_histogram",
     "get_bin_centres",
     "calc_otsu_threshold",
@@ -27,7 +43,6 @@ __all__ = [
     "calc_isodata_threshold",
     "calc_hist_cross_entropy",
     "calc_li_threshold",
-    "calc_kurt_skew_threshold",
     "mask_data_to_valid",
     "bias_score",
     "decompose_bias_variance",
@@ -36,54 +51,76 @@ __all__ = [
     "normalise_img_data",
 ]
 
+if HAVE_SKLEARN:
+    __all__.extend(
+        [
+            "calc_pandas_vif",
+            "lassolars_feature_selection",
+            "accuracy_scores_binary",
+        ]
+    )
 
-def calc_pandas_vif(
-    df: Any,
-    cols: Optional[List[str]] = None,
-) -> Any:
-    """
-    Calculate Variance Inflation Factors (VIF) to investigate multicollinearity
-    between predictor variables in a pandas DataFrame.
+if HAVE_SCIPY:
+    __all__.append("calc_kurt_skew_threshold")
 
-    Interpretation of VIF scores:
-    1 = no multicollinearity; 1-5 = moderate; > 5 = high; > 10 = remove predictor.
+if HAVE_SCIPY and HAVE_SKLEARN:
+    __all__.extend(
+        [
+            "corr_feature_selection",
+            "breusch_pagan_test",
+            "bin_accuracy_scores_prob",
+        ]
+    )
 
-    :param df: Pandas DataFrame whose columns are predictor variables.
-    :param cols: Optional subset of column names to evaluate (at least 2).
-    :return: ``pandas.Series`` indexed by column name containing VIF scores.
-    """
-    # pylint: disable=import-outside-toplevel
-    import pandas
-    import sklearn.linear_model
 
-    if cols is None:
-        cols = list(df.columns)
+if HAVE_SKLEARN:
 
-    if len(cols) < 2:
-        raise rsgispy.RSGISPyException(
-            "The list of columns must be have a length of at least 2."
-        )
+    def calc_pandas_vif(
+        df: Any,
+        cols: Optional[List[str]] = None,
+    ) -> Any:
+        """
+        Calculate Variance Inflation Factors (VIF) to investigate multicollinearity
+        between predictor variables in a pandas DataFrame.
 
-    print(f"Calculating VIF for {len(cols)} predictors variables...")
+        Interpretation of VIF scores:
+        1 = no multicollinearity; 1-5 = moderate; > 5 = high; > 10 = remove predictor.
 
-    linear_model = sklearn.linear_model.LinearRegression()
-    vif_scores = {}
+        :param df: Pandas DataFrame whose columns are predictor variables.
+        :param cols: Optional subset of column names to evaluate (at least 2).
+        :return: ``pandas.Series`` indexed by column name containing VIF scores.
+        """
+        # pylint: disable=import-outside-toplevel
+        import pandas
 
-    for col in cols:
-        tmp_cols = list(cols)
-        tmp_cols.remove(col)
-        y_vals = df[col].values
-        x_vals = df[tmp_cols].values
-        linear_model.fit(x_vals, y_vals)
-        y_pred = linear_model.predict(x_vals)
+        if cols is None:
+            cols = list(df.columns)
 
-        ss_tot = float(numpy.sum((y_vals - numpy.mean(y_vals)) ** 2))
-        ss_res = float(numpy.sum((y_vals - y_pred) ** 2))
-        r2 = 1.0 - (ss_res / ss_tot)
+        if len(cols) < 2:
+            raise rsgispy.RSGISPyException(
+                "The list of columns must be have a length of at least 2."
+            )
 
-        vif_scores[col] = 0.0 if r2 == 1.0 else 1.0 / (1.0 - r2)
+        print(f"Calculating VIF for {len(cols)} predictors variables...")
 
-    return pandas.Series(vif_scores, name="VIF")
+        linear_model = sklearn.linear_model.LinearRegression()
+        vif_scores = {}
+
+        for col in cols:
+            tmp_cols = list(cols)
+            tmp_cols.remove(col)
+            y_vals = df[col].values
+            x_vals = df[tmp_cols].values
+            linear_model.fit(x_vals, y_vals)
+            y_pred = linear_model.predict(x_vals)
+
+            ss_tot = float(numpy.sum((y_vals - numpy.mean(y_vals)) ** 2))
+            ss_res = float(numpy.sum((y_vals - y_pred) ** 2))
+            r2 = 1.0 - (ss_res / ss_tot)
+
+            vif_scores[col] = 0.0 if r2 == 1.0 else 1.0 / (1.0 - r2)
+
+        return pandas.Series(vif_scores, name="VIF")
 
 
 def cqv_threshold(
@@ -127,359 +164,357 @@ def cqv_threshold(
     return good_cols
 
 
-def corr_feature_selection(
-    df: Any,
-    dep_vars: List[str],
-    ind_vars: List[str],
-    n_min_clusters: int = 3,
-    n_max_clusters: int = 25,
-) -> List[str]:
-    """
-    Perform correlation-based feature selection by clustering independent
-    variables using Pearson correlation distance and Silhouette selection.
+if HAVE_SCIPY and HAVE_SKLEARN:
 
-    :param df: Pandas DataFrame containing dependent and independent variables.
-    :param dep_vars: List of dependent variable column names.
-    :param ind_vars: List of independent (predictor) variable column names.
-    :param n_min_clusters: Minimum cluster count in the search (Default = 3).
-    :param n_max_clusters: Exclusive upper cluster count bound (Default = 25).
-    :return: List of selected predictor column names.
-    """
-    # pylint: disable=import-outside-toplevel,too-many-locals
-    import scipy.stats
-    import sklearn.cluster
-    import sklearn.metrics
+    def corr_feature_selection(
+        df: Any,
+        dep_vars: List[str],
+        ind_vars: List[str],
+        n_min_clusters: int = 3,
+        n_max_clusters: int = 25,
+    ) -> List[str]:
+        """
+        Perform correlation-based feature selection by clustering independent
+        variables using Pearson correlation distance and Silhouette selection.
 
-    corr_data = []
-    for dep_var in dep_vars:
-        corr_vals = [
-            df[dep_var].corr(df[ind_var], method="pearson") for ind_var in ind_vars
-        ]
-        corr_data.append(corr_vals)
+        :param df: Pandas DataFrame containing dependent and independent variables.
+        :param dep_vars: List of dependent variable column names.
+        :param ind_vars: List of independent (predictor) variable column names.
+        :param n_min_clusters: Minimum cluster count in the search (Default = 3).
+        :param n_max_clusters: Exclusive upper cluster count bound (Default = 25).
+        :return: List of selected predictor column names.
+        """
+        # pylint: disable=too-many-locals
+        corr_data = []
+        for dep_var in dep_vars:
+            corr_vals = [
+                df[dep_var].corr(df[ind_var], method="pearson") for ind_var in ind_vars
+            ]
+            corr_data.append(corr_vals)
 
-    pearson_corr = numpy.tanh(numpy.mean(numpy.arctanh(corr_data), axis=0))
+        pearson_corr = numpy.tanh(numpy.mean(numpy.arctanh(corr_data), axis=0))
 
-    def _pearson_affinity(arr: numpy.ndarray) -> numpy.ndarray:
-        return 1.0 - numpy.array(
-            [[abs(scipy.stats.pearsonr(col_a, col_b)[0]) for col_a in arr] for col_b in arr]
+        def _pearson_affinity(arr: numpy.ndarray) -> numpy.ndarray:
+            return 1.0 - numpy.array(
+                [
+                    [abs(scipy.stats.pearsonr(col_a, col_b)[0]) for col_a in arr]
+                    for col_b in arr
+                ]
+            )
+
+        def _cluster_features(feat_arr: numpy.ndarray, n_clst: int) -> numpy.ndarray:
+            if feat_arr.ndim != 2:
+                raise rsgispy.RSGISPyException("Error: the input array must be 2D.")
+            clf = sklearn.cluster.FeatureAgglomeration(
+                n_clusters=int(n_clst),
+                metric=_pearson_affinity,
+                linkage="complete",
+            )
+            clf.fit(feat_arr)
+            return clf.labels_ + 1
+
+        x_vals = df[ind_vars].values
+        n_clusters = numpy.arange(n_min_clusters, n_max_clusters, dtype="int64")
+        tqdm_cls = rsgispy.get_tqdm()
+        cluster_score = []
+        for n_clst in tqdm_cls(n_clusters):
+            x_lbls = _cluster_features(x_vals, int(n_clst))
+            cluster_score.append(
+                sklearn.metrics.silhouette_score(x_vals.T, x_lbls, metric="correlation")
+            )
+
+        best_idx = int(numpy.argmax(cluster_score))
+        opt_n_clusters = int(n_clusters[best_idx])
+        opt_n_clusters_scr = cluster_score[best_idx]
+        print(f"Found optimal number of clusters: {opt_n_clusters}")
+        print(f"Silhouette Coefficient: {opt_n_clusters_scr}")
+
+        cluster_lbls = _cluster_features(x_vals, opt_n_clusters)
+        best_predictors: List[str] = []
+        for lbl in numpy.unique(cluster_lbls):
+            lbl_idx = numpy.where(cluster_lbls == lbl)[0]
+            best_corr = int(numpy.argmax(pearson_corr[lbl_idx]))
+            best_predictors.append(ind_vars[lbl_idx[best_corr]])
+
+        return best_predictors
+
+
+if HAVE_SKLEARN:
+
+    def lassolars_feature_selection(
+        df: Any,
+        dep_vars: List[str],
+        ind_vars: List[str],
+        alpha_val: Optional[float] = None,
+    ) -> List[str]:
+        """
+        Perform L1 regularisation-based feature selection using ``LassoLars`` in
+        scikit-learn.
+
+        :param df: Pandas DataFrame containing dependent and independent variables.
+        :param dep_vars: List of dependent variable column names.
+        :param ind_vars: List of independent (predictor) variable column names.
+        :param alpha_val: Regularisation parameter ``alpha``; estimated via BIC
+                          with ``LassoLarsIC`` when ``None``.
+        :return: List of selected predictor column names.
+        """
+        # pylint: disable=too-many-locals
+        x_vals = df[ind_vars].values
+        y_vals = df[dep_vars].values
+
+        if alpha_val is None:
+            ic_est = sklearn.linear_model.LassoLarsIC("bic")
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore", category=sklearn.exceptions.ConvergenceWarning
+                )
+                ic_est.fit(x_vals, y_vals[:, -1])
+            optimal_alpha = float(ic_est.alpha_)
+        else:
+            optimal_alpha = float(alpha_val)
+
+        print(
+            f"Using regularization parameter (alpha) for the Lasso estimator of: "
+            f"{optimal_alpha}"
         )
 
-    def _cluster_features(feat_arr: numpy.ndarray, n_clst: int) -> numpy.ndarray:
-        if feat_arr.ndim != 2:
-            raise rsgispy.RSGISPyException("Error: the input array must be 2D.")
-        clf = sklearn.cluster.FeatureAgglomeration(
-            n_clusters=int(n_clst),
-            metric=_pearson_affinity,
-            linkage="complete",
-        )
-        clf.fit(feat_arr)
-        return clf.labels_ + 1
-
-    x_vals = df[ind_vars].values
-    n_clusters = numpy.arange(n_min_clusters, n_max_clusters, dtype="int64")
-    tqdm_cls = rsgispy.get_tqdm()
-    cluster_score = []
-    for n_clst in tqdm_cls(n_clusters):
-        x_lbls = _cluster_features(x_vals, int(n_clst))
-        cluster_score.append(
-            sklearn.metrics.silhouette_score(x_vals.T, x_lbls, metric="correlation")
-        )
-
-    best_idx = int(numpy.argmax(cluster_score))
-    opt_n_clusters = int(n_clusters[best_idx])
-    opt_n_clusters_scr = cluster_score[best_idx]
-    print(f"Found optimal number of clusters: {opt_n_clusters}")
-    print(f"Silhouette Coefficient: {opt_n_clusters_scr}")
-
-    cluster_lbls = _cluster_features(x_vals, opt_n_clusters)
-    best_predictors: List[str] = []
-    for lbl in numpy.unique(cluster_lbls):
-        lbl_idx = numpy.where(cluster_lbls == lbl)[0]
-        best_corr = int(numpy.argmax(pearson_corr[lbl_idx]))
-        best_predictors.append(ind_vars[lbl_idx[best_corr]])
-
-    return best_predictors
-
-
-def lassolars_feature_selection(
-    df: Any,
-    dep_vars: List[str],
-    ind_vars: List[str],
-    alpha_val: Optional[float] = None,
-) -> List[str]:
-    """
-    Perform L1 regularisation-based feature selection using ``LassoLars`` in
-    scikit-learn.
-
-    :param df: Pandas DataFrame containing dependent and independent variables.
-    :param dep_vars: List of dependent variable column names.
-    :param ind_vars: List of independent (predictor) variable column names.
-    :param alpha_val: Regularisation parameter ``alpha``; estimated via BIC
-                      with ``LassoLarsIC`` when ``None``.
-    :return: List of selected predictor column names.
-    """
-    # pylint: disable=import-outside-toplevel,too-many-locals
-    import sklearn.exceptions
-    import sklearn.feature_selection
-    import sklearn.linear_model
-
-    x_vals = df[ind_vars].values
-    y_vals = df[dep_vars].values
-
-    if alpha_val is None:
-        ic_est = sklearn.linear_model.LassoLarsIC("bic")
+        estimator = sklearn.linear_model.LassoLars(alpha=optimal_alpha)
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "ignore", category=sklearn.exceptions.ConvergenceWarning
             )
-            ic_est.fit(x_vals, y_vals[:, -1])
-        optimal_alpha = float(ic_est.alpha_)
-    else:
-        optimal_alpha = float(alpha_val)
+            estimator.fit(x_vals, y_vals)
 
-    print(
-        f"Using regularization parameter (alpha) for the Lasso estimator of: "
-        f"{optimal_alpha}"
-    )
+        selector = sklearn.feature_selection.SelectFromModel(estimator, prefit=True)
+        ind_vars_arr = numpy.array(ind_vars)
+        return [str(col) for col in ind_vars_arr[selector.get_support()]]
 
-    estimator = sklearn.linear_model.LassoLars(alpha=optimal_alpha)
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore", category=sklearn.exceptions.ConvergenceWarning
+
+if HAVE_SCIPY and HAVE_SKLEARN:
+
+    def breusch_pagan_test(
+        x: numpy.ndarray,
+        y: numpy.ndarray,
+    ) -> List[Union[float, str]]:
+        """
+        Perform a Breusch-Pagan test for heteroskedasticity in a linear model.
+
+        :param x: Predictor array of shape ``(n_samples, n_predictors)``.
+        :param y: 1D response array of shape ``(n_samples,)``.
+        :return: ``[lm_stat, p_value, result_message]``.
+        """
+        # pylint: disable=too-many-locals
+        if x.shape[0] != y.shape[0]:
+            raise rsgispy.RSGISPyException(
+                "Error: the number of samples differs between x and y."
+            )
+        n_samples = x.shape[0]
+
+        linear_model = sklearn.linear_model.LinearRegression()
+        linear_model.fit(x, y)
+
+        err = (y - linear_model.predict(x)) ** 2
+
+        linear_model.fit(x, err)
+        pred_err = linear_model.predict(x)
+
+        ss_tot = float(numpy.sum((err - numpy.mean(err, axis=0)) ** 2))
+        ss_res = float(numpy.sum((err - pred_err) ** 2))
+        r2 = 1.0 - (ss_res / ss_tot)
+
+        lm_stat = float(n_samples * r2)
+        pval = float(scipy.stats.chi2.sf(lm_stat, x.shape[1]))
+
+        if pval < 0.01:
+            test_result = "Heteroskedasticity present at 99% CI."
+        elif pval < 0.05:
+            test_result = "Heteroskedasticity present at 95% CI."
+        else:
+            test_result = "No significant heteroskedasticity."
+        return [lm_stat, pval, test_result]
+
+    def bin_accuracy_scores_prob(
+        y_true: Union[numpy.ndarray, Sequence[int]],
+        y_prob: Union[numpy.ndarray, Sequence[float]],
+    ) -> List[Any]:
+        """
+        Calculate probabilistic binary classification accuracy metrics using
+        scikit-learn and SciPy.
+
+        :param y_true: 1D binary class labels (0 = absence, 1 = presence).
+        :param y_prob: 1D predicted probability scores.
+        :return: ``[metric_names, scores_array]``.
+        """
+        # pylint: disable=too-many-locals
+        y_true_arr = numpy.asarray(y_true)
+        y_prob_arr = numpy.asarray(y_prob)
+        if y_true_arr.ndim != 1:
+            raise rsgispy.RSGISPyException(
+                "ERROR: the true labels are not in a 1D array."
+            )
+        if y_prob_arr.ndim != 1:
+            raise rsgispy.RSGISPyException(
+                "ERROR: the probability of presence values are not in a 1D array."
+            )
+        if y_true_arr.size != y_prob_arr.size:
+            raise rsgispy.RSGISPyException(
+                "ERROR: unequal number of binary labels and probabilities."
+            )
+
+        y_true_u8 = y_true_arr.astype("uint8")
+        if numpy.min(y_true_u8) != 0 or numpy.max(y_true_u8) != 1:
+            raise rsgispy.RSGISPyException(
+                "ERROR: the true labels are not binary (zero or one values)."
+            )
+
+        roc_auc = sklearn.metrics.roc_auc_score(y_true_u8, y_prob_arr)
+        average_precision = sklearn.metrics.average_precision_score(
+            y_true_u8, y_prob_arr
         )
-        estimator.fit(x_vals, y_vals)
+        brier_score = sklearn.metrics.brier_score_loss(y_true_u8, y_prob_arr)
+        log_loss_score = sklearn.metrics.log_loss(y_true_u8, y_prob_arr)
+        r_val = scipy.stats.pointbiserialr(y_true_u8, y_prob_arr)[0]
 
-    selector = sklearn.feature_selection.SelectFromModel(estimator, prefit=True)
-    ind_vars_arr = numpy.array(ind_vars)
-    return [str(col) for col in ind_vars_arr[selector.get_support()]]
-
-
-def breusch_pagan_test(
-    x: numpy.ndarray,
-    y: numpy.ndarray,
-) -> List[Union[float, str]]:
-    """
-    Perform a Breusch-Pagan test for heteroskedasticity in a linear model.
-
-    :param x: Predictor array of shape ``(n_samples, n_predictors)``.
-    :param y: 1D response array of shape ``(n_samples,)``.
-    :return: ``[lm_stat, p_value, result_message]``.
-    """
-    # pylint: disable=import-outside-toplevel,too-many-locals
-    import scipy.stats
-    import sklearn.linear_model
-
-    if x.shape[0] != y.shape[0]:
-        raise rsgispy.RSGISPyException(
-            "Error: the number of samples differs between x and y."
-        )
-    n_samples = x.shape[0]
-
-    linear_model = sklearn.linear_model.LinearRegression()
-    linear_model.fit(x, y)
-
-    err = (y - linear_model.predict(x)) ** 2
-
-    linear_model.fit(x, err)
-    pred_err = linear_model.predict(x)
-
-    ss_tot = float(numpy.sum((err - numpy.mean(err, axis=0)) ** 2))
-    ss_res = float(numpy.sum((err - pred_err) ** 2))
-    r2 = 1.0 - (ss_res / ss_tot)
-
-    lm_stat = float(n_samples * r2)
-    pval = float(scipy.stats.chi2.sf(lm_stat, x.shape[1]))
-
-    if pval < 0.01:
-        test_result = "Heteroskedasticity present at 99% CI."
-    elif pval < 0.05:
-        test_result = "Heteroskedasticity present at 95% CI."
-    else:
-        test_result = "No significant heteroskedasticity."
-    return [lm_stat, pval, test_result]
-
-
-def bin_accuracy_scores_prob(
-    y_true: Union[numpy.ndarray, Sequence[int]],
-    y_prob: Union[numpy.ndarray, Sequence[float]],
-) -> List[Any]:
-    """
-    Calculate probabilistic binary classification accuracy metrics using
-    scikit-learn and SciPy.
-
-    :param y_true: 1D binary class labels (0 = absence, 1 = presence).
-    :param y_prob: 1D predicted probability scores.
-    :return: ``[metric_names, scores_array]``.
-    """
-    # pylint: disable=import-outside-toplevel,too-many-locals
-    from scipy.stats import pointbiserialr
-    from sklearn.metrics import (
-        average_precision_score,
-        brier_score_loss,
-        log_loss,
-        roc_auc_score,
-    )
-
-    y_true_arr = numpy.asarray(y_true)
-    y_prob_arr = numpy.asarray(y_prob)
-    if y_true_arr.ndim != 1:
-        raise rsgispy.RSGISPyException(
-            "ERROR: the true labels are not in a 1D array."
-        )
-    if y_prob_arr.ndim != 1:
-        raise rsgispy.RSGISPyException(
-            "ERROR: the probability of presence values are not in a 1D array."
-        )
-    if y_true_arr.size != y_prob_arr.size:
-        raise rsgispy.RSGISPyException(
-            "ERROR: unequal number of binary labels and probabilities."
-        )
-
-    y_true_u8 = y_true_arr.astype("uint8")
-    if numpy.min(y_true_u8) != 0 or numpy.max(y_true_u8) != 1:
-        raise rsgispy.RSGISPyException(
-            "ERROR: the true labels are not binary (zero or one values)."
-        )
-
-    roc_auc = roc_auc_score(y_true_u8, y_prob_arr)
-    average_precision = average_precision_score(y_true_u8, y_prob_arr)
-    brier_score = brier_score_loss(y_true_u8, y_prob_arr)
-    log_loss_score = log_loss(y_true_u8, y_prob_arr)
-    r_val = pointbiserialr(y_true_u8, y_prob_arr)[0]
-
-    metrics = [
-        "Test AUC",
-        "Point-Biserial r",
-        "Av. Precision",
-        "Brier Score",
-        "Log-Loss Score",
-    ]
-    scores = numpy.array(
-        [roc_auc, r_val, average_precision, brier_score, log_loss_score]
-    ).round(decimals=6)
-    return [metrics, scores]
-
-
-def accuracy_scores_binary(
-    y_true: Union[numpy.ndarray, Sequence[int]],
-    y_pred: Union[numpy.ndarray, Sequence[int]],
-) -> List[numpy.ndarray]:
-    """
-    Calculate accuracy metrics for a binary classification.
-
-    :param y_true: Observed 1D binary labels (0 = absence, 1 = presence).
-    :param y_pred: Predicted 1D binary labels (0 = absence, 1 = presence).
-    :return: ``[metrics_array, scores_array]``.
-    """
-    # pylint: disable=import-outside-toplevel,too-many-locals
-    from sklearn.metrics import cohen_kappa_score, normalized_mutual_info_score
-
-    y_true_arr = numpy.asarray(y_true)
-    y_pred_arr = numpy.asarray(y_pred)
-    if y_true_arr.ndim != 1:
-        raise rsgispy.RSGISPyException(
-            "ERROR: the true labels are not in a 1D array."
-        )
-    if y_pred_arr.ndim != 1:
-        raise rsgispy.RSGISPyException(
-            "ERROR: the predicted labels are not in a 1D array."
-        )
-    if y_true_arr.size != y_pred_arr.size:
-        raise rsgispy.RSGISPyException(
-            "ERROR: unequal number of binary labels."
-        )
-
-    y_true_u8 = y_true_arr.astype("uint8")
-    y_pred_u8 = y_pred_arr.astype("uint8")
-    if numpy.min(y_true_u8) != 0 or numpy.max(y_true_u8) != 1:
-        raise rsgispy.RSGISPyException(
-            "ERROR: the true labels are not binary (zero or one values)."
-        )
-    if numpy.min(y_pred_u8) != 0 or numpy.max(y_pred_u8) != 1:
-        raise rsgispy.RSGISPyException(
-            "ERROR: the predicted labels are not binary (zero or one values)."
-        )
-
-    metrics = numpy.array(
-        [
-            "Prevalence",
-            "Overall Diagnostic Power",
-            "Correct Classification Rate",
-            "Misclassification Rate",
-            "Presence Predictive Power",
-            "Absence Predictive Power",
-            "Accuracy",
-            "Balanced Accuracy",
-            "Sensitivity",
-            "Specificity",
-            "Precision",
-            "F1 Score",
-            "Matthews Correlation",
-            "Cohen Kappa",
-            "Normalised Mutual Information",
-            "Hanssen-Kuiper skill",
+        metrics = [
+            "Test AUC",
+            "Point-Biserial r",
+            "Av. Precision",
+            "Brier Score",
+            "Log-Loss Score",
         ]
-    )
-
-    try:
-        n_presence = numpy.where(y_true_u8 == 1)[0].size
-        n_absence = numpy.where(y_true_u8 == 0)[0].size
-
-        tp_cnt = numpy.where((y_true_u8 == 1) & (y_pred_u8 == 1))[0].size
-        ta_cnt = numpy.where((y_true_u8 == 0) & (y_pred_u8 == 0))[0].size
-        fp_cnt = numpy.where((y_true_u8 == 1) & (y_pred_u8 == 0))[0].size
-        fa_cnt = numpy.where((y_true_u8 == 0) & (y_pred_u8 == 1))[0].size
-
-        prevalence = (tp_cnt / fa_cnt) / y_true_u8.size
-        odp = 1.0 - prevalence
-        ccr = (tp_cnt + ta_cnt) / y_true_u8.size
-        mr_val = (fp_cnt + fa_cnt) / y_true_u8.size
-
-        sensitivity = tp_cnt / n_presence
-        ppp = tp_cnt / (tp_cnt + fp_cnt)
-        app = ta_cnt / (ta_cnt + fa_cnt)
-        specificity = ta_cnt / n_absence
-
-        accuracy = (tp_cnt + ta_cnt) / (n_presence + n_absence)
-        balanced_accuracy = ((tp_cnt / n_presence) + (ta_cnt / n_absence)) / 2.0
-        precision = tp_cnt / (tp_cnt + fp_cnt)
-        f1_val = 2.0 * tp_cnt / ((2.0 * tp_cnt) + fp_cnt + fa_cnt)
-        mcc = ((tp_cnt * ta_cnt) - (fp_cnt * fa_cnt)) / (
-            ((tp_cnt + fp_cnt) * (tp_cnt + fa_cnt) * (ta_cnt + fp_cnt) * (ta_cnt + fa_cnt))
-            ** 0.5
-        )
-        tss = sensitivity + specificity - 1.0
-        nmi_val = normalized_mutual_info_score(y_true_u8, y_pred_u8)
-        kappa_val = cohen_kappa_score(y_true_u8, y_pred_u8)
-
         scores = numpy.array(
-            [
-                prevalence,
-                odp,
-                ccr,
-                mr_val,
-                ppp,
-                app,
-                accuracy,
-                balanced_accuracy,
-                sensitivity,
-                specificity,
-                precision,
-                f1_val,
-                mcc,
-                kappa_val,
-                nmi_val,
-                tss,
-            ]
+            [roc_auc, r_val, average_precision, brier_score, log_loss_score]
         ).round(decimals=6)
-    except Exception:  # pylint: disable=broad-exception-caught
-        scores = numpy.zeros(len(metrics))
+        return [metrics, scores]
 
-    if metrics.size != scores.size:
-        raise rsgispy.RSGISPyException(
-            "ERROR: unable to calculate accuracy metrics."
+
+if HAVE_SKLEARN:
+
+    def accuracy_scores_binary(
+        y_true: Union[numpy.ndarray, Sequence[int]],
+        y_pred: Union[numpy.ndarray, Sequence[int]],
+    ) -> List[numpy.ndarray]:
+        """
+        Calculate accuracy metrics for a binary classification.
+
+        :param y_true: Observed 1D binary labels (0 = absence, 1 = presence).
+        :param y_pred: Predicted 1D binary labels (0 = absence, 1 = presence).
+        :return: ``[metrics_array, scores_array]``.
+        """
+        # pylint: disable=too-many-locals
+        y_true_arr = numpy.asarray(y_true)
+        y_pred_arr = numpy.asarray(y_pred)
+        if y_true_arr.ndim != 1:
+            raise rsgispy.RSGISPyException(
+                "ERROR: the true labels are not in a 1D array."
+            )
+        if y_pred_arr.ndim != 1:
+            raise rsgispy.RSGISPyException(
+                "ERROR: the predicted labels are not in a 1D array."
+            )
+        if y_true_arr.size != y_pred_arr.size:
+            raise rsgispy.RSGISPyException(
+                "ERROR: unequal number of binary labels."
+            )
+
+        y_true_u8 = y_true_arr.astype("uint8")
+        y_pred_u8 = y_pred_arr.astype("uint8")
+        if numpy.min(y_true_u8) != 0 or numpy.max(y_true_u8) != 1:
+            raise rsgispy.RSGISPyException(
+                "ERROR: the true labels are not binary (zero or one values)."
+            )
+        if numpy.min(y_pred_u8) != 0 or numpy.max(y_pred_u8) != 1:
+            raise rsgispy.RSGISPyException(
+                "ERROR: the predicted labels are not binary (zero or one values)."
+            )
+
+        metrics = numpy.array(
+            [
+                "Prevalence",
+                "Overall Diagnostic Power",
+                "Correct Classification Rate",
+                "Misclassification Rate",
+                "Presence Predictive Power",
+                "Absence Predictive Power",
+                "Accuracy",
+                "Balanced Accuracy",
+                "Sensitivity",
+                "Specificity",
+                "Precision",
+                "F1 Score",
+                "Matthews Correlation",
+                "Cohen Kappa",
+                "Normalised Mutual Information",
+                "Hanssen-Kuiper skill",
+            ]
         )
-    return [metrics, scores]
+
+        try:
+            n_presence = numpy.where(y_true_u8 == 1)[0].size
+            n_absence = numpy.where(y_true_u8 == 0)[0].size
+
+            tp_cnt = numpy.where((y_true_u8 == 1) & (y_pred_u8 == 1))[0].size
+            ta_cnt = numpy.where((y_true_u8 == 0) & (y_pred_u8 == 0))[0].size
+            fp_cnt = numpy.where((y_true_u8 == 1) & (y_pred_u8 == 0))[0].size
+            fa_cnt = numpy.where((y_true_u8 == 0) & (y_pred_u8 == 1))[0].size
+
+            prevalence = (tp_cnt / fa_cnt) / y_true_u8.size
+            odp = 1.0 - prevalence
+            ccr = (tp_cnt + ta_cnt) / y_true_u8.size
+            mr_val = (fp_cnt + fa_cnt) / y_true_u8.size
+
+            sensitivity = tp_cnt / n_presence
+            ppp = tp_cnt / (tp_cnt + fp_cnt)
+            app = ta_cnt / (ta_cnt + fa_cnt)
+            specificity = ta_cnt / n_absence
+
+            accuracy = (tp_cnt + ta_cnt) / (n_presence + n_absence)
+            balanced_accuracy = ((tp_cnt / n_presence) + (ta_cnt / n_absence)) / 2.0
+            precision = tp_cnt / (tp_cnt + fp_cnt)
+            f1_val = 2.0 * tp_cnt / ((2.0 * tp_cnt) + fp_cnt + fa_cnt)
+            mcc = ((tp_cnt * ta_cnt) - (fp_cnt * fa_cnt)) / (
+                (
+                    (tp_cnt + fp_cnt)
+                    * (tp_cnt + fa_cnt)
+                    * (ta_cnt + fp_cnt)
+                    * (ta_cnt + fa_cnt)
+                )
+                ** 0.5
+            )
+            tss = sensitivity + specificity - 1.0
+            nmi_val = sklearn.metrics.normalized_mutual_info_score(
+                y_true_u8, y_pred_u8
+            )
+            kappa_val = sklearn.metrics.cohen_kappa_score(y_true_u8, y_pred_u8)
+
+            scores = numpy.array(
+                [
+                    prevalence,
+                    odp,
+                    ccr,
+                    mr_val,
+                    ppp,
+                    app,
+                    accuracy,
+                    balanced_accuracy,
+                    sensitivity,
+                    specificity,
+                    precision,
+                    f1_val,
+                    mcc,
+                    kappa_val,
+                    nmi_val,
+                    tss,
+                ]
+            ).round(decimals=6)
+        except Exception:  # pylint: disable=broad-exception-caught
+            scores = numpy.zeros(len(metrics))
+
+        if metrics.size != scores.size:
+            raise rsgispy.RSGISPyException(
+                "ERROR: unable to calculate accuracy metrics."
+            )
+        return [metrics, scores]
 
 
 def get_nbins_histogram(data: numpy.ndarray) -> Tuple[int, float]:
@@ -656,82 +691,81 @@ def calc_li_threshold(
     return float(t_next - offset)
 
 
-def calc_kurt_skew_threshold(
-    data: numpy.ndarray,
-    max_val: float,
-    min_val: float,
-    init_thres: float,
-    low_thres: bool = True,
-    contamination: float = 10.0,
-    only_kurtosis: bool = False,
-) -> float:
-    """
-    Optimise a distribution tail threshold by minimising kurtosis (and skewness)
-    via dual annealing.
+if HAVE_SCIPY:
 
-    :param data: 1D numeric NumPy array.
-    :param max_val: Upper bound for the threshold search.
-    :param min_val: Lower bound for the threshold search.
-    :param init_thres: Initial threshold guess.
-    :param low_thres: Search lower tail (``data > x``) when True, upper tail
-                      (``data < x``) when False.
-    :param contamination: Tail contamination percentage in ``[1, 100]``.
-    :param only_kurtosis: Optimise kurtosis alone when True; otherwise
-                          ``abs(kurtosis) + abs(skew)``.
-    :return: Optimised threshold value.
-    """
-    # pylint: disable=import-outside-toplevel,too-many-arguments,too-many-positional-arguments
-    import scipy.optimize
-    import scipy.stats
+    def calc_kurt_skew_threshold(
+        data: numpy.ndarray,
+        max_val: float,
+        min_val: float,
+        init_thres: float,
+        low_thres: bool = True,
+        contamination: float = 10.0,
+        only_kurtosis: bool = False,
+    ) -> float:
+        """
+        Optimise a distribution tail threshold by minimising kurtosis (and skewness)
+        via dual annealing.
 
-    if len(data.shape) > 1:
-        raise rsgispy.RSGISPyException("Expecting a single variable.")
+        :param data: 1D numeric NumPy array.
+        :param max_val: Upper bound for the threshold search.
+        :param min_val: Lower bound for the threshold search.
+        :param init_thres: Initial threshold guess.
+        :param low_thres: Search lower tail (``data > x``) when True, upper tail
+                          (``data < x``) when False.
+        :param contamination: Tail contamination percentage in ``[1, 100]``.
+        :param only_kurtosis: Optimise kurtosis alone when True; otherwise
+                              ``abs(kurtosis) + abs(skew)``.
+        :return: Optimised threshold value.
+        """
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
+        if len(data.shape) > 1:
+            raise rsgispy.RSGISPyException("Expecting a single variable.")
 
-    if not 1 <= contamination <= 100:
-        raise rsgispy.RSGISPyException(
-            "contamination parameter should have a value between 1 and 100."
+        if not 1 <= contamination <= 100:
+            raise rsgispy.RSGISPyException(
+                "contamination parameter should have a value between 1 and 100."
+            )
+
+        if low_thres:
+            max_val = min(max_val, float(numpy.percentile(data, contamination)))
+            if min_val >= max_val:
+                min_val = float(numpy.min(data))
+        else:
+            min_val = max(min_val, float(numpy.percentile(data, 100 - contamination)))
+            if max_val <= min_val:
+                max_val = float(numpy.max(data))
+
+        if min_val == max_val:
+            print(f"Min: {min_val}")
+            print(f"Max: {max_val}")
+            raise rsgispy.RSGISPyException("Min and Max values are the same.")
+        if min_val > max_val:
+            print(f"Min: {min_val}")
+            print(f"Max: {max_val}")
+            raise rsgispy.RSGISPyException(
+                "Min value is greater than max - note this can happened if the "
+                "contamination parameter caused threshold to be changed."
+            )
+
+        if not min_val <= init_thres <= max_val:
+            init_thres = min_val + ((max_val - min_val) / 2.0)
+
+        def _opt_fun(x_arr: numpy.ndarray, *args: Any) -> float:
+            vals = args[0]
+            data_sub = vals[vals > x_arr] if low_thres else vals[vals < x_arr]
+            kurtosis = float(scipy.stats.kurtosis(data_sub))
+            if only_kurtosis:
+                return kurtosis
+            skew = float(scipy.stats.skew(data_sub))
+            return abs(kurtosis) + abs(skew)
+
+        opt_rslt = scipy.optimize.dual_annealing(
+            _opt_fun, bounds=[(min_val, max_val)], args=[data], x0=[init_thres]
         )
 
-    if low_thres:
-        max_val = min(max_val, float(numpy.percentile(data, contamination)))
-        if min_val >= max_val:
-            min_val = float(numpy.min(data))
-    else:
-        min_val = max(min_val, float(numpy.percentile(data, 100 - contamination)))
-        if max_val <= min_val:
-            max_val = float(numpy.max(data))
-
-    if min_val == max_val:
-        print(f"Min: {min_val}")
-        print(f"Max: {max_val}")
-        raise rsgispy.RSGISPyException("Min and Max values are the same.")
-    if min_val > max_val:
-        print(f"Min: {min_val}")
-        print(f"Max: {max_val}")
-        raise rsgispy.RSGISPyException(
-            "Min value is greater than max - note this can happened if the "
-            "contamination parameter caused threshold to be changed."
-        )
-
-    if not min_val <= init_thres <= max_val:
-        init_thres = min_val + ((max_val - min_val) / 2.0)
-
-    def _opt_fun(x_arr: numpy.ndarray, *args: Any) -> float:
-        vals = args[0]
-        data_sub = vals[vals > x_arr] if low_thres else vals[vals < x_arr]
-        kurtosis = float(scipy.stats.kurtosis(data_sub))
-        if only_kurtosis:
-            return kurtosis
-        skew = float(scipy.stats.skew(data_sub))
-        return abs(kurtosis) + abs(skew)
-
-    opt_rslt = scipy.optimize.dual_annealing(
-        _opt_fun, bounds=[(min_val, max_val)], args=[data], x0=[init_thres]
-    )
-
-    if not opt_rslt.success:
-        raise rsgispy.RSGISPyException("Optimisation failed, no threshold found.")
-    return float(opt_rslt.x[0])
+        if not opt_rslt.success:
+            raise rsgispy.RSGISPyException("Optimisation failed, no threshold found.")
+        return float(opt_rslt.x[0])
 
 
 def mask_data_to_valid(
