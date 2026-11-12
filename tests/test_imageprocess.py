@@ -315,3 +315,27 @@ def test_runtime_default_block_size_override(tmp_path, monkeypatch):
     with pytest.raises(rsgispy.RSGISPyException):
         rsgispy.imageprocess.get_default_block_size()
 
+
+def test_open_multi_image_datasets(tmp_path):
+    """Test open_multi_image_datasets with unique/duplicate paths and errors."""
+    img1 = tmp_path / "img1.tif"
+    img2 = tmp_path / "img2.tif"
+    _create_test_raster(img1, np.ones((1, 4, 4), dtype=np.float32))
+    _create_test_raster(img2, np.full((2, 4, 4), 2.0, dtype=np.float32))
+
+    with ExitStack() as stack:
+        datasets, paths = rsgispy.imageprocess.open_multi_image_datasets(
+            stack, [str(img1), str(img2), str(img1)]
+        )
+        assert len(datasets) == 2
+        assert paths == [str(img1), str(img2), str(img1)]
+        assert datasets[str(img1)].count == 1
+        assert datasets[str(img2)].count == 2
+
+    with ExitStack() as stack:
+        with pytest.raises(rsgispy.RSGISPyException):
+            rsgispy.imageprocess.open_multi_image_datasets(stack, [])
+        with pytest.raises(rsgispy.RSGISPyException):
+            rsgispy.imageprocess.open_multi_image_datasets(
+                stack, [str(tmp_path / "missing.tif")]
+            )

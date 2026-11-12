@@ -198,7 +198,14 @@ def test_optional_scipy_and_sklearn_missing():
     scipy_only = {"calc_kurt_skew_threshold"}
     sklearn_only = {"calc_pandas_vif", "lassolars_feature_selection", "accuracy_scores_binary"}
     both_deps = {"corr_feature_selection", "breusch_pagan_test", "bin_accuracy_scores_prob"}
-    always_avail = {"cqv_threshold", "calc_otsu_threshold", "bias_score", "normalise_img_data"}
+    always_avail = {
+        "cqv_threshold",
+        "calc_otsu_threshold",
+        "bias_score",
+        "normalise_img_data",
+        "validate_percentiles_0_100",
+        "compute_nanpercentiles",
+    }
 
     blocked_scipy = {"scipy": None, "scipy.optimize": None, "scipy.stats": None}
     blocked_sklearn = {
@@ -254,3 +261,37 @@ def test_optional_scipy_and_sklearn_missing():
     finally:
         sys.modules["rsgispy.tools.stats"] = orig_mod
         rtools.stats = orig_mod
+
+
+def test_percentile_helpers():
+    """Test validate_percentiles_0_100 and compute_nanpercentiles."""
+    rstats.validate_percentiles_0_100(0)
+    rstats.validate_percentiles_0_100(50.0)
+    rstats.validate_percentiles_0_100([0.0, 25.0, 100.0])
+    rstats.validate_percentiles_0_100(np.array([10.0, 90.0]))
+    rstats.validate_percentiles_0_100(np.array(50.0))
+
+    for bad in (None, [], (), np.array([]), -0.1, 100.1, [10.0, 120.0], float("nan"), True, "50"):
+        with pytest.raises(rsgispy.RSGISPyException):
+            rstats.validate_percentiles_0_100(bad)  # type: ignore[arg-type]
+
+    stack = np.array(
+        [
+            [[10.0, -99.0], [-99.0, 40.0]],
+            [[30.0, 20.0], [-99.0, 60.0]],
+        ],
+        dtype=np.float32,
+    )
+    pct_seq = rstats.compute_nanpercentiles(stack.copy(), [0.0, 50.0, 100.0], no_data_val=-99.0)
+    assert pct_seq.shape == (3, 2, 2)
+    assert pct_seq[:, 0, 0] == pytest.approx([10.0, 20.0, 30.0])
+    assert pct_seq[:, 0, 1] == pytest.approx([20.0, 20.0, 20.0])
+    assert pct_seq[:, 1, 0] == pytest.approx([-99.0, -99.0, -99.0])
+
+    # Scalar percentile preserves 3D shape (1, H, W) and works when no_data_val=None
+    pct_scalar = rstats.compute_nanpercentiles(
+        np.array([[[1, 2]], [[3, 4]]], dtype=np.int32), 50.0, no_data_val=None
+    )
+    assert pct_scalar.shape == (1, 1, 2)
+    assert pct_scalar[0, 0] == pytest.approx([2.0, 3.0])
+

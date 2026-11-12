@@ -416,6 +416,43 @@ def open_input_datasets(
     return datasets
 
 
+def open_multi_image_datasets(
+    stack: ExitStack,
+    input_imgs: Sequence[Union[str, os.PathLike]],
+) -> Tuple[Dict[str, DatasetReader], List[str]]:
+    """
+    Open and validate all unique input raster datasets from a sequence of
+    image paths within an ExitStack.
+
+    :param stack: Contextlib ExitStack managing open dataset handles.
+    :param input_imgs: Sequence of input raster file paths.
+    :return: Tuple of ``(datasets, paths)`` where ``datasets`` maps each unique
+             file path to an opened rasterio DatasetReader and ``paths`` is the
+             resolved list of file paths preserving the input order.
+    """
+    if not input_imgs:
+        raise rsgispy.RSGISPyException("input_imgs must not be empty.")
+    paths: List[str] = []
+    datasets: Dict[str, DatasetReader] = {}
+    for img in input_imgs:
+        img_path = os.fspath(img)
+        if not os.path.exists(img_path):
+            raise rsgispy.RSGISPyException(
+                f"Input image file does not exist: '{img_path}'."
+            )
+        paths.append(img_path)
+        if img_path not in datasets:
+            try:
+                datasets[img_path] = stack.enter_context(
+                    rasterio.open(img_path, "r")
+                )
+            except Exception as err:
+                raise rsgispy.RSGISPyException(
+                    f"Could not open input image '{img_path}': {err}"
+                ) from err
+    return datasets, paths
+
+
 def open_output_dataset(
     stack: ExitStack,
     output_img: str,

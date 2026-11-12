@@ -35,6 +35,7 @@ import rasterio.windows
 
 import rsgispy
 import rsgispy.tools.geometrytools
+import rsgispy.tools.stats
 
 __all__ = [
     "calc_zonal_band_stats_file",
@@ -586,10 +587,7 @@ def _validate_percentile(
             raise rsgispy.RSGISPyException(
                 "percentile_field specified but percentile value was None."
             )
-        if not 0.0 <= float(percentile) <= 100.0:
-            raise rsgispy.RSGISPyException(
-                "percentile must be between 0 and 100 inclusive."
-            )
+        rsgispy.tools.stats.validate_percentiles_0_100(percentile)
 
 
 def _centroid_fallback_stats(

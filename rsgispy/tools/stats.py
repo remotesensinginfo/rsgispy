@@ -8,6 +8,7 @@ exported when those optional dependencies are installed.
 
 # pylint: disable=too-many-lines
 
+import math
 from typing import Any, List, Optional, Sequence, Tuple, Union
 import warnings
 
@@ -49,6 +50,8 @@ __all__ = [
     "calc_semivariogram",
     "standarise_img_data",
     "normalise_img_data",
+    "validate_percentiles_0_100",
+    "compute_nanpercentiles",
 ]
 
 if HAVE_SKLEARN:
@@ -1011,3 +1014,74 @@ def normalise_img_data(img_data: numpy.ndarray) -> numpy.ndarray:
         nm_img = numpy.reshape(nm_img, (img_bands, img_height, img_width))
 
     return nm_img
+
+
+def validate_percentiles_0_100(
+    percentiles: Union[float, int, Sequence[float]],
+) -> None:
+    """
+    Validate that percentile value(s) are non-empty and lie in ``[0, 100]``.
+
+    :param percentiles: A single percentile value or a non-empty sequence of
+                        percentile values expected in ``[0, 100]``.
+    """
+    if percentiles is None or isinstance(percentiles, (bool, str, bytes)):
+        raise rsgispy.RSGISPyException(
+            "percentiles must be a number or a non-empty sequence of numbers."
+        )
+    if isinstance(percentiles, (int, float, numpy.number)):
+        vals: List[float] = [float(percentiles)]
+    elif isinstance(percentiles, numpy.ndarray) and percentiles.ndim == 0:
+        vals = [float(percentiles.item())]
+    else:
+        vals = list(percentiles)
+        if not vals:
+            raise rsgispy.RSGISPyException(
+                "percentiles must contain at least one value."
+            )
+
+    for percent in vals:
+        if isinstance(percent, bool) or not 0.0 <= float(percent) <= 100.0:
+            raise rsgispy.RSGISPyException(
+                f"Percentile must be between 0 and 100 ({percent})."
+            )
+
+
+def compute_nanpercentiles(
+    stack_arr: numpy.ndarray,
+    percentiles: Union[float, Sequence[float]],
+    no_data_val: Optional[float] = None,
+) -> numpy.ndarray:
+    """
+    Compute per-pixel percentiles along axis 0 while ignoring ``no_data_val``.
+
+    :param stack_arr: Input array stacked along axis 0 (e.g. ``(n_layers, height, width)``).
+                      Floating-point arrays may be modified in-place to replace
+                      ``no_data_val`` with ``NaN``.
+    :param percentiles: Percentile value or sequence of percentiles in ``[0, 100]``.
+    :param no_data_val: Optional no-data value to mask out before computing
+                        percentiles and restore where all values along axis 0
+                        are no-data/NaN (Default = None).
+    :return: NumPy array of computed percentiles along axis 0. For 3D inputs and
+             scalar ``percentiles``, the output is expanded to ``(1, height, width)``.
+    """
+    if not numpy.issubdtype(stack_arr.dtype, numpy.floating):
+        stack_arr = stack_arr.astype(numpy.float64)
+
+    if no_data_val is not None:
+        if not (
+            isinstance(no_data_val, (float, numpy.floating))
+            and math.isnan(float(no_data_val))
+        ):
+            stack_arr[stack_arr == no_data_val] = numpy.nan
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        pct_arr = numpy.nanpercentile(stack_arr, percentiles, axis=0)
+
+    if pct_arr.ndim == 2:
+        pct_arr = numpy.expand_dims(pct_arr, axis=0)
+
+    if no_data_val is not None:
+        return numpy.nan_to_num(pct_arr, copy=False, nan=no_data_val)
+    return pct_arr

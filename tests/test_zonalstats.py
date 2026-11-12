@@ -180,6 +180,17 @@ def test_calc_zonal_poly_pts_and_test_poly_pts(tmp_path):
     assert res_hybrid.loc[1, "cntv"] == pytest.approx(1.0)
     assert res_hybrid.loc[1, "p50"] == pytest.approx(14.0)
 
+    # Percentile validation errors
+    with pytest.raises(rsgispy.RSGISPyException):
+        zs.calc_zonal_band_stats_test_poly_pts(
+            res_hybrid, tif_path, 1, 0.0, 100.0, -99.0, percentile=None, percentile_field="bad_p"
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        zs.calc_zonal_band_stats_test_poly_pts(
+            res_hybrid, tif_path, 1, 0.0, 100.0, -99.0, percentile=105.0, percentile_field="bad_p"
+        )
+
+
 
 def test_calc_zonal_band_pxl_counts_and_ext_point_band_values(tmp_path):
     """Test categorical pixel counting and point extraction (with reprojection)."""
