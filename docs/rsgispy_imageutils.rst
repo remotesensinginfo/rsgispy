@@ -47,3 +47,8 @@ API Reference
    :members:
    :undoc-members:
    :show-inheritance:
+
+.. automodule:: rsgispy.imageutils.imagelut
+   :members:
+   :undoc-members:
+   :show-inheritance:

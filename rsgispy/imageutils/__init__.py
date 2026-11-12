@@ -618,7 +618,7 @@ def _get_epsg_from_dataset(src: Any, input_img: str) -> int:
 
 
 def _find_extent_on_grid(
-    base_extent: Sequence[float],
+    base_extent: Tuple[float, float, float, float],
     base_grid: float,
     full_contain: bool = True,
 ) -> Tuple[float, float, float, float]:
@@ -876,7 +876,7 @@ def create_blank_buf_img_from_ref_img(
 
 
 def create_blank_img_from_bbox(
-    bbox: Sequence[float],
+    bbox: Tuple[float, float, float, float],
     epsg_code: int,
     output_img: str,
     out_img_res: float,
@@ -1201,7 +1201,7 @@ def _resampling_to_vrt_name(
 def _compute_vrt_grid(
     datasets: Sequence[rasterio.DatasetReader],
     resolution: str = "average",
-    vrt_extent: Optional[Sequence[float]] = None,
+    vrt_extent: Optional[Tuple[float, float, float, float]] = None,
     vrt_out_res_x: Optional[float] = None,
     vrt_out_res_y: Optional[float] = None,
     align_out_pxls: bool = False,
@@ -1400,7 +1400,7 @@ def _apply_vrt_band_creation_opts(
 def create_stack_images_vrt(
     input_imgs: Sequence[str],
     out_vrt_file: str,
-    vrt_extent: Optional[Sequence[float]] = None,
+    vrt_extent: Optional[Tuple[float, float, float, float]] = None,
     vrt_out_res_x: Optional[float] = None,
     vrt_out_res_y: Optional[float] = None,
     resolution: str = "average",
@@ -1549,7 +1549,7 @@ def create_stack_images_vrt(
 def create_mosaic_images_vrt(
     input_imgs: Sequence[str],
     out_vrt_file: str,
-    vrt_extent: Optional[Sequence[float]] = None,
+    vrt_extent: Optional[Tuple[float, float, float, float]] = None,
     vrt_out_res_x: Optional[float] = None,
     vrt_out_res_y: Optional[float] = None,
     interp_method: Union[int, str, Resampling] = rsgispy.INTERP_NEAREST_NEIGHBOUR,
@@ -1773,7 +1773,7 @@ def create_vrt_band_subset(
     input_img: str,
     img_bands: Sequence[int],
     out_vrt_img: str,
-    vrt_extent: Optional[Sequence[float]] = None,
+    vrt_extent: Optional[Tuple[float, float, float, float]] = None,
     vrt_out_res_x: Optional[float] = None,
     vrt_out_res_y: Optional[float] = None,
     interp_method: Union[int, str, Resampling] = rsgispy.INTERP_NEAREST_NEIGHBOUR,
