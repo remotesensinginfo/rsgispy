@@ -17,7 +17,9 @@ Data Types for images:
     * TYPE_64FLOAT = 10
 """
 
+from typing import Union
 import numpy as np
+from rasterio.enums import Resampling
 
 __version__ = "0.0.1"
 
@@ -32,6 +34,36 @@ TYPE_32UINT = 7
 TYPE_64UINT = 8
 TYPE_32FLOAT = 9
 TYPE_64FLOAT = 10
+
+INTERP_NEAREST_NEIGHBOUR = 0
+INTERP_BILINEAR = 1
+INTERP_CUBIC = 2
+INTERP_CUBICSPLINE = 3
+INTERP_LANCZOS = 4
+INTERP_AVERAGE = 5
+INTERP_MODE = 6
+INTERP_MIN = 7
+INTERP_MAX = 8
+INTERP_MEDIAN = 9
+INTERP_Q1 = 10
+INTERP_Q3 = 11
+INTERP_SUM = 12
+
+_RSGIS_TO_RASTERIO_INTERP = {
+    INTERP_NEAREST_NEIGHBOUR: Resampling.nearest,
+    INTERP_BILINEAR: Resampling.bilinear,
+    INTERP_CUBIC: Resampling.cubic,
+    INTERP_CUBICSPLINE: Resampling.cubic_spline,
+    INTERP_LANCZOS: Resampling.lanczos,
+    INTERP_AVERAGE: Resampling.average,
+    INTERP_MODE: Resampling.mode,
+    INTERP_MIN: Resampling.min,
+    INTERP_MAX: Resampling.max,
+    INTERP_MEDIAN: Resampling.med,
+    INTERP_Q1: Resampling.q1,
+    INTERP_Q3: Resampling.q3,
+    INTERP_SUM: Resampling.sum,
+}
 
 _RSGIS_TO_RASTERIO_DTYPE = {
     TYPE_8INT: "int8",
@@ -159,6 +191,25 @@ def get_rsgis_datatype_str(rsgislib_datatype: int) -> str:
             f"The data type '{rsgislib_datatype}' is unknown / not supported."
         )
     return _RSGIS_TO_STR_DTYPE[rsgislib_datatype]
+
+
+def get_rasterio_interp_type(
+    rsgis_interp_method: Union[int, Resampling],
+) -> Resampling:
+    """
+    Convert an ``rsgispy.INTERP_*`` (or ``rsgislib.INTERP_*``) constant to a
+    ``rasterio.enums.Resampling`` enum member.
+
+    :param rsgis_interp_method: Interpolation constant or ``Resampling`` enum.
+    :return: Corresponding ``rasterio.enums.Resampling`` value.
+    """
+    if isinstance(rsgis_interp_method, Resampling):
+        return rsgis_interp_method
+    if rsgis_interp_method not in _RSGIS_TO_RASTERIO_INTERP:
+        raise RSGISPyException(
+            "Interpolation method was not recognised or known."
+        )
+    return _RSGIS_TO_RASTERIO_INTERP[rsgis_interp_method]
 
 
 def is_notebook() -> bool:

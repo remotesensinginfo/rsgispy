@@ -269,3 +269,226 @@ def test_pop_img_stats(tmp_path):
         assert float(tags2["STATISTICS_MEAN"]) == 42.0
         assert float(tags2["STATISTICS_STDDEV"]) == 0.0
         assert tags2["STATISTICS_HISTONUMBINS"] == "1"
+
+
+def test_create_blank_and_copy_and_bbox_and_buf_imgs(tmp_path, monkeypatch):
+    """Test create_blank_img, create_copy_img, create_blank_buf_img_from_ref_img, and create_blank_img_from_bbox."""
+    monkeypatch.delenv("RSGISLIB_IMG_CRT_OPTS_GTIFF", raising=False)
+    monkeypatch.delenv("RSGISPY_IMG_CRT_OPTS_GTIFF", raising=False)
+    rsgispy.imageutils.set_env_vars_deflate_gtiff_outs()
+
+    blank_img = tmp_path / "blank.tif"
+    copy_img = tmp_path / "copy.tif"
+    buf_pxl_img = tmp_path / "buf_pxl.tif"
+    buf_spt_img = tmp_path / "buf_spt.tif"
+    bbox_img = tmp_path / "bbox.tif"
+
+    # 1. create_blank_img using epsg_code
+    rsgispy.imageutils.create_blank_img(
+        output_img=str(blank_img),
+        n_bands=2,
+        width=50,
+        height=40,
+        tl_x=500000.0,
+        tl_y=5200000.0,
+        res_x=10.0,
+        res_y=-10.0,
+        pxl_val=-999.0,
+        epsg_code=32630,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+        no_data_val=-999.0,
+    )
+
+    with rasterio.open(blank_img) as src:
+        assert src.count == 2
+        assert src.width == 50
+        assert src.height == 40
+        assert src.nodata == -999.0
+        assert src.crs.to_epsg() == 32630
+        assert src.transform.c == 500000.0
+        assert src.transform.f == 5200000.0
+        assert src.transform.a == 10.0
+        assert src.transform.e == -10.0
+        assert src.compression == Compression.deflate
+        assert src.profile["tiled"] is True
+        np.testing.assert_allclose(src.read(), -999.0)
+
+    # 2. create_copy_img
+    rsgispy.imageutils.create_copy_img(
+        input_img=str(blank_img),
+        output_img=str(copy_img),
+        n_bands=3,
+        pxl_val=7.0,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_16UINT,
+    )
+
+    with rasterio.open(copy_img) as src:
+        assert src.count == 3
+        assert src.width == 50
+        assert src.height == 40
+        assert src.dtypes[0] == "uint16"
+        assert src.crs.to_epsg() == 32630
+        assert src.compression == Compression.deflate
+        assert src.profile["tiled"] is True
+        assert np.all(src.read() == 7)
+
+    # 3. create_blank_buf_img_from_ref_img (pixel buffer and spatial buffer)
+    rsgispy.imageutils.create_blank_buf_img_from_ref_img(
+        input_img=str(blank_img),
+        output_img=str(buf_pxl_img),
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+        buf_pxl_ext=5,
+    )
+    with rasterio.open(buf_pxl_img) as src:
+        assert src.width == 60
+        assert src.height == 50
+        assert src.transform.c == 500000.0 - 50.0
+        assert src.transform.f == 5200000.0 + 50.0
+        assert src.nodata == -999.0
+        assert src.compression == Compression.deflate
+
+    rsgispy.imageutils.create_blank_buf_img_from_ref_img(
+        input_img=str(blank_img),
+        output_img=str(buf_spt_img),
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+        buf_spt_ext=100.0,
+    )
+    with rasterio.open(buf_spt_img) as src:
+        assert src.width == 70
+        assert src.height == 60
+        assert src.transform.c == 500000.0 - 100.0
+        assert src.transform.f == 5200000.0 + 100.0
+        assert src.compression == Compression.deflate
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageutils.create_blank_buf_img_from_ref_img(
+            str(blank_img), str(buf_pxl_img), "GTIFF", rsgispy.TYPE_32FLOAT
+        )
+
+    # 4. create_blank_img_from_bbox
+    rsgispy.imageutils.create_blank_img_from_bbox(
+        bbox=(500000.0, 500250.0, 5199700.0, 5200000.0),
+        epsg_code=32630,
+        output_img=str(bbox_img),
+        out_img_res=10.0,
+        out_img_pxl_val=1.0,
+        out_img_n_bands=1,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_8UINT,
+        snap_to_grid=True,
+    )
+    with rasterio.open(bbox_img) as src:
+        assert src.width == 25
+        assert src.height == 30
+        assert src.crs.to_epsg() == 32630
+        assert src.compression == Compression.deflate
+        assert np.all(src.read(1) == 1)
+
+
+def test_resample_img_to_match_and_reproject_image(tmp_path, monkeypatch):
+    """Test resample_img_to_match and reproject_image with EPSG codes and env creation opts."""
+    monkeypatch.delenv("RSGISLIB_IMG_CRT_OPTS_GTIFF", raising=False)
+    monkeypatch.delenv("RSGISPY_IMG_CRT_OPTS_GTIFF", raising=False)
+    rsgispy.imageutils.set_env_vars_deflate_gtiff_outs()
+
+    ref_img = tmp_path / "ref.tif"
+    proc_img = tmp_path / "proc.tif"
+    resamp_img = tmp_path / "resampled.tif"
+    reproj_img = tmp_path / "reprojected.tif"
+    reproj_default_opts_img = tmp_path / "reprojected_deflate.tif"
+
+    # Reference image at 10m resolution (20x20)
+    rsgispy.imageutils.create_blank_img(
+        output_img=str(ref_img),
+        n_bands=1,
+        width=20,
+        height=20,
+        tl_x=500000.0,
+        tl_y=5200000.0,
+        res_x=10.0,
+        res_y=-10.0,
+        pxl_val=0.0,
+        epsg_code=32630,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+    )
+
+    # Process image at 20m resolution (10x10) with constant value 42.0
+    rsgispy.imageutils.create_blank_img(
+        output_img=str(proc_img),
+        n_bands=2,
+        width=10,
+        height=10,
+        tl_x=500000.0,
+        tl_y=5200000.0,
+        res_x=20.0,
+        res_y=-20.0,
+        pxl_val=42.0,
+        epsg_code=32630,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+        no_data_val=-999.0,
+    )
+
+    # 1. resample_img_to_match (uses env var creation options when options=None)
+    rsgispy.imageutils.resample_img_to_match(
+        in_ref_img=str(ref_img),
+        in_process_img=str(proc_img),
+        output_img=str(resamp_img),
+        gdalformat="GTIFF",
+        interp_method=rsgispy.INTERP_NEAREST_NEIGHBOUR,
+    )
+
+    with rasterio.open(resamp_img) as src:
+        assert src.count == 2
+        assert src.width == 20
+        assert src.height == 20
+        assert src.transform.a == 10.0
+        assert src.nodata == -999.0
+        assert src.compression == Compression.deflate
+        assert src.profile["tiled"] is True
+        np.testing.assert_allclose(src.read(), 42.0)
+
+    # 2. reproject_image from EPSG:32630 to EPSG:3857 using env var options
+    rsgispy.imageutils.reproject_image(
+        input_img=str(proc_img),
+        output_img=str(reproj_default_opts_img),
+        out_epsg=3857,
+        gdalformat="GTIFF",
+        interp_method=rsgispy.INTERP_BILINEAR,
+        no_data_val=-999.0,
+        out_pxl_res="auto",
+        snap_to_grid=True,
+    )
+
+    with rasterio.open(reproj_default_opts_img) as src:
+        assert src.crs.to_epsg() == 3857
+        assert src.compression == Compression.deflate
+        assert src.profile["tiled"] is True
+
+    # 3. reproject_image with explicit gdal_options overriding env vars
+    rsgispy.imageutils.reproject_image(
+        input_img=str(proc_img),
+        output_img=str(reproj_img),
+        out_epsg=3857,
+        gdalformat="GTIFF",
+        interp_method=rsgispy.INTERP_BILINEAR,
+        no_data_val=-999.0,
+        out_pxl_res="auto",
+        snap_to_grid=True,
+        gdal_options=["COMPRESS=LZW", "TILED=YES"],
+    )
+
+    with rasterio.open(reproj_img) as src:
+        assert src.count == 2
+        assert src.crs.to_epsg() == 3857
+        assert src.nodata == -999.0
+        assert src.compression == Compression.lzw
+        data = src.read(1)
+        valid = data[data != -999.0]
+        assert valid.size > 0
+        np.testing.assert_allclose(valid, 42.0, rtol=1e-4)

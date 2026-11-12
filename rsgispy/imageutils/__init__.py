@@ -4,18 +4,29 @@ functions for configuring GDAL/rasterio image creation options via environment
 variables and populating image statistics, colour tables, and pyramids.
 """
 
+# pylint: disable=too-many-lines
+from contextlib import ExitStack
+import math
 import os
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import rasterio
+import rasterio.crs
 from rasterio.enums import ColorInterp, Resampling
+from rasterio.transform import Affine
+from rasterio.warp import reproject as rio_reproject
+from rasterio.warp import transform as rio_transform_coords
+from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imagecalc import calc_basic_img_band_stats
 from rsgispy.imageprocess import (
+    DEFAULT_BLOCK_SIZE,
+    IntersectionGrid,
     get_gdal_img_creation_opts,
     iter_single_image_band_blocks,
+    open_output_dataset,
 )
 
 __all__ = [
@@ -30,6 +41,12 @@ __all__ = [
     "build_img_pyramids",
     "pop_thmt_img_stats",
     "pop_img_stats",
+    "create_blank_img",
+    "create_copy_img",
+    "create_blank_buf_img_from_ref_img",
+    "create_blank_img_from_bbox",
+    "resample_img_to_match",
+    "reproject_image",
 ]
 
 
@@ -542,4 +559,617 @@ def pop_img_stats(
             input_img,
             resampling_method=Resampling.average,
             ignore_cog=ignore_cog,
+        )
+
+
+def _normalise_creation_options(
+    options: Optional[Union[Sequence[str], Mapping[str, Any]]],
+) -> Optional[Dict[str, Any]]:
+    """
+    Convert ``options`` given as either a sequence of ``'KEY=VALUE'`` strings
+    or a dictionary into a ``Dict[str, Any]`` mapping, or ``None`` if empty.
+    """
+    if not options:
+        return None
+    if isinstance(options, Mapping):
+        return dict(options) if options else None
+    parsed: Dict[str, Any] = {}
+    for item in options:
+        item_str = str(item).strip()
+        if "=" in item_str:
+            key, val = item_str.split("=", 1)
+            parsed[key.strip()] = val.strip()
+    return parsed if parsed else None
+
+
+def _parse_epsg_crs(epsg_code: Optional[int]) -> Optional[Any]:
+    """
+    Resolve a ``rasterio.crs.CRS`` from an integer ``epsg_code``.
+    """
+    # pylint: disable=c-extension-no-member
+    if epsg_code is None:
+        return None
+    try:
+        return rasterio.crs.CRS.from_epsg(int(epsg_code))
+    except Exception as err:
+        raise rsgispy.RSGISPyException(
+            f"Could not parse EPSG code '{epsg_code}': {err}"
+        ) from err
+
+
+def _get_epsg_from_dataset(src: Any, input_img: str) -> int:
+    """
+    Extract the integer EPSG code from an opened rasterio dataset ``src``.
+    """
+    epsg_code = src.crs.to_epsg() if src.crs is not None else None
+    if epsg_code is None:
+        raise rsgispy.RSGISPyException(
+            f"Could not determine EPSG code from input image '{input_img}'."
+        )
+    return int(epsg_code)
+
+
+def _find_extent_on_grid(
+    base_extent: Sequence[float],
+    base_grid: float,
+    full_contain: bool = True,
+) -> Tuple[float, float, float, float]:
+    """
+    Snap ``base_extent`` ``(x_min, x_max, y_min, y_max)`` onto a grid of
+    resolution ``base_grid``.
+    """
+    # pylint: disable=too-many-locals
+    x_min, x_max, y_min, y_max = (float(v) for v in base_extent[:4])
+    x_min_floor = int(math.floor(x_min))
+    y_max_ceil = int(math.ceil(y_max))
+    n_x_cells = math.floor((x_min - x_min_floor) / base_grid)
+    n_y_cells = math.floor((y_max_ceil - y_max) / base_grid)
+    x_min_out = x_min_floor + (n_x_cells * base_grid)
+    y_max_out = y_max_ceil - (n_y_cells * base_grid)
+
+    round_fn = math.ceil if full_contain else math.floor
+    n_pxl_x = round_fn((x_max - x_min_out) / base_grid)
+    n_pxl_y = round_fn(abs(y_max_out - y_min) / base_grid)
+    return (
+        x_min_out,
+        x_min_out + (n_pxl_x * base_grid),
+        y_max_out - (n_pxl_y * base_grid),
+        y_max_out,
+    )
+
+
+def create_blank_img(
+    output_img: str,
+    n_bands: int,
+    width: int,
+    height: int,
+    tl_x: float,
+    tl_y: float,
+    res_x: float,
+    res_y: float,
+    pxl_val: float,
+    epsg_code: int,
+    gdalformat: str = "GTIFF",
+    datatype: int = rsgispy.TYPE_32FLOAT,
+    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    no_data_val: Optional[float] = None,
+) -> None:
+    """
+    Create a new blank raster image with the specified dimensions, resolution,
+    EPSG coordinate system, and initial pixel value using ``rasterio``.
+
+    If ``options`` is ``None`` or empty, any format creation options configured via
+    environment variables (e.g., :func:`set_env_vars_deflate_gtiff_outs`) are
+    automatically applied.
+
+    :param output_img: Path to the output image file.
+    :param n_bands: Number of image bands in the output image.
+    :param width: Width of the output image in pixels.
+    :param height: Height of the output image in pixels.
+    :param tl_x: Top-left pixel X coordinate (eastings).
+    :param tl_y: Top-left pixel Y coordinate (northings).
+    :param res_x: Pixel resolution along the X axis.
+    :param res_y: Pixel resolution along the Y axis (positive or negative).
+    :param pxl_val: Initial pixel value for all bands.
+    :param epsg_code: EPSG integer code defining the output projection (e.g., 32630).
+    :param gdalformat: Output GDAL format name (e.g., 'GTIFF', 'KEA').
+    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
+    :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
+    :param no_data_val: Optional no-data value to set on the output dataset.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if n_bands < 1 or width < 1 or height < 1:
+        raise rsgispy.RSGISPyException(
+            "n_bands, width, and height must all be >= 1."
+        )
+
+    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
+    crs_obj = _parse_epsg_crs(epsg_code)
+    transform = Affine(
+        abs(float(res_x)),
+        0.0,
+        float(tl_x),
+        0.0,
+        -abs(float(res_y)),
+        float(tl_y),
+    )
+    grid = IntersectionGrid(
+        crs=crs_obj,
+        transform=transform,
+        width=int(width),
+        height=int(height),
+        offsets={},
+    )
+    creation_opts = _normalise_creation_options(options)
+
+    with ExitStack() as stack:
+        dst = open_output_dataset(
+            stack,
+            output_img,
+            gdalformat,
+            out_rio_dtype,
+            grid,
+            int(n_bands),
+            False,
+            creation_opts,
+        )
+        if no_data_val is not None:
+            dst.nodata = no_data_val
+
+        for row_off in range(0, grid.height, DEFAULT_BLOCK_SIZE):
+            win_h = min(DEFAULT_BLOCK_SIZE, grid.height - row_off)
+            for col_off in range(0, grid.width, DEFAULT_BLOCK_SIZE):
+                win_w = min(DEFAULT_BLOCK_SIZE, grid.width - col_off)
+                win = Window(col_off, row_off, win_w, win_h)
+                block = np.full(
+                    (int(n_bands), win_h, win_w), pxl_val, dtype=out_np_dtype
+                )
+                dst.write(block, window=win)
+
+
+def create_copy_img(
+    input_img: str,
+    output_img: str,
+    n_bands: int,
+    pxl_val: float,
+    gdalformat: str,
+    datatype: int,
+    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    no_data_val: Optional[float] = None,
+) -> None:
+    """
+    Create a new blank raster image matching the spatial extent, resolution,
+    dimensions, and EPSG projection of ``input_img``.
+
+    :param input_img: Path to the reference input image.
+    :param output_img: Path to the output image file.
+    :param n_bands: Number of image bands in the output image.
+    :param pxl_val: Initial pixel value for all bands.
+    :param gdalformat: Output GDAL format name (e.g., 'GTIFF', 'KEA').
+    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
+    :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
+    :param no_data_val: Optional no-data value to set on the output dataset.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if not os.path.exists(input_img):
+        raise rsgispy.RSGISPyException(
+            f"Input image file does not exist: '{input_img}'."
+        )
+
+    with rasterio.open(input_img, "r") as src:
+        width = src.width
+        height = src.height
+        tl_x = src.transform.c
+        tl_y = src.transform.f
+        res_x = src.transform.a
+        res_y = src.transform.e
+        epsg_code = _get_epsg_from_dataset(src, input_img)
+
+    create_blank_img(
+        output_img=output_img,
+        n_bands=n_bands,
+        width=width,
+        height=height,
+        tl_x=tl_x,
+        tl_y=tl_y,
+        res_x=res_x,
+        res_y=res_y,
+        pxl_val=pxl_val,
+        epsg_code=epsg_code,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        options=options,
+        no_data_val=no_data_val,
+    )
+
+
+def create_blank_buf_img_from_ref_img(
+    input_img: str,
+    output_img: str,
+    gdalformat: str,
+    datatype: int,
+    buf_pxl_ext: Optional[int] = None,
+    buf_spt_ext: Optional[float] = None,
+    no_data_val: Optional[float] = None,
+    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+) -> None:
+    """
+    Create a new blank image based on ``input_img`` buffered on all sides by
+    either ``buf_pxl_ext`` pixels or ``buf_spt_ext`` spatial units.
+
+    :param input_img: Path to the reference input image.
+    :param output_img: Path to the output image file.
+    :param gdalformat: Output GDAL format name (e.g., 'GTIFF', 'KEA').
+    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
+    :param buf_pxl_ext: Buffer amount in pixels (mutually exclusive with ``buf_spt_ext``).
+    :param buf_spt_ext: Buffer amount in spatial projection units (mutually exclusive
+                        with ``buf_pxl_ext``).
+    :param no_data_val: Optional no-data value. If ``None``, read from ``input_img``.
+    :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if (buf_pxl_ext is None) and (buf_spt_ext is None):
+        raise rsgispy.RSGISPyException(
+            "You must specify either the buf_pxl_ext or buf_spt_ext value."
+        )
+    if (buf_pxl_ext is not None) and (buf_spt_ext is not None):
+        raise rsgispy.RSGISPyException(
+            "You cannot specify both the buf_pxl_ext or buf_spt_ext value."
+        )
+    if not os.path.exists(input_img):
+        raise rsgispy.RSGISPyException(
+            f"Input image file does not exist: '{input_img}'."
+        )
+
+    with rasterio.open(input_img, "r") as src:
+        if no_data_val is None:
+            no_data_val = src.nodata
+            if no_data_val is None:
+                raise rsgispy.RSGISPyException(
+                    "You must specify a no data value"
+                )
+
+        x_res = src.transform.a
+        y_res = src.transform.e
+        x_res_abs = abs(x_res)
+        y_res_abs = abs(y_res)
+        x_in_size = src.width
+        y_in_size = src.height
+        bounds = src.bounds
+        n_bands = src.count
+        epsg_code = _get_epsg_from_dataset(src, input_img)
+
+    if buf_spt_ext is not None:
+        buf_pxl_x = math.ceil(buf_spt_ext / x_res_abs)
+        buf_pxl_y = math.ceil(buf_spt_ext / y_res_abs)
+    else:
+        assert buf_pxl_ext is not None
+        buf_pxl_x = int(buf_pxl_ext)
+        buf_pxl_y = int(buf_pxl_ext)
+
+    create_blank_img(
+        output_img=output_img,
+        n_bands=n_bands,
+        width=x_in_size + (2 * buf_pxl_x),
+        height=y_in_size + (2 * buf_pxl_y),
+        tl_x=bounds.left - (buf_pxl_x * x_res_abs),
+        tl_y=bounds.top + (buf_pxl_y * y_res_abs),
+        res_x=x_res,
+        res_y=y_res,
+        pxl_val=float(no_data_val),
+        epsg_code=epsg_code,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        options=options,
+        no_data_val=float(no_data_val),
+    )
+
+
+def create_blank_img_from_bbox(
+    bbox: Sequence[float],
+    epsg_code: int,
+    output_img: str,
+    out_img_res: float,
+    out_img_pxl_val: float,
+    out_img_n_bands: int,
+    gdalformat: str,
+    datatype: int,
+    snap_to_grid: bool = False,
+    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    no_data_val: Optional[float] = None,
+) -> None:
+    """
+    Create a new blank image file from a bounding box ``(xMin, xMax, yMin, yMax)``
+    and an EPSG code.
+
+    :param bbox: Bounding box ``(xMin, xMax, yMin, yMax)`` defining the output extent.
+    :param epsg_code: EPSG integer code defining the output projection (e.g., 32630).
+    :param output_img: Path to the output image file.
+    :param out_img_res: Output pixel resolution (square pixels).
+    :param out_img_pxl_val: Initial pixel value for all bands.
+    :param out_img_n_bands: Number of image bands in the output image.
+    :param gdalformat: Output GDAL format name (e.g., 'GTIFF', 'KEA').
+    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
+    :param snap_to_grid: Whether to snap the bounding box onto a grid of
+                         whole multiples of ``out_img_res`` (Default = False).
+    :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
+    :param no_data_val: Optional no-data value to set on the output dataset.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if snap_to_grid:
+        bbox = _find_extent_on_grid(bbox, out_img_res, full_contain=True)
+
+    x_min, x_max, y_min, y_max = (float(v) for v in bbox[:4])
+    width_coord = x_max - x_min
+    height_coord = y_max - y_min
+
+    width_rem = abs(
+        width_coord / out_img_res - math.floor(width_coord / out_img_res)
+    )
+    height_rem = abs(
+        height_coord / out_img_res - math.floor(height_coord / out_img_res)
+    )
+
+    width = (
+        int(math.floor(width_coord / out_img_res))
+        if width_rem < 0.0001
+        else int(math.ceil(width_coord / out_img_res))
+    )
+    height = (
+        int(math.floor(height_coord / out_img_res))
+        if height_rem < 0.0001
+        else int(math.ceil(height_coord / out_img_res))
+    )
+
+    create_blank_img(
+        output_img=output_img,
+        n_bands=out_img_n_bands,
+        width=width,
+        height=height,
+        tl_x=x_min,
+        tl_y=y_max,
+        res_x=out_img_res,
+        res_y=-out_img_res,
+        pxl_val=out_img_pxl_val,
+        epsg_code=epsg_code,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        options=options,
+        no_data_val=no_data_val,
+    )
+
+
+def resample_img_to_match(
+    in_ref_img: str,
+    in_process_img: str,
+    output_img: str,
+    gdalformat: str,
+    interp_method: Union[int, Resampling] = rsgispy.INTERP_NEAREST_NEIGHBOUR,
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    multicore: bool = False,
+    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+) -> None:
+    """
+    Resample ``in_process_img`` to match the projection, extent, and pixel size
+    of ``in_ref_img`` using ``rasterio.warp.reproject``.
+
+    :param in_ref_img: Reference image defining the target grid and projection.
+    :param in_process_img: Input image to be resampled.
+    :param output_img: Path to the output resampled image file.
+    :param gdalformat: Output GDAL format name (e.g., 'GTIFF', 'KEA').
+    :param interp_method: Interpolation method ``rsgispy.INTERP_*`` or
+                          ``rasterio.enums.Resampling`` (Default = INTERP_NEAREST_NEIGHBOUR).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to the data type of ``in_process_img``).
+    :param no_data_val: Optional no-data value (defaults to ``in_process_img`` nodata).
+    :param multicore: Whether to use multiple CPU threads for warping (Default = False).
+    :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if not os.path.exists(in_ref_img):
+        raise rsgispy.RSGISPyException(
+            f"Reference image file does not exist: '{in_ref_img}'."
+        )
+    if not os.path.exists(in_process_img):
+        raise rsgispy.RSGISPyException(
+            f"Input process image file does not exist: '{in_process_img}'."
+        )
+
+    resampling_alg = rsgispy.get_rasterio_interp_type(interp_method)
+
+    with rasterio.open(in_process_img, "r") as src_proc:
+        num_bands = src_proc.count
+        if no_data_val is None:
+            no_data_val = src_proc.nodata
+        if datatype is None:
+            datatype = rsgispy.get_rsgis_datatype(src_proc.dtypes[0])
+
+    back_val = float(no_data_val) if no_data_val is not None else 0.0
+
+    create_copy_img(
+        input_img=in_ref_img,
+        output_img=output_img,
+        n_bands=num_bands,
+        pxl_val=back_val,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        options=options,
+        no_data_val=no_data_val,
+    )
+
+    num_threads = (os.cpu_count() or 1) if multicore else 1
+    band_indices = list(range(1, num_bands + 1))
+
+    with rasterio.open(in_process_img, "r") as src_proc, rasterio.open(
+        output_img, "r+"
+    ) as dst:
+        rio_reproject(
+            source=rasterio.band(src_proc, band_indices),
+            destination=rasterio.band(dst, band_indices),
+            resampling=resampling_alg,
+            src_nodata=no_data_val,
+            dst_nodata=no_data_val,
+            num_threads=num_threads,
+        )
+
+
+def _resolve_reproject_res(
+    out_pxl_res: Union[float, int, str],
+    in_res: float,
+    x_size: int,
+    y_size: int,
+    tl_x_out: float,
+    tl_y_out: float,
+    br_x_out: float,
+    br_y_out: float,
+) -> float:
+    """
+    Determine the output pixel resolution for :func:`reproject_image`.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    res_str = str(out_pxl_res).strip()
+    try:
+        return abs(float(res_str))
+    except ValueError:
+        pass
+
+    if res_str == "image":
+        return in_res
+    if res_str == "auto":
+        x_out_res = abs(br_x_out - tl_x_out) / x_size
+        y_out_res = abs(tl_y_out - br_y_out) / y_size
+        return min(x_out_res, y_out_res)
+
+    raise rsgispy.RSGISPyException(
+        f"Was not able to define the output resolution. Check input: '{res_str}'"
+    )
+
+
+def reproject_image(
+    input_img: str,
+    output_img: str,
+    out_epsg: int,
+    gdalformat: str = "GTIFF",
+    interp_method: Union[int, Resampling] = rsgispy.INTERP_NEAREST_NEIGHBOUR,
+    in_epsg: Optional[int] = None,
+    no_data_val: float = 0.0,
+    out_pxl_res: Union[float, int, str] = "image",
+    snap_to_grid: bool = True,
+    multicore: bool = False,
+    gdal_options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+) -> None:
+    """
+    Reproject ``input_img`` to the coordinate system specified by ``out_epsg``
+    using ``rasterio.warp.reproject``.
+
+    :param input_img: Path to the input image file.
+    :param output_img: Path to the output image file.
+    :param out_epsg: EPSG integer code representing the output projection (e.g., 3857).
+    :param gdalformat: Output GDAL format name (Default = 'GTIFF').
+    :param interp_method: Interpolation method ``rsgispy.INTERP_*`` or
+                          ``rasterio.enums.Resampling`` (Default = INTERP_NEAREST_NEIGHBOUR).
+    :param in_epsg: Optional EPSG integer code overriding the input image projection.
+    :param no_data_val: No-data value for the reprojected image (Default = 0.0).
+    :param out_pxl_res: Output resolution mode: ``'image'`` (match input resolution),
+                        ``'auto'`` (maintain input dimensions), or a numeric value
+                        for square pixel resolution (Default = 'image').
+    :param snap_to_grid: Whether to snap the top-left pixel to a multiple of the
+                         output pixel resolution (Default = True).
+    :param multicore: Whether to use multiple CPU threads for warping (Default = False).
+    :param gdal_options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-statements
+    if not os.path.exists(input_img):
+        raise rsgispy.RSGISPyException(
+            f"The input image file does not exist: '{input_img}'"
+        )
+
+    resampling_alg = rsgispy.get_rasterio_interp_type(interp_method)
+    out_crs = _parse_epsg_crs(out_epsg)
+    if out_crs is None:
+        raise rsgispy.RSGISPyException(
+            "An output EPSG code (out_epsg) must be provided."
+        )
+
+    with rasterio.open(input_img, "r") as src:
+        in_crs = _parse_epsg_crs(in_epsg) if in_epsg is not None else src.crs
+        if in_crs is None:
+            raise rsgispy.RSGISPyException(
+                f"Could not determine projection for input image: '{input_img}'"
+            )
+
+        x_pxl_res = abs(src.transform.a)
+        y_pxl_res = abs(src.transform.e)
+        in_res = min(x_pxl_res, y_pxl_res)
+        x_size, y_size = src.width, src.height
+        tl_x_in, tl_y_in = src.transform.c, src.transform.f
+        br_x_in = tl_x_in + (x_size * x_pxl_res)
+        br_y_in = tl_y_in - (y_size * y_pxl_res)
+        num_bands = src.count
+        rsgis_dtype = rsgispy.get_rsgis_datatype(src.dtypes[0])
+
+    xs_out, ys_out = rio_transform_coords(
+        in_crs,
+        out_crs,
+        [tl_x_in, br_x_in, br_x_in, tl_x_in],
+        [tl_y_in, br_y_in, tl_y_in, br_y_in],
+    )
+    x_min, x_max = float(min(xs_out)), float(max(xs_out))
+    y_min, y_max = float(min(ys_out)), float(max(ys_out))
+
+    out_res = _resolve_reproject_res(
+        out_pxl_res=out_pxl_res,
+        in_res=in_res,
+        x_size=x_size,
+        y_size=y_size,
+        tl_x_out=float(xs_out[0]),
+        tl_y_out=float(ys_out[0]),
+        br_x_out=float(xs_out[1]),
+        br_y_out=float(ys_out[1]),
+    )
+
+    out_tl_x, out_tl_y = x_min, y_max
+    out_width = int(round((x_max - x_min) / out_res)) + 1
+    out_height = int(round((y_max - y_min) / out_res)) + 1
+
+    if snap_to_grid:
+        out_tl_x = (out_tl_x - (out_tl_x % out_res)) - (5 * out_res)
+        out_tl_y = ((out_tl_y - (out_tl_y % out_res)) + out_res) + (5 * out_res)
+        out_width = int(round((x_max - x_min) / out_res)) + 10
+        out_height = int(round((y_max - y_min) / out_res)) + 10
+
+    create_blank_img(
+        output_img=output_img,
+        n_bands=num_bands,
+        width=out_width,
+        height=out_height,
+        tl_x=out_tl_x,
+        tl_y=out_tl_y,
+        res_x=out_res,
+        res_y=-out_res,
+        pxl_val=float(no_data_val),
+        epsg_code=int(out_epsg),
+        gdalformat=gdalformat,
+        datatype=rsgis_dtype,
+        options=gdal_options,
+        no_data_val=float(no_data_val),
+    )
+
+    num_threads = (os.cpu_count() or 1) if multicore else 1
+    band_indices = list(range(1, num_bands + 1))
+
+    with rasterio.open(input_img, "r") as src, rasterio.open(
+        output_img, "r+"
+    ) as dst:
+        rio_reproject(
+            source=rasterio.band(src, band_indices),
+            destination=rasterio.band(dst, band_indices),
+            src_crs=in_crs,
+            dst_crs=out_crs,
+            resampling=resampling_alg,
+            src_nodata=no_data_val,
+            dst_nodata=no_data_val,
+            num_threads=num_threads,
         )
