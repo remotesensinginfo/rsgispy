@@ -19,6 +19,7 @@ from rsgispy.imageprocess import (
     compute_spatial_intersection,
     ensure_file_exists,
     get_default_block_size,
+    iter_dataset_windows,
     iter_image_blocks,
     normalise_band_defs,
     open_input_datasets,
@@ -33,6 +34,7 @@ __all__ = [
     "image_math",
     "image_band_math",
     "calc_prop_true_exp",
+    "calc_area_under_curve",
 ]
 
 
@@ -375,3 +377,76 @@ def calc_prop_true_exp(
                 total_count += int(true_mask.size)
 
     return float(true_count / total_count) if total_count > 0 else 0.0
+
+
+def calc_area_under_curve(
+    input_img: str,
+    band_widths: Sequence[float],
+    output_img: str,
+    gdalformat: str = "GTIFF",
+    datatype: int = rsgispy.TYPE_32FLOAT,
+    use_pbar: bool = True,
+    creation_opts: Optional[Mapping[str, Any]] = None,
+) -> None:
+    """
+    Calculate the area under the curve defined by the input image bands and
+    their corresponding ``band_widths`` (e.g., spectral or temporal widths).
+
+    For each pixel, the output equals ``sum(band_i * band_widths[i])``.
+
+    :param input_img: Path to the input image file.
+    :param band_widths: Sequence of float widths matching the number of bands
+                        in ``input_img``.
+    :param output_img: Path to the output single-band image file.
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
+                     (Default = ``rsgispy.TYPE_32FLOAT``).
+    :param use_pbar: If True, display a tqdm progress bar (Default = True).
+    :param creation_opts: Optional mapping of GDAL creation options.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if band_widths is None:
+        raise rsgispy.RSGISPyException("Input band_widths list must not be None.")
+    ensure_file_exists(input_img)
+
+    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
+    widths_arr = np.asarray(band_widths, dtype=np.float64)
+    if widths_arr.ndim != 1:
+        raise rsgispy.RSGISPyException("Input band_widths must be a 1D sequence.")
+
+    with ExitStack() as stack:
+        try:
+            src = stack.enter_context(rasterio.open(input_img, "r"))
+        except Exception as err:
+            raise rsgispy.RSGISPyException(
+                f"Could not open input image '{input_img}': {err}"
+            ) from err
+
+        if src.count != widths_arr.size:
+            raise rsgispy.RSGISPyException(
+                f"Length of band_widths ({widths_arr.size}) must be equal to "
+                f"the number of bands in the input image (N Bands: {src.count})."
+            )
+
+        grid = compute_spatial_intersection({input_img: src})
+        dst = open_output_dataset(
+            stack=stack,
+            output_img=output_img,
+            gdalformat=gdalformat,
+            out_rio_dtype=out_rio_dtype,
+            grid=grid,
+            count=1,
+            creation_opts=creation_opts,
+        )
+
+        for out_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
+            in_block = src.read(window=out_win, out_dtype=np.float64)
+            area = np.tensordot(widths_arr, in_block, axes=([0], [0]))
+            out_block = cast_result_block(
+                area, int(out_win.height), int(out_win.width), out_np_dtype
+            )
+            dst.write(out_block, 1, window=out_win)

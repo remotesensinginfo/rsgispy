@@ -65,6 +65,31 @@ API Reference
    :undoc-members:
    :show-inheritance:
 
+.. automodule:: rsgispy.imagecalc.comparison
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: rsgispy.imagecalc.encoding
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: rsgispy.imagecalc.rescale
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: rsgispy.imagecalc.distance
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: rsgispy.imagecalc.fill
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. automodule:: rsgispy.imagecalc.calc_pt_win_smpls
    :members:
    :undoc-members:
