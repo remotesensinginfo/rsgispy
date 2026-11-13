@@ -257,9 +257,10 @@ def test_webtools_httptools_and_ftptools(tmp_path, monkeypatch):
 
     # httptools
     http_db = str(tmp_path / "http_db.json")
-    httptools.create_file_listings_db(
-        http_db, {"f1.txt": "https://example.com/f1.txt"}
-    )
+    if httptools.HAVE_PYSONDB:
+        httptools.create_file_listings_db(
+            http_db, {"f1.txt": "https://example.com/f1.txt"}
+        )
 
     if httptools.HAVE_REQUESTS:
         monkeypatch.setattr(
@@ -278,19 +279,20 @@ def test_webtools_httptools_and_ftptools(tmp_path, monkeypatch):
         )
         assert httptools.send_http_json_request("https://example.com/api") == {"ok": True}
 
-        class _FakeHTTPSession:
-            def __init__(self):
-                self.headers = {}
-                self.auth = None
+        if httptools.HAVE_PYSONDB:
+            class _FakeHTTPSession:
+                def __init__(self):
+                    self.headers = {}
+                    self.auth = None
 
-            def get(self, url, **kwargs):
-                return _SimpleResp(content=b"abc123")
+                def get(self, url, **kwargs):
+                    return _SimpleResp(content=b"abc123")
 
-        monkeypatch.setattr(httptools.requests, "Session", _FakeHTTPSession)
-        out_http_dir = tmp_path / "http_dl"
-        out_http_dir.mkdir()
-        httptools.download_http_files_use_lst_db(http_db, str(out_http_dir))
-        assert (out_http_dir / "f1.txt").read_bytes() == b"abc123"
+            monkeypatch.setattr(httptools.requests, "Session", _FakeHTTPSession)
+            out_http_dir = tmp_path / "http_dl"
+            out_http_dir.mkdir()
+            httptools.download_http_files_use_lst_db(http_db, str(out_http_dir))
+            assert (out_http_dir / "f1.txt").read_bytes() == b"abc123"
 
     # ftptools
     class _FakeFTP:
@@ -331,15 +333,16 @@ def test_webtools_httptools_and_ftptools(tmp_path, monkeypatch):
     assert listings["/root"] == ["/root/file1.txt"]
     assert "/root/sub/file2.tif" in file_paths
 
-    ftp_db = str(tmp_path / "ftp_db.json")
-    ftptools.create_file_listings_db(ftp_db, "ftp.example.com", "/root")
-    filtered_db = str(tmp_path / "ftp_filtered.json")
-    ftptools.filter_file_listings_db(ftp_db, [".tif"], filtered_db)
+    if ftptools.HAVE_PYSONDB:
+        ftp_db = str(tmp_path / "ftp_db.json")
+        ftptools.create_file_listings_db(ftp_db, "ftp.example.com", "/root")
+        filtered_db = str(tmp_path / "ftp_filtered.json")
+        ftptools.filter_file_listings_db(ftp_db, [".tif"], filtered_db)
 
-    ftp_out = tmp_path / "ftp_dl"
-    ftp_out.mkdir()
-    ftptools.download_files_use_lst_db(filtered_db, str(ftp_out))
-    assert (ftp_out / "file2.tif").read_bytes() == b"ftp-data"
+        ftp_out = tmp_path / "ftp_dl"
+        ftp_out.mkdir()
+        ftptools.download_files_use_lst_db(filtered_db, str(ftp_out))
+        assert (ftp_out / "file2.tif").read_bytes() == b"ftp-data"
 
     up_file = tmp_path / "upload.txt"
     up_file.write_bytes(b"up")
@@ -454,18 +457,73 @@ def test_optional_requests_missing_tools(tmp_path):
         for sym_name in (
             "RSGISPyResponseException",
             "wget_download_file",
-            "create_file_listings_db",
-            "download_http_files_use_lst_db",
         ):
             assert hasattr(http_mod, sym_name)
             assert sym_name in http_mod.__all__
 
-        db_path = str(tmp_path / "http_db.json")
-        http_mod.create_file_listings_db(db_path, {"a.txt": "https://example.com/a.txt"})
-        with pytest.raises(rsgispy.RSGISPyException):
-            http_mod.download_http_files_use_lst_db(db_path, str(tmp_path), use_wget=False)
+        if http_mod.HAVE_PYSONDB:
+            for sym_name in (
+                "create_file_listings_db",
+                "download_http_files_use_lst_db",
+            ):
+                assert hasattr(http_mod, sym_name)
+                assert sym_name in http_mod.__all__
+
+            db_path = str(tmp_path / "http_db.json")
+            http_mod.create_file_listings_db(
+                db_path, {"a.txt": "https://example.com/a.txt"}
+            )
+            with pytest.raises(rsgispy.RSGISPyException):
+                http_mod.download_http_files_use_lst_db(
+                    db_path, str(tmp_path), use_wget=False
+                )
     finally:
         sys.modules["rsgispy.tools.webtools"] = orig_webtools
         sys.modules["rsgispy.tools.httptools"] = orig_httptools
         rtools.webtools = orig_webtools
         rtools.httptools = orig_httptools
+
+
+def test_optional_pysondb_missing_tools():
+    """Verify httptools and ftptools omit pysondb functions when pysondb is missing."""
+    import importlib
+    from unittest.mock import patch
+    import rsgispy.tools as rtools
+
+    orig_httptools = httptools
+    orig_ftptools = ftptools
+    try:
+        with patch.dict(sys.modules, {"pysondb": None}):
+            sys.modules.pop("rsgispy.tools.httptools", None)
+            sys.modules.pop("rsgispy.tools.ftptools", None)
+            http_mod = importlib.import_module("rsgispy.tools.httptools")
+            ftp_mod = importlib.import_module("rsgispy.tools.ftptools")
+
+        assert not http_mod.HAVE_PYSONDB
+        for fn_name in ("create_file_listings_db", "download_http_files_use_lst_db"):
+            assert not hasattr(http_mod, fn_name)
+            assert fn_name not in http_mod.__all__
+        assert hasattr(http_mod, "wget_download_file")
+        assert "wget_download_file" in http_mod.__all__
+
+        assert not ftp_mod.HAVE_PYSONDB
+        for fn_name in (
+            "create_file_listings_db",
+            "filter_file_listings_db",
+            "download_files_use_lst_db",
+        ):
+            assert not hasattr(ftp_mod, fn_name)
+            assert fn_name not in ftp_mod.__all__
+        for fn_name in (
+            "get_ftp_file_listings",
+            "download_ftp_file",
+            "download_curl_ftp_file",
+            "upload_ftp_file",
+        ):
+            assert hasattr(ftp_mod, fn_name)
+            assert fn_name in ftp_mod.__all__
+    finally:
+        sys.modules["rsgispy.tools.httptools"] = orig_httptools
+        sys.modules["rsgispy.tools.ftptools"] = orig_ftptools
+        rtools.httptools = orig_httptools
+        rtools.ftptools = orig_ftptools

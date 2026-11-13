@@ -2,8 +2,8 @@
 The tools.httptools module provides HTTP request, file download, and download
 tracking database utilities.
 
-Functions requiring ``requests`` are only defined and exported when
-``requests`` is installed.
+Functions requiring ``requests`` or ``pysondb`` are only defined and exported
+when those packages are installed.
 """
 
 import json
@@ -21,11 +21,16 @@ try:
 except ImportError:
     HAVE_REQUESTS = False
 
+try:
+    import pysondb  # pylint: disable=import-error
+
+    HAVE_PYSONDB = True
+except ImportError:
+    HAVE_PYSONDB = False
+
 __all__ = [
     "RSGISPyResponseException",
     "wget_download_file",
-    "create_file_listings_db",
-    "download_http_files_use_lst_db",
 ]
 
 if HAVE_REQUESTS:
@@ -35,6 +40,14 @@ if HAVE_REQUESTS:
             "check_http_response",
             "send_http_json_request",
             "download_file_http",
+        ]
+    )
+
+if HAVE_PYSONDB:
+    __all__.extend(
+        [
+            "create_file_listings_db",
+            "download_http_files_use_lst_db",
         ]
     )
 
@@ -287,94 +300,90 @@ def wget_download_file(
     return success, out_message
 
 
-def create_file_listings_db(
-    db_json: str,
-    file_urls: Dict[str, str],
-) -> None:
-    """
-    Build a ``pysondb`` JSON tracking database for HTTP file URLs.
+if HAVE_PYSONDB:
 
-    :param db_json: Path to the JSON database file.
-    :param file_urls: Mapping of ``filename -> URL``.
-    """
-    # pylint: disable=import-outside-toplevel
-    import pysondb
+    def create_file_listings_db(
+        db_json: str,
+        file_urls: Dict[str, str],
+    ) -> None:
+        """
+        Build a ``pysondb`` JSON tracking database for HTTP file URLs.
 
-    tqdm_cls = rsgispy.get_tqdm()
-    lst_db = pysondb.getDb(db_json)
-    db_data = [
-        {
-            "http_url": file_urls[c_file],
-            "file_name": c_file,
-            "lcl_path": "",
-            "downloaded": False,
-        }
-        for c_file in tqdm_cls(file_urls)
-    ]
-    if db_data:
-        lst_db.addMany(db_data)
+        :param db_json: Path to the JSON database file.
+        :param file_urls: Mapping of ``filename -> URL``.
+        """
+        tqdm_cls = rsgispy.get_tqdm()
+        lst_db = pysondb.getDb(db_json)
+        db_data = [
+            {
+                "http_url": file_urls[c_file],
+                "file_name": c_file,
+                "lcl_path": "",
+                "downloaded": False,
+            }
+            for c_file in tqdm_cls(file_urls)
+        ]
+        if db_data:
+            lst_db.addMany(db_data)
 
+    def download_http_files_use_lst_db(
+        db_json: str,
+        out_dir_path: str,
+        http_user: Optional[str] = None,
+        http_pass: Optional[str] = None,
+        use_wget: bool = False,
+        wget_time_out: int = 60,
+        check_file_exists: bool = False,
+    ) -> None:
+        """
+        Download pending files listed in a ``pysondb`` JSON database via HTTP or ``wget``.
 
-def download_http_files_use_lst_db(
-    db_json: str,
-    out_dir_path: str,
-    http_user: Optional[str] = None,
-    http_pass: Optional[str] = None,
-    use_wget: bool = False,
-    wget_time_out: int = 60,
-    check_file_exists: bool = False,
-) -> None:
-    """
-    Download pending files listed in a ``pysondb`` JSON database via HTTP or ``wget``.
-
-    :param db_json: Path to the JSON database file.
-    :param out_dir_path: Output directory where files will be saved.
-    :param http_user: Optional HTTP username.
-    :param http_pass: Optional HTTP password.
-    :param use_wget: Use ``wget`` instead of ``requests`` when ``True``.
-    :param wget_time_out: ``wget`` timeout in seconds (Default = ``60``).
-    :param check_file_exists: Skip downloading if target file already exists locally.
-    """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,import-outside-toplevel
-    if not use_wget and not HAVE_REQUESTS:
-        raise rsgispy.RSGISPyException(
-            "The requests module is required when use_wget=False."
-        )
-
-    import pysondb
-
-    lst_db = pysondb.getDb(db_json)
-    dwld_files = lst_db.getByQuery({"downloaded": False})
-    os.makedirs(out_dir_path, exist_ok=True)
-
-    for dwn_file in dwld_files:
-        basename = dwn_file["file_name"]
-        lcl_path = os.path.join(out_dir_path, basename)
-        file_exists = os.path.exists(lcl_path) if check_file_exists else False
-        if not file_exists:
-            if use_wget:
-                dwnlded, _ = wget_download_file(
-                    input_url=dwn_file["http_url"],
-                    out_file_path=lcl_path,
-                    username=http_user,
-                    password=http_pass,
-                    try_number=10,
-                    time_out=wget_time_out,
-                    input_url_md5=None,
-                )
-            else:
-                # pylint: disable-next=possibly-used-before-assignment
-                dwnlded = download_file_http(
-                    input_url=dwn_file["http_url"],
-                    out_file_path=lcl_path,
-                    username=http_user,
-                    password=http_pass,
-                    no_except=True,
-                )
-        else:
-            dwnlded = True
-
-        if dwnlded:
-            lst_db.updateById(
-                dwn_file["id"], {"lcl_path": lcl_path, "downloaded": True}
+        :param db_json: Path to the JSON database file.
+        :param out_dir_path: Output directory where files will be saved.
+        :param http_user: Optional HTTP username.
+        :param http_pass: Optional HTTP password.
+        :param use_wget: Use ``wget`` instead of ``requests`` when ``True``.
+        :param wget_time_out: ``wget`` timeout in seconds (Default = ``60``).
+        :param check_file_exists: Skip downloading if target file already exists locally.
+        """
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
+        if not use_wget and not HAVE_REQUESTS:
+            raise rsgispy.RSGISPyException(
+                "The requests module is required when use_wget=False."
             )
+
+        lst_db = pysondb.getDb(db_json)
+        dwld_files = lst_db.getByQuery({"downloaded": False})
+        os.makedirs(out_dir_path, exist_ok=True)
+
+        for dwn_file in dwld_files:
+            basename = dwn_file["file_name"]
+            lcl_path = os.path.join(out_dir_path, basename)
+            file_exists = os.path.exists(lcl_path) if check_file_exists else False
+            if not file_exists:
+                if use_wget:
+                    dwnlded, _ = wget_download_file(
+                        input_url=dwn_file["http_url"],
+                        out_file_path=lcl_path,
+                        username=http_user,
+                        password=http_pass,
+                        try_number=10,
+                        time_out=wget_time_out,
+                        input_url_md5=None,
+                    )
+                else:
+                    # pylint: disable-next=possibly-used-before-assignment
+                    dwnlded = download_file_http(
+                        input_url=dwn_file["http_url"],
+                        out_file_path=lcl_path,
+                        username=http_user,
+                        password=http_pass,
+                        no_except=True,
+                    )
+            else:
+                dwnlded = True
+
+            if dwnlded:
+                lst_db.updateById(
+                    dwn_file["id"], {"lcl_path": lcl_path, "downloaded": True}
+                )

@@ -2,8 +2,8 @@
 Tools for accessing (searching and downloading) datasets from the NASA
 EOSDIS Common Metadata Repository API (https://cmr.earthdata.nasa.gov/search/).
 
-Classes and functions requiring ``requests`` are only defined and exported when
-``requests`` is installed.
+Classes and functions requiring ``requests`` or ``pysondb`` are only defined
+and exported when those packages are installed.
 """
 
 import datetime
@@ -22,6 +22,13 @@ try:
 except ImportError:
     HAVE_REQUESTS = False
 
+try:
+    import pysondb  # pylint: disable=import-error
+
+    HAVE_PYSONDB = True
+except ImportError:
+    HAVE_PYSONDB = False
+
 CMR_COLLECTS_URL = "https://cmr.earthdata.nasa.gov/search/collections.json"
 CMR_GRANULES_URL = "https://cmr.earthdata.nasa.gov/search/granules.json"
 
@@ -29,8 +36,6 @@ __all__ = [
     "CMR_COLLECTS_URL",
     "CMR_GRANULES_URL",
     "get_total_file_size",
-    "create_cmr_dwnld_db",
-    "download_granules_use_dwnld_db",
 ]
 
 if HAVE_REQUESTS:
@@ -43,6 +48,14 @@ if HAVE_REQUESTS:
             "find_granules",
             "find_all_granules",
             "cmr_download_file_http",
+        ]
+    )
+
+if HAVE_PYSONDB:
+    __all__.extend(
+        [
+            "create_cmr_dwnld_db",
+            "download_granules_use_dwnld_db",
         ]
     )
 
@@ -325,103 +338,101 @@ def get_total_file_size(granule_lst: List[Dict]) -> float:
     return sum(float(granule["granule_size"]) for granule in granule_lst)
 
 
-def create_cmr_dwnld_db(
-    db_json: str,
-    granule_lst: List[Dict],
-    dwnld_file_mime_type: str,
-) -> List[str]:
-    """
-    Build a pysondb JSON download-tracking database from a CMR granule list.
+if HAVE_PYSONDB:
 
-    :param db_json: Path to the JSON database file.
-    :param granule_lst: List of granules from :func:`find_granules` or
-                        :func:`find_all_granules`.
-    :param dwnld_file_mime_type: Link MIME type (e.g., ``"application/x-hdfeos"``).
-    :return: List of ``producer_granule_id`` values with no matching URL.
-    """
-    # pylint: disable=import-outside-toplevel
-    import pysondb
-    import tqdm
+    def create_cmr_dwnld_db(
+        db_json: str,
+        granule_lst: List[Dict],
+        dwnld_file_mime_type: str,
+    ) -> List[str]:
+        """
+        Build a pysondb JSON download-tracking database from a CMR granule list.
 
-    db_data = []
-    granules_no_url = []
-    for granule in tqdm.tqdm(granule_lst):
-        id_val = granule["id"]
-        producer_granule_id = granule["producer_granule_id"]
-        granule_size = granule["granule_size"]
-        granule_url = None
-        for link in granule["links"]:
-            if link.get("type") == dwnld_file_mime_type:
-                granule_url = link["href"]
-                break
-        if granule_url is not None:
-            db_data.append(
-                {
-                    "id": id_val,
-                    "producer_granule_id": producer_granule_id,
-                    "granule_size": granule_size,
-                    "granule_url": granule_url,
-                    "lcl_path": "",
-                    "downloaded": False,
-                }
-            )
-        else:
-            granules_no_url.append(producer_granule_id)
+        :param db_json: Path to the JSON database file.
+        :param granule_lst: List of granules from :func:`find_granules` or
+                            :func:`find_all_granules`.
+        :param dwnld_file_mime_type: Link MIME type (e.g., ``"application/x-hdfeos"``).
+        :return: List of ``producer_granule_id`` values with no matching URL.
+        """
+        # pylint: disable=import-outside-toplevel
+        import tqdm
 
-    lst_db = pysondb.getDb(db_json)
-    if db_data:
-        lst_db.addMany(db_data)
+        db_data = []
+        granules_no_url = []
+        for granule in tqdm.tqdm(granule_lst):
+            id_val = granule["id"]
+            producer_granule_id = granule["producer_granule_id"]
+            granule_size = granule["granule_size"]
+            granule_url = None
+            for link in granule["links"]:
+                if link.get("type") == dwnld_file_mime_type:
+                    granule_url = link["href"]
+                    break
+            if granule_url is not None:
+                db_data.append(
+                    {
+                        "id": id_val,
+                        "producer_granule_id": producer_granule_id,
+                        "granule_size": granule_size,
+                        "granule_url": granule_url,
+                        "lcl_path": "",
+                        "downloaded": False,
+                    }
+                )
+            else:
+                granules_no_url.append(producer_granule_id)
 
-    return granules_no_url
+        lst_db = pysondb.getDb(db_json)
+        if db_data:
+            lst_db.addMany(db_data)
 
+        return granules_no_url
 
-def download_granules_use_dwnld_db(
-    db_json: str,
-    out_path: str,
-    user_pass_file: str,
-    use_wget: bool = False,
-) -> None:
-    """
-    Download pending granules recorded in a JSON database created by
-    :func:`create_cmr_dwnld_db`.
+    def download_granules_use_dwnld_db(
+        db_json: str,
+        out_path: str,
+        user_pass_file: str,
+        use_wget: bool = False,
+    ) -> None:
+        """
+        Download pending granules recorded in a JSON database created by
+        :func:`create_cmr_dwnld_db`.
 
-    :param db_json: Path to the JSON database file.
-    :param out_path: Local directory for downloaded files.
-    :param user_pass_file: Path to the base64-encoded username/password file.
-    :param use_wget: If ``True``, download using ``wget`` instead of ``requests``.
-    """
-    # pylint: disable=import-outside-toplevel
-    if not use_wget and not HAVE_REQUESTS:
-        raise rsgispy.RSGISPyException(
-            "The requests module is required when use_wget=False."
-        )
-
-    import pysondb
-
-    username, password = rsgispy.tools.utils.get_username_password(user_pass_file)
-
-    lst_db = pysondb.getDb(db_json)
-    dwld_files = lst_db.getByQuery({"downloaded": False})
-
-    for dwn_file in dwld_files:
-        out_file_path = os.path.join(out_path, dwn_file["producer_granule_id"])
-        print(f"Downloading: {out_file_path}")
-        if use_wget:
-            dwn_success, _ = rsgispy.tools.httptools.wget_download_file(
-                input_url=dwn_file["granule_url"],
-                out_file_path=out_file_path,
-                username=username,
-                password=password,
-            )
-        else:
-            dwn_success = cmr_download_file_http(
-                input_url=dwn_file["granule_url"],
-                out_file_path=out_file_path,
-                username=username,
-                password=password,
+        :param db_json: Path to the JSON database file.
+        :param out_path: Local directory for downloaded files.
+        :param user_pass_file: Path to the base64-encoded username/password file.
+        :param use_wget: If ``True``, download using ``wget`` instead of ``requests``.
+        """
+        if not use_wget and not HAVE_REQUESTS:
+            raise rsgispy.RSGISPyException(
+                "The requests module is required when use_wget=False."
             )
 
-        if dwn_success:
-            lst_db.updateById(
-                dwn_file["id"], {"lcl_path": out_file_path, "downloaded": True}
-            )
+        username, password = rsgispy.tools.utils.get_username_password(user_pass_file)
+
+        lst_db = pysondb.getDb(db_json)
+        dwld_files = lst_db.getByQuery({"downloaded": False})
+
+        for dwn_file in dwld_files:
+            out_file_path = os.path.join(out_path, dwn_file["producer_granule_id"])
+            print(f"Downloading: {out_file_path}")
+            if use_wget:
+                dwn_success, _ = rsgispy.tools.httptools.wget_download_file(
+                    input_url=dwn_file["granule_url"],
+                    out_file_path=out_file_path,
+                    username=username,
+                    password=password,
+                )
+            else:
+                # pylint: disable=possibly-used-before-assignment
+                dwn_success = cmr_download_file_http(
+                    input_url=dwn_file["granule_url"],
+                    out_file_path=out_file_path,
+                    username=username,
+                    password=password,
+                )
+
+            if dwn_success:
+                lst_db.updateById(
+                    dwn_file["id"], {"lcl_path": out_file_path, "downloaded": True}
+                )

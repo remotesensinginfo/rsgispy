@@ -155,8 +155,14 @@ def test_nasa_cmr_queries_and_download(tmp_path, monkeypatch):
             }
         ]
         assert nasa_cmr.get_total_file_size(granules) == 12.5
-        db_json = str(tmp_path / "cmr.json")
-        assert nasa_cmr.create_cmr_dwnld_db(db_json, granules, "application/x-hdfeos") == []
+        if nasa_cmr.HAVE_PYSONDB:
+            db_json = str(tmp_path / "cmr.json")
+            assert (
+                nasa_cmr.create_cmr_dwnld_db(
+                    db_json, granules, "application/x-hdfeos"
+                )
+                == []
+            )
         return
 
     def _fake_send_json(url, data=None, convert_to_json=False, header_data=None):
@@ -215,11 +221,12 @@ def test_nasa_cmr_queries_and_download(tmp_path, monkeypatch):
     assert len(granules) == 2
     assert nasa_cmr.get_total_file_size(granules) == 20.0
 
-    db_json = str(tmp_path / "cmr.json")
-    missing = nasa_cmr.create_cmr_dwnld_db(
-        db_json, granules, "application/x-hdfeos"
-    )
-    assert missing == ["granule2.h5"]
+    if nasa_cmr.HAVE_PYSONDB:
+        db_json = str(tmp_path / "cmr.json")
+        missing = nasa_cmr.create_cmr_dwnld_db(
+            db_json, granules, "application/x-hdfeos"
+        )
+        assert missing == ["granule2.h5"]
 
     class _FakeCMRSession(nasa_cmr.SessionWithHeaderNASARedirection):
         def get(self, url, **kwargs):
@@ -510,22 +517,49 @@ def test_optional_requests_missing_dataaccess(tmp_path):
             assert not hasattr(cmr_mod, sym_name)
             assert sym_name not in cmr_mod.__all__
 
-        for sym_name in (
-            "get_total_file_size",
-            "create_cmr_dwnld_db",
-            "download_granules_use_dwnld_db",
-        ):
-            assert hasattr(cmr_mod, sym_name)
-            assert sym_name in cmr_mod.__all__
+        assert hasattr(cmr_mod, "get_total_file_size")
+        assert "get_total_file_size" in cmr_mod.__all__
 
-        db_json = str(tmp_path / "cmr.json")
-        cmr_mod.create_cmr_dwnld_db(db_json, [], "application/x-hdfeos")
-        with pytest.raises(rsgispy.RSGISPyException):
-            cmr_mod.download_granules_use_dwnld_db(
-                db_json, str(tmp_path), "unused_creds.txt", use_wget=False
-            )
+        if cmr_mod.HAVE_PYSONDB:
+            for sym_name in (
+                "create_cmr_dwnld_db",
+                "download_granules_use_dwnld_db",
+            ):
+                assert hasattr(cmr_mod, sym_name)
+                assert sym_name in cmr_mod.__all__
+
+            db_json = str(tmp_path / "cmr.json")
+            cmr_mod.create_cmr_dwnld_db(db_json, [], "application/x-hdfeos")
+            with pytest.raises(rsgispy.RSGISPyException):
+                cmr_mod.download_granules_use_dwnld_db(
+                    db_json, str(tmp_path), "unused_creds.txt", use_wget=False
+                )
     finally:
         sys.modules["rsgispy.dataaccess.copernicus_odata"] = orig_odata
         sys.modules["rsgispy.dataaccess.nasa_cmr"] = orig_cmr
         rdataaccess.copernicus_odata = orig_odata
+        rdataaccess.nasa_cmr = orig_cmr
+
+
+def test_optional_pysondb_missing_dataaccess():
+    """Verify nasa_cmr omits pysondb functions when pysondb is missing."""
+    import importlib
+    import sys
+    from unittest.mock import patch
+    import rsgispy.dataaccess as rdataaccess
+
+    orig_cmr = nasa_cmr
+    try:
+        with patch.dict(sys.modules, {"pysondb": None}):
+            sys.modules.pop("rsgispy.dataaccess.nasa_cmr", None)
+            cmr_mod = importlib.import_module("rsgispy.dataaccess.nasa_cmr")
+
+        assert not cmr_mod.HAVE_PYSONDB
+        for fn_name in ("create_cmr_dwnld_db", "download_granules_use_dwnld_db"):
+            assert not hasattr(cmr_mod, fn_name)
+            assert fn_name not in cmr_mod.__all__
+        assert hasattr(cmr_mod, "get_total_file_size")
+        assert "get_total_file_size" in cmr_mod.__all__
+    finally:
+        sys.modules["rsgispy.dataaccess.nasa_cmr"] = orig_cmr
         rdataaccess.nasa_cmr = orig_cmr
