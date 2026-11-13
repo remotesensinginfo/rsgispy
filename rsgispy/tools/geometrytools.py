@@ -6,6 +6,7 @@ coordinate reprojection utilities using pyproj.
 import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
+import numpy as np
 import pyproj
 
 import rsgispy
@@ -34,6 +35,7 @@ __all__ = [
     "pt_in_bbox",
     "find_point_on_whole_num_grid",
     "get_bbox_wkt_poly",
+    "degrees_to_metres",
 ]
 
 CRSLike = Union[pyproj.CRS, int, str]
@@ -586,3 +588,30 @@ def get_bbox_wkt_poly(
         f"{bbox[0]} {bbox[3]}, "
         f"{bbox[0]} {bbox[2]}))"
     )
+
+
+def degrees_to_metres(
+    latitude: Union[float, np.ndarray],
+    lon_size: Union[float, np.ndarray],
+    lat_size: Union[float, np.ndarray],
+) -> Tuple[Union[float, np.ndarray], Union[float, np.ndarray]]:
+    """
+    Convert pixel sizes or distances in degrees (WGS84 ellipsoid) to metres.
+
+    :param latitude: Latitude in degrees (scalar or array).
+    :param lon_size: Longitude delta/pixel size in degrees (scalar or array).
+    :param lat_size: Latitude delta/pixel size in degrees (scalar or array).
+    :return: Tuple ``(x_size_metres, y_size_metres)``.
+    """
+    semi_major = 6378137.0
+    semi_minor = 6356752.314245
+    rad_lat = np.deg2rad(latitude)
+    r_sq = (semi_major * np.cos(rad_lat)) ** 2 + (
+        semi_minor * np.sin(rad_lat)
+    ) ** 2
+    m_lat = ((semi_major * semi_minor) ** 2) / (r_sq**1.5)
+    n_lon = (semi_major**2) / np.sqrt(r_sq)
+    deg_to_rad = math.pi / 180.0
+    x_size = deg_to_rad * np.cos(rad_lat) * n_lon * lon_size
+    y_size = deg_to_rad * m_lat * lat_size
+    return x_size, y_size

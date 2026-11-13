@@ -11,15 +11,14 @@ import rasterio
 import rsgispy
 from rsgispy.elevation._helpers import (
     calc_slope_aspect_from_diffs as _calc_slope_aspect_from_diffs,
-    iter_dataset_windows as _iter_dataset_windows,
     process_pxl_res_dem_3x3 as _process_pxl_res_dem_3x3,
     process_single_dem_3x3 as _process_single_dem_3x3,
     validate_slope_unit as _validate_slope_unit,
 )
 from rsgispy.imageprocess import (
-    IntersectionGrid,
+    create_output_from_dataset,
     ensure_file_exists,
-    open_output_dataset,
+    iter_dataset_windows,
 )
 
 __all__ = [
@@ -176,17 +175,16 @@ def catagorise_aspect(
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
-        grid = IntersectionGrid.from_dataset(src)
-        dst = open_output_dataset(
+        dst = create_output_from_dataset(
             stack=stack,
+            src=src,
             output_img=output_img,
             gdalformat=gdalformat,
             out_rio_dtype="uint8",
-            grid=grid,
             count=1,
         )
 
-        for out_win in _iter_dataset_windows(src.height, src.width):
+        for out_win in iter_dataset_windows(src.height, src.width):
             arr = src.read(1, window=out_win, out_dtype=np.float64)
             nan_mask = np.isnan(arr)
             finite_vals = arr[~nan_mask]

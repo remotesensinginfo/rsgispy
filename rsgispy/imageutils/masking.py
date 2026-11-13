@@ -184,7 +184,7 @@ def mask_img(
 def gen_finite_mask(
     input_img: str,
     output_img: str,
-    gdalformat: str = "KEA",
+    gdalformat: str = "GTIFF",
     options: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """
@@ -193,7 +193,7 @@ def gen_finite_mask(
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output mask image file (8-bit unsigned).
-    :param gdalformat: Output GDAL format name (Default = ``'KEA'``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param options: Optional GDAL creation options mapping.
     """
     creation_opts = dict(options) if isinstance(options, Mapping) else None
@@ -224,7 +224,7 @@ def gen_finite_mask(
 def gen_valid_mask(
     input_imgs: Union[str, os.PathLike, Sequence[Union[str, os.PathLike]]],
     output_img: str,
-    gdalformat: str = "KEA",
+    gdalformat: str = "GTIFF",
     no_data_val: float = 0.0,
     options: Optional[Mapping[str, Any]] = None,
 ) -> None:
@@ -234,7 +234,7 @@ def gen_valid_mask(
 
     :param input_imgs: Input image path or sequence of image paths.
     :param output_img: Path to the output mask image file (8-bit unsigned).
-    :param gdalformat: Output GDAL format name (Default = ``'KEA'``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param no_data_val: Value representing no-data (Default = ``0.0``).
     :param options: Optional GDAL creation options mapping.
     """

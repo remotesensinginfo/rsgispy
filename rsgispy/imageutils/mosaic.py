@@ -457,7 +457,7 @@ def combine_binary_masks(
     msk_imgs_dict: Mapping[str, str],
     output_img: str,
     out_lut_file: str,
-    gdalformat: str = "KEA",
+    gdalformat: str = "GTIFF",
 ) -> None:
     """
     Combine up to 8 binary masks (where value ``1`` indicates presence) into a
@@ -468,7 +468,7 @@ def combine_binary_masks(
                           (1 to 8 entries).
     :param output_img: Path to the 8-bit unsigned bit-packed output image.
     :param out_lut_file: Path to the output JSON lookup table file.
-    :param gdalformat: Output GDAL format name (Default = ``'KEA'``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     """
     # pylint: disable=too-many-locals
     if not msk_imgs_dict:

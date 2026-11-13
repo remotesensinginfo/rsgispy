@@ -553,6 +553,83 @@ def open_output_dataset(
     return stack.enter_context(rasterio.open(output_img, "w", **profile))
 
 
+def create_output_from_dataset(
+    stack: ExitStack,
+    src: DatasetReader,
+    output_img: str,
+    gdalformat: str,
+    out_rio_dtype: str,
+    count: Optional[int] = None,
+    output_exists: bool = False,
+    creation_opts: Optional[Mapping[str, Any]] = None,
+) -> DatasetWriter:
+    """
+    Open an output raster matching the spatial extent, transform, and CRS of an
+    opened reference dataset ``src``.
+
+    :param stack: Contextlib ExitStack managing open dataset handles.
+    :param src: Reference opened rasterio DatasetReader.
+    :param output_img: Path to the output raster file.
+    :param gdalformat: GDAL/rasterio driver name (e.g., ``'GTIFF'``).
+    :param out_rio_dtype: Rasterio dtype string (e.g., ``'float32'``).
+    :param count: Number of output bands when creating a new file
+                  (defaults to ``src.count`` if ``None``).
+    :param output_exists: If ``True`` and the file exists, open in ``'r+'`` mode.
+    :param creation_opts: Optional mapping of GDAL creation options.
+    :return: Opened rasterio DatasetWriter.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    grid = IntersectionGrid.from_dataset(src)
+    return open_output_dataset(
+        stack=stack,
+        output_img=output_img,
+        gdalformat=gdalformat,
+        out_rio_dtype=out_rio_dtype,
+        grid=grid,
+        count=int(src.count) if count is None else int(count),
+        output_exists=output_exists,
+        creation_opts=creation_opts,
+    )
+
+
+def iter_dataset_windows(
+    height: int,
+    width: int,
+    block_size: Optional[int] = None,
+    use_pbar: bool = True,
+) -> Iterator[Window]:
+    """
+    Iterate over processing block windows across a raster of dimensions
+    ``(height, width)``, optionally displaying a tqdm progress bar.
+
+    :param height: Raster height in pixels.
+    :param width: Raster width in pixels.
+    :param block_size: Window block size in pixels. If ``None``, resolved at runtime
+                       via :func:`get_default_block_size`.
+    :param use_pbar: If ``True``, display a tqdm progress bar during iteration
+                     (Default = ``True``).
+    :return: Iterator yielding :class:`rasterio.windows.Window` tiles.
+    """
+    if block_size is None:
+        blk_sz = get_default_block_size()
+    elif int(block_size) <= 0:
+        raise rsgispy.RSGISPyException(
+            f"block_size must be a positive integer, got {block_size}."
+        )
+    else:
+        blk_sz = int(block_size)
+
+    tqdm_cls = rsgispy.get_tqdm()
+    total_blocks = math.ceil(height / blk_sz) * math.ceil(width / blk_sz)
+    with tqdm_cls(total=total_blocks, disable=not use_pbar) as pbar:
+        for row_off in range(0, height, blk_sz):
+            win_h = min(blk_sz, height - row_off)
+            for col_off in range(0, width, blk_sz):
+                win_w = min(blk_sz, width - col_off)
+                yield Window(col_off, row_off, win_w, win_h)
+                pbar.update(1)
+
+
 def iter_image_blocks(
     datasets: Dict[str, DatasetReader],
     norm_defs: Sequence[BandDefn],

@@ -5,7 +5,7 @@ helpers for :mod:`rsgispy.elevation`.
 
 from contextlib import ExitStack
 import math
-from typing import Any, Callable, Iterator, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 import numpy as np
 import rasterio
@@ -13,25 +13,10 @@ from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imageprocess import (
-    IntersectionGrid,
+    create_output_from_dataset,
     ensure_file_exists,
-    get_default_block_size,
-    open_output_dataset,
+    iter_dataset_windows,
 )
-
-
-def iter_dataset_windows(height: int, width: int) -> Iterator[Window]:
-    """Yield block :class:`rasterio.windows.Window` tiles with a tqdm progress bar."""
-    block_size = get_default_block_size()
-    tqdm_cls = rsgispy.get_tqdm()
-    total_blocks = math.ceil(height / block_size) * math.ceil(width / block_size)
-    with tqdm_cls(total=total_blocks) as pbar:
-        for row_off in range(0, height, block_size):
-            win_h = min(block_size, height - row_off)
-            for col_off in range(0, width, block_size):
-                win_w = min(block_size, width - col_off)
-                yield Window(col_off, row_off, win_w, win_h)
-                pbar.update(1)
 
 
 def validate_sun_angles(azimuth: float, zenith: float) -> None:
@@ -182,17 +167,16 @@ def process_single_dem_3x3(
     ensure_file_exists(input_img)
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
-        grid = IntersectionGrid.from_dataset(src)
         ew_res = abs(float(src.transform.a))
         ns_res = abs(float(src.transform.e))
         no_data_val = src.nodata
 
-        dst = open_output_dataset(
+        dst = create_output_from_dataset(
             stack=stack,
+            src=src,
             output_img=output_img,
             gdalformat=gdalformat,
             out_rio_dtype=out_rio_dtype,
-            grid=grid,
             count=1,
         )
 
@@ -230,14 +214,13 @@ def process_pxl_res_dem_3x3(
                 "Input DEM and pixel resolution images must have matching dimensions."
             )
 
-        grid = IntersectionGrid.from_dataset(dem_src)
         no_data_val = dem_src.nodata
-        dst = open_output_dataset(
+        dst = create_output_from_dataset(
             stack=stack,
+            src=dem_src,
             output_img=output_img,
             gdalformat=gdalformat,
             out_rio_dtype=out_rio_dtype,
-            grid=grid,
             count=1,
         )
 

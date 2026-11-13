@@ -15,13 +15,14 @@ from rasterio.transform import Affine
 
 import rsgispy
 from rsgispy.elevation._helpers import (
-    iter_dataset_windows as _iter_dataset_windows,
     read_window_with_halo as _read_window_with_halo,
     valid_mask as _valid_mask,
 )
 from rsgispy.imageprocess import (
     IntersectionGrid,
+    create_output_from_dataset,
     ensure_file_exists,
+    iter_dataset_windows,
     open_output_dataset,
 )
 import rsgispy.imageutils.warp
@@ -76,18 +77,17 @@ def dtm_aspect_median_filter(
                 "Input DEM and aspect images must have matching dimensions."
             )
 
-        grid = IntersectionGrid.from_dataset(dem_src)
         no_data_val = dem_src.nodata
-        dst = open_output_dataset(
+        dst = create_output_from_dataset(
             stack=stack,
+            src=dem_src,
             output_img=output_img,
             gdalformat=gdalformat,
             out_rio_dtype="float32",
-            grid=grid,
             count=1,
         )
 
-        for out_win in _iter_dataset_windows(dem_src.height, dem_src.width):
+        for out_win in iter_dataset_windows(dem_src.height, dem_src.width):
             win_h = int(out_win.height)
             win_w = int(out_win.width)
 
@@ -242,12 +242,12 @@ def fill_dem_soille_gratin_1994(
                         if new_val < max_val:
                             heapq.heappush(heap, (new_val, nr, nc))
 
-        dst = open_output_dataset(
+        dst = create_output_from_dataset(
             stack=stack,
+            src=dem_src,
             output_img=output_img,
             gdalformat=gdalformat,
             out_rio_dtype=rsgispy.get_rasterio_datatype(rsgis_dt),
-            grid=IntersectionGrid.from_dataset(dem_src),
             count=1,
         )
         if dem_nodata is not None:
@@ -289,18 +289,17 @@ def plane_fit_detreat_dem(
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
-        grid = IntersectionGrid.from_dataset(src)
         no_data_val = src.nodata
-        dst = open_output_dataset(
+        dst = create_output_from_dataset(
             stack=stack,
+            src=src,
             output_img=output_img,
             gdalformat=gdalformat,
             out_rio_dtype="float32",
-            grid=grid,
             count=1,
         )
 
-        for out_win in _iter_dataset_windows(src.height, src.width):
+        for out_win in iter_dataset_windows(src.height, src.width):
             win_h = int(out_win.height)
             win_w = int(out_win.width)
             dem_halo = _read_window_with_halo(src, 1, out_win, pad=half)

@@ -16,9 +16,8 @@ from rsgispy.imageprocess import (
     IntersectionGrid,
     cast_result_block,
     ensure_file_exists,
-    get_default_block_size,
+    iter_dataset_windows,
     open_output_dataset,
-    validate_band_index as validate_band_index,
 )
 
 
@@ -119,13 +118,15 @@ def copy_raster_window(
             if desc:
                 dst.set_band_description(bidx, desc)
 
-        block_size = get_default_block_size()
-        for r0 in range(0, height, block_size):
-            win_h = min(block_size, height - r0)
-            for c0 in range(0, width, block_size):
-                win_w = min(block_size, width - c0)
-                src_win = Window(col_off + c0, row_off + r0, win_w, win_h)
-                dst_win = Window(c0, r0, win_w, win_h)
-                data = src.read(window=src_win)
-                out_arr = cast_result_block(data, win_h, win_w, out_np_dtype)
-                dst.write(out_arr, window=dst_win)
+        for dst_win in iter_dataset_windows(height, width, use_pbar=False):
+            src_win = Window(
+                col_off + int(dst_win.col_off),
+                row_off + int(dst_win.row_off),
+                int(dst_win.width),
+                int(dst_win.height),
+            )
+            data = src.read(window=src_win)
+            out_arr = cast_result_block(
+                data, int(dst_win.height), int(dst_win.width), out_np_dtype
+            )
+            dst.write(out_arr, window=dst_win)

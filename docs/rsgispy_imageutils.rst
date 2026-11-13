@@ -1,7 +1,7 @@
 rsgispy.imageutils
 ==================
 
-The :mod:`rsgispy.imageutils` subpackage provides thematic modules for raster image utilities, including configuring GDAL/rasterio creation options (`envopts`), inspecting/modifying metadata (`metadata`), colour tables (`colourtable`), statistics and pyramids (`stats`), creating blank/copy images (`blank`), resampling/reprojection (`warp`), mosaicking (`mosaic`), tiling (`tiling`), masking (`masking`), spatial subsetting (`subsetting`), GDAL VRT generation (`vrt`), and spatial image LUTs (`imagelut`).
+The :mod:`rsgispy.imageutils` subpackage provides thematic modules for raster image utilities, including configuring GDAL/rasterio creation options (`envopts`), inspecting/modifying metadata (`metadata`), validation checks (`checks`), array and pixel access (`arrays`), random and mask sampling (`sampling`), band selection/stacking/sharpening (`bands`), spatial grids and gridding (`spatial`), spectral processing (`spectral`), colour tables (`colourtable`), statistics and pyramids (`stats`), creating blank/copy images (`blank`), resampling/reprojection/translation (`warp`), mosaicking (`mosaic`), tiling (`tiling`), masking (`masking`), spatial subsetting (`subsetting`), GDAL VRT generation (`vrt`), and spatial image LUTs (`imagelut`).
 
 Configuring Output Creation Options
 -----------------------------------
@@ -43,7 +43,22 @@ Populating Image Statistics and Pyramids
 API Reference
 -------------
 
+.. automodule:: rsgispy.imageutils.arrays
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: rsgispy.imageutils.bands
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. automodule:: rsgispy.imageutils.blank
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: rsgispy.imageutils.checks
    :members:
    :undoc-members:
    :show-inheritance:
@@ -74,6 +89,21 @@ API Reference
    :show-inheritance:
 
 .. automodule:: rsgispy.imageutils.mosaic
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: rsgispy.imageutils.sampling
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: rsgispy.imageutils.spatial
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: rsgispy.imageutils.spectral
    :members:
    :undoc-members:
    :show-inheritance:

@@ -368,3 +368,70 @@ def test_dataset_and_validation_helpers(tmp_path):
         assert grid.transform == src.transform
         assert grid.crs == src.crs
         assert not grid.offsets
+
+
+def test_iter_dataset_windows():
+    """Test iter_dataset_windows window tiling and validation."""
+    wins = list(
+        rsgispy.imageprocess.iter_dataset_windows(
+            height=5, width=7, block_size=3, use_pbar=False
+        )
+    )
+    assert [(w.col_off, w.row_off, w.width, w.height) for w in wins] == [
+        (0, 0, 3, 3),
+        (3, 0, 3, 3),
+        (6, 0, 1, 3),
+        (0, 3, 3, 2),
+        (3, 3, 3, 2),
+        (6, 3, 1, 2),
+    ]
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        list(rsgispy.imageprocess.iter_dataset_windows(5, 5, block_size=0))
+
+
+def test_create_output_from_dataset(tmp_path):
+    """Test create_output_from_dataset matching source grid/CRS and custom band count."""
+    in_img = tmp_path / "ref.tif"
+    out_same = tmp_path / "out_same.tif"
+    out_single = tmp_path / "out_single.tif"
+    _create_test_raster(
+        in_img,
+        np.ones((3, 5, 6), dtype=np.float32),
+        origin=(100.0, 200.0),
+        pixel_size=(5.0, 5.0),
+        crs="EPSG:32630",
+    )
+
+    with ExitStack() as stack:
+        src = stack.enter_context(rasterio.open(in_img, "r"))
+        dst_same = rsgispy.imageprocess.create_output_from_dataset(
+            stack=stack,
+            src=src,
+            output_img=str(out_same),
+            gdalformat="GTIFF",
+            out_rio_dtype="float32",
+        )
+        dst_same.write(np.full((3, 5, 6), 2.0, dtype=np.float32))
+
+        dst_single = rsgispy.imageprocess.create_output_from_dataset(
+            stack=stack,
+            src=src,
+            output_img=str(out_single),
+            gdalformat="GTIFF",
+            out_rio_dtype="uint8",
+            count=1,
+        )
+        dst_single.write(np.full((5, 6), 7, dtype=np.uint8), 1)
+
+    with rasterio.open(out_same) as s_out, rasterio.open(in_img) as s_in:
+        assert s_out.count == 3
+        assert s_out.width == s_in.width and s_out.height == s_in.height
+        assert s_out.transform == s_in.transform
+        assert s_out.crs == s_in.crs
+        assert np.all(s_out.read() == 2.0)
+
+    with rasterio.open(out_single) as o_out:
+        assert o_out.count == 1
+        assert o_out.dtypes == ("uint8",)
+        assert np.all(o_out.read(1) == 7)

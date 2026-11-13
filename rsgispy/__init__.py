@@ -55,6 +55,21 @@ IMG_STRETCH_LINEAR = 2
 IMG_STRETCH_STDEV = 3
 IMG_STRETCH_CUMULATIVE = 4
 
+SHARP_RES_IGNORE = 0
+SHARP_RES_LOW = 1
+SHARP_RES_HIGH = 2
+
+GEOM_PT = 1
+GEOM_LINE = 2
+GEOM_POLY = 3
+GEOM_MPT = 4
+GEOM_MLINE = 5
+GEOM_MPOLY = 6
+
+ROUND_NEAREST = 1
+ROUND_UP = 2
+ROUND_DOWN = 3
+
 _RSGIS_TO_RASTERIO_INTERP = {
     INTERP_NEAREST_NEIGHBOUR: Resampling.nearest,
     INTERP_BILINEAR: Resampling.bilinear,
@@ -252,3 +267,12 @@ def get_tqdm():
     import tqdm  # pylint: disable=import-outside-toplevel
 
     return tqdm.tqdm
+
+
+def get_rsgispy_version() -> str:
+    """
+    Return the installed ``rsgispy`` version string.
+
+    :return: Version string (e.g., ``'0.0.1'``).
+    """
+    return __version__

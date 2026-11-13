@@ -48,6 +48,8 @@ Contents
    :caption: API Reference
 
    rsgispy
+   rsgispy_dataaccess
+   rsgispy_droneutils
    rsgispy_elevation
    rsgispy_imagecalc
    rsgispy_imagemorphology

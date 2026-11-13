@@ -216,7 +216,7 @@ def create_raster_tiles_bbox(
     out_tile_dir: str,
     out_tile_name: str = "base_tile_{}",
     out_img_ext: str = "kea",
-    gdalformat: str = "KEA",
+    gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_8UINT,
     out_img_pxl_val: float = 0.0,
     out_img_n_bands: int = 1,
@@ -233,7 +233,7 @@ def create_raster_tiles_bbox(
     :param out_tile_name: Format template containing ``{}`` for tile ``x_y``
                           index (Default = ``'base_tile_{}'``).
     :param out_img_ext: Output file extension (Default = ``'kea'``).
-    :param gdalformat: Output GDAL format name (Default = ``'KEA'``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant (Default = ``rsgispy.TYPE_8UINT``).
     :param out_img_pxl_val: Initial pixel value (Default = ``0.0``).
     :param out_img_n_bands: Number of bands in each tile (Default = ``1``).

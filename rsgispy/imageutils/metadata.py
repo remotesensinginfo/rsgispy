@@ -5,7 +5,8 @@ Raster metadata, spatial geometry, projection, and GCP utilities for
 
 import math
 import os
-from typing import List, Optional, Sequence, Tuple, Union
+import shutil
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pyproj
@@ -14,11 +15,13 @@ import rasterio.crs
 from rasterio.transform import Affine
 
 import rsgispy
-from rsgispy.imageprocess import bbox_from_dataset
+from rsgispy.imageprocess import (
+    bbox_from_dataset,
+    validate_band_index as _validate_band_index,
+)
 from rsgispy.imageutils._helpers import (
     ensure_img_exists as _ensure_img_exists,
     parse_epsg_crs as _parse_epsg_crs,
-    validate_band_index as _validate_band_index,
 )
 from rsgispy.tools.geometrytools import (
     bbox_intersection,
@@ -537,3 +540,346 @@ def get_utm_zone(input_img: str) -> Optional[str]:
     zone_num = int(utm_zone[:-1])
     hemi = utm_zone[-1].upper()
     return f"{zone_num:02d}{hemi}"
+
+
+_RIO_DTYPE_TO_GDAL_ENUM: Dict[str, int] = {
+    "uint8": 1,
+    "byte": 1,
+    "uint16": 2,
+    "int16": 3,
+    "uint32": 4,
+    "int32": 5,
+    "float32": 6,
+    "float64": 7,
+    "cint16": 8,
+    "cint32": 9,
+    "complex64": 10,
+    "cfloat32": 10,
+    "complex128": 11,
+    "cfloat64": 11,
+    "uint64": 12,
+    "int64": 13,
+    "int8": 14,
+}
+
+_RIO_DTYPE_TO_GDAL_NAME: Dict[str, str] = {
+    "uint8": "Byte",
+    "byte": "Byte",
+    "uint16": "UInt16",
+    "int16": "Int16",
+    "uint32": "UInt32",
+    "int32": "Int32",
+    "float32": "Float32",
+    "float64": "Float64",
+    "cint16": "CInt16",
+    "cint32": "CInt32",
+    "complex64": "CFloat32",
+    "cfloat32": "CFloat32",
+    "complex128": "CFloat64",
+    "cfloat64": "CFloat64",
+    "uint64": "UInt64",
+    "int64": "Int64",
+    "int8": "Int8",
+}
+
+_EXT_TO_GDAL_FORMAT: Dict[str, str] = {
+    ".env": "ENVI",
+    ".kea": "KEA",
+    ".tif": "GTiff",
+    ".tiff": "GTiff",
+    ".img": "HFA",
+    ".pix": "PCIDSK",
+    ".vrt": "VRT",
+}
+
+_GDAL_FORMAT_TO_EXT: Dict[str, str] = {
+    "kea": "kea",
+    "gtiff": "tif",
+    "cog": "tif",
+    "hfa": "img",
+    "envi": "env",
+    "pcidsk": "pix",
+    "vrt": "vrt",
+}
+
+
+def set_band_names(
+    input_img: str, band_names: Sequence[str], feedback: bool = False
+) -> None:
+    """
+    Set band description names on ``input_img`` in place.
+
+    :param input_img: Path to the input image file.
+    :param band_names: Sequence of band names (applied from band 1 upwards).
+    :param feedback: If ``True``, print each band assignment (Default = ``False``).
+    """
+    _ensure_img_exists(input_img)
+    with rasterio.open(input_img, "r+") as dst:
+        if len(band_names) > dst.count:
+            raise rsgispy.RSGISPyException(
+                f"Cannot set {len(band_names)} band names on image '{input_img}' "
+                f"with {dst.count} band(s)."
+            )
+        for idx, band_name in enumerate(band_names, start=1):
+            if feedback:
+                print(f'Setting Band {idx} to "{band_name}"')
+            dst.set_band_description(idx, str(band_name))
+
+
+def get_band_names(input_img: str) -> List[str]:
+    """
+    Return the list of band description names for ``input_img``.
+
+    :param input_img: Path to the input image file.
+    :return: List of band name strings (empty string where unset).
+    """
+    _ensure_img_exists(input_img)
+    with rasterio.open(input_img, "r") as src:
+        return [
+            desc if desc is not None else "" for desc in src.descriptions
+        ]
+
+
+def get_gdal_datatype_from_img(input_img: str) -> int:
+    """
+    Return the GDAL datatype integer enum (e.g., ``6`` for ``GDT_Float32``)
+    for band 1 of ``input_img``.
+
+    :param input_img: Path to the input image file.
+    :return: GDAL datatype integer constant.
+    """
+    _ensure_img_exists(input_img)
+    with rasterio.open(input_img, "r") as src:
+        dtype_key = str(src.dtypes[0]).lower()
+    if dtype_key not in _RIO_DTYPE_TO_GDAL_ENUM:
+        raise rsgispy.RSGISPyException(
+            f"Unsupported raster data type '{dtype_key}' in '{input_img}'."
+        )
+    return _RIO_DTYPE_TO_GDAL_ENUM[dtype_key]
+
+
+def get_rsgislib_datatype_from_img(input_img: str) -> int:
+    """
+    Return the ``rsgispy.TYPE_*`` datatype constant for band 1 of ``input_img``.
+
+    :param input_img: Path to the input image file.
+    :return: ``rsgispy.TYPE_*`` integer constant.
+    """
+    _ensure_img_exists(input_img)
+    with rasterio.open(input_img, "r") as src:
+        dtype_key = str(src.dtypes[0]).lower()
+    return rsgispy.get_rsgis_datatype(dtype_key)
+
+
+def get_gdal_datatype_name_from_img(input_img: str) -> str:
+    """
+    Return the GDAL datatype name (e.g., ``'Float32'``, ``'Byte'``) for band 1
+    of ``input_img``.
+
+    :param input_img: Path to the input image file.
+    :return: GDAL datatype name string.
+    """
+    _ensure_img_exists(input_img)
+    with rasterio.open(input_img, "r") as src:
+        dtype_key = str(src.dtypes[0]).lower()
+    if dtype_key not in _RIO_DTYPE_TO_GDAL_NAME:
+        raise rsgispy.RSGISPyException(
+            f"Unsupported raster data type '{dtype_key}' in '{input_img}'."
+        )
+    return _RIO_DTYPE_TO_GDAL_NAME[dtype_key]
+
+
+def get_gdal_format_from_ext(input_img: str) -> str:
+    """
+    Infer the GDAL driver short name from the file extension of ``input_img``.
+
+    :param input_img: Input image file path.
+    :return: GDAL driver format string (e.g., ``'KEA'``, ``'GTiff'``).
+    """
+    ext = os.path.splitext(input_img)[-1].lower()
+    if ext not in _EXT_TO_GDAL_FORMAT:
+        raise rsgispy.RSGISPyException(
+            f"Image file extension '{ext}' is not recognised."
+        )
+    return _EXT_TO_GDAL_FORMAT[ext]
+
+
+def get_file_img_extension(gdalformat: str) -> str:
+    """
+    Return the standard file extension (without leading dot) for ``gdalformat``.
+
+    :param gdalformat: GDAL format string (e.g., ``'KEA'``, ``'GTIFF'``).
+    :return: File extension string (e.g., ``'kea'``, ``'tif'``).
+    """
+    fmt_key = gdalformat.lower().strip()
+    if fmt_key not in _GDAL_FORMAT_TO_EXT:
+        raise rsgispy.RSGISPyException(
+            f"The extension for the gdalformat '{gdalformat}' is unknown."
+        )
+    return _GDAL_FORMAT_TO_EXT[fmt_key]
+
+
+def _collect_layer_files(input_img: str) -> List[str]:
+    """Collect all dataset and common GDAL sidecar files for ``input_img``."""
+    _ensure_img_exists(input_img)
+    with rasterio.open(input_img, "r") as src:
+        files = list(src.files)
+    seen = set(files)
+    for sidecar in (f"{input_img}.ovr", f"{input_img}.aux.xml"):
+        if os.path.exists(sidecar) and sidecar not in seen:
+            files.append(sidecar)
+            seen.add(sidecar)
+    return files
+
+
+def rename_gdal_layer(input_img: str, output_img: str) -> None:
+    """
+    Rename ``input_img`` and its associated rasterio/GDAL sidecar files to
+    ``output_img``.
+
+    :param input_img: Current path of the raster layer.
+    :param output_img: Target path of the renamed raster layer.
+    """
+    files = _collect_layer_files(input_img)
+    in_stem = os.path.splitext(input_img)[0]
+    out_stem = os.path.splitext(output_img)[0]
+    for fpath in files:
+        if not os.path.exists(fpath):
+            continue
+        if fpath == input_img:
+            target = output_img
+        elif fpath.startswith(f"{input_img}."):
+            target = f"{output_img}{fpath[len(input_img):]}"
+        elif os.path.splitext(fpath)[0] == in_stem:
+            target = f"{out_stem}{os.path.splitext(fpath)[1]}"
+        else:
+            continue
+        shutil.move(fpath, target)
+
+
+def delete_gdal_layer(input_img: str) -> None:
+    """
+    Delete ``input_img`` and any associated rasterio/GDAL sidecar files.
+
+    :param input_img: Path to the raster layer to delete.
+    """
+    files = _collect_layer_files(input_img)
+    for fpath in files:
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+
+def set_img_band_metadata(
+    input_img: str,
+    img_band: int,
+    meta_field_name: str,
+    meta_field_value: str,
+) -> None:
+    """
+    Set a metadata item on band ``img_band`` of ``input_img``.
+
+    :param input_img: Path to the input image file.
+    :param img_band: 1-based band index.
+    :param meta_field_name: Metadata field name.
+    :param meta_field_value: Metadata field value.
+    """
+    _ensure_img_exists(input_img)
+    with rasterio.open(input_img, "r+") as dst:
+        _validate_band_index(img_band, dst.count, input_img)
+        dst.update_tags(img_band, **{meta_field_name: f"{meta_field_value}"})
+
+
+def get_img_band_metadata(
+    input_img: str, img_band: int, meta_field_name: str
+) -> Optional[str]:
+    """
+    Retrieve a metadata item value for band ``img_band`` of ``input_img``.
+
+    :param input_img: Path to the input image file.
+    :param img_band: 1-based band index.
+    :param meta_field_name: Metadata field name.
+    :return: Metadata value string, or ``None`` if not set.
+    """
+    _ensure_img_exists(input_img)
+    with rasterio.open(input_img, "r") as src:
+        _validate_band_index(img_band, src.count, input_img)
+        return src.tags(img_band).get(meta_field_name)
+
+
+def get_img_band_metadata_fields(input_img: str, img_band: int) -> List[str]:
+    """
+    Return the list of metadata field names on band ``img_band`` of ``input_img``.
+
+    :param input_img: Path to the input image file.
+    :param img_band: 1-based band index.
+    :return: List of metadata field names.
+    """
+    return list(get_img_band_metadata_fields_dict(input_img, img_band).keys())
+
+
+def get_img_band_metadata_fields_dict(
+    input_img: str, img_band: int
+) -> Dict[str, str]:
+    """
+    Return the dictionary of metadata field names and values on band ``img_band``
+    of ``input_img``.
+
+    :param input_img: Path to the input image file.
+    :param img_band: 1-based band index.
+    :return: Dictionary of metadata keys and values.
+    """
+    _ensure_img_exists(input_img)
+    with rasterio.open(input_img, "r") as src:
+        _validate_band_index(img_band, src.count, input_img)
+        return dict(src.tags(img_band))
+
+
+def set_img_metadata(
+    input_img: str, meta_field_name: str, meta_field_value: str
+) -> None:
+    """
+    Set a dataset-level metadata item on ``input_img``.
+
+    :param input_img: Path to the input image file.
+    :param meta_field_name: Metadata field name.
+    :param meta_field_value: Metadata field value.
+    """
+    _ensure_img_exists(input_img)
+    with rasterio.open(input_img, "r+") as dst:
+        dst.update_tags(**{meta_field_name: f"{meta_field_value}"})
+
+
+def get_img_metadata(input_img: str, meta_field_name: str) -> Optional[str]:
+    """
+    Retrieve a dataset-level metadata item value from ``input_img``.
+
+    :param input_img: Path to the input image file.
+    :param meta_field_name: Metadata field name.
+    :return: Metadata value string, or ``None`` if not set.
+    """
+    _ensure_img_exists(input_img)
+    with rasterio.open(input_img, "r") as src:
+        return src.tags().get(meta_field_name)
+
+
+def get_img_metadata_fields(input_img: str) -> List[str]:
+    """
+    Return the list of dataset-level metadata field names on ``input_img``.
+
+    :param input_img: Path to the input image file.
+    :return: List of metadata field names.
+    """
+    return list(get_img_metadata_fields_dict(input_img).keys())
+
+
+def get_img_metadata_fields_dict(input_img: str) -> Dict[str, str]:
+    """
+    Return the dictionary of dataset-level metadata field names and values on
+    ``input_img``.
+
+    :param input_img: Path to the input image file.
+    :return: Dictionary of metadata keys and values.
+    """
+    _ensure_img_exists(input_img)
+    with rasterio.open(input_img, "r") as src:
+        return dict(src.tags())

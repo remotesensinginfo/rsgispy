@@ -3,22 +3,35 @@ The imageutils.warp module provides raster resampling and reprojection
 functions using ``rasterio.warp.reproject``.
 """
 
+from contextlib import ExitStack
 import os
-from typing import Any, Mapping, Optional, Sequence, Union
+import shlex
+from typing import Any, Dict, Mapping, Optional, Sequence, Union
 
+import numpy as np
 import rasterio
 from rasterio.enums import Resampling
 from rasterio.warp import reproject as rio_reproject
 from rasterio.warp import transform as rio_transform_coords
 
 import rsgispy
-from rsgispy.imageutils._helpers import parse_epsg_crs
+from rsgispy.imageprocess import (
+    cast_result_block,
+    create_output_from_dataset,
+    ensure_file_exists,
+    iter_dataset_windows,
+)
+from rsgispy.imageutils._helpers import (
+    normalise_creation_options,
+    parse_epsg_crs,
+)
 from rsgispy.imageutils.blank import create_blank_img, create_copy_img
 
 __all__ = [
     "resample_img_to_match",
     "reproject_image",
     "gdal_warp",
+    "gdal_translate",
 ]
 
 
@@ -262,7 +275,7 @@ def gdal_warp(
     output_img: str,
     out_epsg: int,
     interp_method: Union[int, Resampling] = rsgispy.INTERP_NEAREST_NEIGHBOUR,
-    gdalformat: str = "KEA",
+    gdalformat: str = "GTIFF",
     use_multi_threaded: bool = True,
     options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -275,7 +288,7 @@ def gdal_warp(
     :param out_epsg: Target EPSG integer code.
     :param interp_method: Interpolation method ``rsgispy.INTERP_*`` or
                           ``rasterio.enums.Resampling`` (Default = INTERP_NEAREST_NEIGHBOUR).
-    :param gdalformat: Output GDAL format name (Default = ``'KEA'``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param use_multi_threaded: Use multiple threads when warping (Default = ``True``).
     :param options: Optional GDAL creation options (dict or sequence of ``'KEY=VALUE'``).
     """
@@ -301,3 +314,107 @@ def gdal_warp(
         multicore=use_multi_threaded,
         gdal_options=options,
     )
+
+
+def _parse_translate_options(
+    gdalformat: str,
+    options: Union[str, Sequence[str], Mapping[str, Any], None],
+) -> Dict[str, Any]:
+    """Parse ``options`` (CLI string, list, or dict) into rasterio creation options."""
+    if gdalformat.upper().strip() == "GTIFF" and (
+        options is None or options == ""
+    ):
+        return {
+            "TILED": "YES",
+            "INTERLEAVE": "PIXEL",
+            "BLOCKXSIZE": "256",
+            "BLOCKYSIZE": "256",
+            "COMPRESS": "LZW",
+            "BIGTIFF": "YES",
+            "COPY_SRC_OVERVIEWS": "YES",
+        }
+    if not options:
+        return {}
+    if isinstance(options, str):
+        tokens = shlex.split(options)
+        pairs = [tok for tok in tokens if "=" in tok]
+        return normalise_creation_options(pairs) or {}
+    return normalise_creation_options(options) or {}
+
+
+def gdal_translate(
+    input_img: str,
+    output_img: str,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    options: Union[str, Sequence[str], Mapping[str, Any]] = "",
+) -> None:
+    """
+    Convert ``input_img`` to another GDAL/rasterio format and/or data type.
+    When ``gdalformat='GTIFF'`` and ``options=''``, tiled LZW BigTIFF creation
+    options are applied automatically.
+
+    :param input_img: Path to the input raster image file.
+    :param output_img: Path to the output raster image file.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image.
+                     If ``None``, the input image data type is used.
+    :param options: Creation options as a string (e.g., ``'-co TILED=YES'``),
+                    sequence of ``'KEY=VALUE'``, or dict.
+    """
+    # pylint: disable=too-many-locals,too-many-branches
+    ensure_file_exists(input_img)
+    creation_opts = _parse_translate_options(gdalformat, options)
+    copy_overviews = (
+        str(creation_opts.pop("COPY_SRC_OVERVIEWS", "NO")).upper() == "YES"
+    )
+
+    with ExitStack() as stack:
+        src = stack.enter_context(rasterio.open(input_img, "r"))
+        out_dtype = (
+            rsgispy.get_rsgis_datatype(src.dtypes[0])
+            if datatype is None
+            else datatype
+        )
+        out_rio_dtype = rsgispy.get_rasterio_datatype(out_dtype)
+        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(out_dtype))
+
+        dst = create_output_from_dataset(
+            stack=stack,
+            src=src,
+            output_img=output_img,
+            gdalformat=gdalformat,
+            out_rio_dtype=out_rio_dtype,
+            creation_opts=creation_opts if creation_opts else None,
+        )
+        if src.nodata is not None:
+            dst.nodata = src.nodata
+        tags = src.tags()
+        if tags:
+            dst.update_tags(**tags)
+        for bidx in range(1, src.count + 1):
+            desc = src.descriptions[bidx - 1]
+            if desc:
+                dst.set_band_description(bidx, desc)
+            btags = src.tags(bidx)
+            if btags:
+                dst.update_tags(bidx, **btags)
+        if out_rio_dtype in ("uint8", "uint16"):
+            try:
+                cmap = src.colormap(1)
+                if cmap:
+                    dst.write_colormap(1, cmap)
+            except ValueError:
+                pass
+
+        for win in iter_dataset_windows(src.height, src.width):
+            data = src.read(window=win)
+            dst.write(
+                cast_result_block(
+                    data, int(win.height), int(win.width), out_np_dtype
+                ),
+                window=win,
+            )
+
+        if copy_overviews and src.overviews(1):
+            dst.build_overviews(src.overviews(1), Resampling.nearest)
