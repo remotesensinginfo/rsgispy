@@ -2,6 +2,9 @@
 The droneutils module provides utilities for organising drone imagery,
 building flightline point and line vector layers from EXIF or external GPS
 metadata, and writing external GPS/orientation tags into image EXIF headers.
+
+Functions requiring ``exiftool`` are only defined and exported when
+``exiftool`` is installed.
 """
 
 import datetime
@@ -18,13 +21,26 @@ from PIL.ExifTags import TAGS
 
 import rsgispy.tools.filetools
 
+try:
+    import exiftool  # pylint: disable=import-error
+
+    HAVE_EXIFTOOL = True
+except ImportError:
+    HAVE_EXIFTOOL = False
+
 __all__ = [
     "ImageTimeCluster",
     "split_photos_by_time",
-    "create_flightline_vec",
-    "create_flightline_extern_gps_vec",
-    "define_extern_gps_in_imgs",
 ]
+
+if HAVE_EXIFTOOL:
+    __all__.extend(
+        [
+            "create_flightline_vec",
+            "create_flightline_extern_gps_vec",
+            "define_extern_gps_in_imgs",
+        ]
+    )
 
 
 class ImageTimeCluster:
@@ -227,422 +243,413 @@ def split_photos_by_time(
             shutil.copy(img, out_dir_path)
 
 
-def _first_valid(exif: Dict[str, Any], keys: Sequence[str], default: Any = None) -> Any:
-    """Return the first non-None / non-empty value for a sequence of EXIF keys."""
-    for key in keys:
-        val = exif.get(key)
-        if val not in (None, ""):
-            return val
-    return default
+if HAVE_EXIFTOOL:
 
+    def _first_valid(
+        exif: Dict[str, Any], keys: Sequence[str], default: Any = None
+    ) -> Any:
+        """Return the first non-None / non-empty value for a sequence of EXIF keys."""
+        for key in keys:
+            val = exif.get(key)
+            if val not in (None, ""):
+                return val
+        return default
 
-def _init_img_info_table(include_relative_alt: bool) -> Dict[str, List[Any]]:
-    """Create an empty metadata column dictionary for flightline point export."""
-    img_info: Dict[str, List[Any]] = {
-        "lat": [],
-        "lon": [],
-    }
-    if include_relative_alt:
-        img_info["relative_altitude"] = []
-    img_info.update(
-        {
-            "absolute_altitude": [],
-            "gimbal_roll_degree": [],
-            "gimbal_pitch_degree": [],
-            "gimbal_yaw_degree": [],
-            "flight_pitch_degree": [],
-            "flight_roll_degree": [],
-            "flight_yaw_degree": [],
-            "focal_length": [],
-            "focal_length35mm": [],
-            "image_width": [],
-            "image_height": [],
-            "max_aperture_value": [],
-            "datetime_original": [],
-            "sensor_model_data": [],
-            "sensor_index": [],
-            "image_filename": [],
+    def _init_img_info_table(include_relative_alt: bool) -> Dict[str, List[Any]]:
+        """Create an empty metadata column dictionary for flightline point export."""
+        img_info: Dict[str, List[Any]] = {
+            "lat": [],
+            "lon": [],
         }
-    )
-    return img_info
+        if include_relative_alt:
+            img_info["relative_altitude"] = []
+        img_info.update(
+            {
+                "absolute_altitude": [],
+                "gimbal_roll_degree": [],
+                "gimbal_pitch_degree": [],
+                "gimbal_yaw_degree": [],
+                "flight_pitch_degree": [],
+                "flight_roll_degree": [],
+                "flight_yaw_degree": [],
+                "focal_length": [],
+                "focal_length35mm": [],
+                "image_width": [],
+                "image_height": [],
+                "max_aperture_value": [],
+                "datetime_original": [],
+                "sensor_model_data": [],
+                "sensor_index": [],
+                "image_filename": [],
+            }
+        )
+        return img_info
 
+    def _append_common_exif_fields(
+        img_info: Dict[str, List[Any]],
+        img_path: str,
+        img_exif: Dict[str, Any],
+        gimbal_default: Optional[float] = None,
+    ) -> None:
+        """Populate orientation, lens, and sensor EXIF fields into ``img_info``."""
+        img_info["image_filename"].append(os.path.split(img_path)[1])
 
-def _append_common_exif_fields(
-    img_info: Dict[str, List[Any]],
-    img_path: str,
-    img_exif: Dict[str, Any],
-    gimbal_default: Optional[float] = None,
-) -> None:
-    """Populate orientation, lens, and sensor EXIF fields into ``img_info``."""
-    img_info["image_filename"].append(os.path.split(img_path)[1])
-
-    img_info["gimbal_roll_degree"].append(
-        float(
-            _first_valid(
-                img_exif,
-                ("XMP:GimbalRollDegree", "MakerNotes:CameraRoll", "XMP:Roll"),
-                gimbal_default,
+        img_info["gimbal_roll_degree"].append(
+            float(
+                _first_valid(
+                    img_exif,
+                    ("XMP:GimbalRollDegree", "MakerNotes:CameraRoll", "XMP:Roll"),
+                    gimbal_default,
+                )
             )
         )
-    )
-    img_info["gimbal_pitch_degree"].append(
-        float(
-            _first_valid(
-                img_exif,
-                ("XMP:GimbalPitchDegree", "MakerNotes:CameraPitch", "XMP:Pitch"),
-                gimbal_default,
+        img_info["gimbal_pitch_degree"].append(
+            float(
+                _first_valid(
+                    img_exif,
+                    ("XMP:GimbalPitchDegree", "MakerNotes:CameraPitch", "XMP:Pitch"),
+                    gimbal_default,
+                )
             )
         )
-    )
-    img_info["gimbal_yaw_degree"].append(
-        float(
-            _first_valid(
-                img_exif,
-                ("XMP:GimbalYawDegree", "MakerNotes:CameraYaw", "XMP:Yaw"),
-                gimbal_default,
-            )
-        )
-    )
-
-    focal_len = _first_valid(img_exif, ("EXIF:FocalLength",))
-    focal_35 = _first_valid(img_exif, ("EXIF:FocalLengthIn35mmFormat",))
-    img_w = _first_valid(img_exif, ("EXIF:ImageWidth", "EXIF:ExifImageWidth"))
-    img_h = _first_valid(img_exif, ("EXIF:ImageHeight", "EXIF:ExifImageHeight"))
-
-    img_info["focal_length"].append(float(focal_len))
-    img_info["focal_length35mm"].append(float(focal_35))
-    img_info["image_width"].append(int(img_w))
-    img_info["image_height"].append(int(img_h))
-    img_info["max_aperture_value"].append(img_exif.get("EXIF:MaxApertureValue"))
-    img_info["datetime_original"].append(img_exif.get("EXIF:DateTimeOriginal"))
-    img_info["sensor_model_data"].append(img_exif.get("EXIF:Model"))
-    img_info["sensor_index"].append(
-        str(_first_valid(img_exif, ("XMP:RigCameraIndex", "XMP:SensorIndex")))
-    )
-
-
-def _write_vector_layer(
-    gdf: geopandas.GeoDataFrame,
-    out_file: str,
-    out_lyr: str,
-    out_format: str,
-) -> None:
-    """Write a GeoDataFrame to disk, respecting GPKG layer naming."""
-    if out_format == "GPKG":
-        gdf.to_file(out_file, layer=out_lyr, driver=out_format)
-    else:
-        gdf.to_file(out_file, driver=out_format)
-
-
-def _write_flightline_outputs(
-    img_info: Dict[str, List[Any]],
-    pts_vec_file: str,
-    pts_vec_lyr: str,
-    line_vec_file: str,
-    line_vec_lyr: str,
-    out_format: str,
-) -> None:
-    """Create and write both the photo point layer and flightline segment layer."""
-    imgs_df = pandas.DataFrame(img_info)
-    imgs_gdf = geopandas.GeoDataFrame(
-        imgs_df,
-        geometry=geopandas.points_from_xy(imgs_df.lon, imgs_df.lat),
-        crs="EPSG:4326",
-    )
-
-    if len(imgs_gdf) == 0:
-        return
-
-    _write_vector_layer(imgs_gdf, pts_vec_file, pts_vec_lyr, out_format)
-
-    flightline_ids: List[int] = []
-    flightline_geoms: List[shapely.geometry.LineString] = []
-    coords = list(zip(imgs_df.lon, imgs_df.lat))
-    for seg_id, (start_pt, end_pt) in enumerate(zip(coords[:-1], coords[1:]), start=1):
-        flightline_ids.append(seg_id)
-        flightline_geoms.append(
-            shapely.geometry.LineString(
-                [shapely.geometry.Point(start_pt), shapely.geometry.Point(end_pt)]
+        img_info["gimbal_yaw_degree"].append(
+            float(
+                _first_valid(
+                    img_exif,
+                    ("XMP:GimbalYawDegree", "MakerNotes:CameraYaw", "XMP:Yaw"),
+                    gimbal_default,
+                )
             )
         )
 
-    if flightline_geoms:
-        flightline_gdf = geopandas.GeoDataFrame(
-            data={"ID": flightline_ids, "geometry": flightline_geoms},
-            geometry="geometry",
+        focal_len = _first_valid(img_exif, ("EXIF:FocalLength",))
+        focal_35 = _first_valid(img_exif, ("EXIF:FocalLengthIn35mmFormat",))
+        img_w = _first_valid(img_exif, ("EXIF:ImageWidth", "EXIF:ExifImageWidth"))
+        img_h = _first_valid(img_exif, ("EXIF:ImageHeight", "EXIF:ExifImageHeight"))
+
+        img_info["focal_length"].append(float(focal_len))
+        img_info["focal_length35mm"].append(float(focal_35))
+        img_info["image_width"].append(int(img_w))
+        img_info["image_height"].append(int(img_h))
+        img_info["max_aperture_value"].append(img_exif.get("EXIF:MaxApertureValue"))
+        img_info["datetime_original"].append(img_exif.get("EXIF:DateTimeOriginal"))
+        img_info["sensor_model_data"].append(img_exif.get("EXIF:Model"))
+        img_info["sensor_index"].append(
+            str(_first_valid(img_exif, ("XMP:RigCameraIndex", "XMP:SensorIndex")))
+        )
+
+    def _write_vector_layer(
+        gdf: geopandas.GeoDataFrame,
+        out_file: str,
+        out_lyr: str,
+        out_format: str,
+    ) -> None:
+        """Write a GeoDataFrame to disk, respecting GPKG layer naming."""
+        if out_format == "GPKG":
+            gdf.to_file(out_file, layer=out_lyr, driver=out_format)
+        else:
+            gdf.to_file(out_file, driver=out_format)
+
+    def _write_flightline_outputs(
+        img_info: Dict[str, List[Any]],
+        pts_vec_file: str,
+        pts_vec_lyr: str,
+        line_vec_file: str,
+        line_vec_lyr: str,
+        out_format: str,
+    ) -> None:
+        """Create and write both the photo point layer and flightline segment layer."""
+        imgs_df = pandas.DataFrame(img_info)
+        imgs_gdf = geopandas.GeoDataFrame(
+            imgs_df,
+            geometry=geopandas.points_from_xy(imgs_df.lon, imgs_df.lat),
             crs="EPSG:4326",
         )
-        _write_vector_layer(flightline_gdf, line_vec_file, line_vec_lyr, out_format)
 
+        if len(imgs_gdf) == 0:
+            return
 
-def _parse_exif_datetime(date_str: str) -> datetime.datetime:
-    return datetime.datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S")
+        _write_vector_layer(imgs_gdf, pts_vec_file, pts_vec_lyr, out_format)
 
-
-# pylint: disable=too-many-arguments,too-many-positional-arguments
-def create_flightline_vec(
-    input_imgs: List[str],
-    pts_vec_file: str,
-    pts_vec_lyr: str,
-    line_vec_file: str,
-    line_vec_lyr: str,
-    out_format: str = "GPKG",
-) -> None:
-    """
-    Create point and flightline vector layers from drone images containing GPS EXIF.
-
-    If the output vector format supports multiple layers (e.g., ``"GPKG"``),
-    the same file can be provided for ``pts_vec_file`` and ``line_vec_file``.
-
-    :param input_imgs: List of input image paths.
-    :param pts_vec_file: Output vector file for the photo points.
-    :param pts_vec_lyr: Output vector layer name for the photo points.
-    :param line_vec_file: Output vector file for the flightline.
-    :param line_vec_lyr: Output vector layer name for the flightline.
-    :param out_format: Output vector format driver (default: ``"GPKG"``).
-    """
-    # pylint: disable=import-outside-toplevel
-    import exiftool
-
-    sorted_imgs = rsgispy.tools.filetools.sort_file_by_datetime(input_imgs)
-    print(f"There are {len(sorted_imgs)} input images")
-
-    exif_entries: List[Tuple[str, Dict[str, Any]]] = []
-    with exiftool.ExifToolHelper() as et:
-        for img in sorted_imgs:
-            exif_entries.append((img, et.get_metadata(img)[0]))
-    exif_entries.sort(
-        key=lambda item: _parse_exif_datetime(item[1]["EXIF:DateTimeOriginal"])
-    )
-
-    img_info = _init_img_info_table(include_relative_alt=True)
-    for img, img_exif in exif_entries:
-        img_info["lat"].append(
-            float(_first_valid(img_exif, ("Composite:GPSLatitude", "EXIF:GPSLatitude")))
-        )
-        img_info["lon"].append(
-            float(
-                _first_valid(img_exif, ("Composite:GPSLongitude", "EXIF:GPSLongitude"))
-            )
-        )
-        img_info["relative_altitude"].append(
-            float(
-                _first_valid(img_exif, ("XMP:RelativeAltitude", "Composite:GPSAltitude"))
-            )
-        )
-        img_info["absolute_altitude"].append(
-            float(
-                _first_valid(img_exif, ("XMP:AbsoluteAltitude", "Composite:GPSAltitude"))
-            )
-        )
-
-        _append_common_exif_fields(img_info, img, img_exif)
-
-        img_info["flight_pitch_degree"].append(
-            float(
-                _first_valid(
-                    img_exif,
-                    ("XMP:FlightPitchDegree", "MakerNotes:Pitch"),
-                    999,
+        flightline_ids: List[int] = []
+        flightline_geoms: List[shapely.geometry.LineString] = []
+        coords = list(zip(imgs_df.lon, imgs_df.lat))
+        for seg_id, (start_pt, end_pt) in enumerate(
+            zip(coords[:-1], coords[1:]), start=1
+        ):
+            flightline_ids.append(seg_id)
+            flightline_geoms.append(
+                shapely.geometry.LineString(
+                    [shapely.geometry.Point(start_pt), shapely.geometry.Point(end_pt)]
                 )
             )
+
+        if flightline_geoms:
+            flightline_gdf = geopandas.GeoDataFrame(
+                data={"ID": flightline_ids, "geometry": flightline_geoms},
+                geometry="geometry",
+                crs="EPSG:4326",
+            )
+            _write_vector_layer(
+                flightline_gdf, line_vec_file, line_vec_lyr, out_format
+            )
+
+    def _parse_exif_datetime(date_str: str) -> datetime.datetime:
+        return datetime.datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S")
+
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def create_flightline_vec(
+        input_imgs: List[str],
+        pts_vec_file: str,
+        pts_vec_lyr: str,
+        line_vec_file: str,
+        line_vec_lyr: str,
+        out_format: str = "GPKG",
+    ) -> None:
+        """
+        Create point and flightline vector layers from drone images containing GPS EXIF.
+
+        If the output vector format supports multiple layers (e.g., ``"GPKG"``),
+        the same file can be provided for ``pts_vec_file`` and ``line_vec_file``.
+
+        :param input_imgs: List of input image paths.
+        :param pts_vec_file: Output vector file for the photo points.
+        :param pts_vec_lyr: Output vector layer name for the photo points.
+        :param line_vec_file: Output vector file for the flightline.
+        :param line_vec_lyr: Output vector layer name for the flightline.
+        :param out_format: Output vector format driver (default: ``"GPKG"``).
+        """
+        sorted_imgs = rsgispy.tools.filetools.sort_file_by_datetime(input_imgs)
+        print(f"There are {len(sorted_imgs)} input images")
+
+        exif_entries: List[Tuple[str, Dict[str, Any]]] = []
+        with exiftool.ExifToolHelper() as et:
+            for img in sorted_imgs:
+                exif_entries.append((img, et.get_metadata(img)[0]))
+        exif_entries.sort(
+            key=lambda item: _parse_exif_datetime(item[1]["EXIF:DateTimeOriginal"])
         )
-        img_info["flight_roll_degree"].append(
-            float(
-                _first_valid(
-                    img_exif,
-                    ("XMP:FlightRollDegree", "MakerNotes:Roll"),
-                    999,
+
+        img_info = _init_img_info_table(include_relative_alt=True)
+        for img, img_exif in exif_entries:
+            img_info["lat"].append(
+                float(_first_valid(img_exif, ("Composite:GPSLatitude", "EXIF:GPSLatitude")))
+            )
+            img_info["lon"].append(
+                float(
+                    _first_valid(img_exif, ("Composite:GPSLongitude", "EXIF:GPSLongitude"))
                 )
             )
-        )
-        img_info["flight_yaw_degree"].append(
-            float(
-                _first_valid(
-                    img_exif,
-                    ("XMP:FlightYawDegree", "MakerNotes:Yaw"),
-                    999,
+            img_info["relative_altitude"].append(
+                float(
+                    _first_valid(img_exif, ("XMP:RelativeAltitude", "Composite:GPSAltitude"))
                 )
             )
+            img_info["absolute_altitude"].append(
+                float(
+                    _first_valid(img_exif, ("XMP:AbsoluteAltitude", "Composite:GPSAltitude"))
+                )
+            )
+
+            _append_common_exif_fields(img_info, img, img_exif)
+
+            img_info["flight_pitch_degree"].append(
+                float(
+                    _first_valid(
+                        img_exif,
+                        ("XMP:FlightPitchDegree", "MakerNotes:Pitch"),
+                        999,
+                    )
+                )
+            )
+            img_info["flight_roll_degree"].append(
+                float(
+                    _first_valid(
+                        img_exif,
+                        ("XMP:FlightRollDegree", "MakerNotes:Roll"),
+                        999,
+                    )
+                )
+            )
+            img_info["flight_yaw_degree"].append(
+                float(
+                    _first_valid(
+                        img_exif,
+                        ("XMP:FlightYawDegree", "MakerNotes:Yaw"),
+                        999,
+                    )
+                )
+            )
+
+        _write_flightline_outputs(
+            img_info,
+            pts_vec_file,
+            pts_vec_lyr,
+            line_vec_file,
+            line_vec_lyr,
+            out_format,
         )
 
-    _write_flightline_outputs(
-        img_info,
-        pts_vec_file,
-        pts_vec_lyr,
-        line_vec_file,
-        line_vec_lyr,
-        out_format,
-    )
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def create_flightline_extern_gps_vec(
+        gps_data_df: pandas.DataFrame,
+        input_imgs_dir: str,
+        pts_vec_file: str,
+        pts_vec_lyr: str,
+        line_vec_file: str,
+        line_vec_lyr: str,
+        out_format: str = "GPKG",
+    ) -> None:
+        """
+        Create point and flightline vector layers from external GPS data and drone images.
 
+        The input pandas DataFrame must have columns:
+        ``image``, ``lat``, ``lon``, ``alt``, ``roll``, ``pitch``, ``yaw``.
 
-# pylint: disable=too-many-arguments,too-many-positional-arguments
-def create_flightline_extern_gps_vec(
-    gps_data_df: pandas.DataFrame,
-    input_imgs_dir: str,
-    pts_vec_file: str,
-    pts_vec_lyr: str,
-    line_vec_file: str,
-    line_vec_lyr: str,
-    out_format: str = "GPKG",
-) -> None:
-    """
-    Create point and flightline vector layers from external GPS data and drone images.
+        :param gps_data_df: DataFrame containing external GPS and attitude records.
+        :param input_imgs_dir: Directory containing the input image files.
+        :param pts_vec_file: Output vector file for the photo points.
+        :param pts_vec_lyr: Output vector layer name for the photo points.
+        :param line_vec_file: Output vector file for the flightline.
+        :param line_vec_lyr: Output vector layer name for the flightline.
+        :param out_format: Output vector format driver (default: ``"GPKG"``).
+        """
+        exif_entries: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = []
+        with exiftool.ExifToolHelper() as et:
+            for _, row in gps_data_df.iterrows():
+                input_img = os.path.join(input_imgs_dir, row["image"])
+                if os.path.exists(input_img):
+                    gps_data = {
+                        "lat": row["lat"],
+                        "lon": row["lon"],
+                        "alt": row["alt"],
+                        "roll": row["roll"],
+                        "pitch": row["pitch"],
+                        "yaw": row["yaw"],
+                    }
+                    exif_entries.append((input_img, gps_data, et.get_metadata(input_img)[0]))
 
-    The input pandas DataFrame must have columns:
-    ``image``, ``lat``, ``lon``, ``alt``, ``roll``, ``pitch``, ``yaw``.
+        exif_entries.sort(
+            key=lambda item: _parse_exif_datetime(item[2]["EXIF:DateTimeOriginal"])
+        )
+        print(f"There were {len(exif_entries)} images found matching the GPS data.")
 
-    :param gps_data_df: DataFrame containing external GPS and attitude records.
-    :param input_imgs_dir: Directory containing the input image files.
-    :param pts_vec_file: Output vector file for the photo points.
-    :param pts_vec_lyr: Output vector layer name for the photo points.
-    :param line_vec_file: Output vector file for the flightline.
-    :param line_vec_lyr: Output vector layer name for the flightline.
-    :param out_format: Output vector format driver (default: ``"GPKG"``).
-    """
-    # pylint: disable=import-outside-toplevel
-    import exiftool
+        img_info = _init_img_info_table(include_relative_alt=False)
+        for img, img_gps_data, img_exif in exif_entries:
+            img_info["lat"].append(float(img_gps_data["lat"]))
+            img_info["lon"].append(float(img_gps_data["lon"]))
+            img_info["absolute_altitude"].append(float(img_gps_data["alt"]))
 
-    exif_entries: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = []
-    with exiftool.ExifToolHelper() as et:
-        for _, row in gps_data_df.iterrows():
-            input_img = os.path.join(input_imgs_dir, row["image"])
-            if os.path.exists(input_img):
-                gps_data = {
-                    "lat": row["lat"],
-                    "lon": row["lon"],
-                    "alt": row["alt"],
-                    "roll": row["roll"],
-                    "pitch": row["pitch"],
-                    "yaw": row["yaw"],
+            _append_common_exif_fields(img_info, img, img_exif, gimbal_default=0.0)
+
+            img_info["flight_pitch_degree"].append(
+                float(
+                    _first_valid(
+                        img_exif,
+                        ("XMP:FlightPitchDegree", "MakerNotes:Pitch"),
+                        img_gps_data["pitch"],
+                    )
+                )
+            )
+            img_info["flight_roll_degree"].append(
+                float(
+                    _first_valid(
+                        img_exif,
+                        ("XMP:FlightRollDegree", "MakerNotes:Roll"),
+                        img_gps_data["roll"],
+                    )
+                )
+            )
+            img_info["flight_yaw_degree"].append(
+                float(
+                    _first_valid(
+                        img_exif,
+                        ("XMP:FlightYawDegree", "MakerNotes:Yaw"),
+                        img_gps_data["yaw"],
+                    )
+                )
+            )
+
+        _write_flightline_outputs(
+            img_info,
+            pts_vec_file,
+            pts_vec_lyr,
+            line_vec_file,
+            line_vec_lyr,
+            out_format,
+        )
+
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def define_extern_gps_in_imgs(
+        gps_data_df: pandas.DataFrame,
+        input_imgs_dir: str,
+        flying_height: float,
+        gimbal_roll: float,
+        gimbal_pitch: float,
+        gimbal_yaw: float,
+        overwrite: bool = False,
+    ) -> None:
+        """
+        Write external GPS and attitude metadata into image EXIF/XMP tags.
+
+        The input pandas DataFrame must have columns:
+        ``image``, ``lat``, ``lon``, ``alt``, ``roll``, ``pitch``, ``yaw``.
+
+        :param gps_data_df: DataFrame containing external GPS and attitude records.
+        :param input_imgs_dir: Directory containing the input image files.
+        :param flying_height: Flying height (metres) written to ``XMP:RelativeAltitude``.
+        :param gimbal_roll: Gimbal roll angle in degrees.
+        :param gimbal_pitch: Gimbal pitch angle in degrees.
+        :param gimbal_yaw: Gimbal yaw angle in degrees.
+        :param overwrite: If ``True``, overwrite the original image files in place.
+        """
+        n_imgs = 0
+        with exiftool.ExifToolHelper() as et:
+            for _, row in tqdm.tqdm(gps_data_df.iterrows()):
+                input_img = os.path.join(input_imgs_dir, row["image"])
+                if not os.path.exists(input_img):
+                    continue
+
+                lat_val = float(row["lat"])
+                lon_val = float(row["lon"])
+                alt_val = float(row["alt"])
+                pitch_val = float(row["pitch"])
+                roll_val = float(row["roll"])
+                yaw_val = float(row["yaw"])
+
+                lat_ref, lat_ref_comp = ("S", "South") if lat_val < 0 else ("N", "North")
+                lon_ref, lon_ref_comp = ("W", "West") if lon_val < 0 else ("E", "East")
+
+                out_tags: Dict[str, Any] = {
+                    "Composite:GPSLatitude": lat_val,
+                    "EXIF:GPSLatitude": lat_val,
+                    "EXIF:GPSLatitudeRef": lat_ref,
+                    "Composite:GPSLatitudeRef": lat_ref_comp,
+                    "Composite:GPSLongitude": lon_val,
+                    "EXIF:GPSLongitude": lon_val,
+                    "EXIF:GPSLongitudeRef": lon_ref,
+                    "Composite:GPSLongitudeRef": lon_ref_comp,
+                    "XMP:AbsoluteAltitude": alt_val,
+                    "Composite:GPSAltitude": alt_val,
+                    "XMP:RelativeAltitude": float(flying_height),
+                    "XMP:FlightPitchDegree": pitch_val,
+                    "MakerNotes:Pitch": pitch_val,
+                    "XMP:FlightRollDegree": roll_val,
+                    "MakerNotes:Roll": roll_val,
+                    "XMP:FlightYawDegree": yaw_val,
+                    "MakerNotes:Yaw": yaw_val,
+                    "XMP:GimbalRollDegree": float(gimbal_roll),
+                    "MakerNotes:CameraRoll": float(gimbal_roll),
+                    "XMP:Roll": float(gimbal_roll),
+                    "XMP:GimbalPitchDegree": float(gimbal_pitch),
+                    "MakerNotes:CameraPitch": float(gimbal_pitch),
+                    "XMP:Pitch": float(gimbal_pitch),
+                    "XMP:GimbalYawDegree": float(gimbal_yaw),
+                    "MakerNotes:CameraYaw": float(gimbal_yaw),
+                    "XMP:Yaw": float(gimbal_yaw),
                 }
-                exif_entries.append((input_img, gps_data, et.get_metadata(input_img)[0]))
 
-    exif_entries.sort(
-        key=lambda item: _parse_exif_datetime(item[2]["EXIF:DateTimeOriginal"])
-    )
-    print(f"There were {len(exif_entries)} images found matching the GPS data.")
-
-    img_info = _init_img_info_table(include_relative_alt=False)
-    for img, img_gps_data, img_exif in exif_entries:
-        img_info["lat"].append(float(img_gps_data["lat"]))
-        img_info["lon"].append(float(img_gps_data["lon"]))
-        img_info["absolute_altitude"].append(float(img_gps_data["alt"]))
-
-        _append_common_exif_fields(img_info, img, img_exif, gimbal_default=0.0)
-
-        img_info["flight_pitch_degree"].append(
-            float(
-                _first_valid(
-                    img_exif,
-                    ("XMP:FlightPitchDegree", "MakerNotes:Pitch"),
-                    img_gps_data["pitch"],
-                )
-            )
-        )
-        img_info["flight_roll_degree"].append(
-            float(
-                _first_valid(
-                    img_exif,
-                    ("XMP:FlightRollDegree", "MakerNotes:Roll"),
-                    img_gps_data["roll"],
-                )
-            )
-        )
-        img_info["flight_yaw_degree"].append(
-            float(
-                _first_valid(
-                    img_exif,
-                    ("XMP:FlightYawDegree", "MakerNotes:Yaw"),
-                    img_gps_data["yaw"],
-                )
-            )
-        )
-
-    _write_flightline_outputs(
-        img_info,
-        pts_vec_file,
-        pts_vec_lyr,
-        line_vec_file,
-        line_vec_lyr,
-        out_format,
-    )
-
-
-# pylint: disable=too-many-arguments,too-many-positional-arguments
-def define_extern_gps_in_imgs(
-    gps_data_df: pandas.DataFrame,
-    input_imgs_dir: str,
-    flying_height: float,
-    gimbal_roll: float,
-    gimbal_pitch: float,
-    gimbal_yaw: float,
-    overwrite: bool = False,
-) -> None:
-    """
-    Write external GPS and attitude metadata into image EXIF/XMP tags.
-
-    The input pandas DataFrame must have columns:
-    ``image``, ``lat``, ``lon``, ``alt``, ``roll``, ``pitch``, ``yaw``.
-
-    :param gps_data_df: DataFrame containing external GPS and attitude records.
-    :param input_imgs_dir: Directory containing the input image files.
-    :param flying_height: Flying height (metres) written to ``XMP:RelativeAltitude``.
-    :param gimbal_roll: Gimbal roll angle in degrees.
-    :param gimbal_pitch: Gimbal pitch angle in degrees.
-    :param gimbal_yaw: Gimbal yaw angle in degrees.
-    :param overwrite: If ``True``, overwrite the original image files in place.
-    """
-    # pylint: disable=import-outside-toplevel
-    import exiftool
-
-    n_imgs = 0
-    with exiftool.ExifToolHelper() as et:
-        for _, row in tqdm.tqdm(gps_data_df.iterrows()):
-            input_img = os.path.join(input_imgs_dir, row["image"])
-            if not os.path.exists(input_img):
-                continue
-
-            lat_val = float(row["lat"])
-            lon_val = float(row["lon"])
-            alt_val = float(row["alt"])
-            pitch_val = float(row["pitch"])
-            roll_val = float(row["roll"])
-            yaw_val = float(row["yaw"])
-
-            lat_ref, lat_ref_comp = ("S", "South") if lat_val < 0 else ("N", "North")
-            lon_ref, lon_ref_comp = ("W", "West") if lon_val < 0 else ("E", "East")
-
-            out_tags: Dict[str, Any] = {
-                "Composite:GPSLatitude": lat_val,
-                "EXIF:GPSLatitude": lat_val,
-                "EXIF:GPSLatitudeRef": lat_ref,
-                "Composite:GPSLatitudeRef": lat_ref_comp,
-                "Composite:GPSLongitude": lon_val,
-                "EXIF:GPSLongitude": lon_val,
-                "EXIF:GPSLongitudeRef": lon_ref,
-                "Composite:GPSLongitudeRef": lon_ref_comp,
-                "XMP:AbsoluteAltitude": alt_val,
-                "Composite:GPSAltitude": alt_val,
-                "XMP:RelativeAltitude": float(flying_height),
-                "XMP:FlightPitchDegree": pitch_val,
-                "MakerNotes:Pitch": pitch_val,
-                "XMP:FlightRollDegree": roll_val,
-                "MakerNotes:Roll": roll_val,
-                "XMP:FlightYawDegree": yaw_val,
-                "MakerNotes:Yaw": yaw_val,
-                "XMP:GimbalRollDegree": float(gimbal_roll),
-                "MakerNotes:CameraRoll": float(gimbal_roll),
-                "XMP:Roll": float(gimbal_roll),
-                "XMP:GimbalPitchDegree": float(gimbal_pitch),
-                "MakerNotes:CameraPitch": float(gimbal_pitch),
-                "XMP:Pitch": float(gimbal_pitch),
-                "XMP:GimbalYawDegree": float(gimbal_yaw),
-                "MakerNotes:CameraYaw": float(gimbal_yaw),
-                "XMP:Yaw": float(gimbal_yaw),
-            }
-
-            params = ["-P", "-overwrite_original"] if overwrite else []
-            et.set_tags(input_img, tags=out_tags, params=params)
-            n_imgs += 1
-    print(f"Updated EXIF for {n_imgs} images.")
+                params = ["-P", "-overwrite_original"] if overwrite else []
+                et.set_tags(input_img, tags=out_tags, params=params)
+                n_imgs += 1
+        print(f"Updated EXIF for {n_imgs} images.")

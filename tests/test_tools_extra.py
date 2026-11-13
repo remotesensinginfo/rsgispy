@@ -145,66 +145,67 @@ def test_imagetools_gif_qr_exif_and_pdf(tmp_path, monkeypatch):
     im1.save(im1_path, exif=exif.tobytes())
     im2.save(im2_path)
 
-    gif_path = tmp_path / "anim.gif"
-    imagetools.animate_img_set(
-        [str(im1_path), str(im2_path)],
-        str(gif_path),
-        fps=2,
-        resize=True,
-        out_x_size=16,
-        tmp_dir=str(tmp_path / "gif_tmp"),
-    )
-    assert gif_path.exists()
+    if imagetools.HAVE_IMAGEIO:
+        gif_path = tmp_path / "anim.gif"
+        imagetools.animate_img_set(
+            [str(im1_path), str(im2_path)],
+            str(gif_path),
+            fps=2,
+            resize=True,
+            out_x_size=16,
+            tmp_dir=str(tmp_path / "gif_tmp"),
+        )
+        assert gif_path.exists()
 
     # PIL EXIF listing
     imagetools.list_exif_info_pil(str(im1_path))
 
     # QR code
-    qr_path = tmp_path / "qr.png"
-    imagetools.create_qr_code(str(qr_path), "https://example.com")
-    assert qr_path.exists()
+    if imagetools.HAVE_QRCODE:
+        qr_path = tmp_path / "qr.png"
+        imagetools.create_qr_code(str(qr_path), "https://example.com")
+        assert qr_path.exists()
 
     # PDF blank page + image extraction via PyMuPDF
-    try:
-        import pymupdf as fitz_mod
-    except ImportError:
-        import fitz as fitz_mod
+    if imagetools.HAVE_PYMUPDF:
+        fitz_mod = imagetools.fitz_mod
+        pdf_path = tmp_path / "sample.pdf"
+        doc = fitz_mod.open()
+        page = doc.new_page(width=200, height=200)
+        page.insert_image(fitz_mod.Rect(10, 10, 100, 100), filename=str(im1_path))
+        doc.save(str(pdf_path))
+        doc.close()
 
-    pdf_path = tmp_path / "sample.pdf"
-    doc = fitz_mod.open()
-    page = doc.new_page(width=200, height=200)
-    page.insert_image(fitz_mod.Rect(10, 10, 100, 100), filename=str(im1_path))
-    doc.save(str(pdf_path))
-    doc.close()
+        blank_pdf = tmp_path / "with_blanks.pdf"
+        imagetools.add_pdf_blank_pages(str(pdf_path), str(blank_pdf))
+        assert blank_pdf.exists()
+        with fitz_mod.open(str(blank_pdf)) as out_doc:
+            assert len(out_doc) == 2
 
-    blank_pdf = tmp_path / "with_blanks.pdf"
-    imagetools.add_pdf_blank_pages(str(pdf_path), str(blank_pdf))
-    assert blank_pdf.exists()
-    with fitz_mod.open(str(blank_pdf)) as out_doc:
-        assert len(out_doc) == 2
-
-    extract_dir = tmp_path / "extracted"
-    extract_dir.mkdir()
-    imagetools.extract_images_from_pdf(str(pdf_path), str(extract_dir))
-    assert len(list(extract_dir.iterdir())) >= 1
+        extract_dir = tmp_path / "extracted"
+        extract_dir.mkdir()
+        imagetools.extract_images_from_pdf(str(pdf_path), str(extract_dir))
+        assert len(list(extract_dir.iterdir())) >= 1
 
     # ExifTool wrapper test (mocked)
-    class _FakeExifToolHelper:
-        def __enter__(self):
-            return self
+    if imagetools.HAVE_EXIFTOOL:
 
-        def __exit__(self, exc_type, exc_val, exc_tb):
-            return False
+        class _FakeExifToolHelper:
+            def __enter__(self):
+                return self
 
-        def get_metadata(self, path):
-            return [{"EXIF:Make": "TestCam", "File:FileName": os.path.basename(path)}]
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                return False
 
-    fake_mod = types.ModuleType("exiftool")
-    fake_mod.ExifToolHelper = _FakeExifToolHelper
-    monkeypatch.setitem(sys.modules, "exiftool", fake_mod)
-    exif_dict = imagetools.get_exif_info(str(im1_path))
-    assert exif_dict["EXIF:Make"] == "TestCam"
-    imagetools.list_exif_info(str(im1_path))
+            def get_metadata(self, path):
+                return [{"EXIF:Make": "TestCam", "File:FileName": os.path.basename(path)}]
+
+        fake_mod = types.ModuleType("exiftool")
+        fake_mod.ExifToolHelper = _FakeExifToolHelper
+        monkeypatch.setattr(imagetools, "exiftool", fake_mod)
+        exif_dict = imagetools.get_exif_info(str(im1_path))
+        assert exif_dict["EXIF:Make"] == "TestCam"
+        imagetools.list_exif_info(str(im1_path))
 
 
 def test_webtools_httptools_and_ftptools(tmp_path, monkeypatch):
@@ -527,3 +528,58 @@ def test_optional_pysondb_missing_tools():
         sys.modules["rsgispy.tools.ftptools"] = orig_ftptools
         rtools.httptools = orig_httptools
         rtools.ftptools = orig_ftptools
+
+
+def test_optional_imagetools_missing():
+    """Verify imagetools omits functions when optional packages are missing."""
+    import importlib
+    from unittest.mock import patch
+    import rsgispy.tools as rtools
+
+    orig_imagetools = imagetools
+    try:
+        with patch.dict(
+            sys.modules,
+            {
+                "imageio": None,
+                "imageio.v2": None,
+                "exiftool": None,
+                "qrcode": None,
+                "pymupdf": None,
+                "fitz": None,
+            },
+        ):
+            sys.modules.pop("rsgispy.tools.imagetools", None)
+            img_mod = importlib.import_module("rsgispy.tools.imagetools")
+
+        assert not img_mod.HAVE_IMAGEIO
+        assert not img_mod.HAVE_EXIFTOOL
+        assert not img_mod.HAVE_PYMUPDF
+        assert not img_mod.HAVE_QRCODE
+        for fn_name in (
+            "animate_img_set",
+            "list_exif_info",
+            "get_exif_info",
+            "extract_images_from_pdf",
+            "add_pdf_blank_pages",
+            "create_qr_code",
+        ):
+            assert not hasattr(img_mod, fn_name)
+            assert fn_name not in img_mod.__all__
+
+        assert hasattr(img_mod, "list_exif_info_pil")
+        assert "list_exif_info_pil" in img_mod.__all__
+
+        # Also verify fallback from pymupdf -> fitz when only pymupdf is missing
+        fake_fitz = types.ModuleType("fitz")
+        with patch.dict(sys.modules, {"pymupdf": None, "fitz": fake_fitz}):
+            sys.modules.pop("rsgispy.tools.imagetools", None)
+            img_mod_fitz = importlib.import_module("rsgispy.tools.imagetools")
+        assert img_mod_fitz.HAVE_PYMUPDF
+        assert img_mod_fitz.fitz_mod is fake_fitz
+        for fn_name in ("extract_images_from_pdf", "add_pdf_blank_pages"):
+            assert hasattr(img_mod_fitz, fn_name)
+            assert fn_name in img_mod_fitz.__all__
+    finally:
+        sys.modules["rsgispy.tools.imagetools"] = orig_imagetools
+        rtools.imagetools = orig_imagetools

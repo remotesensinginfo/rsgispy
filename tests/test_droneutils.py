@@ -99,6 +99,9 @@ class _FakeExifToolHelper:
 
 
 def test_create_flightline_vec(tmp_path, monkeypatch):
+    if not rsgispy.droneutils.HAVE_EXIFTOOL:
+        return
+
     img1 = str(tmp_path / "img1.jpg")
     img2 = str(tmp_path / "img2.jpg")
     _create_test_jpeg(img1)
@@ -146,7 +149,7 @@ def test_create_flightline_vec(tmp_path, monkeypatch):
 
     fake_mod = types.ModuleType("exiftool")
     fake_mod.ExifToolHelper = lambda: _FakeExifToolHelper(meta)
-    monkeypatch.setitem(sys.modules, "exiftool", fake_mod)
+    monkeypatch.setattr(rsgispy.droneutils, "exiftool", fake_mod)
     monkeypatch.setattr(
         rsgispy.tools.filetools,
         "sort_file_by_datetime",
@@ -172,6 +175,9 @@ def test_create_flightline_vec(tmp_path, monkeypatch):
 
 
 def test_create_flightline_extern_gps_and_define_tags(tmp_path, monkeypatch):
+    if not rsgispy.droneutils.HAVE_EXIFTOOL:
+        return
+
     img1 = tmp_path / "p1.jpg"
     img2 = tmp_path / "p2.jpg"
     _create_test_jpeg(img1)
@@ -235,7 +241,7 @@ def test_create_flightline_extern_gps_and_define_tags(tmp_path, monkeypatch):
     writes = []
     fake_mod = types.ModuleType("exiftool")
     fake_mod.ExifToolHelper = lambda: _FakeExifToolHelper(meta, writes)
-    monkeypatch.setitem(sys.modules, "exiftool", fake_mod)
+    monkeypatch.setattr(rsgispy.droneutils, "exiftool", fake_mod)
 
     pts_shp = str(tmp_path / "pts.geojson")
     line_shp = str(tmp_path / "lines.geojson")
@@ -270,3 +276,31 @@ def test_create_flightline_extern_gps_and_define_tags(tmp_path, monkeypatch):
     assert writes[1][1]["EXIF:GPSLatitudeRef"] == "S"
     assert writes[1][1]["EXIF:GPSLongitudeRef"] == "E"
     assert writes[0][2] == ["-P", "-overwrite_original"]
+
+
+def test_optional_exiftool_missing_droneutils():
+    """Verify droneutils omits exiftool functions when exiftool is missing."""
+    import importlib
+    from unittest.mock import patch
+
+    orig_droneutils = rsgispy.droneutils
+    try:
+        with patch.dict(sys.modules, {"exiftool": None}):
+            sys.modules.pop("rsgispy.droneutils", None)
+            drone_mod = importlib.import_module("rsgispy.droneutils")
+
+        assert not drone_mod.HAVE_EXIFTOOL
+        for fn_name in (
+            "create_flightline_vec",
+            "create_flightline_extern_gps_vec",
+            "define_extern_gps_in_imgs",
+        ):
+            assert not hasattr(drone_mod, fn_name)
+            assert fn_name not in drone_mod.__all__
+
+        for sym_name in ("ImageTimeCluster", "split_photos_by_time"):
+            assert hasattr(drone_mod, sym_name)
+            assert sym_name in drone_mod.__all__
+    finally:
+        sys.modules["rsgispy.droneutils"] = orig_droneutils
+        rsgispy.droneutils = orig_droneutils
