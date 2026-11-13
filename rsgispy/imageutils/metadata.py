@@ -23,7 +23,7 @@ from rsgispy.imageutils._helpers import (
     ensure_img_exists as _ensure_img_exists,
     parse_epsg_crs as _parse_epsg_crs,
 )
-from rsgispy.tools.geometrytools import (
+from rsgispy.tools.geometry import (
     bbox_intersection,
     do_bboxes_intersect,
     reproj_bbox,

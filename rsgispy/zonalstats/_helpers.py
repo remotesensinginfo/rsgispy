@@ -13,7 +13,7 @@ from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imageprocess import bbox_from_dataset
-import rsgispy.tools.geometrytools
+import rsgispy.tools.geometry
 
 
 def resolve_vector_crs(
@@ -56,7 +56,7 @@ def check_bbox_overlap(
     vec_bbox: Tuple[float, float, float, float],
 ) -> None:
     """Raise :class:`rsgispy.RSGISPyException` if raster and vector bboxes do not overlap."""
-    if not rsgispy.tools.geometrytools.do_bboxes_intersect(img_bbox, vec_bbox):
+    if not rsgispy.tools.geometry.do_bboxes_intersect(img_bbox, vec_bbox):
         print(f"Image BBOX: {img_bbox}")
         print(f"Vector BBOX: {vec_bbox}")
         raise rsgispy.RSGISPyException("The vector layer and image do not overlap.")
@@ -108,7 +108,7 @@ def open_validated_zonal_inputs(
                     f"Inputted raster and vector layers have different projections: "
                     f"(Vector Layer: '{vec_crs}' '{input_img}': '{img_crs}')"
                 )
-            vec_bbox = rsgispy.tools.geometrytools.reproj_bbox(
+            vec_bbox = rsgispy.tools.geometry.reproj_bbox(
                 vec_bbox, vec_crs, img_crs
             )
             geom_series = geom_series.set_crs(

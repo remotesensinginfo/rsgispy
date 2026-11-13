@@ -10,8 +10,8 @@ import numpy
 import pyproj
 
 import rsgispy
-from rsgispy.tools.geometrytools import degrees_to_metres
-import rsgispy.tools.utils
+from rsgispy.tools.geometry import degrees_to_metres
+import rsgispy.tools.strings
 
 __all__ = [
     "get_epsg_code_from_wkt",
@@ -108,7 +108,7 @@ def get_deg_coord_as_str(lat: float, lon: float, n_chars: int = 4) -> str:
     east_west = "w" if lon < 0 else "e"
     north_south = "s" if lat < 0 else "n"
 
-    lat_str = rsgispy.tools.utils.zero_pad_num_str(
+    lat_str = rsgispy.tools.strings.zero_pad_num_str(
         lat,
         str_len=n_chars,
         round_num=True,
@@ -117,7 +117,7 @@ def get_deg_coord_as_str(lat: float, lon: float, n_chars: int = 4) -> str:
         absolute=True,
         gain=10,
     )
-    lon_str = rsgispy.tools.utils.zero_pad_num_str(
+    lon_str = rsgispy.tools.strings.zero_pad_num_str(
         lon,
         str_len=n_chars,
         round_num=True,

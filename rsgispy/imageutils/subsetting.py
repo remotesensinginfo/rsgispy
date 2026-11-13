@@ -13,7 +13,7 @@ import rasterio
 import rsgispy
 from rsgispy.imageprocess import bbox_from_dataset, ensure_file_exists
 from rsgispy.imageutils._helpers import copy_raster_window
-from rsgispy.tools.geometrytools import (
+from rsgispy.tools.geometry import (
     bbox_intersection,
     do_bboxes_intersect,
     reproj_bbox,

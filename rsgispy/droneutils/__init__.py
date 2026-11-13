@@ -19,7 +19,7 @@ import tqdm
 from PIL import Image
 from PIL.ExifTags import TAGS
 
-import rsgispy.tools.filetools
+import rsgispy.tools.files
 
 try:
     import exiftool  # pylint: disable=import-error
@@ -419,7 +419,7 @@ if HAVE_EXIFTOOL:
         :param line_vec_lyr: Output vector layer name for the flightline.
         :param out_format: Output vector format driver (default: ``"GPKG"``).
         """
-        sorted_imgs = rsgispy.tools.filetools.sort_file_by_datetime(input_imgs)
+        sorted_imgs = rsgispy.tools.files.sort_file_by_datetime(input_imgs)
         print(f"There are {len(sorted_imgs)} input images")
 
         exif_entries: List[Tuple[str, Dict[str, Any]]] = []

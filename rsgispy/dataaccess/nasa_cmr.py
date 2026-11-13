@@ -12,8 +12,9 @@ from typing import Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 import rsgispy
-import rsgispy.tools.httptools
-import rsgispy.tools.utils
+import rsgispy.tools.credentials
+import rsgispy.tools.dicts
+import rsgispy.tools.http
 
 try:
     import requests  # pylint: disable=import-error
@@ -90,7 +91,7 @@ if HAVE_REQUESTS:
 
     def _check_cmr_response(data: Dict) -> Union[str, List, Dict]:
         """Validate a CMR response dictionary and extract ``feed.entry``."""
-        if not rsgispy.tools.utils.dict_struct_does_path_exist(data, ["feed", "entry"]):
+        if not rsgispy.tools.dicts.dict_struct_does_path_exist(data, ["feed", "entry"]):
             print(data)
             raise rsgispy.RSGISPyException("Data structure is not as expected - check.")
         return data["feed"]["entry"]
@@ -105,7 +106,7 @@ if HAVE_REQUESTS:
         prod_srch_params = {"short_name": prod_short_name}
         header_info = {"Accept": "application/json"}
 
-        rtnd_data = rsgispy.tools.httptools.send_http_json_request(
+        rtnd_data = rsgispy.tools.http.send_http_json_request(
             CMR_COLLECTS_URL,
             data=prod_srch_params,
             convert_to_json=False,
@@ -219,7 +220,7 @@ if HAVE_REQUESTS:
         if other_params is not None:
             prod_srch_params = {**prod_srch_params, **other_params}
 
-        rtnd_data = rsgispy.tools.httptools.send_http_json_request(
+        rtnd_data = rsgispy.tools.http.send_http_json_request(
             CMR_GRANULES_URL,
             data=prod_srch_params,
             convert_to_json=False,
@@ -306,7 +307,7 @@ if HAVE_REQUESTS:
 
         try:
             with session_http.get(input_url, stream=True, timeout=120) as resp:
-                if rsgispy.tools.httptools.check_http_response(resp, input_url):
+                if rsgispy.tools.http.check_http_response(resp, input_url):
                     total = int(resp.headers.get("content-length", 0))
                     chunk_size = 2**20
                     n_chunks = int(total / chunk_size) + 1
@@ -408,7 +409,7 @@ if HAVE_PYSONDB:
                 "The requests module is required when use_wget=False."
             )
 
-        username, password = rsgispy.tools.utils.get_username_password(user_pass_file)
+        username, password = rsgispy.tools.credentials.get_username_password(user_pass_file)
 
         lst_db = pysondb.getDb(db_json)
         dwld_files = lst_db.getByQuery({"downloaded": False})
@@ -417,7 +418,7 @@ if HAVE_PYSONDB:
             out_file_path = os.path.join(out_path, dwn_file["producer_granule_id"])
             print(f"Downloading: {out_file_path}")
             if use_wget:
-                dwn_success, _ = rsgispy.tools.httptools.wget_download_file(
+                dwn_success, _ = rsgispy.tools.http.wget_download_file(
                     input_url=dwn_file["granule_url"],
                     out_file_path=out_file_path,
                     username=username,

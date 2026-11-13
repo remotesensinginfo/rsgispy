@@ -27,7 +27,7 @@ from rsgispy.imageutils.metadata import (
     get_img_size,
     get_wkt_proj_from_img,
 )
-from rsgispy.tools.geometrytools import does_bbox_contain
+from rsgispy.tools.geometry import does_bbox_contain
 
 __all__ = [
     "create_img_from_array",

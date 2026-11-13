@@ -18,8 +18,8 @@ import rasterio
 from rasterio.windows import Window
 import tqdm
 
-import rsgispy.tools.filetools
-import rsgispy.tools.utils
+import rsgispy.tools.files
+import rsgispy.tools.jsonio
 
 try:
     import h5py  # pylint: disable=import-error
@@ -56,7 +56,7 @@ def _validate_file_exists_and_size(
     if not os.path.exists(file_path):
         return False, "File does not exist."
 
-    file_size_bytes = rsgispy.tools.filetools.get_file_size(file_path)
+    file_size_bytes = rsgispy.tools.files.get_file_size(file_path)
     if file_size_bytes == 0:
         return False, "File size is zero."
     if max_file_size is not None and file_size_bytes > max_file_size:
@@ -94,9 +94,9 @@ def _handle_failed_file(
         print(f"Error: '{err_str}'")
     if rm_err:
         if multi_file:
-            rsgispy.tools.filetools.delete_file_with_basename(file_path)
+            rsgispy.tools.files.delete_file_with_basename(file_path)
         else:
-            rsgispy.tools.filetools.delete_file_silent(file_path)
+            rsgispy.tools.files.delete_file_silent(file_path)
             print(f"Removed {file_path}")
     else:
         print(f"rm {file_path}")
@@ -710,7 +710,7 @@ def cmp_to_ref_imgs(
     """
     input_imgs = glob.glob(os.path.join(input_img_dir, f"*.{input_img_ext}"))
     input_imgs_lut: Dict[str, List[Any]] = {
-        rsgispy.tools.filetools.get_file_basename(img): [img, False]
+        rsgispy.tools.files.get_file_basename(img): [img, False]
         for img in input_imgs
     }
 
@@ -723,7 +723,7 @@ def cmp_to_ref_imgs(
     n_errs = 0
 
     for ref_img in tqdm.tqdm(ref_imgs):
-        ref_base = rsgispy.tools.filetools.get_file_basename(ref_img)
+        ref_base = rsgispy.tools.files.get_file_basename(ref_img)
         matched_entries = [
             (chk_base, entry[0])
             for chk_base, entry in input_imgs_lut.items()
@@ -746,7 +746,7 @@ def cmp_to_ref_imgs(
                 input_imgs_lut[chk_base][1] = True
 
                 if error and rm_errs:
-                    rsgispy.tools.filetools.delete_file_silent(chk_img)
+                    rsgispy.tools.files.delete_file_silent(chk_img)
         else:
             out_report["ref_no_match"].append(ref_img)
 
@@ -755,7 +755,7 @@ def cmp_to_ref_imgs(
     ]
 
     if output_file is not None:
-        rsgispy.tools.utils.write_dict_to_json(out_report, output_file)
+        rsgispy.tools.jsonio.write_dict_to_json(out_report, output_file)
 
     print(f"Found {n_errs} images with errors...")
     return out_report

@@ -1,5 +1,5 @@
 """
-The tools.tilecacheutils module contains utilities for working with XYZ and TMS
+The tools.tilecache module contains utilities for working with XYZ and TMS
 Web Mercator tile caches.
 """
 
@@ -9,7 +9,7 @@ import os
 from typing import Dict, List, Tuple, Union
 
 import rsgispy
-import rsgispy.tools.utils
+import rsgispy.tools.maths
 
 __all__ = [
     "TILE_SIZE",
@@ -374,7 +374,7 @@ def convert_between_tms_xyz(tiles_dir: str) -> None:
         os.path.abspath(os.path.join(tiles_dir, entry))
         for entry in os.listdir(tiles_dir)
         if os.path.isdir(os.path.join(tiles_dir, entry))
-        and rsgispy.tools.utils.is_number(entry)
+        and rsgispy.tools.maths.is_number(entry)
     ]
 
     for zoom_dir in tqdm_cls(in_zoom_dirs, desc="overall"):
@@ -383,12 +383,12 @@ def convert_between_tms_xyz(tiles_dir: str) -> None:
             os.listdir(zoom_dir), desc=f"zoom {zoom}", leave=False
         ):
             x_dir = os.path.join(zoom_dir, x_entry)
-            if os.path.isdir(x_dir) and rsgispy.tools.utils.is_number(x_entry):
+            if os.path.isdir(x_dir) and rsgispy.tools.maths.is_number(x_entry):
                 x_val = int(x_entry)
                 for y_file in tqdm_cls(os.listdir(x_dir), desc="y", leave=False):
                     y_cur_file = os.path.join(x_dir, y_file)
                     y_in_str, img_ext = os.path.splitext(y_file)
-                    if rsgispy.tools.utils.is_number(y_in_str):
+                    if rsgispy.tools.maths.is_number(y_in_str):
                         _, n_tile_y, _ = flip_xyz_tms_tiles(
                             x_val, int(y_in_str), zoom
                         )

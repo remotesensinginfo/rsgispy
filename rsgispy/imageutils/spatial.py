@@ -23,7 +23,7 @@ from rsgispy.imageprocess import (
     iter_dataset_windows,
 )
 from rsgispy.imageutils.metadata import get_img_res
-from rsgispy.tools.geometrytools import degrees_to_metres
+from rsgispy.tools.geometry import degrees_to_metres
 
 __all__ = [
     "calc_wgs84_pixel_area",

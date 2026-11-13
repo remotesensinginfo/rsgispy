@@ -1,5 +1,5 @@
 """
-Tests for rsgispy.tools.geometrytools using pyproj.
+Tests for rsgispy.tools.geometry using pyproj.
 """
 
 import pyproj
@@ -7,7 +7,7 @@ import pytest
 import shapely.wkt
 
 import rsgispy
-import rsgispy.tools.geometrytools as gt
+import rsgispy.tools.geometry as gt
 
 
 def test_reproj_point_and_bbox():

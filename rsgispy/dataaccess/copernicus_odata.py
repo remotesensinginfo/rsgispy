@@ -83,10 +83,10 @@ from typing import Dict, List, Optional, Tuple, Union
 import tqdm
 
 import rsgispy
-import rsgispy.tools.filetools
-import rsgispy.tools.geometrytools
-import rsgispy.tools.httptools
-import rsgispy.tools.utils
+import rsgispy.tools.geometry
+import rsgispy.tools.hashing
+import rsgispy.tools.http
+import rsgispy.tools.system
 
 try:
     import requests  # pylint: disable=import-error
@@ -340,10 +340,10 @@ if HAVE_REQUESTS:
         :return: Access token string, or ``None`` if validation failed.
         """
         if username is None:
-            username = rsgispy.tools.utils.get_environment_variable("RSGIS_COP_USER")
+            username = rsgispy.tools.system.get_environment_variable("RSGIS_COP_USER")
 
         if password is None:
-            password = rsgispy.tools.utils.get_environment_variable("RSGIS_COP_PASS")
+            password = rsgispy.tools.system.get_environment_variable("RSGIS_COP_PASS")
 
         data = {
             "client_id": "cdse-public",
@@ -353,7 +353,7 @@ if HAVE_REQUESTS:
         }
         resp_obj = requests.post(RSGIS_ODATA_TOKEN_URL, data=data, timeout=60)
         try:
-            if rsgispy.tools.httptools.check_http_response(
+            if rsgispy.tools.http.check_http_response(
                 resp_obj, RSGIS_ODATA_TOKEN_URL
             ):
                 resp_dict = resp_obj.json()
@@ -403,7 +403,7 @@ if HAVE_REQUESTS:
             f"{RSGIS_ODATA_PRODUCTS_URL}?$filter=Collection/Name eq '{sensor_name}'"
         )
 
-        bbox_wkt_str = rsgispy.tools.geometrytools.get_bbox_wkt_poly(bbox)
+        bbox_wkt_str = rsgispy.tools.geometry.get_bbox_wkt_poly(bbox)
         bbox_url_str = f"OData.CSC.Intersects(area=geography'SRID=4326;{bbox_wkt_str}')"
         query_url = f"{query_url} and {bbox_url_str}"
 
@@ -469,7 +469,7 @@ if HAVE_REQUESTS:
         query_url = f"{query_url}&$expand=Locations"
 
         resp_obj = requests.get(query_url, timeout=60)
-        rsgispy.tools.httptools.check_http_response(resp_obj, query_url)
+        rsgispy.tools.http.check_http_response(resp_obj, query_url)
         resp_dict = resp_obj.json()
         if "value" in resp_dict:
             return resp_dict["value"]
@@ -490,7 +490,7 @@ if HAVE_REQUESTS:
         )
         resp_obj = requests.get(query_url, timeout=60)
 
-        if rsgispy.tools.httptools.check_http_response(resp_obj, query_url):
+        if rsgispy.tools.http.check_http_response(resp_obj, query_url):
             resp_dict = resp_obj.json()
             if "value" not in resp_dict:
                 raise rsgispy.RSGISPyException("Error - response didn't have a 'value'.")
@@ -556,7 +556,7 @@ if HAVE_REQUESTS:
         chunk_size = 8192
         n_chunks = int(scn_size / chunk_size) + 1
 
-        if rsgispy.tools.httptools.check_http_response(resp_obj, scn_url):
+        if rsgispy.tools.http.check_http_response(resp_obj, scn_url):
             with open(tmp_file_path, "wb") as file:
                 for chunk in tqdm.tqdm(
                     resp_obj.iter_content(chunk_size=chunk_size), total=n_chunks
@@ -566,7 +566,7 @@ if HAVE_REQUESTS:
 
         if os.path.exists(tmp_file_path):
             if scn_checksum is not None:
-                md5_checksum = rsgispy.tools.filetools.create_md5_hash(tmp_file_path)
+                md5_checksum = rsgispy.tools.hashing.create_md5_hash(tmp_file_path)
                 if md5_checksum != scn_checksum:
                     raise rsgispy.RSGISPyException("Error - checksum mismatch.")
             os.rename(tmp_file_path, out_file_path)

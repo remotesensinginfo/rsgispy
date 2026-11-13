@@ -13,7 +13,7 @@ import rasterio
 import rsgispy
 from rsgispy.imageutils._helpers import copy_raster_window
 from rsgispy.imageutils.blank import create_blank_img_from_bbox
-from rsgispy.tools.filetools import does_path_exists_or_creatable
+from rsgispy.tools.files import does_path_exists_or_creatable
 
 __all__ = [
     "create_tiles",

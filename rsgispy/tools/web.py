@@ -1,5 +1,5 @@
 """
-The tools.webtools module provides utilities for discovering linked images and
+The tools.web module provides utilities for discovering linked images and
 files on web pages.
 
 Functions requiring ``bs4`` and ``requests`` are only defined and exported when

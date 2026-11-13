@@ -25,7 +25,8 @@ from rsgispy.imageprocess import (
     validate_crs_and_res,
 )
 from rsgispy.imageutils.colourtable import set_img_thematic
-from rsgispy.tools.utils import create_var_list, write_dict_to_json
+from rsgispy.tools.jsonio import write_dict_to_json
+from rsgispy.tools.maths import create_var_list
 
 __all__ = [
     "create_img_mosaic",

@@ -25,7 +25,7 @@ from rasterio.warp import transform_bounds
 
 import rsgispy
 import rsgispy.imageutils.warp
-import rsgispy.tools.filetools
+import rsgispy.tools.files
 import rsgispy.tools.plotting
 
 __all__ = [
@@ -432,7 +432,7 @@ def create_wmts_img_map(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     uid_str = uuid.uuid4().hex[:8]
-    with rsgispy.tools.filetools.work_dir_context(tmp_dir) as work_dir:
+    with rsgispy.tools.files.work_dir_context(tmp_dir) as work_dir:
 
         gdal_lyr_url = f"WMTS:{wmts_url},layer={wmts_lyr}"
         out_tmp_xml = os.path.join(work_dir, f"wmts_tmp_xml_{uid_str}.xml")

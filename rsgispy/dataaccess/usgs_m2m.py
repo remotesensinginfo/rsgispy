@@ -6,8 +6,9 @@ import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import rsgispy
-import rsgispy.tools.httptools
-import rsgispy.tools.utils
+import rsgispy.tools.dicts
+import rsgispy.tools.http
+import rsgispy.tools.system
 
 DATA_PRODUCTS: Dict[str, str] = {
     "landsat_tm_c1": "5e83d08fd9932768",
@@ -54,14 +55,14 @@ __all__ = [
 def _check_usgs_response(data: Dict) -> Any:
     """Validate a USGS M2M JSON response and return its ``data`` payload."""
     if (
-        rsgispy.tools.utils.dict_struct_does_path_exist(data, ["errorCode"])
+        rsgispy.tools.dicts.dict_struct_does_path_exist(data, ["errorCode"])
         and data["errorCode"] is not None
     ):
         raise rsgispy.RSGISPyException(
             f"{data['errorCode']} - {data['errorMessage']}"
         )
 
-    if not rsgispy.tools.utils.dict_struct_does_path_exist(data, ["data"]):
+    if not rsgispy.tools.dicts.dict_struct_does_path_exist(data, ["data"]):
         print(data)
         raise rsgispy.RSGISPyException("Data structure is not as expected - check.")
 
@@ -91,14 +92,14 @@ def usgs_login(
     :return: API key string for the USGS session.
     """
     if username is None:
-        username = rsgispy.tools.utils.get_environment_variable("RSGIS_USGS_USER")
+        username = rsgispy.tools.system.get_environment_variable("RSGIS_USGS_USER")
 
     if password is None:
-        password = rsgispy.tools.utils.get_environment_variable("RSGIS_USGS_PASS")
+        password = rsgispy.tools.system.get_environment_variable("RSGIS_USGS_PASS")
 
     login_data = {"username": username, "password": password}
     login_url = USGS_M2M_URL + "login"
-    rtnd_data = rsgispy.tools.httptools.send_http_json_request(login_url, login_data)
+    rtnd_data = rsgispy.tools.http.send_http_json_request(login_url, login_data)
     return _check_usgs_response(rtnd_data)
 
 
@@ -109,12 +110,12 @@ def usgs_logout(api_key: str) -> None:
     :param api_key: API key created at login.
     """
     logout_url = USGS_M2M_URL + "logout"
-    rsgispy.tools.httptools.send_http_json_request(logout_url, None, api_key)
+    rsgispy.tools.http.send_http_json_request(logout_url, None, api_key)
 
 
 def _has_user_permission(api_key: str, permission: str) -> bool:
     permissions_url = USGS_M2M_URL + "permissions"
-    rtnd_data = rsgispy.tools.httptools.send_http_json_request(
+    rtnd_data = rsgispy.tools.http.send_http_json_request(
         permissions_url, api_key=api_key
     )
     permissions_info = _check_usgs_response(rtnd_data)
@@ -155,7 +156,7 @@ def _query_grid2ll(
         "row": row,
         "responseShape": response_shape,
     }
-    rtnd_data = rsgispy.tools.httptools.send_http_json_request(
+    rtnd_data = rsgispy.tools.http.send_http_json_request(
         grid2ll_url, grid2ll_data, api_key=api_key
     )
     return _check_usgs_response(rtnd_data)
@@ -217,7 +218,7 @@ def get_dataset_info(dataset: str, api_key: str) -> Dict:
     """
     dataset_url = USGS_M2M_URL + "dataset"
     dataset_data = {"datasetName": dataset}
-    rtnd_data = rsgispy.tools.httptools.send_http_json_request(
+    rtnd_data = rsgispy.tools.http.send_http_json_request(
         dataset_url, dataset_data, api_key=api_key
     )
     return _check_usgs_response(rtnd_data)
@@ -232,7 +233,7 @@ def get_earth_explorer_datasets(api_key: str) -> Dict[str, List[str]]:
     """
     dataset_url = USGS_M2M_URL + "dataset-categories"
     dataset_data = {"catalog": "EE"}
-    rtnd_data = rsgispy.tools.httptools.send_http_json_request(
+    rtnd_data = rsgispy.tools.http.send_http_json_request(
         dataset_url, dataset_data, api_key=api_key
     )
     dataset_info = _check_usgs_response(rtnd_data)
@@ -346,7 +347,7 @@ def usgs_search(
         search_data["startingNumber"] = start_n
 
     search_url = USGS_M2M_URL + "scene-search"
-    rtnd_data = rsgispy.tools.httptools.send_http_json_request(
+    rtnd_data = rsgispy.tools.http.send_http_json_request(
         search_url, search_data, api_key=api_key
     )
     srch_data = _check_usgs_response(rtnd_data)
@@ -490,7 +491,7 @@ def create_scene_list(
         "timeToLive": lst_period,
     }
     scn_lst_add_url = USGS_M2M_URL + "scene-list-add"
-    rtnd_data = rsgispy.tools.httptools.send_http_json_request(
+    rtnd_data = rsgispy.tools.http.send_http_json_request(
         scn_lst_add_url, add_scn_info, api_key=api_key
     )
     return _check_usgs_response(rtnd_data)
@@ -505,7 +506,7 @@ def remove_scene_list(api_key: str, lst_name: str) -> None:
     """
     rm_scn_info = {"listId": lst_name}
     scn_lst_rm_url = USGS_M2M_URL + "scene-list-remove"
-    rsgispy.tools.httptools.send_http_json_request(
+    rsgispy.tools.http.send_http_json_request(
         scn_lst_rm_url, rm_scn_info, api_key=api_key
     )
 
@@ -539,7 +540,7 @@ def check_dwnld_opts(
 
     dwnld_opts_params = {"listId": lst_name, "datasetName": dataset}
     dwnld_opts_url = USGS_M2M_URL + "download-options"
-    rtnd_data = rsgispy.tools.httptools.send_http_json_request(
+    rtnd_data = rsgispy.tools.http.send_http_json_request(
         dwnld_opts_url, dwnld_opts_params, api_key
     )
     dnwld_opt_out_info = _check_usgs_response(rtnd_data)
@@ -585,7 +586,7 @@ def request_downloads(
         "label": dwnld_label,
         "returnAvailable": True,
     }
-    rtnd_data = rsgispy.tools.httptools.send_http_json_request(
+    rtnd_data = rsgispy.tools.http.send_http_json_request(
         dwnld_reqst_url, dwnld_reqst_data, api_key=api_key
     )
     dwnld_reqst_info = _check_usgs_response(rtnd_data)

@@ -11,7 +11,7 @@ import numpy
 import scipy.stats
 
 import rsgispy
-import rsgispy.tools.utils
+import rsgispy.tools.maths
 
 __all__ = [
     "K0",
@@ -224,13 +224,13 @@ def to_latlon(
         raise ValueError("set either zone_letter or northern, but not both")
 
     if strict:
-        if not rsgispy.tools.utils.in_bounds(
+        if not rsgispy.tools.maths.in_bounds(
             easting, 100000, 1000000, upper_strict=True
         ):
             raise rsgispy.RSGISPyException(
                 "easting out of range (must be between 100.000 m and 999.999 m)"
             )
-        if not rsgispy.tools.utils.in_bounds(northing, 0, 10000000):
+        if not rsgispy.tools.maths.in_bounds(northing, 0, 10000000):
             raise rsgispy.RSGISPyException(
                 "northing out of range (must be between 0 m and 10.000.000 m)"
             )
@@ -318,11 +318,11 @@ def from_latlon(
     :return: Tuple ``(eastings, northings, zone_number, zone_letter)``.
     """
     # pylint: disable=too-many-locals
-    if not rsgispy.tools.utils.in_bounds(latitude, -80.0, 84.0):
+    if not rsgispy.tools.maths.in_bounds(latitude, -80.0, 84.0):
         raise rsgispy.RSGISPyException(
             "latitude out of range (must be between 80 deg S and 84 deg N)"
         )
-    if not rsgispy.tools.utils.in_bounds(longitude, -180.0, 180.0):
+    if not rsgispy.tools.maths.in_bounds(longitude, -180.0, 180.0):
         raise rsgispy.RSGISPyException(
             "longitude out of range (must be between 180 deg W and 180 deg E)"
         )
@@ -393,9 +393,9 @@ def from_latlon(
         )
     )
 
-    if rsgispy.tools.utils.mixed_signs(latitude):
+    if rsgispy.tools.maths.mixed_signs(latitude):
         raise ValueError("latitudes must all have the same sign")
-    if rsgispy.tools.utils.negative(latitude):
+    if rsgispy.tools.maths.negative(latitude):
         northing += 10000000
 
     return easting, northing, zone_number, zone_letter

@@ -12,15 +12,15 @@ from PIL import Image
 import pyproj
 
 import rsgispy
-import rsgispy.tools.ftptools as ftptools
-import rsgispy.tools.httptools as httptools
-import rsgispy.tools.imagetools as imagetools
+import rsgispy.tools.ftp as ftp
+import rsgispy.tools.http as http
+import rsgispy.tools.imaging as imaging
 import rsgispy.tools.maths as maths
 import rsgispy.tools.projection as projection
-import rsgispy.tools.tilecacheutils as tilecacheutils
+import rsgispy.tools.tilecache as tilecache
 import rsgispy.tools.utm as utm
-import rsgispy.tools.webtools as webtools
-import rsgispy.tools.wmts_tools as wmts_tools
+import rsgispy.tools.web as web
+import rsgispy.tools.wmts as wmts
 
 
 def test_maths_round_to_nearest_val():
@@ -90,39 +90,39 @@ def test_utm_conversions_and_zones():
     assert splits[0][0] == 29
 
 
-def test_tilecacheutils_roundtrips(tmp_path):
-    res0 = tilecacheutils.resolution(0)
-    res1 = tilecacheutils.resolution(1)
+def test_tilecache_roundtrips(tmp_path):
+    res0 = tilecache.resolution(0)
+    res1 = tilecache.resolution(1)
     assert numpy.isclose(res0 / 2.0, res1)
 
-    assert tilecacheutils.truncate_lng_lat(190.0, 95.0) == (180.0, 90.0)
+    assert tilecache.truncate_lng_lat(190.0, 95.0) == (180.0, 90.0)
 
-    tx, ty, tz = tilecacheutils.get_tile_for_point(-4.08, 52.41, 10, tms=False)
+    tx, ty, tz = tilecache.get_tile_for_point(-4.08, 52.41, 10, tms=False)
     assert tz == 10
-    bbox = tilecacheutils.get_tile_bbox(tx, ty, tz, tms=False)
+    bbox = tilecache.get_tile_bbox(tx, ty, tz, tms=False)
     assert bbox[0] <= -4.08 <= bbox[1]
     assert bbox[2] <= 52.41 <= bbox[3]
 
-    tl_lon, tl_lat = tilecacheutils.get_tile_tl_lonlat(tx, ty, tz, tms=False)
+    tl_lon, tl_lat = tilecache.get_tile_tl_lonlat(tx, ty, tz, tms=False)
     assert numpy.isclose(tl_lon, bbox[0])
     assert numpy.isclose(tl_lat, bbox[3])
 
-    fx, fy, fz = tilecacheutils.flip_xyz_tms_tiles(tx, ty, tz)
-    bx, by, bz = tilecacheutils.flip_xyz_tms_tiles(fx, fy, fz)
+    fx, fy, fz = tilecache.flip_xyz_tms_tiles(tx, ty, tz)
+    bx, by, bz = tilecache.flip_xyz_tms_tiles(fx, fy, fz)
     assert (bx, by, bz) == (tx, ty, tz)
 
-    mx, my = tilecacheutils.get_web_mercator_xy(-4.08, 52.41)
-    rlon, rlat = tilecacheutils.get_xy_mercator_lonlat(mx, my)
+    mx, my = tilecache.get_web_mercator_xy(-4.08, 52.41)
+    rlon, rlat = tilecache.get_xy_mercator_lonlat(mx, my)
     assert numpy.isclose(rlon, -4.08, atol=1e-5)
     assert numpy.isclose(rlat, 52.41, atol=1e-5)
 
-    bounds = tilecacheutils.xy_mercator_bounds(tx, ty, tz, tms=False)
+    bounds = tilecache.xy_mercator_bounds(tx, ty, tz, tms=False)
     assert bounds[0] < bounds[1] and bounds[2] < bounds[3]
 
-    qk = tilecacheutils.get_quadkey_for_tile_path(tx, ty, tz, tms=False)
-    assert tilecacheutils.get_tile_path_from_quadkey(qk, tms=False) == (tx, ty, tz)
+    qk = tilecache.get_quadkey_for_tile_path(tx, ty, tz, tms=False)
+    assert tilecache.get_tile_path_from_quadkey(qk, tms=False) == (tx, ty, tz)
 
-    tiles = tilecacheutils.get_tiles([-4.1, -4.05, 52.4, 52.43], [10], tms=False)
+    tiles = tilecache.get_tiles([-4.1, -4.05, 52.4, 52.43], [10], tms=False)
     assert 10 in tiles and len(tiles[10]) >= 1
 
     # Test convert_between_tms_xyz renaming
@@ -130,11 +130,11 @@ def test_tilecacheutils_roundtrips(tmp_path):
     z_dir.mkdir(parents=True)
     tile_file = z_dir / "0.png"
     tile_file.write_bytes(b"png")
-    tilecacheutils.convert_between_tms_xyz(str(tmp_path))
+    tilecache.convert_between_tms_xyz(str(tmp_path))
     assert (z_dir / "3.png").exists()
 
 
-def test_imagetools_gif_qr_exif_and_pdf(tmp_path, monkeypatch):
+def test_imaging_gif_qr_exif_and_pdf(tmp_path, monkeypatch):
     # GIF animation
     im1_path = tmp_path / "im1.png"
     im2_path = tmp_path / "im2.png"
@@ -145,9 +145,9 @@ def test_imagetools_gif_qr_exif_and_pdf(tmp_path, monkeypatch):
     im1.save(im1_path, exif=exif.tobytes())
     im2.save(im2_path)
 
-    if imagetools.HAVE_IMAGEIO:
+    if imaging.HAVE_IMAGEIO:
         gif_path = tmp_path / "anim.gif"
-        imagetools.animate_img_set(
+        imaging.animate_img_set(
             [str(im1_path), str(im2_path)],
             str(gif_path),
             fps=2,
@@ -158,17 +158,17 @@ def test_imagetools_gif_qr_exif_and_pdf(tmp_path, monkeypatch):
         assert gif_path.exists()
 
     # PIL EXIF listing
-    imagetools.list_exif_info_pil(str(im1_path))
+    imaging.list_exif_info_pil(str(im1_path))
 
     # QR code
-    if imagetools.HAVE_QRCODE:
+    if imaging.HAVE_QRCODE:
         qr_path = tmp_path / "qr.png"
-        imagetools.create_qr_code(str(qr_path), "https://example.com")
+        imaging.create_qr_code(str(qr_path), "https://example.com")
         assert qr_path.exists()
 
     # PDF blank page + image extraction via PyMuPDF
-    if imagetools.HAVE_PYMUPDF:
-        fitz_mod = imagetools.fitz_mod
+    if imaging.HAVE_PYMUPDF:
+        fitz_mod = imaging.fitz_mod
         pdf_path = tmp_path / "sample.pdf"
         doc = fitz_mod.open()
         page = doc.new_page(width=200, height=200)
@@ -177,18 +177,18 @@ def test_imagetools_gif_qr_exif_and_pdf(tmp_path, monkeypatch):
         doc.close()
 
         blank_pdf = tmp_path / "with_blanks.pdf"
-        imagetools.add_pdf_blank_pages(str(pdf_path), str(blank_pdf))
+        imaging.add_pdf_blank_pages(str(pdf_path), str(blank_pdf))
         assert blank_pdf.exists()
         with fitz_mod.open(str(blank_pdf)) as out_doc:
             assert len(out_doc) == 2
 
         extract_dir = tmp_path / "extracted"
         extract_dir.mkdir()
-        imagetools.extract_images_from_pdf(str(pdf_path), str(extract_dir))
+        imaging.extract_images_from_pdf(str(pdf_path), str(extract_dir))
         assert len(list(extract_dir.iterdir())) >= 1
 
     # ExifTool wrapper test (mocked)
-    if imagetools.HAVE_EXIFTOOL:
+    if imaging.HAVE_EXIFTOOL:
 
         class _FakeExifToolHelper:
             def __enter__(self):
@@ -202,13 +202,13 @@ def test_imagetools_gif_qr_exif_and_pdf(tmp_path, monkeypatch):
 
         fake_mod = types.ModuleType("exiftool")
         fake_mod.ExifToolHelper = _FakeExifToolHelper
-        monkeypatch.setattr(imagetools, "exiftool", fake_mod)
-        exif_dict = imagetools.get_exif_info(str(im1_path))
+        monkeypatch.setattr(imaging, "exiftool", fake_mod)
+        exif_dict = imaging.get_exif_info(str(im1_path))
         assert exif_dict["EXIF:Make"] == "TestCam"
-        imagetools.list_exif_info(str(im1_path))
+        imaging.list_exif_info(str(im1_path))
 
 
-def test_webtools_httptools_and_ftptools(tmp_path, monkeypatch):
+def test_web_http_and_ftp(tmp_path, monkeypatch):
     html = (
         '<html><body>'
         '<img src="a.jpg"><img src="/sub/b.png">'
@@ -229,7 +229,7 @@ def test_webtools_httptools_and_ftptools(tmp_path, monkeypatch):
 
         def raise_for_status(self):
             if self.status_code >= 400:
-                raise webtools.requests.HTTPError("err")
+                raise web.requests.HTTPError("err")
 
         def json(self):
             return self._json
@@ -246,41 +246,41 @@ def test_webtools_httptools_and_ftptools(tmp_path, monkeypatch):
         def __exit__(self, exc_type, exc_val, exc_tb):
             return False
 
-    if webtools.HAVE_BS4 and webtools.HAVE_REQUESTS:
+    if web.HAVE_BS4 and web.HAVE_REQUESTS:
         monkeypatch.setattr(
-            webtools.requests, "get", lambda url, timeout=30.0: _SimpleResp(text=html)
+            web.requests, "get", lambda url, timeout=30.0: _SimpleResp(text=html)
         )
-        imgs = webtools.find_web_imgs("https://example.com/dir/page.html", file_ext="jpg")
+        imgs = web.find_web_imgs("https://example.com/dir/page.html", file_ext="jpg")
         assert imgs == ["https://example.com/dir/a.jpg"]
-        pdfs = webtools.find_web_files("https://example.com/dir/page.html", file_ext="pdf")
+        pdfs = web.find_web_files("https://example.com/dir/page.html", file_ext="pdf")
         assert "https://example.com/dir/doc1.pdf" in pdfs
         assert "http://other.org/doc2.pdf" in pdfs
 
-    # httptools
+    # http
     http_db = str(tmp_path / "http_db.json")
-    if httptools.HAVE_PYSONDB:
-        httptools.create_file_listings_db(
+    if http.HAVE_PYSONDB:
+        http.create_file_listings_db(
             http_db, {"f1.txt": "https://example.com/f1.txt"}
         )
 
-    if httptools.HAVE_REQUESTS:
+    if http.HAVE_REQUESTS:
         monkeypatch.setattr(
-            httptools.requests,
+            http.requests,
             "head",
             lambda url, timeout=30.0: _SimpleResp(status_code=200),
         )
-        assert httptools.check_url_exists("https://example.com")
+        assert http.check_url_exists("https://example.com")
 
         monkeypatch.setattr(
-            httptools.requests,
+            http.requests,
             "post",
             lambda url, data=None, headers=None, timeout=60.0: _SimpleResp(
                 json_data={"ok": True}
             ),
         )
-        assert httptools.send_http_json_request("https://example.com/api") == {"ok": True}
+        assert http.send_http_json_request("https://example.com/api") == {"ok": True}
 
-        if httptools.HAVE_PYSONDB:
+        if http.HAVE_PYSONDB:
             class _FakeHTTPSession:
                 def __init__(self):
                     self.headers = {}
@@ -289,13 +289,13 @@ def test_webtools_httptools_and_ftptools(tmp_path, monkeypatch):
                 def get(self, url, **kwargs):
                     return _SimpleResp(content=b"abc123")
 
-            monkeypatch.setattr(httptools.requests, "Session", _FakeHTTPSession)
+            monkeypatch.setattr(http.requests, "Session", _FakeHTTPSession)
             out_http_dir = tmp_path / "http_dl"
             out_http_dir.mkdir()
-            httptools.download_http_files_use_lst_db(http_db, str(out_http_dir))
+            http.download_http_files_use_lst_db(http_db, str(out_http_dir))
             assert (out_http_dir / "f1.txt").read_bytes() == b"abc123"
 
-    # ftptools
+    # ftp
     class _FakeFTP:
         def __init__(self, url, timeout=300):
             self.cwd_path = "/"
@@ -329,28 +329,28 @@ def test_webtools_httptools_and_ftptools(tmp_path, monkeypatch):
         def quit(self):
             return None
 
-    monkeypatch.setattr(ftptools.ftplib, "FTP", _FakeFTP)
-    listings, file_paths = ftptools.get_ftp_file_listings("ftp.example.com", "/root")
+    monkeypatch.setattr(ftp.ftplib, "FTP", _FakeFTP)
+    listings, file_paths = ftp.get_ftp_file_listings("ftp.example.com", "/root")
     assert listings["/root"] == ["/root/file1.txt"]
     assert "/root/sub/file2.tif" in file_paths
 
-    if ftptools.HAVE_PYSONDB:
+    if ftp.HAVE_PYSONDB:
         ftp_db = str(tmp_path / "ftp_db.json")
-        ftptools.create_file_listings_db(ftp_db, "ftp.example.com", "/root")
+        ftp.create_file_listings_db(ftp_db, "ftp.example.com", "/root")
         filtered_db = str(tmp_path / "ftp_filtered.json")
-        ftptools.filter_file_listings_db(ftp_db, [".tif"], filtered_db)
+        ftp.filter_file_listings_db(ftp_db, [".tif"], filtered_db)
 
         ftp_out = tmp_path / "ftp_dl"
         ftp_out.mkdir()
-        ftptools.download_files_use_lst_db(filtered_db, str(ftp_out))
+        ftp.download_files_use_lst_db(filtered_db, str(ftp_out))
         assert (ftp_out / "file2.tif").read_bytes() == b"ftp-data"
 
     up_file = tmp_path / "upload.txt"
     up_file.write_bytes(b"up")
-    assert ftptools.upload_ftp_file(str(up_file), "ftp.example.com", "/dest")
+    assert ftp.upload_ftp_file(str(up_file), "ftp.example.com", "/dest")
 
 
-def test_wmts_tools_layer_list_and_render(tmp_path, monkeypatch):
+def test_wmts_layer_list_and_render(tmp_path, monkeypatch):
     # Create a fake 256x256 RGB PNG tile in memory
     tile_buf = io.BytesIO()
     Image.new("RGB", (256, 256), color=(12, 34, 56)).save(tile_buf, format="PNG")
@@ -393,11 +393,11 @@ def test_wmts_tools_layer_list_and_render(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "owslib", fake_owslib)
     monkeypatch.setitem(sys.modules, "owslib.wmts", fake_owslib_wmts)
 
-    lyrs = wmts_tools.get_wmts_layer_list("https://example.com/wmts", name_filter="_a")
+    lyrs = wmts.get_wmts_layer_list("https://example.com/wmts", name_filter="_a")
     assert lyrs == ["layer_a"]
 
     out_tif = tmp_path / "wmts_out.tif"
-    wmts_tools.get_wmts_as_img(
+    wmts.get_wmts_as_img(
         wmts_url="https://example.com/wmts",
         wmts_lyr="layer_a",
         bbox=(-500000.0, 500000.0, 5000000.0, 6000000.0),
@@ -415,19 +415,19 @@ def test_wmts_tools_layer_list_and_render(tmp_path, monkeypatch):
 
 
 def test_optional_requests_missing_tools(tmp_path):
-    """Verify webtools and httptools prevent executing optional-dep functions when missing."""
+    """Verify web and http prevent executing optional-dep functions when missing."""
     import importlib
     from unittest.mock import patch
     import rsgispy.tools as rtools
 
-    orig_webtools = webtools
-    orig_httptools = httptools
+    orig_web = web
+    orig_http = http
     blocked_req = {"requests": None, "requests.exceptions": None}
     blocked_bs4 = {"bs4": None}
     try:
         with patch.dict(sys.modules, blocked_bs4):
-            sys.modules.pop("rsgispy.tools.webtools", None)
-            web_mod_no_bs4 = importlib.import_module("rsgispy.tools.webtools")
+            sys.modules.pop("rsgispy.tools.web", None)
+            web_mod_no_bs4 = importlib.import_module("rsgispy.tools.web")
 
         assert not web_mod_no_bs4.HAVE_BS4
         for fn_name in ("find_web_imgs", "find_web_files"):
@@ -435,10 +435,10 @@ def test_optional_requests_missing_tools(tmp_path):
             assert fn_name not in web_mod_no_bs4.__all__
 
         with patch.dict(sys.modules, blocked_req):
-            sys.modules.pop("rsgispy.tools.webtools", None)
-            sys.modules.pop("rsgispy.tools.httptools", None)
-            web_mod = importlib.import_module("rsgispy.tools.webtools")
-            http_mod = importlib.import_module("rsgispy.tools.httptools")
+            sys.modules.pop("rsgispy.tools.web", None)
+            sys.modules.pop("rsgispy.tools.http", None)
+            web_mod = importlib.import_module("rsgispy.tools.web")
+            http_mod = importlib.import_module("rsgispy.tools.http")
 
         assert not web_mod.HAVE_REQUESTS
         for fn_name in ("find_web_imgs", "find_web_files"):
@@ -479,26 +479,26 @@ def test_optional_requests_missing_tools(tmp_path):
                     db_path, str(tmp_path), use_wget=False
                 )
     finally:
-        sys.modules["rsgispy.tools.webtools"] = orig_webtools
-        sys.modules["rsgispy.tools.httptools"] = orig_httptools
-        rtools.webtools = orig_webtools
-        rtools.httptools = orig_httptools
+        sys.modules["rsgispy.tools.web"] = orig_web
+        sys.modules["rsgispy.tools.http"] = orig_http
+        rtools.web = orig_web
+        rtools.http = orig_http
 
 
 def test_optional_pysondb_missing_tools():
-    """Verify httptools and ftptools omit pysondb functions when pysondb is missing."""
+    """Verify http and ftp omit pysondb functions when pysondb is missing."""
     import importlib
     from unittest.mock import patch
     import rsgispy.tools as rtools
 
-    orig_httptools = httptools
-    orig_ftptools = ftptools
+    orig_http = http
+    orig_ftp = ftp
     try:
         with patch.dict(sys.modules, {"pysondb": None}):
-            sys.modules.pop("rsgispy.tools.httptools", None)
-            sys.modules.pop("rsgispy.tools.ftptools", None)
-            http_mod = importlib.import_module("rsgispy.tools.httptools")
-            ftp_mod = importlib.import_module("rsgispy.tools.ftptools")
+            sys.modules.pop("rsgispy.tools.http", None)
+            sys.modules.pop("rsgispy.tools.ftp", None)
+            http_mod = importlib.import_module("rsgispy.tools.http")
+            ftp_mod = importlib.import_module("rsgispy.tools.ftp")
 
         assert not http_mod.HAVE_PYSONDB
         for fn_name in ("create_file_listings_db", "download_http_files_use_lst_db"):
@@ -524,19 +524,19 @@ def test_optional_pysondb_missing_tools():
             assert hasattr(ftp_mod, fn_name)
             assert fn_name in ftp_mod.__all__
     finally:
-        sys.modules["rsgispy.tools.httptools"] = orig_httptools
-        sys.modules["rsgispy.tools.ftptools"] = orig_ftptools
-        rtools.httptools = orig_httptools
-        rtools.ftptools = orig_ftptools
+        sys.modules["rsgispy.tools.http"] = orig_http
+        sys.modules["rsgispy.tools.ftp"] = orig_ftp
+        rtools.http = orig_http
+        rtools.ftp = orig_ftp
 
 
-def test_optional_imagetools_missing():
-    """Verify imagetools omits functions when optional packages are missing."""
+def test_optional_imaging_missing():
+    """Verify imaging omits functions when optional packages are missing."""
     import importlib
     from unittest.mock import patch
     import rsgispy.tools as rtools
 
-    orig_imagetools = imagetools
+    orig_imaging = imaging
     try:
         with patch.dict(
             sys.modules,
@@ -549,8 +549,8 @@ def test_optional_imagetools_missing():
                 "fitz": None,
             },
         ):
-            sys.modules.pop("rsgispy.tools.imagetools", None)
-            img_mod = importlib.import_module("rsgispy.tools.imagetools")
+            sys.modules.pop("rsgispy.tools.imaging", None)
+            img_mod = importlib.import_module("rsgispy.tools.imaging")
 
         assert not img_mod.HAVE_IMAGEIO
         assert not img_mod.HAVE_EXIFTOOL
@@ -573,13 +573,13 @@ def test_optional_imagetools_missing():
         # Also verify fallback from pymupdf -> fitz when only pymupdf is missing
         fake_fitz = types.ModuleType("fitz")
         with patch.dict(sys.modules, {"pymupdf": None, "fitz": fake_fitz}):
-            sys.modules.pop("rsgispy.tools.imagetools", None)
-            img_mod_fitz = importlib.import_module("rsgispy.tools.imagetools")
+            sys.modules.pop("rsgispy.tools.imaging", None)
+            img_mod_fitz = importlib.import_module("rsgispy.tools.imaging")
         assert img_mod_fitz.HAVE_PYMUPDF
         assert img_mod_fitz.fitz_mod is fake_fitz
         for fn_name in ("extract_images_from_pdf", "add_pdf_blank_pages"):
             assert hasattr(img_mod_fitz, fn_name)
             assert fn_name in img_mod_fitz.__all__
     finally:
-        sys.modules["rsgispy.tools.imagetools"] = orig_imagetools
-        rtools.imagetools = orig_imagetools
+        sys.modules["rsgispy.tools.imaging"] = orig_imaging
+        rtools.imaging = orig_imaging

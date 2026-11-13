@@ -1,5 +1,5 @@
 """
-Tests for rsgispy.tools.stats.
+Tests for rsgispy.tools.stats, thresholding, featureselection, and accuracy.
 """
 
 import importlib.util
@@ -12,11 +12,14 @@ import pandas as pd
 import pytest
 
 import rsgispy
+import rsgispy.tools.accuracy as raccuracy
+import rsgispy.tools.featureselection as rfeatsel
 import rsgispy.tools.stats as rstats
+import rsgispy.tools.thresholding as rthresh
 
 
 def test_feature_selection_and_vif():
-    """Test calc_pandas_vif, cqv_threshold, corr_feature_selection, and lassolars_feature_selection."""
+    """Test calc_pandas_vif, cqv_threshold, corr_feature_selection, and lassolars."""
     rng = np.random.default_rng(42)
     n_samples = 60
     x1 = rng.uniform(10.0, 20.0, size=n_samples)
@@ -27,76 +30,84 @@ def test_feature_selection_and_vif():
 
     df = pd.DataFrame({"y": y, "x1": x1, "x2": x2, "x3": x3, "x_const": x_const})
 
-    cqv_cols = rstats.cqv_threshold(df, cols=["x1", "x2", "x_const"], lowthreshold=0.1, highthreshold=0.9)
+    cqv_cols = rfeatsel.cqv_threshold(
+        df, cols=["x1", "x2", "x_const"], lowthreshold=0.1, highthreshold=0.9
+    )
     assert "x1" in cqv_cols
     assert "x2" in cqv_cols
     assert "x_const" not in cqv_cols
     with pytest.raises(rsgispy.RSGISPyException):
-        rstats.cqv_threshold(df, cols=["x1"])
+        rfeatsel.cqv_threshold(df, cols=["x1"])
 
-    if rstats.HAVE_SKLEARN:
-        vifs = rstats.calc_pandas_vif(df, cols=["x1", "x2", "x3"])
+    if rfeatsel.HAVE_SKLEARN:
+        vifs = rfeatsel.calc_pandas_vif(df, cols=["x1", "x2", "x3"])
         assert vifs["x1"] > 10.0
         assert vifs["x3"] > 10.0
         assert vifs["x2"] < 5.0
         with pytest.raises(rsgispy.RSGISPyException):
-            rstats.calc_pandas_vif(df, cols=["x1"])
+            rfeatsel.calc_pandas_vif(df, cols=["x1"])
 
-        lasso_cols = rstats.lassolars_feature_selection(df, dep_vars=["y"], ind_vars=["x1", "x2", "x3"])
+        lasso_cols = rfeatsel.lassolars_feature_selection(
+            df, dep_vars=["y"], ind_vars=["x1", "x2", "x3"]
+        )
         assert "x1" in lasso_cols or "x3" in lasso_cols
 
-        lasso_alpha = rstats.lassolars_feature_selection(
+        lasso_alpha = rfeatsel.lassolars_feature_selection(
             df, dep_vars=["y"], ind_vars=["x1", "x2", "x3"], alpha_val=0.01
         )
         assert isinstance(lasso_alpha, list)
 
-    if rstats.HAVE_SCIPY and rstats.HAVE_SKLEARN:
-        corr_cols = rstats.corr_feature_selection(
-            df, dep_vars=["y"], ind_vars=["x1", "x2", "x3", "x_const"], n_min_clusters=2, n_max_clusters=4
+    if rfeatsel.HAVE_SCIPY and rfeatsel.HAVE_SKLEARN:
+        corr_cols = rfeatsel.corr_feature_selection(
+            df,
+            dep_vars=["y"],
+            ind_vars=["x1", "x2", "x3", "x_const"],
+            n_min_clusters=2,
+            n_max_clusters=4,
         )
         assert len(corr_cols) >= 2
         assert set(corr_cols).issubset({"x1", "x2", "x3", "x_const"})
 
 
 def test_regression_and_classification_metrics():
-    """Test breusch_pagan_test, bin_accuracy_scores_prob, accuracy_scores_binary, bias_score, decompose_bias_variance."""
+    """Test breusch_pagan, binary/prob accuracy scores, bias_score, and bias-variance."""
     rng = np.random.default_rng(7)
     x = rng.normal(size=(80, 2))
     y = 2.0 * x[:, 0] - x[:, 1] + rng.normal(0.0, 0.5, size=80)
 
-    if rstats.HAVE_SCIPY and rstats.HAVE_SKLEARN:
-        lm_stat, pval, msg = rstats.breusch_pagan_test(x, y)
+    if rfeatsel.HAVE_SCIPY and rfeatsel.HAVE_SKLEARN:
+        lm_stat, pval, msg = rfeatsel.breusch_pagan_test(x, y)
         assert lm_stat >= 0.0
         assert 0.0 <= pval <= 1.0
         assert isinstance(msg, str)
         with pytest.raises(rsgispy.RSGISPyException):
-            rstats.breusch_pagan_test(x[:10], y)
+            rfeatsel.breusch_pagan_test(x[:10], y)
 
     y_true = np.array([0, 0, 0, 1, 1, 1, 0, 1])
     y_prob = np.array([0.1, 0.2, 0.7, 0.8, 0.9, 0.3, 0.1, 0.85])
     y_pred = np.array([0, 0, 1, 1, 1, 0, 0, 1])
 
-    if rstats.HAVE_SCIPY and rstats.HAVE_SKLEARN:
-        prob_names, prob_scores = rstats.bin_accuracy_scores_prob(y_true, y_prob)
+    if raccuracy.HAVE_SCIPY and raccuracy.HAVE_SKLEARN:
+        prob_names, prob_scores = raccuracy.bin_accuracy_scores_prob(y_true, y_prob)
         assert len(prob_names) == len(prob_scores) == 5
         assert prob_scores[0] > 0.7  # AUC
         with pytest.raises(rsgispy.RSGISPyException):
-            rstats.bin_accuracy_scores_prob(y_true[:3], y_prob)
+            raccuracy.bin_accuracy_scores_prob(y_true[:3], y_prob)
 
-    if rstats.HAVE_SKLEARN:
-        bin_names, bin_scores = rstats.accuracy_scores_binary(y_true, y_pred)
+    if raccuracy.HAVE_SKLEARN:
+        bin_names, bin_scores = raccuracy.accuracy_scores_binary(y_true, y_pred)
         assert len(bin_names) == len(bin_scores) == 16
         assert bin_scores[6] == pytest.approx(0.75)  # Accuracy
         with pytest.raises(rsgispy.RSGISPyException):
-            rstats.accuracy_scores_binary(y_true, np.array([0, 2, 1, 1, 1, 0, 0, 1]))
+            raccuracy.accuracy_scores_binary(y_true, np.array([0, 2, 1, 1, 1, 0, 0, 1]))
 
     yt = np.array([[10.0, 20.0], [20.0, 40.0], [30.0, 60.0]])
     yp = np.array([[12.0, 18.0], [22.0, 38.0], [32.0, 58.0]])
-    bias, norm_bias = rstats.bias_score(yt, yp)
+    bias, norm_bias = raccuracy.bias_score(yt, yp)
     assert bias == pytest.approx([2.0, -2.0])
     assert norm_bias == pytest.approx([10.0, -5.0])
 
-    mse, bias_sq, var, noise = rstats.decompose_bias_variance(yt, yp)
+    mse, bias_sq, var, noise = raccuracy.decompose_bias_variance(yt, yp)
     assert mse == pytest.approx([4.0, 4.0])
     assert bias_sq == pytest.approx([4.0, 4.0])
     assert var == pytest.approx([0.0, 0.0])
@@ -104,40 +115,42 @@ def test_regression_and_classification_metrics():
 
 
 def test_thresholding_masking_normalisation_and_variogram(tmp_path):
-    """Test histogram thresholding, mask_data_to_valid, image normalise/standarise, and calc_semivariogram."""
+    """Test thresholding, mask_data_to_valid, image normalise/standarise, and variogram."""
     rng = np.random.default_rng(123)
     mode1 = rng.normal(10.0, 1.5, size=500)
     mode2 = rng.normal(30.0, 1.5, size=500)
     bimodal = np.concatenate([mode1, mode2])
 
-    n_bins, bin_w = rstats.get_nbins_histogram(bimodal)
+    n_bins, bin_w = rthresh.get_nbins_histogram(bimodal)
     assert n_bins > 5
     assert bin_w > 0.0
 
-    centres = rstats.get_bin_centres(np.array([1.0, 4.0, 9.0]))
+    centres = rthresh.get_bin_centres(np.array([1.0, 4.0, 9.0]))
     assert centres == pytest.approx([2.5, 6.5])
-    geom_centres = rstats.get_bin_centres(np.array([1.0, 4.0, 9.0]), geometric=True)
+    geom_centres = rthresh.get_bin_centres(np.array([1.0, 4.0, 9.0]), geometric=True)
     assert geom_centres == pytest.approx([2.0, 6.0])
 
     for fn in (
-        rstats.calc_otsu_threshold,
-        rstats.calc_yen_threshold,
-        rstats.calc_isodata_threshold,
-        rstats.calc_li_threshold,
+        rthresh.calc_otsu_threshold,
+        rthresh.calc_yen_threshold,
+        rthresh.calc_isodata_threshold,
+        rthresh.calc_li_threshold,
     ):
         thres = fn(bimodal)
         assert 12.0 < thres < 28.0
 
-    ce = rstats.calc_hist_cross_entropy(bimodal, 20.0)
+    ce = rthresh.calc_hist_cross_entropy(bimodal, 20.0)
     assert np.isfinite(ce)
 
-    if rstats.HAVE_SCIPY:
-        kurt_thres = rstats.calc_kurt_skew_threshold(
+    if rthresh.HAVE_SCIPY:
+        kurt_thres = rthresh.calc_kurt_skew_threshold(
             bimodal, max_val=25.0, min_val=5.0, init_thres=15.0, low_thres=True, contamination=20.0
         )
         assert np.isfinite(kurt_thres)
         with pytest.raises(rsgispy.RSGISPyException):
-            rstats.calc_kurt_skew_threshold(bimodal, max_val=25.0, min_val=5.0, init_thres=15.0, contamination=0.5)
+            rthresh.calc_kurt_skew_threshold(
+                bimodal, max_val=25.0, min_val=5.0, init_thres=15.0, contamination=0.5
+            )
 
     raw = np.array([[1.0, 2.0], [np.nan, 3.0], [0.0, 5.0], [4.0, 12.0], [3.0, 6.0]])
     masked = rstats.mask_data_to_valid(raw, lower_limit=0.5, upper_limit=10.0)
@@ -195,18 +208,6 @@ def test_optional_scipy_and_sklearn_missing():
     """Verify dependent functions are omitted when scipy and/or scikit-learn are unavailable."""
     import rsgispy.tools as rtools
 
-    scipy_only = {"calc_kurt_skew_threshold"}
-    sklearn_only = {"calc_pandas_vif", "lassolars_feature_selection", "accuracy_scores_binary"}
-    both_deps = {"corr_feature_selection", "breusch_pagan_test", "bin_accuracy_scores_prob"}
-    always_avail = {
-        "cqv_threshold",
-        "calc_otsu_threshold",
-        "bias_score",
-        "normalise_img_data",
-        "validate_percentiles_0_100",
-        "compute_nanpercentiles",
-    }
-
     blocked_scipy = {"scipy": None, "scipy.optimize": None, "scipy.stats": None}
     blocked_sklearn = {
         "sklearn": None,
@@ -217,50 +218,98 @@ def test_optional_scipy_and_sklearn_missing():
         "sklearn.metrics": None,
     }
 
-    def _fresh_import(blocked):
+    def _fresh_import(mod_name, blocked):
         with patch.dict(sys.modules, blocked):
-            sys.modules.pop("rsgispy.tools.stats", None)
-            return importlib.import_module("rsgispy.tools.stats")
+            sys.modules.pop(mod_name, None)
+            return importlib.import_module(mod_name)
 
-    orig_mod = rstats
+    orig_thresh = rthresh
+    orig_featsel = rfeatsel
+    orig_acc = raccuracy
     try:
         # Missing both scipy and sklearn
-        mod = _fresh_import({**blocked_scipy, **blocked_sklearn})
-        assert not mod.HAVE_SCIPY
-        assert not mod.HAVE_SKLEARN
-        for fn_name in scipy_only | sklearn_only | both_deps:
-            assert not hasattr(mod, fn_name)
-            assert fn_name not in mod.__all__
-        for fn_name in always_avail:
-            assert hasattr(mod, fn_name)
-            assert fn_name in mod.__all__
+        both_blocked = {**blocked_scipy, **blocked_sklearn}
+        t_mod = _fresh_import("rsgispy.tools.thresholding", both_blocked)
+        assert not t_mod.HAVE_SCIPY
+        assert not hasattr(t_mod, "calc_kurt_skew_threshold")
+        assert "calc_kurt_skew_threshold" not in t_mod.__all__
+        assert hasattr(t_mod, "calc_otsu_threshold")
+        assert "calc_otsu_threshold" in t_mod.__all__
+
+        f_mod = _fresh_import("rsgispy.tools.featureselection", both_blocked)
+        assert not f_mod.HAVE_SCIPY
+        assert not f_mod.HAVE_SKLEARN
+        for fn_name in (
+            "calc_pandas_vif",
+            "lassolars_feature_selection",
+            "corr_feature_selection",
+            "breusch_pagan_test",
+        ):
+            assert not hasattr(f_mod, fn_name)
+            assert fn_name not in f_mod.__all__
+        assert hasattr(f_mod, "cqv_threshold")
+        assert "cqv_threshold" in f_mod.__all__
+
+        a_mod = _fresh_import("rsgispy.tools.accuracy", both_blocked)
+        assert not a_mod.HAVE_SCIPY
+        assert not a_mod.HAVE_SKLEARN
+        for fn_name in ("accuracy_scores_binary", "bin_accuracy_scores_prob"):
+            assert not hasattr(a_mod, fn_name)
+            assert fn_name not in a_mod.__all__
+        assert hasattr(a_mod, "bias_score")
+        assert "bias_score" in a_mod.__all__
 
         # Missing scipy only (when sklearn is installed)
-        if orig_mod.HAVE_SKLEARN or importlib.util.find_spec("sklearn") is not None:
-            mod = _fresh_import(blocked_scipy)
-            assert not mod.HAVE_SCIPY
-            assert mod.HAVE_SKLEARN
-            for fn_name in scipy_only | both_deps:
-                assert not hasattr(mod, fn_name)
-                assert fn_name not in mod.__all__
-            for fn_name in sklearn_only | always_avail:
-                assert hasattr(mod, fn_name)
-                assert fn_name in mod.__all__
+        if orig_featsel.HAVE_SKLEARN or importlib.util.find_spec("sklearn") is not None:
+            t_mod = _fresh_import("rsgispy.tools.thresholding", blocked_scipy)
+            assert not t_mod.HAVE_SCIPY
+            assert not hasattr(t_mod, "calc_kurt_skew_threshold")
+
+            f_mod = _fresh_import("rsgispy.tools.featureselection", blocked_scipy)
+            assert not f_mod.HAVE_SCIPY
+            assert f_mod.HAVE_SKLEARN
+            for fn_name in ("corr_feature_selection", "breusch_pagan_test"):
+                assert not hasattr(f_mod, fn_name)
+                assert fn_name not in f_mod.__all__
+            for fn_name in ("calc_pandas_vif", "lassolars_feature_selection", "cqv_threshold"):
+                assert hasattr(f_mod, fn_name)
+                assert fn_name in f_mod.__all__
+
+            a_mod = _fresh_import("rsgispy.tools.accuracy", blocked_scipy)
+            assert not a_mod.HAVE_SCIPY
+            assert a_mod.HAVE_SKLEARN
+            assert not hasattr(a_mod, "bin_accuracy_scores_prob")
+            assert hasattr(a_mod, "accuracy_scores_binary")
 
         # Missing sklearn only (when scipy is installed)
-        if orig_mod.HAVE_SCIPY or importlib.util.find_spec("scipy") is not None:
-            mod = _fresh_import(blocked_sklearn)
-            assert mod.HAVE_SCIPY
-            assert not mod.HAVE_SKLEARN
-            for fn_name in sklearn_only | both_deps:
-                assert not hasattr(mod, fn_name)
-                assert fn_name not in mod.__all__
-            for fn_name in scipy_only | always_avail:
-                assert hasattr(mod, fn_name)
-                assert fn_name in mod.__all__
+        if orig_featsel.HAVE_SCIPY or importlib.util.find_spec("scipy") is not None:
+            f_mod = _fresh_import("rsgispy.tools.featureselection", blocked_sklearn)
+            assert f_mod.HAVE_SCIPY
+            assert not f_mod.HAVE_SKLEARN
+            for fn_name in (
+                "calc_pandas_vif",
+                "lassolars_feature_selection",
+                "corr_feature_selection",
+                "breusch_pagan_test",
+            ):
+                assert not hasattr(f_mod, fn_name)
+                assert fn_name not in f_mod.__all__
+            assert hasattr(f_mod, "cqv_threshold")
+
+            a_mod = _fresh_import("rsgispy.tools.accuracy", blocked_sklearn)
+            assert a_mod.HAVE_SCIPY
+            assert not a_mod.HAVE_SKLEARN
+            for fn_name in ("accuracy_scores_binary", "bin_accuracy_scores_prob"):
+                assert not hasattr(a_mod, fn_name)
+                assert fn_name not in a_mod.__all__
+            assert hasattr(a_mod, "bias_score")
     finally:
-        sys.modules["rsgispy.tools.stats"] = orig_mod
-        rtools.stats = orig_mod
+        sys.modules["rsgispy.tools.thresholding"] = orig_thresh
+        sys.modules["rsgispy.tools.featureselection"] = orig_featsel
+        sys.modules["rsgispy.tools.accuracy"] = orig_acc
+        rtools.thresholding = orig_thresh
+        rtools.featureselection = orig_featsel
+        rtools.accuracy = orig_acc
 
 
 def test_percentile_helpers():
@@ -294,4 +343,3 @@ def test_percentile_helpers():
     )
     assert pct_scalar.shape == (1, 1, 2)
     assert pct_scalar[0, 0] == pytest.approx([2.0, 3.0])
-

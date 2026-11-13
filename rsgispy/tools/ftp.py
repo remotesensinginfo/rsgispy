@@ -1,5 +1,5 @@
 """
-The tools.ftptools module provides FTP directory traversal, download/upload,
+The tools.ftp module provides FTP directory traversal, download/upload,
 and tracking database utilities.
 
 Functions requiring ``pysondb`` are only defined and exported when
@@ -13,7 +13,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import rsgispy
-import rsgispy.tools.filetools
+import rsgispy.tools.files
 
 try:
     import pysondb  # pylint: disable=import-error
@@ -444,7 +444,7 @@ def upload_ftp_file(
     ftp_conn = ftplib.FTP(ftp_url, timeout=ftp_timeout)
     ftp_conn.login(user=ftp_user or "", passwd=ftp_pass or "")
     try:
-        remote_path_parts = rsgispy.tools.filetools.split_path_all(remote_path)
+        remote_path_parts = rsgispy.tools.files.split_path_all(remote_path)
         if remote_path_parts and remote_path_parts[0] == "/":
             remote_path_parts.pop(0)
 

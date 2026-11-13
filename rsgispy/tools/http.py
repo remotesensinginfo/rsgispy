@@ -1,5 +1,5 @@
 """
-The tools.httptools module provides HTTP request, file download, and download
+The tools.http module provides HTTP request, file download, and download
 tracking database utilities.
 
 Functions requiring ``requests`` or ``pysondb`` are only defined and exported
@@ -12,7 +12,7 @@ import subprocess
 from typing import Any, Dict, Optional, Tuple
 
 import rsgispy
-import rsgispy.tools.filetools
+import rsgispy.tools.hashing
 
 try:
     import requests  # pylint: disable=import-error
@@ -283,7 +283,7 @@ def wget_download_file(
 
     if download_state == 0:
         if input_url_md5 is not None:
-            dwnld_file_md5 = rsgispy.tools.filetools.create_md5_hash(out_file_path)
+            dwnld_file_md5 = rsgispy.tools.hashing.create_md5_hash(out_file_path)
             if dwnld_file_md5 == input_url_md5:
                 success = True
                 out_message = "File Downloaded and MD5 to checked."

@@ -16,7 +16,7 @@ from rsgispy.imageutils.metadata import (
     get_img_res,
     get_wkt_proj_from_img,
 )
-from rsgispy.tools.geometrytools import (
+from rsgispy.tools.geometry import (
     bbox_equal,
     do_bboxes_intersect,
     reproj_bbox,

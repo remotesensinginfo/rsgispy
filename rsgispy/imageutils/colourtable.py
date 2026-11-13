@@ -13,7 +13,7 @@ from rasterio.enums import ColorInterp
 import rsgispy
 from rsgispy.imageprocess import validate_band_index as _validate_band_index
 from rsgispy.imageutils._helpers import ensure_img_exists as _ensure_img_exists
-from rsgispy.tools.utils import hex_to_rgb
+from rsgispy.tools.colours import hex_to_rgb
 
 __all__ = [
     "set_img_thematic",

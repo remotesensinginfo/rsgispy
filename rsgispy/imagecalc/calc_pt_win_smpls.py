@@ -19,7 +19,7 @@ from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imageprocess import bbox_from_dataset, ensure_file_exists
-import rsgispy.tools.geometrytools
+import rsgispy.tools.geometry
 
 __all__ = [
     "RSGISCalcSumVals",
@@ -84,7 +84,7 @@ def _extract_rotated_window(
     img_y_res = float(src_ds.transform.e)
     img_y_res_abs = abs(img_y_res)
 
-    pt_grid = rsgispy.tools.geometrytools.find_point_on_whole_num_grid(
+    pt_grid = rsgispy.tools.geometry.find_point_on_whole_num_grid(
         pt_xy, img_bbox, img_x_res, img_y_res_abs
     )
 
@@ -98,13 +98,13 @@ def _extract_rotated_window(
         pt_grid[1] - img_ybox,
         pt_grid[1] + img_ybox,
     )
-    pt_img_buf_bbox = rsgispy.tools.geometrytools.buffer_bbox(
+    pt_img_buf_bbox = rsgispy.tools.geometry.buffer_bbox(
         pt_img_bbox, buf=(img_max_box * 2.0)
     )
-    pt_img_bound_bbox = rsgispy.tools.geometrytools.bbox_intersection(
+    pt_img_bound_bbox = rsgispy.tools.geometry.bbox_intersection(
         pt_img_bbox, img_bbox
     )
-    pt_img_bound_buf_bbox = rsgispy.tools.geometrytools.bbox_intersection(
+    pt_img_bound_buf_bbox = rsgispy.tools.geometry.bbox_intersection(
         pt_img_buf_bbox, img_bbox
     )
 

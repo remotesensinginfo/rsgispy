@@ -1,5 +1,5 @@
 """
-The tools.imagetools module contains functions for non-spatial image, EXIF,
+The tools.imaging module contains functions for non-spatial image, EXIF,
 PDF image, and QR code utilities.
 
 Functions requiring ``imageio``, ``exiftool``, ``pymupdf``/``fitz``, or
@@ -11,8 +11,8 @@ import shutil
 from typing import Any, Dict, List, Optional
 
 import rsgispy
-import rsgispy.tools.filetools
-import rsgispy.tools.utils
+import rsgispy.tools.files
+import rsgispy.tools.strings
 
 try:
     import imageio.v2 as imageio_v2  # pylint: disable=import-error
@@ -101,7 +101,7 @@ if HAVE_IMAGEIO:
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         # pylint: disable=too-many-locals,import-outside-toplevel
         tqdm_cls = rsgispy.get_tqdm()
-        uid_str = rsgispy.tools.utils.uid_generator()
+        uid_str = rsgispy.tools.strings.uid_generator()
         lcl_tmp_dir = os.path.join(tmp_dir, f"tmp_{uid_str}")
 
         if resize:
@@ -110,7 +110,7 @@ if HAVE_IMAGEIO:
             os.makedirs(lcl_tmp_dir, exist_ok=True)
             ani_input_imgs: List[str] = []
             for in_img in tqdm_cls(input_imgs, desc="Resizing"):
-                basename = rsgispy.tools.filetools.get_file_basename(in_img)
+                basename = rsgispy.tools.files.get_file_basename(in_img)
                 out_resize_img = os.path.join(lcl_tmp_dir, f"{basename}_resize.png")
                 with Image.open(in_img) as lcl_img_obj:
                     target_y = out_y_size

@@ -50,8 +50,8 @@ import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import rsgispy
-import rsgispy.tools.geometrytools
-import rsgispy.tools.utils
+import rsgispy.tools.geometry
+import rsgispy.tools.system
 
 # pylint: disable=invalid-name
 PLANET_AVAIL = True
@@ -235,15 +235,15 @@ def planet_auth(
     _require_planet()
 
     if username is None:
-        username = rsgispy.tools.utils.get_environment_variable("RSGIS_PLANET_USER")
+        username = rsgispy.tools.system.get_environment_variable("RSGIS_PLANET_USER")
 
     if password is None:
-        password = rsgispy.tools.utils.get_environment_variable("RSGIS_PLANET_PASS")
+        password = rsgispy.tools.system.get_environment_variable("RSGIS_PLANET_PASS")
 
     if api_key is None:
-        api_key = rsgispy.tools.utils.get_environment_variable("RSGIS_PLANET_API_KEY")
+        api_key = rsgispy.tools.system.get_environment_variable("RSGIS_PLANET_API_KEY")
     if api_key is None:
-        api_key = rsgispy.tools.utils.get_environment_variable("PL_API_KEY")
+        api_key = rsgispy.tools.system.get_environment_variable("PL_API_KEY")
 
     if api_key is not None:
         return planet.Auth.from_key(api_key)
@@ -269,7 +269,7 @@ async def _search_planet_items(
     item_type_str = get_item_type_str(item_type)
 
     data_filters = [planet.data_filter.permission_filter()]
-    bbox_geo_dict = rsgispy.tools.geometrytools.get_bbox_geojson_poly(bbox)
+    bbox_geo_dict = rsgispy.tools.geometry.get_bbox_geojson_poly(bbox)
     data_filters.append(planet.data_filter.geometry_filter(bbox_geo_dict))
 
     if start_date is not None or end_date is not None:

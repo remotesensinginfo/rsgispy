@@ -1,5 +1,5 @@
 """
-The tools.geometrytools module provides bounding box, grid-snapping, and
+The tools.geometry module provides bounding box, grid-snapping, and
 coordinate reprojection utilities using pyproj.
 """
 

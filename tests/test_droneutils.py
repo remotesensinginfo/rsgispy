@@ -151,7 +151,7 @@ def test_create_flightline_vec(tmp_path, monkeypatch):
     fake_mod.ExifToolHelper = lambda: _FakeExifToolHelper(meta)
     monkeypatch.setattr(rsgispy.droneutils, "exiftool", fake_mod)
     monkeypatch.setattr(
-        rsgispy.tools.filetools,
+        rsgispy.tools.files,
         "sort_file_by_datetime",
         lambda imgs: list(imgs),
     )

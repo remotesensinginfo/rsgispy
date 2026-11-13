@@ -26,8 +26,8 @@ from rsgispy.imageprocess import (
     open_output_dataset,
 )
 import rsgispy.imageutils.warp
-import rsgispy.tools.filetools
-import rsgispy.tools.utils
+import rsgispy.tools.files
+import rsgispy.tools.strings
 
 __all__ = [
     "dtm_aspect_median_filter",
@@ -391,12 +391,12 @@ def resampling_detread_dem(
     img_width = int(math.ceil(coord_width / resmp_res) + 1)
     img_height = int(math.ceil(coord_height / resmp_res) + 1)
 
-    int_base_name = rsgispy.tools.filetools.get_file_basename(input_img)
-    uid_str = rsgispy.tools.utils.uid_generator()
+    int_base_name = rsgispy.tools.files.get_file_basename(input_img)
+    uid_str = rsgispy.tools.strings.uid_generator()
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
 
-    with rsgispy.tools.filetools.work_dir_context(tmp_dir) as work_dir:
+    with rsgispy.tools.files.work_dir_context(tmp_dir) as work_dir:
         base_img = os.path.join(work_dir, f"{int_base_name}_base_{uid_str}.tif")
         low_res_img = os.path.join(work_dir, f"{int_base_name}_low_res_{uid_str}.tif")
 

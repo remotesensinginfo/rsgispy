@@ -13,8 +13,8 @@ import rsgispy.dataaccess.nasa_cmr as nasa_cmr
 import rsgispy.dataaccess.openstreetmap as openstreetmap
 import rsgispy.dataaccess.planet_data_api as planet_data_api
 import rsgispy.dataaccess.usgs_m2m as usgs_m2m
-import rsgispy.tools.filetools
-import rsgispy.tools.httptools
+import rsgispy.tools.hashing
+import rsgispy.tools.http
 
 
 class _FakeHTTPResponse:
@@ -79,10 +79,10 @@ def test_copernicus_odata_mappings_and_queries(tmp_path, monkeypatch):
                                     {
                                         "Algorithm": "MD5",
                                         "Value": (
-                                            rsgispy.tools.filetools
+                                            rsgispy.tools.hashing
                                             .create_md5_hash_str("hello world")
                                             if hasattr(
-                                                rsgispy.tools.filetools,
+                                                rsgispy.tools.hashing,
                                                 "create_md5_hash_str",
                                             )
                                             else "5eb63bbbe01eeed093cb22bb8f5acdc3"
@@ -203,7 +203,7 @@ def test_nasa_cmr_queries_and_download(tmp_path, monkeypatch):
         return {"feed": {"entry": []}}
 
     monkeypatch.setattr(
-        rsgispy.tools.httptools, "send_http_json_request", _fake_send_json
+        rsgispy.tools.http, "send_http_json_request", _fake_send_json
     )
 
     assert nasa_cmr.check_prod_version_avail("GEDI02_A", "002")
@@ -436,7 +436,7 @@ def test_usgs_m2m_workflow(monkeypatch):
         return {"errorCode": None, "data": {}}
 
     monkeypatch.setattr(
-        rsgispy.tools.httptools,
+        rsgispy.tools.http,
         "send_http_json_request",
         _fake_usgs_request,
         raising=False,

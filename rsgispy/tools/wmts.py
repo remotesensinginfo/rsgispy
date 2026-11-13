@@ -1,5 +1,5 @@
 """
-The tools.wmts_tools module provides utilities for querying and downloading
+The tools.wmts module provides utilities for querying and downloading
 Web Map Tile Service (WMTS) layers using ``owslib`` and ``rasterio`` without
 requiring GDAL's ``osgeo`` bindings.
 """
@@ -21,8 +21,9 @@ import rsgispy
 from rsgispy.imageprocess import IntersectionGrid, open_output_dataset
 import rsgispy.imageutils.subsetting
 import rsgispy.imageutils.warp
-import rsgispy.tools.filetools
-import rsgispy.tools.geometrytools
+import rsgispy.tools.files
+import rsgispy.tools.geometry
+import rsgispy.tools.strings
 
 __all__ = [
     "get_wmts_layer_list",
@@ -190,7 +191,7 @@ def get_wmts_as_img(
         wmts_obj, lyr_obj, wmts_epsg
     )
     if resolved_wmts_epsg != int(bbox_epsg):
-        wmts_bbox = rsgispy.tools.geometrytools.reproj_bbox_epsg(
+        wmts_bbox = rsgispy.tools.geometry.reproj_bbox_epsg(
             tuple(bbox[:4]), int(bbox_epsg), resolved_wmts_epsg
         )
     else:
@@ -220,8 +221,8 @@ def get_wmts_as_img(
     mosaic_ul_y = orig_y - row_min * tile_span_y
     mosaic_transform = from_origin(mosaic_ul_x, mosaic_ul_y, pxl_res, pxl_res)
 
-    uid_str = rsgispy.tools.utils.uid_generator()
-    with rsgispy.tools.filetools.work_dir_context(tmp_dir) as work_dir:
+    uid_str = rsgispy.tools.strings.uid_generator()
+    with rsgispy.tools.files.work_dir_context(tmp_dir) as work_dir:
         mosaic_img = os.path.join(work_dir, f"wmts_mosaic_{uid_str}.tif")
         mosaic_grid = IntersectionGrid(
             crs=rasterio.crs.CRS.from_epsg(resolved_wmts_epsg),

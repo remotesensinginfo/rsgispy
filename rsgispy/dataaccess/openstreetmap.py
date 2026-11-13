@@ -6,7 +6,7 @@ from importlib.util import find_spec
 from typing import Any, Dict, List, Tuple, Union
 
 import rsgispy
-import rsgispy.tools.geometrytools
+import rsgispy.tools.geometry
 
 # pylint: disable=invalid-name
 OSMNX_AVAIL = True
@@ -88,7 +88,7 @@ def get_osm_gdf(
         geom_type_str = get_osm_geom_type_name(rsgis_geom_type)
 
         if bbox_epsg != 4326:
-            wgs84_bbox = rsgispy.tools.geometrytools.reproj_bbox_epsg(
+            wgs84_bbox = rsgispy.tools.geometry.reproj_bbox_epsg(
                 bbox, in_epsg=bbox_epsg, out_epsg=4326
             )
         else:
