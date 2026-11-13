@@ -49,6 +49,9 @@ def test_copernicus_odata_mappings_and_queries(tmp_path, monkeypatch):
     with pytest.raises(rsgispy.RSGISPyException):
         copernicus_odata.get_sensor_collection_name(9999)
 
+    if not copernicus_odata.HAVE_REQUESTS:
+        return
+
     monkeypatch.setenv("RSGIS_COP_USER", "user1")
     monkeypatch.setenv("RSGIS_COP_PASS", "pass1")
     monkeypatch.setattr(
@@ -137,6 +140,25 @@ def test_copernicus_odata_mappings_and_queries(tmp_path, monkeypatch):
 
 
 def test_nasa_cmr_queries_and_download(tmp_path, monkeypatch):
+    if not nasa_cmr.HAVE_REQUESTS:
+        granules = [
+            {
+                "id": "G1",
+                "producer_granule_id": "granule1.h5",
+                "granule_size": "12.5",
+                "links": [
+                    {
+                        "type": "application/x-hdfeos",
+                        "href": "https://example.com/granule1.h5",
+                    }
+                ],
+            }
+        ]
+        assert nasa_cmr.get_total_file_size(granules) == 12.5
+        db_json = str(tmp_path / "cmr.json")
+        assert nasa_cmr.create_cmr_dwnld_db(db_json, granules, "application/x-hdfeos") == []
+        return
+
     def _fake_send_json(url, data=None, convert_to_json=False, header_data=None):
         if "collections" in url:
             return {
@@ -407,7 +429,10 @@ def test_usgs_m2m_workflow(monkeypatch):
         return {"errorCode": None, "data": {}}
 
     monkeypatch.setattr(
-        rsgispy.tools.httptools, "send_http_json_request", _fake_usgs_request
+        rsgispy.tools.httptools,
+        "send_http_json_request",
+        _fake_usgs_request,
+        raising=False,
     )
 
     api_key = usgs_m2m.usgs_login("u", "p")
@@ -439,3 +464,68 @@ def test_usgs_m2m_workflow(monkeypatch):
     assert avail == {1: "https://example.com/scn.tar"}
     assert prep == [2]
     usgs_m2m.usgs_logout(api_key)
+
+
+def test_optional_requests_missing_dataaccess(tmp_path):
+    """Verify dataaccess modules omit/guard requests functions when requests is missing."""
+    import importlib
+    import sys
+    from unittest.mock import patch
+    import rsgispy.dataaccess as rdataaccess
+
+    orig_odata = copernicus_odata
+    orig_cmr = nasa_cmr
+    try:
+        with patch.dict(sys.modules, {"requests": None}):
+            sys.modules.pop("rsgispy.dataaccess.copernicus_odata", None)
+            sys.modules.pop("rsgispy.dataaccess.nasa_cmr", None)
+            odata_mod = importlib.import_module("rsgispy.dataaccess.copernicus_odata")
+            cmr_mod = importlib.import_module("rsgispy.dataaccess.nasa_cmr")
+
+        assert not odata_mod.HAVE_REQUESTS
+        for fn_name in (
+            "get_access_token",
+            "query_scn_lst",
+            "query_scn",
+            "download_scn",
+            "download_scns",
+        ):
+            assert not hasattr(odata_mod, fn_name)
+            assert fn_name not in odata_mod.__all__
+        assert (
+            odata_mod.get_sensor_collection_name(odata_mod.RSGIS_ODATA_SEN2)
+            == "SENTINEL-2"
+        )
+
+        assert not cmr_mod.HAVE_REQUESTS
+        for sym_name in (
+            "SessionWithHeaderNASARedirection",
+            "get_prods_info",
+            "check_prod_version_avail",
+            "get_max_prod_version",
+            "find_granules",
+            "find_all_granules",
+            "cmr_download_file_http",
+        ):
+            assert not hasattr(cmr_mod, sym_name)
+            assert sym_name not in cmr_mod.__all__
+
+        for sym_name in (
+            "get_total_file_size",
+            "create_cmr_dwnld_db",
+            "download_granules_use_dwnld_db",
+        ):
+            assert hasattr(cmr_mod, sym_name)
+            assert sym_name in cmr_mod.__all__
+
+        db_json = str(tmp_path / "cmr.json")
+        cmr_mod.create_cmr_dwnld_db(db_json, [], "application/x-hdfeos")
+        with pytest.raises(rsgispy.RSGISPyException):
+            cmr_mod.download_granules_use_dwnld_db(
+                db_json, str(tmp_path), "unused_creds.txt", use_wget=False
+            )
+    finally:
+        sys.modules["rsgispy.dataaccess.copernicus_odata"] = orig_odata
+        sys.modules["rsgispy.dataaccess.nasa_cmr"] = orig_cmr
+        rdataaccess.copernicus_odata = orig_odata
+        rdataaccess.nasa_cmr = orig_cmr

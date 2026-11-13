@@ -1,15 +1,23 @@
 """Tests for rsgispy.tools.checkdatasets."""
 
+import importlib
 import json
+import sys
+from unittest.mock import patch
 
 import geopandas
-import h5py
 import numpy
 import rasterio
 from rasterio.transform import from_origin
 import shapely.geometry
 
+import rsgispy.tools as rtools
 from rsgispy.tools import checkdatasets
+
+try:
+    import h5py  # pylint: disable=import-error
+except ImportError:
+    h5py = None
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -113,6 +121,9 @@ def test_check_gdal_vector_file(tmp_path):
 
 def test_check_hdf5_file(tmp_path):
     """Test valid and corrupted HDF5 validation."""
+    if not checkdatasets.HAVE_H5PY:
+        return
+
     h5_path = tmp_path / "valid.h5"
     with h5py.File(h5_path, "w") as hf:
         grp = hf.create_group("grp")
@@ -162,11 +173,12 @@ def test_multiprocessing_runners_and_rm_err(tmp_path):
         [str(good_gpkg)], chk_proj=True, epsg_code=4326, timeout=10
     )
 
-    good_h5 = tmp_path / "good.h5"
-    with h5py.File(good_h5, "w") as hf:
-        hf.create_dataset("d", data=numpy.ones(3))
-    assert checkdatasets.run_check_hdf5_file(str(good_h5), timeout=10)
-    assert checkdatasets.run_check_hdf5_files([str(good_h5)], timeout=10)
+    if checkdatasets.HAVE_H5PY:
+        good_h5 = tmp_path / "good.h5"
+        with h5py.File(good_h5, "w") as hf:
+            hf.create_dataset("d", data=numpy.ones(3))
+        assert checkdatasets.run_check_hdf5_file(str(good_h5), timeout=10)
+        assert checkdatasets.run_check_hdf5_files([str(good_h5)], timeout=10)
 
 
 def test_cmp_to_ref_imgs(tmp_path):
@@ -204,3 +216,41 @@ def test_cmp_to_ref_imgs(tmp_path):
     assert report["not_checked"] == [str(chk_orphan)]
     assert report["ref_no_match"] == [str(ref2)]
     assert json.loads(report_json.read_text())["errors"] == [str(chk_bad_size)]
+
+
+def test_optional_h5py_missing(tmp_path):
+    """Verify HDF5 functions are omitted when h5py is unavailable."""
+    h5_only = {"check_hdf5_file", "run_check_hdf5_file", "run_check_hdf5_files"}
+    always_avail = {
+        "check_gdal_image_file",
+        "run_check_gdal_image_file",
+        "run_check_gdal_image_files",
+        "check_gdal_vector_file",
+        "run_check_gdal_vector_file",
+        "run_check_gdal_vector_files",
+        "cmp_to_ref_imgs",
+    }
+
+    tif = tmp_path / "valid.tif"
+    _write_test_tif(tif, count=2, epsg=32630)
+
+    orig_mod = checkdatasets
+    try:
+        with patch.dict(sys.modules, {"h5py": None}):
+            sys.modules.pop("rsgispy.tools.checkdatasets", None)
+            mod = importlib.import_module("rsgispy.tools.checkdatasets")
+
+        assert not mod.HAVE_H5PY
+        for fn_name in h5_only:
+            assert not hasattr(mod, fn_name)
+            assert fn_name not in mod.__all__
+        for fn_name in always_avail:
+            assert hasattr(mod, fn_name)
+            assert fn_name in mod.__all__
+
+        ok, err = mod.check_gdal_image_file(str(tif), chk_proj=True, epsg_code=32630)
+        assert ok is True
+        assert err == ""
+    finally:
+        sys.modules["rsgispy.tools.checkdatasets"] = orig_mod
+        rtools.checkdatasets = orig_mod

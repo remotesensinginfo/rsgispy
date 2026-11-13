@@ -245,48 +245,52 @@ def test_webtools_httptools_and_ftptools(tmp_path, monkeypatch):
         def __exit__(self, exc_type, exc_val, exc_tb):
             return False
 
-    monkeypatch.setattr(
-        webtools.requests, "get", lambda url, timeout=30.0: _SimpleResp(text=html)
-    )
-    imgs = webtools.find_web_imgs("https://example.com/dir/page.html", file_ext="jpg")
-    assert imgs == ["https://example.com/dir/a.jpg"]
-    pdfs = webtools.find_web_files("https://example.com/dir/page.html", file_ext="pdf")
-    assert "https://example.com/dir/doc1.pdf" in pdfs
-    assert "http://other.org/doc2.pdf" in pdfs
+    if webtools.HAVE_REQUESTS:
+        monkeypatch.setattr(
+            webtools.requests, "get", lambda url, timeout=30.0: _SimpleResp(text=html)
+        )
+        imgs = webtools.find_web_imgs("https://example.com/dir/page.html", file_ext="jpg")
+        assert imgs == ["https://example.com/dir/a.jpg"]
+        pdfs = webtools.find_web_files("https://example.com/dir/page.html", file_ext="pdf")
+        assert "https://example.com/dir/doc1.pdf" in pdfs
+        assert "http://other.org/doc2.pdf" in pdfs
 
     # httptools
-    monkeypatch.setattr(
-        httptools.requests, "head", lambda url, timeout=30.0: _SimpleResp(status_code=200)
-    )
-    assert httptools.check_url_exists("https://example.com")
-
-    monkeypatch.setattr(
-        httptools.requests,
-        "post",
-        lambda url, data=None, headers=None, timeout=60.0: _SimpleResp(
-            json_data={"ok": True}
-        ),
-    )
-    assert httptools.send_http_json_request("https://example.com/api") == {"ok": True}
-
     http_db = str(tmp_path / "http_db.json")
     httptools.create_file_listings_db(
         http_db, {"f1.txt": "https://example.com/f1.txt"}
     )
 
-    class _FakeHTTPSession:
-        def __init__(self):
-            self.headers = {}
-            self.auth = None
+    if httptools.HAVE_REQUESTS:
+        monkeypatch.setattr(
+            httptools.requests,
+            "head",
+            lambda url, timeout=30.0: _SimpleResp(status_code=200),
+        )
+        assert httptools.check_url_exists("https://example.com")
 
-        def get(self, url, **kwargs):
-            return _SimpleResp(content=b"abc123")
+        monkeypatch.setattr(
+            httptools.requests,
+            "post",
+            lambda url, data=None, headers=None, timeout=60.0: _SimpleResp(
+                json_data={"ok": True}
+            ),
+        )
+        assert httptools.send_http_json_request("https://example.com/api") == {"ok": True}
 
-    monkeypatch.setattr(httptools.requests, "Session", _FakeHTTPSession)
-    out_http_dir = tmp_path / "http_dl"
-    out_http_dir.mkdir()
-    httptools.download_http_files_use_lst_db(http_db, str(out_http_dir))
-    assert (out_http_dir / "f1.txt").read_bytes() == b"abc123"
+        class _FakeHTTPSession:
+            def __init__(self):
+                self.headers = {}
+                self.auth = None
+
+            def get(self, url, **kwargs):
+                return _SimpleResp(content=b"abc123")
+
+        monkeypatch.setattr(httptools.requests, "Session", _FakeHTTPSession)
+        out_http_dir = tmp_path / "http_dl"
+        out_http_dir.mkdir()
+        httptools.download_http_files_use_lst_db(http_db, str(out_http_dir))
+        assert (out_http_dir / "f1.txt").read_bytes() == b"abc123"
 
     # ftptools
     class _FakeFTP:
@@ -404,3 +408,54 @@ def test_wmts_tools_layer_list_and_render(tmp_path, monkeypatch):
         assert src.count == 3
         data = src.read()
         assert data.shape[1] > 0 and data.shape[2] > 0
+
+
+def test_optional_requests_missing_tools(tmp_path):
+    """Verify webtools and httptools prevent executing requests functions when missing."""
+    import importlib
+    from unittest.mock import patch
+    import rsgispy.tools as rtools
+
+    orig_webtools = webtools
+    orig_httptools = httptools
+    blocked = {"requests": None, "requests.exceptions": None}
+    try:
+        with patch.dict(sys.modules, blocked):
+            sys.modules.pop("rsgispy.tools.webtools", None)
+            sys.modules.pop("rsgispy.tools.httptools", None)
+            web_mod = importlib.import_module("rsgispy.tools.webtools")
+            http_mod = importlib.import_module("rsgispy.tools.httptools")
+
+        assert not web_mod.HAVE_REQUESTS
+        for fn_name in ("find_web_imgs", "find_web_files"):
+            assert not hasattr(web_mod, fn_name)
+            assert fn_name not in web_mod.__all__
+
+        assert not http_mod.HAVE_REQUESTS
+        for fn_name in (
+            "check_url_exists",
+            "check_http_response",
+            "send_http_json_request",
+            "download_file_http",
+        ):
+            assert not hasattr(http_mod, fn_name)
+            assert fn_name not in http_mod.__all__
+
+        for sym_name in (
+            "RSGISPyResponseException",
+            "wget_download_file",
+            "create_file_listings_db",
+            "download_http_files_use_lst_db",
+        ):
+            assert hasattr(http_mod, sym_name)
+            assert sym_name in http_mod.__all__
+
+        db_path = str(tmp_path / "http_db.json")
+        http_mod.create_file_listings_db(db_path, {"a.txt": "https://example.com/a.txt"})
+        with pytest.raises(rsgispy.RSGISPyException):
+            http_mod.download_http_files_use_lst_db(db_path, str(tmp_path), use_wget=False)
+    finally:
+        sys.modules["rsgispy.tools.webtools"] = orig_webtools
+        sys.modules["rsgispy.tools.httptools"] = orig_httptools
+        rtools.webtools = orig_webtools
+        rtools.httptools = orig_httptools

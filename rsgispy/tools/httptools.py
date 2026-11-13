@@ -1,6 +1,9 @@
 """
 The tools.httptools module provides HTTP request, file download, and download
 tracking database utilities.
+
+Functions requiring ``requests`` are only defined and exported when
+``requests`` is installed.
 """
 
 import json
@@ -8,21 +11,32 @@ import os
 import subprocess
 from typing import Any, Dict, Optional, Tuple
 
-import requests
-
 import rsgispy
 import rsgispy.tools.filetools
 
+try:
+    import requests  # pylint: disable=import-error
+
+    HAVE_REQUESTS = True
+except ImportError:
+    HAVE_REQUESTS = False
+
 __all__ = [
     "RSGISPyResponseException",
-    "check_url_exists",
-    "check_http_response",
-    "send_http_json_request",
-    "download_file_http",
     "wget_download_file",
     "create_file_listings_db",
     "download_http_files_use_lst_db",
 ]
+
+if HAVE_REQUESTS:
+    __all__.extend(
+        [
+            "check_url_exists",
+            "check_http_response",
+            "send_http_json_request",
+            "download_file_http",
+        ]
+    )
 
 
 class RSGISPyResponseException(rsgispy.RSGISPyException):
@@ -31,7 +45,7 @@ class RSGISPyResponseException(rsgispy.RSGISPyException):
     def __init__(
         self,
         value: str,
-        response: Optional[requests.Response] = None,
+        response: Optional[Any] = None,
     ):
         """Initialise with an error message and optional ``requests.Response``."""
         super().__init__(value)
@@ -48,163 +62,165 @@ class RSGISPyResponseException(rsgispy.RSGISPyException):
         )
 
 
-def check_url_exists(url: str, timeout: float = 30.0) -> bool:
-    """
-    Check whether ``url`` exists on a remote server using an HTTP HEAD request.
+if HAVE_REQUESTS:
 
-    :param url: Remote URL to check.
-    :param timeout: Request timeout in seconds (Default = ``30.0``).
-    :return: ``True`` if HTTP status is OK (200), ``False`` otherwise.
-    """
-    resp = requests.head(url, timeout=timeout)
-    return resp.status_code == requests.codes.ok  # pylint: disable=no-member
+    def check_url_exists(url: str, timeout: float = 30.0) -> bool:
+        """
+        Check whether ``url`` exists on a remote server using an HTTP HEAD request.
 
+        :param url: Remote URL to check.
+        :param timeout: Request timeout in seconds (Default = ``30.0``).
+        :return: ``True`` if HTTP status is OK (200), ``False`` otherwise.
+        """
+        resp = requests.head(url, timeout=timeout)
+        return resp.status_code == requests.codes.ok  # pylint: disable=no-member
 
-def check_http_response(response: requests.Response, url: str) -> bool:
-    """
-    Validate an HTTP response and raise :class:`RSGISPyResponseException` on error.
+    def check_http_response(response: Any, url: str) -> bool:
+        """
+        Validate an HTTP response and raise :class:`RSGISPyResponseException` on error.
 
-    :param response: :class:`requests.Response` instance.
-    :param url: Request URL used in fallback error messages.
-    :return: ``True`` when response succeeded.
-    """
-    try:
-        response.raise_for_status()
-        return True
-    except (requests.HTTPError, ValueError):
-        excpt_msg = f"Unknown error ('{response.reason}'), check url in a web browser: '{url}'"
-        if "cause-message" in response.headers:
-            excpt_msg = response.headers["cause-message"]
-        else:
-            try:
-                err_json = response.json()
-                if isinstance(err_json, dict) and "error" in err_json:
-                    err_obj = err_json["error"]
-                    if isinstance(err_obj, dict) and "message" in err_obj:
-                        msg_obj = err_obj["message"]
-                        excpt_msg = (
-                            msg_obj["value"]
-                            if isinstance(msg_obj, dict) and "value" in msg_obj
-                            else str(msg_obj)
-                        )
-            except Exception:  # pylint: disable=broad-exception-caught
-                pass
-        api_error = RSGISPyResponseException(excpt_msg, response)
-        api_error.__cause__ = None
-        raise api_error from None
+        :param response: :class:`requests.Response` instance.
+        :param url: Request URL used in fallback error messages.
+        :return: ``True`` when response succeeded.
+        """
+        try:
+            response.raise_for_status()
+            return True
+        except (requests.HTTPError, ValueError):
+            excpt_msg = (
+                f"Unknown error ('{response.reason}'), "
+                f"check url in a web browser: '{url}'"
+            )
+            if "cause-message" in response.headers:
+                excpt_msg = response.headers["cause-message"]
+            else:
+                try:
+                    err_json = response.json()
+                    if isinstance(err_json, dict) and "error" in err_json:
+                        err_obj = err_json["error"]
+                        if isinstance(err_obj, dict) and "message" in err_obj:
+                            msg_obj = err_obj["message"]
+                            excpt_msg = (
+                                msg_obj["value"]
+                                if isinstance(msg_obj, dict) and "value" in msg_obj
+                                else str(msg_obj)
+                            )
+                except Exception:  # pylint: disable=broad-exception-caught
+                    pass
+            api_error = RSGISPyResponseException(excpt_msg, response)
+            api_error.__cause__ = None
+            raise api_error from None
 
+    def send_http_json_request(
+        url: str,
+        data: Any = None,
+        api_key: Optional[str] = None,
+        convert_to_json: bool = True,
+        header_data: Optional[Dict[str, str]] = None,
+        timeout: float = 60.0,
+    ) -> Any:
+        """
+        Send an HTTP POST request and parse the JSON response.
 
-def send_http_json_request(
-    url: str,
-    data: Any = None,
-    api_key: Optional[str] = None,
-    convert_to_json: bool = True,
-    header_data: Optional[Dict[str, str]] = None,
-    timeout: float = 60.0,
-) -> Any:
-    """
-    Send an HTTP POST request and parse the JSON response.
+        :param url: Target endpoint URL.
+        :param data: Payload dictionary or raw data to send.
+        :param api_key: Optional ``X-Auth-Token`` header value.
+        :param convert_to_json: Serialise ``data`` with ``json.dumps`` when ``True``.
+        :param header_data: Optional dictionary of HTTP request headers.
+        :param timeout: Request timeout in seconds (Default = ``60.0``).
+        :return: Parsed JSON response object.
+        """
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
+        params_data = (
+            None if data is None else json.dumps(data)
+        ) if convert_to_json else data
 
-    :param url: Target endpoint URL.
-    :param data: Payload dictionary or raw data to send.
-    :param api_key: Optional ``X-Auth-Token`` header value.
-    :param convert_to_json: Serialise ``data`` with ``json.dumps`` when ``True``.
-    :param header_data: Optional dictionary of HTTP request headers.
-    :param timeout: Request timeout in seconds (Default = ``60.0``).
-    :return: Parsed JSON response object.
-    """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    params_data = (
-        None if data is None else json.dumps(data)
-    ) if convert_to_json else data
+        headers = dict(header_data) if header_data is not None else {}
+        if api_key is not None:
+            headers["X-Auth-Token"] = api_key
 
-    headers = dict(header_data) if header_data is not None else {}
-    if api_key is not None:
-        headers["X-Auth-Token"] = api_key
-
-    response = requests.post(
-        url,
-        params_data,
-        headers=headers or None,
-        timeout=timeout,
-    )
-    try:
-        http_status_code = response.status_code
-        if http_status_code == 404:
-            raise rsgispy.RSGISPyException("404 Not Found")
-        if http_status_code == 401:
-            raise rsgispy.RSGISPyException("401 Unauthorized")
-        if http_status_code == 400:
-            raise rsgispy.RSGISPyException(f"Error Code: {http_status_code}")
-
-        output = json.loads(response.text)
-    except rsgispy.RSGISPyException:
-        response.close()
-        raise
-    except Exception as err:
-        response.close()
-        raise rsgispy.RSGISPyException(f"{err}") from err
-    response.close()
-
-    return output
-
-
-def download_file_http(
-    input_url: str,
-    out_file_path: str,
-    username: Optional[str] = None,
-    password: Optional[str] = None,
-    no_except: bool = True,
-    timeout: float = 60.0,
-) -> bool:
-    """
-    Download a file from ``input_url`` to ``out_file_path``, staging to
-    ``out_file_path + '.incomplete'`` until finished.
-
-    :param input_url: Remote file URL.
-    :param out_file_path: Local destination file path.
-    :param username: Optional basic-auth username.
-    :param password: Optional basic-auth password.
-    :param no_except: Return ``False`` on failure instead of raising when ``True``.
-    :param timeout: Request timeout in seconds (Default = ``60.0``).
-    :return: ``True`` if download succeeded, ``False`` otherwise.
-    """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    tqdm_cls = rsgispy.get_tqdm()
-    session_http = requests.Session()
-    if (username is not None) and (password is not None):
-        session_http.auth = (username, password)
-    session_http.headers["User-Agent"] = f"rsgispy/{rsgispy.get_rsgispy_version()}"
-
-    tmp_dwnld_path = f"{out_file_path}.incomplete"
-
-    try:
-        with session_http.get(
-            input_url,
-            stream=True,
-            auth=session_http.auth,
+        response = requests.post(
+            url,
+            params_data,
+            headers=headers or None,
             timeout=timeout,
-        ) as resp:
-            if check_http_response(resp, input_url):
-                total = int(resp.headers.get("content-length", 0))
-                chunk_size = 2**20
-                n_chunks = int(total / chunk_size) + 1
+        )
+        try:
+            http_status_code = response.status_code
+            if http_status_code == 404:
+                raise rsgispy.RSGISPyException("404 Not Found")
+            if http_status_code == 401:
+                raise rsgispy.RSGISPyException("401 Unauthorized")
+            if http_status_code == 400:
+                raise rsgispy.RSGISPyException(f"Error Code: {http_status_code}")
 
-                with open(tmp_dwnld_path, "wb") as out_fp:
-                    for chunk in tqdm_cls(
-                        resp.iter_content(chunk_size=chunk_size), total=n_chunks
-                    ):
-                        if chunk:
-                            out_fp.write(chunk)
-        if os.path.exists(tmp_dwnld_path):
-            os.rename(tmp_dwnld_path, out_file_path)
-            print(f"Download Complete: {out_file_path}")
-    except Exception as err:  # pylint: disable=broad-exception-caught
-        if no_except:
-            print(err)
-            return False
-        raise rsgispy.RSGISPyException(f"{err}") from err
-    return True
+            output = json.loads(response.text)
+        except rsgispy.RSGISPyException:
+            response.close()
+            raise
+        except Exception as err:
+            response.close()
+            raise rsgispy.RSGISPyException(f"{err}") from err
+        response.close()
+
+        return output
+
+    def download_file_http(
+        input_url: str,
+        out_file_path: str,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        no_except: bool = True,
+        timeout: float = 60.0,
+    ) -> bool:
+        """
+        Download a file from ``input_url`` to ``out_file_path``, staging to
+        ``out_file_path + '.incomplete'`` until finished.
+
+        :param input_url: Remote file URL.
+        :param out_file_path: Local destination file path.
+        :param username: Optional basic-auth username.
+        :param password: Optional basic-auth password.
+        :param no_except: Return ``False`` on failure instead of raising when ``True``.
+        :param timeout: Request timeout in seconds (Default = ``60.0``).
+        :return: ``True`` if download succeeded, ``False`` otherwise.
+        """
+        # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+        tqdm_cls = rsgispy.get_tqdm()
+        session_http = requests.Session()
+        if (username is not None) and (password is not None):
+            session_http.auth = (username, password)
+        session_http.headers["User-Agent"] = f"rsgispy/{rsgispy.get_rsgispy_version()}"
+
+        tmp_dwnld_path = f"{out_file_path}.incomplete"
+
+        try:
+            with session_http.get(
+                input_url,
+                stream=True,
+                auth=session_http.auth,
+                timeout=timeout,
+            ) as resp:
+                if check_http_response(resp, input_url):
+                    total = int(resp.headers.get("content-length", 0))
+                    chunk_size = 2**20
+                    n_chunks = int(total / chunk_size) + 1
+
+                    with open(tmp_dwnld_path, "wb") as out_fp:
+                        for chunk in tqdm_cls(
+                            resp.iter_content(chunk_size=chunk_size), total=n_chunks
+                        ):
+                            if chunk:
+                                out_fp.write(chunk)
+            if os.path.exists(tmp_dwnld_path):
+                os.rename(tmp_dwnld_path, out_file_path)
+                print(f"Download Complete: {out_file_path}")
+        except Exception as err:  # pylint: disable=broad-exception-caught
+            if no_except:
+                print(err)
+                return False
+            raise rsgispy.RSGISPyException(f"{err}") from err
+        return True
 
 
 def wget_download_file(
@@ -320,6 +336,11 @@ def download_http_files_use_lst_db(
     :param check_file_exists: Skip downloading if target file already exists locally.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,import-outside-toplevel
+    if not use_wget and not HAVE_REQUESTS:
+        raise rsgispy.RSGISPyException(
+            "The requests module is required when use_wget=False."
+        )
+
     import pysondb
 
     lst_db = pysondb.getDb(db_json)
@@ -342,6 +363,7 @@ def download_http_files_use_lst_db(
                     input_url_md5=None,
                 )
             else:
+                # pylint: disable-next=possibly-used-before-assignment
                 dwnlded = download_file_http(
                     input_url=dwn_file["http_url"],
                     out_file_path=lcl_path,
