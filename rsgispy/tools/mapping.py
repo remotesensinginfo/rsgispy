@@ -24,9 +24,11 @@ import rasterio.shutil
 from rasterio.warp import transform_bounds
 
 import rsgispy
+import rsgispy.imageutils.metadata
 import rsgispy.imageutils.warp
 import rsgispy.tools.files
 import rsgispy.tools.plotting
+import rsgispy.tools.projection
 
 __all__ = [
     "calc_y_fig_size",
@@ -45,66 +47,6 @@ __all__ = [
     "create_raster_cmap_img_map",
     "create_vec_pt_density_map",
 ]
-
-
-def _great_circle_distance(
-    wgs84_p1: Sequence[float],
-    wgs84_p2: Sequence[float],
-    earth_radius: float = 6378137.0,
-) -> float:
-    """
-    Calculate the great-circle distance between two WGS84 ``(lon, lat)`` points.
-    """
-    if (wgs84_p1[1] < -90.0) or (wgs84_p1[1] > 90.0):
-        raise rsgispy.RSGISPyException(
-            "Point 1 latitude is not within valid range (-90 - 90)"
-        )
-    if (wgs84_p2[1] < -90.0) or (wgs84_p2[1] > 90.0):
-        raise rsgispy.RSGISPyException(
-            "Point 2 latitude is not within valid range (-90 - 90)"
-        )
-    if (wgs84_p1[0] < -180.0) or (wgs84_p1[0] > 180.0):
-        raise rsgispy.RSGISPyException(
-            "Point 1 longitude is not within valid range (-180 - 180)"
-        )
-    if (wgs84_p2[0] < -180.0) or (wgs84_p2[0] > 180.0):
-        raise rsgispy.RSGISPyException(
-            "Point 2 longitude is not within valid range (-180 - 180)"
-        )
-
-    lon1 = math.radians(wgs84_p1[0])
-    lat1 = math.radians(wgs84_p1[1])
-    lon2 = math.radians(wgs84_p2[0])
-    lat2 = math.radians(wgs84_p2[1])
-
-    lon_abs_diff = abs(lon1 - lon2)
-    cos_angle = min(
-        1.0,
-        max(
-            -1.0,
-            math.sin(lat1) * math.sin(lat2)
-            + math.cos(lat1) * math.cos(lat2) * math.cos(lon_abs_diff),
-        ),
-    )
-    return earth_radius * math.acos(cos_angle)
-
-
-def _get_img_bbox(input_img: str) -> Tuple[float, float, float, float]:
-    """Return ``(MinX, MaxX, MinY, MaxY)`` for a raster using rasterio."""
-    with rasterio.open(input_img, "r") as src:
-        left, bottom, right, top = src.bounds
-    return (float(left), float(right), float(bottom), float(top))
-
-
-def _get_img_epsg(input_img: str) -> Optional[int]:
-    """Return EPSG integer code for a raster using rasterio, or ``None``."""
-    try:
-        with rasterio.open(input_img, "r") as src:
-            if src.crs is None:
-                return None
-            return src.crs.to_epsg()
-    except Exception:  # pylint: disable=broad-exception-caught
-        return None
 
 
 def _get_vec_epsg(
@@ -137,7 +79,7 @@ def _add_scale_bar(
     """Add a ScaleBar artist to ``ax``, converting degrees to metres for EPSG:4326."""
     distance_meters = 1.0
     if epsg_code == 4326:
-        distance_meters = _great_circle_distance(
+        distance_meters = rsgispy.tools.projection.great_circle_distance(
             wgs84_p1=(bbox[0], bbox[3]),
             wgs84_p2=(bbox[0] + 1.0, bbox[3]),
         )
@@ -441,7 +383,9 @@ def create_wmts_img_map(
         )
 
         resolved_wmts_epsg = (
-            wmts_epsg if wmts_epsg is not None else _get_img_epsg(out_tmp_xml)
+            wmts_epsg
+            if wmts_epsg is not None
+            else rsgispy.imageutils.metadata.get_epsg_proj_from_img(out_tmp_xml)
         )
         if resolved_wmts_epsg is not None and resolved_wmts_epsg != bbox_epsg:
             w_min_x, w_min_y, w_max_x, w_max_y = transform_bounds(
@@ -801,7 +745,7 @@ def create_raster_img_map(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if bbox is None:
-        bbox = _get_img_bbox(input_img)
+        bbox = rsgispy.imageutils.metadata.get_img_bbox(input_img)
 
     if img_no_data_val is None:
         with rasterio.open(input_img, "r") as src:
@@ -858,7 +802,7 @@ def create_raster_img_map(
 
     _finalize_map_axis(
         ax=ax,
-        epsg_code=_get_img_epsg(input_img),
+        epsg_code=rsgispy.imageutils.metadata.get_epsg_proj_from_img(input_img),
         bbox=bbox,
         show_scale_bar=show_scale_bar,
         use_grid=use_grid,
@@ -915,7 +859,7 @@ def create_thematic_raster_map(
         zorder_list = [plot_zorders] * len(input_imgs)
 
     if bbox is None:
-        bbox = _get_img_bbox(input_imgs[0])
+        bbox = rsgispy.imageutils.metadata.get_img_bbox(input_imgs[0])
 
     img_data_arr_scns = []
     img_coords_scns = []
@@ -943,7 +887,7 @@ def create_thematic_raster_map(
 
     _finalize_map_axis(
         ax=ax,
-        epsg_code=_get_img_epsg(input_imgs[0]),
+        epsg_code=rsgispy.imageutils.metadata.get_epsg_proj_from_img(input_imgs[0]),
         bbox=bbox,
         show_scale_bar=show_scale_bar,
         use_grid=use_grid,
@@ -1074,7 +1018,7 @@ def create_raster_cmap_img_map(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if bbox is None:
-        bbox = _get_img_bbox(input_img)
+        bbox = rsgispy.imageutils.metadata.get_img_bbox(input_img)
 
     img_data, img_coords = rsgispy.tools.plotting.get_raster_mpl_imshow(
         input_img, bands=[img_band], bbox=bbox
@@ -1106,7 +1050,7 @@ def create_raster_cmap_img_map(
 
     _finalize_map_axis(
         ax=ax,
-        epsg_code=_get_img_epsg(input_img),
+        epsg_code=rsgispy.imageutils.metadata.get_epsg_proj_from_img(input_img),
         bbox=bbox,
         show_scale_bar=show_scale_bar,
         use_grid=use_grid,

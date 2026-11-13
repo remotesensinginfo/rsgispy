@@ -192,27 +192,20 @@ def calc_img_difference(
             dst.write(np.stack(out_bands, axis=0), window=out_win)
 
 
-def are_imgs_equal(
+def _calc_imgs_equal(
     in_ref_img: str,
     in_cmp_img: str,
+    img_ref_band: Optional[int] = None,
+    img_cmp_band: Optional[int] = None,
     prop_eql: float = 1.0,
     flt_dif: float = 0.0001,
     use_pbar: bool = True,
 ) -> Tuple[bool, float]:
     """
-    Check whether two multi-band images have equal pixel values across their
-    spatial intersection within floating-point tolerance ``flt_dif``.
-
-    :param in_ref_img: Path to the reference image.
-    :param in_cmp_img: Path to the comparison image.
-    :param prop_eql: Minimum proportion of matching pixels required to return
-                     ``True`` (range ``0`` to ``1``, Default = ``1.0``).
-    :param flt_dif: Absolute difference tolerance below which two pixels are
-                    considered equal (Default = ``0.0001``).
-    :param use_pbar: If True, display a tqdm progress bar (Default = True).
-    :return: Tuple ``(is_equal, prop_pixels_equal)``.
+    Shared implementation for :func:`are_imgs_equal` (when band arguments are
+    ``None``) and :func:`are_img_bands_equal` (when both band indices are given).
     """
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(in_ref_img, label="Reference image")
     ensure_file_exists(in_cmp_img, label="Comparison image")
 
@@ -222,10 +215,16 @@ def are_imgs_equal(
         datasets, _ = open_multi_image_datasets(stack, [in_ref_img, in_cmp_img])
         ds_ref = datasets[in_ref_img]
         ds_cmp = datasets[in_cmp_img]
-        if ds_ref.count != ds_cmp.count:
-            raise rsgispy.RSGISPyException(
-                "The number of image bands is not the same between the two images."
-            )
+        if img_ref_band is None and img_cmp_band is None:
+            if ds_ref.count != ds_cmp.count:
+                raise rsgispy.RSGISPyException(
+                    "The number of image bands is not the same between the two images."
+                )
+        else:
+            if img_ref_band is not None:
+                validate_band_index(img_ref_band, ds_ref.count, in_ref_img)
+            if img_cmp_band is not None:
+                validate_band_index(img_cmp_band, ds_cmp.count, in_cmp_img)
 
         grid = compute_spatial_intersection(datasets)
         base_cref, base_rref = grid.offsets[in_ref_img]
@@ -248,8 +247,16 @@ def are_imgs_equal(
                 win_w,
                 win_h,
             )
-            ref_arr = ds_ref.read(window=win_ref, out_dtype=np.float64).ravel()
-            cmp_arr = ds_cmp.read(window=win_cmp, out_dtype=np.float64).ravel()
+            ref_arr = (
+                ds_ref.read(window=win_ref, out_dtype=np.float64)
+                if img_ref_band is None
+                else ds_ref.read(img_ref_band, window=win_ref, out_dtype=np.float64)
+            ).ravel()
+            cmp_arr = (
+                ds_cmp.read(window=win_cmp, out_dtype=np.float64)
+                if img_cmp_band is None
+                else ds_cmp.read(img_cmp_band, window=win_cmp, out_dtype=np.float64)
+            ).ravel()
 
             valid = ~(np.isnan(ref_arr) | np.isnan(cmp_arr))
             ref_v = ref_arr[valid]
@@ -262,6 +269,35 @@ def are_imgs_equal(
         return False, 0.0
     prop_pxls_eq = float(n_eq_pxls) / float(n_pxls)
     return bool(prop_pxls_eq >= prop_eql), prop_pxls_eq
+
+
+def are_imgs_equal(
+    in_ref_img: str,
+    in_cmp_img: str,
+    prop_eql: float = 1.0,
+    flt_dif: float = 0.0001,
+    use_pbar: bool = True,
+) -> Tuple[bool, float]:
+    """
+    Check whether two multi-band images have equal pixel values across their
+    spatial intersection within floating-point tolerance ``flt_dif``.
+
+    :param in_ref_img: Path to the reference image.
+    :param in_cmp_img: Path to the comparison image.
+    :param prop_eql: Minimum proportion of matching pixels required to return
+                     ``True`` (range ``0`` to ``1``, Default = ``1.0``).
+    :param flt_dif: Absolute difference tolerance below which two pixels are
+                    considered equal (Default = ``0.0001``).
+    :param use_pbar: If True, display a tqdm progress bar (Default = True).
+    :return: Tuple ``(is_equal, prop_pixels_equal)``.
+    """
+    return _calc_imgs_equal(
+        in_ref_img=in_ref_img,
+        in_cmp_img=in_cmp_img,
+        prop_eql=prop_eql,
+        flt_dif=flt_dif,
+        use_pbar=use_pbar,
+    )
 
 
 def are_img_bands_equal(
@@ -288,58 +324,16 @@ def are_img_bands_equal(
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :return: Tuple ``(is_equal, prop_pixels_equal)``.
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    ensure_file_exists(in_ref_img, label="Reference image")
-    ensure_file_exists(in_cmp_img, label="Comparison image")
-
-    n_eq_pxls = 0
-    n_pxls = 0
-    with ExitStack() as stack:
-        datasets, _ = open_multi_image_datasets(stack, [in_ref_img, in_cmp_img])
-        ds_ref = datasets[in_ref_img]
-        ds_cmp = datasets[in_cmp_img]
-        validate_band_index(img_ref_band, ds_ref.count, in_ref_img)
-        validate_band_index(img_cmp_band, ds_cmp.count, in_cmp_img)
-
-        grid = compute_spatial_intersection(datasets)
-        base_cref, base_rref = grid.offsets[in_ref_img]
-        base_ccmp, base_rcmp = grid.offsets[in_cmp_img]
-
-        for out_win in iter_dataset_windows(
-            grid.height, grid.width, use_pbar=use_pbar
-        ):
-            win_h = int(out_win.height)
-            win_w = int(out_win.width)
-            win_ref = Window(
-                base_cref + int(out_win.col_off),
-                base_rref + int(out_win.row_off),
-                win_w,
-                win_h,
-            )
-            win_cmp = Window(
-                base_ccmp + int(out_win.col_off),
-                base_rcmp + int(out_win.row_off),
-                win_w,
-                win_h,
-            )
-            ref_arr = ds_ref.read(
-                img_ref_band, window=win_ref, out_dtype=np.float64
-            ).ravel()
-            cmp_arr = ds_cmp.read(
-                img_cmp_band, window=win_cmp, out_dtype=np.float64
-            ).ravel()
-
-            valid = ~(np.isnan(ref_arr) | np.isnan(cmp_arr))
-            ref_v = ref_arr[valid]
-            cmp_v = cmp_arr[valid]
-            if ref_v.size > 0:
-                n_eq_pxls += int(np.count_nonzero(np.abs(ref_v - cmp_v) < flt_dif))
-                n_pxls += int(ref_v.size)
-
-    if n_pxls == 0:
-        return False, 0.0
-    prop_pxls_eq = float(n_eq_pxls) / float(n_pxls)
-    return bool(prop_pxls_eq >= prop_eql), prop_pxls_eq
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    return _calc_imgs_equal(
+        in_ref_img=in_ref_img,
+        in_cmp_img=in_cmp_img,
+        img_ref_band=img_ref_band,
+        img_cmp_band=img_cmp_band,
+        prop_eql=prop_eql,
+        flt_dif=flt_dif,
+        use_pbar=use_pbar,
+    )
 
 
 if HAVE_SCIPY:
