@@ -50,6 +50,7 @@ Contents
    rsgispy
    rsgispy_elevation
    rsgispy_imagecalc
+   rsgispy_imagemorphology
    rsgispy_imageutils
    rsgispy_imageprocess
    rsgispy_tools
