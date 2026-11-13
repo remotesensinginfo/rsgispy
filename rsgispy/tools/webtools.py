@@ -2,14 +2,19 @@
 The tools.webtools module provides utilities for discovering linked images and
 files on web pages.
 
-Functions requiring ``requests`` are only defined and exported when
-``requests`` is installed.
+Functions requiring ``bs4`` and ``requests`` are only defined and exported when
+both packages are installed.
 """
 
 from typing import List
 from urllib.parse import urljoin
 
-import bs4
+try:
+    import bs4  # pylint: disable=import-error
+
+    HAVE_BS4 = True
+except ImportError:
+    HAVE_BS4 = False
 
 try:
     import requests  # pylint: disable=import-error
@@ -20,7 +25,7 @@ except ImportError:
 
 __all__: List[str] = []
 
-if HAVE_REQUESTS:
+if HAVE_BS4 and HAVE_REQUESTS:
     __all__.extend(
         [
             "find_web_imgs",
@@ -29,7 +34,7 @@ if HAVE_REQUESTS:
     )
 
 
-if HAVE_REQUESTS:
+if HAVE_BS4 and HAVE_REQUESTS:
 
     def _find_web_elements(
         base_url: str,

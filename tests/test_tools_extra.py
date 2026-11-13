@@ -245,7 +245,7 @@ def test_webtools_httptools_and_ftptools(tmp_path, monkeypatch):
         def __exit__(self, exc_type, exc_val, exc_tb):
             return False
 
-    if webtools.HAVE_REQUESTS:
+    if webtools.HAVE_BS4 and webtools.HAVE_REQUESTS:
         monkeypatch.setattr(
             webtools.requests, "get", lambda url, timeout=30.0: _SimpleResp(text=html)
         )
@@ -411,16 +411,26 @@ def test_wmts_tools_layer_list_and_render(tmp_path, monkeypatch):
 
 
 def test_optional_requests_missing_tools(tmp_path):
-    """Verify webtools and httptools prevent executing requests functions when missing."""
+    """Verify webtools and httptools prevent executing optional-dep functions when missing."""
     import importlib
     from unittest.mock import patch
     import rsgispy.tools as rtools
 
     orig_webtools = webtools
     orig_httptools = httptools
-    blocked = {"requests": None, "requests.exceptions": None}
+    blocked_req = {"requests": None, "requests.exceptions": None}
+    blocked_bs4 = {"bs4": None}
     try:
-        with patch.dict(sys.modules, blocked):
+        with patch.dict(sys.modules, blocked_bs4):
+            sys.modules.pop("rsgispy.tools.webtools", None)
+            web_mod_no_bs4 = importlib.import_module("rsgispy.tools.webtools")
+
+        assert not web_mod_no_bs4.HAVE_BS4
+        for fn_name in ("find_web_imgs", "find_web_files"):
+            assert not hasattr(web_mod_no_bs4, fn_name)
+            assert fn_name not in web_mod_no_bs4.__all__
+
+        with patch.dict(sys.modules, blocked_req):
             sys.modules.pop("rsgispy.tools.webtools", None)
             sys.modules.pop("rsgispy.tools.httptools", None)
             web_mod = importlib.import_module("rsgispy.tools.webtools")
