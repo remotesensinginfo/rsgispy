@@ -10,7 +10,8 @@ from rasterio.transform import from_origin
 from shapely.geometry import Point, box
 
 import rsgispy
-import rsgispy.zonalstats as zs
+import rsgispy.zonalstats.point as zs_pt
+import rsgispy.zonalstats.polygon as zs_poly
 
 
 def _write_test_raster(path: str, data: np.ndarray, epsg: int = 32630, nodata=None) -> None:
@@ -61,7 +62,7 @@ def test_calc_zonal_band_stats_and_file(tmp_path):
         crs="EPSG:32630",
     )
 
-    out_gdf = zs.calc_zonal_band_stats(
+    out_gdf = zs_poly.calc_zonal_band_stats(
         gdf,
         tif_path,
         img_band=1,
@@ -98,7 +99,7 @@ def test_calc_zonal_band_stats_and_file(tmp_path):
     gpd.GeoDataFrame({"id": [1, 2]}, geometry=[poly1, poly2], crs="EPSG:32630").to_file(
         gpkg_path, layer="polys"
     )
-    zs.calc_zonal_band_stats_file(
+    zs_poly.calc_zonal_band_stats_file(
         gpkg_path,
         "polys",
         tif_path,
@@ -114,13 +115,13 @@ def test_calc_zonal_band_stats_and_file(tmp_path):
 
     # Validation errors
     with pytest.raises(rsgispy.RSGISPyException):
-        zs.calc_zonal_band_stats(gdf, tif_path, 1, 0.0, 100.0, -1.0)
+        zs_poly.calc_zonal_band_stats(gdf, tif_path, 1, 0.0, 100.0, -1.0)
     with pytest.raises(rsgispy.RSGISPyException):
-        zs.calc_zonal_band_stats(
+        zs_poly.calc_zonal_band_stats(
             gdf.to_crs("EPSG:4326"), tif_path, 1, 0.0, 100.0, -1.0, mean_field="m"
         )
     with pytest.raises(rsgispy.RSGISPyException):
-        zs.calc_zonal_band_stats(
+        zs_poly.calc_zonal_band_stats(
             gpd.GeoDataFrame({"id": [1]}, geometry=[box(0, 0, 10, 10)], crs="EPSG:32630"),
             tif_path,
             1,
@@ -147,7 +148,7 @@ def test_calc_zonal_poly_pts_and_test_poly_pts(tmp_path):
         gpkg_path, layer="zones"
     )
 
-    zs.calc_zonal_poly_pts_band_stats_file(
+    zs_poly.calc_zonal_poly_pts_band_stats_file(
         gpkg_path, "zones", tif_path, img_band=1, out_field="CentVal"
     )
     res_cent = gpd.read_file(gpkg_path, layer="zones")
@@ -155,7 +156,7 @@ def test_calc_zonal_poly_pts_and_test_poly_pts(tmp_path):
     assert res_cent.loc[0, "centval"] == pytest.approx(7.0)
     assert res_cent.loc[1, "centval"] == pytest.approx(14.0)
 
-    zs.calc_zonal_band_stats_test_poly_pts_file(
+    zs_poly.calc_zonal_band_stats_test_poly_pts_file(
         gpkg_path,
         "zones",
         tif_path,
@@ -182,11 +183,11 @@ def test_calc_zonal_poly_pts_and_test_poly_pts(tmp_path):
 
     # Percentile validation errors
     with pytest.raises(rsgispy.RSGISPyException):
-        zs.calc_zonal_band_stats_test_poly_pts(
+        zs_poly.calc_zonal_band_stats_test_poly_pts(
             res_hybrid, tif_path, 1, 0.0, 100.0, -99.0, percentile=None, percentile_field="bad_p"
         )
     with pytest.raises(rsgispy.RSGISPyException):
-        zs.calc_zonal_band_stats_test_poly_pts(
+        zs_poly.calc_zonal_band_stats_test_poly_pts(
             res_hybrid, tif_path, 1, 0.0, 100.0, -99.0, percentile=105.0, percentile_field="bad_p"
         )
 
@@ -211,7 +212,7 @@ def test_calc_zonal_band_pxl_counts_and_ext_point_band_values(tmp_path):
     gpd.GeoDataFrame({"id": [1]}, geometry=[poly], crs="EPSG:32630").to_file(
         poly_gpkg, layer="cats"
     )
-    zs.calc_zonal_band_pxl_counts_file(
+    zs_poly.calc_zonal_band_pxl_counts_file(
         poly_gpkg,
         "cats",
         tif_path,
@@ -236,7 +237,7 @@ def test_calc_zonal_band_pxl_counts_and_ext_point_band_values(tmp_path):
         ],
         crs="EPSG:32630",
     )
-    pts_out = zs.ext_point_band_values(
+    pts_out = zs_pt.ext_point_band_values(
         pts_gdf,
         tif_path,
         img_band=1,
@@ -250,7 +251,7 @@ def test_calc_zonal_band_pxl_counts_and_ext_point_band_values(tmp_path):
     # Point extraction from WGS84 file with reproj_vec=True
     pts_wgs_file = str(tmp_path / "pts_wgs84.geojson")
     pts_gdf.iloc[:2].to_crs("EPSG:4326").to_file(pts_wgs_file)
-    zs.ext_point_band_values_file(
+    zs_pt.ext_point_band_values_file(
         pts_wgs_file,
         None,
         tif_path,
@@ -267,7 +268,7 @@ def test_calc_zonal_band_pxl_counts_and_ext_point_band_values(tmp_path):
 
     # Mismatched CRS without reproj_vec raises
     with pytest.raises(rsgispy.RSGISPyException):
-        zs.ext_point_band_values(
+        zs_pt.ext_point_band_values(
             pts_gdf.to_crs("EPSG:4326"),
             tif_path,
             img_band=1,
@@ -280,7 +281,7 @@ def test_calc_zonal_band_pxl_counts_and_ext_point_band_values(tmp_path):
 
     # Non-point geometry raises
     with pytest.raises(rsgispy.RSGISPyException):
-        zs.ext_point_band_values(
+        zs_pt.ext_point_band_values(
             gpd.GeoDataFrame({"id": [1]}, geometry=[poly], crs="EPSG:32630"),
             tif_path,
             img_band=1,

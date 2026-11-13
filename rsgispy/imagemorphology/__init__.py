@@ -16,6 +16,7 @@ from rasterio.windows import Window
 import rsgispy
 from rsgispy.imageprocess import (
     IntersectionGrid,
+    ensure_file_exists,
     get_default_block_size,
     open_output_dataset,
 )
@@ -37,34 +38,12 @@ __all__ = [
 ]
 
 
-def _validate_input_file(img_path: str) -> None:
-    """Ensure ``img_path`` exists on disk."""
-    if not os.path.exists(img_path):
-        raise rsgispy.RSGISPyException(
-            f"Input image file does not exist: '{img_path}'."
-        )
-
-
-def _grid_from_dataset(src: rasterio.DatasetReader) -> IntersectionGrid:
-    """Build an :class:`IntersectionGrid` matching ``src`` dimensions and transform."""
-    return IntersectionGrid(
-        crs=src.crs,
-        transform=src.transform,
-        width=src.width,
-        height=src.height,
-        offsets={},
-    )
-
-
 def _parse_morph_op_file(morph_op_file: str) -> np.ndarray:
     """
     Parse an RSGISLib ``.gmtxt`` structuring-element text file into a boolean
     mask array.
     """
-    if not os.path.exists(morph_op_file):
-        raise rsgispy.RSGISPyException(
-            f"Morphology operator file does not exist: '{morph_op_file}'."
-        )
+    ensure_file_exists(morph_op_file, label="Morphology operator")
 
     with open(morph_op_file, "r", encoding="utf-8") as handle:
         lines = [line.strip() for line in handle if line.strip()]
@@ -252,7 +231,7 @@ def _run_window_morphology(
 ) -> None:
     """Apply a windowed morphological operation across ``input_img`` block-by-block."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    _validate_input_file(input_img)
+    ensure_file_exists(input_img)
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = rsgispy.get_numpy_datatype(datatype)
 
@@ -263,7 +242,7 @@ def _run_window_morphology(
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
-        grid = _grid_from_dataset(src)
+        grid = IntersectionGrid.from_dataset(src)
         out_count = 1 if combined else src.count
         dst = open_output_dataset(
             stack=stack,
@@ -347,7 +326,7 @@ def _subtract_images(
     with ExitStack() as stack:
         pos_ds = stack.enter_context(rasterio.open(pos_img, "r"))
         neg_ds = stack.enter_context(rasterio.open(neg_img, "r"))
-        grid = _grid_from_dataset(pos_ds)
+        grid = IntersectionGrid.from_dataset(pos_ds)
         dst = open_output_dataset(
             stack=stack,
             output_img=output_img,
@@ -385,7 +364,7 @@ def _run_two_step_seq(
     (e.g., ``erode`` -> ``dilate`` for opening, or ``dilate`` -> ``erode`` for closing).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    _validate_input_file(input_img)
+    ensure_file_exists(input_img)
     if niters < 1:
         raise rsgispy.RSGISPyException(
             f"niters must be >= 1 (got {niters})."
@@ -863,7 +842,7 @@ def image_black_top_hat(
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    _validate_input_file(input_img)
+    ensure_file_exists(input_img)
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
     with tempfile.TemporaryDirectory() as tmp_dir:
         closed_img = (
@@ -917,7 +896,7 @@ def image_white_top_hat(
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    _validate_input_file(input_img)
+    ensure_file_exists(input_img)
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
     with tempfile.TemporaryDirectory() as tmp_dir:
         opened_img = (

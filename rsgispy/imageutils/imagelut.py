@@ -13,7 +13,7 @@ from rasterio.warp import transform_bounds
 from shapely.geometry import box
 
 import rsgispy
-import rsgispy.imageutils
+import rsgispy.imageutils.vrt
 
 __all__ = [
     "create_img_extent_lut",
@@ -216,7 +216,7 @@ def get_raster_lyr(
 
     If a single image intersects ``scn_bbox``, its path is returned directly.
     If multiple images intersect, a mosaic VRT file is generated in ``tmp_dir``
-    using :func:`rsgispy.imageutils.create_mosaic_images_vrt` and its path is
+    using :func:`rsgispy.imageutils.vrt.create_mosaic_images_vrt` and its path is
     returned. If no images intersect, ``None`` is returned.
 
     :param scn_bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)`` in the LUT CRS.
@@ -235,7 +235,7 @@ def get_raster_lyr(
         os.makedirs(tmp_dir, exist_ok=True)
         img_uid = uuid.uuid4().hex[:8]
         out_vrt_file = os.path.join(tmp_dir, f"imglyr_{img_uid}_tmp.vrt")
-        rsgispy.imageutils.create_mosaic_images_vrt(
+        rsgispy.imageutils.vrt.create_mosaic_images_vrt(
             input_imgs=imgs,
             out_vrt_file=out_vrt_file,
         )

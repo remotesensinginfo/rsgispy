@@ -137,6 +137,49 @@ class IntersectionGrid:
     crs: Optional[rasterio.crs.CRS]
     offsets: Dict[str, Tuple[int, int]]
 
+    @classmethod
+    def from_dataset(
+        cls,
+        src: DatasetReader,
+        offsets: Optional[Dict[str, Tuple[int, int]]] = None,
+    ) -> "IntersectionGrid":
+        """Construct an :class:`IntersectionGrid` matching an opened dataset."""
+        return cls(
+            width=int(src.width),
+            height=int(src.height),
+            transform=src.transform,
+            crs=src.crs,
+            offsets={} if offsets is None else offsets,
+        )
+
+
+def ensure_file_exists(file_path: str, label: str = "Input image") -> None:
+    """Raise :class:`rsgispy.RSGISPyException` if ``file_path`` does not exist."""
+    if not os.path.exists(file_path):
+        raise rsgispy.RSGISPyException(
+            f"{label} file does not exist: '{file_path}'."
+        )
+
+
+def validate_band_index(img_band: int, n_bands: int, img_path: str) -> None:
+    """Validate that a 1-based band index is within ``[1, n_bands]``."""
+    if img_band < 1 or img_band > n_bands:
+        raise rsgispy.RSGISPyException(
+            f"Band {img_band} is out of range for image '{img_path}' "
+            f"with {n_bands} band(s)."
+        )
+
+
+def bbox_from_dataset(src: DatasetReader) -> Tuple[float, float, float, float]:
+    """Return ``(MinX, MaxX, MinY, MaxY)`` from an opened rasterio dataset."""
+    bounds = src.bounds
+    return (
+        float(bounds.left),
+        float(bounds.right),
+        float(bounds.bottom),
+        float(bounds.top),
+    )
+
 
 class BandDefn:
     """
@@ -467,7 +510,7 @@ def open_output_dataset(
     Open an existing output raster for update or create a new output raster.
 
     Automatically applies any format creation options configured via
-    :func:`rsgispy.imageutils.get_gdal_img_creation_opts` (such as
+    :func:`rsgispy.imageprocess.get_gdal_img_creation_opts` (such as
     ``RSGISLIB_IMG_CRT_OPTS_<GDAL_FORMAT>``) as well as any explicit
     ``creation_opts`` dictionary passed to this function.
 

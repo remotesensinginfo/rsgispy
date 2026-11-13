@@ -21,18 +21,18 @@ To install with testing and documentation dependencies:
 Quickstart
 ----------
 
-Evaluating a mathematical expression across image bands with :func:`rsgispy.imagecalc.band_maths`:
+Evaluating a mathematical expression across image bands with :func:`rsgispy.imagecalc.maths.band_maths`:
 
 .. code-block:: python
 
    import rsgispy
-   import rsgispy.imagecalc
+   import rsgispy.imagecalc.maths
 
    band_defns = [
-       rsgispy.imagecalc.BandDefn(band_name="b1", input_img="img.kea", img_band=1),
-       rsgispy.imagecalc.BandDefn(band_name="b2", input_img="img.kea", img_band=2),
+       rsgispy.imagecalc.maths.BandDefn(band_name="b1", input_img="img.kea", img_band=1),
+       rsgispy.imagecalc.maths.BandDefn(band_name="b2", input_img="img.kea", img_band=2),
    ]
-   rsgispy.imagecalc.band_maths(
+   rsgispy.imagecalc.maths.band_maths(
        output_img="out.tif",
        exp="b1*b2",
        gdalformat="GTIFF",

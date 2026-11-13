@@ -18,6 +18,7 @@ from rasterio.warp import reproject
 from rasterio.windows import Window
 
 import rsgispy
+from rsgispy.imageprocess import bbox_from_dataset, ensure_file_exists
 import rsgispy.tools.geometrytools
 
 __all__ = [
@@ -219,14 +220,8 @@ def calc_pt_smpl_img_vals(
     :param no_data_val: Image no-data value. If ``None``, taken from image header.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    if not os.path.exists(input_img):
-        raise rsgispy.RSGISPyException(
-            f"Input image file does not exist: '{input_img}'."
-        )
-    if not os.path.exists(vec_file):
-        raise rsgispy.RSGISPyException(
-            f"Input vector file does not exist: '{vec_file}'."
-        )
+    ensure_file_exists(input_img)
+    ensure_file_exists(vec_file, label="Input vector")
 
     out_col_names: List[str] = []
     out_vals_dict: Dict[str, List[float]] = {}
@@ -243,13 +238,7 @@ def calc_pt_smpl_img_vals(
 
     with rasterio.open(input_img, "r") as src_ds:
         eff_nodata = no_data_val if no_data_val is not None else src_ds.nodata
-        bounds = src_ds.bounds
-        img_bbox = (
-            float(bounds.left),
-            float(bounds.right),
-            float(bounds.bottom),
-            float(bounds.top),
-        )
+        img_bbox = bbox_from_dataset(src_ds)
         img_dtype = src_ds.dtypes[0]
         img_crs = src_ds.crs
         img_count = src_ds.count

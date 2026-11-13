@@ -301,3 +301,16 @@ def test_archives_and_cmd_tool(tmp_path):
     assert os.path.exists(arch_out)
     with pytest.raises(rsgispy.RSGISPyException):
         filetools.create_directory_archive(str(src_dir), str(tmp_path / "bad"), "unknown_fmt")
+
+
+def test_work_dir_context(tmp_path):
+    """Test work_dir_context with temporary and persistent directories."""
+    with filetools.work_dir_context(None) as auto_dir:
+        assert os.path.isdir(auto_dir)
+    assert not os.path.exists(auto_dir)
+
+    custom_dir = tmp_path / "custom_work"
+    with filetools.work_dir_context(str(custom_dir)) as work_dir:
+        assert work_dir == str(custom_dir)
+        assert os.path.isdir(work_dir)
+    assert os.path.isdir(custom_dir)

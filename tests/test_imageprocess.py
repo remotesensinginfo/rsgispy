@@ -339,3 +339,32 @@ def test_open_multi_image_datasets(tmp_path):
             rsgispy.imageprocess.open_multi_image_datasets(
                 stack, [str(tmp_path / "missing.tif")]
             )
+
+
+def test_dataset_and_validation_helpers(tmp_path):
+    """Test IntersectionGrid.from_dataset, bbox, exists, and band helpers."""
+    img = tmp_path / "sample.tif"
+    _create_test_raster(
+        img, np.ones((2, 4, 5), dtype=np.float32), origin=(10.0, 50.0), pixel_size=(2.0, 2.0)
+    )
+    rsgispy.imageprocess.ensure_file_exists(str(img))
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageprocess.ensure_file_exists(str(tmp_path / "missing.tif"))
+
+    with rasterio.open(img) as src:
+        rsgispy.imageprocess.validate_band_index(1, src.count, str(img))
+        rsgispy.imageprocess.validate_band_index(2, src.count, str(img))
+        with pytest.raises(rsgispy.RSGISPyException):
+            rsgispy.imageprocess.validate_band_index(0, src.count, str(img))
+        with pytest.raises(rsgispy.RSGISPyException):
+            rsgispy.imageprocess.validate_band_index(3, src.count, str(img))
+
+        assert rsgispy.imageprocess.bbox_from_dataset(src) == pytest.approx(
+            (10.0, 20.0, 42.0, 50.0)
+        )
+        grid = rsgispy.imageprocess.IntersectionGrid.from_dataset(src)
+        assert grid.width == 5
+        assert grid.height == 4
+        assert grid.transform == src.transform
+        assert grid.crs == src.crs
+        assert not grid.offsets

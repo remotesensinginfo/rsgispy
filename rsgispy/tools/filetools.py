@@ -4,6 +4,7 @@ hashing, locking, and archiving files and directories.
 """
 
 # pylint: disable=too-many-lines
+from contextlib import contextmanager
 import datetime
 import errno
 import glob
@@ -18,7 +19,7 @@ import sys
 import tarfile
 import tempfile
 import time
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Dict, Iterator, List, Optional, Sequence, Tuple, Union
 
 import pyproj
 import rasterio
@@ -73,6 +74,7 @@ __all__ = [
     "unzip_file",
     "untar_bz_file",
     "create_targz_arch",
+    "work_dir_context",
 ]
 
 _WIN_ERROR_INVALID_NAME = 123
@@ -1104,3 +1106,23 @@ def create_targz_arch(
                 tar_out_file.add(c_file, arcname=arcname)
             else:
                 tar_out_file.add(c_file)
+
+
+@contextmanager
+def work_dir_context(tmp_dir: Optional[str] = None) -> Iterator[str]:
+    """
+    Yield a writable working directory path.
+
+    If ``tmp_dir`` is ``None``, a temporary directory is created and removed
+    when the context exits. Otherwise ``tmp_dir`` is created if needed and
+    kept after exit.
+
+    :param tmp_dir: Optional user-provided directory path (Default = ``None``).
+    :return: Path to the working directory.
+    """
+    if tmp_dir is None:
+        with tempfile.TemporaryDirectory() as tmp_path:
+            yield tmp_path
+    else:
+        os.makedirs(tmp_dir, exist_ok=True)
+        yield tmp_dir

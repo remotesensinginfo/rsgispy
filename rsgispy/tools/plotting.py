@@ -5,7 +5,6 @@ using rasterio.
 """
 
 import math
-import os
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from matplotlib.patches import Patch
@@ -16,6 +15,7 @@ from rasterio.windows import bounds as window_bounds
 from rasterio.windows import from_bounds as window_from_bounds
 
 import rsgispy
+from rsgispy.imageprocess import ensure_file_exists
 
 __all__ = [
     "get_raster_mpl_imshow",
@@ -109,10 +109,7 @@ def get_raster_mpl_imshow(
              shape ``(height, width)`` for 1 band or ``(height, width, 3)``
              for 3 bands, and ``coords_bbox`` is ``(MinX, MaxX, MinY, MaxY)``.
     """
-    if not os.path.exists(input_img):
-        raise rsgispy.RSGISPyException(
-            f"Input image file does not exist: '{input_img}'."
-        )
+    ensure_file_exists(input_img)
 
     with rasterio.open(input_img, "r") as src:
         n_bands = src.count
@@ -167,10 +164,7 @@ def get_thematic_raster_mpl_imshow(
     :return: Tuple ``(img_clr_data_arr, coords_bbox, lgd_out_patches)``.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
-    if not os.path.exists(input_img):
-        raise rsgispy.RSGISPyException(
-            f"Input image file does not exist: '{input_img}'."
-        )
+    ensure_file_exists(input_img)
 
     with rasterio.open(input_img, "r") as src:
         if band <= 0 or band > src.count:

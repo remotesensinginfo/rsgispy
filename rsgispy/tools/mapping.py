@@ -4,10 +4,8 @@ raster and vector data using rasterio, geopandas, and matplotlib.
 """
 
 # pylint: disable=too-many-lines
-from contextlib import ExitStack
 import math
 import os
-import tempfile
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import uuid
 import xml.etree.ElementTree as ET
@@ -26,7 +24,8 @@ import rasterio.shutil
 from rasterio.warp import transform_bounds
 
 import rsgispy
-import rsgispy.imageutils
+import rsgispy.imageutils.warp
+import rsgispy.tools.filetools
 import rsgispy.tools.plotting
 
 __all__ = [
@@ -433,12 +432,7 @@ def create_wmts_img_map(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     uid_str = uuid.uuid4().hex[:8]
-    with ExitStack() as stack:
-        if tmp_dir is None:
-            work_dir = stack.enter_context(tempfile.TemporaryDirectory())
-        else:
-            os.makedirs(tmp_dir, exist_ok=True)
-            work_dir = tmp_dir
+    with rsgispy.tools.filetools.work_dir_context(tmp_dir) as work_dir:
 
         gdal_lyr_url = f"WMTS:{wmts_url},layer={wmts_lyr}"
         out_tmp_xml = os.path.join(work_dir, f"wmts_tmp_xml_{uid_str}.xml")
@@ -476,7 +470,7 @@ def create_wmts_img_map(
             rasterio.shutil.copy(  # pylint: disable=c-extension-no-member
                 out_sub_xml, wmts_raw_img, driver="GTiff"
             )
-            rsgispy.imageutils.reproject_image(
+            rsgispy.imageutils.warp.reproject_image(
                 input_img=wmts_raw_img,
                 output_img=wmts_tmp_img,
                 out_epsg=bbox_epsg,

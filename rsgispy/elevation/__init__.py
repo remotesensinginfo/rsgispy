@@ -9,7 +9,6 @@ from contextlib import ExitStack
 import heapq
 import math
 import os
-import tempfile
 from typing import Any, Callable, Optional, Tuple
 
 import numpy as np
@@ -20,10 +19,11 @@ from rasterio.windows import Window
 import rsgispy
 from rsgispy.imageprocess import (
     IntersectionGrid,
+    ensure_file_exists,
     get_default_block_size,
     open_output_dataset,
 )
-import rsgispy.imageutils
+import rsgispy.imageutils.warp
 import rsgispy.tools.filetools
 import rsgispy.tools.utils
 
@@ -46,14 +46,6 @@ __all__ = [
 ]
 
 
-def _validate_input_file(img_path: str, label: str = "Input image") -> None:
-    """Validate that ``img_path`` exists on disk."""
-    if not os.path.exists(img_path):
-        raise rsgispy.RSGISPyException(
-            f"{label} file does not exist: '{img_path}'."
-        )
-
-
 def _validate_sun_angles(azimuth: float, zenith: float) -> None:
     """Validate solar/view azimuth in ``[0, 360]`` and zenith in ``[0, 90]``."""
     if zenith < 0.0 or zenith > 90.0:
@@ -74,17 +66,6 @@ def _validate_slope_unit(unit: str) -> str:
             "The unit option needs to be specified as either 'degrees' or 'radians'."
         )
     return unit_norm
-
-
-def _grid_from_dataset(src: rasterio.DatasetReader) -> IntersectionGrid:
-    """Construct an :class:`IntersectionGrid` matching an opened dataset."""
-    return IntersectionGrid(
-        crs=src.crs,
-        transform=src.transform,
-        width=src.width,
-        height=src.height,
-        offsets={},
-    )
 
 
 def _read_window_with_halo(
@@ -279,10 +260,10 @@ def _process_single_dem_3x3(
 ) -> None:
     """Run a 3x3 windowed calculation block-by-block over a single DEM raster."""
     # pylint: disable=too-many-locals
-    _validate_input_file(input_img)
+    ensure_file_exists(input_img)
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
-        grid = _grid_from_dataset(src)
+        grid = IntersectionGrid.from_dataset(src)
         ew_res = abs(float(src.transform.a))
         ns_res = abs(float(src.transform.e))
         no_data_val = src.nodata
@@ -327,8 +308,8 @@ def _process_pxl_res_dem_3x3(
 ) -> None:
     """Run a 3x3 windowed calculation using per-pixel E-W/N-S resolution bands."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    _validate_input_file(in_dem_img, "Input DEM image")
-    _validate_input_file(in_pxl_res_img, "Input pixel resolution image")
+    ensure_file_exists(in_dem_img, "Input DEM image")
+    ensure_file_exists(in_pxl_res_img, "Input pixel resolution image")
 
     with ExitStack() as stack:
         dem_src = stack.enter_context(rasterio.open(in_dem_img, "r"))
@@ -342,7 +323,7 @@ def _process_pxl_res_dem_3x3(
                 "Input DEM and pixel resolution images must have matching dimensions."
             )
 
-        grid = _grid_from_dataset(dem_src)
+        grid = IntersectionGrid.from_dataset(dem_src)
         no_data_val = dem_src.nodata
         dst = open_output_dataset(
             stack=stack,
@@ -518,11 +499,11 @@ def catagorise_aspect(
     :param gdalformat: GDAL/rasterio driver format for the output file.
     """
     # pylint: disable=too-many-locals
-    _validate_input_file(input_img)
+    ensure_file_exists(input_img)
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
-        grid = _grid_from_dataset(src)
+        grid = IntersectionGrid.from_dataset(src)
         dst = open_output_dataset(
             stack=stack,
             output_img=output_img,
@@ -648,11 +629,11 @@ def shadow_mask(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-statements
     _validate_sun_angles(azimuth, zenith)
-    _validate_input_file(input_img)
+    ensure_file_exists(input_img)
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
-        grid = _grid_from_dataset(src)
+        grid = IntersectionGrid.from_dataset(src)
         ew_res = abs(float(src.transform.a))
         ns_res = abs(float(src.transform.e))
         no_data_val = src.nodata
@@ -860,8 +841,8 @@ def dtm_aspect_median_filter(
     if aspect_range < 0.0:
         raise rsgispy.RSGISPyException("aspect_range must be non-negative.")
 
-    _validate_input_file(in_dem_img, "Input DEM image")
-    _validate_input_file(in_aspect_img, "Input aspect image")
+    ensure_file_exists(in_dem_img, "Input DEM image")
+    ensure_file_exists(in_aspect_img, "Input aspect image")
 
     win_size = (win_h_size * 2) + 1
     with ExitStack() as stack:
@@ -872,7 +853,7 @@ def dtm_aspect_median_filter(
                 "Input DEM and aspect images must have matching dimensions."
             )
 
-        grid = _grid_from_dataset(dem_src)
+        grid = IntersectionGrid.from_dataset(dem_src)
         no_data_val = dem_src.nodata
         dst = open_output_dataset(
             stack=stack,
@@ -961,8 +942,8 @@ def fill_dem_soille_gratin_1994(
     :param gdalformat: GDAL/rasterio driver format for the output file.
     """
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
-    _validate_input_file(in_dem_img, "Input DEM image")
-    _validate_input_file(in_vld_img, "Input valid mask image")
+    ensure_file_exists(in_dem_img, "Input DEM image")
+    ensure_file_exists(in_vld_img, "Input valid mask image")
 
     with ExitStack() as stack:
         dem_src = stack.enter_context(rasterio.open(in_dem_img, "r"))
@@ -1053,7 +1034,7 @@ def fill_dem_soille_gratin_1994(
             output_img=output_img,
             gdalformat=gdalformat,
             out_rio_dtype=rsgispy.get_rasterio_datatype(rsgis_dt),
-            grid=_grid_from_dataset(dem_src),
+            grid=IntersectionGrid.from_dataset(dem_src),
             count=1,
         )
         if dem_nodata is not None:
@@ -1082,7 +1063,7 @@ def plane_fit_detreat_dem(
         raise rsgispy.RSGISPyException(
             "win_size must be an odd integer greater than or equal to 3."
         )
-    _validate_input_file(input_img)
+    ensure_file_exists(input_img)
 
     half = win_size // 2
     offs = np.arange(-half, half + 1, dtype=np.float64)
@@ -1095,7 +1076,7 @@ def plane_fit_detreat_dem(
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
-        grid = _grid_from_dataset(src)
+        grid = IntersectionGrid.from_dataset(src)
         no_data_val = src.nodata
         dst = open_output_dataset(
             stack=stack,
@@ -1184,12 +1165,12 @@ def fft_dem_fusion(
     # pylint: disable=too-many-locals
     if c_size < 1:
         raise rsgispy.RSGISPyException("c_size must be at least 1.")
-    _validate_input_file(high_res_dem_img, "High-res DEM image")
-    _validate_input_file(low_res_dem_img, "Low-res DEM image")
+    ensure_file_exists(high_res_dem_img, "High-res DEM image")
+    ensure_file_exists(low_res_dem_img, "Low-res DEM image")
 
     with rasterio.open(high_res_dem_img, "r") as high_src:
         high_arr = high_src.read(1, out_dtype=np.float64)
-        grid = _grid_from_dataset(high_src)
+        grid = IntersectionGrid.from_dataset(high_src)
 
     with rasterio.open(low_res_dem_img, "r") as low_src:
         low_arr = low_src.read(1, out_dtype=np.float64)
@@ -1257,7 +1238,7 @@ def resampling_detread_dem(
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if resmp_res <= 0.0:
         raise rsgispy.RSGISPyException("resmp_res must be greater than 0.")
-    _validate_input_file(input_img)
+    ensure_file_exists(input_img)
 
     with rasterio.open(input_img, "r") as src:
         if datatype is None:
@@ -1282,12 +1263,7 @@ def resampling_detread_dem(
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
 
-    with ExitStack() as stack:
-        if tmp_dir is None:
-            work_dir = stack.enter_context(tempfile.TemporaryDirectory())
-        else:
-            os.makedirs(tmp_dir, exist_ok=True)
-            work_dir = tmp_dir
+    with rsgispy.tools.filetools.work_dir_context(tmp_dir) as work_dir:
 
         base_img = os.path.join(work_dir, f"{int_base_name}_base_{uid_str}.tif")
         low_res_img = os.path.join(work_dir, f"{int_base_name}_low_res_{uid_str}.tif")
@@ -1316,7 +1292,7 @@ def resampling_detread_dem(
                 np.full((img_height, img_width), 0, dtype=out_np_dtype), 1
             )
 
-        rsgispy.imageutils.resample_img_to_match(
+        rsgispy.imageutils.warp.resample_img_to_match(
             base_img,
             input_img,
             low_res_img,
@@ -1327,7 +1303,7 @@ def resampling_detread_dem(
             multicore=False,
         )
 
-        rsgispy.imageutils.resample_img_to_match(
+        rsgispy.imageutils.warp.resample_img_to_match(
             input_img,
             low_res_img,
             output_img,

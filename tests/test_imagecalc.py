@@ -1,5 +1,5 @@
 """
-Tests for rsgispy and rsgispy.imagecalc.band_maths.
+Tests for rsgispy and rsgispy.imagecalc.maths.band_maths.
 """
 
 import numpy as np
@@ -8,7 +8,9 @@ import rasterio
 from rasterio.transform import from_origin
 
 import rsgispy
-import rsgispy.imagecalc
+import rsgispy.imagecalc.maths
+import rsgispy.imagecalc.percentiles
+import rsgispy.imagecalc.stats
 import rsgispy.imageprocess
 
 
@@ -63,9 +65,9 @@ def test_datatype_helpers():
 
 def test_band_defn():
     """Test BandDefn initialisation, equality, repr, and to_dict."""
-    b1 = rsgispy.imagecalc.BandDefn(band_name="b1", input_img="img.tif", img_band=1)
+    b1 = rsgispy.imagecalc.maths.BandDefn(band_name="b1", input_img="img.tif", img_band=1)
     b2 = rsgispy.imageprocess.BandDefn(band_name="b1", input_img="img.tif", img_band=1)
-    b3 = rsgispy.imagecalc.BandDefn(band_name="b2", input_img="img.tif", img_band=2)
+    b3 = rsgispy.imagecalc.maths.BandDefn(band_name="b2", input_img="img.tif", img_band=2)
 
     assert b1 == b2
     assert b1 != b3
@@ -89,18 +91,18 @@ def test_band_maths_basic_multiplication(tmp_path):
     _create_test_raster(in_img, np.stack([b1_arr, b2_arr]))
 
     band_defns = [
-        rsgispy.imagecalc.BandDefn(band_name="b1", input_img=str(in_img), img_band=1),
-        rsgispy.imagecalc.BandDefn(band_name="b2", input_img=str(in_img), img_band=2),
+        rsgispy.imagecalc.maths.BandDefn(band_name="b1", input_img=str(in_img), img_band=1),
+        rsgispy.imagecalc.maths.BandDefn(band_name="b2", input_img=str(in_img), img_band=2),
     ]
 
-    rsgispy.imagecalc.band_maths(
+    rsgispy.imagecalc.maths.band_maths(
         output_img=str(out_img1),
         exp="b1*b2",
         gdalformat="GTIFF",
         datatype=rsgispy.TYPE_32FLOAT,
         band_defs=band_defns,
     )
-    rsgispy.imagecalc.band_math(
+    rsgispy.imagecalc.maths.band_math(
         output_img=str(out_img2),
         exp="b1*b2",
         gdalformat="GTIFF",
@@ -131,11 +133,11 @@ def test_band_maths_ternary_and_uint8(tmp_path):
     _create_test_raster(in_img, np.stack([b1_arr, b2_arr]), dtype="uint8")
 
     band_defns = [
-        rsgispy.imagecalc.BandDefn(band_name="b1", input_img=str(in_img), img_band=1),
-        rsgispy.imagecalc.BandDefn(band_name="b2", input_img=str(in_img), img_band=2),
+        rsgispy.imagecalc.maths.BandDefn(band_name="b1", input_img=str(in_img), img_band=1),
+        rsgispy.imagecalc.maths.BandDefn(band_name="b2", input_img=str(in_img), img_band=2),
     ]
 
-    rsgispy.imagecalc.band_maths(
+    rsgispy.imagecalc.maths.band_maths(
         output_img=str(out_img),
         exp="(b1==1) || (b2==1) ? 1 : 0",
         gdalformat="GTIFF",
@@ -165,11 +167,11 @@ def test_band_maths_spatial_overlap(tmp_path):
     _create_test_raster(img2, arr2[np.newaxis, :, :], origin=(2.0, 8.0))
 
     band_defns = [
-        rsgispy.imagecalc.BandDefn(band_name="b1", input_img=str(img1), img_band=1),
-        rsgispy.imagecalc.BandDefn(band_name="b2", input_img=str(img2), img_band=1),
+        rsgispy.imagecalc.maths.BandDefn(band_name="b1", input_img=str(img1), img_band=1),
+        rsgispy.imagecalc.maths.BandDefn(band_name="b2", input_img=str(img2), img_band=1),
     ]
 
-    rsgispy.imagecalc.band_maths(
+    rsgispy.imagecalc.maths.band_maths(
         output_img=str(out_img),
         exp="b1 + b2",
         gdalformat="GTIFF",
@@ -203,10 +205,10 @@ def test_band_maths_multi_block_and_output_exists(tmp_path):
     _create_test_raster(out_img, np.zeros((1, 300, 300), dtype=np.float32))
 
     band_defns = [
-        rsgispy.imagecalc.BandDefn(band_name="b1", input_img=str(in_img), img_band=1)
+        rsgispy.imagecalc.maths.BandDefn(band_name="b1", input_img=str(in_img), img_band=1)
     ]
 
-    rsgispy.imagecalc.band_maths(
+    rsgispy.imagecalc.maths.band_maths(
         output_img=str(out_img),
         exp="sqrt(b1) + 2.0",
         gdalformat="GTIFF",
@@ -240,63 +242,63 @@ def test_band_maths_validation_errors(tmp_path):
 
     # Empty band_defs
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.band_maths(
+        rsgispy.imagecalc.maths.band_maths(
             str(out_img), "b1", "GTIFF", rsgispy.TYPE_32FLOAT, []
         )
 
     # Non-existent file
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.band_maths(
+        rsgispy.imagecalc.maths.band_maths(
             str(out_img),
             "b1",
             "GTIFF",
             rsgispy.TYPE_32FLOAT,
-            [rsgispy.imagecalc.BandDefn("b1", str(tmp_path / "missing.tif"), 1)],
+            [rsgispy.imagecalc.maths.BandDefn("b1", str(tmp_path / "missing.tif"), 1)],
         )
 
     # Out-of-range band index
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.band_maths(
+        rsgispy.imagecalc.maths.band_maths(
             str(out_img),
             "b1",
             "GTIFF",
             rsgispy.TYPE_32FLOAT,
-            [rsgispy.imagecalc.BandDefn("b1", str(in_img), 5)],
+            [rsgispy.imagecalc.maths.BandDefn("b1", str(in_img), 5)],
         )
 
     # Invalid expression / undefined variable
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.band_maths(
+        rsgispy.imagecalc.maths.band_maths(
             str(out_img),
             "b1 + unknown_var",
             "GTIFF",
             rsgispy.TYPE_32FLOAT,
-            [rsgispy.imagecalc.BandDefn("b1", str(in_img), 1)],
+            [rsgispy.imagecalc.maths.BandDefn("b1", str(in_img), 1)],
         )
 
     # Non-overlapping rasters
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.band_maths(
+        rsgispy.imagecalc.maths.band_maths(
             str(out_img),
             "b1 + b2",
             "GTIFF",
             rsgispy.TYPE_32FLOAT,
             [
-                rsgispy.imagecalc.BandDefn("b1", str(in_img), 1),
-                rsgispy.imagecalc.BandDefn("b2", str(no_overlap_img), 1),
+                rsgispy.imagecalc.maths.BandDefn("b1", str(in_img), 1),
+                rsgispy.imagecalc.maths.BandDefn("b2", str(no_overlap_img), 1),
             ],
         )
 
     # Different pixel resolutions
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.band_maths(
+        rsgispy.imagecalc.maths.band_maths(
             str(out_img),
             "b1 + b2",
             "GTIFF",
             rsgispy.TYPE_32FLOAT,
             [
-                rsgispy.imagecalc.BandDefn("b1", str(in_img), 1),
-                rsgispy.imagecalc.BandDefn("b2", str(diff_res_img), 1),
+                rsgispy.imagecalc.maths.BandDefn("b1", str(in_img), 1),
+                rsgispy.imagecalc.maths.BandDefn("b2", str(diff_res_img), 1),
             ],
         )
 
@@ -309,14 +311,14 @@ def test_tqdm_progress_bar_and_notebook_detection(tmp_path, capsys, monkeypatch)
 
     _create_test_raster(in_img, np.ones((1, 5, 5), dtype=np.float32))
     band_defns = [
-        rsgispy.imagecalc.BandDefn(band_name="b1", input_img=str(in_img), img_band=1)
+        rsgispy.imagecalc.maths.BandDefn(band_name="b1", input_img=str(in_img), img_band=1)
     ]
 
     assert rsgispy.is_notebook() is False
 
     # Suppress progress bar with use_pbar=False
     capsys.readouterr()
-    rsgispy.imagecalc.band_maths(
+    rsgispy.imagecalc.maths.band_maths(
         output_img=str(out_img_quiet),
         exp="b1 * 2",
         gdalformat="GTIFF",
@@ -328,7 +330,7 @@ def test_tqdm_progress_bar_and_notebook_detection(tmp_path, capsys, monkeypatch)
     assert captured_quiet.err == ""
 
     # Enable progress bar with use_pbar=True
-    rsgispy.imagecalc.band_maths(
+    rsgispy.imagecalc.maths.band_maths(
         output_img=str(out_img_pbar),
         exp="b1 * 2",
         gdalformat="GTIFF",
@@ -362,7 +364,7 @@ def test_image_math_and_image_band_math(tmp_path):
     stack = np.stack([b1, b2, b3])
     _create_test_raster(in_img, stack)
 
-    rsgispy.imagecalc.image_math(
+    rsgispy.imagecalc.maths.image_math(
         input_img=str(in_img),
         output_img=str(out_im),
         exp="b1 * 10",
@@ -377,7 +379,7 @@ def test_image_math_and_image_band_math(tmp_path):
         np.testing.assert_allclose(src.read(), stack * 10.0)
 
     # Update existing output_img with output_exists=True
-    rsgispy.imagecalc.image_math(
+    rsgispy.imagecalc.maths.image_math(
         input_img=str(in_img),
         output_img=str(out_im),
         exp="b1 + 1",
@@ -389,7 +391,7 @@ def test_image_math_and_image_band_math(tmp_path):
     with rasterio.open(out_im) as src:
         np.testing.assert_allclose(src.read(), stack + 1.0)
 
-    rsgispy.imagecalc.image_band_math(
+    rsgispy.imagecalc.maths.image_band_math(
         input_img=str(in_img),
         output_img=str(out_ibm),
         exp="(b1 + b2) / b3",
@@ -404,11 +406,11 @@ def test_image_math_and_image_band_math(tmp_path):
         np.testing.assert_allclose(src.read(1), (b1 + b2) / b3)
 
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.image_math(
+        rsgispy.imagecalc.maths.image_math(
             str(tmp_path / "missing.tif"), str(out_im), "b1", "GTIFF", rsgispy.TYPE_32FLOAT
         )
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.image_band_math(
+        rsgispy.imagecalc.maths.image_band_math(
             str(tmp_path / "missing.tif"), str(out_ibm), "b1", "GTIFF", rsgispy.TYPE_32FLOAT
         )
 
@@ -427,19 +429,19 @@ def test_band_percentiles(tmp_path):
 
     # Band 1 without 0.0: [10, 20, 30, 40, 50] -> median 30.0
     # Band 2 without 0.0: [100, 200, 300, 400, 500] -> median 300.0
-    pcts = rsgispy.imagecalc.calc_band_percentile(str(in_img), 0.5, no_data_val=0.0)
+    pcts = rsgispy.imagecalc.percentiles.calc_band_percentile(str(in_img), 0.5, no_data_val=0.0)
     assert pcts == pytest.approx([30.0, 300.0])
 
     # All values without no_data_val
-    pcts_all = rsgispy.imagecalc.calc_band_percentile(str(in_img), 0.5, no_data_val=None)
+    pcts_all = rsgispy.imagecalc.percentiles.calc_band_percentile(str(in_img), 0.5, no_data_val=None)
     assert pcts_all == pytest.approx([25.0, 250.0])
 
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.calc_band_percentile(str(in_img), 1.5, no_data_val=None)
+        rsgispy.imagecalc.percentiles.calc_band_percentile(str(in_img), 1.5, no_data_val=None)
 
     # Masked pixels where msk == 1 and neither band == 0.0:
     # (0,1)->(10,200), (0,2)->(20,300), (1,1)->(40,500)
-    msk_pcts = rsgispy.imagecalc.calc_band_percentile_msk(
+    msk_pcts = rsgispy.imagecalc.percentiles.calc_band_percentile_msk(
         str(in_img),
         str(msk_img),
         msk_val=1,
@@ -452,7 +454,7 @@ def test_band_percentiles(tmp_path):
     np.testing.assert_allclose(msk_pcts[:, 1], [200.0, 300.0, 500.0])
 
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.calc_band_percentile_msk(
+        rsgispy.imagecalc.percentiles.calc_band_percentile_msk(
             str(in_img), str(msk_img), msk_val=99, percentiles=[50.0], use_pbar=False
         )
 
@@ -473,7 +475,7 @@ def test_imgs_and_band_pxl_percentiles(tmp_path):
     _create_test_raster(img2, np.stack([b1, b2]))
     _create_test_raster(img_diff_bands, a1[np.newaxis, :, :])
 
-    rsgispy.imagecalc.calc_imgs_pxl_percentiles(
+    rsgispy.imagecalc.percentiles.calc_imgs_pxl_percentiles(
         input_imgs=[str(img1), str(img2)],
         percentiles=[0.0, 100.0],
         output_img=str(out_all),
@@ -491,7 +493,7 @@ def test_imgs_and_band_pxl_percentiles(tmp_path):
         assert res_all[0, 0, 1] == pytest.approx(40.0)
         assert res_all[1, 0, 1] == pytest.approx(80.0)
 
-    rsgispy.imagecalc.calc_img_band_pxl_percentiles(
+    rsgispy.imagecalc.percentiles.calc_img_band_pxl_percentiles(
         input_imgs=[str(img1), str(img2)],
         percentiles=[50.0, 100.0],
         output_img=str(out_per_band),
@@ -510,11 +512,11 @@ def test_imgs_and_band_pxl_percentiles(tmp_path):
         assert res_pb[3, 1, 0] == pytest.approx(90.0)
 
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.calc_img_band_pxl_percentiles(
+        rsgispy.imagecalc.percentiles.calc_img_band_pxl_percentiles(
             [str(img1), str(img_diff_bands)], [50.0], str(out_per_band), "GTIFF", use_pbar=False
         )
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.calc_imgs_pxl_percentiles(
+        rsgispy.imagecalc.percentiles.calc_imgs_pxl_percentiles(
             [str(img1), str(img2)], [-1.0], str(out_all), "GTIFF", use_pbar=False
         )
 
@@ -531,35 +533,35 @@ def test_prop_true_count_and_unique(tmp_path):
     vld = np.array([[1, 1, 0], [1, 1, 0]], dtype=np.uint8)
     _create_test_raster(vld_img, vld[np.newaxis, :, :], dtype="uint8")
 
-    bdefs = [rsgispy.imagecalc.BandDefn("b1", str(img), 1)]
-    prop_all = rsgispy.imagecalc.calc_prop_true_exp("b1 <= 2 ? 1 : 0", bdefs, use_pbar=False)
+    bdefs = [rsgispy.imagecalc.maths.BandDefn("b1", str(img), 1)]
+    prop_all = rsgispy.imagecalc.maths.calc_prop_true_exp("b1 <= 2 ? 1 : 0", bdefs, use_pbar=False)
     assert prop_all == pytest.approx(4.0 / 6.0)
 
     # Inside vld == 1 (4 pixels: 1, 2, 2, 1): all <= 2 -> proportion 1.0
-    prop_vld = rsgispy.imagecalc.calc_prop_true_exp(
+    prop_vld = rsgispy.imagecalc.maths.calc_prop_true_exp(
         "b1 <= 2 ? 1 : 0", bdefs, in_vld_img=str(vld_img), use_pbar=False
     )
     assert prop_vld == pytest.approx(1.0)
 
-    counts_b1 = rsgispy.imagecalc.count_pxls_of_val(
+    counts_b1 = rsgispy.imagecalc.stats.count_pxls_of_val(
         str(img), vals=[1, 2, 99], img_band=1, use_pbar=False
     )
     assert counts_b1.dtype == np.int64
     np.testing.assert_array_equal(counts_b1, [2, 2, 0])
 
-    counts_all = rsgispy.imagecalc.count_pxls_of_val(
+    counts_all = rsgispy.imagecalc.stats.count_pxls_of_val(
         str(img), vals=[1, 2, 5], img_band=None, use_pbar=False
     )
     np.testing.assert_array_equal(counts_all, [4, 4, 1])
 
-    uniq1 = rsgispy.imagecalc.get_unique_values(str(img), img_band=1)
-    uniq2 = rsgispy.imagecalc.get_unique_values(str(img), img_band=2)
+    uniq1 = rsgispy.imagecalc.stats.get_unique_values(str(img), img_band=1)
+    uniq2 = rsgispy.imagecalc.stats.get_unique_values(str(img), img_band=2)
     np.testing.assert_array_equal(uniq1, [1, 2, 3, 4])
     np.testing.assert_array_equal(uniq2, [1, 2, 3, 5])
 
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.count_pxls_of_val(str(img), vals=[], img_band=1, use_pbar=False)
+        rsgispy.imagecalc.stats.count_pxls_of_val(str(img), vals=[], img_band=1, use_pbar=False)
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.count_pxls_of_val(str(img), vals=[1], img_band=5, use_pbar=False)
+        rsgispy.imagecalc.stats.count_pxls_of_val(str(img), vals=[1], img_band=5, use_pbar=False)
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.get_unique_values(str(img), img_band=5)
+        rsgispy.imagecalc.stats.get_unique_values(str(img), img_band=5)
