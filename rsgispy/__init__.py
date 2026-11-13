@@ -88,7 +88,7 @@ import numpy as np
 from rasterio.enums import Resampling
 
 #: Package version string for ``rsgispy``.
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 
 #: Undefined raster pixel data type (``0``).
 TYPE_UNDEFINED = 0
