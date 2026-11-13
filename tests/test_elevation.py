@@ -10,7 +10,10 @@ import rasterio
 from rasterio.transform import from_origin
 
 import rsgispy
-import rsgispy.elevation as relev
+import rsgispy.elevation.filtering as elev_filt
+import rsgispy.elevation.fusion as elev_fus
+import rsgispy.elevation.illumination as elev_illum
+import rsgispy.elevation.terrain as elev_terr
 
 
 def _write_raster(path, arr, res=10.0, nodata=None, crs="EPSG:32630"):
@@ -44,8 +47,8 @@ def test_slope_aspect_catagorise_and_pxl_res(tmp_path):
 
     slope_deg_path = tmp_path / "slope_deg.tif"
     slope_rad_path = tmp_path / "slope_rad.tif"
-    relev.slope(str(dem_path), str(slope_deg_path), "GTIFF", "degrees")
-    relev.slope(str(dem_path), str(slope_rad_path), "GTIFF", "radians")
+    elev_terr.slope(str(dem_path), str(slope_deg_path), "GTIFF", "degrees")
+    elev_terr.slope(str(dem_path), str(slope_rad_path), "GTIFF", "radians")
     with rasterio.open(slope_deg_path) as s_deg, rasterio.open(slope_rad_path) as s_rad:
         assert s_deg.dtypes[0] == "float32"
         # Interior pixel (2, 2) has exact 45-degree slope
@@ -53,7 +56,7 @@ def test_slope_aspect_catagorise_and_pxl_res(tmp_path):
         assert s_rad.read(1)[2, 2] == pytest.approx(math.radians(45.0), abs=1e-4)
 
     aspect_path = tmp_path / "aspect.tif"
-    relev.aspect(str(dem_path), str(aspect_path), "GTIFF")
+    elev_terr.aspect(str(dem_path), str(aspect_path), "GTIFF")
     with rasterio.open(aspect_path) as asp_ds:
         assert asp_ds.read(1)[2, 2] == pytest.approx(180.0, abs=1e-4)
 
@@ -65,7 +68,7 @@ def test_slope_aspect_catagorise_and_pxl_res(tmp_path):
     asp_grid = tmp_path / "asp_grid.tif"
     cat_path = tmp_path / "asp_cat.tif"
     _write_raster(asp_grid, asp_vals)
-    relev.catagorise_aspect(str(asp_grid), str(cat_path), "GTIFF")
+    elev_terr.catagorise_aspect(str(asp_grid), str(cat_path), "GTIFF")
     with rasterio.open(cat_path) as cat_ds:
         assert cat_ds.dtypes[0] == "uint8"
         expected = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 0]], dtype=np.uint8)
@@ -80,16 +83,16 @@ def test_slope_aspect_catagorise_and_pxl_res(tmp_path):
 
     slope_pr_path = tmp_path / "slope_pr.tif"
     asp_pr_path = tmp_path / "asp_pr.tif"
-    relev.slope_pxl_res_img(str(dem_path), str(pxl_res_path), str(slope_pr_path), "GTIFF", "degrees")
-    relev.aspect_pxl_res_img(str(dem_path), str(pxl_res_path), str(asp_pr_path), "GTIFF")
+    elev_terr.slope_pxl_res_img(str(dem_path), str(pxl_res_path), str(slope_pr_path), "GTIFF", "degrees")
+    elev_terr.aspect_pxl_res_img(str(dem_path), str(pxl_res_path), str(asp_pr_path), "GTIFF")
     with rasterio.open(slope_pr_path) as spr, rasterio.open(asp_pr_path) as apr:
         assert spr.read(1)[2, 2] == pytest.approx(math.degrees(math.atan(0.5)), abs=1e-4)
         assert apr.read(1)[2, 2] == pytest.approx(180.0, abs=1e-4)
 
     with pytest.raises(rsgispy.RSGISPyException):
-        relev.slope(str(dem_path), str(slope_deg_path), "GTIFF", "percent")
+        elev_terr.slope(str(dem_path), str(slope_deg_path), "GTIFF", "percent")
     with pytest.raises(rsgispy.RSGISPyException):
-        relev.slope_pxl_res_img(str(dem_path), str(dem_path), str(slope_pr_path), "GTIFF", "degrees")
+        elev_terr.slope_pxl_res_img(str(dem_path), str(dem_path), str(slope_pr_path), "GTIFF", "degrees")
 
 
 def test_hillshade_shadow_and_ray_angles(tmp_path):
@@ -102,7 +105,7 @@ def test_hillshade_shadow_and_ray_angles(tmp_path):
 
     # Sun from South (azimuth=180, zenith=45): row 3 faces South (brighter), row 1 faces North (darker)
     hs_path = tmp_path / "hs.tif"
-    relev.hillshade(str(dem_path), str(hs_path), azimuth=180.0, zenith=45.0, gdalformat="GTIFF")
+    elev_illum.hillshade(str(dem_path), str(hs_path), azimuth=180.0, zenith=45.0, gdalformat="GTIFF")
     with rasterio.open(hs_path) as hs_ds:
         assert hs_ds.dtypes[0] == "uint8"
         hs = hs_ds.read(1)
@@ -114,7 +117,7 @@ def test_hillshade_shadow_and_ray_angles(tmp_path):
         np.stack([np.full((5, 5), 10.0, dtype=np.float32), np.full((5, 5), 10.0, dtype=np.float32)]),
     )
     hs_pr_path = tmp_path / "hs_pr.tif"
-    relev.hillshade_pxl_res_img(
+    elev_illum.hillshade_pxl_res_img(
         str(dem_path), str(pxl_res_path), str(hs_pr_path), azimuth=180.0, zenith=45.0, gdalformat="GTIFF"
     )
     with rasterio.open(hs_path) as h1, rasterio.open(hs_pr_path) as h2:
@@ -122,7 +125,7 @@ def test_hillshade_shadow_and_ray_angles(tmp_path):
 
     # Shadow mask: row 1 faces away from southern low sun (zenith=75) -> shadowed
     shd_path = tmp_path / "shadow.tif"
-    relev.shadow_mask(
+    elev_illum.shadow_mask(
         str(dem_path), str(shd_path), azimuth=180.0, zenith=75.0, max_height=200.0, gdalformat="GTIFF"
     )
     with rasterio.open(shd_path) as shd_ds:
@@ -136,7 +139,7 @@ def test_hillshade_shadow_and_ray_angles(tmp_path):
     cliff_path = tmp_path / "cliff.tif"
     cliff_shd = tmp_path / "cliff_shd.tif"
     _write_raster(cliff_path, cliff, res=10.0, nodata=-9999.0)
-    relev.shadow_mask(
+    elev_illum.shadow_mask(
         str(cliff_path), str(cliff_shd), azimuth=180.0, zenith=75.0, max_height=200.0, gdalformat="GTIFF"
     )
     with rasterio.open(cliff_shd) as cshd_ds:
@@ -144,8 +147,8 @@ def test_hillshade_shadow_and_ray_angles(tmp_path):
 
     inc_path = tmp_path / "inc.tif"
     ext_path = tmp_path / "ext.tif"
-    relev.local_incidence_angle(str(dem_path), str(inc_path), azimuth=180.0, zenith=45.0, gdalformat="GTIFF")
-    relev.local_existance_angle(str(dem_path), str(ext_path), azimuth=180.0, zenith=45.0, gdalformat="GTIFF")
+    elev_illum.local_incidence_angle(str(dem_path), str(inc_path), azimuth=180.0, zenith=45.0, gdalformat="GTIFF")
+    elev_illum.local_existance_angle(str(dem_path), str(ext_path), azimuth=180.0, zenith=45.0, gdalformat="GTIFF")
     with rasterio.open(inc_path) as inc_ds, rasterio.open(ext_path) as ext_ds:
         assert inc_ds.dtypes[0] == "float32"
         assert ext_ds.dtypes[0] == "float32"
@@ -153,9 +156,9 @@ def test_hillshade_shadow_and_ray_angles(tmp_path):
         assert ext_ds.read(1)[2, 2] == pytest.approx(45.0, abs=1e-4)
 
     with pytest.raises(rsgispy.RSGISPyException):
-        relev.hillshade(str(dem_path), str(hs_path), azimuth=400.0, zenith=45.0, gdalformat="GTIFF")
+        elev_illum.hillshade(str(dem_path), str(hs_path), azimuth=400.0, zenith=45.0, gdalformat="GTIFF")
     with pytest.raises(rsgispy.RSGISPyException):
-        relev.shadow_mask(str(dem_path), str(shd_path), azimuth=180.0, zenith=100.0, max_height=200.0, gdalformat="GTIFF")
+        elev_illum.shadow_mask(str(dem_path), str(shd_path), azimuth=180.0, zenith=100.0, max_height=200.0, gdalformat="GTIFF")
 
 
 def test_filtering_fill_detrend_and_fusion(tmp_path):
@@ -170,7 +173,7 @@ def test_filtering_fill_detrend_and_fusion(tmp_path):
     filt_path = tmp_path / "dtm_filt.tif"
     _write_raster(dtm_path, dtm, nodata=-9999.0)
     _write_raster(asp_path, asp)
-    relev.dtm_aspect_median_filter(
+    elev_filt.dtm_aspect_median_filter(
         str(dtm_path), str(asp_path), str(filt_path), aspect_range=30.0, win_h_size=1, gdalformat="GTIFF"
     )
     with rasterio.open(filt_path) as fds:
@@ -203,7 +206,7 @@ def test_filtering_fill_detrend_and_fusion(tmp_path):
     filled_path = tmp_path / "filled.tif"
     _write_raster(pit_path, pit_dem, nodata=-9999)
     _write_raster(vld_path, vld_msk)
-    relev.fill_dem_soille_gratin_1994(str(pit_path), str(vld_path), str(filled_path), "GTIFF")
+    elev_filt.fill_dem_soille_gratin_1994(str(pit_path), str(vld_path), str(filled_path), "GTIFF")
     with rasterio.open(filled_path) as fld_ds:
         assert fld_ds.dtypes[0] == "int16"
         # Lowest rim cell is 4, so pit at (2, 2) must be filled to 4
@@ -215,12 +218,12 @@ def test_filtering_fill_detrend_and_fusion(tmp_path):
     plane_path = tmp_path / "plane.tif"
     plane_out = tmp_path / "plane_fit.tif"
     _write_raster(plane_path, plane, nodata=-9999.0)
-    relev.plane_fit_detreat_dem(str(plane_path), str(plane_out), "GTIFF", win_size=3)
+    elev_filt.plane_fit_detreat_dem(str(plane_path), str(plane_out), "GTIFF", win_size=3)
     with rasterio.open(plane_out) as pds:
         np.testing.assert_allclose(pds.read(1)[1:-1, 1:-1], plane[1:-1, 1:-1], atol=1e-4)
 
     with pytest.raises(rsgispy.RSGISPyException):
-        relev.plane_fit_detreat_dem(str(plane_path), str(plane_out), "GTIFF", win_size=4)
+        elev_filt.plane_fit_detreat_dem(str(plane_path), str(plane_out), "GTIFF", win_size=4)
 
     # 4. fft_dem_fusion
     high_dem = np.full((16, 16), 100.0, dtype=np.float32)
@@ -230,7 +233,7 @@ def test_filtering_fill_detrend_and_fusion(tmp_path):
     fused_path = tmp_path / "fused.tif"
     _write_raster(high_path, high_dem)
     _write_raster(low_path, low_dem)
-    relev.fft_dem_fusion(str(high_path), str(low_path), str(fused_path), c_size=4, gdalformat="GTIFF")
+    elev_fus.fft_dem_fusion(str(high_path), str(low_path), str(fused_path), c_size=4, gdalformat="GTIFF")
     with rasterio.open(fused_path) as fds:
         # DC component came from high_dem -> mean matches 100.0
         assert float(fds.read(1).mean()) == pytest.approx(100.0, abs=1e-3)
@@ -240,7 +243,7 @@ def test_filtering_fill_detrend_and_fusion(tmp_path):
     resamp_path = tmp_path / "resamp_in.tif"
     resamp_out = tmp_path / "resamp_out.tif"
     _write_raster(resamp_path, resamp_in, res=10.0, nodata=-9999.0)
-    relev.resampling_detread_dem(
+    elev_filt.resampling_detread_dem(
         str(resamp_path),
         str(resamp_out),
         resmp_res=30.0,
