@@ -64,6 +64,11 @@ def write_dict_to_json(
 
     :param data_dict: Data structure to serialise to JSON.
     :param out_file: Output JSON file path.
+
+    .. code:: python
+
+        import rsgispy.tools.jsonio
+        rsgispy.tools.jsonio.write_dict_to_json({"a": 1, "b": 2}, "out.json")
     """
     with open(out_file, "w", encoding="utf-8") as out_fp:
         json.dump(
@@ -83,6 +88,11 @@ def dict_to_json_str(data_dict: Union[Dict[str, Any], List[Any]]) -> str:
 
     :param data_dict: Data structure to serialise to JSON.
     :return: Compact JSON string.
+
+    .. code:: python
+
+        import rsgispy.tools.jsonio
+        json_str = rsgispy.tools.jsonio.dict_to_json_str({"a": 1, "b": 2})
     """
     return json.dumps(
         data_dict,
@@ -105,6 +115,11 @@ def write_dict_to_json_gz(
     :param data_dict: Data structure to serialise to JSON.
     :param out_file: Output ``.json.gz`` file path.
     :param encoding: Text encoding (Default = ``'utf-8'``).
+
+    .. code:: python
+
+        import rsgispy.tools.jsonio
+        rsgispy.tools.jsonio.write_dict_to_json_gz({"a": 1}, "out.json.gz")
     """
     json_str = json.dumps(
         data_dict,
@@ -125,6 +140,11 @@ def read_json_to_dict(input_file: str) -> Any:
 
     :param input_file: Input JSON file path.
     :return: Parsed JSON dict or list.
+
+    .. code:: python
+
+        import rsgispy.tools.jsonio
+        data = rsgispy.tools.jsonio.read_json_to_dict("out.json")
     """
     with open(input_file, "r", encoding="utf-8") as in_fp:
         return json.load(in_fp)
@@ -137,6 +157,11 @@ def read_gz_json_to_dict(input_file: str, encoding: str = "utf-8") -> Any:
     :param input_file: Input ``.json.gz`` file path.
     :param encoding: Text encoding (Default = ``'utf-8'``).
     :return: Parsed JSON dict or list.
+
+    .. code:: python
+
+        import rsgispy.tools.jsonio
+        data = rsgispy.tools.jsonio.read_gz_json_to_dict("out.json.gz")
     """
     with gzip.GzipFile(input_file, "r") as f_in:
         json_bytes = f_in.read()

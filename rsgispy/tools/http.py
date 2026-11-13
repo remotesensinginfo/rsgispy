@@ -84,6 +84,11 @@ if HAVE_REQUESTS:
         :param url: Remote URL to check.
         :param timeout: Request timeout in seconds (Default = ``30.0``).
         :return: ``True`` if HTTP status is OK (200), ``False`` otherwise.
+
+        .. code:: python
+
+            import rsgispy.tools.http
+            exists = rsgispy.tools.http.check_url_exists("https://example.com/data.zip")
         """
         resp = requests.head(url, timeout=timeout)
         return resp.status_code == requests.codes.ok  # pylint: disable=no-member
@@ -95,6 +100,13 @@ if HAVE_REQUESTS:
         :param response: :class:`requests.Response` instance.
         :param url: Request URL used in fallback error messages.
         :return: ``True`` when response succeeded.
+
+        .. code:: python
+
+            import requests
+            import rsgispy.tools.http
+            resp = requests.get("https://example.com/data.json", timeout=30.0)
+            ok = rsgispy.tools.http.check_http_response(resp, "https://example.com/data.json")
         """
         try:
             response.raise_for_status()
@@ -142,6 +154,13 @@ if HAVE_REQUESTS:
         :param header_data: Optional dictionary of HTTP request headers.
         :param timeout: Request timeout in seconds (Default = ``60.0``).
         :return: Parsed JSON response object.
+
+        .. code:: python
+
+            import rsgispy.tools.http
+            resp = rsgispy.tools.http.send_http_json_request(
+                "https://example.com/api/query", data={"limit": 10}
+            )
         """
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         params_data = (
@@ -197,6 +216,13 @@ if HAVE_REQUESTS:
         :param no_except: Return ``False`` on failure instead of raising when ``True``.
         :param timeout: Request timeout in seconds (Default = ``60.0``).
         :return: ``True`` if download succeeded, ``False`` otherwise.
+
+        .. code:: python
+
+            import rsgispy.tools.http
+            ok = rsgispy.tools.http.download_file_http(
+                "https://example.com/data.zip", "data.zip"
+            )
         """
         # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         tqdm_cls = rsgispy.get_tqdm()
@@ -256,6 +282,13 @@ def wget_download_file(
     :param time_out: Timeout in seconds (Default = ``60``).
     :param input_url_md5: Optional expected MD5 hex digest.
     :return: Tuple ``(success, message)``.
+
+    .. code:: python
+
+        import rsgispy.tools.http
+        ok, msg = rsgispy.tools.http.wget_download_file(
+            "https://example.com/data.zip", "data.zip"
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     success = False
@@ -311,6 +344,13 @@ if HAVE_PYSONDB:
 
         :param db_json: Path to the JSON database file.
         :param file_urls: Mapping of ``filename -> URL``.
+
+        .. code:: python
+
+            import rsgispy.tools.http
+            rsgispy.tools.http.create_file_listings_db(
+                "http_files.json", {"data.zip": "https://example.com/data.zip"}
+            )
         """
         tqdm_cls = rsgispy.get_tqdm()
         lst_db = pysondb.getDb(db_json)
@@ -345,6 +385,13 @@ if HAVE_PYSONDB:
         :param use_wget: Use ``wget`` instead of ``requests`` when ``True``.
         :param wget_time_out: ``wget`` timeout in seconds (Default = ``60``).
         :param check_file_exists: Skip downloading if target file already exists locally.
+
+        .. code:: python
+
+            import rsgispy.tools.http
+            rsgispy.tools.http.download_http_files_use_lst_db(
+                "http_files.json", "./downloads", check_file_exists=True
+            )
         """
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         if not use_wget and not HAVE_REQUESTS:

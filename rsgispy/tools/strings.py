@@ -26,6 +26,11 @@ def uid_generator(size: int = 6) -> str:
 
     :param size: Length of the returned string.
     :return: Random hex string of length ``size``.
+
+    .. code:: python
+
+        import rsgispy.tools.strings
+        uid = rsgispy.tools.strings.uid_generator(size=8)
     """
     random_str = str(uuid.uuid4()).replace("-", "")
     return random_str[0:size]
@@ -41,6 +46,11 @@ def str_to_float(str_val: str, err_val: Optional[float] = None) -> float:
     :param str_val: String to convert to float.
     :param err_val: Fallback value returned on conversion failure.
     :return: Floating-point value.
+
+    .. code:: python
+
+        import rsgispy.tools.strings
+        val = rsgispy.tools.strings.str_to_float(" 12.5 ", err_val=0.0)
     """
     cleaned = str(str_val).strip()
     try:
@@ -63,6 +73,11 @@ def str_to_int(str_val: str, err_val: Optional[int] = None) -> int:
     :param str_val: String to convert to int.
     :param err_val: Fallback value returned on conversion failure.
     :return: Integer value.
+
+    .. code:: python
+
+        import rsgispy.tools.strings
+        val = rsgispy.tools.strings.str_to_int("42.6")
     """
     cleaned = str(str_val).strip()
     try:
@@ -99,6 +114,11 @@ def zero_pad_num_str(
     :param absolute: Whether to take the absolute value first.
     :param gain: Multiplier applied before integerising.
     :return: Zero-padded string representation.
+
+    .. code:: python
+
+        import rsgispy.tools.strings
+        padded = rsgispy.tools.strings.zero_pad_num_str(7, str_len=4)
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     if absolute:
@@ -118,6 +138,11 @@ def remove_repeated_chars(str_val: str, repeat_char: str) -> str:
     :param str_val: Input string.
     :param repeat_char: Single character to deduplicate.
     :return: String with repeated ``repeat_char`` collapsed.
+
+    .. code:: python
+
+        import rsgispy.tools.strings
+        cleaned = rsgispy.tools.strings.remove_repeated_chars("a___b__c", "_")
     """
     if len(repeat_char) != 1:
         raise rsgispy.RSGISPyException(
@@ -152,6 +177,13 @@ def check_str(
     :param rm_spaces: Replace spaces with ``_`` and collapse repeats when True.
     :param rm_punc: Remove punctuation other than ``_`` and ``-`` when True.
     :return: Cleaned string.
+
+    .. code:: python
+
+        import rsgispy.tools.strings
+        clean = rsgispy.tools.strings.check_str(
+            "My File-Name!", rm_dashs=True, rm_spaces=True, rm_punc=True
+        )
     """
     str_val_tmp = "" if str_val is None else str_val.strip()
 

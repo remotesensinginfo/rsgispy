@@ -417,6 +417,15 @@ def create_circular_op(output_file: str, op_size: int) -> None:
 
     :param output_file: Output file path for the ``.gmtxt`` operator matrix.
     :param op_size: Odd integer width/height of the square operator matrix.
+
+    .. code:: python
+
+        import rsgispy.imagemorphology
+
+        rsgispy.imagemorphology.create_circular_op(
+            output_file="circ_op_5.gmtxt",
+            op_size=5,
+        )
     """
     size_int = int(op_size)
     if size_int < 1 or size_int % 2 == 0:
@@ -459,6 +468,21 @@ def image_dilate(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagemorphology
+
+        rsgispy.imagemorphology.image_dilate(
+            input_img="mask.tif",
+            output_img="mask_dilate.tif",
+            morph_op_file="",
+            use_op_file=False,
+            op_size=3,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_8UINT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
@@ -493,6 +517,21 @@ def image_erode(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagemorphology
+
+        rsgispy.imagemorphology.image_erode(
+            input_img="mask.tif",
+            output_img="mask_erode.tif",
+            morph_op_file="",
+            use_op_file=False,
+            op_size=3,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_8UINT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
@@ -528,6 +567,21 @@ def image_gradiant(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_32FLOAT``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagemorphology
+
+        rsgispy.imagemorphology.image_gradiant(
+            input_img="img.tif",
+            output_img="img_grad.tif",
+            morph_op_file="",
+            use_op_file=False,
+            op_size=3,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
@@ -563,6 +617,21 @@ def image_dilate_combined_out(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagemorphology
+
+        rsgispy.imagemorphology.image_dilate_combined_out(
+            input_img="masks.tif",
+            output_img="masks_dilate_comb.tif",
+            morph_op_file="",
+            use_op_file=False,
+            op_size=3,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_8UINT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
@@ -598,6 +667,21 @@ def image_erode_combined_out(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagemorphology
+
+        rsgispy.imagemorphology.image_erode_combined_out(
+            input_img="masks.tif",
+            output_img="masks_erode_comb.tif",
+            morph_op_file="",
+            use_op_file=False,
+            op_size=3,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_8UINT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
@@ -633,6 +717,21 @@ def image_gradiant_combined_out(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_32FLOAT``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagemorphology
+
+        rsgispy.imagemorphology.image_gradiant_combined_out(
+            input_img="img.tif",
+            output_img="img_grad_comb.tif",
+            morph_op_file="",
+            use_op_file=False,
+            op_size=3,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
@@ -675,6 +774,23 @@ def image_local_minima(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagemorphology
+
+        rsgispy.imagemorphology.image_local_minima(
+            input_img="dem.tif",
+            output_img="minima.tif",
+            sequencial_out=False,
+            allow_equal=True,
+            morph_op_file="",
+            use_op_file=False,
+            op_size=3,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_8UINT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
@@ -719,6 +835,23 @@ def image_local_minima_combined_out(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagemorphology
+
+        rsgispy.imagemorphology.image_local_minima_combined_out(
+            input_img="bands.tif",
+            output_img="minima_comb.tif",
+            sequencial_out=False,
+            allow_equal=True,
+            morph_op_file="",
+            use_op_file=False,
+            op_size=3,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_8UINT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
@@ -760,6 +893,22 @@ def image_opening(
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
     :param niters: Number of opening iterations (Default = ``1``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagemorphology
+
+        rsgispy.imagemorphology.image_opening(
+            input_img="mask.tif",
+            output_img="mask_open.tif",
+            tmp_img=None,
+            morph_op_file="",
+            use_op_file=False,
+            op_size=3,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_8UINT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
@@ -801,6 +950,22 @@ def image_closing(
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
     :param niters: Number of closing iterations (Default = ``1``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagemorphology
+
+        rsgispy.imagemorphology.image_closing(
+            input_img="mask.tif",
+            output_img="mask_close.tif",
+            tmp_img=None,
+            morph_op_file="",
+            use_op_file=False,
+            op_size=3,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_8UINT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
@@ -840,6 +1005,22 @@ def image_black_top_hat(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagemorphology
+
+        rsgispy.imagemorphology.image_black_top_hat(
+            input_img="dem.tif",
+            output_img="dem_bth.tif",
+            tmp_img=None,
+            morph_op_file="",
+            use_op_file=False,
+            op_size=5,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     ensure_file_exists(input_img)
@@ -894,6 +1075,22 @@ def image_white_top_hat(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagemorphology
+
+        rsgispy.imagemorphology.image_white_top_hat(
+            input_img="dem.tif",
+            output_img="dem_wth.tif",
+            tmp_img=None,
+            morph_op_file="",
+            use_op_file=False,
+            op_size=5,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     ensure_file_exists(input_img)

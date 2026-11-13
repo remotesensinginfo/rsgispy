@@ -51,6 +51,13 @@ if HAVE_SCIPY and HAVE_SKLEARN:
         :param y_true: 1D binary class labels (0 = absence, 1 = presence).
         :param y_prob: 1D predicted probability scores.
         :return: ``[metric_names, scores_array]``.
+
+        .. code:: python
+
+            import rsgispy.tools.accuracy
+            names, scores = rsgispy.tools.accuracy.bin_accuracy_scores_prob(
+                [0, 1, 0, 1], [0.1, 0.9, 0.2, 0.8]
+            )
         """
         # pylint: disable=too-many-locals
         y_true_arr = numpy.asarray(y_true)
@@ -107,6 +114,13 @@ if HAVE_SKLEARN:
         :param y_true: Observed 1D binary labels (0 = absence, 1 = presence).
         :param y_pred: Predicted 1D binary labels (0 = absence, 1 = presence).
         :return: ``[metrics_array, scores_array]``.
+
+        .. code:: python
+
+            import rsgispy.tools.accuracy
+            metrics, scores = rsgispy.tools.accuracy.accuracy_scores_binary(
+                [0, 1, 0, 1], [0, 1, 1, 1]
+            )
         """
         # pylint: disable=too-many-locals
         y_true_arr = numpy.asarray(y_true)
@@ -234,6 +248,13 @@ def bias_score(
     :param y_true: Array of true target values.
     :param y_pred: Array of predicted target values.
     :return: ``(bias, norm_bias)`` tuple.
+
+    .. code:: python
+
+        import rsgispy.tools.accuracy
+        bias, norm_bias = rsgispy.tools.accuracy.bias_score(
+            [1.0, 2.0, 3.0], [1.1, 2.2, 2.9]
+        )
     """
     y_true_arr = numpy.asarray(y_true)
     y_pred_arr = numpy.asarray(y_pred)
@@ -257,6 +278,13 @@ def decompose_bias_variance(
     :param y_true: Array of true target values.
     :param y_pred: Array of predicted target values.
     :return: ``(mse, bias_squared, variance, noise)`` tuple.
+
+    .. code:: python
+
+        import rsgispy.tools.accuracy
+        mse, bias_sq, var, noise = rsgispy.tools.accuracy.decompose_bias_variance(
+            [1.0, 2.0, 3.0], [1.1, 2.2, 2.9]
+        )
     """
     y_true_arr = numpy.asarray(y_true)
     y_pred_arr = numpy.asarray(y_pred)

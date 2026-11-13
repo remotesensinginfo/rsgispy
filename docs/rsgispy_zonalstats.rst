@@ -1,17 +1,18 @@
 rsgispy.zonalstats
 ==================
 
-The :mod:`rsgispy.zonalstats` subpackage provides zonal statistics modules for polygon (``polygon``) and point (``point``) vector datasets using ``rasterio`` and ``geopandas``.
+The :mod:`rsgispy.zonalstats` subpackage provides zonal statistics extraction
+modules for polygon and point vector datasets using ``rasterio`` and
+``geopandas``.
 
-API Reference
--------------
+Modules
+-------
 
-.. automodule:: rsgispy.zonalstats.polygon
-   :members:
-   :undoc-members:
-   :show-inheritance:
+* :doc:`zonalstats/polygon` — Polygon zonal statistics and pixel counts.
+* :doc:`zonalstats/point` — Point band value extraction.
 
-.. automodule:: rsgispy.zonalstats.point
-   :members:
-   :undoc-members:
-   :show-inheritance:
+.. toctree::
+   :maxdepth: 1
+
+   zonalstats/polygon
+   zonalstats/point

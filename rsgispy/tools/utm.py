@@ -80,6 +80,11 @@ def min_max_eastings_for_lat(latitude: float, zone: int = 1) -> Tuple[float, flo
     :param latitude: Latitude in decimal degrees (scalar).
     :param zone: UTM zone number (Default = ``1``).
     :return: Tuple ``(min_easting, max_easting)``.
+
+    .. code:: python
+
+        import rsgispy.tools.utm
+        min_e, max_e = rsgispy.tools.utm.min_max_eastings_for_lat(52.4, zone=30)
     """
     if isinstance(latitude, numpy.ndarray):
         raise rsgispy.RSGISPyException("Don't input an array.")
@@ -101,6 +106,11 @@ def epsg_for_utm(zone: int, hemisphere: str) -> int:
     :param zone: UTM zone number (0..60).
     :param hemisphere: Hemisphere indicator (``'N'`` or ``'S'``).
     :return: Corresponding EPSG integer code.
+
+    .. code:: python
+
+        import rsgispy.tools.utm
+        epsg = rsgispy.tools.utm.epsg_for_utm(zone=30, hemisphere="N")
     """
     if hemisphere not in ["N", "S"]:
         raise rsgispy.RSGISPyException('Invalid hemisphere ("N" or "S").')
@@ -121,6 +131,11 @@ def utm_from_epsg(epsg_code: int) -> Tuple[int, str]:
 
     :param epsg_code: EPSG integer code for the UTM projection.
     :return: Tuple ``(zone, hemisphere)``.
+
+    .. code:: python
+
+        import rsgispy.tools.utm
+        zone, hemi = rsgispy.tools.utm.utm_from_epsg(32630)
     """
     h_zone = int(epsg_code) - 32000
 
@@ -142,6 +157,11 @@ def split_wgs84_bbox_utm_zones(
 
     :param wgs84_bbox: Bounding box in WGS84 lon/lat ``(MinX, MaxX, MinY, MaxY)``.
     :return: List of ``[utm_zone, [x_min, x_max, y_min, y_max]]`` entries.
+
+    .. code:: python
+
+        import rsgispy.tools.utm
+        zone_bboxes = rsgispy.tools.utm.split_wgs84_bbox_utm_zones((-8.0, 2.0, 50.0, 55.0))
     """
     utm_tl = from_latlon(wgs84_bbox[3], wgs84_bbox[0])
     utm_tr = from_latlon(wgs84_bbox[3], wgs84_bbox[1])
@@ -177,6 +197,11 @@ def check_valid_zone(
     :param zone_letter: Optional UTM zone designator letter.
     :param use_exp: If ``True``, raise :class:`rsgispy.RSGISPyException` on invalid values.
     :return: ``True`` if valid, ``False`` otherwise (when ``use_exp=False``).
+
+    .. code:: python
+
+        import rsgispy.tools.utm
+        is_valid = rsgispy.tools.utm.check_valid_zone(30, "U", use_exp=False)
     """
     valid_zone = True
     if not 1 <= zone_number <= 60:
@@ -216,6 +241,11 @@ def to_latlon(
     :param northern: Hemisphere flag (``True`` for Northern, ``False`` for Southern).
     :param strict: Validate easting/northing bounds (Default = ``True``).
     :return: Tuple ``(latitude, longitude)``.
+
+    .. code:: python
+
+        import rsgispy.tools.utm
+        lat, lon = rsgispy.tools.utm.to_latlon(426500.0, 5807000.0, 30, zone_letter="U")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not zone_letter and northern is None:
@@ -316,6 +346,11 @@ def from_latlon(
     :param force_zone_number: Optional forced UTM zone number.
     :param force_zone_letter: Optional forced UTM zone letter.
     :return: Tuple ``(eastings, northings, zone_number, zone_letter)``.
+
+    .. code:: python
+
+        import rsgispy.tools.utm
+        east, north, zone, letter = rsgispy.tools.utm.from_latlon(52.41, -4.08)
     """
     # pylint: disable=too-many-locals
     if not rsgispy.tools.maths.in_bounds(latitude, -80.0, 84.0):
@@ -409,6 +444,11 @@ def latitude_to_zone_letter(
 
     :param latitude: Latitude in decimal degrees (if an array, uses first element).
     :return: Zone letter string, or ``None`` if outside [-80, 84].
+
+    .. code:: python
+
+        import rsgispy.tools.utm
+        letter = rsgispy.tools.utm.latitude_to_zone_letter(52.41)
     """
     if isinstance(latitude, numpy.ndarray):
         latitude = float(latitude.flat[0])
@@ -428,6 +468,11 @@ def latlon_to_zone_number(
     :param latitude: Latitude in decimal degrees.
     :param longitude: Longitude in decimal degrees.
     :return: Integer UTM zone number.
+
+    .. code:: python
+
+        import rsgispy.tools.utm
+        zone = rsgispy.tools.utm.latlon_to_zone_number(52.41, -4.08)
     """
     if isinstance(latitude, numpy.ndarray):
         latitude = float(latitude.flat[0])
@@ -460,6 +505,15 @@ def latlon_arr_to_utm_zone_number(
     :param latitude: NumPy array of latitudes.
     :param longitude: NumPy array of longitudes.
     :return: NumPy array of integer UTM zone numbers.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.utm
+
+        lats = np.array([52.41, 51.48])
+        lons = np.array([-4.08, -3.18])
+        zones = rsgispy.tools.utm.latlon_arr_to_utm_zone_number(lats, lons)
     """
     utm_zones = ((longitude + 180) / 6) + 1
     utm_zones = numpy.rint(utm_zones).astype(int)
@@ -493,6 +547,15 @@ def latlon_to_mode_utm_zone_number(
     :param latitude: NumPy array of latitudes.
     :param longitude: NumPy array of longitudes.
     :return: Modal UTM zone integer.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.utm
+
+        lats = np.array([52.41, 51.48, 53.00])
+        lons = np.array([-4.08, -3.18, -3.50])
+        mode_zone = rsgispy.tools.utm.latlon_to_mode_utm_zone_number(lats, lons)
     """
     utm_zones = latlon_arr_to_utm_zone_number(latitude, longitude)
     mode_res = scipy.stats.mode(utm_zones)
@@ -505,5 +568,10 @@ def zone_number_to_central_longitude(zone_number: int) -> float:
 
     :param zone_number: UTM zone number (1..60).
     :return: Central longitude in degrees.
+
+    .. code:: python
+
+        import rsgispy.tools.utm
+        central_lon = rsgispy.tools.utm.zone_number_to_central_longitude(30)
     """
     return (zone_number - 1) * 6 - 180 + 3

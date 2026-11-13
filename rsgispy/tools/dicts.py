@@ -49,6 +49,13 @@ def dict_struct_does_path_exist(
     :param dict_struct_obj: Nested dictionary (e.g., parsed JSON).
     :param tree_sequence: Sequence of keys specifying the path.
     :return: True if the full path exists, False otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.dicts
+
+        data = {"meta": {"sensor": "Sentinel-2"}}
+        exists = rsgispy.tools.dicts.dict_struct_does_path_exist(data, ["meta", "sensor"])
     """
     curr_obj: Any = dict_struct_obj
     for tree_step in tree_sequence:
@@ -72,6 +79,15 @@ def dict_struct_get_str_value(
     :param valid_values: Optional allowed values; raises if the retrieved value
                          is not among them.
     :return: Retrieved string value.
+
+    .. code:: python
+
+        import rsgispy.tools.dicts
+
+        data = {"meta": {"sensor": "Sentinel-2"}}
+        sensor = rsgispy.tools.dicts.dict_struct_get_str_value(
+            data, ["meta", "sensor"], valid_values=["Sentinel-2", "Landsat-8"]
+        )
     """
     curr_obj, _ = _dict_struct_traverse(dict_struct_obj, tree_sequence)
     if valid_values is not None and curr_obj not in valid_values:
@@ -91,6 +107,15 @@ def dict_struct_get_boolean_value(
     :param dict_struct_obj: Nested dictionary (e.g., parsed JSON).
     :param tree_sequence: Sequence of keys specifying the path.
     :return: Retrieved boolean value.
+
+    .. code:: python
+
+        import rsgispy.tools.dicts
+
+        data = {"flags": {"cloud_masked": True}}
+        is_masked = rsgispy.tools.dicts.dict_struct_get_boolean_value(
+            data, ["flags", "cloud_masked"]
+        )
     """
     curr_obj, _ = _dict_struct_traverse(dict_struct_obj, tree_sequence)
     if isinstance(curr_obj, bool):
@@ -111,6 +136,15 @@ def dict_struct_get_date_value(
     :param date_format: Format string or list of format strings passed to
                         ``datetime.datetime.strptime``.
     :return: Parsed ``datetime.date`` object.
+
+    .. code:: python
+
+        import rsgispy.tools.dicts
+
+        data = {"acquisition": {"date": "2023-06-15"}}
+        acq_date = rsgispy.tools.dicts.dict_struct_get_date_value(
+            data, ["acquisition", "date"]
+        )
     """
     curr_obj, _ = _dict_struct_traverse(dict_struct_obj, tree_sequence)
 
@@ -147,6 +181,15 @@ def dict_struct_get_datetime_value(
     :param date_time_format: Format string or list of format strings passed to
                              ``datetime.datetime.strptime``.
     :return: Parsed ``datetime.datetime`` object.
+
+    .. code:: python
+
+        import rsgispy.tools.dicts
+
+        data = {"acquisition": {"timestamp": "2023-06-15T10:30:00.000Z"}}
+        acq_dt = rsgispy.tools.dicts.dict_struct_get_datetime_value(
+            data, ["acquisition", "timestamp"]
+        )
     """
     curr_obj, _ = _dict_struct_traverse(dict_struct_obj, tree_sequence)
     cleaned_val = str(curr_obj).replace("Z", "")
@@ -184,6 +227,15 @@ def dict_struct_get_str_list_value(
     :param valid_values: Optional allowed string values; raises if any item
                          is not a string or not in ``valid_values``.
     :return: List of strings.
+
+    .. code:: python
+
+        import rsgispy.tools.dicts
+
+        data = {"product": {"bands": ["B02", "B03", "B04"]}}
+        bands = rsgispy.tools.dicts.dict_struct_get_str_list_value(
+            data, ["product", "bands"]
+        )
     """
     curr_obj, _ = _dict_struct_traverse(dict_struct_obj, tree_sequence)
     if not isinstance(curr_obj, list):
@@ -213,6 +265,15 @@ def dict_struct_get_numeric_value(
     :param valid_lower: Optional minimum valid bound.
     :param valid_upper: Optional maximum valid bound.
     :return: Numeric ``int`` or ``float`` value.
+
+    .. code:: python
+
+        import rsgispy.tools.dicts
+
+        data = {"quality": {"cloud_cover": 12.5}}
+        cloud_pct = rsgispy.tools.dicts.dict_struct_get_numeric_value(
+            data, ["quality", "cloud_cover"], valid_lower=0.0, valid_upper=100.0
+        )
     """
     curr_obj, steps_str = _dict_struct_traverse(dict_struct_obj, tree_sequence)
     if not rsgispy.tools.maths.is_number(curr_obj):
@@ -247,6 +308,13 @@ def dict_struct_get_list_value(
     :param dict_struct_obj: Nested dictionary (e.g., parsed JSON).
     :param tree_sequence: Sequence of keys specifying the path.
     :return: Retrieved list.
+
+    .. code:: python
+
+        import rsgispy.tools.dicts
+
+        data = {"scene": {"bbox": [-4.5, -4.0, 52.0, 52.5]}}
+        bbox = rsgispy.tools.dicts.dict_struct_get_list_value(data, ["scene", "bbox"])
     """
     curr_obj, _ = _dict_struct_traverse(dict_struct_obj, tree_sequence)
     if not isinstance(curr_obj, list):

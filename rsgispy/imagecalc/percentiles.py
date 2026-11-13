@@ -47,6 +47,16 @@ def calc_band_percentile(
     :param percentile: Percentile fraction between ``0.0`` and ``1.0`` inclusive.
     :param no_data_val: Optional no-data value to exclude (or ``None``).
     :return: List of float percentile values, one per band.
+
+    .. code:: python
+
+        import rsgispy.imagecalc.percentiles
+
+        pct_vals = rsgispy.imagecalc.percentiles.calc_band_percentile(
+            input_img="img.tif",
+            percentile=0.95,
+            no_data_val=0.0,
+        )
     """
     if percentile < 0.0 or percentile > 1.0:
         raise rsgispy.RSGISPyException("Percentile value must be between 0 - 1.")
@@ -94,6 +104,17 @@ def calc_band_percentile_msk(
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :return: NumPy array of shape ``(len(percentiles), n_bands)`` (or ``(n_bands,)``
              if ``percentiles`` is a scalar-like single float passed to ``np.percentile``).
+
+    .. code:: python
+
+        import rsgispy.imagecalc.percentiles
+
+        pcts = rsgispy.imagecalc.percentiles.calc_band_percentile_msk(
+            input_img="img.tif",
+            in_msk_img="mask.tif",
+            msk_val=1,
+            percentiles=[5.0, 50.0, 95.0],
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     validate_percentiles_0_100(percentiles)
@@ -182,6 +203,18 @@ def calc_imgs_pxl_percentiles(
     :param no_data_val: No-data value to ignore during percentile calculation (Default = 0).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+
+    .. code:: python
+
+        import rsgispy.imagecalc.percentiles
+
+        rsgispy.imagecalc.percentiles.calc_imgs_pxl_percentiles(
+            input_imgs=["img1.tif", "img2.tif", "img3.tif"],
+            percentiles=[10.0, 50.0, 90.0],
+            output_img="pxl_pcts.tif",
+            gdalformat="GTIFF",
+            no_data_val=0.0,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     validate_percentiles_0_100(percentiles)
@@ -261,6 +294,18 @@ def calc_img_band_pxl_percentiles(
     :param no_data_val: No-data value to ignore during percentile calculation (Default = 0).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+
+    .. code:: python
+
+        import rsgispy.imagecalc.percentiles
+
+        rsgispy.imagecalc.percentiles.calc_img_band_pxl_percentiles(
+            input_imgs=["img1.tif", "img2.tif", "img3.tif"],
+            percentiles=[10.0, 50.0, 90.0],
+            output_img="band_pxl_pcts.tif",
+            gdalformat="GTIFF",
+            no_data_val=0.0,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     validate_percentiles_0_100(percentiles)

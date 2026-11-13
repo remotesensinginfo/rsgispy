@@ -71,6 +71,13 @@ if HAVE_BS4 and HAVE_REQUESTS:
         :param file_ext: File extension filter (Default = ``'jpg'``).
         :param timeout: Request timeout in seconds (Default = ``30.0``).
         :return: List of matching absolute image URLs.
+
+        .. code:: python
+
+            import rsgispy.tools.web
+            img_urls = rsgispy.tools.web.find_web_imgs(
+                "https://example.com/gallery", file_ext="png"
+            )
         """
         return _find_web_elements(base_url, "img", "src", file_ext, timeout)
 
@@ -86,5 +93,12 @@ if HAVE_BS4 and HAVE_REQUESTS:
         :param file_ext: File extension filter (Default = ``'pdf'``).
         :param timeout: Request timeout in seconds (Default = ``30.0``).
         :return: List of matching absolute file URLs.
+
+        .. code:: python
+
+            import rsgispy.tools.web
+            pdf_urls = rsgispy.tools.web.find_web_files(
+                "https://example.com/docs", file_ext="pdf"
+            )
         """
         return _find_web_elements(base_url, "a", "href", file_ext, timeout)

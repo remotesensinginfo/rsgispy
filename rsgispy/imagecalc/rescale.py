@@ -104,6 +104,24 @@ def calc_img_rescale(
     :param n_gain: New gain value.
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagecalc.rescale
+
+        rsgispy.imagecalc.rescale.calc_img_rescale(
+            input_imgs=["img_b1.tif", "img_b2.tif"],
+            output_img="rescaled.tif",
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
+            c_no_data_val=0.0,
+            c_offset=0.0,
+            c_gain=10000.0,
+            n_no_data_val=-9999.0,
+            n_offset=0.0,
+            n_gain=1.0,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if c_gain == 0.0:
@@ -191,6 +209,30 @@ def rescale_img_pxl_vals(
                            ``[out_min, out_max]`` interval (Default = ``True``).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagecalc.rescale
+
+        rescale_objs = [
+            rsgispy.imagecalc.rescale.ImageBandRescale(
+                band=1,
+                in_min=0.0,
+                in_max=10000.0,
+                no_data_val=0.0,
+                out_min=0.0,
+                out_max=1.0,
+                out_no_data=-9999.0,
+            ),
+        ]
+        rsgispy.imagecalc.rescale.rescale_img_pxl_vals(
+            input_img="img.tif",
+            output_img="rescaled.tif",
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
+            band_rescale_objs=rescale_objs,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not band_rescale_objs:

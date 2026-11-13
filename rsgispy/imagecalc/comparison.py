@@ -137,6 +137,19 @@ def calc_img_difference(
                      (Default = ``rsgispy.TYPE_32FLOAT``).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagecalc.comparison
+
+        rsgispy.imagecalc.comparison.calc_img_difference(
+            in_a_img="img_a.tif",
+            in_b_img="img_b.tif",
+            output_img="diff.tif",
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
@@ -290,6 +303,17 @@ def are_imgs_equal(
                     considered equal (Default = ``0.0001``).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :return: Tuple ``(is_equal, prop_pixels_equal)``.
+
+    .. code:: python
+
+        import rsgispy.imagecalc.comparison
+
+        is_eq, prop = rsgispy.imagecalc.comparison.are_imgs_equal(
+            in_ref_img="img_ref.tif",
+            in_cmp_img="img_cmp.tif",
+            prop_eql=0.99,
+            flt_dif=0.0001,
+        )
     """
     return _calc_imgs_equal(
         in_ref_img=in_ref_img,
@@ -323,6 +347,17 @@ def are_img_bands_equal(
                     considered equal (Default = ``0.0001``).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :return: Tuple ``(is_equal, prop_pixels_equal)``.
+
+    .. code:: python
+
+        import rsgispy.imagecalc.comparison
+
+        is_eq, prop = rsgispy.imagecalc.comparison.are_img_bands_equal(
+            in_ref_img="img_ref.tif",
+            img_ref_band=1,
+            in_cmp_img="img_cmp.tif",
+            img_cmp_band=1,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     return _calc_imgs_equal(
@@ -361,6 +396,19 @@ if HAVE_SCIPY:
                                  (Default = ``rsgispy.STATS_CORR_PEARSONS``).
         :return: Tuple ``(correlation_coefficient, p_value)``, or ``(None, None)``
                  if 5 or fewer valid paired pixels exist.
+
+        .. code:: python
+
+            import rsgispy
+            import rsgispy.imagecalc.comparison
+
+            r_val, p_val = rsgispy.imagecalc.comparison.calc_img_correlation(
+                in_a_img="img_a.tif",
+                in_b_img="img_b.tif",
+                img_a_band=1,
+                img_b_band=1,
+                corr_stat_method=rsgispy.STATS_CORR_PEARSONS,
+            )
         """
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         arr_a, arr_b = _extract_valid_paired_pixels(
@@ -415,6 +463,19 @@ if HAVE_SCIPY:
         :param use_glb_range: If ``True``, share a common ``[min, max]`` range
                               across both histograms.
         :return: Earth Mover's distance, or ``None`` if <= 5 valid pixels exist.
+
+        .. code:: python
+
+            import rsgispy.imagecalc.comparison
+
+            emd = rsgispy.imagecalc.comparison.calc_img_earth_move_dist(
+                in_a_img="img_a.tif",
+                in_b_img="img_b.tif",
+                img_a_band=1,
+                img_b_band=1,
+                hist_a_bins=20,
+                hist_b_bins=20,
+            )
         """
         # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         arr_a, arr_b = _extract_valid_paired_pixels(
@@ -477,6 +538,18 @@ if HAVE_SKLEARN:
         :param img_b_min: Optional exclusive minimum threshold for image B.
         :param img_b_max: Optional exclusive maximum threshold for image B.
         :return: Mutual information score, or ``None`` if <= 5 valid pixels exist.
+
+        .. code:: python
+
+            import rsgispy.imagecalc.comparison
+
+            mi_val = rsgispy.imagecalc.comparison.calc_img_mutual_info(
+                in_a_img="img_a.tif",
+                in_b_img="img_b.tif",
+                img_a_band=1,
+                img_b_band=1,
+                hist_bins=64,
+            )
         """
         # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         arr_a, arr_b = _extract_valid_paired_pixels(

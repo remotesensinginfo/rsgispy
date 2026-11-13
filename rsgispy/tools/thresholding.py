@@ -40,6 +40,13 @@ def get_nbins_histogram(data: numpy.ndarray) -> Tuple[int, float]:
 
     :param data: 1D numeric NumPy array.
     :return: ``(n_bins, bin_width)`` tuple.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.thresholding
+        data = np.random.normal(0.0, 1.0, 500)
+        n_bins, bin_width = rsgispy.tools.thresholding.get_nbins_histogram(data)
     """
     n_pts = data.shape[0]
     lower_q = numpy.percentile(data, 25)
@@ -61,6 +68,13 @@ def get_bin_centres(
     :param geometric: Compute geometric mean ``sqrt(min * max)`` when True, or
                       arithmetic mean ``(min + max) / 2`` otherwise.
     :return: 1D NumPy array of bin centres.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.thresholding
+        edges = np.array([0.0, 1.0, 2.0, 3.0])
+        centres = rsgispy.tools.thresholding.get_bin_centres(edges)
     """
     if geometric:
         return numpy.sqrt(bin_edges[1:] * bin_edges[:-1])
@@ -73,6 +87,13 @@ def calc_otsu_threshold(data: numpy.ndarray) -> float:
 
     :param data: 1D numeric NumPy array.
     :return: Computed Otsu threshold value.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.thresholding
+        data = np.concatenate([np.random.normal(2, 0.5, 200), np.random.normal(6, 0.5, 200)])
+        thres = rsgispy.tools.thresholding.calc_otsu_threshold(data)
     """
     n_bins, _ = get_nbins_histogram(data)
     hist, bin_edges = numpy.histogram(data, bins=n_bins)
@@ -96,6 +117,13 @@ def calc_yen_threshold(data: numpy.ndarray) -> float:
 
     :param data: 1D numeric NumPy array.
     :return: Computed Yen threshold value.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.thresholding
+        data = np.concatenate([np.random.normal(2, 0.5, 200), np.random.normal(6, 0.5, 200)])
+        thres = rsgispy.tools.thresholding.calc_yen_threshold(data)
     """
     n_bins, _ = get_nbins_histogram(data)
     hist, bin_edges = numpy.histogram(data, bins=n_bins)
@@ -119,6 +147,13 @@ def calc_isodata_threshold(data: numpy.ndarray) -> float:
 
     :param data: 1D numeric NumPy array.
     :return: Computed ISODATA threshold value.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.thresholding
+        data = np.concatenate([np.random.normal(2, 0.5, 200), np.random.normal(6, 0.5, 200)])
+        thres = rsgispy.tools.thresholding.calc_isodata_threshold(data)
     """
     n_bins, _ = get_nbins_histogram(data)
     hist, bin_edges = numpy.histogram(data, bins=n_bins)
@@ -146,6 +181,13 @@ def calc_hist_cross_entropy(data: numpy.ndarray, threshold: float) -> float:
     :param data: 1D numeric NumPy array.
     :param threshold: Threshold splitting the histogram into two classes.
     :return: Cross-entropy objective value.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.thresholding
+        data = np.concatenate([np.random.normal(2, 0.5, 200), np.random.normal(6, 0.5, 200)])
+        ce = rsgispy.tools.thresholding.calc_hist_cross_entropy(data, threshold=4.0)
     """
     n_bins, _ = get_nbins_histogram(data)
     histogram, bin_edges = numpy.histogram(data, bins=n_bins, density=True)
@@ -180,6 +222,13 @@ def calc_li_threshold(
                       between unique sorted data values).
     :param initial_guess: Optional initial threshold estimate.
     :return: Computed threshold value.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.thresholding
+        data = np.concatenate([np.random.normal(2, 0.5, 200), np.random.normal(6, 0.5, 200)])
+        thres = rsgispy.tools.thresholding.calc_li_threshold(data)
     """
     finite_data = data[numpy.isfinite(data)]
 
@@ -237,6 +286,15 @@ if HAVE_SCIPY:
         :param only_kurtosis: Optimise kurtosis alone when True; otherwise
                               ``abs(kurtosis) + abs(skew)``.
         :return: Optimised threshold value.
+
+        .. code:: python
+
+            import numpy as np
+            import rsgispy.tools.thresholding
+            data = np.random.normal(5.0, 1.0, 500)
+            thres = rsgispy.tools.thresholding.calc_kurt_skew_threshold(
+                data, max_val=4.5, min_val=2.0, init_thres=3.0
+            )
         """
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         if len(data.shape) > 1:

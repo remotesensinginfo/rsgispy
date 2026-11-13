@@ -44,6 +44,12 @@ def get_default_block_size() -> int:
     environment variables at runtime, falling back to :data:`DEFAULT_BLOCK_SIZE`.
 
     :return: Positive integer block size in pixels.
+
+    .. code:: python
+
+        import rsgispy.imageprocess
+
+        blk_size = rsgispy.imageprocess.get_default_block_size()
     """
     raw_val = os.environ.get(ENV_VAR_BLOCK_SIZE) or os.environ.get(
         ENV_VAR_RSGISLIB_BLOCK_SIZE
@@ -78,6 +84,12 @@ def set_default_block_size(block_size: int) -> None:
     ``RSGISPY_BLOCK_SIZE`` environment variable.
 
     :param block_size: Positive integer block size in pixels.
+
+    .. code:: python
+
+        import rsgispy.imageprocess
+
+        rsgispy.imageprocess.set_default_block_size(256)
     """
     if (
         isinstance(block_size, bool)
@@ -95,6 +107,12 @@ def reset_default_block_size() -> None:
     Clear any runtime block size override from the ``RSGISPY_BLOCK_SIZE`` and
     ``RSGISLIB_BLOCK_SIZE`` environment variables so :data:`DEFAULT_BLOCK_SIZE`
     is used again.
+
+    .. code:: python
+
+        import rsgispy.imageprocess
+
+        rsgispy.imageprocess.reset_default_block_size()
     """
     os.environ.pop(ENV_VAR_BLOCK_SIZE, None)
     os.environ.pop(ENV_VAR_RSGISLIB_BLOCK_SIZE, None)
@@ -109,6 +127,12 @@ def get_gdal_img_creation_opts(gdalformat: str) -> Dict[str, str]:
 
     :param gdalformat: GDAL format string (e.g., 'GTIFF', 'COG', 'KEA').
     :return: Dictionary of creation option key-value strings.
+
+    .. code:: python
+
+        import rsgispy.imageprocess
+
+        opts = rsgispy.imageprocess.get_gdal_img_creation_opts("GTIFF")
     """
     fmt_upper = gdalformat.upper().strip()
     rsgispy_var = f"RSGISPY_IMG_CRT_OPTS_{fmt_upper}"
@@ -154,7 +178,15 @@ class IntersectionGrid:
 
 
 def ensure_file_exists(file_path: str, label: str = "Input image") -> None:
-    """Raise :class:`rsgispy.RSGISPyException` if ``file_path`` does not exist."""
+    """
+    Raise :class:`rsgispy.RSGISPyException` if ``file_path`` does not exist.
+
+    .. code:: python
+
+        import rsgispy.imageprocess
+
+        rsgispy.imageprocess.ensure_file_exists("img.tif")
+    """
     if not os.path.exists(file_path):
         raise rsgispy.RSGISPyException(
             f"{label} file does not exist: '{file_path}'."
@@ -162,7 +194,15 @@ def ensure_file_exists(file_path: str, label: str = "Input image") -> None:
 
 
 def validate_band_index(img_band: int, n_bands: int, img_path: str) -> None:
-    """Validate that a 1-based band index is within ``[1, n_bands]``."""
+    """
+    Validate that a 1-based band index is within ``[1, n_bands]``.
+
+    .. code:: python
+
+        import rsgispy.imageprocess
+
+        rsgispy.imageprocess.validate_band_index(img_band=1, n_bands=4, img_path="img.tif")
+    """
     if img_band < 1 or img_band > n_bands:
         raise rsgispy.RSGISPyException(
             f"Band {img_band} is out of range for image '{img_path}' "
@@ -171,7 +211,17 @@ def validate_band_index(img_band: int, n_bands: int, img_path: str) -> None:
 
 
 def bbox_from_dataset(src: DatasetReader) -> Tuple[float, float, float, float]:
-    """Return ``(MinX, MaxX, MinY, MaxY)`` from an opened rasterio dataset."""
+    """
+    Return ``(MinX, MaxX, MinY, MaxY)`` from an opened rasterio dataset.
+
+    .. code:: python
+
+        import rasterio
+        import rsgispy.imageprocess
+
+        with rasterio.open("img.tif", "r") as src:
+            bbox = rsgispy.imageprocess.bbox_from_dataset(src)
+    """
     bounds = src.bounds
     return (
         float(bounds.left),
@@ -232,6 +282,14 @@ def normalise_band_defs(
 
     :param band_defs: Sequence of BandDefn objects or dicts.
     :return: Deduplicated list of validated BandDefn objects.
+
+    .. code:: python
+
+        import rsgispy.imageprocess
+
+        band_defs = rsgispy.imageprocess.normalise_band_defs(
+            [rsgispy.imageprocess.BandDefn("b1", "img.tif", 1)]
+        )
     """
     if not band_defs:
         raise rsgispy.RSGISPyException(
@@ -294,6 +352,14 @@ def validate_crs_and_res(
 
     :param datasets: Mapping of file path to opened rasterio DatasetReader.
     :param first_ds: Reference dataset (defaults to the first dataset in ``datasets``).
+
+    .. code:: python
+
+        import rasterio
+        import rsgispy.imageprocess
+
+        with rasterio.open("a.tif", "r") as ds_a, rasterio.open("b.tif", "r") as ds_b:
+            rsgispy.imageprocess.validate_crs_and_res({"a.tif": ds_a, "b.tif": ds_b})
     """
     if not datasets:
         raise rsgispy.RSGISPyException("No datasets provided for validation.")
@@ -330,6 +396,16 @@ def compute_spatial_intersection(
 
     :param datasets: Mapping of file path to opened rasterio DatasetReader.
     :return: IntersectionGrid describing the output extent and input pixel offsets.
+
+    .. code:: python
+
+        import rasterio
+        import rsgispy.imageprocess
+
+        with rasterio.open("a.tif", "r") as ds_a, rasterio.open("b.tif", "r") as ds_b:
+            grid = rsgispy.imageprocess.compute_spatial_intersection(
+                {"a.tif": ds_a, "b.tif": ds_b}
+            )
     """
     if not datasets:
         raise rsgispy.RSGISPyException(
@@ -413,6 +489,16 @@ def cast_result_block(
     :param win_w: Width of the current window in pixels.
     :param out_np_dtype: Target NumPy dtype for the output raster.
     :return: NumPy array of shape ``(win_h, win_w)`` or ``(bands, win_h, win_w)``.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.imageprocess
+
+        arr = np.ones((256, 256), dtype=np.float64)
+        out = rsgispy.imageprocess.cast_result_block(
+            arr, 256, 256, np.dtype(np.float32)
+        )
     """
     out_np_dtype = np.dtype(out_np_dtype)
     if np.ndim(res) == 0:
@@ -435,6 +521,15 @@ def open_input_datasets(
     :param stack: Contextlib ExitStack managing open dataset handles.
     :param norm_defs: Validated sequence of BandDefn objects.
     :return: Mapping of file path to opened rasterio DatasetReader.
+
+    .. code:: python
+
+        from contextlib import ExitStack
+        import rsgispy.imageprocess
+
+        band_defs = [rsgispy.imageprocess.BandDefn("b1", "img.tif", 1)]
+        with ExitStack() as stack:
+            datasets = rsgispy.imageprocess.open_input_datasets(stack, band_defs)
     """
     datasets: Dict[str, DatasetReader] = {}
     for b_def in norm_defs:
@@ -472,6 +567,16 @@ def open_multi_image_datasets(
     :return: Tuple of ``(datasets, paths)`` where ``datasets`` maps each unique
              file path to an opened rasterio DatasetReader and ``paths`` is the
              resolved list of file paths preserving the input order.
+
+    .. code:: python
+
+        from contextlib import ExitStack
+        import rsgispy.imageprocess
+
+        with ExitStack() as stack:
+            datasets, paths = rsgispy.imageprocess.open_multi_image_datasets(
+                stack, ["a.tif", "b.tif"]
+            )
     """
     if not input_imgs:
         raise rsgispy.RSGISPyException("input_imgs must not be empty.")
@@ -524,6 +629,20 @@ def open_output_dataset(
     :param creation_opts: Optional mapping of GDAL creation options (e.g.,
                           ``{'COMPRESS': 'DEFLATE', 'TILED': 'YES'}``).
     :return: Opened rasterio DatasetWriter.
+
+    .. code:: python
+
+        from contextlib import ExitStack
+        import rsgispy.imageprocess
+
+        with ExitStack() as stack:
+            datasets, _ = rsgispy.imageprocess.open_multi_image_datasets(
+                stack, ["in.tif"]
+            )
+            grid = rsgispy.imageprocess.compute_spatial_intersection(datasets)
+            dst = rsgispy.imageprocess.open_output_dataset(
+                stack, "out.tif", "GTIFF", "float32", grid, count=1
+            )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     if output_exists and os.path.exists(output_img):
@@ -577,6 +696,18 @@ def create_output_from_dataset(
     :param output_exists: If ``True`` and the file exists, open in ``'r+'`` mode.
     :param creation_opts: Optional mapping of GDAL creation options.
     :return: Opened rasterio DatasetWriter.
+
+    .. code:: python
+
+        from contextlib import ExitStack
+        import rasterio
+        import rsgispy.imageprocess
+
+        with ExitStack() as stack:
+            src = stack.enter_context(rasterio.open("in.tif", "r"))
+            dst = rsgispy.imageprocess.create_output_from_dataset(
+                stack, src, "out.tif", "GTIFF", "float32", count=1
+            )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     grid = IntersectionGrid.from_dataset(src)
@@ -609,6 +740,13 @@ def iter_dataset_windows(
     :param use_pbar: If ``True``, display a tqdm progress bar during iteration
                      (Default = ``True``).
     :return: Iterator yielding :class:`rasterio.windows.Window` tiles.
+
+    .. code:: python
+
+        import rsgispy.imageprocess
+
+        for win in rsgispy.imageprocess.iter_dataset_windows(1024, 1024, block_size=256):
+            print(win)
     """
     if block_size is None:
         blk_sz = get_default_block_size()
@@ -650,6 +788,20 @@ def iter_image_blocks(
     :param read_dtype: NumPy dtype to cast input bands into when reading (Default = float64).
     :param use_pbar: If True, display a tqdm progress bar during iteration (Default = True).
     :return: Iterator yielding ``(out_win, block_vars)``.
+
+    .. code:: python
+
+        from contextlib import ExitStack
+        import rsgispy.imageprocess
+
+        band_defs = [rsgispy.imageprocess.BandDefn("b1", "img.tif", 1)]
+        with ExitStack() as stack:
+            datasets = rsgispy.imageprocess.open_input_datasets(stack, band_defs)
+            grid = rsgispy.imageprocess.compute_spatial_intersection(datasets)
+            for win, block_vars in rsgispy.imageprocess.iter_image_blocks(
+                datasets, band_defs, grid
+            ):
+                print(win, block_vars["b1"].shape)
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if block_size is None:
@@ -704,6 +856,13 @@ def iter_single_image_band_blocks(
     :param read_dtype: NumPy dtype to cast bands into when reading (Default = float64).
     :param use_pbar: If True, display a tqdm progress bar during iteration (Default = True).
     :return: Iterator yielding ``(out_win, [band_1_arr, ..., band_n_arr])`` tuples.
+
+    .. code:: python
+
+        import rsgispy.imageprocess
+
+        for win, bands in rsgispy.imageprocess.iter_single_image_band_blocks("img.tif"):
+            print(win, len(bands))
     """
     with rasterio.open(input_img, "r") as src:
         n_bands = src.count
@@ -750,6 +909,24 @@ def process_blocks(
                        via :func:`get_default_block_size`.
     :param read_dtype: NumPy dtype to cast input bands into when reading (Default = float64).
     :param use_pbar: If True, display a tqdm progress bar during processing (Default = True).
+
+    .. code:: python
+
+        from contextlib import ExitStack
+        import numpy as np
+        import rsgispy.imageprocess
+
+        band_defs = [rsgispy.imageprocess.BandDefn("b1", "in.tif", 1)]
+        with ExitStack() as stack:
+            datasets = rsgispy.imageprocess.open_input_datasets(stack, band_defs)
+            grid = rsgispy.imageprocess.compute_spatial_intersection(datasets)
+            dst = rsgispy.imageprocess.open_output_dataset(
+                stack, "out.tif", "GTIFF", "float32", grid, count=1
+            )
+            rsgispy.imageprocess.process_blocks(
+                dst, datasets, band_defs, grid,
+                lambda b: b["b1"] * 2.0, np.dtype(np.float32)
+            )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     for out_win, block_vars in iter_image_blocks(

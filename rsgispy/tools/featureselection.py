@@ -68,6 +68,13 @@ if HAVE_SKLEARN:
         :param df: Pandas DataFrame whose columns are predictor variables.
         :param cols: Optional subset of column names to evaluate (at least 2).
         :return: ``pandas.Series`` indexed by column name containing VIF scores.
+
+        .. code:: python
+
+            import pandas as pd
+            import rsgispy.tools.featureselection
+            df = pd.DataFrame({"a": [1, 2, 3, 4], "b": [2, 3, 5, 7], "c": [4, 5, 8, 9]})
+            vif = rsgispy.tools.featureselection.calc_pandas_vif(df)
         """
         # pylint: disable=import-outside-toplevel
         import pandas
@@ -118,6 +125,13 @@ def cqv_threshold(
     :param lowthreshold: Minimum CQV threshold (Default = 0.25).
     :param highthreshold: Maximum CQV threshold (Default = 0.75).
     :return: List of selected column names.
+
+    .. code:: python
+
+        import pandas as pd
+        import rsgispy.tools.featureselection
+        df = pd.DataFrame({"a": [1, 2, 3, 10], "b": [5, 5, 6, 6]})
+        cols = rsgispy.tools.featureselection.cqv_threshold(df)
     """
     if cols is None:
         cols = list(df.columns)
@@ -162,6 +176,21 @@ if HAVE_SCIPY and HAVE_SKLEARN:
         :param n_min_clusters: Minimum cluster count in the search (Default = 3).
         :param n_max_clusters: Exclusive upper cluster count bound (Default = 25).
         :return: List of selected predictor column names.
+
+        .. code:: python
+
+            import pandas as pd
+            import rsgispy.tools.featureselection
+            df = pd.DataFrame({
+                "y": [1, 2, 3, 4, 5],
+                "x1": [1.0, 2.1, 2.9, 4.0, 5.1],
+                "x2": [5.0, 4.1, 3.0, 2.1, 1.0],
+                "x3": [2.0, 3.0, 4.0, 5.0, 6.0],
+                "x4": [0.1, 0.4, 0.2, 0.8, 0.5],
+            })
+            selected = rsgispy.tools.featureselection.corr_feature_selection(
+                df, ["y"], ["x1", "x2", "x3", "x4"], n_min_clusters=2, n_max_clusters=4
+            )
         """
         # pylint: disable=too-many-locals
         corr_data = []
@@ -236,6 +265,19 @@ if HAVE_SKLEARN:
         :param alpha_val: Regularisation parameter ``alpha``; estimated via BIC
                           with ``LassoLarsIC`` when ``None``.
         :return: List of selected predictor column names.
+
+        .. code:: python
+
+            import pandas as pd
+            import rsgispy.tools.featureselection
+            df = pd.DataFrame({
+                "y": [1, 2, 3, 4, 5],
+                "x1": [1.0, 2.0, 3.0, 4.0, 5.0],
+                "x2": [0.1, 0.2, 0.1, 0.3, 0.2],
+            })
+            cols = rsgispy.tools.featureselection.lassolars_feature_selection(
+                df, ["y"], ["x1", "x2"]
+            )
         """
         # pylint: disable=too-many-locals
         x_vals = df[ind_vars].values
@@ -281,6 +323,14 @@ if HAVE_SCIPY and HAVE_SKLEARN:
         :param x: Predictor array of shape ``(n_samples, n_predictors)``.
         :param y: 1D response array of shape ``(n_samples,)``.
         :return: ``[lm_stat, p_value, result_message]``.
+
+        .. code:: python
+
+            import numpy as np
+            import rsgispy.tools.featureselection
+            x = np.array([[1.0, 2.0], [2.0, 3.0], [3.0, 5.0], [4.0, 7.0]])
+            y = np.array([2.1, 3.9, 6.2, 8.1])
+            lm_stat, pval, msg = rsgispy.tools.featureselection.breusch_pagan_test(x, y)
         """
         # pylint: disable=too-many-locals
         if x.shape[0] != y.shape[0]:

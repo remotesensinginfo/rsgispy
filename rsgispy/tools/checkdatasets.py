@@ -254,6 +254,14 @@ def check_gdal_image_file(
     :param calc_chk_sum: Compute per-band checksums to verify raster block integrity.
     :param max_file_size: Maximum allowed file size in bytes (optional).
     :return: Tuple ``(file_ok, err_str)``.
+
+    .. code:: python
+
+        import rsgispy.tools.checkdatasets
+
+        file_ok, err_str = rsgispy.tools.checkdatasets.check_gdal_image_file(
+            "img.tif", chk_proj=True, epsg_code=32630
+        )
     """
     file_ok, err_str = _validate_file_exists_and_size(input_img, max_file_size)
     if not file_ok:
@@ -344,6 +352,14 @@ def run_check_gdal_image_file(
     :param print_err: Print failure details to stdout.
     :param timeout: Per-file timeout in seconds (Default: ``4``).
     :return: ``True`` if the file passed all checks, ``False`` otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.checkdatasets
+
+        file_ok = rsgispy.tools.checkdatasets.run_check_gdal_image_file(
+            "img.tif", chk_proj=True, epsg_code=32630, timeout=10
+        )
     """
     return _run_checks_in_pool(
         [input_img],
@@ -393,6 +409,14 @@ def run_check_gdal_image_files(
     :param print_file_names: Print each file path before checking it.
     :param timeout: Per-file timeout in seconds (Default: ``4``).
     :return: ``True`` if all files passed checks, ``False`` otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.checkdatasets
+
+        all_ok = rsgispy.tools.checkdatasets.run_check_gdal_image_files(
+            ["img1.tif", "img2.tif"], chk_proj=True, epsg_code=32630
+        )
     """
     return _run_checks_in_pool(
         input_imgs,
@@ -430,6 +454,14 @@ def check_gdal_vector_file(
     :param epsg_code: Expected EPSG code (ignored if ``<= 0``; Default: ``0``).
     :param max_file_size: Maximum allowed file size in bytes (optional).
     :return: Tuple ``(file_ok, err_str)``.
+
+    .. code:: python
+
+        import rsgispy.tools.checkdatasets
+
+        file_ok, err_str = rsgispy.tools.checkdatasets.check_gdal_vector_file(
+            "polys.gpkg", chk_proj=True, epsg_code=4326
+        )
     """
     # pylint: disable=import-outside-toplevel
     import pyogrio
@@ -514,6 +546,14 @@ def run_check_gdal_vector_file(
     :param multi_file: Delete all sibling files sharing the same basename (e.g., Shapefiles).
     :param timeout: Timeout in seconds (Default: ``4``).
     :return: ``True`` if the vector file is valid, ``False`` otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.checkdatasets
+
+        file_ok = rsgispy.tools.checkdatasets.run_check_gdal_vector_file(
+            "polys.gpkg", chk_proj=True, epsg_code=4326, timeout=10
+        )
     """
     return _run_checks_in_pool(
         [vec_file],
@@ -550,6 +590,14 @@ def run_check_gdal_vector_files(
 
     :param vec_files: List of input vector file paths.
     :return: ``True`` if all files are valid, ``False`` otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.checkdatasets
+
+        all_ok = rsgispy.tools.checkdatasets.run_check_gdal_vector_files(
+            ["polys1.gpkg", "polys2.gpkg"], chk_proj=True, epsg_code=4326
+        )
     """
     return _run_checks_in_pool(
         vec_files,
@@ -578,6 +626,12 @@ if HAVE_H5PY:
 
         :param input_file: Path to the HDF5 file.
         :return: Tuple ``(is_valid, err_str)``.
+
+        .. code:: python
+
+            import rsgispy.tools.checkdatasets
+
+            file_ok, err_str = rsgispy.tools.checkdatasets.check_hdf5_file("img.kea")
         """
 
         def _check_h5_var(h5_obj: Any) -> Tuple[bool, str]:
@@ -639,6 +693,14 @@ if HAVE_H5PY:
         :param print_err: Print failure details to stdout.
         :param timeout: Timeout in seconds (Default: ``4``).
         :return: ``True`` if the file passed checks, ``False`` otherwise.
+
+        .. code:: python
+
+            import rsgispy.tools.checkdatasets
+
+            file_ok = rsgispy.tools.checkdatasets.run_check_hdf5_file(
+                "img.kea", timeout=10
+            )
         """
         return _run_checks_in_pool(
             [input_file],
@@ -664,6 +726,14 @@ if HAVE_H5PY:
         :param print_file_names: Print each file path before checking it.
         :param timeout: Per-file timeout in seconds (Default: ``4``).
         :return: ``True`` if all files passed checks, ``False`` otherwise.
+
+        .. code:: python
+
+            import rsgispy.tools.checkdatasets
+
+            all_ok = rsgispy.tools.checkdatasets.run_check_hdf5_files(
+                ["img1.kea", "img2.kea"], timeout=10
+            )
         """
         return _run_checks_in_pool(
             input_files,
@@ -707,6 +777,16 @@ def cmp_to_ref_imgs(
     :param output_file: Optional JSON report output path.
     :return: Report dictionary with keys ``checked``, ``not_checked``,
              ``errors``, and ``ref_no_match``.
+
+    .. code:: python
+
+        import rsgispy.tools.checkdatasets
+
+        report = rsgispy.tools.checkdatasets.cmp_to_ref_imgs(
+            ref_imgs=["ref/tile_01.tif"],
+            input_img_dir="outputs",
+            input_img_ext="tif",
+        )
     """
     input_imgs = glob.glob(os.path.join(input_img_dir, f"*.{input_img_ext}"))
     input_imgs_lut: Dict[str, List[Any]] = {

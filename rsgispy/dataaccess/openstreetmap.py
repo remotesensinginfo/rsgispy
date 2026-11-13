@@ -47,6 +47,13 @@ def get_osm_geom_type_name(geom_type: int) -> str:
 
     :param geom_type: Numerical geometry type (e.g., ``rsgispy.GEOM_POLY``).
     :return: Name of the geometry type (``"Polygon"``, ``"Point"``, or ``"LineString"``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.dataaccess.openstreetmap as osm
+
+        geom_name = osm.get_osm_geom_type_name(rsgispy.GEOM_POLY)
     """
     if geom_type not in _OSM_GEOM_TYPE_MAP:
         raise rsgispy.RSGISPyException(
@@ -73,6 +80,17 @@ def get_osm_gdf(
     :param bbox_epsg: EPSG code of ``bbox`` (default: 4326).
     :param clip_to_roi: If ``True``, clip returned geometries to ``bbox``.
     :return: ``geopandas.GeoDataFrame`` containing matching OSM features.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.dataaccess.openstreetmap as osm
+
+        gdf = osm.get_osm_gdf(
+            bbox=(-4.1, -4.0, 52.4, 52.5),
+            osm_tags={"building": True},
+            rsgis_geom_type=rsgispy.GEOM_POLY,
+        )
     """
     if not OSMNX_AVAIL:
         raise rsgispy.RSGISPyException(
@@ -155,6 +173,19 @@ def get_osm_to_file(
     :param out_format: Output vector driver (default: ``"GPKG"``).
     :param out_vec_epsg: Target EPSG code for output vector (default: 4326).
     :param clip_to_roi: If ``True``, clip returned geometries to ``bbox``.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.dataaccess.openstreetmap as osm
+
+        osm.get_osm_to_file(
+            out_vec_file="buildings.gpkg",
+            out_vec_lyr="buildings",
+            bbox=(-4.1, -4.0, 52.4, 52.5),
+            osm_tags={"building": True},
+            rsgis_geom_type=rsgispy.GEOM_POLY,
+        )
     """
     data_gdf = get_osm_gdf(
         bbox=bbox,
@@ -190,6 +221,19 @@ def get_osm_multi_to_file(
     :param out_format: Output vector driver (default: ``"GPKG"``).
     :param out_vec_epsg: Target EPSG code for output vector (default: 4326).
     :param clip_to_roi: If ``True``, clip returned geometries to ``bbox``.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.dataaccess.openstreetmap as osm
+
+        osm.get_osm_multi_to_file(
+            out_vec_file="osm_features.gpkg",
+            out_vec_lyr="features",
+            bbox=(-4.1, -4.0, 52.4, 52.5),
+            osm_tags_lst=[{"building": True}, {"amenity": "school"}],
+            rsgis_geom_type=rsgispy.GEOM_POLY,
+        )
     """
     if not PANDAS_AVAIL:
         raise rsgispy.RSGISPyException(

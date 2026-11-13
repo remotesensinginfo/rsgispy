@@ -50,6 +50,19 @@ def recode_int_raster(
                      (Default = ``rsgispy.TYPE_32INT``).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagecalc.encoding
+
+        rsgispy.imagecalc.encoding.recode_int_raster(
+            input_img="classes.tif",
+            output_img="classes_recoded.tif",
+            recode_dict={1: 10, 2: 20},
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32INT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if recode_dict is None:
@@ -123,6 +136,17 @@ def one_hot_category_encoding(
                         categories from ``input_img``.
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+
+    .. code:: python
+
+        import rsgispy.imagecalc.encoding
+
+        rsgispy.imagecalc.encoding.one_hot_category_encoding(
+            input_img="landcover.tif",
+            output_img="landcover_onehot.tif",
+            gdalformat="GTIFF",
+            no_data_val=0,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)

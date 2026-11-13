@@ -1,32 +1,31 @@
 rsgispy.elevation
 =================
 
-The :mod:`rsgispy.elevation` subpackage provides terrain and digital elevation model (DEM) analysis modules using ``rasterio`` and ``numpy``: ``terrain``, ``illumination``, ``filtering``, ``fusion``, and ``roughness``.
+The :mod:`rsgispy.elevation` subpackage provides terrain and digital elevation
+model (DEM) analysis utilities using ``rasterio`` and ``numpy``.
 
-API Reference
--------------
+Terrain Derivatives & Illumination
+----------------------------------
 
-.. automodule:: rsgispy.elevation.terrain
-   :members:
-   :undoc-members:
-   :show-inheritance:
+* :doc:`elevation/terrain` — Slope, aspect, and aspect categorisation.
+* :doc:`elevation/illumination` — Hillshade, shadow masks, local incidence and exitance angles.
+* :doc:`elevation/roughness` — Surface roughness profile and Smith roughness metrics.
 
-.. automodule:: rsgispy.elevation.illumination
-   :members:
-   :undoc-members:
-   :show-inheritance:
+.. toctree::
+   :maxdepth: 1
 
-.. automodule:: rsgispy.elevation.filtering
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   elevation/terrain
+   elevation/illumination
+   elevation/roughness
 
-.. automodule:: rsgispy.elevation.fusion
-   :members:
-   :undoc-members:
-   :show-inheritance:
+DEM Filtering & Fusion
+----------------------
 
-.. automodule:: rsgispy.elevation.roughness
-   :members:
-   :undoc-members:
-   :show-inheritance:
+* :doc:`elevation/filtering` — Aspect median filtering, depression filling, and detrending.
+* :doc:`elevation/fusion` — FFT-based DEM fusion.
+
+.. toctree::
+   :maxdepth: 1
+
+   elevation/filtering
+   elevation/fusion

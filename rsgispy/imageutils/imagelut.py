@@ -150,6 +150,16 @@ def query_img_lut(
     :param lut_db_file: Path to the LUT vector file (e.g., ``'lut.gpkg'``).
     :param lyr_name: Optional layer name within ``lut_db_file``.
     :return: List of image file paths intersecting ``scn_bbox``.
+
+    .. code:: python
+
+        import rsgispy.imageutils.imagelut
+
+        imgs = rsgispy.imageutils.imagelut.query_img_lut(
+            (500000.0, 510000.0, 5590000.0, 5600000.0),
+            "ImgExtents.gpkg",
+            "ImgExtents",
+        )
     """
     if not os.path.exists(lut_db_file):
         raise rsgispy.RSGISPyException(
@@ -185,6 +195,14 @@ def get_all_lut_imgs(
     :param lut_db_file: Path to the LUT vector file (e.g., ``'lut.gpkg'``).
     :param lyr_name: Optional layer name within ``lut_db_file``.
     :return: List of all image file paths stored in the LUT.
+
+    .. code:: python
+
+        import rsgispy.imageutils.imagelut
+
+        all_imgs = rsgispy.imageutils.imagelut.get_all_lut_imgs(
+            "ImgExtents.gpkg", "ImgExtents"
+        )
     """
     if not os.path.exists(lut_db_file):
         raise rsgispy.RSGISPyException(
@@ -225,6 +243,17 @@ def get_raster_lyr(
     :param tmp_dir: Directory where temporary VRT files will be written when
                     multiple images intersect ``scn_bbox``.
     :return: Path to the single image or generated VRT file, or ``None``.
+
+    .. code:: python
+
+        import rsgispy.imageutils.imagelut
+
+        lyr = rsgispy.imageutils.imagelut.get_raster_lyr(
+            (500000.0, 510000.0, 5590000.0, 5600000.0),
+            "ImgExtents.gpkg",
+            "ImgExtents",
+            "/tmp/vrt_dir",
+        )
     """
     imgs = query_img_lut(
         scn_bbox=scn_bbox,
@@ -273,6 +302,14 @@ def query_file_lut(
     :param cp_cmds: If True, return a list of ``cp <src> <out_dest>`` command
                     strings (Default = False).
     :return: List of intersecting file paths or shell command strings.
+
+    .. code:: python
+
+        import rsgispy.imageutils.imagelut
+
+        files = rsgispy.imageutils.imagelut.query_file_lut(
+            "ImgExtents.gpkg", "ImgExtents", "roi.gpkg"
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if targz_out and cp_cmds:

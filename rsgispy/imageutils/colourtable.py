@@ -32,6 +32,12 @@ def set_img_thematic(input_img: str) -> None:
     Set all image bands in ``input_img`` to have ``LAYER_TYPE=thematic`` metadata.
 
     :param input_img: Path to the image file to update.
+
+    .. code:: python
+
+        import rsgispy.imageutils.colourtable
+
+        rsgispy.imageutils.colourtable.set_img_thematic("cls_img.tif")
     """
     if not os.path.exists(input_img):
         raise rsgispy.RSGISPyException(
@@ -52,6 +58,12 @@ def set_img_not_thematic(input_img: str) -> None:
     Set all image bands in ``input_img`` to have ``LAYER_TYPE=athematic`` metadata.
 
     :param input_img: Path to the image file to update.
+
+    .. code:: python
+
+        import rsgispy.imageutils.colourtable
+
+        rsgispy.imageutils.colourtable.set_img_not_thematic("img.tif")
     """
     if not os.path.exists(input_img):
         raise rsgispy.RSGISPyException(
@@ -75,6 +87,12 @@ def is_img_thematic(input_img: str, img_band: int = 1) -> bool:
     :param input_img: Path to the input image file.
     :param img_band: 1-based band index to inspect (Default = ``1``).
     :return: ``True`` if the band is marked thematic, ``False`` otherwise.
+
+    .. code:: python
+
+        import rsgispy.imageutils.colourtable
+
+        thematic = rsgispy.imageutils.colourtable.is_img_thematic("cls_img.tif")
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
@@ -94,6 +112,12 @@ def get_img_band_colour_interp(input_img: str, img_band: int) -> int:
     :param input_img: Path to the input image file.
     :param img_band: 1-based band index.
     :return: Colour interpretation integer code.
+
+    .. code:: python
+
+        import rsgispy.imageutils.colourtable
+
+        ci = rsgispy.imageutils.colourtable.get_img_band_colour_interp("img.tif", 1)
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
@@ -111,6 +135,15 @@ def set_img_band_colour_interp(
     :param img_band: 1-based band index.
     :param clr_itrp_val: Integer colour interpretation code or
                          ``rasterio.enums.ColorInterp`` member.
+
+    .. code:: python
+
+        from rasterio.enums import ColorInterp
+        import rsgispy.imageutils.colourtable
+
+        rsgispy.imageutils.colourtable.set_img_band_colour_interp(
+            "img.tif", 1, ColorInterp.red
+        )
     """
     _ensure_img_exists(input_img)
     try:
@@ -140,6 +173,12 @@ def get_colour_tab_info(
     :param input_img: Path to the input image file.
     :param img_band: 1-based band index (Default = ``1``).
     :return: Dictionary mapping pixel values to ``{'red', 'green', 'blue', 'alpha'}`` dicts.
+
+    .. code:: python
+
+        import rsgispy.imageutils.colourtable
+
+        clr_tab = rsgispy.imageutils.colourtable.get_colour_tab_info("cls_img.tif")
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
@@ -177,6 +216,14 @@ def get_colour_tab_info_for_def(
     :param input_img: Path to the input image file.
     :param img_band: 1-based band index (Default = ``1``).
     :return: Dictionary mapping pixel values to ``[red, green, blue, alpha]`` lists.
+
+    .. code:: python
+
+        import rsgispy.imageutils.colourtable
+
+        clr_lut = rsgispy.imageutils.colourtable.get_colour_tab_info_for_def(
+            "cls_img.tif"
+        )
     """
     clr_tab = get_colour_tab_info(input_img, img_band=img_band)
     return {
@@ -232,6 +279,13 @@ def define_colour_table(
     :param clr_lut: Mapping from integer pixel values to hex strings (e.g., ``'#FF0000'``),
                     ``[R, G, B]`` sequences, or ``[R, G, B, A]`` sequences.
     :param img_band: 1-based band index (Default = ``1``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.colourtable
+
+        clr_lut = {1: "#FF0000", 2: [0, 255, 0, 255]}
+        rsgispy.imageutils.colourtable.define_colour_table("cls_img.tif", clr_lut)
     """
     _ensure_img_exists(input_img)
     if not clr_lut:

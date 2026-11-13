@@ -67,6 +67,13 @@ def calc_wgs84_pixel_area(
     :param output_img: Path to the output single-band float64 area image.
     :param scale: Divisor converting square metres to target units (Default = ``10000``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.spatial
+        rsgispy.imageutils.spatial.calc_wgs84_pixel_area(
+            "wgs84_img.tif", "pixel_area_ha.tif", scale=10000
+        )
     """
     ensure_file_exists(input_img)
     if float(scale) <= 0.0:
@@ -109,6 +116,13 @@ def calc_wgs84_pixel_size(
     :param input_img: Path to the input WGS84 raster image file.
     :param output_img: Path to the output 2-band float64 image.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.spatial
+        rsgispy.imageutils.spatial.calc_wgs84_pixel_size(
+            "wgs84_img.tif", "pixel_size_m.tif"
+        )
     """
     ensure_file_exists(input_img)
     x_res, y_res = get_img_res(input_img, abs_vals=True)
@@ -151,6 +165,13 @@ def calc_pixel_locations(
     :param input_img: Path to the reference input image file.
     :param output_img: Path to the output 2-band coordinate image file.
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.spatial
+        rsgispy.imageutils.spatial.calc_pixel_locations(
+            "input_img.tif", "pxl_coords.tif", "GTIFF"
+        )
     """
     ensure_file_exists(input_img)
 
@@ -189,6 +210,13 @@ def calc_wgs84_pixel_locations(
     :param input_img: Path to the reference input image file.
     :param output_img: Path to the output 2-band WGS84 coordinate image file.
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.spatial
+        rsgispy.imageutils.spatial.calc_wgs84_pixel_locations(
+            "input_img.tif", "wgs84_coords.tif", "GTIFF"
+        )
     """
     ensure_file_exists(input_img)
 
@@ -472,6 +500,18 @@ def grid_scattered_pts(
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image
                      (Default = :data:`rsgispy.TYPE_32FLOAT`).
+
+    .. code:: python
+
+        import rsgispy.imageutils.spatial
+        rsgispy.imageutils.spatial.grid_scattered_pts(
+            "points.gpkg",
+            "pts_layer",
+            "elev",
+            "ref_img.tif",
+            "gridded_elev.tif",
+            gdal_grid_alg="invdist:power=2.0",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(vec_file, label="Vector")

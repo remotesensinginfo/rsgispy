@@ -43,6 +43,18 @@ def fft_dem_fusion(
                    (Default = 20).
     :param gdalformat: GDAL/rasterio driver format for the output file
                        (Default = ``'GTIFF'``).
+
+    .. code:: python
+
+        import rsgispy.elevation.fusion
+
+        rsgispy.elevation.fusion.fft_dem_fusion(
+            high_res_dem_img="dem_high.tif",
+            low_res_dem_img="dem_low.tif",
+            fused_dem_img="dem_fused.tif",
+            c_size=20,
+            gdalformat="GTIFF",
+        )
     """
     # pylint: disable=too-many-locals
     if c_size < 1:

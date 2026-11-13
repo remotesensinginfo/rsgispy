@@ -61,6 +61,21 @@ def create_img_mosaic(
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
     :param options: Optional GDAL creation options mapping.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.mosaic
+        rsgispy.imageutils.mosaic.create_img_mosaic(
+            ["tile1.tif", "tile2.tif"],
+            "mosaic.tif",
+            0.0,
+            0.0,
+            1,
+            0,
+            "GTIFF",
+            rsgispy.TYPE_16UINT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements
     if overlap_behaviour not in (0, 1, 2):
@@ -201,6 +216,13 @@ def include_imgs(
     :param input_bands: Optional 1-based band subset from each included image
                         (mapped sequentially onto bands ``1..N`` of ``input_img``).
     :param skip_val: Optional pixel value to skip (preserving existing base values).
+
+    .. code:: python
+
+        import rsgispy.imageutils.mosaic
+        rsgispy.imageutils.mosaic.include_imgs(
+            "base_img.tif", ["patch1.tif", "patch2.tif"], skip_val=0.0
+        )
     """
     # pylint: disable=redefined-outer-name,too-many-locals,too-many-branches
     if not os.path.exists(input_img):
@@ -308,6 +330,13 @@ def include_imgs_with_overlap(
     :param input_img: Path to the existing base image updated in place.
     :param include_imgs: Sequence of overlapping tile/image paths.
     :param overlap: Number of border pixels to crop from each side.
+
+    .. code:: python
+
+        import rsgispy.imageutils.mosaic
+        rsgispy.imageutils.mosaic.include_imgs_with_overlap(
+            "base_img.tif", ["tile1.tif", "tile2.tif"], overlap=16
+        )
     """
     # pylint: disable=redefined-outer-name,too-many-locals
     if not os.path.exists(input_img):
@@ -397,6 +426,17 @@ def combine_imgs_to_band(
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
     :param no_data_val: No-data value ignored during combination (Default = ``0.0``).
     :param options: Optional GDAL creation options mapping.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.mosaic
+        rsgispy.imageutils.mosaic.combine_imgs_to_band(
+            ["band1.tif", "band2.tif"],
+            "combined.tif",
+            "GTIFF",
+            rsgispy.TYPE_8UINT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
@@ -470,6 +510,15 @@ def combine_binary_masks(
     :param output_img: Path to the 8-bit unsigned bit-packed output image.
     :param out_lut_file: Path to the output JSON lookup table file.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.mosaic
+        rsgispy.imageutils.mosaic.combine_binary_masks(
+            {"water": "water_msk.tif", "cloud": "cloud_msk.tif"},
+            "combined_mask.tif",
+            "mask_lut.json",
+        )
     """
     # pylint: disable=too-many-locals
     if not msk_imgs_dict:

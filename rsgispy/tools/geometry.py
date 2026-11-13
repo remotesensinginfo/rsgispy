@@ -63,6 +63,14 @@ def reproj_bbox(
     :param in_crs: Input CRS (``pyproj.CRS``, EPSG int, or CRS string/WKT).
     :param out_crs: Output CRS (``pyproj.CRS``, EPSG int, or CRS string/WKT).
     :return: Reprojected bounding box ``(MinX, MaxX, MinY, MaxY)``.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+
+        bbox_osgb = rsgispy.tools.geometry.reproj_bbox(
+            (-4.2, -4.0, 52.3, 52.5), in_crs=4326, out_crs=27700
+        )
     """
     in_crs_obj = _to_pyproj_crs(in_crs)
     out_crs_obj = _to_pyproj_crs(out_crs)
@@ -87,6 +95,14 @@ def reproj_bbox_epsg(
     :param in_epsg: Input projection EPSG integer code.
     :param out_epsg: Output projection EPSG integer code.
     :return: Reprojected bounding box ``(MinX, MaxX, MinY, MaxY)``.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+
+        bbox_osgb = rsgispy.tools.geometry.reproj_bbox_epsg(
+            (-4.2, -4.0, 52.3, 52.5), in_epsg=4326, out_epsg=27700
+        )
     """
     return reproj_bbox(
         bbox,
@@ -105,6 +121,14 @@ def do_bboxes_intersect(
     :param bbox1: First bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :param bbox2: Second bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :return: True if the bounding boxes overlap, False otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+
+        overlaps = rsgispy.tools.geometry.do_bboxes_intersect(
+            (0.0, 10.0, 0.0, 10.0), (5.0, 15.0, 5.0, 15.0)
+        )
     """
     return (
         (bbox1[1] > bbox2[0])
@@ -124,6 +148,14 @@ def does_bbox_contain(
     :param bbox1: Outer bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :param bbox2: Inner bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :return: True if ``bbox1`` contains ``bbox2``, False otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+
+        contained = rsgispy.tools.geometry.does_bbox_contain(
+            (0.0, 10.0, 0.0, 10.0), (2.0, 8.0, 2.0, 8.0)
+        )
     """
     return (
         (bbox1[0] <= bbox2[0])
@@ -141,6 +173,11 @@ def calc_bbox_area(
 
     :param bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :return: Bounding box area.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+        area = rsgispy.tools.geometry.calc_bbox_area((0.0, 100.0, 0.0, 50.0))
     """
     return float((bbox[1] - bbox[0]) * (bbox[3] - bbox[2]))
 
@@ -155,6 +192,14 @@ def bbox_equal(
     :param bbox1: First bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :param bbox2: Second bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :return: True if all four coordinates are equal, False otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+
+        is_eq = rsgispy.tools.geometry.bbox_equal(
+            (0.0, 10.0, 0.0, 10.0), (0.0, 10.0, 0.0, 10.0)
+        )
     """
     return (
         (bbox1[0] == bbox2[0])
@@ -174,6 +219,14 @@ def bbox_intersection(
     :param bbox1: First bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :param bbox2: Second bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :return: Intersecting bounding box ``(MinX, MaxX, MinY, MaxY)``.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+
+        inter = rsgispy.tools.geometry.bbox_intersection(
+            (0.0, 10.0, 0.0, 10.0), (5.0, 15.0, 5.0, 15.0)
+        )
     """
     if not do_bboxes_intersect(bbox1, bbox2):
         raise rsgispy.RSGISPyException("Bounding Boxes do not intersect.")
@@ -194,6 +247,14 @@ def bboxes_intersection(
 
     :param bboxes: Non-empty sequence of bounding boxes ``(MinX, MaxX, MinY, MaxY)``.
     :return: Intersecting bounding box ``(MinX, MaxX, MinY, MaxY)``.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+
+        inter = rsgispy.tools.geometry.bboxes_intersection(
+            [(0.0, 10.0, 0.0, 10.0), (2.0, 12.0, 2.0, 12.0), (4.0, 8.0, 4.0, 8.0)]
+        )
     """
     if not bboxes:
         raise rsgispy.RSGISPyException("bboxes must contain at least one bbox.")
@@ -219,6 +280,11 @@ def buffer_bbox(
     :param bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :param buf: Buffer distance added outward on each side.
     :return: Buffered bounding box ``(MinX, MaxX, MinY, MaxY)``.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+        buf_bbox = rsgispy.tools.geometry.buffer_bbox((10.0, 20.0, 10.0, 20.0), buf=5.0)
     """
     return (
         bbox[0] - buf,
@@ -236,6 +302,14 @@ def find_bbox_union(
 
     :param bboxes: Sequence of bounding boxes ``(MinX, MaxX, MinY, MaxY)``.
     :return: Union bounding box ``(MinX, MaxX, MinY, MaxY)``, or ``None`` if empty.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+
+        union_bbox = rsgispy.tools.geometry.find_bbox_union(
+            [(0.0, 10.0, 0.0, 10.0), (5.0, 15.0, 5.0, 15.0)]
+        )
     """
     if not bboxes:
         return None
@@ -255,6 +329,11 @@ def unwrap_wgs84_bbox(
 
     :param bbox: WGS84 bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :return: List of one or two bounding boxes ``(MinX, MaxX, MinY, MaxY)``.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+        split_bboxes = rsgispy.tools.geometry.unwrap_wgs84_bbox((175.0, -175.0, -10.0, 10.0))
     """
     if bbox[1] < bbox[0]:
         return [
@@ -281,6 +360,16 @@ def find_common_extent_on_grid(
     :param full_contain: If True, snap outward to contain the intersection;
                          if False, snap inward within the intersection.
     :return: Grid-aligned bounding box ``(MinX, MaxX, MinY, MaxY)``.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+
+        common_bbox = rsgispy.tools.geometry.find_common_extent_on_grid(
+            base_extent=(0.0, 100.0, 0.0, 100.0),
+            base_grid=10.0,
+            other_extent=(15.0, 85.0, 25.0, 95.0),
+        )
     """
     x_min_overlap, x_max_overlap, y_min_overlap, y_max_overlap = base_extent
     snap_fn = math.floor if full_contain else math.ceil
@@ -321,6 +410,14 @@ def find_extent_on_grid(
     :param full_contain: If True, round cell counts up to contain ``base_extent``;
                          if False, round down.
     :return: Grid-aligned bounding box ``(MinX, MaxX, MinY, MaxY)``.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+
+        snapped_bbox = rsgispy.tools.geometry.find_extent_on_grid(
+            (1.2, 9.8, 1.4, 9.6), base_grid=1.0
+        )
     """
     x_min, x_max, y_min, y_max = base_extent
     x_min_out = (
@@ -354,6 +451,14 @@ def find_extent_on_whole_num_grid(
                          if False, round down.
     :param round_vals: Optional decimal places to round the output coordinates.
     :return: Grid-aligned bounding box ``(MinX, MaxX, MinY, MaxY)``.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+
+        snapped_bbox = rsgispy.tools.geometry.find_extent_on_whole_num_grid(
+            (12.0, 98.0, 14.0, 96.0), base_grid=10.0
+        )
     """
     x_min, x_max, y_min, y_max = base_extent
     x_min_out = math.floor(x_min / base_grid) * base_grid
@@ -386,6 +491,14 @@ def get_bbox_grid(
     :param x_size: Tile width in bbox units.
     :param y_size: Tile height in bbox units.
     :return: List of tile bounding boxes ``(MinX, MaxX, MinY, MaxY)``.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+
+        tiles = rsgispy.tools.geometry.get_bbox_grid(
+            (0.0, 100.0, 0.0, 100.0), x_size=50.0, y_size=50.0
+        )
     """
     # pylint: disable=too-many-locals
     width = bbox[1] - bbox[0]
@@ -438,6 +551,11 @@ def get_bbox_geojson_poly(
 
     :param bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :return: GeoJSON Polygon dictionary.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+        geojson_poly = rsgispy.tools.geometry.get_bbox_geojson_poly((0.0, 10.0, 0.0, 10.0))
     """
     return {
         "type": "Polygon",
@@ -461,6 +579,11 @@ def get_bbox_centre_pt(
 
     :param bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :return: Centre point ``(x, y)``.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+        cx, cy = rsgispy.tools.geometry.get_bbox_centre_pt((0.0, 10.0, 0.0, 20.0))
     """
     x_pt = bbox[0] + (bbox[1] - bbox[0]) / 2.0
     y_pt = bbox[2] + (bbox[3] - bbox[2]) / 2.0
@@ -481,6 +604,11 @@ def reproj_point(
     :param x: Input X (or longitude) coordinate.
     :param y: Input Y (or latitude) coordinate.
     :return: Reprojected ``(x, y)`` tuple.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+        east, north = rsgispy.tools.geometry.reproj_point(4326, 27700, -4.08, 52.41)
     """
     in_crs_obj = _to_pyproj_crs(in_crs)
     out_crs_obj = _to_pyproj_crs(out_crs)
@@ -504,6 +632,11 @@ def reproj_point_to_wgs84(
     :param x: Input X coordinate.
     :param y: Input Y coordinate.
     :return: ``(lon, lat)`` in EPSG:4326.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+        lon, lat = rsgispy.tools.geometry.reproj_point_to_wgs84(27700, 258800.0, 281600.0)
     """
     return reproj_point(in_crs, pyproj.CRS.from_epsg(4326), x, y)
 
@@ -518,6 +651,11 @@ def calc_pt_distance(x1: float, y1: float, x2: float, y2: float) -> float:
     :param x2: Second point X coordinate.
     :param y2: Second point Y coordinate.
     :return: Euclidean distance.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+        dist = rsgispy.tools.geometry.calc_pt_distance(0.0, 0.0, 3.0, 4.0)
     """
     return math.hypot(x1 - x2, y1 - y2)
 
@@ -532,6 +670,11 @@ def pt_in_bbox(
     :param pt: Point ``(x, y)``.
     :param bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :return: True if inside or on the boundary of ``bbox``, False otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+        inside = rsgispy.tools.geometry.pt_in_bbox((5.0, 5.0), (0.0, 10.0, 0.0, 10.0))
     """
     return (
         (pt[0] >= bbox[0])
@@ -556,6 +699,17 @@ def find_point_on_whole_num_grid(
     :param x_grid_res: Grid resolution along the X axis.
     :param y_grid_res: Grid resolution along the Y axis.
     :return: Grid-snapped point ``(x, y)``.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+
+        snapped_pt = rsgispy.tools.geometry.find_point_on_whole_num_grid(
+            pt=(14.0, 86.0),
+            bbox=(0.0, 100.0, 0.0, 100.0),
+            x_grid_res=10.0,
+            y_grid_res=10.0,
+        )
     """
     if not pt_in_bbox(pt, bbox):
         raise rsgispy.RSGISPyException("Point is not within the bbox!")
@@ -580,6 +734,11 @@ def get_bbox_wkt_poly(
 
     :param bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :return: WKT Polygon string.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+        wkt_poly = rsgispy.tools.geometry.get_bbox_wkt_poly((0.0, 10.0, 0.0, 10.0))
     """
     return (
         f"POLYGON (({bbox[0]} {bbox[2]}, "
@@ -602,6 +761,14 @@ def degrees_to_metres(
     :param lon_size: Longitude delta/pixel size in degrees (scalar or array).
     :param lat_size: Latitude delta/pixel size in degrees (scalar or array).
     :return: Tuple ``(x_size_metres, y_size_metres)``.
+
+    .. code:: python
+
+        import rsgispy.tools.geometry
+
+        x_m, y_m = rsgispy.tools.geometry.degrees_to_metres(
+            latitude=52.4, lon_size=0.0001, lat_size=0.0001
+        )
     """
     semi_major = 6378137.0
     semi_minor = 6356752.314245

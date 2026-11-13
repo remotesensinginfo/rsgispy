@@ -102,6 +102,11 @@ if HAVE_REQUESTS:
 
         :param prod_short_name: Product short name.
         :return: List of collection entries (often across versions).
+
+        .. code:: python
+
+            import rsgispy.dataaccess.nasa_cmr as nasa_cmr
+            prods = nasa_cmr.get_prods_info("ATL08")
         """
         prod_srch_params = {"short_name": prod_short_name}
         header_info = {"Accept": "application/json"}
@@ -121,6 +126,11 @@ if HAVE_REQUESTS:
         :param prod_short_name: Product short name.
         :param version: Version string to check.
         :return: ``True`` if that version exists in CMR.
+
+        .. code:: python
+
+            import rsgispy.dataaccess.nasa_cmr as nasa_cmr
+            avail = nasa_cmr.check_prod_version_avail("ATL08", "006")
         """
         prod_lst = get_prods_info(prod_short_name)
         return any(prod["version_id"] == version for prod in prod_lst)
@@ -131,6 +141,11 @@ if HAVE_REQUESTS:
 
         :param prod_short_name: Product short name.
         :return: String representation of the highest version.
+
+        .. code:: python
+
+            import rsgispy.dataaccess.nasa_cmr as nasa_cmr
+            latest = nasa_cmr.get_max_prod_version("ATL08")
         """
         prod_lst = get_prods_info(prod_short_name)
         first = True
@@ -179,6 +194,19 @@ if HAVE_REQUESTS:
         :param page_num: 1-based page number.
         :param other_params: Optional dictionary of additional CMR parameters.
         :return: List of granule metadata dictionaries.
+
+        .. code:: python
+
+            import datetime
+            import rsgispy.dataaccess.nasa_cmr as nasa_cmr
+
+            granules = nasa_cmr.find_granules(
+                prod_short_name="ATL08",
+                version="006",
+                bbox=[-5.0, -3.0, 52.0, 53.0],
+                start_date=datetime.datetime(2023, 1, 1),
+                end_date=datetime.datetime(2023, 6, 30),
+            )
         """
         prod_srch_params: Dict[str, Union[str, int, bool]] = {
             "short_name": prod_short_name,
@@ -249,6 +277,20 @@ if HAVE_REQUESTS:
         Paginate through :func:`find_granules` up to ``max_n_pages`` pages.
 
         :return: Combined list of granule metadata dictionaries.
+
+        .. code:: python
+
+            import datetime
+            import rsgispy.dataaccess.nasa_cmr as nasa_cmr
+
+            granules = nasa_cmr.find_all_granules(
+                prod_short_name="ATL08",
+                version="006",
+                bbox=[-5.0, -3.0, 52.0, 53.0],
+                start_date=datetime.datetime(2023, 1, 1),
+                end_date=datetime.datetime(2023, 6, 30),
+                max_n_pages=10,
+            )
         """
         # pylint: disable=import-outside-toplevel
         import tqdm
@@ -296,6 +338,17 @@ if HAVE_REQUESTS:
         :param password: Earthdata password.
         :param no_except: If ``True``, print errors and return ``False`` instead of raising.
         :return: ``True`` if download succeeded.
+
+        .. code:: python
+
+            import rsgispy.dataaccess.nasa_cmr as nasa_cmr
+
+            ok = nasa_cmr.cmr_download_file_http(
+                input_url="https://data.nsidc.earthdatacloud.nasa.gov/example.h5",
+                out_file_path="example.h5",
+                username="earthdata_user",
+                password="earthdata_password",
+            )
         """
         # pylint: disable=import-outside-toplevel
         import tqdm
@@ -335,6 +388,13 @@ def get_total_file_size(granule_lst: List[Dict]) -> float:
 
     :param granule_lst: List of granule dictionaries.
     :return: Total size (typically MB).
+
+    .. code:: python
+
+        import rsgispy.dataaccess.nasa_cmr as nasa_cmr
+
+        granules = nasa_cmr.find_granules("ATL08", "006", bbox=[-5.0, -3.0, 52.0, 53.0])
+        total_mb = nasa_cmr.get_total_file_size(granules)
     """
     return sum(float(granule["granule_size"]) for granule in granule_lst)
 
@@ -354,6 +414,17 @@ if HAVE_PYSONDB:
                             :func:`find_all_granules`.
         :param dwnld_file_mime_type: Link MIME type (e.g., ``"application/x-hdfeos"``).
         :return: List of ``producer_granule_id`` values with no matching URL.
+
+        .. code:: python
+
+            import rsgispy.dataaccess.nasa_cmr as nasa_cmr
+
+            granules = nasa_cmr.find_granules("ATL08", "006", bbox=[-5.0, -3.0, 52.0, 53.0])
+            missing = nasa_cmr.create_cmr_dwnld_db(
+                db_json="cmr_downloads.json",
+                granule_lst=granules,
+                dwnld_file_mime_type="application/x-hdfeos",
+            )
         """
         # pylint: disable=import-outside-toplevel
         import tqdm
@@ -403,6 +474,16 @@ if HAVE_PYSONDB:
         :param out_path: Local directory for downloaded files.
         :param user_pass_file: Path to the base64-encoded username/password file.
         :param use_wget: If ``True``, download using ``wget`` instead of ``requests``.
+
+        .. code:: python
+
+            import rsgispy.dataaccess.nasa_cmr as nasa_cmr
+
+            nasa_cmr.download_granules_use_dwnld_db(
+                db_json="cmr_downloads.json",
+                out_path="./downloads",
+                user_pass_file="earthdata_creds.txt",
+            )
         """
         if not use_wget and not HAVE_REQUESTS:
             raise rsgispy.RSGISPyException(

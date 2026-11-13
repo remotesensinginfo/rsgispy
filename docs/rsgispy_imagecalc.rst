@@ -1,7 +1,11 @@
 rsgispy.imagecalc
 =================
 
-The :mod:`rsgispy.imagecalc` subpackage provides modules for performing mathematical calculations (`maths`), summary statistics (`stats`), percentiles (`percentiles`), and windowed sampling (`calc_pt_win_smpls`) on raster image bands using `pymu-eval <https://github.com/remotesensinginfo/pymu-eval>`_ (muParser syntax) and `rasterio <https://rasterio.readthedocs.io/>`_.
+The :mod:`rsgispy.imagecalc` subpackage provides modules for performing
+mathematical calculations, summary statistics, percentiles, image comparison,
+encoding, rescaling, distance/buffering, KNN gap filling, and windowed sampling
+on raster image bands using `pymu-eval <https://github.com/remotesensinginfo/pymu-eval>`_
+and `rasterio <https://rasterio.readthedocs.io/>`_.
 
 Examples
 --------
@@ -47,50 +51,44 @@ Conditional (Ternary) Expressions
        band_defs=band_defns,
    )
 
-API Reference
--------------
+Band Mathematics & Value Rescaling
+----------------------------------
 
-.. automodule:: rsgispy.imagecalc.maths
-   :members:
-   :undoc-members:
-   :show-inheritance:
+* :doc:`imagecalc/maths` — muParser band/image expressions, proportions, and area under curve.
+* :doc:`imagecalc/rescale` — Linear rescaling and gain/offset/nodata transformations.
 
-.. automodule:: rsgispy.imagecalc.stats
-   :members:
-   :undoc-members:
-   :show-inheritance:
+.. toctree::
+   :maxdepth: 1
 
-.. automodule:: rsgispy.imagecalc.percentiles
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   imagecalc/maths
+   imagecalc/rescale
 
-.. automodule:: rsgispy.imagecalc.comparison
-   :members:
-   :undoc-members:
-   :show-inheritance:
+Statistics, Percentiles & Comparison
+------------------------------------
 
-.. automodule:: rsgispy.imagecalc.encoding
-   :members:
-   :undoc-members:
-   :show-inheritance:
+* :doc:`imagecalc/stats` — Basic band statistics, unique values, multi-image summaries, and mask probabilities.
+* :doc:`imagecalc/percentiles` — Band percentiles and pixel-wise cross-band/cross-image percentiles.
+* :doc:`imagecalc/comparison` — Image difference, equality tests, correlation, mutual info, and EMD.
 
-.. automodule:: rsgispy.imagecalc.rescale
-   :members:
-   :undoc-members:
-   :show-inheritance:
+.. toctree::
+   :maxdepth: 1
 
-.. automodule:: rsgispy.imagecalc.distance
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   imagecalc/stats
+   imagecalc/percentiles
+   imagecalc/comparison
 
-.. automodule:: rsgispy.imagecalc.fill
-   :members:
-   :undoc-members:
-   :show-inheritance:
+Encoding, Distance, Filling & Sampling
+--------------------------------------
 
-.. automodule:: rsgispy.imagecalc.calc_pt_win_smpls
-   :members:
-   :undoc-members:
-   :show-inheritance:
+* :doc:`imagecalc/encoding` — Integer recoding and one-hot category encoding.
+* :doc:`imagecalc/distance` — Distance-to-pixel-values (full and tiled) and morphological buffering.
+* :doc:`imagecalc/fill` — K-nearest-neighbour region filling.
+* :doc:`imagecalc/calc_pt_win_smpls` — Windowed summary statistics around point samples.
+
+.. toctree::
+   :maxdepth: 1
+
+   imagecalc/encoding
+   imagecalc/distance
+   imagecalc/fill
+   imagecalc/calc_pt_win_smpls

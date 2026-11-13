@@ -196,6 +196,18 @@ def split_photos_by_time(
                           (default: ``"DateTime"``).
     :param date_time_format: ``datetime.strptime`` format for the EXIF timestamp.
     :param out_date_time_format: ``datetime.strftime`` format for cluster folder names.
+
+    .. code:: python
+
+        import glob
+        import rsgispy.droneutils
+
+        imgs = glob.glob("drone_photos/*.JPG")
+        rsgispy.droneutils.split_photos_by_time(
+            input_imgs=imgs,
+            output_base_dir="./flight_groups",
+            time_split_secs=60,
+        )
     """
     img_dt_lut: Dict[str, str] = {}
     for img_file in input_imgs:
@@ -418,6 +430,20 @@ if HAVE_EXIFTOOL:
         :param line_vec_file: Output vector file for the flightline.
         :param line_vec_lyr: Output vector layer name for the flightline.
         :param out_format: Output vector format driver (default: ``"GPKG"``).
+
+        .. code:: python
+
+            import glob
+            import rsgispy.droneutils
+
+            imgs = glob.glob("drone_photos/*.JPG")
+            rsgispy.droneutils.create_flightline_vec(
+                input_imgs=imgs,
+                pts_vec_file="flightline.gpkg",
+                pts_vec_lyr="photo_pts",
+                line_vec_file="flightline.gpkg",
+                line_vec_lyr="flight_lines",
+            )
         """
         sorted_imgs = rsgispy.tools.files.sort_file_by_datetime(input_imgs)
         print(f"There are {len(sorted_imgs)} input images")
@@ -513,6 +539,21 @@ if HAVE_EXIFTOOL:
         :param line_vec_file: Output vector file for the flightline.
         :param line_vec_lyr: Output vector layer name for the flightline.
         :param out_format: Output vector format driver (default: ``"GPKG"``).
+
+        .. code:: python
+
+            import pandas
+            import rsgispy.droneutils
+
+            gps_df = pandas.read_csv("gps_log.csv")
+            rsgispy.droneutils.create_flightline_extern_gps_vec(
+                gps_data_df=gps_df,
+                input_imgs_dir="./drone_photos",
+                pts_vec_file="flightline.gpkg",
+                pts_vec_lyr="photo_pts",
+                line_vec_file="flightline.gpkg",
+                line_vec_lyr="flight_lines",
+            )
         """
         exif_entries: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = []
         with exiftool.ExifToolHelper() as et:
@@ -602,6 +643,21 @@ if HAVE_EXIFTOOL:
         :param gimbal_pitch: Gimbal pitch angle in degrees.
         :param gimbal_yaw: Gimbal yaw angle in degrees.
         :param overwrite: If ``True``, overwrite the original image files in place.
+
+        .. code:: python
+
+            import pandas
+            import rsgispy.droneutils
+
+            gps_df = pandas.read_csv("gps_log.csv")
+            rsgispy.droneutils.define_extern_gps_in_imgs(
+                gps_data_df=gps_df,
+                input_imgs_dir="./drone_photos",
+                flying_height=80.0,
+                gimbal_roll=0.0,
+                gimbal_pitch=-90.0,
+                gimbal_yaw=0.0,
+            )
         """
         n_imgs = 0
         with exiftool.ExifToolHelper() as et:

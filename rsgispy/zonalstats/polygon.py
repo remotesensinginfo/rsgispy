@@ -295,6 +295,23 @@ def calc_zonal_band_stats_file(
     :param mode_field: Output column name for modal value (or ``None``).
     :param median_field: Output column name for median value (or ``None``).
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
+
+    .. code:: python
+
+        import rsgispy.zonalstats.polygon
+
+        rsgispy.zonalstats.polygon.calc_zonal_band_stats_file(
+            vec_file="polygons.gpkg",
+            vec_lyr="polygons",
+            input_img="img.tif",
+            img_band=1,
+            min_thres=0.0,
+            max_thres=10000.0,
+            out_no_data_val=-999.0,
+            min_field="b1_min",
+            max_field="b1_max",
+            mean_field="b1_mean",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     vec_gdf = _read_vec_file(vec_file, vec_lyr)
@@ -357,6 +374,23 @@ def calc_zonal_band_stats(
     :param median_field: Output column name for median value (or ``None``).
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :return: Updated :class:`geopandas.GeoDataFrame`.
+
+    .. code:: python
+
+        import geopandas
+        import rsgispy.zonalstats.polygon
+
+        vec_gdf = geopandas.read_file("polygons.gpkg", layer="polygons")
+        out_gdf = rsgispy.zonalstats.polygon.calc_zonal_band_stats(
+            vec_gdf=vec_gdf,
+            input_img="img.tif",
+            img_band=1,
+            min_thres=0.0,
+            max_thres=10000.0,
+            out_no_data_val=-999.0,
+            mean_field="b1_mean",
+            stddev_field="b1_std",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     field_map: Dict[str, Optional[str]] = {
@@ -401,6 +435,18 @@ def calc_zonal_poly_pts_band_stats_file(
     :param img_band: 1-based band index within ``input_img``.
     :param out_field: Output column name in the vector layer.
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
+
+    .. code:: python
+
+        import rsgispy.zonalstats.polygon
+
+        rsgispy.zonalstats.polygon.calc_zonal_poly_pts_band_stats_file(
+            vec_file="polygons.gpkg",
+            vec_lyr="polygons",
+            input_img="img.tif",
+            img_band=1,
+            out_field="b1_pt_val",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     vec_gdf = _read_vec_file(vec_file, vec_lyr)
@@ -433,6 +479,19 @@ def calc_zonal_poly_pts_band_stats(
     :param out_field: Output column name in ``vec_gdf``.
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :return: Updated :class:`geopandas.GeoDataFrame`.
+
+    .. code:: python
+
+        import geopandas
+        import rsgispy.zonalstats.polygon
+
+        vec_gdf = geopandas.read_file("polygons.gpkg", layer="polygons")
+        out_gdf = rsgispy.zonalstats.polygon.calc_zonal_poly_pts_band_stats(
+            vec_gdf=vec_gdf,
+            input_img="img.tif",
+            img_band=1,
+            out_field="b1_pt_val",
+        )
     """
     if not out_field:
         raise rsgispy.RSGISPyException(
@@ -503,6 +562,23 @@ def calc_zonal_band_stats_test_poly_pts_file(
     :param mode_field: Output column name for modal value (or ``None``).
     :param median_field: Output column name for median value (or ``None``).
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
+
+    .. code:: python
+
+        import rsgispy.zonalstats.polygon
+
+        rsgispy.zonalstats.polygon.calc_zonal_band_stats_test_poly_pts_file(
+            vec_file="polygons.gpkg",
+            vec_lyr="polygons",
+            input_img="img.tif",
+            img_band=1,
+            min_thres=0.0,
+            max_thres=10000.0,
+            out_no_data_val=-999.0,
+            percentile=95.0,
+            percentile_field="b1_p95",
+            mean_field="b1_mean",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     vec_gdf = _read_vec_file(vec_file, vec_lyr)
@@ -572,6 +648,23 @@ def calc_zonal_band_stats_test_poly_pts(
     :param median_field: Output column name for median value (or ``None``).
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :return: Updated :class:`geopandas.GeoDataFrame`.
+
+    .. code:: python
+
+        import geopandas
+        import rsgispy.zonalstats.polygon
+
+        vec_gdf = geopandas.read_file("polygons.gpkg", layer="polygons")
+        out_gdf = rsgispy.zonalstats.polygon.calc_zonal_band_stats_test_poly_pts(
+            vec_gdf=vec_gdf,
+            input_img="img.tif",
+            img_band=1,
+            min_thres=0.0,
+            max_thres=10000.0,
+            out_no_data_val=-999.0,
+            mean_field="b1_mean",
+            median_field="b1_med",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     field_map: Dict[str, Optional[str]] = {
@@ -619,6 +712,19 @@ def calc_zonal_band_pxl_counts_file(
     :param vals_lut: Mapping ``{pixel_value: output_field_name}``.
     :param total_field: Output column name for total pixels inside each polygon.
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
+
+    .. code:: python
+
+        import rsgispy.zonalstats.polygon
+
+        rsgispy.zonalstats.polygon.calc_zonal_band_pxl_counts_file(
+            vec_file="polygons.gpkg",
+            vec_lyr="polygons",
+            input_img="landcover.tif",
+            img_band=1,
+            vals_lut={1: "forest_pxls", 2: "water_pxls"},
+            total_field="total_pxls",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     vec_gdf = _read_vec_file(vec_file, vec_lyr)
@@ -654,6 +760,20 @@ def calc_zonal_band_pxl_counts(
     :param total_field: Output column name for total pixels inside each polygon.
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :return: Updated :class:`geopandas.GeoDataFrame`.
+
+    .. code:: python
+
+        import geopandas
+        import rsgispy.zonalstats.polygon
+
+        vec_gdf = geopandas.read_file("polygons.gpkg", layer="polygons")
+        out_gdf = rsgispy.zonalstats.polygon.calc_zonal_band_pxl_counts(
+            vec_gdf=vec_gdf,
+            input_img="landcover.tif",
+            img_band=1,
+            vals_lut={1: "forest_pxls", 2: "water_pxls"},
+            total_field="total_pxls",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not vals_lut:

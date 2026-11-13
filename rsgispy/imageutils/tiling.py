@@ -76,6 +76,22 @@ def create_tiles(
     :param datatype: ``rsgispy.TYPE_*`` constant for the output tiles.
     :param out_img_ext: Output file extension (e.g., ``'tif'`` or ``'kea'``).
     :return: List of created tile file paths.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.tiling
+        tiles = rsgispy.imageutils.tiling.create_tiles(
+            "input_img.tif",
+            "tiles/img",
+            1000,
+            1000,
+            50,
+            False,
+            "GTIFF",
+            rsgispy.TYPE_16UINT,
+            "tif",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not os.path.exists(input_img):
@@ -152,6 +168,21 @@ def create_tiles_multi_core(
     :param datatype: ``rsgispy.TYPE_*`` constant for the output tiles.
     :param out_img_ext: Output file extension (e.g., ``'tif'`` or ``'kea'``).
     :param n_cores: Number of worker processes (Default = ``1``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.tiling
+        rsgispy.imageutils.tiling.create_tiles_multi_core(
+            "input_img.tif",
+            "tiles/img",
+            1000,
+            1000,
+            "GTIFF",
+            rsgispy.TYPE_16UINT,
+            "tif",
+            n_cores=4,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not os.path.exists(input_img):
@@ -237,6 +268,18 @@ def create_raster_tiles_bbox(
     :param datatype: ``rsgispy.TYPE_*`` constant (Default = ``rsgispy.TYPE_8UINT``).
     :param out_img_pxl_val: Initial pixel value (Default = ``0.0``).
     :param out_img_n_bands: Number of bands in each tile (Default = ``1``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.tiling
+        rsgispy.imageutils.tiling.create_raster_tiles_bbox(
+            (500000.0, 520000.0, 4000000.0, 4020000.0),
+            10000.0,
+            10000.0,
+            10.0,
+            32630,
+            "tiles_out",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     x_min, x_max, y_min, y_max = (float(v) for v in bbox[:4])

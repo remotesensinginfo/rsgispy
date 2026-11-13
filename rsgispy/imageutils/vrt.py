@@ -280,6 +280,13 @@ def create_stack_images_vrt(
     :param band_names: Optional sequence of band descriptions for the output stacked bands.
     :param options: Optional VRT creation options
                     (e.g., ``{'BLOCKXSIZE': 256, 'BLOCKYSIZE': 256}``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.vrt
+        rsgispy.imageutils.vrt.create_stack_images_vrt(
+            ["band1.tif", "band2.tif", "band3.tif"], "stack.vrt"
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not input_imgs:
@@ -438,6 +445,13 @@ def create_mosaic_images_vrt(
     :param pixel_function_args: Optional dictionary of arguments for ``pixel_function``.
     :param options: Optional VRT creation options
                     (e.g., ``{'BLOCKXSIZE': 256, 'BLOCKYSIZE': 256}``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.vrt
+        rsgispy.imageutils.vrt.create_mosaic_images_vrt(
+            ["tile1.tif", "tile2.tif"], "mosaic.vrt"
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements
     if not input_imgs:
@@ -648,6 +662,13 @@ def create_vrt_band_subset(
     :param band_names: Optional sequence of band descriptions for the output VRT bands.
     :param options: Optional VRT creation options
                     (e.g., ``{'BLOCKXSIZE': 256, 'BLOCKYSIZE': 256}``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.vrt
+        rsgispy.imageutils.vrt.create_vrt_band_subset(
+            "multi_band.tif", [3, 2, 1], "rgb_subset.vrt"
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not os.path.exists(input_img):

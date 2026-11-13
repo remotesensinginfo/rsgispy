@@ -90,6 +90,11 @@ def usgs_login(
     :param username: USGS EarthExplorer username. Reads ``RSGIS_USGS_USER`` if ``None``.
     :param password: USGS EarthExplorer password. Reads ``RSGIS_USGS_PASS`` if ``None``.
     :return: API key string for the USGS session.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.usgs_m2m as m2m
+        api_key = m2m.usgs_login("my_username", "my_password")
     """
     if username is None:
         username = rsgispy.tools.system.get_environment_variable("RSGIS_USGS_USER")
@@ -108,6 +113,11 @@ def usgs_logout(api_key: str) -> None:
     Log out of the USGS M2M system using the session ``api_key``.
 
     :param api_key: API key created at login.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.usgs_m2m as m2m
+        m2m.usgs_logout(api_key)
     """
     logout_url = USGS_M2M_URL + "logout"
     rsgispy.tools.http.send_http_json_request(logout_url, None, api_key)
@@ -128,6 +138,11 @@ def can_user_dwnld(api_key: str) -> bool:
 
     :param api_key: API key created at login.
     :return: ``True`` if download permission is granted.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.usgs_m2m as m2m
+        allowed = m2m.can_user_dwnld(api_key)
     """
     return _has_user_permission(api_key, "download")
 
@@ -138,6 +153,11 @@ def can_user_order(api_key: str) -> bool:
 
     :param api_key: API key created at login.
     :return: ``True`` if order permission is granted.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.usgs_m2m as m2m
+        allowed = m2m.can_user_order(api_key)
     """
     return _has_user_permission(api_key, "order")
 
@@ -176,6 +196,13 @@ def get_wrs_pt(
     :param path: WRS path number.
     :param grid_version: ``USGS_WRS1`` or ``USGS_WRS2`` (default: ``USGS_WRS2``).
     :return: ``(longitude, latitude)`` tuple.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.usgs_m2m as m2m
+
+        api_key = m2m.usgs_login()
+        lon, lat = m2m.get_wrs_pt(api_key, row=23, path=204)
     """
     grid2ll_info = _query_grid2ll(api_key, row, path, grid_version, "point")
     if grid2ll_info["shape"] != "point":
@@ -198,6 +225,13 @@ def get_wrs_bbox(
     :param path: WRS path number.
     :param grid_version: ``USGS_WRS1`` or ``USGS_WRS2`` (default: ``USGS_WRS2``).
     :return: ``(min_lon, max_lon, min_lat, max_lat)`` tuple.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.usgs_m2m as m2m
+
+        api_key = m2m.usgs_login()
+        bbox = m2m.get_wrs_bbox(api_key, row=23, path=204)
     """
     grid2ll_info = _query_grid2ll(api_key, row, path, grid_version, "polygon")
     if grid2ll_info["shape"] != "polygon":
@@ -215,6 +249,13 @@ def get_dataset_info(dataset: str, api_key: str) -> Dict:
     :param dataset: Name of the dataset.
     :param api_key: API key created at login.
     :return: Dictionary of dataset metadata.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.usgs_m2m as m2m
+
+        api_key = m2m.usgs_login()
+        info = m2m.get_dataset_info("landsat_ot_c2_l2", api_key)
     """
     dataset_url = USGS_M2M_URL + "dataset"
     dataset_data = {"datasetName": dataset}
@@ -230,6 +271,13 @@ def get_earth_explorer_datasets(api_key: str) -> Dict[str, List[str]]:
 
     :param api_key: API key created at login.
     :return: Dictionary mapping category names to lists of dataset aliases.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.usgs_m2m as m2m
+
+        api_key = m2m.usgs_login()
+        datasets = m2m.get_earth_explorer_datasets(api_key)
     """
     dataset_url = USGS_M2M_URL + "dataset-categories"
     dataset_data = {"catalog": "EE"}
@@ -289,6 +337,21 @@ def usgs_search(
     :param max_n_rslts: Maximum number of scenes to return (must be <= 100).
     :param start_n: Optional starting record index for pagination.
     :return: Tuple of ``(scenes_list, search_metadata_dict)``.
+
+    .. code:: python
+
+        import datetime
+        import rsgispy.dataaccess.usgs_m2m as m2m
+
+        api_key = m2m.usgs_login()
+        scns, meta = m2m.usgs_search(
+            dataset="landsat_ot_c2_l2",
+            api_key=api_key,
+            start_date=datetime.datetime(2023, 6, 1),
+            end_date=datetime.datetime(2023, 6, 30),
+            cloud_max=20,
+            bbox=[-5.0, -3.0, 52.0, 53.0],
+        )
     """
     _validate_dataset(dataset, api_key)
 
@@ -381,6 +444,21 @@ def get_all_usgs_search(
     Paginate through :func:`usgs_search` to collect up to ``max_n_rslts`` scenes.
 
     :return: Combined list of scene dictionaries.
+
+    .. code:: python
+
+        import datetime
+        import rsgispy.dataaccess.usgs_m2m as m2m
+
+        api_key = m2m.usgs_login()
+        scns = m2m.get_all_usgs_search(
+            dataset="landsat_ot_c2_l2",
+            api_key=api_key,
+            max_n_rslts=250,
+            start_date=datetime.datetime(2023, 6, 1),
+            end_date=datetime.datetime(2023, 6, 30),
+            bbox=[-5.0, -3.0, 52.0, 53.0],
+        )
     """
     if max_n_rslts <= 100:
         scns, _ = usgs_search(
@@ -452,6 +530,14 @@ def get_download_ids(
     :param scns: List of scene dictionaries from :func:`usgs_search`.
     :param bulk: If ``True``, include only scenes available for bulk download.
     :return: Tuple ``(display_ids, entity_ids)``.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.usgs_m2m as m2m
+
+        api_key = m2m.usgs_login()
+        scns, _ = m2m.usgs_search("landsat_ot_c2_l2", api_key)
+        dsp_ids, ent_ids = m2m.get_download_ids(scns)
     """
     scn_dsp_ids: List[str] = []
     scn_ent_ids: List[str] = []
@@ -480,6 +566,18 @@ def create_scene_list(
     :param lst_name: Name for the temporary scene list.
     :param lst_period: Retention duration in ISO 8601 format (default: ``"P1W"``).
     :return: Number of scenes added.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.usgs_m2m as m2m
+
+        api_key = m2m.usgs_login()
+        n_added = m2m.create_scene_list(
+            api_key=api_key,
+            dataset="landsat_ot_c2_l2",
+            scn_ent_ids=["LC82040232023160LGN00"],
+            lst_name="my_scenes",
+        )
     """
     _validate_dataset(dataset, api_key)
 
@@ -503,6 +601,13 @@ def remove_scene_list(api_key: str, lst_name: str) -> None:
 
     :param api_key: API key created at login.
     :param lst_name: Scene list name created with :func:`create_scene_list`.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.usgs_m2m as m2m
+
+        api_key = m2m.usgs_login()
+        m2m.remove_scene_list(api_key=api_key, lst_name="my_scenes")
     """
     rm_scn_info = {"listId": lst_name}
     scn_lst_rm_url = USGS_M2M_URL + "scene-list-remove"
@@ -527,6 +632,17 @@ def check_dwnld_opts(
     :param dwnld_filetype: ``"bundle"``, ``"band"``, or ``"all"`` (default: ``"bundle"``).
     :param rm_lst: Remove the scene list after checking when ``True``.
     :return: List of ``{"entityId": ..., "productId": ...}`` dictionaries.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.usgs_m2m as m2m
+
+        api_key = m2m.usgs_login()
+        dwlds = m2m.check_dwnld_opts(
+            api_key=api_key,
+            lst_name="my_scenes",
+            dataset="landsat_ot_c2_l2",
+        )
     """
     if not can_user_dwnld(api_key):
         raise rsgispy.RSGISPyException(
@@ -579,6 +695,18 @@ def request_downloads(
     :param dwlds_lst: Download list returned by :func:`check_dwnld_opts`.
     :param dwnld_label: Label for the download request.
     :return: Tuple ``(available_urls_by_id, preparing_download_ids)``.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.usgs_m2m as m2m
+
+        api_key = m2m.usgs_login()
+        dwlds = m2m.check_dwnld_opts(api_key, "my_scenes", "landsat_ot_c2_l2")
+        avail_urls, prep_ids = m2m.request_downloads(
+            api_key=api_key,
+            dwlds_lst=dwlds,
+            dwnld_label="my_download",
+        )
     """
     dwnld_reqst_url = USGS_M2M_URL + "download-request"
     dwnld_reqst_data = {

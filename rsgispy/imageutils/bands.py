@@ -77,6 +77,15 @@ def select_img_bands(
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
     :param bands: Sequence of 1-based band indices to extract in order.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.bands
+
+        rsgispy.imageutils.bands.select_img_bands(
+            "in_img.tif", "out_img.tif", "GTIFF", rsgispy.TYPE_16UINT, [1, 3, 5]
+        )
     """
     # pylint: disable=too-many-locals
     ensure_file_exists(input_img)
@@ -146,6 +155,21 @@ def stack_img_bands(
     :param no_data_val: No-data value written where pixels are skipped.
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.bands
+
+        rsgispy.imageutils.bands.stack_img_bands(
+            ["b1.tif", "b2.tif", "b3.tif"],
+            ["Blue", "Green", "Red"],
+            "stacked.tif",
+            None,
+            0.0,
+            "GTIFF",
+            rsgispy.TYPE_16UINT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
@@ -392,6 +416,19 @@ def sharpen_low_res_bands(
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image
                      (Default = :data:`rsgispy.TYPE_32FLOAT`).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.bands
+
+        band_info = [
+            rsgispy.imageutils.bands.SharpBandInfo(1, rsgispy.SHARP_RES_HIGH, "B2"),
+            rsgispy.imageutils.bands.SharpBandInfo(2, rsgispy.SHARP_RES_LOW, "B5"),
+        ]
+        rsgispy.imageutils.bands.sharpen_low_res_bands(
+            "in_img.tif", "sharp_img.tif", band_info
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
     ensure_file_exists(input_img)

@@ -655,6 +655,19 @@ def calc_simple_roughness_profile_metrics(
     :param detrend: Whether to detrend the surface profiles. Default: ``True``.
     :param detrend_poly_order: Polynomial order used to detrend the profiles.
     :param export_plot_path: Optional directory to save diagnostic PNG plots.
+
+    .. code:: python
+
+        import rsgispy.elevation.roughness
+
+        rsgispy.elevation.roughness.calc_simple_roughness_profile_metrics(
+            input_img="dem.tif",
+            vec_file="sample_pts.gpkg",
+            vec_lyr="pts",
+            out_vec_file="roughness_out.gpkg",
+            out_vec_lyr="pts_rough",
+            out_format="GPKG",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     rough_profile_obj = CalcProfileRoughMetrics(
@@ -714,6 +727,19 @@ def calc_munro_roughness_profile_metrics(
     :param detrend: Whether to detrend the surface profiles. Default: ``True``.
     :param detrend_poly_order: Polynomial order used to detrend the profiles.
     :param export_plot_path: Optional directory to save diagnostic PNG plots.
+
+    .. code:: python
+
+        import rsgispy.elevation.roughness
+
+        rsgispy.elevation.roughness.calc_munro_roughness_profile_metrics(
+            input_img="dem.tif",
+            vec_file="sample_pts.gpkg",
+            vec_lyr="pts",
+            out_vec_file="munro_rough_out.gpkg",
+            out_vec_lyr="pts_munro",
+            out_format="GPKG",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     rough_profile_obj = CalcMunroRoughnessMetric(
@@ -771,6 +797,19 @@ def calc_smith_roughness_metrics(
     :param no_data_val: Image no-data value; ``None`` reads from header.
     :param detrend: Whether to plane-detrend the surface. Default: ``True``.
     :param export_plot_path: Optional directory to save diagnostic PNG plots.
+
+    .. code:: python
+
+        import rsgispy.elevation.roughness
+
+        rsgispy.elevation.roughness.calc_smith_roughness_metrics(
+            input_img="dem.tif",
+            vec_file="sample_pts.gpkg",
+            vec_lyr="pts",
+            out_vec_file="smith_rough_out.gpkg",
+            out_vec_lyr="pts_smith",
+            out_format="GPKG",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     rough_profile_obj = CalcSmithRoughnessMetric(
@@ -828,6 +867,19 @@ def calc_all_roughness_profile_metrics(
     :param no_data_val: Image no-data value; ``None`` reads from header.
     :param detrend: Whether to detrend the surfaces/profiles. Default: ``True``.
     :param detrend_poly_order: Polynomial order used to detrend 1D profiles.
+
+    .. code:: python
+
+        import rsgispy.elevation.roughness
+
+        rsgispy.elevation.roughness.calc_all_roughness_profile_metrics(
+            input_img="dem.tif",
+            vec_file="sample_pts.gpkg",
+            vec_lyr="pts",
+            out_vec_file="all_rough_out.gpkg",
+            out_vec_lyr="pts_rough",
+            out_format="GPKG",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     rough_profile_obj = CalcProfileRoughMetrics(

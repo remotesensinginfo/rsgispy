@@ -41,6 +41,13 @@ def get_wmts_layer_list(
     :param wmts_url: URL of the WMTS service (GetCapabilities endpoint).
     :param name_filter: Optional substring filter applied to layer identifiers.
     :return: List of matching layer identifiers.
+
+    .. code:: python
+
+        import rsgispy.tools.wmts
+        layers = rsgispy.tools.wmts.get_wmts_layer_list(
+            "https://example.com/wmts/1.0.0/WMTSCapabilities.xml"
+        )
     """
     # pylint: disable=import-outside-toplevel
     import owslib.wmts
@@ -175,6 +182,17 @@ def get_wmts_as_img(
     :param zoom_level: Optional TileMatrix identifier or zero-based zoom index.
     :param tmp_dir: Optional temporary directory for intermediate files.
     :param wmts_epsg: Optional EPSG code override for the WMTS layer.
+
+    .. code:: python
+
+        import rsgispy.tools.wmts
+        rsgispy.tools.wmts.get_wmts_as_img(
+            "https://example.com/wmts/1.0.0/WMTSCapabilities.xml",
+            wmts_lyr="imagery",
+            bbox=[-4.5, -4.0, 52.0, 52.5],
+            bbox_epsg=4326,
+            output_img="wmts_tile.tif",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-statements,import-outside-toplevel

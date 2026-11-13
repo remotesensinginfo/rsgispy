@@ -34,6 +34,13 @@ def mask_data_to_valid(
     :param lower_limit: Optional exclusive lower limit.
     :param upper_limit: Optional exclusive upper limit.
     :return: Filtered 2D NumPy array.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.stats
+        arr = np.array([[1.0, 2.0], [np.nan, 3.0], [0.0, 5.0]])
+        valid = rsgispy.tools.stats.mask_data_to_valid(arr, lower_limit=0.0)
     """
     filtered = data[numpy.all(numpy.isfinite(data), axis=1)]
     if lower_limit is not None:
@@ -63,6 +70,14 @@ def calc_semivariogram(
     :param n_lags: Number of lag bins (Default = 25).
     :param normalize_vals: Normalise values to ``[0, 1]`` when True.
     :return: ``pandas.DataFrame`` with ``distance``, ``semivariance``, and ``count``.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.stats
+        coords = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [2.0, 2.0]])
+        vals = np.array([1.2, 1.5, 1.4, 2.8])
+        df = rsgispy.tools.stats.calc_semivariogram(coords, vals, n_lags=4)
     """
     # pylint: disable=import-outside-toplevel,too-many-arguments
     # pylint: disable=too-many-positional-arguments,too-many-locals
@@ -160,6 +175,13 @@ def standarise_img_data(img_data: numpy.ndarray) -> numpy.ndarray:
     :param img_data: Array of shape ``(bands, height, width)`` or
                      ``(bands, n_pxls)``.
     :return: Standardised array of matching shape.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.stats
+        img = np.random.rand(3, 10, 10)
+        std_img = rsgispy.tools.stats.standarise_img_data(img)
     """
     if len(img_data.shape) == 3:
         img_bands, img_height, img_width = img_data.shape
@@ -193,6 +215,13 @@ def normalise_img_data(img_data: numpy.ndarray) -> numpy.ndarray:
     :param img_data: Array of shape ``(bands, height, width)`` or
                      ``(bands, n_pxls)``.
     :return: Normalised array of matching shape.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.stats
+        img = np.random.rand(3, 10, 10)
+        norm_img = rsgispy.tools.stats.normalise_img_data(img)
     """
     if len(img_data.shape) == 3:
         img_bands, img_height, img_width = img_data.shape
@@ -223,6 +252,11 @@ def validate_percentiles_0_100(
 
     :param percentiles: A single percentile value or a non-empty sequence of
                         percentile values expected in ``[0, 100]``.
+
+    .. code:: python
+
+        import rsgispy.tools.stats
+        rsgispy.tools.stats.validate_percentiles_0_100([25, 50, 75])
     """
     if percentiles is None or isinstance(percentiles, (bool, str, bytes)):
         raise rsgispy.RSGISPyException(
@@ -263,6 +297,13 @@ def compute_nanpercentiles(
                         are no-data/NaN (Default = None).
     :return: NumPy array of computed percentiles along axis 0. For 3D inputs and
              scalar ``percentiles``, the output is expanded to ``(1, height, width)``.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.stats
+        stack = np.random.rand(5, 10, 10)
+        pct = rsgispy.tools.stats.compute_nanpercentiles(stack, [25, 50, 75])
     """
     if not numpy.issubdtype(stack_arr.dtype, numpy.floating):
         stack_arr = stack_arr.astype(numpy.float64)

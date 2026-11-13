@@ -119,6 +119,14 @@ def calc_y_fig_size(
     :param bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)`` for the region of interest.
     :param fig_x_size: Size for the figure in the x-axis.
     :return: Figure size in the y-axis.
+
+    .. code:: python
+
+        import rsgispy.tools.mapping
+
+        fig_y_size = rsgispy.tools.mapping.calc_y_fig_size(
+            bbox=(250000.0, 270000.0, 280000.0, 290000.0), fig_x_size=10.0
+        )
     """
     x_bbox_size = bbox[1] - bbox[0]
     if x_bbox_size == 0:
@@ -140,6 +148,16 @@ def define_axis_extent(
 
     :param ax: Matplotlib axis for which limits are set.
     :param bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)``.
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import rsgispy.tools.mapping
+
+        fig, ax = plt.subplots()
+        rsgispy.tools.mapping.define_axis_extent(
+            ax, bbox=(250000.0, 270000.0, 280000.0, 290000.0)
+        )
     """
     ax.set_aspect("equal", "box")
     ax.set_xlim([bbox[0], bbox[1]])
@@ -156,6 +174,14 @@ def define_map_tick_spacing(
 
     :param ax: Matplotlib axis for which tick spacing is defined.
     :param tick_spacing: Spacing between major ticks in map units.
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import rsgispy.tools.mapping
+
+        fig, ax = plt.subplots()
+        rsgispy.tools.mapping.define_map_tick_spacing(ax, tick_spacing=5000.0)
     """
     ax.xaxis.set_major_locator(ticker.MultipleLocator(tick_spacing))
     ax.yaxis.set_major_locator(ticker.MultipleLocator(tick_spacing))
@@ -179,6 +205,16 @@ def get_overview_info(
     :param out_epsg: Output EPSG code for the overview bbox and point (Default = 4326).
     :return: Tuple ``(overview_bbox, centre_point)`` where ``overview_bbox`` is
              ``(MinX, MaxX, MinY, MaxY)`` and ``centre_point`` is ``(X, Y)``.
+
+    .. code:: python
+
+        import rsgispy.tools.mapping
+
+        over_bbox, centre_pt = rsgispy.tools.mapping.get_overview_info(
+            roi_bbox=(-4.2, -4.0, 52.3, 52.5),
+            roi_epsg=4326,
+            overview_buf=5.0,
+        )
     """
     if roi_epsg != out_epsg:
         min_x, min_y, max_x, max_y = transform_bounds(
@@ -242,6 +278,21 @@ def add_overview_maps(
     :param line_clr: Edge line colour for ``overview_lyr`` (Default = ``'black'``).
     :param line_width: Line width for ``overview_lyr`` (Default = 0.25).
     :return: Created inset matplotlib axis.
+
+    .. code:: python
+
+        import geopandas
+        import matplotlib.pyplot as plt
+        import rsgispy.tools.mapping
+
+        fig, ax = plt.subplots()
+        world_gdf = geopandas.read_file("world.gpkg")
+        ax_inset = rsgispy.tools.mapping.add_overview_maps(
+            ax=ax,
+            overview_lyr=world_gdf,
+            overview_bbox=(-10.0, 5.0, 48.0, 60.0),
+            overview_pt=(-4.08, 52.41),
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     ax_over = ax.inset_axes(
@@ -281,6 +332,20 @@ def add_contextily_basemap(
     :param cx_attribution: Attribution string, ``False`` to suppress, or ``None``
                            for default attribution.
     :param cx_att_size: Attribution font size (Default = 8).
+
+    .. code:: python
+
+        import contextily
+        import matplotlib.pyplot as plt
+        import rsgispy.tools.mapping
+
+        fig, ax = plt.subplots()
+        rsgispy.tools.mapping.define_axis_extent(
+            ax, bbox=(250000.0, 270000.0, 280000.0, 290000.0)
+        )
+        rsgispy.tools.mapping.add_contextily_basemap(
+            ax=ax, epsg_crs=27700, cx_src=contextily.providers.OpenStreetMap.Mapnik
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,import-outside-toplevel
     import contextily
@@ -371,6 +436,20 @@ def create_wmts_img_map(
     :param tmp_dir: Optional directory for intermediate WMTS files.
     :param wmts_epsg: Optional EPSG code for the WMTS layer if auto-detection fails.
     :param scale_bar_loc: Scale bar placement string (Default = ``'upper right'``).
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import rsgispy.tools.mapping
+
+        fig, ax = plt.subplots()
+        rsgispy.tools.mapping.create_wmts_img_map(
+            ax=ax,
+            wmts_url="https://example.com/wmts/1.0.0/WMTSCapabilities.xml",
+            wmts_lyr="ortho_layer",
+            bbox=(250000.0, 260000.0, 280000.0, 290000.0),
+            bbox_epsg=27700,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     uid_str = uuid.uuid4().hex[:8]
@@ -485,6 +564,18 @@ def draw_bboxes_to_axis(
     :param lbl_pos_buf: Offset distance between rectangle edge and label.
     :param lbl_fill_clr: Optional background fill colour behind label text.
     :param lbl_padding: Padding around label text when ``lbl_fill_clr`` is set.
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import rsgispy.tools.mapping
+
+        fig, ax = plt.subplots()
+        rsgispy.tools.mapping.draw_bboxes_to_axis(
+            ax=ax,
+            bboxes=[(0.0, 10.0, 0.0, 10.0), (15.0, 25.0, 0.0, 10.0)],
+            bbox_labels=["Site A", "Site B"],
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if bbox_labels is not None and len(bboxes) != len(bbox_labels):
@@ -565,6 +656,14 @@ def add_axis_label(
     :param lbl_font_size: Font size (Default = 12).
     :param fill_clr: Background box fill colour (Default = ``'white'``).
     :param padding: Padding around label text (Default = 3.0).
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import rsgispy.tools.mapping
+
+        fig, ax = plt.subplots()
+        rsgispy.tools.mapping.add_axis_label(ax, lbl_text="(a)")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     xmin, _ = ax.get_xlim()
@@ -635,6 +734,21 @@ def create_vec_lyr_map(
     :param sub_in_vec: Spatially subset vector layers to ``bbox`` before plotting.
     :param scale_bar_loc: Scale bar placement string (Default = ``'upper right'``).
     :param plot_zorders: Drawing z-order float or list of z-orders (Default = 1.0).
+
+    .. code:: python
+
+        import geopandas
+        import matplotlib.pyplot as plt
+        import rsgispy.tools.mapping
+
+        fig, ax = plt.subplots()
+        gdf = geopandas.read_file("polys.gpkg")
+        rsgispy.tools.mapping.create_vec_lyr_map(
+            ax=ax,
+            gp_vecs=gdf,
+            bbox=(250000.0, 270000.0, 280000.0, 290000.0),
+            title_str="Study Area",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     vec_list = gp_vecs if isinstance(gp_vecs, list) else [gp_vecs]
@@ -742,6 +856,21 @@ def create_raster_img_map(
     :param img_alpha: Display alpha transparency (Default = 1.0).
     :param scale_bar_loc: Scale bar placement string (Default = ``'upper right'``).
     :param plot_zorder: Drawing z-order (Default = 1.0).
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import rsgispy
+        import rsgispy.tools.mapping
+
+        fig, ax = plt.subplots()
+        rsgispy.tools.mapping.create_raster_img_map(
+            ax=ax,
+            input_img="sentinel2.tif",
+            img_bands=[4, 3, 2],
+            img_stch=rsgispy.IMG_STRETCH_STDEV,
+            title_str="RGB Composite",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if bbox is None:
@@ -843,6 +972,16 @@ def create_thematic_raster_map(
     :param show_map_axis: Whether to display axis ticks and frame (Default = True).
     :param scale_bar_loc: Scale bar placement string (Default = ``'upper right'``).
     :param plot_zorders: Drawing z-order float or list of z-orders (Default = 1.0).
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import rsgispy.tools.mapping
+
+        fig, ax = plt.subplots()
+        rsgispy.tools.mapping.create_thematic_raster_map(
+            ax=ax, input_img="landcover.kea", title_str="Land Cover"
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     input_imgs = [input_img] if isinstance(input_img, str) else list(input_img)
@@ -936,6 +1075,21 @@ def create_choropleth_vec_lyr_map(
     :param sub_in_vec: Spatially subset vector layer to ``bbox`` before plotting.
     :param scale_bar_loc: Scale bar placement string (Default = ``'upper right'``).
     :param plot_zorder: Drawing z-order (Default = 1.0).
+
+    .. code:: python
+
+        import geopandas
+        import matplotlib.pyplot as plt
+        import rsgispy.tools.mapping
+
+        fig, ax = plt.subplots()
+        gdf = geopandas.read_file("regions.gpkg")
+        rsgispy.tools.mapping.create_choropleth_vec_lyr_map(
+            ax=ax,
+            gp_vec=gdf,
+            vec_col="area_ha",
+            bbox=(250000.0, 270000.0, 280000.0, 290000.0),
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if vec_fill_cmap is None:
@@ -1015,6 +1169,20 @@ def create_raster_cmap_img_map(
     :param scale_bar_loc: Scale bar placement string (Default = ``'upper right'``).
     :param plot_zorder: Drawing z-order (Default = 1.0).
     :return: Tuple ``(c_cmap, c_norm)`` for creating a Matplotlib colorbar.
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import rsgispy.tools.mapping
+
+        fig, ax = plt.subplots()
+        cmap, norm = rsgispy.tools.mapping.create_raster_cmap_img_map(
+            ax=ax,
+            input_img="ndvi.tif",
+            img_band=1,
+            cmap_name="YlGn",
+            norm_img_vals=True,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if bbox is None:
@@ -1101,6 +1269,22 @@ def create_vec_pt_density_map(
     :param scale_bar_loc: Scale bar placement string (Default = ``'upper right'``).
     :param plot_zorder: Drawing z-order (Default = 1.0).
     :return: Tuple ``(c_cmap, c_norm)`` for creating a Matplotlib colorbar.
+
+    .. code:: python
+
+        import geopandas
+        import matplotlib.pyplot as plt
+        import mpl_scatter_density  # noqa: F401
+        import rsgispy.tools.mapping
+
+        fig = plt.figure()
+        ax = fig.add_subplot(1, 1, 1, projection="scatter_density")
+        pts_gdf = geopandas.read_file("points.gpkg")
+        cmap, norm = rsgispy.tools.mapping.create_vec_pt_density_map(
+            ax=ax,
+            gp_vec=pts_gdf,
+            bbox=(250000.0, 270000.0, 280000.0, 290000.0),
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     # pylint: disable=import-outside-toplevel,import-error,unused-import

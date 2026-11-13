@@ -61,6 +61,18 @@ def resample_img_to_match(
     :param no_data_val: Optional no-data value (defaults to ``in_process_img`` nodata).
     :param multicore: Whether to use multiple CPU threads for warping (Default = False).
     :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.warp
+        rsgispy.imageutils.warp.resample_img_to_match(
+            "ref_img.tif",
+            "in_img.tif",
+            "resampled_img.tif",
+            "GTIFF",
+            interp_method=rsgispy.INTERP_BILINEAR,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not os.path.exists(in_ref_img):
@@ -174,6 +186,17 @@ def reproject_image(
                          output pixel resolution (Default = True).
     :param multicore: Whether to use multiple CPU threads for warping (Default = False).
     :param gdal_options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.warp
+        rsgispy.imageutils.warp.reproject_image(
+            "input_img.tif",
+            "reproj_img.tif",
+            out_epsg=32630,
+            interp_method=rsgispy.INTERP_BILINEAR,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-statements
     if not os.path.exists(input_img):
@@ -291,6 +314,13 @@ def gdal_warp(
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param use_multi_threaded: Use multiple threads when warping (Default = ``True``).
     :param options: Optional GDAL creation options (dict or sequence of ``'KEY=VALUE'``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.warp
+        rsgispy.imageutils.warp.gdal_warp(
+            "input_img.tif", "warped_img.tif", out_epsg=4326
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     if not os.path.exists(input_img):
@@ -361,6 +391,13 @@ def gdal_translate(
                      If ``None``, the input image data type is used.
     :param options: Creation options as a string (e.g., ``'-co TILED=YES'``),
                     sequence of ``'KEY=VALUE'``, or dict.
+
+    .. code:: python
+
+        import rsgispy.imageutils.warp
+        rsgispy.imageutils.warp.gdal_translate(
+            "input_img.kea", "output_img.tif", gdalformat="GTIFF"
+        )
     """
     # pylint: disable=too-many-locals,too-many-branches
     ensure_file_exists(input_img)

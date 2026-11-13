@@ -320,6 +320,11 @@ def get_sensor_collection_name(sensor: int) -> str:
 
     :param sensor: ``RSGIS_ODATA_*`` sensor identifier.
     :return: OData string name for the sensor collection.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.copernicus_odata as cdse
+        name = cdse.get_sensor_collection_name(cdse.RSGIS_ODATA_SEN2)
     """
     if sensor not in _ODATA_SENSOR_MAP:
         raise rsgispy.RSGISPyException("Did not recognise sensor type")
@@ -338,6 +343,11 @@ if HAVE_REQUESTS:
         :param username: CDSE username. Reads ``RSGIS_COP_USER`` if ``None``.
         :param password: CDSE password. Reads ``RSGIS_COP_PASS`` if ``None``.
         :return: Access token string, or ``None`` if validation failed.
+
+        .. code:: python
+
+            import rsgispy.dataaccess.copernicus_odata as cdse
+            token = cdse.get_access_token("user@example.com", "secret")
         """
         if username is None:
             username = rsgispy.tools.system.get_environment_variable("RSGIS_COP_USER")
@@ -397,6 +407,19 @@ if HAVE_REQUESTS:
         :param max_n_rslts: Maximum number of scenes to return (default: 25).
         :param start_n: Optional offset skipping the first ``n`` scenes.
         :return: List of scene metadata dictionaries.
+
+        .. code:: python
+
+            import datetime
+            import rsgispy.dataaccess.copernicus_odata as cdse
+
+            scns = cdse.query_scn_lst(
+                sensor=cdse.RSGIS_ODATA_SEN2,
+                bbox=(-5.0, -3.0, 52.0, 53.0),
+                start_date=datetime.datetime(2024, 6, 1),
+                end_date=datetime.datetime(2024, 6, 30),
+                cloud_cover=20.0,
+            )
         """
         sensor_name = get_sensor_collection_name(sensor)
         query_url = (
@@ -484,6 +507,14 @@ if HAVE_REQUESTS:
 
         :param scn_name: Name of the scene to query.
         :return: Dictionary containing metadata for the scene, or ``None``.
+
+        .. code:: python
+
+            import rsgispy.dataaccess.copernicus_odata as cdse
+
+            scn_info = cdse.query_scn(
+                "S2B_MSIL2A_20240602T112119_N0510_R037_T30UVD_20240602T125034.SAFE"
+            )
         """
         query_url = (
             f"{RSGIS_ODATA_PRODUCTS_URL}?$filter=Name eq '{scn_name}'&$expand=Locations"
@@ -512,6 +543,16 @@ if HAVE_REQUESTS:
         :param access_token: OAuth2 bearer token from :func:`get_access_token`.
         :param scn_info: Scene dictionary from :func:`query_scn` or :func:`query_scn_lst`.
         :param out_path: Output directory where the downloaded zip will be saved.
+
+        .. code:: python
+
+            import rsgispy.dataaccess.copernicus_odata as cdse
+
+            token = cdse.get_access_token()
+            scn_info = cdse.query_scn(
+                "S2B_MSIL2A_20240602T112119_N0510_R037_T30UVD_20240602T125034.SAFE"
+            )
+            cdse.download_scn(token, scn_info, "./downloads")
         """
         scn_name = scn_info["Name"]
         print(f"Downloading {scn_name}")
@@ -587,6 +628,16 @@ if HAVE_REQUESTS:
         :param scns_info: List of scene dictionaries from :func:`query_scn_lst`.
         :param out_path: Output directory where scenes will be saved.
         :param no_except: If ``True`` (default), print exceptions and continue.
+
+        .. code:: python
+
+            import rsgispy.dataaccess.copernicus_odata as cdse
+
+            token = cdse.get_access_token()
+            scns = cdse.query_scn_lst(
+                cdse.RSGIS_ODATA_SEN2, (-5.0, -3.0, 52.0, 53.0)
+            )
+            cdse.download_scns(token, scns, "./downloads")
         """
         for scn_info in scns_info:
             try:

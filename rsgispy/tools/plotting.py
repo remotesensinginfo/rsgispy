@@ -108,6 +108,14 @@ def get_raster_mpl_imshow(
     :return: Tuple ``(img_data_arr, coords_bbox)`` where ``img_data_arr`` has
              shape ``(height, width)`` for 1 band or ``(height, width, 3)``
              for 3 bands, and ``coords_bbox`` is ``(MinX, MaxX, MinY, MaxY)``.
+
+    .. code:: python
+
+        import rsgispy.tools.plotting
+
+        img_arr, extent = rsgispy.tools.plotting.get_raster_mpl_imshow(
+            "sentinel2.tif", bands=[4, 3, 2]
+        )
     """
     ensure_file_exists(input_img)
 
@@ -162,8 +170,19 @@ def get_thematic_raster_mpl_imshow(
     :param ctab_alpha: If True, include alpha values from the colour table
                        (Default = True).
     :return: Tuple ``(img_clr_data_arr, coords_bbox, lgd_out_patches)``.
+
+    .. code:: python
+
+        import rsgispy.tools.plotting
+
+        img_rgba, extent, patches = (
+            rsgispy.tools.plotting.get_thematic_raster_mpl_imshow(
+                "landcover.kea", out_patches=True, cls_names_lut={1: "Forest"}
+            )
+        )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches
     ensure_file_exists(input_img)
 
     with rasterio.open(input_img, "r") as src:
@@ -251,6 +270,14 @@ def limit_range_np_arr(
     :param max_thres: Upper threshold (Default = 1.0).
     :param max_out_val: Replacement value above ``max_thres`` (Default = 1.0).
     :return: Clamped NumPy array copy.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.plotting
+
+        arr = np.array([-0.2, 0.5, 1.4])
+        clamped = rsgispy.tools.plotting.limit_range_np_arr(arr, 0.0, 0.0, 1.0, 1.0)
     """
     arr_data_out = arr_data.copy()
     arr_data_out[arr_data < min_thres] = min_out_val
@@ -352,6 +379,16 @@ def manual_stretch_np_arr(
     :param max_out_val: Maximum output clamp value (Default = 1.0).
     :param no_data_clr: Optional colour value(s) assigned to no-data pixels.
     :return: Stretched NumPy array.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.plotting
+
+        arr = np.array([[0.0, 500.0], [1000.0, 2000.0]])
+        stretched = rsgispy.tools.plotting.manual_stretch_np_arr(
+            arr, min_max_vals={"min": 0.0, "max": 2000.0}
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     arr_data_out = _prep_stretch_array(arr_data, no_data_val)
@@ -432,6 +469,14 @@ def linear_stretch_np_arr(
     :param max_out_val: Maximum output clamp value (Default = 1.0).
     :param no_data_clr: Optional colour value(s) assigned to no-data pixels.
     :return: Stretched NumPy array.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.plotting
+
+        arr = np.array([[10.0, 50.0], [100.0, 200.0]])
+        stretched = rsgispy.tools.plotting.linear_stretch_np_arr(arr)
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     arr_data_out = _prep_stretch_array(arr_data, no_data_val)
@@ -488,6 +533,16 @@ def cumulative_stretch_np_arr(
     :param max_out_val: Maximum output clamp value (Default = 1.0).
     :param no_data_clr: Optional colour value(s) assigned to no-data pixels.
     :return: Stretched NumPy array.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.plotting
+
+        arr = np.arange(100, dtype=float).reshape(10, 10)
+        stretched = rsgispy.tools.plotting.cumulative_stretch_np_arr(
+            arr, lower=2.0, upper=98.0
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     arr_data_out = _prep_stretch_array(arr_data, no_data_val)
@@ -540,6 +595,14 @@ def stdev_stretch_np_arr(
     :param max_out_val: Maximum output clamp value (Default = 1.0).
     :param no_data_clr: Optional colour value(s) assigned to no-data pixels.
     :return: Stretched NumPy array.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.plotting
+
+        arr = np.arange(100, dtype=float).reshape(10, 10)
+        stretched = rsgispy.tools.plotting.stdev_stretch_np_arr(arr, n_stdevs=2.0)
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     arr_data_out = _prep_stretch_array(arr_data, no_data_val)

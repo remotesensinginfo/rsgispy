@@ -28,6 +28,14 @@ def set_img_creation_opts(
 
     :param gdalformat: GDAL format string (e.g., 'GTIFF', 'COG').
     :param creation_opts: Mapping of GDAL creation option keys and values.
+
+    .. code:: python
+
+        import rsgispy.imageutils.envopts
+
+        rsgispy.imageutils.envopts.set_img_creation_opts(
+            "GTIFF", {"TILED": "YES", "COMPRESS": "LZW"}
+        )
     """
     fmt_upper = gdalformat.upper().strip()
     opts_str = ":".join(f"{k}={v}" for k, v in creation_opts.items())
@@ -82,6 +90,12 @@ def set_env_vars_zstd_gtiff_outs(bigtiff: bool = False) -> None:
 
     :param bigtiff: If True, GTIFF files will be created as BigTIFF (``BIGTIFF=YES``),
                     otherwise ``BIGTIFF=IF_SAFER`` (Default = False).
+
+    .. code:: python
+
+        import rsgispy.imageutils.envopts
+
+        rsgispy.imageutils.envopts.set_env_vars_zstd_gtiff_outs()
     """
     bigtiff_val = "YES" if bigtiff else "IF_SAFER"
     opts_str = f"TILED=YES:COMPRESS=ZSTD:INTERLEAVE=BAND:BIGTIFF={bigtiff_val}"
@@ -96,6 +110,12 @@ def set_env_vars_lzw_cog_outs(bigtiff: bool = False) -> None:
 
     :param bigtiff: If True, COG files will be created as BigTIFF (``BIGTIFF=YES``),
                     otherwise ``BIGTIFF=IF_SAFER`` (Default = False).
+
+    .. code:: python
+
+        import rsgispy.imageutils.envopts
+
+        rsgispy.imageutils.envopts.set_env_vars_lzw_cog_outs()
     """
     bigtiff_val = "YES" if bigtiff else "IF_SAFER"
     opts_str = f"COMPRESS=LZW:BIGTIFF={bigtiff_val}"
@@ -110,6 +130,12 @@ def set_env_vars_deflate_cog_outs(bigtiff: bool = False) -> None:
 
     :param bigtiff: If True, COG files will be created as BigTIFF (``BIGTIFF=YES``),
                     otherwise ``BIGTIFF=IF_SAFER`` (Default = False).
+
+    .. code:: python
+
+        import rsgispy.imageutils.envopts
+
+        rsgispy.imageutils.envopts.set_env_vars_deflate_cog_outs()
     """
     bigtiff_val = "YES" if bigtiff else "IF_SAFER"
     opts_str = f"COMPRESS=DEFLATE:BIGTIFF={bigtiff_val}"

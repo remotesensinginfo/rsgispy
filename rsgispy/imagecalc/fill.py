@@ -141,6 +141,21 @@ if HAVE_SCIPY:
                          (Default = ``rsgispy.TYPE_32INT``).
         :param use_pbar: If True, display a tqdm progress bar (Default = True).
         :param creation_opts: Optional mapping of GDAL creation options.
+
+        .. code:: python
+
+            import rsgispy
+            import rsgispy.imagecalc.fill
+
+            rsgispy.imagecalc.fill.calc_fill_regions_knn(
+                in_ref_img="ref_classes.tif",
+                ref_no_data=0,
+                in_fill_regions_img="fill_mask.tif",
+                fill_region_val=1,
+                output_img="filled_classes.tif",
+                k=5,
+                summary=rsgispy.SUMTYPE_MODE,
+            )
         """
         # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         ensure_file_exists(in_ref_img, label="Reference image")

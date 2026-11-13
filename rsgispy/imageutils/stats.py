@@ -34,6 +34,11 @@ def build_img_pyramids(
     :param input_img: Path to the image file to update.
     :param resampling_method: Overview resampling algorithm (Default = Resampling.average).
     :param ignore_cog: If True, pass ``IGNORE_COG_LAYOUT_BREAK=YES`` when opening.
+
+    .. code:: python
+
+        import rsgispy.imageutils.stats
+        rsgispy.imageutils.stats.build_img_pyramids("input_img.tif")
     """
     open_opts: Dict[str, Any] = {}
     if ignore_cog:

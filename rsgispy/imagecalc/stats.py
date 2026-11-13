@@ -58,6 +58,15 @@ def calc_basic_img_band_stats(
     :param use_no_data: Whether to exclude the no-data value from statistics (Default = True).
     :param use_pbar: Whether to display a tqdm progress bar (Default = True).
     :return: Tuple of ``(min_vals, max_vals, mean_vals, stddev_vals)`` NumPy arrays.
+
+    .. code:: python
+
+        import rsgispy.imagecalc.stats
+
+        mins, maxs, means, stds = rsgispy.imagecalc.stats.calc_basic_img_band_stats(
+            input_img="img.tif",
+            no_data_val=0.0,
+        )
     """
     # pylint: disable=too-many-locals,too-many-branches
     ensure_file_exists(input_img)
@@ -147,6 +156,16 @@ def count_pxls_of_val(
     :param img_band: 1-based band index, or ``None`` to count across all bands.
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :return: 1D ``int64`` NumPy array of counts matching the order of ``vals``.
+
+    .. code:: python
+
+        import rsgispy.imagecalc.stats
+
+        counts = rsgispy.imagecalc.stats.count_pxls_of_val(
+            input_img="classes.tif",
+            vals=[1, 2, 3],
+            img_band=1,
+        )
     """
     if vals is None:
         raise rsgispy.RSGISPyException("Input vals list must not be None.")
@@ -193,6 +212,15 @@ def get_unique_values(
     :param input_img: Path to the input image file.
     :param img_band: 1-based band index to process (Default = 1).
     :return: 1D sorted NumPy array of unique values.
+
+    .. code:: python
+
+        import rsgispy.imagecalc.stats
+
+        unq_vals = rsgispy.imagecalc.stats.get_unique_values(
+            input_img="classes.tif",
+            img_band=1,
+        )
     """
     ensure_file_exists(input_img)
 
@@ -371,6 +399,22 @@ def image_pixel_column_summary(
     :param use_no_data: If True, exclude ``no_data_val`` from statistics.
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagecalc.stats
+
+        sum_stats = rsgispy.imagecalc.stats.StatsSummary(
+            calc_min=True, calc_max=True, calc_mean=True
+        )
+        rsgispy.imagecalc.stats.image_pixel_column_summary(
+            input_img="stack.tif",
+            output_img="stack_summary.tif",
+            sum_stats=sum_stats,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if sum_stats is None:
@@ -470,6 +514,19 @@ def calc_multi_img_band_stats(
     :param use_no_data: If True, exclude ``no_data_val`` pixels (Default = False).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagecalc.stats
+
+        rsgispy.imagecalc.stats.calc_multi_img_band_stats(
+            input_imgs=["img1.tif", "img2.tif", "img3.tif"],
+            output_img="mean_composite.tif",
+            summary_stat=rsgispy.SUMTYPE_MEAN,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     valid_stats = (
@@ -586,6 +643,20 @@ def get_img_sum_stats_in_pxl(
     :param io_grid_y: Block height in reference pixels (Default = 16).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagecalc.stats
+
+        rsgispy.imagecalc.stats.get_img_sum_stats_in_pxl(
+            in_ref_img="coarse_grid.tif",
+            in_stats_img="fine_res.tif",
+            output_img="zonal_stats.tif",
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
+            sum_stats=[rsgispy.SUMTYPE_MEAN, rsgispy.SUMTYPE_STDDEV],
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not sum_stats:
@@ -744,6 +815,19 @@ def calc_mask_img_pxl_val_prob(
                           (Default = True).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+
+    .. code:: python
+
+        import rsgispy.imagecalc.stats
+
+        rsgispy.imagecalc.stats.calc_mask_img_pxl_val_prob(
+            input_img="multispec.tif",
+            img_bands=[1, 2, 3],
+            in_msk_img="training_mask.tif",
+            msk_val=1,
+            output_img="pxl_prob.tif",
+            gdalformat="GTIFF",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches

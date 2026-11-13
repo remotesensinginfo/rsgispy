@@ -118,6 +118,18 @@ def hillshade(
     :param azimuth: Solar azimuth angle in degrees ``[0, 360]`` (e.g., 315).
     :param zenith: Solar zenith angle in degrees ``[0, 90]`` (e.g., 45).
     :param gdalformat: GDAL/rasterio driver format for the output file.
+
+    .. code:: python
+
+        import rsgispy.elevation.illumination
+
+        rsgispy.elevation.illumination.hillshade(
+            input_img="dem.tif",
+            output_img="hillshade.tif",
+            azimuth=315.0,
+            zenith=45.0,
+            gdalformat="GTIFF",
+        )
     """
     _validate_sun_angles(azimuth, zenith)
 
@@ -151,6 +163,19 @@ def hillshade_pxl_res_img(
     :param azimuth: Solar azimuth angle in degrees ``[0, 360]`` (e.g., 315).
     :param zenith: Solar zenith angle in degrees ``[0, 90]`` (e.g., 45).
     :param gdalformat: GDAL/rasterio driver format for the output file.
+
+    .. code:: python
+
+        import rsgispy.elevation.illumination
+
+        rsgispy.elevation.illumination.hillshade_pxl_res_img(
+            in_dem_img="dem.tif",
+            in_pxl_res_img="pxl_res.tif",
+            output_img="hillshade.tif",
+            azimuth=315.0,
+            zenith=45.0,
+            gdalformat="GTIFF",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     _validate_sun_angles(azimuth, zenith)
@@ -187,8 +212,22 @@ def shadow_mask(
     :param zenith: Solar zenith angle in degrees ``[0, 90]``.
     :param max_height: Maximum elevation threshold terminating upward ray tracing.
     :param gdalformat: GDAL/rasterio driver format for the output file.
+
+    .. code:: python
+
+        import rsgispy.elevation.illumination
+
+        rsgispy.elevation.illumination.shadow_mask(
+            input_img="dem.tif",
+            output_img="shadow_mask.tif",
+            azimuth=315.0,
+            zenith=45.0,
+            max_height=3000.0,
+            gdalformat="GTIFF",
+        )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-statements
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-statements
     _validate_sun_angles(azimuth, zenith)
     ensure_file_exists(input_img)
 
@@ -311,6 +350,18 @@ def local_incidence_angle(
     :param azimuth: Solar azimuth angle in degrees.
     :param zenith: Solar zenith angle in degrees.
     :param gdalformat: GDAL/rasterio driver format for the output file.
+
+    .. code:: python
+
+        import rsgispy.elevation.illumination
+
+        rsgispy.elevation.illumination.local_incidence_angle(
+            input_img="dem.tif",
+            output_img="incidence.tif",
+            azimuth=315.0,
+            zenith=45.0,
+            gdalformat="GTIFF",
+        )
     """
 
     def _block(
@@ -351,6 +402,18 @@ def local_existance_angle(
     :param azimuth: Sensor/view azimuth angle in degrees.
     :param zenith: Sensor/view zenith angle in degrees.
     :param gdalformat: GDAL/rasterio driver format for the output file.
+
+    .. code:: python
+
+        import rsgispy.elevation.illumination
+
+        rsgispy.elevation.illumination.local_existance_angle(
+            input_img="dem.tif",
+            output_img="exitance.tif",
+            azimuth=180.0,
+            zenith=15.0,
+            gdalformat="GTIFF",
+        )
     """
 
     def _block(

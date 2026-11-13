@@ -43,6 +43,17 @@ def slope(
     :param output_img: Path to the output slope image file.
     :param gdalformat: GDAL/rasterio driver format for the output file.
     :param unit: Output angular unit, either ``'degrees'`` or ``'radians'``.
+
+    .. code:: python
+
+        import rsgispy.elevation.terrain
+
+        rsgispy.elevation.terrain.slope(
+            input_img="dem.tif",
+            output_img="slope.tif",
+            gdalformat="GTIFF",
+            unit="degrees",
+        )
     """
     unit_norm = _validate_slope_unit(unit)
 
@@ -80,6 +91,18 @@ def slope_pxl_res_img(
     :param output_img: Path to the output slope image file.
     :param gdalformat: GDAL/rasterio driver format for the output file.
     :param unit: Output angular unit, either ``'degrees'`` or ``'radians'``.
+
+    .. code:: python
+
+        import rsgispy.elevation.terrain
+
+        rsgispy.elevation.terrain.slope_pxl_res_img(
+            in_dem_img="dem.tif",
+            in_pxl_res_img="pxl_res.tif",
+            output_img="slope.tif",
+            gdalformat="GTIFF",
+            unit="degrees",
+        )
     """
     unit_norm = _validate_slope_unit(unit)
 
@@ -112,6 +135,16 @@ def aspect(
     :param input_img: Path to the input DEM image file.
     :param output_img: Path to the output aspect image file.
     :param gdalformat: GDAL/rasterio driver format for the output file.
+
+    .. code:: python
+
+        import rsgispy.elevation.terrain
+
+        rsgispy.elevation.terrain.aspect(
+            input_img="dem.tif",
+            output_img="aspect.tif",
+            gdalformat="GTIFF",
+        )
     """
 
     def _block(
@@ -141,6 +174,17 @@ def aspect_pxl_res_img(
     :param in_pxl_res_img: Path to the 2-band pixel resolution image file.
     :param output_img: Path to the output aspect image file.
     :param gdalformat: GDAL/rasterio driver format for the output file.
+
+    .. code:: python
+
+        import rsgispy.elevation.terrain
+
+        rsgispy.elevation.terrain.aspect_pxl_res_img(
+            in_dem_img="dem.tif",
+            in_pxl_res_img="pxl_res.tif",
+            output_img="aspect.tif",
+            gdalformat="GTIFF",
+        )
     """
 
     def _block(
@@ -170,6 +214,16 @@ def catagorise_aspect(
     :param input_img: Path to the input aspect image file (in degrees).
     :param output_img: Path to the output categorised uint8 image file.
     :param gdalformat: GDAL/rasterio driver format for the output file.
+
+    .. code:: python
+
+        import rsgispy.elevation.terrain
+
+        rsgispy.elevation.terrain.catagorise_aspect(
+            input_img="aspect.tif",
+            output_img="aspect_cats.tif",
+            gdalformat="GTIFF",
+        )
     """
     ensure_file_exists(input_img)
 

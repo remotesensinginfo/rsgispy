@@ -58,6 +58,19 @@ def dtm_aspect_median_filter(
     :param aspect_range: Angular tolerance around the centre pixel aspect (degrees).
     :param win_h_size: Half-window size in pixels (full window is ``2 * win_h_size + 1``).
     :param gdalformat: GDAL/rasterio driver format for the output file.
+
+    .. code:: python
+
+        import rsgispy.elevation.filtering
+
+        rsgispy.elevation.filtering.dtm_aspect_median_filter(
+            in_dem_img="dem.tif",
+            in_aspect_img="aspect.tif",
+            output_img="dem_filt.tif",
+            aspect_range=20.0,
+            win_h_size=2,
+            gdalformat="GTIFF",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if win_h_size < 1:
@@ -153,6 +166,17 @@ def fill_dem_soille_gratin_1994(
     :param in_vld_img: Path to a binary mask image specifying valid pixels (``1`` = valid).
     :param output_img: Path to the output filled DEM image file.
     :param gdalformat: GDAL/rasterio driver format for the output file.
+
+    .. code:: python
+
+        import rsgispy.elevation.filtering
+
+        rsgispy.elevation.filtering.fill_dem_soille_gratin_1994(
+            in_dem_img="dem_int.tif",
+            in_vld_img="valid_mask.tif",
+            output_img="dem_filled.tif",
+            gdalformat="GTIFF",
+        )
     """
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     ensure_file_exists(in_dem_img, "Input DEM image")
@@ -270,6 +294,17 @@ def plane_fit_detreat_dem(
     :param output_img: Path to the output detrended DEM image file.
     :param gdalformat: GDAL/rasterio driver format for the output file.
     :param win_size: Odd window size in pixels (``>= 3``) for plane fitting.
+
+    .. code:: python
+
+        import rsgispy.elevation.filtering
+
+        rsgispy.elevation.filtering.plane_fit_detreat_dem(
+            input_img="dem.tif",
+            output_img="dem_detrend.tif",
+            gdalformat="GTIFF",
+            win_size=11,
+        )
     """
     # pylint: disable=too-many-locals
     if win_size < 3 or win_size % 2 == 0:
@@ -367,6 +402,18 @@ def resampling_detread_dem(
                            (Default = :data:`rsgispy.INTERP_AVERAGE`).
     :param up_smpl_mthd: Interpolation method for up-sampling
                          (Default = :data:`rsgispy.INTERP_CUBICSPLINE`).
+
+    .. code:: python
+
+        import rsgispy.elevation.filtering
+
+        rsgispy.elevation.filtering.resampling_detread_dem(
+            input_img="dem.tif",
+            output_img="dem_detrend.tif",
+            resmp_res=100.0,
+            gdalformat="GTIFF",
+            no_data_val=-9999.0,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if resmp_res <= 0.0:

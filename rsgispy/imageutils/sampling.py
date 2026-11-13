@@ -53,6 +53,13 @@ def perform_random_pxl_sample_in_mask(
     :param mask_vals: Single mask value or sequence of mask values to sample.
     :param n_samples: Number of pixels to randomly sample per mask value.
     :param rnd_seed: Optional random seed for reproducibility (Default = ``None``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.sampling
+        rsgispy.imageutils.sampling.perform_random_pxl_sample_in_mask(
+            "mask_img.tif", "sampled_mask.tif", "GTIFF", [1, 2], 100, rnd_seed=42
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
@@ -106,6 +113,13 @@ def extract_img_pxl_sample(
     :param pxl_n_sample: Sampling stride (e.g., ``100`` keeps every 100th valid pixel).
     :param no_data_val: Optional no-data value to exclude across all bands.
     :return: 2D NumPy array ``(n_sampled, n_bands)``.
+
+    .. code:: python
+
+        import rsgispy.imageutils.sampling
+        pxls = rsgispy.imageutils.sampling.extract_img_pxl_sample(
+            "input_img.tif", 100, no_data_val=0.0
+        )
     """
     # pylint: disable=too-many-locals
     if pxl_n_sample < 1:
@@ -164,6 +178,13 @@ def extract_img_pxl_vals_in_msk(
     :param img_mask_val: Mask value identifying pixels to extract.
     :param no_data_val: Optional no-data value to exclude across selected bands.
     :return: 2D NumPy array ``(n_values, len(img_bands))``.
+
+    .. code:: python
+
+        import rsgispy.imageutils.sampling
+        pxls = rsgispy.imageutils.sampling.extract_img_pxl_vals_in_msk(
+            "input_img.tif", [1, 2, 3], "mask_img.tif", 1
+        )
     """
     # pylint: disable=too-many-locals
     if not img_bands:
@@ -244,6 +265,13 @@ def assign_random_pxls(
     :param use_no_data: If ``True``, avoid pixels equal to the band no-data value
                         (Default = ``True``).
     :param rnd_seed: Optional random seed for reproducibility (Default = ``None``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.sampling
+        rsgispy.imageutils.sampling.assign_random_pxls(
+            "input_img.tif", "rand_pts.tif", 500, edge_pxl=5, rnd_seed=42
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if edge_pxl < 0:
@@ -324,6 +352,13 @@ def generate_random_pxl_vals_img(
     :param low_val: Lower inclusive integer bound.
     :param up_val: Upper exclusive integer bound.
     :param rnd_seed: Optional random seed for reproducibility (Default = ``None``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.sampling
+        rsgispy.imageutils.sampling.generate_random_pxl_vals_img(
+            "input_img.tif", "rand_vals.tif", "GTIFF", 1, 10, rnd_seed=42
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)

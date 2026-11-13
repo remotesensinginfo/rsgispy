@@ -43,6 +43,11 @@ def resolution(zoom: int) -> float:
 
     :param zoom: Zoom level.
     :return: Pixel resolution in metres.
+
+    .. code:: python
+
+        import rsgispy.tools.tilecache
+        res_m = rsgispy.tools.tilecache.resolution(zoom=12)
     """
     return INITIAL_RESOLUTION / (2**zoom)
 
@@ -54,6 +59,11 @@ def truncate_lng_lat(lon_deg: float, lat_deg: float) -> Tuple[float, float]:
     :param lon_deg: Longitude in degrees.
     :param lat_deg: Latitude in degrees.
     :return: Clamped ``(lon_deg, lat_deg)``.
+
+    .. code:: python
+
+        import rsgispy.tools.tilecache
+        lon, lat = rsgispy.tools.tilecache.truncate_lng_lat(185.0, -95.0)
     """
     lon_deg = max(-180.0, min(180.0, lon_deg))
     lat_deg = max(-90.0, min(90.0, lat_deg))
@@ -76,6 +86,11 @@ def get_tile_for_point(
     :param tms: If ``True``, use TMS origin (bottom-left); if ``False``, XYZ (top-left).
     :param tile_size: Tile size in pixels (Default = ``256``).
     :return: ``(tile_x, tile_y, zoom)``.
+
+    .. code:: python
+
+        import rsgispy.tools.tilecache
+        tx, ty, z = rsgispy.tools.tilecache.get_tile_for_point(-4.08, 52.41, zoom=12)
     """
     meter_x = lon_deg * ORIGIN_SHIFT / 180.0
     meter_y = math.log(math.tan((90.0 + lat_deg) * math.pi / 360.0)) / (
@@ -108,6 +123,11 @@ def get_tile_tl_lonlat(
     :param zoom: Zoom level.
     :param tms: If ``True``, interpret ``tile_y`` as TMS; otherwise XYZ.
     :return: ``(lon_deg, lat_deg)``.
+
+    .. code:: python
+
+        import rsgispy.tools.tilecache
+        lon, lat = rsgispy.tools.tilecache.get_tile_tl_lonlat(2001, 2745, zoom=12)
     """
     if tms:
         tile_y = (2**zoom - 1) - tile_y
@@ -132,6 +152,11 @@ def get_tile_bbox(
     :param zoom: Zoom level.
     :param tms: If ``True``, interpret ``tile_y`` as TMS; otherwise XYZ.
     :return: ``[MinLon, MaxLon, MinLat, MaxLat]``.
+
+    .. code:: python
+
+        import rsgispy.tools.tilecache
+        bbox = rsgispy.tools.tilecache.get_tile_bbox(2001, 2745, zoom=12)
     """
     tl_pt = get_tile_tl_lonlat(tile_x, tile_y, zoom, tms)
     br_pt = get_tile_tl_lonlat(tile_x + 1, tile_y + 1, zoom, tms)
@@ -150,6 +175,11 @@ def flip_xyz_tms_tiles(
     :param tile_y: Tile Y index.
     :param zoom: Zoom level.
     :return: ``(tile_x, flipped_tile_y, zoom)``.
+
+    .. code:: python
+
+        import rsgispy.tools.tilecache
+        tx, ty, z = rsgispy.tools.tilecache.flip_xyz_tms_tiles(2001, 2745, zoom=12)
     """
     return tile_x, (2**zoom - 1) - tile_y, zoom
 
@@ -166,6 +196,11 @@ def get_web_mercator_xy(
     :param lat_deg: Latitude in degrees.
     :param truncate: Clamp coordinates to valid lon/lat limits first.
     :return: ``(meter_x, meter_y)``.
+
+    .. code:: python
+
+        import rsgispy.tools.tilecache
+        mx, my = rsgispy.tools.tilecache.get_web_mercator_xy(-4.08, 52.41)
     """
     if truncate:
         lon_deg, lat_deg = truncate_lng_lat(lon_deg, lat_deg)
@@ -190,6 +225,11 @@ def get_xy_mercator_lonlat(
     :param meter_y: Y coordinate in Web Mercator metres.
     :param truncate: Clamp output coordinates to valid lon/lat limits.
     :return: ``(lon_deg, lat_deg)``.
+
+    .. code:: python
+
+        import rsgispy.tools.tilecache
+        lon, lat = rsgispy.tools.tilecache.get_xy_mercator_lonlat(-454183.0, 6874676.0)
     """
     lon_deg = (meter_x / ORIGIN_SHIFT) * 180.0
     lat_deg = (meter_y / ORIGIN_SHIFT) * 180.0
@@ -217,6 +257,11 @@ def xy_mercator_bounds(
     :param zoom: Zoom level.
     :param tms: If ``True``, interpret ``tile_y`` as TMS; otherwise XYZ.
     :return: ``(x_min, x_max, y_min, y_max)``.
+
+    .. code:: python
+
+        import rsgispy.tools.tilecache
+        bbox_m = rsgispy.tools.tilecache.xy_mercator_bounds(2001, 2745, zoom=12)
     """
     bbox = get_tile_bbox(tile_x, tile_y, zoom, tms)
     x_min, y_max = get_web_mercator_xy(bbox[0], bbox[3])
@@ -238,6 +283,11 @@ def get_quadkey_for_tile_path(
     :param zoom: Zoom level.
     :param tms: If ``True``, interpret ``tile_y`` as TMS; otherwise XYZ.
     :return: Quadkey string.
+
+    .. code:: python
+
+        import rsgispy.tools.tilecache
+        qk = rsgispy.tools.tilecache.get_quadkey_for_tile_path(2001, 2745, zoom=12)
     """
     if tms:
         tile_y = (2**zoom - 1) - tile_y
@@ -263,6 +313,11 @@ def get_tile_path_from_quadkey(
     :param quadkey: Input quadkey string.
     :param tms: If ``True``, return ``tile_y`` in TMS; otherwise XYZ.
     :return: ``(tile_x, tile_y, zoom)``.
+
+    .. code:: python
+
+        import rsgispy.tools.tilecache
+        tx, ty, z = rsgispy.tools.tilecache.get_tile_path_from_quadkey("031311310201")
     """
     if len(quadkey) == 0:
         return 0, 0, 0
@@ -301,6 +356,14 @@ def get_tiles(
     :param tms: If ``True``, return TMS tile indices; otherwise XYZ.
     :param truncate: Clamp coordinates to valid lon/lat bounds.
     :return: Dictionary mapping ``zoom -> [(tile_x, tile_y, zoom), ...]``.
+
+    .. code:: python
+
+        import rsgispy.tools.tilecache
+
+        tiles = rsgispy.tools.tilecache.get_tiles(
+            bbox=(-4.2, -4.0, 52.3, 52.5), zooms=[10, 11]
+        )
     """
     # pylint: disable=too-many-locals,too-many-branches
     west, east, south, north = bbox[0], bbox[1], bbox[2], bbox[3]
@@ -368,6 +431,11 @@ def convert_between_tms_xyz(tiles_dir: str) -> None:
     by renaming tile files along the Y axis.
 
     :param tiles_dir: Root directory of the tile cache (``zoom/x/y.ext``).
+
+    .. code:: python
+
+        import rsgispy.tools.tilecache
+        rsgispy.tools.tilecache.convert_between_tms_xyz("tiles_cache")
     """
     tqdm_cls = rsgispy.get_tqdm()
     in_zoom_dirs = [

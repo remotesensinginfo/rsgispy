@@ -71,6 +71,18 @@ def create_img_from_array(
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
     :param options: Optional GDAL creation options (dict or sequence of ``'KEY=VALUE'``).
     :param no_data_val: Optional output no-data value.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy
+        import rsgispy.imageutils.arrays
+
+        data = np.zeros((3, 100, 100), dtype=np.float32)
+        rsgispy.imageutils.arrays.create_img_from_array(
+            data, "out.tif", 500000.0, 5600000.0, 10.0, -10.0, None,
+            "GTIFF", rsgispy.TYPE_32FLOAT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,c-extension-no-member
     arr = np.asarray(data_arr)
@@ -144,6 +156,17 @@ def create_img_from_array_ref_img(
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
     :param options: Optional GDAL creation options (dict or sequence of ``'KEY=VALUE'``).
     :param no_data_val: Optional output no-data value.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy
+        import rsgispy.imageutils.arrays
+
+        data = np.ones((100, 100), dtype=np.uint8)
+        rsgispy.imageutils.arrays.create_img_from_array_ref_img(
+            data, "out.tif", "ref.tif", "GTIFF", rsgispy.TYPE_8UINT
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     arr = np.asarray(data_arr)
@@ -192,6 +215,14 @@ def get_img_coords_pxl_values(
     :param x_coords: Array or sequence of spatial X coordinates.
     :param y_coords: Array or sequence of spatial Y coordinates.
     :return: 1D NumPy float array of extracted pixel values.
+
+    .. code:: python
+
+        import rsgispy.imageutils.arrays
+
+        vals = rsgispy.imageutils.arrays.get_img_coords_pxl_values(
+            "img.tif", 1, [500050.0, 500100.0], [5599950.0, 5599900.0]
+        )
     """
     x_arr = np.asarray(x_coords, dtype=np.float64)
     y_arr = np.asarray(y_coords, dtype=np.float64)
@@ -223,6 +254,14 @@ def get_img_pxl_values(
     :param x_coords: Array or sequence of X pixel indices (``0 <= x < width``).
     :param y_coords: Array or sequence of Y pixel indices (``0 <= y < height``).
     :return: 1D NumPy float array of extracted pixel values.
+
+    .. code:: python
+
+        import rsgispy.imageutils.arrays
+
+        vals = rsgispy.imageutils.arrays.get_img_pxl_values(
+            "img.tif", 1, [10, 20], [15, 25]
+        )
     """
     ensure_file_exists(input_img)
     x_arr = np.asarray(x_coords, dtype=np.int64)
@@ -261,6 +300,14 @@ def set_img_pxl_values(
     :param x_coords: Array or sequence of X pixel indices.
     :param y_coords: Array or sequence of Y pixel indices.
     :param pxl_value: Value to assign to the specified pixels (Default = ``1``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.arrays
+
+        rsgispy.imageutils.arrays.set_img_pxl_values(
+            "img.tif", 1, [10, 20], [15, 25], pxl_value=0
+        )
     """
     ensure_file_exists(input_img)
     x_arr = np.asarray(x_coords, dtype=np.int64)
@@ -293,6 +340,12 @@ def get_img_pxl_column(
     :param x_pxl_coord: X pixel coordinate (0-based column index).
     :param y_pxl_coord: Y pixel coordinate (0-based row index).
     :return: 1D float32 NumPy array of length ``n_bands``.
+
+    .. code:: python
+
+        import rsgispy.imageutils.arrays
+
+        pxl_col = rsgispy.imageutils.arrays.get_img_pxl_column("img.tif", 10, 15)
     """
     ensure_file_exists(input_img)
     col_idx = int(x_pxl_coord)
@@ -323,6 +376,14 @@ def get_img_column(
     :param x_coord: Spatial X coordinate.
     :param y_coord: Spatial Y coordinate.
     :return: 1D float32 NumPy array of length ``n_bands``.
+
+    .. code:: python
+
+        import rsgispy.imageutils.arrays
+
+        pxl_col = rsgispy.imageutils.arrays.get_img_column(
+            "img.tif", 500050.0, 5599950.0
+        )
     """
     img_bbox = get_img_bbox(input_img)
     img_res_x, img_res_y = get_img_res(input_img, abs_vals=True)
@@ -343,6 +404,14 @@ def get_img_band_pxl_data(
     :param bbox_sub: Bounding box ``(MinX, MaxX, MinY, MaxY)`` contained within
                      ``input_img``.
     :return: 2D NumPy array ``(height, width)`` with the subset pixel values.
+
+    .. code:: python
+
+        import rsgispy.imageutils.arrays
+
+        arr = rsgispy.imageutils.arrays.get_img_band_pxl_data(
+            "img.tif", 1, [500000.0, 500500.0, 5599500.0, 5600000.0]
+        )
     """
     # pylint: disable=too-many-locals
     ensure_file_exists(input_img)
@@ -400,6 +469,12 @@ def get_img_data_as_arr(
     :param img_bands: Optional sequence of 1-based band indices to read in order.
                       If ``None``, all bands are read.
     :return: 3D NumPy array ``(bands, height, width)``.
+
+    .. code:: python
+
+        import rsgispy.imageutils.arrays
+
+        arr = rsgispy.imageutils.arrays.get_img_data_as_arr("img.tif", [1, 2, 3])
     """
     ensure_file_exists(input_img)
     with rasterio.open(input_img, "r") as src:

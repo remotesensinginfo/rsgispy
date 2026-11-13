@@ -194,6 +194,19 @@ def image_math(
     :param output_exists: If True and ``output_img`` exists, update it in place (Default = False).
     :param use_pbar: If True, display a tqdm progress bar during processing (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagecalc.maths
+
+        rsgispy.imagecalc.maths.image_math(
+            input_img="img.tif",
+            output_img="out.tif",
+            exp="b1 * 0.0001",
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
@@ -279,6 +292,19 @@ def image_band_math(
     :param output_exists: If True and ``output_img`` exists, update it in place (Default = False).
     :param use_pbar: If True, display a tqdm progress bar during processing (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagecalc.maths
+
+        rsgispy.imagecalc.maths.image_band_math(
+            input_img="multispec.tif",
+            output_img="ndvi.tif",
+            exp="(b4 - b3) / (b4 + b3)",
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     ensure_file_exists(input_img)
@@ -322,6 +348,18 @@ def calc_prop_true_exp(
     :param in_vld_img: Optional valid-area mask image path (pixels == 1 in band 1).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :return: Proportion of true pixels in ``[0.0, 1.0]``.
+
+    .. code:: python
+
+        import rsgispy.imagecalc.maths
+
+        band_defs = [
+            rsgispy.imagecalc.maths.BandDefn("b1", "ndvi.tif", 1),
+        ]
+        prop = rsgispy.imagecalc.maths.calc_prop_true_exp(
+            exp="b1 > 0.3 ? 1 : 0",
+            band_defs=band_defs,
+        )
     """
     # pylint: disable=too-many-locals
     norm_defs = normalise_band_defs(band_defs)
@@ -404,6 +442,19 @@ def calc_area_under_curve(
                      (Default = ``rsgispy.TYPE_32FLOAT``).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagecalc.maths
+
+        rsgispy.imagecalc.maths.calc_area_under_curve(
+            input_img="timeseries.tif",
+            band_widths=[10.0, 10.0, 10.0, 10.0],
+            output_img="auc.tif",
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if band_widths is None:

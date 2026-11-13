@@ -83,6 +83,11 @@ def get_file_basename(
     :param rm_n_exts: Number of extensions to strip. ``0`` (default) strips all
                       dot-separated extensions.
     :return: Extracted basename string.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        bname = rsgispy.tools.files.get_file_basename("/path/to/img_tile.tar.gz")
     """
     file_base_name = os.path.basename(input_file)
     n_exts = file_base_name.count(".")
@@ -118,6 +123,11 @@ def is_path_valid(file_path_name: str) -> bool:
 
     :param file_path_name: File path to test.
     :return: True if valid, False otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        valid = rsgispy.tools.files.is_path_valid("/tmp/example.tif")
     """
     valid = isinstance(file_path_name, str) and bool(file_path_name)
     if valid:
@@ -158,6 +168,11 @@ def is_path_sibling_creatable(file_path_name: str) -> bool:
 
     :param file_path_name: File path to check.
     :return: True if a file can be created in the parent directory, False otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        ok = rsgispy.tools.files.is_path_sibling_creatable("/tmp/out.tif")
     """
     dirname = os.path.dirname(file_path_name) or os.getcwd()
     try:
@@ -175,6 +190,11 @@ def does_path_exists_or_creatable(file_path_name: str) -> bool:
 
     :param file_path_name: File path to check.
     :return: True if path exists or is creatable, False otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        ok = rsgispy.tools.files.does_path_exists_or_creatable("/tmp/out.tif")
     """
     try:
         return is_path_valid(file_path_name) and (
@@ -192,6 +212,11 @@ def get_dir_name(input_file: str) -> str:
 
     :param input_file: Path to an existing file or directory.
     :return: Directory name (without parent path).
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        dir_name = rsgispy.tools.files.get_dir_name("/data/scenes/img.tif")
     """
     abs_path = os.path.abspath(input_file)
     if os.path.isfile(abs_path):
@@ -211,6 +236,11 @@ def split_path_all(input_path: str) -> List[str]:
 
     :param input_path: Input file or directory path.
     :return: List of path components.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        parts = rsgispy.tools.files.split_path_all("/data/scenes/img.tif")
     """
     all_parts: List[str] = []
     cur_path = input_path
@@ -234,6 +264,11 @@ def delete_file_silent(input_file: str) -> bool:
 
     :param input_file: Path to the file to remove.
     :return: True if removed or did not exist; False if removal failed.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        removed = rsgispy.tools.files.delete_file_silent("/tmp/temp.txt")
     """
     try:
         if os.path.exists(input_file) and os.path.isfile(input_file):
@@ -250,6 +285,11 @@ def delete_file_with_basename(input_file: str, print_rms: bool = True) -> None:
 
     :param input_file: Input file path whose basename defines files to delete.
     :param print_rms: If True, print each deleted file path (Default = True).
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        rsgispy.tools.files.delete_file_with_basename("layer.shp")
     """
     base_name = os.path.splitext(input_file)[0]
     for file_path in glob.glob(f"{base_name}.*"):
@@ -274,6 +314,13 @@ def rm_files_size_gt(
     :param min_size: Minimum file size in bytes (exclusive).
     :param rm_file: If True, delete matching files; otherwise print commands.
     :param rm_use_basename: If True, delete all files sharing each basename.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        rsgispy.tools.files.rm_files_size_gt(
+            "/tmp/imgs", "*.tif", 1048576, rm_file=True
+        )
     """
     file_lst = find_files_size_limits(file_path, file_srch, min_size=min_size)
     for in_file in file_lst:
@@ -293,6 +340,11 @@ def find_file(dir_path: str, file_search: str) -> str:
     :param dir_path: Directory path to search.
     :param file_search: Glob pattern containing wildcard(s).
     :return: Matching file path.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        img_path = rsgispy.tools.files.find_file("/data/scenes", "*_b2.tif")
     """
     files = glob.glob(os.path.join(dir_path, file_search))
     if len(files) != 1:
@@ -310,6 +362,11 @@ def find_file_none(dir_path: str, file_search: str) -> Optional[str]:
     :param dir_path: Directory path to search.
     :param file_search: Glob pattern containing wildcard(s).
     :return: Matching file path or ``None``.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        img_path = rsgispy.tools.files.find_file_none("/data/scenes", "*_b2.tif")
     """
     files = glob.glob(os.path.join(dir_path, file_search))
     if len(files) != 1:
@@ -324,6 +381,11 @@ def find_files_ext(dir_path: str, ending: str) -> Dict[str, str]:
     :param dir_path: Base directory path to search.
     :param ending: Filename suffix/extension (e.g., ``'.tif'``).
     :return: Dictionary mapping filename to full file path.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        tifs = rsgispy.tools.files.find_files_ext("/data/scenes", ".tif")
     """
     out_file_dict: Dict[str, str] = {}
     for root, _, files in os.walk(dir_path):
@@ -345,6 +407,13 @@ def find_files_mpaths_ext(
     :param dir_paths: Sequence of base directory paths to search.
     :param ending: Filename suffix/extension (e.g., ``'.tif'``).
     :return: Dictionary mapping filename to full file path.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        tifs = rsgispy.tools.files.find_files_mpaths_ext(
+            ["/data/dir1", "/data/dir2"], ".tif"
+        )
     """
     out_file_dict: Dict[str, str] = {}
     for dir_path in dir_paths:
@@ -364,6 +433,11 @@ def find_first_file(
     :param rtn_except: If True, raise :class:`rsgispy.RSGISPyException` when
                        zero or multiple files match; otherwise return ``None``.
     :return: Matched file path, or ``None`` if ``rtn_except=False``.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        img = rsgispy.tools.files.find_first_file("/data", "*N15W093*.tif")
     """
     files: List[str] = []
     for root, _, _ in os.walk(dir_path):
@@ -394,6 +468,14 @@ def get_files_mod_time(
     :param dt_before: Keep files modified strictly before this datetime.
     :param dt_after: Keep files modified strictly after this datetime.
     :return: Filtered list of file paths.
+
+    .. code:: python
+
+        import datetime
+        import rsgispy.tools.files
+        recent = rsgispy.tools.files.get_files_mod_time(
+            ["a.tif", "b.tif"], dt_after=datetime.datetime(2025, 1, 1)
+        )
     """
     if (dt_before is None) and (dt_after is None):
         raise rsgispy.RSGISPyException(
@@ -425,6 +507,13 @@ def find_files_size_limits(
     :param min_size: Exclusive lower file size threshold in bytes (Default = 0).
     :param max_size: Optional exclusive upper file size threshold in bytes.
     :return: List of matching file paths.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        large_tifs = rsgispy.tools.files.find_files_size_limits(
+            "/data", "*.tif", min_size=1024
+        )
     """
     files = glob.glob(os.path.join(dir_path, file_search))
     out_files: List[str] = []
@@ -447,6 +536,11 @@ def is_cmd_tool_avail(
     :param cmd_name: Name of the executable (e.g., ``'tar'``, ``'gzip'``).
     :param test_call_cmd: Optional command argument list to execute as a check.
     :return: True if available (and test command succeeds if provided).
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        avail = rsgispy.tools.files.is_cmd_tool_avail("tar", ["tar", "--version"])
     """
     command_exists = shutil.which(cmd_name) is not None
     if (test_call_cmd is not None) and command_exists:
@@ -473,6 +567,11 @@ def file_is_hidden(dir_path: str) -> bool:
 
     :param dir_path: Input file or directory path.
     :return: True if hidden, False otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        hidden = rsgispy.tools.files.file_is_hidden("/data/.hidden_file")
     """
     abs_path = os.path.abspath(dir_path)
     if os.name == "nt":
@@ -495,6 +594,11 @@ def get_dir_list(dir_path: str, inc_hidden: bool = False) -> List[str]:
     :param dir_path: Directory path to inspect.
     :param inc_hidden: Whether to include hidden directories (Default = False).
     :return: List of subdirectory paths.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        dirs = rsgispy.tools.files.get_dir_list("/data/scenes")
     """
     out_dir_lst: List[str] = []
     for item in os.listdir(dir_path):
@@ -515,6 +619,11 @@ def get_dir_list_srch(
     :param name_inc: Substring required in directory name.
     :param inc_hidden: Whether to include hidden directories (Default = False).
     :return: List of matching subdirectory paths.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        dirs = rsgispy.tools.files.get_dir_list_srch("/data/scenes", "S2")
     """
     out_dir_lst: List[str] = []
     for item in os.listdir(dir_path):
@@ -538,6 +647,11 @@ def convert_file_size_units(
     :param in_unit: Input unit (``'bytes'``, ``'kb'``, ``'mb'``, ``'gb'``, ``'tb'``).
     :param out_unit: Output unit (``'bytes'``, ``'kb'``, ``'mb'``, ``'gb'``, ``'tb'``).
     :return: Converted file size as float.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        size_mb = rsgispy.tools.files.convert_file_size_units(1048576, "bytes", "mb")
     """
     in_unit_l = in_unit.lower()
     if in_unit_l not in _SIZE_UNITS:
@@ -561,6 +675,11 @@ def get_file_size(file_path: str, unit: str = "bytes") -> float:
     :param file_path: Path to an existing regular file.
     :param unit: Size unit (``'bytes'``, ``'kb'``, ``'mb'``, ``'gb'``, ``'tb'``).
     :return: File size in requested unit.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        size_mb = rsgispy.tools.files.get_file_size("input_img.tif", unit="mb")
     """
     unit_l = unit.lower()
     if unit_l not in _SIZE_UNITS:
@@ -583,6 +702,11 @@ def get_file_mod_time(file_path: str) -> datetime.datetime:
 
     :param file_path: Path to an existing file or directory.
     :return: Modification timestamp as ``datetime.datetime``.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        mtime = rsgispy.tools.files.get_file_mod_time("input_img.tif")
     """
     if not os.path.exists(file_path):
         raise rsgispy.RSGISPyException(f"File path does not exist: {file_path}")
@@ -604,6 +728,11 @@ def get_file_lock(
     :param use_except: If True, raise :class:`rsgispy.RSGISPyException` when
                        lock acquisition fails; otherwise return False.
     :return: True if lock was acquired, False otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        locked = rsgispy.tools.files.get_file_lock("/data/output.tif")
     """
     file_path, file_name = os.path.split(input_file)
     lock_file_path = os.path.join(file_path, f".{file_name}.lok")
@@ -633,6 +762,11 @@ def release_file_lock(input_file: str) -> None:
     Release the ``.<filename>.lok`` lock file for ``input_file``.
 
     :param input_file: Target file path whose lock file should be removed.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        rsgispy.tools.files.release_file_lock("/data/output.tif")
     """
     file_path, file_name = os.path.split(input_file)
     lock_file_path = os.path.join(file_path, f".{file_name}.lok")
@@ -650,6 +784,11 @@ def clean_file_locks(dir_path: str, timeout: int = 3600) -> None:
 
     :param dir_path: Directory containing lock files.
     :param timeout: Lock expiry threshold in seconds (Default = 3600).
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        rsgispy.tools.files.clean_file_locks("/data", timeout=3600)
     """
     c_datetime = datetime.datetime.now()
     for lock_file_path in glob.glob(os.path.join(dir_path, ".*.lok")):
@@ -693,6 +832,13 @@ def sort_imgs_to_dirs_utm(
     :param input_imgs_dir: Input directory containing images.
     :param file_search_str: Glob search pattern relative to ``input_imgs_dir``.
     :param out_base_dir: Destination base directory for ``utm<zone>`` folders.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        rsgispy.tools.files.sort_imgs_to_dirs_utm(
+            "/data/raw", "*.tif", "/data/by_utm"
+        )
     """
     in_files = glob.glob(os.path.join(input_imgs_dir, file_search_str))
     for img_file in in_files:
@@ -713,6 +859,13 @@ def natural_sort_file_names(in_file_lst: List[str]) -> List[str]:
 
     :param in_file_lst: List of file paths to sort.
     :return: Naturally sorted list of file paths.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        sorted_files = rsgispy.tools.files.natural_sort_file_names(
+            ["img10.tif", "img2.tif", "img1.tif"]
+        )
     """
     nsre = re.compile("([0-9]+)")
 
@@ -733,6 +886,13 @@ def sort_file_by_datetime(in_file_lst: List[str]) -> List[str]:
 
     :param in_file_lst: List of existing file paths.
     :return: Sorted list of file paths.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        sorted_files = rsgispy.tools.files.sort_file_by_datetime(
+            ["a.tif", "b.tif"]
+        )
     """
     in_file_lst.sort(key=os.path.getmtime)
     return in_file_lst
@@ -749,6 +909,12 @@ def work_dir_context(tmp_dir: Optional[str] = None) -> Iterator[str]:
 
     :param tmp_dir: Optional user-provided directory path (Default = ``None``).
     :return: Path to the working directory.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        with rsgispy.tools.files.work_dir_context() as work_dir:
+            print(work_dir)
     """
     if tmp_dir is None:
         with tempfile.TemporaryDirectory() as tmp_path:

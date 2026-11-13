@@ -97,6 +97,13 @@ if HAVE_IMAGEIO:
         :param out_x_size: Target width when ``resize=True`` (Default = ``720``).
         :param out_y_size: Target height when ``resize=True`` (proportional if ``None``).
         :param tmp_dir: Directory for temporary resized images when ``resize=True``.
+
+        .. code:: python
+
+            import rsgispy.tools.imaging
+            rsgispy.tools.imaging.animate_img_set(
+                ["frame1.png", "frame2.png"], "animation.gif", fps=2
+            )
         """
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         # pylint: disable=too-many-locals,import-outside-toplevel
@@ -140,6 +147,11 @@ def list_exif_info_pil(input_img: str) -> None:
     Print EXIF metadata from ``input_img`` using ``PIL``.
 
     :param input_img: Path to the input image file.
+
+    .. code:: python
+
+        import rsgispy.tools.imaging
+        rsgispy.tools.imaging.list_exif_info_pil("photo.jpg")
     """
     # pylint: disable=import-outside-toplevel
     from PIL import Image
@@ -169,6 +181,11 @@ if HAVE_EXIFTOOL:
         Print EXIF metadata from ``input_img`` using ``exiftool``.
 
         :param input_img: Path to the input image file.
+
+        .. code:: python
+
+            import rsgispy.tools.imaging
+            rsgispy.tools.imaging.list_exif_info("photo.jpg")
         """
         exif_dict = get_exif_info(input_img)
         for exif_tag, exif_val in exif_dict.items():
@@ -180,6 +197,11 @@ if HAVE_EXIFTOOL:
 
         :param input_img: Path to the input image file.
         :return: Dictionary mapping EXIF tag names to metadata values.
+
+        .. code:: python
+
+            import rsgispy.tools.imaging
+            exif = rsgispy.tools.imaging.get_exif_info("photo.jpg")
         """
         out_exif_data: Dict[str, Any] = {}
         with exiftool.ExifToolHelper() as et_helper:
@@ -202,6 +224,11 @@ if HAVE_PYMUPDF:
 
         :param input_pdf: Path to the input PDF file.
         :param output_dir: Output directory where PNG images will be saved.
+
+        .. code:: python
+
+            import rsgispy.tools.imaging
+            rsgispy.tools.imaging.extract_images_from_pdf("report.pdf", "./pdf_imgs")
         """
         tqdm_cls = rsgispy.get_tqdm()
         os.makedirs(output_dir, exist_ok=True)
@@ -225,6 +252,11 @@ if HAVE_PYMUPDF:
 
         :param input_pdf: Path to the input PDF file.
         :param output_pdf: Path to the output PDF file.
+
+        .. code:: python
+
+            import rsgispy.tools.imaging
+            rsgispy.tools.imaging.add_pdf_blank_pages("report.pdf", "report_blank.pdf")
         """
         _, pdf_doc = _open_pdf_doc(input_pdf)
         try:
@@ -253,6 +285,11 @@ if HAVE_QRCODE:
         :param qr_data: String payload to encode in the QR code.
         :param qr_code_size: Pixel box size for each QR module (Default = ``10``).
         :param qr_code_border: Quiet-zone border size in boxes (Default = ``4``).
+
+        .. code:: python
+
+            import rsgispy.tools.imaging
+            rsgispy.tools.imaging.create_qr_code("qr.png", "https://example.com")
         """
         qr_obj = qrcode.QRCode(
             version=5,

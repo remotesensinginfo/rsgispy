@@ -49,6 +49,21 @@ def ext_point_band_values_file(
     :param reproj_vec: Reproject point coordinates on the fly when True if vector
                        and raster CRSs differ (Default = False).
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
+
+    .. code:: python
+
+        import rsgispy.zonalstats.point
+
+        rsgispy.zonalstats.point.ext_point_band_values_file(
+            vec_file="points.gpkg",
+            vec_lyr="points",
+            input_img="img.tif",
+            img_band=1,
+            min_thres=0.0,
+            max_thres=10000.0,
+            out_no_data_val=-999.0,
+            out_field="b1_val",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     vec_gdf = _read_vec_file(vec_file, vec_lyr)
@@ -96,6 +111,22 @@ def ext_point_band_values(
                        and raster CRSs differ (Default = False).
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :return: Updated :class:`geopandas.GeoDataFrame`.
+
+    .. code:: python
+
+        import geopandas
+        import rsgispy.zonalstats.point
+
+        vec_gdf = geopandas.read_file("points.gpkg", layer="points")
+        out_gdf = rsgispy.zonalstats.point.ext_point_band_values(
+            vec_gdf=vec_gdf,
+            input_img="img.tif",
+            img_band=1,
+            min_thres=0.0,
+            max_thres=10000.0,
+            out_no_data_val=-999.0,
+            out_field="b1_val",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if vec_gdf is None:

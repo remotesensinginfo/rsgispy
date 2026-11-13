@@ -50,6 +50,21 @@ def subset_bbox(
     :param min_y: Minimum Y coordinate in ``input_img`` CRS.
     :param max_y: Maximum Y coordinate in ``input_img`` CRS.
     :param options: Optional GDAL creation options mapping.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.subsetting
+        rsgispy.imageutils.subsetting.subset_bbox(
+            "input_img.tif",
+            "subset_img.tif",
+            "GTIFF",
+            rsgispy.TYPE_32FLOAT,
+            500000.0,
+            505000.0,
+            4000000.0,
+            4005000.0,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
@@ -121,6 +136,18 @@ def subset_to_img(
     :param output_img: Path to the output subset image file.
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.subsetting
+        rsgispy.imageutils.subsetting.subset_to_img(
+            "input_img.tif",
+            "roi_img.tif",
+            "subset_img.tif",
+            "GTIFF",
+            rsgispy.TYPE_32FLOAT,
+        )
     """
     ensure_file_exists(input_img)
     ensure_file_exists(in_roi_img, label="ROI image")
@@ -163,6 +190,19 @@ def subset(
     :param output_img: Path to the output subset image file.
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.subsetting
+        rsgispy.imageutils.subsetting.subset(
+            "input_img.tif",
+            "roi.gpkg",
+            "roi_layer",
+            "subset_img.tif",
+            "GTIFF",
+            rsgispy.TYPE_32FLOAT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     ensure_file_exists(input_img)

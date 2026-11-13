@@ -188,6 +188,11 @@ def get_item_type_str(item_type: int) -> str:
 
     :param item_type: ``RSGIS_PLANET_ITEM_*`` value.
     :return: String representation of the item type.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.planet_data_api as pl
+        item_str = pl.get_item_type_str(pl.RSGIS_PLANET_ITEM_PSScene)
     """
     if item_type not in _ITEM_TYPE_MAP:
         raise rsgispy.RSGISPyException("item_type was not recognised")
@@ -200,6 +205,11 @@ def get_asset_type_str(asset_type: int) -> str:
 
     :param asset_type: ``RSGIS_PLANET_ASSET_*`` value.
     :return: String representation of the asset type.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.planet_data_api as pl
+        asset_str = pl.get_asset_type_str(pl.RSGIS_PLANET_ASSET_ortho_analytic_4b_sr)
     """
     if asset_type not in _ASSET_TYPE_MAP:
         raise rsgispy.RSGISPyException("asset_type was not recognised")
@@ -212,6 +222,11 @@ def get_bundle_type_str(bundle_type: int) -> str:
 
     :param bundle_type: ``RSGIS_PLANET_BUNDLE_*`` value.
     :return: String representation of the bundle type.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.planet_data_api as pl
+        bundle_str = pl.get_bundle_type_str(pl.RSGIS_PLANET_BUNDLE_analytic_sr_udm2)
     """
     if bundle_type not in _BUNDLE_TYPE_MAP:
         raise rsgispy.RSGISPyException("bundle_type was not recognised")
@@ -231,6 +246,11 @@ def planet_auth(
     :param api_key: Planet API key. Reads ``RSGIS_PLANET_API_KEY`` or
                     ``PL_API_KEY`` if ``None``.
     :return: A ``planet.Auth`` object.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.planet_data_api as pl
+        auth = pl.planet_auth(api_key="PLAK_example_key")
     """
     _require_planet()
 
@@ -344,6 +364,21 @@ def run_search_planet_items(
     :param view_angle_max: Optional maximum view angle (degrees).
     :param max_n_rslts: Maximum number of results to return (default: 25).
     :return: List of scene item dictionaries.
+
+    .. code:: python
+
+        import datetime
+        import rsgispy.dataaccess.planet_data_api as pl
+
+        auth = pl.planet_auth()
+        items = pl.run_search_planet_items(
+            auth_obj=auth,
+            item_type=pl.RSGIS_PLANET_ITEM_PSScene,
+            bbox=(-4.1, -4.0, 52.4, 52.5),
+            start_date=datetime.datetime(2024, 6, 1),
+            end_date=datetime.datetime(2024, 6, 30),
+            cloud_cover=0.1,
+        )
     """
     return asyncio.run(
         _search_planet_items(
@@ -416,6 +451,19 @@ def run_download_and_validate_item(
     :param asset_type: Asset type constant (``RSGIS_PLANET_ASSET_*``).
     :param out_file_path: Output directory where the asset is downloaded.
     :param overwrite: Overwrite existing files if ``True``.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.planet_data_api as pl
+
+        auth = pl.planet_auth()
+        pl.run_download_and_validate_item(
+            auth_obj=auth,
+            item_type=pl.RSGIS_PLANET_ITEM_PSScene,
+            item_id="20240615_101500_0f34",
+            asset_type=pl.RSGIS_PLANET_ASSET_ortho_analytic_4b_sr,
+            out_file_path="./planet_downloads",
+        )
     """
     asyncio.run(
         _download_and_validate_item(
@@ -484,6 +532,22 @@ def run_create_planet_order(
     :param bundle_type: Bundle type constant (``RSGIS_PLANET_BUNDLE_*``).
     :param email_notification: Send email when ready for download (default: ``True``).
     :return: Dictionary describing the created order.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.planet_data_api as pl
+
+        auth = pl.planet_auth()
+        items = pl.run_search_planet_items(
+            auth, pl.RSGIS_PLANET_ITEM_PSScene, (-4.1, -4.0, 52.4, 52.5)
+        )
+        order = pl.run_create_planet_order(
+            auth_obj=auth,
+            order_name="my_order",
+            items=items,
+            item_type=pl.RSGIS_PLANET_ITEM_PSScene,
+            bundle_type=pl.RSGIS_PLANET_BUNDLE_analytic_sr_udm2,
+        )
     """
     return asyncio.run(
         _create_planet_order(
@@ -531,6 +595,17 @@ def run_download_planet_order(
     :param out_file_path: Local directory for downloaded files.
     :param overwrite: Overwrite existing files if ``True``.
     :return: List of downloaded file paths.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.planet_data_api as pl
+
+        auth = pl.planet_auth()
+        files = pl.run_download_planet_order(
+            auth_obj=auth,
+            order_id="12345678-abcd-1234-abcd-1234567890ab",
+            out_file_path="./planet_orders",
+        )
     """
     return asyncio.run(
         _download_planet_order(auth_obj, order_id, out_file_path, overwrite)
@@ -553,6 +628,13 @@ def run_get_planet_orders(auth_obj: Any) -> List[Dict]:
 
     :param auth_obj: ``planet.Auth`` object from :func:`planet_auth`.
     :return: List of order dictionaries.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.planet_data_api as pl
+
+        auth = pl.planet_auth()
+        orders = pl.run_get_planet_orders(auth_obj=auth)
     """
     return asyncio.run(_get_planet_orders(auth_obj))
 
@@ -580,5 +662,15 @@ def run_cancel_planet_orders(
     :param auth_obj: ``planet.Auth`` object from :func:`planet_auth`.
     :param order_ids: Optional list of order IDs to cancel.
     :return: Dictionary describing cancelled orders.
+
+    .. code:: python
+
+        import rsgispy.dataaccess.planet_data_api as pl
+
+        auth = pl.planet_auth()
+        res = pl.run_cancel_planet_orders(
+            auth_obj=auth,
+            order_ids=["12345678-abcd-1234-abcd-1234567890ab"],
+        )
     """
     return asyncio.run(_cancel_planet_orders(auth_obj, order_ids))

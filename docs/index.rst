@@ -1,7 +1,10 @@
 rsgispy Documentation
 =====================
 
-**rsgispy** is a pure Python replacement for `RSGISLib <http://www.rsgislib.org>`_ designed to be easy to install and maintain while preserving a familiar API for remote sensing and GIS raster processing.
+**rsgispy** is a pure Python replacement for `RSGISLib <http://www.rsgislib.org>`_
+designed to be easy to install and maintain while preserving a familiar API for
+remote sensing and GIS raster processing using ``rasterio``, ``numpy``, ``pyproj``,
+``geopandas``, and ``pymu-eval``.
 
 Installation
 ------------
@@ -21,7 +24,8 @@ To install with testing and documentation dependencies:
 Quickstart
 ----------
 
-Evaluating a mathematical expression across image bands with :func:`rsgispy.imagecalc.maths.band_maths`:
+Evaluating a mathematical expression across image bands with
+:func:`rsgispy.imagecalc.maths.band_maths`:
 
 .. code-block:: python
 
@@ -40,8 +44,19 @@ Evaluating a mathematical expression across image bands with :func:`rsgispy.imag
        band_defs=band_defns,
    )
 
-Contents
---------
+Package Overview
+----------------
+
+* :doc:`rsgispy` — Core data type constants, exception class, and interpolation mappings.
+* :doc:`rsgispy_dataaccess` — Clients for Copernicus OData, NASA CMR, OSM, Planet, and USGS M2M.
+* :doc:`rsgispy_droneutils` — Drone photo organisation and metadata utilities.
+* :doc:`rsgispy_elevation` — Terrain derivatives, illumination, DEM filtering, fusion, and roughness.
+* :doc:`rsgispy_imagecalc` — Band maths, statistics, percentiles, comparison, encoding, and distance.
+* :doc:`rsgispy_imagemorphology` — Morphological raster filtering (dilation, erosion, opening, closing).
+* :doc:`rsgispy_imageprocess` — Block-processing engine, spatial intersection, and dataset validation.
+* :doc:`rsgispy_imageutils` — Raster creation, metadata, masking, mosaicking, tiling, VRT, and warping.
+* :doc:`rsgispy_tools` — General geospatial, geometry, projection, plotting, mapping, and file utilities.
+* :doc:`rsgispy_zonalstats` — Polygon and point zonal statistics extraction.
 
 .. toctree::
    :maxdepth: 2
@@ -53,8 +68,8 @@ Contents
    rsgispy_elevation
    rsgispy_imagecalc
    rsgispy_imagemorphology
-   rsgispy_imageutils
    rsgispy_imageprocess
+   rsgispy_imageutils
    rsgispy_tools
    rsgispy_zonalstats
 

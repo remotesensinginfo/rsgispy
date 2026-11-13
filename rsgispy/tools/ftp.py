@@ -152,6 +152,13 @@ def get_ftp_file_listings(
     :param try_n_times: Number of retries per directory listing (Default = ``5``).
     :param mlsd_not_avail: Fallback to ``LIST`` when ``MLSD`` is unsupported.
     :return: Tuple ``(dir_to_files_dict, flat_file_list)``.
+
+    .. code:: python
+
+        import rsgispy.tools.ftp
+        dirs, files = rsgispy.tools.ftp.get_ftp_file_listings(
+            "ftp.example.com", "/pub/data"
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     ftp_files: Dict[str, List[str]] = {}
@@ -195,6 +202,13 @@ if HAVE_PYSONDB:
         :param ftp_timeout: Connection timeout in seconds (Default = ``300``).
         :param try_n_times: Number of retries per directory listing (Default = ``5``).
         :param mlsd_not_avail: Fallback to ``LIST`` when ``MLSD`` is unsupported.
+
+        .. code:: python
+
+            import rsgispy.tools.ftp
+            rsgispy.tools.ftp.create_file_listings_db(
+                "ftp_files.json", "ftp.example.com", "/pub/data"
+            )
         """
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         tqdm_cls = rsgispy.get_tqdm()
@@ -234,6 +248,13 @@ if HAVE_PYSONDB:
         :param filter_vals: Substrings to match.
         :param out_db_file: Output filtered JSON database file path.
         :param filter_path: Match against full remote path when ``True`` (Default = ``False``).
+
+        .. code:: python
+
+            import rsgispy.tools.ftp
+            rsgispy.tools.ftp.filter_file_listings_db(
+                "ftp_files.json", [".tif", ".xml"], "filtered_files.json"
+            )
         """
         tqdm_cls = rsgispy.get_tqdm()
         lst_db = pysondb.getDb(db_json)
@@ -281,6 +302,13 @@ def download_ftp_file(
     :param ftp_pass: Optional FTP password.
     :param print_info: Print progress messages when ``True``.
     :return: ``True`` on success, ``False`` on failure.
+
+    .. code:: python
+
+        import rsgispy.tools.ftp
+        ok = rsgispy.tools.ftp.download_ftp_file(
+            "ftp.example.com", "/pub/data/file.zip", "file.zip"
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     try:
@@ -320,6 +348,13 @@ def download_curl_ftp_file(
     :param ftp_pass: Optional FTP password.
     :param print_info: Print progress info when ``True``.
     :return: ``True`` on success, ``False`` on failure.
+
+    .. code:: python
+
+        import rsgispy.tools.ftp
+        ok = rsgispy.tools.ftp.download_curl_ftp_file(
+            "ftp://ftp.example.com", "/pub/data/file.zip", "file.zip"
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=import-outside-toplevel,c-extension-no-member,no-member
@@ -379,6 +414,13 @@ if HAVE_PYSONDB:
         :param ftp_pass: Optional FTP password.
         :param create_dir_struct: Preserve remote directory hierarchy when ``True``.
         :param use_curl: Use :func:`download_curl_ftp_file` instead of :func:`download_ftp_file`.
+
+        .. code:: python
+
+            import rsgispy.tools.ftp
+            rsgispy.tools.ftp.download_files_use_lst_db(
+                "ftp_files.json", "./downloads", create_dir_struct=True
+            )
         """
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         tqdm_cls = rsgispy.get_tqdm()
@@ -432,6 +474,13 @@ def upload_ftp_file(
     :param ftp_pass: Optional FTP password.
     :param print_info: Print progress messages when ``True``.
     :return: ``True`` on success, ``False`` on failure.
+
+    .. code:: python
+
+        import rsgispy.tools.ftp
+        ok = rsgispy.tools.ftp.upload_ftp_file(
+            "local_file.zip", "ftp.example.com", "/pub/uploads"
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not os.path.isfile(local_file):

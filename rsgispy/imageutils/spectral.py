@@ -150,6 +150,18 @@ def spectral_smoothing(
                      (Default = :data:`rsgispy.TYPE_32FLOAT`).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.spectral
+        rsgispy.imageutils.spectral.spectral_smoothing(
+            "input_img.tif",
+            "valid_msk.tif",
+            1,
+            "smoothed_img.tif",
+            win_len=5,
+            polyorder=3,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     if win_len < 3 or win_len % 2 == 0:
@@ -202,6 +214,13 @@ def mask_outliners_data_values(
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.spectral
+        rsgispy.imageutils.spectral.mask_outliners_data_values(
+            "input_img.tif", "valid_msk.tif", 1, "masked_img.tif"
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     if not 0.0 <= float(lower) <= float(upper) <= 100.0:
@@ -256,6 +275,17 @@ def polyfill_nan_data_values(
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.spectral
+        rsgispy.imageutils.spectral.polyfill_nan_data_values(
+            "input_img.tif",
+            [490.0, 560.0, 665.0, 842.0],
+            "valid_msk.tif",
+            1,
+            "filled_img.tif",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     band_arr = np.asarray(band_vals, dtype=np.float64)
@@ -319,6 +349,13 @@ def whiten_image(
     :param valid_msk_val: Mask value identifying valid pixels.
     :param output_img: Path to the output float32 whitened image file.
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.spectral
+        rsgispy.imageutils.spectral.whiten_image(
+            "input_img.tif", "valid_msk.tif", 1, "whitened_img.tif", "GTIFF"
+        )
     """
     # pylint: disable=too-many-locals
     ensure_file_exists(input_img)

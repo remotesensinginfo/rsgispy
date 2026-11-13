@@ -199,6 +199,14 @@ def get_img_subset_pxl_bbox(
     :param sub_bbox: Spatial bounding box ``(MinX, MaxX, MinY, MaxY)`` in the
                      image CRS.
     :return: Pixel bounding box ``(min_x_pxl, max_x_pxl, min_y_pxl, max_y_pxl)``.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        pxl_bbox = rsgispy.imageutils.metadata.get_img_subset_pxl_bbox(
+            "img.tif", (500000.0, 501000.0, 5599000.0, 5600000.0)
+        )
     """
     img_bbox = get_img_bbox(input_img)
     x_res, y_res = get_img_res(input_img, abs_vals=True)
@@ -236,6 +244,14 @@ def get_img_pxl_spatial_coords(
     :param input_img: Path to the input image file.
     :param sub_pxl_bbox: Pixel bounding box ``(min_x, max_x, min_y, max_y)``.
     :return: Spatial bounding box ``(MinX, MaxX, MinY, MaxY)``.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        bbox = rsgispy.imageutils.metadata.get_img_pxl_spatial_coords(
+            "img.tif", (0, 100, 0, 100)
+        )
     """
     img_bbox = get_img_bbox(input_img)
     x_res, y_res = get_img_res(input_img, abs_vals=True)
@@ -261,6 +277,14 @@ def get_img_pxl_coords(
     :param x_coords: Array or sequence of X spatial coordinates.
     :param y_coords: Array or sequence of Y spatial coordinates.
     :return: Tuple ``(x_pxl_coords, y_pxl_coords)`` of integer NumPy arrays.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        x_pxls, y_pxls = rsgispy.imageutils.metadata.get_img_pxl_coords(
+            "img.tif", [500050.0, 500100.0], [5599950.0, 5599900.0]
+        )
     """
     _ensure_img_exists(input_img)
     x_arr = np.asarray(x_coords, dtype=np.float64)
@@ -295,6 +319,12 @@ def get_img_files(input_img: str) -> List[str]:
 
     :param input_img: Path to the input image file.
     :return: List of associated file paths.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        files = rsgispy.imageutils.metadata.get_img_files("img.tif")
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
@@ -307,6 +337,12 @@ def has_gcps(input_img: str) -> bool:
 
     :param input_img: Path to the input image file.
     :return: ``True`` if the image has one or more GCPs, ``False`` otherwise.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        gcps_present = rsgispy.imageutils.metadata.has_gcps("img.tif")
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
@@ -321,6 +357,12 @@ def copy_gcps(input_img: str, output_img: str) -> None:
 
     :param input_img: Path to the source image containing GCPs.
     :param output_img: Path to the target image to update with GCPs.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        rsgispy.imageutils.metadata.copy_gcps("in_img.tif", "out_img.tif")
     """
     _ensure_img_exists(input_img)
     _ensure_img_exists(output_img)
@@ -427,6 +469,14 @@ def assign_spatial_info(
     :param res_y: Pixel height (Y resolution, typically negative for north-up).
     :param rot_x: X rotation parameter.
     :param rot_y: Y rotation parameter.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        rsgispy.imageutils.metadata.assign_spatial_info(
+            "img.tif", tl_x=500000.0, tl_y=5600000.0, res_x=10.0, res_y=-10.0
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     _ensure_img_exists(input_img)
@@ -453,6 +503,12 @@ def copy_proj_from_img(input_img: str, ref_img: str) -> None:
 
     :param input_img: Path to the target image file to update.
     :param ref_img: Path to the reference image file.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        rsgispy.imageutils.metadata.copy_proj_from_img("in_img.tif", "ref_img.tif")
     """
     # pylint: disable=c-extension-no-member
     _ensure_img_exists(ref_img)
@@ -471,6 +527,14 @@ def copy_spatial_and_proj_from_img(input_img: str, ref_img: str) -> None:
 
     :param input_img: Path to the target image file to update.
     :param ref_img: Path to the reference image file.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        rsgispy.imageutils.metadata.copy_spatial_and_proj_from_img(
+            "in_img.tif", "ref_img.tif"
+        )
     """
     # pylint: disable=c-extension-no-member
     _ensure_img_exists(ref_img)
@@ -490,6 +554,12 @@ def get_wkt_proj_from_img(input_img: str) -> str:
 
     :param input_img: Path to the input image file.
     :return: WKT projection string.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        wkt_str = rsgispy.imageutils.metadata.get_wkt_proj_from_img("img.tif")
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
@@ -504,6 +574,12 @@ def get_epsg_proj_from_img(input_img: str) -> Optional[int]:
 
     :param input_img: Path to the input image file.
     :return: EPSG integer code or ``None``.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        epsg_code = rsgispy.imageutils.metadata.get_epsg_proj_from_img("img.tif")
     """
     _ensure_img_exists(input_img)
     try:
@@ -525,6 +601,12 @@ def get_utm_zone(input_img: str) -> Optional[str]:
 
     :param input_img: Path to the input image file.
     :return: Zero-padded UTM zone string or ``None``.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        utm_zone = rsgispy.imageutils.metadata.get_utm_zone("img.tif")
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
@@ -612,6 +694,12 @@ def set_band_names(
     :param input_img: Path to the input image file.
     :param band_names: Sequence of band names (applied from band 1 upwards).
     :param feedback: If ``True``, print each band assignment (Default = ``False``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        rsgispy.imageutils.metadata.set_band_names("img.tif", ["Red", "Green", "Blue"])
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r+") as dst:
@@ -632,6 +720,12 @@ def get_band_names(input_img: str) -> List[str]:
 
     :param input_img: Path to the input image file.
     :return: List of band name strings (empty string where unset).
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        band_names = rsgispy.imageutils.metadata.get_band_names("img.tif")
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
@@ -647,6 +741,12 @@ def get_gdal_datatype_from_img(input_img: str) -> int:
 
     :param input_img: Path to the input image file.
     :return: GDAL datatype integer constant.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        gdal_dtype = rsgispy.imageutils.metadata.get_gdal_datatype_from_img("img.tif")
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
@@ -664,6 +764,12 @@ def get_rsgislib_datatype_from_img(input_img: str) -> int:
 
     :param input_img: Path to the input image file.
     :return: ``rsgispy.TYPE_*`` integer constant.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        dtype = rsgispy.imageutils.metadata.get_rsgislib_datatype_from_img("img.tif")
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
@@ -678,6 +784,12 @@ def get_gdal_datatype_name_from_img(input_img: str) -> str:
 
     :param input_img: Path to the input image file.
     :return: GDAL datatype name string.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        dtype_name = rsgispy.imageutils.metadata.get_gdal_datatype_name_from_img("img.tif")
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
@@ -695,6 +807,12 @@ def get_gdal_format_from_ext(input_img: str) -> str:
 
     :param input_img: Input image file path.
     :return: GDAL driver format string (e.g., ``'KEA'``, ``'GTiff'``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        fmt = rsgispy.imageutils.metadata.get_gdal_format_from_ext("img.tif")
     """
     ext = os.path.splitext(input_img)[-1].lower()
     if ext not in _EXT_TO_GDAL_FORMAT:
@@ -710,6 +828,12 @@ def get_file_img_extension(gdalformat: str) -> str:
 
     :param gdalformat: GDAL format string (e.g., ``'KEA'``, ``'GTIFF'``).
     :return: File extension string (e.g., ``'kea'``, ``'tif'``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        ext = rsgispy.imageutils.metadata.get_file_img_extension("GTIFF")
     """
     fmt_key = gdalformat.lower().strip()
     if fmt_key not in _GDAL_FORMAT_TO_EXT:
@@ -739,6 +863,12 @@ def rename_gdal_layer(input_img: str, output_img: str) -> None:
 
     :param input_img: Current path of the raster layer.
     :param output_img: Target path of the renamed raster layer.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        rsgispy.imageutils.metadata.rename_gdal_layer("old_img.tif", "new_img.tif")
     """
     files = _collect_layer_files(input_img)
     in_stem = os.path.splitext(input_img)[0]
@@ -762,6 +892,12 @@ def delete_gdal_layer(input_img: str) -> None:
     Delete ``input_img`` and any associated rasterio/GDAL sidecar files.
 
     :param input_img: Path to the raster layer to delete.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        rsgispy.imageutils.metadata.delete_gdal_layer("tmp_img.tif")
     """
     files = _collect_layer_files(input_img)
     for fpath in files:
@@ -782,6 +918,14 @@ def set_img_band_metadata(
     :param img_band: 1-based band index.
     :param meta_field_name: Metadata field name.
     :param meta_field_value: Metadata field value.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        rsgispy.imageutils.metadata.set_img_band_metadata(
+            "img.tif", 1, "WAVELENGTH", "665"
+        )
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r+") as dst:
@@ -799,6 +943,14 @@ def get_img_band_metadata(
     :param img_band: 1-based band index.
     :param meta_field_name: Metadata field name.
     :return: Metadata value string, or ``None`` if not set.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        val = rsgispy.imageutils.metadata.get_img_band_metadata(
+            "img.tif", 1, "WAVELENGTH"
+        )
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
@@ -813,6 +965,14 @@ def get_img_band_metadata_fields(input_img: str, img_band: int) -> List[str]:
     :param input_img: Path to the input image file.
     :param img_band: 1-based band index.
     :return: List of metadata field names.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        fields = rsgispy.imageutils.metadata.get_img_band_metadata_fields(
+            "img.tif", 1
+        )
     """
     return list(get_img_band_metadata_fields_dict(input_img, img_band).keys())
 
@@ -827,6 +987,14 @@ def get_img_band_metadata_fields_dict(
     :param input_img: Path to the input image file.
     :param img_band: 1-based band index.
     :return: Dictionary of metadata keys and values.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        meta = rsgispy.imageutils.metadata.get_img_band_metadata_fields_dict(
+            "img.tif", 1
+        )
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
@@ -843,6 +1011,14 @@ def set_img_metadata(
     :param input_img: Path to the input image file.
     :param meta_field_name: Metadata field name.
     :param meta_field_value: Metadata field value.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        rsgispy.imageutils.metadata.set_img_metadata(
+            "img.tif", "SENSOR", "Sentinel-2"
+        )
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r+") as dst:
@@ -856,6 +1032,12 @@ def get_img_metadata(input_img: str, meta_field_name: str) -> Optional[str]:
     :param input_img: Path to the input image file.
     :param meta_field_name: Metadata field name.
     :return: Metadata value string, or ``None`` if not set.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        sensor = rsgispy.imageutils.metadata.get_img_metadata("img.tif", "SENSOR")
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
@@ -868,6 +1050,12 @@ def get_img_metadata_fields(input_img: str) -> List[str]:
 
     :param input_img: Path to the input image file.
     :return: List of metadata field names.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        fields = rsgispy.imageutils.metadata.get_img_metadata_fields("img.tif")
     """
     return list(get_img_metadata_fields_dict(input_img).keys())
 
@@ -879,6 +1067,12 @@ def get_img_metadata_fields_dict(input_img: str) -> Dict[str, str]:
 
     :param input_img: Path to the input image file.
     :return: Dictionary of metadata keys and values.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        meta = rsgispy.imageutils.metadata.get_img_metadata_fields_dict("img.tif")
     """
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:

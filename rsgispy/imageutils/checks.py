@@ -39,6 +39,12 @@ def do_img_res_match(in_a_img: str, in_b_img: str) -> bool:
     :param in_a_img: First input image file path.
     :param in_b_img: Second input image file path.
     :return: ``True`` if both X and Y resolutions match, ``False`` otherwise.
+
+    .. code:: python
+
+        import rsgispy.imageutils.checks
+
+        res_match = rsgispy.imageutils.checks.do_img_res_match("img1.tif", "img2.tif")
     """
     img1_x_res, img1_y_res = get_img_res(in_a_img)
     img2_x_res, img2_y_res = get_img_res(in_b_img)
@@ -67,6 +73,14 @@ def check_img_lst(
     :param abs_res: If ``True``, compare absolute pixel resolution values
                     (Default = ``True``).
     :return: List of image paths that pass all checks.
+
+    .. code:: python
+
+        import rsgispy.imageutils.checks
+
+        valid_imgs = rsgispy.imageutils.checks.check_img_lst(
+            ["img1.tif", "img2.tif"], 10.0, 10.0
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     if abs_res:
@@ -113,6 +127,14 @@ def check_img_file_comparison(
     :param test_eql_bbox: If ``True``, require identical bounding boxes (Default = ``False``).
     :param print_errors: If ``True``, print mismatch details (Default = ``True``).
     :return: ``True`` if images pass all enabled checks, ``False`` otherwise.
+
+    .. code:: python
+
+        import rsgispy.imageutils.checks
+
+        ok = rsgispy.imageutils.checks.check_img_file_comparison(
+            "base.tif", "comp.tif", test_n_bands=True, test_eql_bbox=True
+        )
     """
     imgs_match = True
 
@@ -155,6 +177,14 @@ def do_gdal_layers_have_same_proj(in_a_img: str, in_b_img: str) -> bool:
     :param in_a_img: First input image file path.
     :param in_b_img: Second input image file path.
     :return: ``True`` if projections match, ``False`` otherwise.
+
+    .. code:: python
+
+        import rsgispy.imageutils.checks
+
+        same_proj = rsgispy.imageutils.checks.do_gdal_layers_have_same_proj(
+            "img1.tif", "img2.tif"
+        )
     """
     epsg_a = get_epsg_proj_from_img(in_a_img)
     epsg_b = get_epsg_proj_from_img(in_b_img)
@@ -177,6 +207,12 @@ def do_images_overlap(
     :param over_thres: Minimum required overlap width/height in ``in_a_img`` CRS
                        units (Default = ``0.0``).
     :return: ``True`` if the images overlap by more than ``over_thres``, else ``False``.
+
+    .. code:: python
+
+        import rsgispy.imageutils.checks
+
+        overlaps = rsgispy.imageutils.checks.do_images_overlap("img1.tif", "img2.tif")
     """
     ensure_file_exists(in_a_img)
     ensure_file_exists(in_b_img)
@@ -212,6 +248,14 @@ def test_img_lst_intersects(
     :param input_imgs: Sequence of image file paths.
     :param stop_err: If ``True``, raise :class:`rsgispy.RSGISPyException` on the
                      first mismatch; otherwise print diagnostics (Default = ``False``).
+
+    .. code:: python
+
+        import rsgispy.imageutils.checks
+
+        rsgispy.imageutils.checks.test_img_lst_intersects(
+            ["img1.tif", "img2.tif"], stop_err=True
+        )
     """
     if not input_imgs:
         return

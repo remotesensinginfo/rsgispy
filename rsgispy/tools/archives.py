@@ -32,6 +32,13 @@ def create_directory_archive(
     :param arch_format: One of ``'zip'``, ``'tar'``, ``'gztar'``, ``'bztar'``,
                         or ``'xztar'``.
     :return: Full output archive file path including extension.
+
+    .. code:: python
+
+        import rsgispy.tools.archives
+        arch_path = rsgispy.tools.archives.create_directory_archive(
+            "data_dir", "data_backup", "gztar"
+        )
     """
     if not rsgispy.tools.files.is_path_valid(in_dir):
         raise rsgispy.RSGISPyException(
@@ -122,6 +129,11 @@ def untar_file(
     :param gen_arch_dir: Create a subdirectory named after ``in_file`` (Default = True).
     :param verbose: Print progress messages and command details (Default = False).
     :return: Output directory where files were extracted.
+
+    .. code:: python
+
+        import rsgispy.tools.archives
+        out_path = rsgispy.tools.archives.untar_file("archive.tar", "extracted/")
     """
     return _extract_archive_cmd(
         in_file,
@@ -146,6 +158,11 @@ def untar_gz_file(
     :param gen_arch_dir: Create a subdirectory named after ``in_file`` (Default = True).
     :param verbose: Print progress messages and command details (Default = False).
     :return: Output directory where files were extracted.
+
+    .. code:: python
+
+        import rsgispy.tools.archives
+        out_path = rsgispy.tools.archives.untar_gz_file("archive.tar.gz", "extracted/")
     """
     return _extract_archive_cmd(
         in_file,
@@ -170,6 +187,11 @@ def unzip_file(
     :param gen_arch_dir: Create a subdirectory named after ``in_file`` (Default = True).
     :param verbose: Print progress messages and command details (Default = False).
     :return: Output directory where files were extracted.
+
+    .. code:: python
+
+        import rsgispy.tools.archives
+        out_path = rsgispy.tools.archives.unzip_file("archive.zip", "extracted/")
     """
     return _extract_archive_cmd(
         in_file,
@@ -194,6 +216,11 @@ def untar_bz_file(
     :param gen_arch_dir: Create a subdirectory named after ``in_file`` (Default = True).
     :param verbose: Print progress messages and command details (Default = False).
     :return: Output directory where files were extracted.
+
+    .. code:: python
+
+        import rsgispy.tools.archives
+        out_path = rsgispy.tools.archives.untar_bz_file("archive.tar.bz2", "extracted/")
     """
     return _extract_archive_cmd(
         in_file,
@@ -216,6 +243,13 @@ def create_targz_arch(
     :param file_list: Sequence of file paths to include in the archive.
     :param base_path: Optional common base directory stripped from archive
                       member paths.
+
+    .. code:: python
+
+        import rsgispy.tools.archives
+        rsgispy.tools.archives.create_targz_arch(
+            "out.tar.gz", ["data/a.tif", "data/b.tif"], base_path="data"
+        )
     """
     out_arch_abs = os.path.abspath(out_arch_file)
     with tarfile.open(out_arch_abs, "w:gz") as tar_out_file:

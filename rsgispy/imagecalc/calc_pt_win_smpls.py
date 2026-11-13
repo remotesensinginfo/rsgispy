@@ -218,6 +218,20 @@ def calc_pt_smpl_img_vals(
     :param x_box_col: Column name specifying half-window width in X pixels.
     :param y_box_col: Column name specifying half-window height in Y pixels.
     :param no_data_val: Image no-data value. If ``None``, taken from image header.
+
+    .. code:: python
+
+        import rsgispy.elevation.roughness
+        import rsgispy.imagecalc.calc_pt_win_smpls
+
+        calc_obj = rsgispy.elevation.roughness.CalcProfileRoughMetrics()
+        rsgispy.imagecalc.calc_pt_win_smpls.calc_pt_smpl_img_vals(
+            input_img="dem.tif",
+            vec_file="sample_pts.gpkg",
+            vec_lyr="pts",
+            calc_objs=[calc_obj],
+            out_vec_file="out_pts.gpkg",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)

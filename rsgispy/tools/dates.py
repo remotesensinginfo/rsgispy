@@ -29,6 +29,13 @@ def get_days_since(year: int, day_of_year: int, base_date: datetime.date) -> int
     :param day_of_year: Day within the year (1..366).
     :param base_date: Reference ``datetime.date``.
     :return: Number of days elapsed since ``base_date``.
+
+    .. code:: python
+
+        import datetime
+        import rsgispy.tools.dates
+
+        days = rsgispy.tools.dates.get_days_since(2020, 45, datetime.date(2020, 1, 1))
     """
     if year < base_date.year:
         raise rsgispy.RSGISPyException(
@@ -54,6 +61,15 @@ def get_days_since_date(
     :param day: Target day of month (1..31).
     :param base_date: Reference ``datetime.date``.
     :return: Number of days elapsed since ``base_date``.
+
+    .. code:: python
+
+        import datetime
+        import rsgispy.tools.dates
+
+        days = rsgispy.tools.dates.get_days_since_date(
+            2020, 2, 14, datetime.date(2020, 1, 1)
+        )
     """
     if year < base_date.year:
         raise rsgispy.RSGISPyException(
@@ -70,6 +86,11 @@ def find_month_end_date(year: int, month: int) -> int:
     :param year: Year integer (e.g., 2019).
     :param month: Month integer (1..12).
     :return: Number of the last day of the month.
+
+    .. code:: python
+
+        import rsgispy.tools.dates
+        end_day = rsgispy.tools.dates.find_month_end_date(2020, 2)
     """
     _, n_days = calendar.monthrange(year, month)
     return int(n_days)
@@ -89,6 +110,11 @@ def create_year_month_start_end_lst(
     :param end_year: End year.
     :param end_month: End month (1..12).
     :return: List of ``(year, month)`` tuples.
+
+    .. code:: python
+
+        import rsgispy.tools.dates
+        ym_lst = rsgispy.tools.dates.create_year_month_start_end_lst(2020, 10, 2021, 2)
     """
     out_year_mnt_lst: List[Tuple[int, int]] = []
     for year in range(int(start_year), int(end_year) + 1):
@@ -114,6 +140,14 @@ def create_year_month_n_months_lst(
     :param n_months_fwd: Number of months forward from the start month.
     :param n_months_bwd: Number of months backward from the start month.
     :return: List of ``(year, month)`` tuples.
+
+    .. code:: python
+
+        import rsgispy.tools.dates
+
+        ym_lst = rsgispy.tools.dates.create_year_month_n_months_lst(
+            2020, 6, n_months_fwd=2, n_months_bwd=1
+        )
     """
     if start_year < 0:
         raise rsgispy.RSGISPyException("Year must be positive")
@@ -138,6 +172,13 @@ def is_summer_winter(lat: float, date: datetime.date) -> int:
     :param lat: Latitude in decimal degrees.
     :param date: ``datetime.date`` (or ``datetime.datetime``) object.
     :return: ``1`` for summer, ``2`` for winter.
+
+    .. code:: python
+
+        import datetime
+        import rsgispy.tools.dates
+
+        season = rsgispy.tools.dates.is_summer_winter(52.4, datetime.date(2020, 7, 15))
     """
     if lat < 0:
         if 4 < date.month < 11:
@@ -161,6 +202,17 @@ def get_datetime_increment_lst(
     :param end_date: End datetime of the sequence.
     :param interval: Step ``datetime.timedelta``.
     :return: List of ``datetime.datetime`` objects.
+
+    .. code:: python
+
+        import datetime
+        import rsgispy.tools.dates
+
+        dts = rsgispy.tools.dates.get_datetime_increment_lst(
+            datetime.datetime(2020, 1, 1),
+            datetime.datetime(2020, 1, 4),
+            datetime.timedelta(days=1),
+        )
     """
     date_lst: List[datetime.datetime] = []
     c_date = start_date

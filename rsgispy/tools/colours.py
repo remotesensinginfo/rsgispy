@@ -20,6 +20,11 @@ def hex_to_rgb(hex_str: str) -> Tuple[int, int, int]:
 
     :param hex_str: 6-character or 7-character (leading ``#``) hex colour string.
     :return: ``(R, G, B)`` integer tuple.
+
+    .. code:: python
+
+        import rsgispy.tools.colours
+        rgb = rsgispy.tools.colours.hex_to_rgb("#ff8800")
     """
     cleaned = hex_str[1:] if hex_str.startswith("#") else hex_str
     if len(cleaned) != 6:
@@ -47,6 +52,11 @@ def rgb_to_hex(
     :param b: Blue value (``0..255``, or ``0..1`` when ``normalised=True``).
     :param normalised: Whether inputs are normalised in ``0..1``.
     :return: Hex colour string ``#rrggbb``.
+
+    .. code:: python
+
+        import rsgispy.tools.colours
+        hex_str = rsgispy.tools.colours.rgb_to_hex(255, 136, 0)
     """
     if normalised:
         r = int(r * 255)

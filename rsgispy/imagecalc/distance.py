@@ -183,6 +183,19 @@ if HAVE_SCIPY:
         :param unit_geo: If ``True``, return distances in CRS map units; if
                          ``False``, return distances in pixel units (Default = True).
         :param creation_opts: Optional mapping of GDAL creation options.
+
+        .. code:: python
+
+            import rsgispy.imagecalc.distance
+
+            rsgispy.imagecalc.distance.calc_dist_to_img_vals(
+                input_img="classes.tif",
+                output_img="dist_to_water.tif",
+                pxl_vals=1,
+                img_band=1,
+                gdalformat="GTIFF",
+                max_dist=1000.0,
+            )
         """
         # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         ensure_file_exists(input_img)
@@ -268,6 +281,19 @@ if HAVE_SCIPY:
         :param n_cores: Number of worker processes; ``<= 0`` uses all CPU cores
                         (Default = ``-1``).
         :param creation_opts: Optional mapping of GDAL creation options.
+
+        .. code:: python
+
+            import rsgispy.imagecalc.distance
+
+            rsgispy.imagecalc.distance.calc_dist_to_img_vals_tiled(
+                input_img="classes.tif",
+                output_img="dist_tiled.tif",
+                pxl_vals=[1, 2],
+                max_dist=1000.0,
+                tile_size=2000,
+                n_cores=4,
+            )
         """
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         # pylint: disable=too-many-locals,unused-argument
@@ -392,6 +418,18 @@ if HAVE_SCIPY:
         :param unit_geo: If ``True``, ``buf_thres`` is in CRS map units; if
                          ``False``, in pixel units (Default = ``True``).
         :param creation_opts: Optional mapping of GDAL creation options.
+
+        .. code:: python
+
+            import rsgispy.imagecalc.distance
+
+            rsgispy.imagecalc.distance.buffer_img_pxl_vals(
+                input_img="water_mask.tif",
+                output_img="water_buf_50m.tif",
+                pxl_vals=1,
+                buf_thres=50.0,
+                gdalformat="GTIFF",
+            )
         """
         # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         if tmp_dir is not None and not os.path.exists(tmp_dir):

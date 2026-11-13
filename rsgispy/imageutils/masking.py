@@ -106,6 +106,16 @@ def mask_img(
     :param out_value: Value written to masked pixels in the output image.
     :param mask_value: Scalar or sequence of mask values in ``in_msk_img`` to mask.
     :param options: Optional GDAL creation options mapping.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.masking
+
+        rsgispy.imageutils.masking.mask_img(
+            "in_img.tif", "msk.tif", "out_img.tif", "GTIFF",
+            rsgispy.TYPE_32FLOAT, 0.0, 0,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if isinstance(mask_value, (int, float, np.number)):
@@ -195,6 +205,12 @@ def gen_finite_mask(
     :param output_img: Path to the output mask image file (8-bit unsigned).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param options: Optional GDAL creation options mapping.
+
+    .. code:: python
+
+        import rsgispy.imageutils.masking
+
+        rsgispy.imageutils.masking.gen_finite_mask("in_img.tif", "finite_msk.tif")
     """
     creation_opts = dict(options) if isinstance(options, Mapping) else None
     with ExitStack() as stack:
@@ -237,6 +253,14 @@ def gen_valid_mask(
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param no_data_val: Value representing no-data (Default = ``0.0``).
     :param options: Optional GDAL creation options mapping.
+
+    .. code:: python
+
+        import rsgispy.imageutils.masking
+
+        rsgispy.imageutils.masking.gen_valid_mask(
+            ["img1.tif", "img2.tif"], "valid_msk.tif", no_data_val=0.0
+        )
     """
     # pylint: disable=too-many-locals
     if isinstance(input_imgs, (str, os.PathLike)):
@@ -301,6 +325,14 @@ def gen_img_edge_mask(
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param n_edge_pxls: Number of edge pixels along each side to mark as ``1``.
     :param options: Optional GDAL creation options mapping.
+
+    .. code:: python
+
+        import rsgispy.imageutils.masking
+
+        rsgispy.imageutils.masking.gen_img_edge_mask(
+            "in_img.tif", "edge_msk.tif", "GTIFF", 5
+        )
     """
     # pylint: disable=too-many-locals
     edge_px = int(n_edge_pxls)
@@ -361,6 +393,14 @@ def mask_all_band_zero_vals(
     :param out_val: Replacement value when a pixel has positive band sum but
                     a band value ``<= 0`` (Default = ``1.0``).
     :param options: Optional GDAL creation options mapping.
+
+    .. code:: python
+
+        import rsgispy.imageutils.masking
+
+        rsgispy.imageutils.masking.mask_all_band_zero_vals(
+            "in_img.tif", "out_img.tif", "GTIFF", out_val=1.0
+        )
     """
     # pylint: disable=too-many-locals
     creation_opts = dict(options) if isinstance(options, Mapping) else None
@@ -415,6 +455,18 @@ def create_valid_mask(
     :param out_msk_file: Path to the output mask image file.
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param tmp_dir: Temporary directory path (accepted for API compatibility).
+
+    .. code:: python
+
+        import rsgispy.imageutils.masking
+
+        img_info = [
+            rsgispy.imageutils.masking.ImageBandInfo("img1.tif", "img1", [1, 2]),
+            rsgispy.imageutils.masking.ImageBandInfo("img2.tif", "img2"),
+        ]
+        rsgispy.imageutils.masking.create_valid_mask(
+            img_info, "valid_msk.tif", "GTIFF"
+        )
     """
     # pylint: disable=too-many-locals,too-many-branches
     if not img_band_info:

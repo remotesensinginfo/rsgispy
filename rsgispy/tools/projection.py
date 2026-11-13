@@ -30,6 +30,13 @@ def get_epsg_code_from_wkt(wkt_str: str) -> Optional[int]:
 
     :param wkt_str: Projection WKT string.
     :return: Integer EPSG code, or ``None`` if it cannot be identified.
+
+    .. code:: python
+
+        import rsgispy.tools.projection
+
+        wkt_str = rsgispy.tools.projection.get_wkt_from_epsg_code(4326)
+        epsg = rsgispy.tools.projection.get_epsg_code_from_wkt(wkt_str)
     """
     try:
         crs = pyproj.CRS.from_wkt(wkt_str)
@@ -45,6 +52,11 @@ def get_wkt_from_epsg_code(epsg_code: int) -> Optional[str]:
 
     :param epsg_code: Integer EPSG code.
     :return: WKT string representation, or ``None`` if lookup fails.
+
+    .. code:: python
+
+        import rsgispy.tools.projection
+        wkt_str = rsgispy.tools.projection.get_wkt_from_epsg_code(27700)
     """
     try:
         crs = pyproj.CRS.from_epsg(int(epsg_code))
@@ -59,6 +71,11 @@ def get_crs_obj(epsg_code: int) -> pyproj.CRS:
 
     :param epsg_code: Integer EPSG code for the projection.
     :return: :class:`pyproj.CRS` object.
+
+    .. code:: python
+
+        import rsgispy.tools.projection
+        crs = rsgispy.tools.projection.get_crs_obj(32630)
     """
     try:
         return pyproj.CRS.from_epsg(int(epsg_code))
@@ -80,6 +97,14 @@ def metres_to_degrees(
     :param x_size: X sizes/distances in metres (scalar or array).
     :param y_size: Y sizes/distances in metres (scalar or array).
     :return: Tuple ``(lon_size_degrees, lat_size_degrees)``.
+
+    .. code:: python
+
+        import rsgispy.tools.projection
+
+        lon_deg, lat_deg = rsgispy.tools.projection.metres_to_degrees(
+            latitude=52.4, x_size=10.0, y_size=10.0
+        )
     """
     semi_major = 6378137.0
     semi_minor = 6356752.314245
@@ -104,6 +129,11 @@ def get_deg_coord_as_str(lat: float, lon: float, n_chars: int = 4) -> str:
     :param lon: Longitude in degrees.
     :param n_chars: Zero-padded character width for each coordinate component.
     :return: Formatted coordinate string.
+
+    .. code:: python
+
+        import rsgispy.tools.projection
+        coord_str = rsgispy.tools.projection.get_deg_coord_as_str(52.4, -4.1)
     """
     east_west = "w" if lon < 0 else "e"
     north_south = "s" if lat < 0 else "n"
@@ -143,6 +173,14 @@ def great_circle_distance(
     :param earth_radius: Earth radius defining the unit of the returned distance
                          (Default = ``6378137.0`` metres).
     :return: Great-circle distance between the two points.
+
+    .. code:: python
+
+        import rsgispy.tools.projection
+
+        dist_m = rsgispy.tools.projection.great_circle_distance(
+            wgs84_p1=[-4.08, 52.41], wgs84_p2=[-3.18, 51.48]
+        )
     """
     if (wgs84_p1[1] < -90.0) or (wgs84_p1[1] > 90.0):
         raise rsgispy.RSGISPyException(

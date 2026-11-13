@@ -100,6 +100,16 @@ def create_blank_img(
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
     :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
     :param no_data_val: Optional no-data value to set on the output dataset.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.blank
+
+        rsgispy.imageutils.blank.create_blank_img(
+            "blank.tif", 1, 100, 100, 500000.0, 5600000.0, 10.0, -10.0,
+            0.0, 32630, "GTIFF", rsgispy.TYPE_32FLOAT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if n_bands < 1 or width < 1 or height < 1:
@@ -175,6 +185,15 @@ def create_copy_img(
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
     :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
     :param no_data_val: Optional no-data value to set on the output dataset.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.blank
+
+        rsgispy.imageutils.blank.create_copy_img(
+            "in_img.tif", "out_img.tif", 1, 0, "GTIFF", rsgispy.TYPE_8UINT
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not os.path.exists(input_img):
@@ -232,6 +251,16 @@ def create_blank_buf_img_from_ref_img(
                         with ``buf_pxl_ext``).
     :param no_data_val: Optional no-data value. If ``None``, read from ``input_img``.
     :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.blank
+
+        rsgispy.imageutils.blank.create_blank_buf_img_from_ref_img(
+            "in_img.tif", "buf_img.tif", "GTIFF", rsgispy.TYPE_32FLOAT,
+            buf_pxl_ext=10, no_data_val=0.0,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if (buf_pxl_ext is None) and (buf_spt_ext is None):
@@ -320,6 +349,16 @@ def create_blank_img_from_bbox(
                          whole multiples of ``out_img_res`` (Default = False).
     :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
     :param no_data_val: Optional no-data value to set on the output dataset.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils.blank
+
+        rsgispy.imageutils.blank.create_blank_img_from_bbox(
+            (500000.0, 501000.0, 5599000.0, 5600000.0),
+            32630, "blank_bbox.tif", 10.0, 0.0, 1, "GTIFF", rsgispy.TYPE_8UINT,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if snap_to_grid:

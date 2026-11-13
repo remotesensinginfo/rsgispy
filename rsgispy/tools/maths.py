@@ -41,6 +41,11 @@ def round_to_nearest_val(
                             :data:`rsgispy.ROUND_UP`, or
                             :data:`rsgispy.ROUND_DOWN`; Default = ``ROUND_NEAREST``).
     :return: Rounded scalar or NumPy array.
+
+    .. code:: python
+
+        import rsgispy.tools.maths
+        val = rsgispy.tools.maths.round_to_nearest_val(12.3, round_val=5)
     """
     if round_val == 0:
         raise rsgispy.RSGISPyException("round_val must be non-zero.")
@@ -67,6 +72,11 @@ def is_number(str_val: Union[str, float, int]) -> bool:
 
     :param str_val: Input string or numeric value to test.
     :return: True if convertible to float or complex, False otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.maths
+        is_num = rsgispy.tools.maths.is_number("3.14")
     """
     if isinstance(str_val, bool):
         return False
@@ -97,6 +107,11 @@ def similar_numeric_vals(
     :param eql_thres: Threshold below which values are considered similar.
     :param abs_diff: Use absolute difference between ``val_a`` and ``val_b``.
     :return: True if values are within ``eql_thres``, False otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.maths
+        is_close = rsgispy.tools.maths.similar_numeric_vals(1.05, 1.0, eql_thres=0.1)
     """
     if isinstance(val_a, collections.abc.Sequence):
         val_a = numpy.array(val_a)
@@ -126,6 +141,11 @@ def in_bounds(
     :param upper: Upper bound.
     :param upper_strict: Use strict ``< upper`` instead of ``<= upper``.
     :return: True if all values lie within bounds.
+
+    .. code:: python
+
+        import rsgispy.tools.maths
+        valid = rsgispy.tools.maths.in_bounds([0.2, 0.5, 0.9], 0.0, 1.0)
     """
     if upper_strict:
         return bool(lower <= numpy.min(x) and numpy.max(x) < upper)
@@ -138,6 +158,11 @@ def mixed_signs(x: Union[numpy.ndarray, Sequence[float]]) -> bool:
 
     :param x: Sequence or NumPy array of numeric values.
     :return: True if minimum < 0 and maximum >= 0.
+
+    .. code:: python
+
+        import rsgispy.tools.maths
+        has_mixed = rsgispy.tools.maths.mixed_signs([-1.5, 0.0, 2.3])
     """
     min_val = numpy.min(x)
     max_val = numpy.max(x)
@@ -150,6 +175,11 @@ def negative(x: Union[numpy.ndarray, Sequence[float]]) -> bool:
 
     :param x: Sequence or NumPy array of numeric values.
     :return: True if the maximum value is < 0.
+
+    .. code:: python
+
+        import rsgispy.tools.maths
+        all_neg = rsgispy.tools.maths.negative([-3.0, -1.2, -0.5])
     """
     return bool(numpy.max(x) < 0)
 
@@ -160,6 +190,11 @@ def is_odd(number: float) -> bool:
 
     :param number: Number to test.
     :return: True if ``number % 2 != 0``, False otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.maths
+        odd = rsgispy.tools.maths.is_odd(7)
     """
     return (number % 2) != 0
 
@@ -170,6 +205,11 @@ def powerset_iter(in_set: List[Any]) -> Iterator[List[Any]]:
 
     :param in_set: Input list of items.
     :return: Iterator over subset lists.
+
+    .. code:: python
+
+        import rsgispy.tools.maths
+        subsets = list(rsgispy.tools.maths.powerset_iter([1, 2, 3]))
     """
     if len(in_set) <= 1:
         yield in_set
@@ -188,6 +228,11 @@ def powerset_lst(in_set: List[Any], min_items: int = 0) -> List[List[Any]]:
     :param min_items: Minimum number of items required in each returned subset.
                       Ignored if <= 0 (Default = 0).
     :return: List of subset lists.
+
+    .. code:: python
+
+        import rsgispy.tools.maths
+        subsets = rsgispy.tools.maths.powerset_lst([1, 2, 3], min_items=2)
     """
     out_pset: List[List[Any]] = []
     for subset in powerset_iter(in_set):
@@ -207,6 +252,11 @@ def create_var_list(
     :param in_vals_lsts: Dictionary mapping parameter names to lists of values.
     :param val_dict: Internal accumulator dictionary used during recursion.
     :return: List of dictionaries with one single value per key.
+
+    .. code:: python
+
+        import rsgispy.tools.maths
+        combos = rsgispy.tools.maths.create_var_list({"a": [1, 2], "b": ["x", "y"]})
     """
     out_vars: List[Dict[str, Any]] = []
     if (in_vals_lsts is None) and (val_dict is not None):
