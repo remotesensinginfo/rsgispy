@@ -682,6 +682,10 @@ def test_optional_scipy_sklearn_guards(monkeypatch):
         ):
             ctx.setitem(sys.modules, mod_name, None)
 
+        ctx.setattr(rsgispy.imagecalc, "comparison", ic_cmp)
+        ctx.setattr(rsgispy.imagecalc, "distance", ic_dist)
+        ctx.setattr(rsgispy.imagecalc, "fill", ic_fill)
+
         for mod_name in (
             "rsgispy.imagecalc.comparison",
             "rsgispy.imagecalc.distance",

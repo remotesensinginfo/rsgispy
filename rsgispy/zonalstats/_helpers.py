@@ -14,21 +14,24 @@ from rasterio.windows import Window
 import rsgispy
 from rsgispy.imageprocess import bbox_from_dataset, validate_band_index
 import rsgispy.tools.geometry
+from rsgispy.vectorprocess import (
+    get_gdf_bbox,
+    read_vec_gdf as read_vec_file,
+    resolve_vector_crs,
+    write_vec_gdf as write_vec_file,
+)
 
-
-def resolve_vector_crs(
-    vec_gdf: geopandas.GeoDataFrame,
-    vec_def_epsg: Optional[int] = None,
-) -> pyproj.CRS:
-    """Resolve the vector CRS from ``vec_def_epsg`` or ``vec_gdf.crs``."""
-    if vec_def_epsg is not None:
-        return pyproj.CRS.from_epsg(int(vec_def_epsg))
-    if vec_gdf.crs is None:
-        raise rsgispy.RSGISPyException(
-            "Could not retrieve a projection object from the vector layer - "
-            "projection might not be defined."
-        )
-    return pyproj.CRS.from_user_input(vec_gdf.crs)
+__all__ = [
+    "check_bbox_overlap",
+    "get_gdf_bbox",
+    "is_valid_pixel_value",
+    "open_raster_band_info",
+    "open_validated_zonal_inputs",
+    "read_vec_file",
+    "resolve_vector_crs",
+    "sample_point_pixel",
+    "write_vec_file",
+]
 
 
 def open_raster_band_info(
@@ -57,22 +60,6 @@ def check_bbox_overlap(
         print(f"Image BBOX: {img_bbox}")
         print(f"Vector BBOX: {vec_bbox}")
         raise rsgispy.RSGISPyException("The vector layer and image do not overlap.")
-
-
-def get_gdf_bbox(
-    vec_gdf: geopandas.GeoDataFrame,
-) -> Tuple[float, float, float, float]:
-    """Return ``(MinX, MaxX, MinY, MaxY)`` from a GeoDataFrame."""
-    if vec_gdf.empty:
-        raise rsgispy.RSGISPyException(
-            "The inputted vector layer contains no features."
-        )
-    min_x, min_y, max_x, max_y = vec_gdf.total_bounds
-    if not all(math.isfinite(val) for val in (min_x, min_y, max_x, max_y)):
-        raise rsgispy.RSGISPyException(
-            "Could not compute valid bounding box for the vector layer."
-        )
-    return (float(min_x), float(max_x), float(min_y), float(max_y))
 
 
 @contextmanager
@@ -150,24 +137,3 @@ def is_valid_pixel_value(
         if val == img_nodata:
             return False
     return min_thres <= val <= max_thres
-
-
-def read_vec_file(
-    vec_file: str, vec_lyr: Optional[str]
-) -> geopandas.GeoDataFrame:
-    """Read a vector file layer into a GeoDataFrame, raising RSGISPyException on error."""
-    try:
-        return geopandas.read_file(vec_file, layer=vec_lyr)
-    except Exception as err:
-        raise rsgispy.RSGISPyException(
-            f"Could not open '{vec_file}' (layer='{vec_lyr}'): {err}"
-        ) from err
-
-
-def write_vec_file(
-    vec_gdf: geopandas.GeoDataFrame,
-    vec_file: str,
-    vec_lyr: Optional[str],
-) -> None:
-    """Write an updated GeoDataFrame back to ``vec_file`` (and optional ``vec_lyr``)."""
-    vec_gdf.to_file(vec_file, layer=vec_lyr)

@@ -66,6 +66,7 @@ Raster Creation, Copying & VRT
 ------------------------------
 
 * :doc:`imageutils/blank` — Blank raster creation and copying from reference images/bboxes.
+* :doc:`imageutils/rasterise` — Vector rasterisation, look-up score rasters, and distance zone classification.
 * :doc:`imageutils/vrt` — GDAL VRT band-stack, mosaic, and band-subset generation.
 * :doc:`imageutils/imagelut` — Spatial vector LUT creation and querying across raster files.
 
@@ -73,6 +74,7 @@ Raster Creation, Copying & VRT
    :maxdepth: 1
 
    imageutils/blank
+   imageutils/rasterise
    imageutils/vrt
    imageutils/imagelut
 

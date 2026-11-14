@@ -54,8 +54,13 @@ Package Overview
 * :doc:`rsgispy_imagecalc` — Band maths, statistics, percentiles, comparison, encoding, and distance.
 * :doc:`rsgispy_imagemorphology` — Morphological raster filtering (dilation, erosion, opening, closing).
 * :doc:`rsgispy_imageprocess` — Block-processing engine, spatial intersection, and dataset validation.
-* :doc:`rsgispy_imageutils` — Raster creation, metadata, masking, mosaicking, tiling, VRT, and warping.
+* :doc:`rsgispy_imageutils` — Raster creation, rasterisation, metadata, masking, mosaicking, tiling, VRT, and warping.
 * :doc:`rsgispy_tools` — General geospatial, geometry, projection, plotting, mapping, and file utilities.
+* :doc:`rsgispy_vectorattrs` — Vector attribute table, column, and spatial join utilities.
+* :doc:`rsgispy_vectorgeoms` — Vector geometry creation, grids, polygonisation, manipulation, overlay, clipping, transects, and spatial predicates.
+* :doc:`rsgispy_vectorprocess` — Shared low-level vector I/O, CRS, bounding-box, and attribute helpers.
+* :doc:`rsgispy_vectorstats` — Spatial metrics, area/length/distance calculations, attribute counts, and empirical semi-variograms for vector datasets.
+* :doc:`rsgispy_vectorutils` — Vector metadata, translation, reprojection, merging, splitting, and selection utilities.
 * :doc:`rsgispy_zonalstats` — Polygon and point zonal statistics extraction.
 
 .. toctree::
@@ -71,6 +76,11 @@ Package Overview
    rsgispy_imageprocess
    rsgispy_imageutils
    rsgispy_tools
+   rsgispy_vectorattrs
+   rsgispy_vectorgeoms
+   rsgispy_vectorprocess
+   rsgispy_vectorstats
+   rsgispy_vectorutils
    rsgispy_zonalstats
 
 Indices and tables
