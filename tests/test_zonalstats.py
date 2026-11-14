@@ -290,3 +290,84 @@ def test_calc_zonal_band_pxl_counts_and_ext_point_band_values(tmp_path):
             out_no_data_val=-1.0,
             out_field="SampleVal",
         )
+
+
+def test_zonalstats_vector_input_gdf(tmp_path):
+    """Test VectorInput GeoDataFrame input and optional in-memory output in zonalstats."""
+    arr = np.arange(1, 17, dtype=np.float32).reshape(4, 4)
+    tif_path = str(tmp_path / "grid4.tif")
+    _write_test_raster(tif_path, arr, nodata=0.0)
+
+    poly_gdf = gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[box(500000.0, 5199980.0, 500020.0, 5200000.0)],
+        crs="EPSG:32630",
+    )
+    orig_poly_cols = list(poly_gdf.columns)
+
+    poly_res = zs_poly.calc_zonal_band_stats_file(
+        poly_gdf,
+        None,
+        tif_path,
+        img_band=1,
+        min_thres=0.0,
+        max_thres=100.0,
+        out_no_data_val=-1.0,
+        mean_field="mean_v",
+    )
+    assert isinstance(poly_res, gpd.GeoDataFrame)
+    assert poly_res.loc[0, "mean_v"] == pytest.approx(np.mean([1.0, 2.0, 5.0, 6.0]))
+    assert list(poly_gdf.columns) == orig_poly_cols
+
+    cent_res = zs_poly.calc_zonal_poly_pts_band_stats_file(
+        poly_gdf, None, tif_path, img_band=1, out_field="cent_v"
+    )
+    assert isinstance(cent_res, gpd.GeoDataFrame)
+    assert cent_res.loc[0, "cent_v"] == pytest.approx(6.0)
+    assert list(poly_gdf.columns) == orig_poly_cols
+
+    hybrid_res = zs_poly.calc_zonal_band_stats_test_poly_pts_file(
+        poly_gdf,
+        None,
+        tif_path,
+        img_band=1,
+        min_thres=0.0,
+        max_thres=100.0,
+        out_no_data_val=-1.0,
+        mean_field="hyb_mean",
+    )
+    assert isinstance(hybrid_res, gpd.GeoDataFrame)
+    assert hybrid_res.loc[0, "hyb_mean"] == pytest.approx(np.mean([1.0, 2.0, 5.0, 6.0]))
+
+    cnt_res = zs_poly.calc_zonal_band_pxl_counts_file(
+        poly_gdf,
+        None,
+        tif_path,
+        img_band=1,
+        vals_lut={1: "c1", 6: "c6"},
+        total_field="tot",
+    )
+    assert isinstance(cnt_res, gpd.GeoDataFrame)
+    assert cnt_res.loc[0, "c1"] == pytest.approx(1.0)
+    assert cnt_res.loc[0, "c6"] == pytest.approx(1.0)
+
+    pts_gdf = gpd.GeoDataFrame(
+        {"id": [1, 2]},
+        geometry=[Point(500005.0, 5199995.0), Point(500015.0, 5199985.0)],
+        crs="EPSG:32630",
+    )
+    orig_pts_cols = list(pts_gdf.columns)
+    pts_res = zs_pt.ext_point_band_values_file(
+        pts_gdf,
+        None,
+        tif_path,
+        img_band=1,
+        min_thres=0.0,
+        max_thres=100.0,
+        out_no_data_val=-1.0,
+        out_field="pt_val",
+    )
+    assert isinstance(pts_res, gpd.GeoDataFrame)
+    assert list(pts_res["pt_val"]) == pytest.approx([1.0, 6.0])
+    assert list(pts_gdf.columns) == orig_pts_cols
+

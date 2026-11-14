@@ -8,7 +8,9 @@ import types
 import geopandas
 import pandas
 from PIL import Image
+import pytest
 
+import rsgispy
 import rsgispy.droneutils
 
 
@@ -295,8 +297,19 @@ def test_optional_exiftool_missing_droneutils():
             "create_flightline_extern_gps_vec",
             "define_extern_gps_in_imgs",
         ):
-            assert not hasattr(drone_mod, fn_name)
-            assert fn_name not in drone_mod.__all__
+            assert hasattr(drone_mod, fn_name)
+            assert fn_name in drone_mod.__all__
+
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            drone_mod.create_flightline_vec([], "p.gpkg", "p", "l.gpkg", "l")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            drone_mod.create_flightline_extern_gps_vec(
+                pandas.DataFrame(), ".", "p.gpkg", "p", "l.gpkg", "l"
+            )
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            drone_mod.define_extern_gps_in_imgs(
+                pandas.DataFrame(), ".", 50.0, 0.0, -90.0, 0.0
+            )
 
         for sym_name in ("ImageTimeCluster", "split_photos_by_time"):
             assert hasattr(drone_mod, sym_name)

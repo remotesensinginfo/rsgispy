@@ -7,6 +7,7 @@ intersections, point-to-line construction, and coastline estimation using
 
 import datetime
 import math
+import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import geopandas
@@ -18,9 +19,10 @@ import rsgispy
 from rsgispy.imageutils.metadata import get_img_bbox
 from rsgispy.vectorprocess import (
     CRSLike,
+    VectorInput,
     extract_geom_pts,
     parse_crs_input,
-    prepare_out_vec_file,
+    prepare_optional_out_vec,
     pt_xy,
     read_vec_gdf,
     resolve_out_lyr_name,
@@ -147,9 +149,9 @@ def _iter_line_parts(geom) -> List[shapely.geometry.LineString]:
 
 
 def create_orthg_lines(
-    vec_in_file: str,
+    vec_in_file: VectorInput,
     vec_in_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     pt_step: float = 1000,
     line_len: float = 10000,
@@ -158,13 +160,15 @@ def create_orthg_lines(
     del_exist_vec: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Create a set of lines orthogonal to the lines in an input vector layer.
 
-    :param vec_in_file: Input polyline vector file path.
+    :param vec_in_file: Input polyline vector file path or
+                        :class:`geopandas.GeoDataFrame`.
     :param vec_in_lyr: Input vector layer name (or ``None``).
-    :param out_vec_file: Output polyline vector file path.
+    :param out_vec_file: Output polyline vector file path, or ``None`` to return
+                         an in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name (derived from filename if ``None``).
     :param pt_step: Step interval along lines (in CRS units) at which
                     orthogonal lines are generated (Default = ``1000``).
@@ -180,6 +184,8 @@ def create_orthg_lines(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Orthogonal lines :class:`geopandas.GeoDataFrame` when
+             ``out_vec_file`` is ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -191,10 +197,10 @@ def create_orthg_lines(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    prepare_out_vec_file(out_vec_file, del_exist_vec=del_exist_vec)
-    out_lyr = resolve_out_lyr_name(out_vec_file, out_vec_lyr)
+    out_path = prepare_optional_out_vec(out_vec_file, del_exist_vec=del_exist_vec)
+    out_lyr = resolve_out_lyr_name(out_path, out_vec_lyr)
 
-    in_gdf = read_vec_gdf(vec_in_file, vec_in_lyr)
+    in_gdf = read_vec_gdf(vec_in_file, vec_in_lyr, copy=False)
     records: List[Dict[str, Any]] = []
     line_uid = 1
     pbar_cls = rsgispy.get_tqdm()
@@ -256,13 +262,16 @@ def create_orthg_lines(
             geometry=geopandas.GeoSeries([], crs=in_gdf.crs),
             crs=in_gdf.crs,
         )
+    if out_path is None:
+        return out_gdf
     write_vec_gdf(
         out_gdf,
-        out_vec_file,
+        out_path,
         out_lyr,
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def pandas_int_empty() -> numpy.ndarray:
@@ -276,16 +285,16 @@ def pandas_float_empty() -> numpy.ndarray:
 
 
 def split_lines_to_reg_pts(
-    vec_in_file: str,
+    vec_in_file: VectorInput,
     vec_in_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     pt_step: float = 1000,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Split a line vector layer into points placed at regular intervals
     (``pt_step``) along each line.
@@ -293,9 +302,11 @@ def split_lines_to_reg_pts(
     Output points contain ``uid``, ``line_id``, ``pt_x``, ``pt_y``, and
     ``dist`` attributes.
 
-    :param vec_in_file: Input polyline vector file path.
+    :param vec_in_file: Input polyline vector file path or
+                        :class:`geopandas.GeoDataFrame`.
     :param vec_in_lyr: Input vector layer name (or ``None``).
-    :param out_vec_file: Output points vector file path.
+    :param out_vec_file: Output points vector file path, or ``None`` to return
+                         an in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name (derived from filename if ``None``).
     :param pt_step: Step interval along lines in CRS units (Default = ``1000``).
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
@@ -307,6 +318,8 @@ def split_lines_to_reg_pts(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Points :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -317,10 +330,10 @@ def split_lines_to_reg_pts(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    prepare_out_vec_file(out_vec_file, del_exist_vec=del_exist_vec)
-    out_lyr = resolve_out_lyr_name(out_vec_file, out_vec_lyr)
+    out_path = prepare_optional_out_vec(out_vec_file, del_exist_vec=del_exist_vec)
+    out_lyr = resolve_out_lyr_name(out_path, out_vec_lyr)
 
-    in_gdf = read_vec_gdf(vec_in_file, vec_in_lyr)
+    in_gdf = read_vec_gdf(vec_in_file, vec_in_lyr, copy=False)
     records: List[Dict[str, Any]] = []
     pt_uid = 1
     line_id = 1
@@ -381,21 +394,24 @@ def split_lines_to_reg_pts(
             geometry=geopandas.GeoSeries([], crs=in_gdf.crs),
             crs=in_gdf.crs,
         )
+    if out_path is None:
+        return out_gdf
     write_vec_gdf(
         out_gdf,
-        out_vec_file,
+        out_path,
         out_lyr,
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def _calc_line_boundary_intersections(
-    vec_line_file: str,
+    vec_line_file: VectorInput,
     vec_line_lyr: Optional[str],
-    vec_objs_file: str,
+    vec_objs_file: VectorInput,
     vec_objs_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]],
     out_vec_lyr: Optional[str],
     start_x_field: str,
     start_y_field: str,
@@ -405,18 +421,18 @@ def _calc_line_boundary_intersections(
     mode: str,
     use_pbar: bool,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Shared implementation for line-to-object-boundary intersection modes:
     ``'closest'``, ``'range'``, and ``'second'``.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    prepare_out_vec_file(out_vec_file, del_exist_vec=del_exist_vec)
-    out_lyr = resolve_out_lyr_name(out_vec_file, out_vec_lyr)
+    out_path = prepare_optional_out_vec(out_vec_file, del_exist_vec=del_exist_vec)
+    out_lyr = resolve_out_lyr_name(out_path, out_vec_lyr)
 
-    line_gdf = read_vec_gdf(vec_line_file, vec_line_lyr)
+    line_gdf = read_vec_gdf(vec_line_file, vec_line_lyr, copy=False)
     validate_columns_exist(line_gdf, [start_x_field, start_y_field, uid_field])
-    objs_gdf = read_vec_gdf(vec_objs_file, vec_objs_lyr)
+    objs_gdf = read_vec_gdf(vec_objs_file, vec_objs_lyr, copy=False)
 
     if not line_gdf.empty and not objs_gdf.empty:
         xmin, ymin, xmax, ymax = line_gdf.total_bounds
@@ -536,21 +552,24 @@ def _calc_line_boundary_intersections(
             crs=objs_gdf.crs,
         )
 
+    if out_path is None:
+        return out_gdf
     write_vec_gdf(
         out_gdf,
-        out_vec_file,
+        out_path,
         out_lyr,
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def closest_line_intersection(
-    vec_line_file: str,
+    vec_line_file: VectorInput,
     vec_line_lyr: Optional[str],
-    vec_objs_file: str,
+    vec_objs_file: VectorInput,
     vec_objs_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     start_x_field: str = "start_x",
     start_y_field: str = "start_y",
@@ -559,17 +578,20 @@ def closest_line_intersection(
     del_exist_vec: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Intersect each line with the boundaries of objects in ``vec_objs_file``,
     creating a new line between each input line's start point
     (``start_x_field``, ``start_y_field``) and its closest intersection point.
 
-    :param vec_line_file: Input lines vector file path.
+    :param vec_line_file: Input lines vector file path or
+                          :class:`geopandas.GeoDataFrame`.
     :param vec_line_lyr: Input lines vector layer name (or ``None``).
-    :param vec_objs_file: Object polygons vector file path to intersect against.
+    :param vec_objs_file: Object polygons vector file path or
+                          :class:`geopandas.GeoDataFrame` to intersect against.
     :param vec_objs_lyr: Object polygons vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param start_x_field: Attribute column for line start X (Default = ``'start_x'``).
     :param start_y_field: Attribute column for line start Y (Default = ``'start_y'``).
@@ -583,6 +605,8 @@ def closest_line_intersection(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Intersected lines :class:`geopandas.GeoDataFrame` when
+             ``out_vec_file`` is ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -594,7 +618,7 @@ def closest_line_intersection(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    _calc_line_boundary_intersections(
+    return _calc_line_boundary_intersections(
         vec_line_file=vec_line_file,
         vec_line_lyr=vec_line_lyr,
         vec_objs_file=vec_objs_file,
@@ -613,11 +637,11 @@ def closest_line_intersection(
 
 
 def line_intersection_range(
-    vec_line_file: str,
+    vec_line_file: VectorInput,
     vec_line_lyr: Optional[str],
-    vec_objs_file: str,
+    vec_objs_file: VectorInput,
     vec_objs_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     start_x_field: str = "start_x",
     start_y_field: str = "start_y",
@@ -626,17 +650,19 @@ def line_intersection_range(
     del_exist_vec: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Intersect each line with the boundaries of objects in ``vec_objs_file``,
     creating a new line spanning from the closest to the furthest intersection
     point relative to ``(start_x_field, start_y_field)``.
 
-    :param vec_line_file: Input lines vector file path.
+    :param vec_line_file: Input lines vector file path or GeoDataFrame.
     :param vec_line_lyr: Input lines vector layer name (or ``None``).
-    :param vec_objs_file: Object polygons vector file path to intersect against.
+    :param vec_objs_file: Object polygons vector file path or GeoDataFrame to
+                          intersect against.
     :param vec_objs_lyr: Object polygons vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param start_x_field: Attribute column for line start X (Default = ``'start_x'``).
     :param start_y_field: Attribute column for line start Y (Default = ``'start_y'``).
@@ -650,6 +676,8 @@ def line_intersection_range(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Resulting :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -661,7 +689,7 @@ def line_intersection_range(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    _calc_line_boundary_intersections(
+    return _calc_line_boundary_intersections(
         vec_line_file=vec_line_file,
         vec_line_lyr=vec_line_lyr,
         vec_objs_file=vec_objs_file,
@@ -680,11 +708,11 @@ def line_intersection_range(
 
 
 def scnd_line_intersection_range(
-    vec_line_file: str,
+    vec_line_file: VectorInput,
     vec_line_lyr: Optional[str],
-    vec_objs_file: str,
+    vec_objs_file: VectorInput,
     vec_objs_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     start_x_field: str = "start_x",
     start_y_field: str = "start_y",
@@ -693,17 +721,19 @@ def scnd_line_intersection_range(
     del_exist_vec: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Intersect each line with the boundaries of objects in ``vec_objs_file``,
     cutting each line from its start point to its second closest intersection
     point.
 
-    :param vec_line_file: Input lines vector file path.
+    :param vec_line_file: Input lines vector file path or GeoDataFrame.
     :param vec_line_lyr: Input lines vector layer name (or ``None``).
-    :param vec_objs_file: Object polygons vector file path to intersect against.
+    :param vec_objs_file: Object polygons vector file path or GeoDataFrame to
+                          intersect against.
     :param vec_objs_lyr: Object polygons vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param start_x_field: Attribute column for line start X (Default = ``'start_x'``).
     :param start_y_field: Attribute column for line start Y (Default = ``'start_y'``).
@@ -717,6 +747,8 @@ def scnd_line_intersection_range(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Resulting :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -728,7 +760,7 @@ def scnd_line_intersection_range(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    _calc_line_boundary_intersections(
+    return _calc_line_boundary_intersections(
         vec_line_file=vec_line_file,
         vec_line_lyr=vec_line_lyr,
         vec_objs_file=vec_objs_file,
@@ -747,22 +779,23 @@ def scnd_line_intersection_range(
 
 
 def pts_to_line_geoms(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     sort_col: Optional[str] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Convert a vector layer of points to a single line geometry. If the input
     contains ``MultiPoint`` geometries, they are exploded before constructing
     the line.
 
-    :param vec_file: Input point vector file path.
+    :param vec_file: Input point vector file path or GeoDataFrame.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param out_vec_file: Output line vector file path.
+    :param out_vec_file: Output line vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name (derived from filename if ``None``).
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param sort_col: Optional attribute column name used to sort points prior
@@ -772,6 +805,8 @@ def pts_to_line_geoms(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Resulting line :class:`geopandas.GeoDataFrame` when
+             ``out_vec_file`` is ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -782,7 +817,6 @@ def pts_to_line_geoms(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    out_lyr = resolve_out_lyr_name(out_vec_file, out_vec_lyr)
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     geom_types = set(data_gdf.geometry.geom_type.dropna().unique())
 
@@ -804,6 +838,9 @@ def pts_to_line_geoms(
     line_gdf = geopandas.GeoDataFrame(
         {"id": [1], "geometry": [line_geom]}, crs=data_gdf.crs
     )
+    if out_vec_file is None:
+        return line_gdf
+    out_lyr = resolve_out_lyr_name(out_vec_file, out_vec_lyr)
     write_vec_gdf(
         line_gdf,
         out_vec_file,
@@ -811,28 +848,30 @@ def pts_to_line_geoms(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def create_angle_lines_from_points(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     angle: float,
     line_len: float,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Generate radial line segments of length ``line_len`` at angular increments
     ``angle`` (in degrees) around each point feature in ``vec_file``.
 
-    :param vec_file: Input point vector file path.
+    :param vec_file: Input point vector file path or GeoDataFrame.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param angle: Angular spacing in degrees between generated lines.
     :param line_len: Length of each generated line in CRS units.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param use_pbar: Show progress bar (Default = ``True``).
@@ -841,6 +880,8 @@ def create_angle_lines_from_points(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Resulting radial lines :class:`geopandas.GeoDataFrame` when
+             ``out_vec_file`` is ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -853,7 +894,7 @@ def create_angle_lines_from_points(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     line_angles = numpy.arange(0, 360, angle)
-    pts_gdf = read_vec_gdf(vec_file, vec_lyr)
+    pts_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     pbar_cls = rsgispy.get_tqdm()
 
     pt_ids: List[Any] = []
@@ -877,6 +918,8 @@ def create_angle_lines_from_points(
     out_gdf = geopandas.GeoDataFrame(
         {"pt_id": pt_ids, "geometry": geoms}, geometry="geometry", crs=pts_gdf.crs
     )
+    if out_vec_file is None:
+        return out_gdf
     write_vec_gdf(
         out_gdf,
         out_vec_file,
@@ -884,15 +927,16 @@ def create_angle_lines_from_points(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def estimate_future_coastline(
-    curr_vec_file: str,
+    curr_vec_file: VectorInput,
     curr_vec_lyr: Optional[str],
     curr_vec_date: datetime.date,
-    trans_vec_file: str,
+    trans_vec_file: VectorInput,
     trans_vec_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]],
     out_vec_lyr: Optional[str],
     out_pred_date: datetime.date,
     trans_rate_col: str = "LRR",
@@ -900,17 +944,19 @@ def estimate_future_coastline(
     trans_pt_order_land_first: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Estimate a future coastline position using baseline coastline geometry and
     DSAS-style transects with annual rate-of-change values.
 
-    :param curr_vec_file: Current/baseline coastline vector file path.
+    :param curr_vec_file: Current/baseline coastline vector file path or
+                          GeoDataFrame.
     :param curr_vec_lyr: Baseline coastline vector layer name (or ``None``).
     :param curr_vec_date: Date of the current coastline (``datetime.date``).
-    :param trans_vec_file: Transect vector file path.
+    :param trans_vec_file: Transect vector file path or GeoDataFrame.
     :param trans_vec_lyr: Transect vector layer name (or ``None``).
-    :param out_vec_file: Output predicted coastline vector file path.
+    :param out_vec_file: Output predicted coastline vector file path, or ``None``
+                         to return an in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_pred_date: Future prediction date (``datetime.date``).
     :param trans_rate_col: Transect rate-of-change column name (Default = ``'LRR'``).
@@ -924,6 +970,8 @@ def estimate_future_coastline(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Predicted coastline :class:`geopandas.GeoDataFrame` when
+             ``out_vec_file`` is ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -955,8 +1003,8 @@ def estimate_future_coastline(
             "date needs to be more than 1 year."
         )
 
-    curr_data_gdf = read_vec_gdf(curr_vec_file, curr_vec_lyr)
-    trans_data_gdf = read_vec_gdf(trans_vec_file, trans_vec_lyr)
+    curr_data_gdf = read_vec_gdf(curr_vec_file, curr_vec_lyr, copy=False)
+    trans_data_gdf = read_vec_gdf(trans_vec_file, trans_vec_lyr, copy=False)
     validate_columns_exist(trans_data_gdf, [trans_rate_col])
 
     pbar_cls = rsgispy.get_tqdm()
@@ -1013,6 +1061,8 @@ def estimate_future_coastline(
         geometry="geometry",
         crs=trans_data_gdf.crs,
     )
+    if out_vec_file is None:
+        return out_gdf
     write_vec_gdf(
         out_gdf,
         out_vec_file,
@@ -1020,6 +1070,7 @@ def estimate_future_coastline(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def create_lines_vec(

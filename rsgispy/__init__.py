@@ -456,3 +456,31 @@ def get_rsgispy_version() -> str:
         version = rsgispy.get_rsgispy_version()
     """
     return __version__
+
+
+def check_optional_dep(
+    available: bool,
+    feature_name: str,
+    package_name: str,
+    extra: str,
+) -> None:
+    """
+    Verify that an optional dependency is available and raise
+    :class:`RSGISPyException` with installation guidance when missing.
+
+    :param available: Boolean availability flag (e.g., ``HAVE_SCIPY``).
+    :param feature_name: Name of the function or class requiring the package.
+    :param package_name: PyPI/import name of the missing optional package.
+    :param extra: Optional-dependency extra name defined in ``pyproject.toml``.
+
+    .. code:: python
+
+        import rsgispy
+
+        rsgispy.check_optional_dep(True, "spec_unmix_fcls", "scipy", "unmixing")
+    """
+    if not available:
+        raise RSGISPyException(
+            f"{feature_name} requires '{package_name}'. "
+            f"Install it with: pip install \"rsgispy[{extra}]\""
+        )

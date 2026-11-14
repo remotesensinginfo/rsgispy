@@ -1,9 +1,6 @@
 """
 The tools.thresholding module provides histogram- and distribution-based
 automatic thresholding utilities.
-
-Functions requiring ``scipy`` are only defined and exported when that optional
-dependency is installed.
 """
 
 from typing import Any, Optional, Tuple
@@ -18,6 +15,7 @@ try:
 
     HAVE_SCIPY = True
 except ImportError:
+    scipy = None  # type: ignore[assignment]
     HAVE_SCIPY = False
 
 __all__ = [
@@ -28,10 +26,8 @@ __all__ = [
     "calc_isodata_threshold",
     "calc_hist_cross_entropy",
     "calc_li_threshold",
+    "calc_kurt_skew_threshold",
 ]
-
-if HAVE_SCIPY:
-    __all__.append("calc_kurt_skew_threshold")
 
 
 def get_nbins_histogram(data: numpy.ndarray) -> Tuple[int, float]:
@@ -261,87 +257,88 @@ def calc_li_threshold(
     return float(t_next - offset)
 
 
-if HAVE_SCIPY:
+def calc_kurt_skew_threshold(
+    data: numpy.ndarray,
+    max_val: float,
+    min_val: float,
+    init_thres: float,
+    low_thres: bool = True,
+    contamination: float = 10.0,
+    only_kurtosis: bool = False,
+) -> float:
+    """
+    Optimise a distribution tail threshold by minimising kurtosis (and skewness)
+    via dual annealing.
 
-    def calc_kurt_skew_threshold(
-        data: numpy.ndarray,
-        max_val: float,
-        min_val: float,
-        init_thres: float,
-        low_thres: bool = True,
-        contamination: float = 10.0,
-        only_kurtosis: bool = False,
-    ) -> float:
-        """
-        Optimise a distribution tail threshold by minimising kurtosis (and skewness)
-        via dual annealing.
+    :param data: 1D numeric NumPy array.
+    :param max_val: Upper bound for the threshold search.
+    :param min_val: Lower bound for the threshold search.
+    :param init_thres: Initial threshold guess.
+    :param low_thres: Search lower tail (``data > x``) when True, upper tail
+                      (``data < x``) when False.
+    :param contamination: Tail contamination percentage in ``[1, 100]``.
+    :param only_kurtosis: Optimise kurtosis alone when True; otherwise
+                          ``abs(kurtosis) + abs(skew)``.
+    :return: Optimised threshold value.
 
-        :param data: 1D numeric NumPy array.
-        :param max_val: Upper bound for the threshold search.
-        :param min_val: Lower bound for the threshold search.
-        :param init_thres: Initial threshold guess.
-        :param low_thres: Search lower tail (``data > x``) when True, upper tail
-                          (``data < x``) when False.
-        :param contamination: Tail contamination percentage in ``[1, 100]``.
-        :param only_kurtosis: Optimise kurtosis alone when True; otherwise
-                              ``abs(kurtosis) + abs(skew)``.
-        :return: Optimised threshold value.
+    .. code:: python
 
-        .. code:: python
+        import numpy as np
+        import rsgispy.tools.thresholding
+        data = np.random.normal(5.0, 1.0, 500)
+        thres = rsgispy.tools.thresholding.calc_kurt_skew_threshold(
+            data, max_val=4.5, min_val=2.0, init_thres=3.0
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    rsgispy.check_optional_dep(
+        HAVE_SCIPY, "calc_kurt_skew_threshold", "scipy", "stats"
+    )
+    if len(data.shape) > 1:
+        raise rsgispy.RSGISPyException("Expecting a single variable.")
 
-            import numpy as np
-            import rsgispy.tools.thresholding
-            data = np.random.normal(5.0, 1.0, 500)
-            thres = rsgispy.tools.thresholding.calc_kurt_skew_threshold(
-                data, max_val=4.5, min_val=2.0, init_thres=3.0
-            )
-        """
-        # pylint: disable=too-many-arguments,too-many-positional-arguments
-        if len(data.shape) > 1:
-            raise rsgispy.RSGISPyException("Expecting a single variable.")
-
-        if not 1 <= contamination <= 100:
-            raise rsgispy.RSGISPyException(
-                "contamination parameter should have a value between 1 and 100."
-            )
-
-        if low_thres:
-            max_val = min(max_val, float(numpy.percentile(data, contamination)))
-            if min_val >= max_val:
-                min_val = float(numpy.min(data))
-        else:
-            min_val = max(min_val, float(numpy.percentile(data, 100 - contamination)))
-            if max_val <= min_val:
-                max_val = float(numpy.max(data))
-
-        if min_val == max_val:
-            print(f"Min: {min_val}")
-            print(f"Max: {max_val}")
-            raise rsgispy.RSGISPyException("Min and Max values are the same.")
-        if min_val > max_val:
-            print(f"Min: {min_val}")
-            print(f"Max: {max_val}")
-            raise rsgispy.RSGISPyException(
-                "Min value is greater than max - note this can happened if the "
-                "contamination parameter caused threshold to be changed."
-            )
-
-        if not min_val <= init_thres <= max_val:
-            init_thres = min_val + ((max_val - min_val) / 2.0)
-
-        def _opt_fun(x_arr: numpy.ndarray, *args: Any) -> float:
-            vals = args[0]
-            data_sub = vals[vals > x_arr] if low_thres else vals[vals < x_arr]
-            kurtosis = float(scipy.stats.kurtosis(data_sub))
-            if only_kurtosis:
-                return kurtosis
-            skew = float(scipy.stats.skew(data_sub))
-            return abs(kurtosis) + abs(skew)
-
-        opt_rslt = scipy.optimize.dual_annealing(
-            _opt_fun, bounds=[(min_val, max_val)], args=[data], x0=[init_thres]
+    if not 1 <= contamination <= 100:
+        raise rsgispy.RSGISPyException(
+            "contamination parameter should have a value between 1 and 100."
         )
 
-        if not opt_rslt.success:
-            raise rsgispy.RSGISPyException("Optimisation failed, no threshold found.")
-        return float(opt_rslt.x[0])
+    if low_thres:
+        max_val = min(max_val, float(numpy.percentile(data, contamination)))
+        if min_val >= max_val:
+            min_val = float(numpy.min(data))
+    else:
+        min_val = max(min_val, float(numpy.percentile(data, 100 - contamination)))
+        if max_val <= min_val:
+            max_val = float(numpy.max(data))
+
+    if min_val == max_val:
+        print(f"Min: {min_val}")
+        print(f"Max: {max_val}")
+        raise rsgispy.RSGISPyException("Min and Max values are the same.")
+    if min_val > max_val:
+        print(f"Min: {min_val}")
+        print(f"Max: {max_val}")
+        raise rsgispy.RSGISPyException(
+            "Min value is greater than max - note this can happened if the "
+            "contamination parameter caused threshold to be changed."
+        )
+
+    if not min_val <= init_thres <= max_val:
+        init_thres = min_val + ((max_val - min_val) / 2.0)
+
+    def _opt_fun(x_arr: numpy.ndarray, *args: Any) -> float:
+        vals = args[0]
+        data_sub = vals[vals > x_arr] if low_thres else vals[vals < x_arr]
+        kurtosis = float(scipy.stats.kurtosis(data_sub))
+        if only_kurtosis:
+            return kurtosis
+        skew = float(scipy.stats.skew(data_sub))
+        return abs(kurtosis) + abs(skew)
+
+    opt_rslt = scipy.optimize.dual_annealing(
+        _opt_fun, bounds=[(min_val, max_val)], args=[data], x0=[init_thres]
+    )
+
+    if not opt_rslt.success:
+        raise rsgispy.RSGISPyException("Optimisation failed, no threshold found.")
+    return float(opt_rslt.x[0])

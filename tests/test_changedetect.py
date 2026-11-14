@@ -11,6 +11,8 @@ import pytest
 import rasterio
 from rasterio.transform import from_origin
 
+import rsgispy
+import rsgispy.changedetect
 import rsgispy.changedetect.imgchngmthds as icm
 import rsgispy.changedetect.pxloutlierchng as poc
 import rsgispy.tools.plotting as rplot
@@ -67,14 +69,13 @@ def test_default_gdalformat_is_gtiff():
         icm.image_difference,
         icm.image_ratio,
         icm.change_vector_analysis,
+        icm.slow_feature_analysis,
+        icm.multivariate_alteration_detection,
         poc.find_class_pyod_outliers,
         poc.find_class_otsu_outliers,
         poc.find_class_li_outliers,
+        poc.find_class_kurt_skew_outliers,
     ]
-    if icm.HAVE_SCIPY:
-        funcs.extend([icm.slow_feature_analysis, icm.multivariate_alteration_detection])
-    if poc.HAVE_SCIPY:
-        funcs.append(poc.find_class_kurt_skew_outliers)
 
     for fn in funcs:
         sig = inspect.signature(fn)
@@ -311,3 +312,52 @@ def test_pxloutlierchng_methods(tmp_path):
             use_pbar=False,
         )
         assert 0.1 <= thres_ks <= 0.65
+
+
+def test_optional_scipy_missing_changedetect(monkeypatch):
+    """Verify changedetect optional functions remain exposed and raise friendly errors."""
+    import importlib
+    import sys
+
+    import rsgispy.tools.thresholding as thresh_mod
+
+    for mod_name in (
+        "scipy",
+        "scipy.optimize",
+        "scipy.stats",
+        "sklearn",
+        "sklearn.cluster",
+    ):
+        monkeypatch.setitem(sys.modules, mod_name, None)
+
+    monkeypatch.setattr(rsgispy.tools, "thresholding", thresh_mod)
+    monkeypatch.setattr(rsgispy.changedetect, "imgchngmthds", icm)
+    monkeypatch.setattr(rsgispy.changedetect, "pxloutlierchng", poc)
+    monkeypatch.delitem(sys.modules, "rsgispy.tools.thresholding", raising=False)
+    monkeypatch.delitem(sys.modules, "rsgispy.changedetect.imgchngmthds", raising=False)
+    monkeypatch.delitem(sys.modules, "rsgispy.changedetect.pxloutlierchng", raising=False)
+
+    icm_fresh = importlib.import_module("rsgispy.changedetect.imgchngmthds")
+    poc_fresh = importlib.import_module("rsgispy.changedetect.pxloutlierchng")
+
+    assert not icm_fresh.HAVE_SCIPY
+    assert not icm_fresh.HAVE_SKLEARN
+    for fn_name in ("slow_feature_analysis", "multivariate_alteration_detection"):
+        assert hasattr(icm_fresh, fn_name)
+        assert fn_name in icm_fresh.__all__
+    with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+        icm_fresh.slow_feature_analysis("a.tif", "b.tif", "out.tif", "dist.tif")
+    with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+        icm_fresh.multivariate_alteration_detection(
+            "a.tif", "b.tif", "out.tif", "dist.tif", "mads.tif"
+        )
+    with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+        icm_fresh.change_vector_analysis("a.tif", "b.tif", "bin.tif", "dist.tif", use_kmeans=True)
+
+    assert not poc_fresh.HAVE_SCIPY
+    assert hasattr(poc_fresh, "find_class_kurt_skew_outliers")
+    assert "find_class_kurt_skew_outliers" in poc_fresh.__all__
+    with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+        poc_fresh.find_class_kurt_skew_outliers(
+            "img.tif", "msk.tif", "out.tif", 0.0, 1.0, 0.5, True
+        )

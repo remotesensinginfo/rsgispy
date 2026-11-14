@@ -431,8 +431,12 @@ def test_optional_requests_missing_tools(tmp_path):
 
         assert not web_mod_no_bs4.HAVE_BS4
         for fn_name in ("find_web_imgs", "find_web_files"):
-            assert not hasattr(web_mod_no_bs4, fn_name)
-            assert fn_name not in web_mod_no_bs4.__all__
+            assert hasattr(web_mod_no_bs4, fn_name)
+            assert fn_name in web_mod_no_bs4.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            web_mod_no_bs4.find_web_imgs("https://example.com")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            web_mod_no_bs4.find_web_files("https://example.com")
 
         with patch.dict(sys.modules, blocked_req):
             sys.modules.pop("rsgispy.tools.web", None)
@@ -442,8 +446,12 @@ def test_optional_requests_missing_tools(tmp_path):
 
         assert not web_mod.HAVE_REQUESTS
         for fn_name in ("find_web_imgs", "find_web_files"):
-            assert not hasattr(web_mod, fn_name)
-            assert fn_name not in web_mod.__all__
+            assert hasattr(web_mod, fn_name)
+            assert fn_name in web_mod.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            web_mod.find_web_imgs("https://example.com")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            web_mod.find_web_files("https://example.com")
 
         assert not http_mod.HAVE_REQUESTS
         for fn_name in (
@@ -452,8 +460,16 @@ def test_optional_requests_missing_tools(tmp_path):
             "send_http_json_request",
             "download_file_http",
         ):
-            assert not hasattr(http_mod, fn_name)
-            assert fn_name not in http_mod.__all__
+            assert hasattr(http_mod, fn_name)
+            assert fn_name in http_mod.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            http_mod.check_url_exists("https://example.com")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            http_mod.check_http_response(None, "https://example.com")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            http_mod.send_http_json_request("https://example.com", {})
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            http_mod.download_file_http("https://example.com", str(tmp_path / "a.txt"))
 
         for sym_name in (
             "RSGISPyResponseException",
@@ -486,7 +502,7 @@ def test_optional_requests_missing_tools(tmp_path):
 
 
 def test_optional_pysondb_missing_tools():
-    """Verify http and ftp omit pysondb functions when pysondb is missing."""
+    """Verify http and ftp expose pysondb functions and raise RSGISPyException."""
     import importlib
     from unittest.mock import patch
     import rsgispy.tools as rtools
@@ -502,8 +518,12 @@ def test_optional_pysondb_missing_tools():
 
         assert not http_mod.HAVE_PYSONDB
         for fn_name in ("create_file_listings_db", "download_http_files_use_lst_db"):
-            assert not hasattr(http_mod, fn_name)
-            assert fn_name not in http_mod.__all__
+            assert hasattr(http_mod, fn_name)
+            assert fn_name in http_mod.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            http_mod.create_file_listings_db("db.json", {})
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            http_mod.download_http_files_use_lst_db("db.json", ".")
         assert hasattr(http_mod, "wget_download_file")
         assert "wget_download_file" in http_mod.__all__
 
@@ -513,8 +533,14 @@ def test_optional_pysondb_missing_tools():
             "filter_file_listings_db",
             "download_files_use_lst_db",
         ):
-            assert not hasattr(ftp_mod, fn_name)
-            assert fn_name not in ftp_mod.__all__
+            assert hasattr(ftp_mod, fn_name)
+            assert fn_name in ftp_mod.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            ftp_mod.create_file_listings_db("db.json", "ftp.example.com", "/")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            ftp_mod.filter_file_listings_db("db.json", [".tif"], "out.json")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            ftp_mod.download_files_use_lst_db("db.json", ".")
         for fn_name in (
             "get_ftp_file_listings",
             "download_ftp_file",
@@ -531,7 +557,7 @@ def test_optional_pysondb_missing_tools():
 
 
 def test_optional_imaging_missing():
-    """Verify imaging omits functions when optional packages are missing."""
+    """Verify imaging exposes functions and raises RSGISPyException when deps missing."""
     import importlib
     from unittest.mock import patch
     import rsgispy.tools as rtools
@@ -564,8 +590,21 @@ def test_optional_imaging_missing():
             "add_pdf_blank_pages",
             "create_qr_code",
         ):
-            assert not hasattr(img_mod, fn_name)
-            assert fn_name not in img_mod.__all__
+            assert hasattr(img_mod, fn_name)
+            assert fn_name in img_mod.__all__
+
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            img_mod.animate_img_set([], "out.gif")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            img_mod.list_exif_info("photo.jpg")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            img_mod.get_exif_info("photo.jpg")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            img_mod.extract_images_from_pdf("a.pdf", ".")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            img_mod.add_pdf_blank_pages("a.pdf", "b.pdf")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            img_mod.create_qr_code("qr.png", "hello")
 
         assert hasattr(img_mod, "list_exif_info_pil")
         assert "list_exif_info_pil" in img_mod.__all__

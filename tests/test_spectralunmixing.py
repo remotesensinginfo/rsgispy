@@ -4,6 +4,7 @@ Tests for :mod:`rsgispy.imagecalc.spectralunmixing`.
 
 import importlib.util
 import inspect
+import math
 
 import geopandas
 import numpy as np
@@ -73,6 +74,13 @@ def test_exports_and_default_gdalformat():
 
     funcs = [
         su.spec_unmix_ucls,
+        su.spec_unmix_nnls,
+        su.spec_unmix_fcls,
+        su.spec_unmix_spts_ucls,
+        su.spec_unmix_spts_nnls,
+        su.spec_unmix_spts_fcls,
+        su.spec_unmix_pymcr_nnls,
+        su.spec_unmix_pymcr_fcls,
         su.exhcon_linear_spec_unmix,
         su.rescale_unmixing_results,
         su.predict_refl_linear_unmixing,
@@ -80,16 +88,8 @@ def test_exports_and_default_gdalformat():
         su.summarise_multi_endmember_linear_unmixing,
         su.calc_ppi,
     ]
-    if su.HAVE_SCIPY:
-        funcs.extend([su.spec_unmix_nnls, su.spec_unmix_fcls])
-    if su.HAVE_PYSPTOOLS:
-        funcs.extend([su.spec_unmix_spts_ucls, su.spec_unmix_spts_nnls])
-        if su.HAVE_CVXOPT:
-            funcs.append(su.spec_unmix_spts_fcls)
-    if su.HAVE_PYMCR:
-        funcs.extend([su.spec_unmix_pymcr_nnls, su.spec_unmix_pymcr_fcls])
-
     for fn in funcs:
+        assert fn.__name__ in su.__all__
         sig = inspect.signature(fn)
         assert sig.parameters["gdalformat"].default == "GTIFF"
 
@@ -668,3 +668,166 @@ def test_recommended_scipy_nnls_fcls_unmixers(tmp_path):
     with rasterio.open(out_fcls_scaled) as src:
         fcls_scaled = src.read()
     np.testing.assert_allclose(fcls_scaled, fcls_arr, atol=1e-5)
+
+
+@pytest.mark.skipif(not su.HAVE_SCIPY, reason="scipy not installed")
+def test_batched_nnls_fcls_equivalence_and_edge_cases():
+    """Verify batched active-set solvers match SciPy reference across m=1, m=5, and m=22."""
+    import scipy.optimize
+
+    rng = np.random.default_rng(123)
+
+    # m=1 single endmember edge case
+    em1 = rng.uniform(0.1, 0.9, size=(1, 4))
+    px1 = rng.uniform(0.1, 0.9, size=(10, 4))
+    out_fcls1 = su._scipy_fcls_solver(px1, em1)  # pylint: disable=protected-access
+    np.testing.assert_allclose(out_fcls1, np.ones((10, 1)), atol=1e-12)
+    out_nnls1 = su._scipy_nnls_solver(px1, em1)  # pylint: disable=protected-access
+    ref_nnls1 = np.array([scipy.optimize.nnls(em1.T, p)[0] for p in px1])
+    np.testing.assert_allclose(out_nnls1, ref_nnls1, atol=1e-10)
+
+    # m=5 mixed interior and active-boundary pixels
+    em5 = rng.uniform(0.05, 0.85, size=(5, 8))
+    w_true = rng.dirichlet(np.ones(5) * 0.4, size=200)
+    px5 = w_true @ em5 + rng.normal(0.0, 0.05, size=(200, 8))
+    # Include unscaled / negative-coefficient stress cases
+    px5[:20] = -0.3 * em5[0] + 1.5 * em5[2] + rng.normal(0.0, 0.02, size=(20, 8))
+
+    out_nnls5 = su._scipy_nnls_solver(px5, em5)  # pylint: disable=protected-access
+    ref_nnls5 = np.array([scipy.optimize.nnls(em5.T, p)[0] for p in px5])
+    np.testing.assert_allclose(out_nnls5, ref_nnls5, atol=1e-8)
+
+    out_fcls5 = su._scipy_fcls_solver(px5, em5)  # pylint: disable=protected-access
+    ref_fcls5 = su._scipy_fcls_heinz_chang_loop(px5, em5)  # pylint: disable=protected-access
+    assert np.all(out_fcls5 >= -1e-12)
+    np.testing.assert_allclose(np.sum(out_fcls5, axis=1), 1.0, atol=1e-10)
+    # Check residuals are at least as low as reference Heinz-Chang solver
+    res_batched = np.sum((out_fcls5 @ em5 - px5) ** 2, axis=1)
+    res_ref = np.sum((ref_fcls5 @ em5 - px5) ** 2, axis=1)
+    assert np.all(res_batched <= res_ref + 1e-7)
+
+    # m=22 fallback path (m > 20)
+    em22 = rng.uniform(0.1, 0.9, size=(22, 25))
+    px22 = rng.uniform(0.1, 0.9, size=(5, 25))
+    out_nnls22 = su._scipy_nnls_solver(px22, em22)  # pylint: disable=protected-access
+    assert out_nnls22.shape == (5, 22)
+    assert np.all(out_nnls22 >= -1e-12)
+    out_fcls22 = su._scipy_fcls_solver(px22, em22)  # pylint: disable=protected-access
+    assert out_fcls22.shape == (5, 22)
+    np.testing.assert_allclose(np.sum(out_fcls22, axis=1), 1.0, atol=1e-6)
+
+
+def test_optional_dependency_friendly_errors(monkeypatch, tmp_path):
+    """Verify optional unmixers raise RSGISPyException with pip install hints when missing."""
+    em_df = pandas.DataFrame({"Soil": [0.2, 0.4], "Veg": [0.6, 0.2]})
+    dummy_in = str(tmp_path / "in.tif")
+    dummy_out = str(tmp_path / "out.tif")
+
+    checks = [
+        (su.spec_unmix_nnls, "HAVE_SCIPY", "scipy"),
+        (su.spec_unmix_fcls, "HAVE_SCIPY", "scipy"),
+        (su.spec_unmix_spts_ucls, "HAVE_PYSPTOOLS", "pysptools"),
+        (su.spec_unmix_spts_nnls, "HAVE_PYSPTOOLS", "pysptools"),
+        (su.spec_unmix_spts_fcls, "HAVE_PYSPTOOLS", "pysptools"),
+        (su.spec_unmix_spts_fcls, "HAVE_CVXOPT", "cvxopt"),
+        (su.spec_unmix_pymcr_nnls, "HAVE_PYMCR", "pyMCR"),
+        (su.spec_unmix_pymcr_fcls, "HAVE_PYMCR", "pyMCR"),
+    ]
+    for fn, flag, pkg in checks:
+        monkeypatch.setattr(su, flag, False)
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            fn(dummy_in, None, 1, dummy_out, em_df)
+        with pytest.raises(rsgispy.RSGISPyException, match=pkg):
+            fn(dummy_in, None, 1, dummy_out, em_df)
+        monkeypatch.undo()
+
+
+def test_spectral_angle_mapper(tmp_path):
+    """Test spectral_angle_mapper accuracy, scale invariance, thresholding, and nodata."""
+    em_veg = np.array([1.0, 4.0, 2.0], dtype=np.float64)
+    em_soil = np.array([3.0, 1.0, 1.0], dtype=np.float64)
+    em_df = pandas.DataFrame({"Veg": em_veg, "Soil": em_soil})
+    em_csv = tmp_path / "sam_em.csv"
+    su.write_endmembers_df(em_df, str(em_csv))
+
+    img_path = tmp_path / "sam_in.tif"
+    msk_path = tmp_path / "sam_msk.tif"
+    out_ang = tmp_path / "sam_ang.tif"
+    out_cls = tmp_path / "sam_cls.tif"
+    out_min = tmp_path / "sam_min.tif"
+
+    # 2x3 image:
+    # (0, 0): scaled Veg (3 * em_veg) -> exact angle 0 to Veg -> class 1
+    # (0, 1): scaled Soil (0.5 * em_soil) -> exact angle 0 to Soil -> class 2
+    # (0, 2): equal mix far from both -> large angle -> > max_angle=15 deg -> class 0
+    # (1, 0): valid pure Veg but masked out -> nodata / class 0
+    # (1, 1): nodata (-9999) -> nodata / class 0
+    # (1, 2): zero spectrum -> nodata / class 0
+    cube = np.zeros((3, 2, 3), dtype=np.float32)
+    cube[:, 0, 0] = (3.0 * em_veg).astype(np.float32)
+    cube[:, 0, 1] = (0.5 * em_soil).astype(np.float32)
+    cube[:, 0, 2] = np.array([0.0, 0.0, 5.0], dtype=np.float32)
+    cube[:, 1, 0] = em_veg.astype(np.float32)
+    cube[:, 1, 1] = -9999.0
+    cube[:, 1, 2] = 0.0
+    _write_raster(img_path, cube, origin=(0.0, 20.0), res=10.0, nodata=-9999.0)
+
+    msk = np.array([[[1, 1, 1], [0, 1, 1]]], dtype=np.uint8)
+    _write_raster(msk_path, msk, origin=(0.0, 20.0), res=10.0)
+
+    su.spectral_angle_mapper(
+        str(img_path),
+        str(em_csv),
+        str(out_ang),
+        out_class_img=str(out_cls),
+        out_min_angle_img=str(out_min),
+        degrees=True,
+        max_angle=15.0,
+        valid_msk_img=str(msk_path),
+        valid_msk_val=1,
+        calc_stats=True,
+        use_pbar=False,
+    )
+
+    with rasterio.open(out_ang) as src:
+        ang = src.read()
+        assert list(src.descriptions) == ["Veg", "Soil"]
+    assert ang[0, 0, 0] == pytest.approx(0.0, abs=1e-3)
+    assert ang[1, 0, 1] == pytest.approx(0.0, abs=1e-3)
+    expected_deg = math.degrees(
+        math.acos(2.0 / math.sqrt(21.0))
+    )  # [0,0,5] vs [1,4,2]
+    assert ang[0, 0, 2] == pytest.approx(expected_deg, abs=1e-3)
+    assert ang[0, 1, 0] == pytest.approx(-9999.0)
+    assert ang[0, 1, 1] == pytest.approx(-9999.0)
+    assert ang[0, 1, 2] == pytest.approx(-9999.0)
+
+    with rasterio.open(out_cls) as src:
+        cls = src.read(1)
+    assert cls[0, 0] == 1
+    assert cls[0, 1] == 2
+    assert cls[0, 2] == 0  # exceeds max_angle=15 deg
+    assert cls[1, 0] == 0  # masked out
+    assert cls[1, 1] == 0  # nodata
+    assert cls[1, 2] == 0  # zero norm
+
+    with rasterio.open(out_min) as src:
+        m_ang = src.read(1)
+    assert m_ang[0, 0] == pytest.approx(0.0, abs=1e-3)
+    assert m_ang[0, 1] == pytest.approx(0.0, abs=1e-3)
+
+    # Error handling: band mismatch and zero-norm endmember
+    with pytest.raises(rsgispy.RSGISPyException):
+        su.spectral_angle_mapper(
+            str(img_path),
+            pandas.DataFrame({"A": [1.0, 2.0]}),
+            str(tmp_path / "bad_bands.tif"),
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        su.spectral_angle_mapper(
+            str(img_path),
+            pandas.DataFrame({"Zero": [0.0, 0.0, 0.0]}),
+            str(tmp_path / "bad_zero.tif"),
+        )
+
+

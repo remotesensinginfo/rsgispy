@@ -83,7 +83,7 @@ Band, Spectral & Array Operations
 
 * :doc:`imageutils/arrays` — NumPy array/raster conversion and pixel/column extraction.
 * :doc:`imageutils/bands` — Band selection, stacking, and pan-sharpening.
-* :doc:`imageutils/spectral` — Spectral smoothing, outlier masking, polyfill, and whitening.
+* :doc:`imageutils/spectral` — Spectral smoothing, outlier masking, polyfill, whitening, PCA, MNF, Tasseled Cap, and histogram matching.
 * :doc:`imageutils/sampling` — Random and mask-based pixel sampling.
 
 .. toctree::

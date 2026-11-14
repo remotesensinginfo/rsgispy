@@ -18,6 +18,7 @@ zonal statistics functions using ``rasterio`` and ``geopandas``.
 """
 
 import math
+import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import geopandas
@@ -29,6 +30,7 @@ import rasterio.windows
 
 import rsgispy
 import rsgispy.tools.stats
+from rsgispy.vectorprocess import VectorInput
 from rsgispy.zonalstats._helpers import (
     is_valid_pixel_value as _is_valid_pixel_value,
     open_validated_zonal_inputs as _open_validated_zonal_inputs,
@@ -259,7 +261,7 @@ def _calc_zonal_stats_core(
 
 
 def calc_zonal_band_stats_file(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     input_img: str,
     img_band: int,
@@ -277,15 +279,21 @@ def calc_zonal_band_stats_file(
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
+) -> Optional[geopandas.GeoDataFrame]:
     """
-    Calculate zonal statistics for a raster band over polygons in ``vec_file``.
+    Calculate zonal statistics for a raster band over polygons in ``vec_file``
+    (a vector file path or an in-memory :class:`geopandas.GeoDataFrame`).
 
     Use this function when raster pixels are small relative to the polygons so
     each polygon contains at least one pixel centre.
 
-    :param vec_file: Input vector file path (updated in-place on disk).
-    :param vec_lyr: Vector layer name (or ``None`` for single-layer formats).
+    :param vec_file: Input vector file path (updated in-place on disk unless
+                     ``out_vec_file`` is given) or
+                     :class:`geopandas.GeoDataFrame`.
+    :param vec_lyr: Vector layer name (or ``None`` for single-layer formats /
+                    in-memory GeoDataFrames).
     :param input_img: Path to the input raster image.
     :param img_band: 1-based band index within ``input_img``.
     :param min_thres: Lower inclusive threshold for pixels included in stats.
@@ -307,6 +315,12 @@ def calc_zonal_band_stats_file(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :param out_vec_file: Optional separate output vector file path.
+    :param out_vec_lyr: Optional output vector layer name (defaults to
+                        ``vec_lyr``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``vec_file`` is a
+             ``GeoDataFrame`` and ``out_vec_file`` is ``None``, otherwise
+             ``None``.
 
     .. code:: python
 
@@ -326,6 +340,7 @@ def calc_zonal_band_stats_file(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    is_gdf_input = isinstance(vec_file, geopandas.GeoDataFrame)
     vec_gdf = _read_vec_file(vec_file, vec_lyr)
     vec_gdf = calc_zonal_band_stats(
         vec_gdf,
@@ -345,11 +360,27 @@ def calc_zonal_band_stats_file(
         vec_def_epsg=vec_def_epsg,
         use_pbar=use_pbar,
     )
-    _write_vec_file(vec_gdf, vec_file, vec_lyr, out_compress=out_compress)
+    if out_vec_file is not None:
+        _write_vec_file(
+            vec_gdf,
+            out_vec_file,
+            out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+            out_compress=out_compress,
+        )
+        return None
+    if is_gdf_input:
+        return vec_gdf
+    _write_vec_file(
+        vec_gdf,
+        vec_file,  # type: ignore[arg-type]
+        out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+        out_compress=out_compress,
+    )
+    return None
 
 
 def calc_zonal_band_stats(
-    vec_gdf: geopandas.GeoDataFrame,
+    vec_gdf: VectorInput,
     input_img: str,
     img_band: int,
     min_thres: float,
@@ -365,14 +396,18 @@ def calc_zonal_band_stats(
     median_field: Optional[str] = None,
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
+    vec_lyr: Optional[str] = None,
 ) -> geopandas.GeoDataFrame:
     """
     Calculate zonal statistics for a raster band over polygons in a
-    :class:`geopandas.GeoDataFrame`.
+    :class:`geopandas.GeoDataFrame` or vector file path.
 
-    The GeoDataFrame is updated in-place and returned.
+    When given a :class:`geopandas.GeoDataFrame`, it is updated in-place and
+    returned. When given a file path, the layer is loaded into a new
+    GeoDataFrame and returned.
 
-    :param vec_gdf: Input GeoDataFrame containing polygon geometries.
+    :param vec_gdf: Input :class:`geopandas.GeoDataFrame` or vector file path
+                    containing polygon geometries.
     :param input_img: Path to the input raster image.
     :param img_band: 1-based band index within ``input_img``.
     :param min_thres: Lower inclusive threshold for pixels included in stats.
@@ -389,6 +424,7 @@ def calc_zonal_band_stats(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param vec_lyr: Optional layer name when ``vec_gdf`` is a file path.
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
     .. code:: python
@@ -409,6 +445,8 @@ def calc_zonal_band_stats(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if isinstance(vec_gdf, (str, os.PathLike)):
+        vec_gdf = _read_vec_file(vec_gdf, vec_lyr)
     field_map: Dict[str, Optional[str]] = {
         "min": min_field,
         "max": max_field,
@@ -434,7 +472,7 @@ def calc_zonal_band_stats(
 
 
 def calc_zonal_poly_pts_band_stats_file(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     input_img: str,
     img_band: int,
@@ -442,14 +480,20 @@ def calc_zonal_poly_pts_band_stats_file(
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
+) -> Optional[geopandas.GeoDataFrame]:
     """
-    Extract raster band values at each polygon's centroid for ``vec_file``.
+    Extract raster band values at each polygon's centroid for ``vec_file``
+    (a vector file path or an in-memory :class:`geopandas.GeoDataFrame`).
 
     Useful when intersecting coarse-resolution imagery with small polygons.
 
-    :param vec_file: Input vector file path (updated in-place on disk).
-    :param vec_lyr: Vector layer name (or ``None`` for single-layer formats).
+    :param vec_file: Input vector file path (updated in-place on disk unless
+                     ``out_vec_file`` is given) or
+                     :class:`geopandas.GeoDataFrame`.
+    :param vec_lyr: Vector layer name (or ``None`` for single-layer formats /
+                    in-memory GeoDataFrames).
     :param input_img: Path to the input raster image.
     :param img_band: 1-based band index within ``input_img``.
     :param out_field: Output column name in the vector layer.
@@ -461,6 +505,12 @@ def calc_zonal_poly_pts_band_stats_file(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :param out_vec_file: Optional separate output vector file path.
+    :param out_vec_lyr: Optional output vector layer name (defaults to
+                        ``vec_lyr``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``vec_file`` is a
+             ``GeoDataFrame`` and ``out_vec_file`` is ``None``, otherwise
+             ``None``.
 
     .. code:: python
 
@@ -475,6 +525,7 @@ def calc_zonal_poly_pts_band_stats_file(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
+    is_gdf_input = isinstance(vec_file, geopandas.GeoDataFrame)
     vec_gdf = _read_vec_file(vec_file, vec_lyr)
     vec_gdf = calc_zonal_poly_pts_band_stats(
         vec_gdf,
@@ -484,30 +535,51 @@ def calc_zonal_poly_pts_band_stats_file(
         vec_def_epsg=vec_def_epsg,
         use_pbar=use_pbar,
     )
-    _write_vec_file(vec_gdf, vec_file, vec_lyr, out_compress=out_compress)
+    if out_vec_file is not None:
+        _write_vec_file(
+            vec_gdf,
+            out_vec_file,
+            out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+            out_compress=out_compress,
+        )
+        return None
+    if is_gdf_input:
+        return vec_gdf
+    _write_vec_file(
+        vec_gdf,
+        vec_file,  # type: ignore[arg-type]
+        out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+        out_compress=out_compress,
+    )
+    return None
 
 
 def calc_zonal_poly_pts_band_stats(
-    vec_gdf: geopandas.GeoDataFrame,
+    vec_gdf: VectorInput,
     input_img: str,
     img_band: int,
     out_field: str,
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
+    vec_lyr: Optional[str] = None,
 ) -> geopandas.GeoDataFrame:
     """
     Extract raster band values at each polygon's centroid for a
-    :class:`geopandas.GeoDataFrame`.
+    :class:`geopandas.GeoDataFrame` or vector file path.
 
-    The GeoDataFrame is updated in-place and returned.
+    When given a :class:`geopandas.GeoDataFrame`, it is updated in-place and
+    returned. When given a file path, the layer is loaded into a new
+    GeoDataFrame and returned.
 
-    :param vec_gdf: Input GeoDataFrame containing polygon geometries.
+    :param vec_gdf: Input :class:`geopandas.GeoDataFrame` or vector file path
+                    containing polygon geometries.
     :param input_img: Path to the input raster image.
     :param img_band: 1-based band index within ``input_img``.
     :param out_field: Output column name in ``vec_gdf``.
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param vec_lyr: Optional layer name when ``vec_gdf`` is a file path.
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
     .. code:: python
@@ -524,6 +596,12 @@ def calc_zonal_poly_pts_band_stats(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
+    if vec_gdf is None:
+        raise rsgispy.RSGISPyException("The inputted vector layer was None")
+
+    if isinstance(vec_gdf, (str, os.PathLike)):
+        vec_gdf = _read_vec_file(vec_gdf, vec_lyr)
+
     if not out_field:
         raise rsgispy.RSGISPyException(
             "Output field specified as None or empty, a name needs to be given."
@@ -553,7 +631,7 @@ def calc_zonal_poly_pts_band_stats(
 
 
 def calc_zonal_band_stats_test_poly_pts_file(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     input_img: str,
     img_band: int,
@@ -573,13 +651,19 @@ def calc_zonal_band_stats_test_poly_pts_file(
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
+) -> Optional[geopandas.GeoDataFrame]:
     """
-    Calculate zonal statistics for polygons in ``vec_file``, falling back to the
+    Calculate zonal statistics for polygons in ``vec_file`` (a vector file
+    path or an in-memory :class:`geopandas.GeoDataFrame`), falling back to the
     polygon centroid if no valid pixels fall within the polygon.
 
-    :param vec_file: Input vector file path (updated in-place on disk).
-    :param vec_lyr: Vector layer name (or ``None`` for single-layer formats).
+    :param vec_file: Input vector file path (updated in-place on disk unless
+                     ``out_vec_file`` is given) or
+                     :class:`geopandas.GeoDataFrame`.
+    :param vec_lyr: Vector layer name (or ``None`` for single-layer formats /
+                    in-memory GeoDataFrames).
     :param input_img: Path to the input raster image.
     :param img_band: 1-based band index within ``input_img``.
     :param min_thres: Lower inclusive threshold for pixels included in stats.
@@ -604,6 +688,12 @@ def calc_zonal_band_stats_test_poly_pts_file(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :param out_vec_file: Optional separate output vector file path.
+    :param out_vec_lyr: Optional output vector layer name (defaults to
+                        ``vec_lyr``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``vec_file`` is a
+             ``GeoDataFrame`` and ``out_vec_file`` is ``None``, otherwise
+             ``None``.
 
     .. code:: python
 
@@ -623,6 +713,7 @@ def calc_zonal_band_stats_test_poly_pts_file(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    is_gdf_input = isinstance(vec_file, geopandas.GeoDataFrame)
     vec_gdf = _read_vec_file(vec_file, vec_lyr)
     vec_gdf = calc_zonal_band_stats_test_poly_pts(
         vec_gdf,
@@ -644,11 +735,27 @@ def calc_zonal_band_stats_test_poly_pts_file(
         vec_def_epsg=vec_def_epsg,
         use_pbar=use_pbar,
     )
-    _write_vec_file(vec_gdf, vec_file, vec_lyr, out_compress=out_compress)
+    if out_vec_file is not None:
+        _write_vec_file(
+            vec_gdf,
+            out_vec_file,
+            out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+            out_compress=out_compress,
+        )
+        return None
+    if is_gdf_input:
+        return vec_gdf
+    _write_vec_file(
+        vec_gdf,
+        vec_file,  # type: ignore[arg-type]
+        out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+        out_compress=out_compress,
+    )
+    return None
 
 
 def calc_zonal_band_stats_test_poly_pts(
-    vec_gdf: geopandas.GeoDataFrame,
+    vec_gdf: VectorInput,
     input_img: str,
     img_band: int,
     min_thres: float,
@@ -666,14 +773,19 @@ def calc_zonal_band_stats_test_poly_pts(
     median_field: Optional[str] = None,
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
+    vec_lyr: Optional[str] = None,
 ) -> geopandas.GeoDataFrame:
     """
-    Calculate zonal statistics for polygons in a :class:`geopandas.GeoDataFrame`,
-    falling back to the polygon centroid if no valid pixels fall inside.
+    Calculate zonal statistics for polygons in a :class:`geopandas.GeoDataFrame`
+    or vector file path, falling back to the polygon centroid if no valid pixels
+    fall inside.
 
-    The GeoDataFrame is updated in-place and returned.
+    When given a :class:`geopandas.GeoDataFrame`, it is updated in-place and
+    returned. When given a file path, the layer is loaded into a new
+    GeoDataFrame and returned.
 
-    :param vec_gdf: Input GeoDataFrame containing polygon geometries.
+    :param vec_gdf: Input :class:`geopandas.GeoDataFrame` or vector file path
+                    containing polygon geometries.
     :param input_img: Path to the input raster image.
     :param img_band: 1-based band index within ``input_img``.
     :param min_thres: Lower inclusive threshold for pixels included in stats.
@@ -693,6 +805,7 @@ def calc_zonal_band_stats_test_poly_pts(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param vec_lyr: Optional layer name when ``vec_gdf`` is a file path.
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
     .. code:: python
@@ -713,6 +826,8 @@ def calc_zonal_band_stats_test_poly_pts(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if isinstance(vec_gdf, (str, os.PathLike)):
+        vec_gdf = _read_vec_file(vec_gdf, vec_lyr)
     field_map: Dict[str, Optional[str]] = {
         "min": min_field,
         "max": max_field,
@@ -740,7 +855,7 @@ def calc_zonal_band_stats_test_poly_pts(
 
 
 def calc_zonal_band_pxl_counts_file(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     input_img: str,
     img_band: int,
@@ -749,13 +864,19 @@ def calc_zonal_band_pxl_counts_file(
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Count pixels matching specific integer values in ``vals_lut`` within each
-    polygon of ``vec_file``.
+    polygon of ``vec_file`` (a vector file path or an in-memory
+    :class:`geopandas.GeoDataFrame`).
 
-    :param vec_file: Input vector file path (updated in-place on disk).
-    :param vec_lyr: Vector layer name (or ``None`` for single-layer formats).
+    :param vec_file: Input vector file path (updated in-place on disk unless
+                     ``out_vec_file`` is given) or
+                     :class:`geopandas.GeoDataFrame`.
+    :param vec_lyr: Vector layer name (or ``None`` for single-layer formats /
+                    in-memory GeoDataFrames).
     :param input_img: Path to the input integer/categorical raster image.
     :param img_band: 1-based band index within ``input_img``.
     :param vals_lut: Mapping ``{pixel_value: output_field_name}``.
@@ -768,6 +889,12 @@ def calc_zonal_band_pxl_counts_file(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :param out_vec_file: Optional separate output vector file path.
+    :param out_vec_lyr: Optional output vector layer name (defaults to
+                        ``vec_lyr``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``vec_file`` is a
+             ``GeoDataFrame`` and ``out_vec_file`` is ``None``, otherwise
+             ``None``.
 
     .. code:: python
 
@@ -783,6 +910,7 @@ def calc_zonal_band_pxl_counts_file(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
+    is_gdf_input = isinstance(vec_file, geopandas.GeoDataFrame)
     vec_gdf = _read_vec_file(vec_file, vec_lyr)
     vec_gdf = calc_zonal_band_pxl_counts(
         vec_gdf,
@@ -793,25 +921,45 @@ def calc_zonal_band_pxl_counts_file(
         vec_def_epsg=vec_def_epsg,
         use_pbar=use_pbar,
     )
-    _write_vec_file(vec_gdf, vec_file, vec_lyr, out_compress=out_compress)
+    if out_vec_file is not None:
+        _write_vec_file(
+            vec_gdf,
+            out_vec_file,
+            out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+            out_compress=out_compress,
+        )
+        return None
+    if is_gdf_input:
+        return vec_gdf
+    _write_vec_file(
+        vec_gdf,
+        vec_file,  # type: ignore[arg-type]
+        out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+        out_compress=out_compress,
+    )
+    return None
 
 
 def calc_zonal_band_pxl_counts(
-    vec_gdf: geopandas.GeoDataFrame,
+    vec_gdf: VectorInput,
     input_img: str,
     img_band: int,
     vals_lut: Dict[int, str],
     total_field: str = "pxl_count",
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
+    vec_lyr: Optional[str] = None,
 ) -> geopandas.GeoDataFrame:
     """
     Count pixels matching specific integer values in ``vals_lut`` within each
-    polygon of a :class:`geopandas.GeoDataFrame`.
+    polygon of a :class:`geopandas.GeoDataFrame` or vector file path.
 
-    The GeoDataFrame is updated in-place and returned.
+    When given a :class:`geopandas.GeoDataFrame`, it is updated in-place and
+    returned. When given a file path, the layer is loaded into a new
+    GeoDataFrame and returned.
 
-    :param vec_gdf: Input GeoDataFrame containing polygon geometries.
+    :param vec_gdf: Input :class:`geopandas.GeoDataFrame` or vector file path
+                    containing polygon geometries.
     :param input_img: Path to the input integer/categorical raster image.
     :param img_band: 1-based band index within ``input_img``.
     :param vals_lut: Mapping ``{pixel_value: output_field_name}``.
@@ -819,6 +967,7 @@ def calc_zonal_band_pxl_counts(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param vec_lyr: Optional layer name when ``vec_gdf`` is a file path.
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
     .. code:: python
@@ -836,6 +985,12 @@ def calc_zonal_band_pxl_counts(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if vec_gdf is None:
+        raise rsgispy.RSGISPyException("The inputted vector layer was None")
+
+    if isinstance(vec_gdf, (str, os.PathLike)):
+        vec_gdf = _read_vec_file(vec_gdf, vec_lyr)
+
     if not vals_lut:
         raise rsgispy.RSGISPyException(
             "At least one field needs to be specified within the dictionary."

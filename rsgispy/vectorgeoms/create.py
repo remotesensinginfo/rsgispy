@@ -37,6 +37,7 @@ from rsgispy.tools.projection import get_deg_coord_as_str
 import rsgispy.tools.utm
 from rsgispy.vectorprocess import (
     CRSLike,
+    VectorInput,
     build_atts_dataframe,
     check_format_name,
     get_file_vec_extension,
@@ -44,6 +45,7 @@ from rsgispy.vectorprocess import (
     is_geoparquet_format,
     list_vec_layers,
     parse_crs_input,
+    prepare_optional_out_vec,
     prepare_out_vec_file,
     read_vec_gdf,
     resolve_out_lyr_name,
@@ -749,27 +751,28 @@ def write_pts_to_vec(
 
 
 def create_bboxs_for_pts(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     bbox_width: float,
     bbox_height: float,
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     epsg_code: Optional[int] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Create rectangular polygon bounding boxes centred on each point in an input
     point vector layer.
 
-    :param vec_file: Input point vector file path.
+    :param vec_file: Input point vector file path or GeoDataFrame.
     :param vec_lyr: Input point vector layer name.
     :param bbox_width: Output rectangle width in CRS units.
     :param bbox_height: Output rectangle height in CRS units.
-    :param out_vec_file: Output polygon vector file path.
+    :param out_vec_file: Output polygon vector file path, or ``None`` to return
+                         an in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output polygon vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, delete existing ``out_vec_file`` first
@@ -782,6 +785,8 @@ def create_bboxs_for_pts(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Polygon :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -792,8 +797,8 @@ def create_bboxs_for_pts(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    prepare_out_vec_file(out_vec_file, del_exist_vec=del_exist_vec)
-    gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, epsg=epsg_code)
+    prepare_optional_out_vec(out_vec_file, del_exist_vec=del_exist_vec)
+    gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, epsg=epsg_code, copy=False)
     if gdf.crs is None:
         raise rsgispy.RSGISPyException(
             "Input layer has no CRS defined; supply epsg_code."
@@ -813,6 +818,16 @@ def create_bboxs_for_pts(
             (pt_x - h_width, pt_x + h_width, pt_y - h_height, pt_y + h_height)
         )
 
+    if out_vec_file is None:
+        att_cols = build_atts_dataframe(
+            len(out_bboxs), atts=None, att_types=None, length_label="bboxs"
+        )
+        geoms = [
+            box(float(b[0]), float(b[2]), float(b[1]), float(b[3]))
+            for b in out_bboxs
+        ]
+        return geopandas.GeoDataFrame(att_cols, geometry=geoms, crs=gdf.crs)
+
     create_poly_vec_bboxs(
         vec_file=out_vec_file,
         vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
@@ -822,6 +837,7 @@ def create_bboxs_for_pts(
         overwrite=False,
         out_compress=out_compress,
     )
+    return None
 
 
 def create_wgs84_vec_grid(
@@ -1149,23 +1165,24 @@ def create_hex_grid_poly(
 
 
 def create_hex_grid_polys(
-    vec_in_file: str,
+    vec_in_file: VectorInput,
     vec_in_lyr: Optional[str],
     hex_scale: int,
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Create an H3 hexagon grid covering all polygons in ``vec_in_file`` and
     export the result in the input layer's coordinate reference system.
 
-    :param vec_in_file: Input polygon vector file path.
+    :param vec_in_file: Input polygon vector file path or GeoDataFrame.
     :param vec_in_lyr: Input vector layer name.
     :param hex_scale: H3 resolution level (integer ``0..15``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param use_pbar: If ``True``, display a tqdm progress bar across polygons
@@ -1175,6 +1192,8 @@ def create_hex_grid_polys(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Hexagon :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -1185,7 +1204,7 @@ def create_hex_grid_polys(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    polys_gdf = read_vec_gdf(vec_in_file, vec_lyr=vec_in_lyr)
+    polys_gdf = read_vec_gdf(vec_in_file, vec_lyr=vec_in_lyr, copy=False)
     orig_crs = polys_gdf.crs
     reproj_poly = orig_crs is not None and (
         orig_crs != parse_crs_input(4326)
@@ -1201,7 +1220,13 @@ def create_hex_grid_polys(
             hex_parts.append(hex_tmp)
 
     if not hex_parts:
-        return
+        if out_vec_file is None:
+            return geopandas.GeoDataFrame(
+                {"hex_id": pandas.Series(dtype="object")},
+                geometry=geopandas.GeoSeries([], crs=orig_crs),
+                crs=orig_crs,
+            )
+        return None
 
     hex_gdf = geopandas.GeoDataFrame(
         pandas.concat(hex_parts, ignore_index=True),
@@ -1211,6 +1236,9 @@ def create_hex_grid_polys(
     if reproj_poly and orig_crs is not None:
         hex_gdf = hex_gdf.to_crs(orig_crs)
 
+    if out_vec_file is None:
+        return hex_gdf
+
     write_vec_gdf(
         hex_gdf,
         out_vec_file=out_vec_file,
@@ -1219,6 +1247,7 @@ def create_hex_grid_polys(
         overwrite=True,
         out_compress=out_compress,
     )
+    return None
 
 
 def create_random_pts_in_radius(

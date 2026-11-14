@@ -4,14 +4,17 @@ categorise columns in vector attribute tables using ``geopandas``.
 """
 
 import datetime
+import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
+import geopandas
 import numpy
 
 import rsgispy
 import rsgispy.tools.jsonio
 import rsgispy.tools.strings
 from rsgispy.vectorprocess import (
+    VectorInput,
     read_vec_gdf,
     to_python_scalar,
     validate_columns_exist,
@@ -38,20 +41,21 @@ __all__ = [
 
 
 def add_fid_col(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_col: str = "fid",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Add a 1-based unique integer feature ID column to a vector layer.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_col: Output FID column name (Default = ``'fid'``).
@@ -60,6 +64,8 @@ def add_fid_col(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -72,6 +78,8 @@ def add_fid_col(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     base_gdf = read_vec_gdf(vec_file, vec_lyr)
     base_gdf[out_col] = numpy.arange(1, len(base_gdf) + 1, 1, dtype=int)
+    if out_vec_file is None:
+        return base_gdf
     write_vec_gdf(
         base_gdf,
         out_vec_file,
@@ -79,28 +87,30 @@ def add_fid_col(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def add_unq_numeric_col(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     unq_col: str,
     out_col: str,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
-    lut_json_file: Optional[str] = None,
+    lut_json_file: Optional[Union[str, os.PathLike]] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Add a sequential integer ID column (starting at ``1``) mapped from unique
     values in ``unq_col``, optionally writing the lookup table to JSON.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param unq_col: Source column whose unique values define the mapping.
     :param out_col: Output numeric column name.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param lut_json_file: Optional path to write the JSON lookup table.
@@ -109,6 +119,8 @@ def add_unq_numeric_col(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -133,6 +145,10 @@ def add_unq_numeric_col(
         lut["id"][str(idx)] = py_val
         lut["val"][str(py_val)] = idx
 
+    if lut_json_file is not None:
+        rsgispy.tools.jsonio.write_dict_to_json(lut, os.fspath(lut_json_file))
+    if out_vec_file is None:
+        return base_gdf
     write_vec_gdf(
         base_gdf,
         out_vec_file,
@@ -140,28 +156,28 @@ def add_unq_numeric_col(
         out_format=out_format,
         out_compress=out_compress,
     )
-    if lut_json_file is not None:
-        rsgispy.tools.jsonio.write_dict_to_json(lut, lut_json_file)
+    return None
 
 
 def add_numeric_col(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     out_col: str,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_val: float = 1,
     out_format: str = "GPKG",
     out_col_int: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Add a constant numeric column to a vector layer.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param out_col: Output numeric column name.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_val: Constant value assigned to all rows (Default = ``1``).
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
@@ -172,6 +188,8 @@ def add_numeric_col(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -185,6 +203,8 @@ def add_numeric_col(
     base_gdf = read_vec_gdf(vec_file, vec_lyr)
     dtype = int if out_col_int else float
     base_gdf[out_col] = numpy.full(len(base_gdf), out_val, dtype=dtype)
+    if out_vec_file is None:
+        return base_gdf
     write_vec_gdf(
         base_gdf,
         out_vec_file,
@@ -192,29 +212,31 @@ def add_numeric_col(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def add_numeric_col_lut(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     ref_col: str,
     val_lut: Dict[Any, Union[int, float]],
     out_col: str,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     col_dtype: str = "int",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Add a numeric column derived from ``ref_col`` via a dictionary lookup table.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param ref_col: Reference column name whose values match keys in ``val_lut``.
     :param val_lut: Dictionary mapping reference values to output numbers.
     :param out_col: Output numeric column name.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param col_dtype: Output column data type (``'int'`` or ``'float'``;
@@ -224,6 +246,8 @@ def add_numeric_col_lut(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -255,6 +279,8 @@ def add_numeric_col_lut(
         sel_rows = base_gdf[ref_col] == lut_key
         base_gdf.loc[sel_rows, out_col] = out_val
 
+    if out_vec_file is None:
+        return base_gdf
     write_vec_gdf(
         base_gdf,
         out_vec_file,
@@ -262,28 +288,30 @@ def add_numeric_col_lut(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def add_numeric_col_range_lut(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     vec_col: str,
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]],
     out_vec_lyr: Optional[str],
     out_vec_col: str,
     val_lut: Dict[int, Tuple[float, float]],
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Add a numeric class column using half-open ``[lower, upper)`` value ranges.
 
     Features outside all configured intervals receive ``0``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param vec_col: Numeric source column name to classify.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_vec_col: Output numeric column name.
     :param val_lut: Dictionary mapping output integer code to ``(low, high)``
@@ -294,6 +322,8 @@ def add_numeric_col_range_lut(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -319,6 +349,8 @@ def add_numeric_col_range_lut(
         out_arr[(vals_arr >= low_val) & (vals_arr < high_val)] = out_code
 
     data_gdf[out_vec_col] = out_arr
+    if out_vec_file is None:
+        return data_gdf
     write_vec_gdf(
         data_gdf,
         out_vec_file,
@@ -326,29 +358,31 @@ def add_numeric_col_range_lut(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def add_numeric_col_from_lst_lut(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     ref_col: str,
     vals_lut: Sequence[Tuple[Union[str, int], int]],
     out_col: str,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Add an integer column derived from ``ref_col`` using a sequence of
     ``(match_value, output_int)`` pairs.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param ref_col: Reference column name.
     :param vals_lut: Sequence of ``(lookup_value, out_int)`` tuples.
     :param out_col: Output numeric column name.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
@@ -356,6 +390,8 @@ def add_numeric_col_from_lst_lut(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -381,6 +417,8 @@ def add_numeric_col_from_lst_lut(
         out_vals[ref_vals == match_val] = out_int
 
     base_gdf[out_col] = out_vals
+    if out_vec_file is None:
+        return base_gdf
     write_vec_gdf(
         base_gdf,
         out_vec_file,
@@ -388,25 +426,27 @@ def add_numeric_col_from_lst_lut(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def add_string_col(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     out_col: str,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_val: str = "str_val",
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Add a constant string column to a vector layer.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param out_col: Output string column name.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_val: Constant string assigned to all rows (Default = ``'str_val'``).
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
@@ -415,6 +455,8 @@ def add_string_col(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -427,6 +469,8 @@ def add_string_col(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     base_gdf = read_vec_gdf(vec_file, vec_lyr)
     base_gdf[out_col] = [str(out_val)] * len(base_gdf)
+    if out_vec_file is None:
+        return base_gdf
     write_vec_gdf(
         base_gdf,
         out_vec_file,
@@ -434,28 +478,30 @@ def add_string_col(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def add_string_col_lut(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     ref_col: str,
     val_lut: Dict[Any, str],
     out_col: str,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Add a string column derived from ``ref_col`` via a dictionary lookup table.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param ref_col: Reference column name whose values match keys in ``val_lut``.
     :param val_lut: Dictionary mapping reference values to output strings.
     :param out_col: Output string column name.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
@@ -463,6 +509,8 @@ def add_string_col_lut(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -487,6 +535,8 @@ def add_string_col_lut(
         sel_rows = base_gdf[ref_col] == lut_key
         base_gdf.loc[sel_rows, out_col] = str(out_str)
 
+    if out_vec_file is None:
+        return base_gdf
     write_vec_gdf(
         base_gdf,
         out_vec_file,
@@ -494,26 +544,28 @@ def add_string_col_lut(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def add_ran_vals_cols(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_col: str = "ran_vals",
     rnd_seed: Optional[int] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Add a column populated with random integers in ``[1, 10 * n_rows)``.
 
     Note that random values are not guaranteed to be unique across rows.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_col: Output column name (Default = ``'ran_vals'``).
@@ -523,6 +575,8 @@ def add_ran_vals_cols(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -538,6 +592,8 @@ def add_ran_vals_cols(
     n_rows = len(data_gdf)
     high = max(2, n_rows * 10)
     data_gdf[out_col] = rng.integers(low=1, high=high, size=n_rows)
+    if out_vec_file is None:
+        return data_gdf
     write_vec_gdf(
         data_gdf,
         out_vec_file,
@@ -545,6 +601,7 @@ def add_ran_vals_cols(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def _format_coord_component(
@@ -568,10 +625,10 @@ def _format_coord_component(
 
 
 def create_name_col(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_col: str = "names",
     x_col: str = "MinX",
@@ -589,13 +646,14 @@ def create_name_col(
     dec_pt_val: str = "",
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Create a feature name column formatted from X and Y coordinate attributes.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_col: Output name column (Default = ``'names'``).
@@ -626,6 +684,8 @@ def create_name_col(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -681,6 +741,8 @@ def create_name_col(
         names.append(name)
 
     base_gdf[out_col] = names
+    if out_vec_file is None:
+        return base_gdf
     write_vec_gdf(
         base_gdf,
         out_vec_file,
@@ -688,14 +750,15 @@ def create_name_col(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def check_str_col(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     vec_col: str,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     rm_non_ascii: bool = True,
     rm_dashs: bool = False,
@@ -703,14 +766,15 @@ def check_str_col(
     rm_punc: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Sanitise values in a string column using :func:`rsgispy.tools.strings.check_str`.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param vec_col: String column name to clean.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param rm_non_ascii: Remove non-ASCII characters (Default = ``True``).
@@ -725,6 +789,8 @@ def check_str_col(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -752,6 +818,8 @@ def check_str_col(
     ]
 
     base_gdf[vec_col] = cleaned
+    if out_vec_file is None:
+        return base_gdf
     write_vec_gdf(
         base_gdf,
         out_vec_file,
@@ -759,30 +827,32 @@ def check_str_col(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def create_date_col(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     year_col: str,
     month_col: str,
     day_col: str,
     out_date_col: str,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Create a date/datetime column from integer year, month, and day columns.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param year_col: Column containing integer years.
     :param month_col: Column containing integer months (1–12).
     :param day_col: Column containing integer days of month (1–31).
     :param out_date_col: Output date column name.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
@@ -790,6 +860,8 @@ def create_date_col(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -810,6 +882,8 @@ def create_date_col(
         )
     ]
     data_gdf[out_date_col] = out_dates
+    if out_vec_file is None:
+        return data_gdf
     write_vec_gdf(
         data_gdf,
         out_vec_file,
@@ -817,24 +891,26 @@ def create_date_col(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def find_replace_str_vec_lyr(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]],
     out_vec_lyr: Optional[str],
     cols: Sequence[str],
     find_replace: Dict[str, str],
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Perform substring find-and-replace across specified string columns.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param cols: Sequence of string column names to update.
     :param find_replace: Mapping ``{"find_str": "replacement_str"}``.
@@ -844,6 +920,8 @@ def find_replace_str_vec_lyr(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -863,6 +941,8 @@ def find_replace_str_vec_lyr(
             series = series.str.replace(find_val, repl_val, regex=False)
         base_gdf[col] = series
 
+    if out_vec_file is None:
+        return base_gdf
     write_vec_gdf(
         base_gdf,
         out_vec_file,
@@ -870,30 +950,32 @@ def find_replace_str_vec_lyr(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def create_angle_sets(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     angle_col: str,
     start_angle: int,
     angle_set_width: int,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_angle_set_col: str = "angle_set",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Partition point/feature azimuth angles (0–360 degrees) into mirrored
     angular sectors (each sector includes its opposite 180-degree direction).
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param angle_col: Column containing azimuth angles in ``[0, 360]`` degrees.
     :param start_angle: Starting angle in ``[0, 360]`` degrees.
     :param angle_set_width: Angular sector width in degrees; must divide ``180``.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_angle_set_col: Output integer sector ID column
@@ -903,6 +985,8 @@ def create_angle_sets(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -955,6 +1039,8 @@ def create_angle_sets(
                 angle_sets[(angles >= start_a) & (angles < end_a)] = idx
 
     data_gdf[out_angle_set_col] = angle_sets
+    if out_vec_file is None:
+        return data_gdf
     write_vec_gdf(
         data_gdf,
         out_vec_file,
@@ -962,6 +1048,7 @@ def create_angle_sets(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def _split_wrapped_interval(start_ang: int, end_ang: int) -> List[Tuple[int, int]]:
@@ -988,28 +1075,29 @@ def _split_wrapped_interval(start_ang: int, end_ang: int) -> List[Tuple[int, int
 
 
 def create_orthogonal_angle_sets(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     angle_col: str,
     start_angle: int,
     angle_half_width: int,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_angle_set_col: str = "angle_set",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Create two orthogonal mirrored angle sets (labelled ``1`` and ``2``;
     outside angles receive ``0``).
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param angle_col: Column containing azimuth angles in ``[0, 360]`` degrees.
     :param start_angle: Central angle of set 1 in ``[0, 180]`` degrees.
     :param angle_half_width: Half-width of each angular sector in ``[0, 45]``
                              degrees.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_angle_set_col: Output integer sector ID column
@@ -1019,6 +1107,8 @@ def create_orthogonal_angle_sets(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -1061,6 +1151,8 @@ def create_orthogonal_angle_sets(
         angle_sets[(angles >= low_a) & (angles <= high_a)] = 2
 
     data_gdf[out_angle_set_col] = angle_sets
+    if out_vec_file is None:
+        return data_gdf
     write_vec_gdf(
         data_gdf,
         out_vec_file,
@@ -1068,3 +1160,4 @@ def create_orthogonal_angle_sets(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None

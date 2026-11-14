@@ -13,8 +13,8 @@ Minimal Installation
 ~~~~~~~~~~~~~~~~~~~~
 
 Install ``rsgispy`` with only its core dependencies (``geopandas``,
-``matplotlib``, ``matplotlib-scalebar``, ``numpy``, ``pymu-eval``, ``pyproj``,
-``rasterio``, ``shapely``, and ``tqdm``) using ``pip``:
+``matplotlib``, ``matplotlib-scalebar``, ``numpy``, ``pandas``, ``pymu-eval``,
+``pyproj``, ``rasterio``, ``shapely``, and ``tqdm``) using ``pip``:
 
 .. code-block:: bash
 

@@ -4,13 +4,14 @@ The vectorattrs.spatial module provides spatial attribute table enrichment
 joins) using ``geopandas``.
 """
 
+import os
 from typing import Optional, Union
 
 import geopandas
 import numpy
 
 import rsgispy
-from rsgispy.vectorprocess import read_vec_gdf, write_vec_gdf
+from rsgispy.vectorprocess import VectorInput, read_vec_gdf, write_vec_gdf
 
 __all__ = [
     "pop_bbox_cols",
@@ -40,19 +41,24 @@ def _populate_bbox_columns(
 
 
 def pop_bbox_cols(
-    vec_file: str,
-    vec_lyr: Optional[str],
+    vec_file: VectorInput,
+    vec_lyr: Optional[str] = None,
     x_min_col: str = "xmin",
     x_max_col: str = "xmax",
     y_min_col: str = "ymin",
     y_max_col: str = "ymax",
     out_format: Optional[str] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
+) -> Optional[geopandas.GeoDataFrame]:
     """
-    Populate geometry bounding-box columns in-place on an existing vector file.
+    Populate geometry bounding-box columns on a vector file or an in-memory
+    :class:`geopandas.GeoDataFrame`.
 
-    :param vec_file: Path to the vector file to update.
+    :param vec_file: Path to the vector file to update (in-place unless
+                     ``out_vec_file`` is given) or
+                     :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Layer name within ``vec_file`` (or ``None``).
     :param x_min_col: Output MinX column name (Default = ``'xmin'``).
     :param x_max_col: Output MaxX column name (Default = ``'xmax'``).
@@ -65,6 +71,15 @@ def pop_bbox_cols(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :param out_vec_file: Optional separate output vector file path. When
+                         ``vec_file`` is a :class:`geopandas.GeoDataFrame` and
+                         ``out_vec_file`` is ``None``, the updated GeoDataFrame
+                         is returned in memory.
+    :param out_vec_lyr: Optional output vector layer name (defaults to
+                        ``vec_lyr``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``vec_file`` is a
+             ``GeoDataFrame`` and ``out_vec_file`` is ``None``, otherwise
+             ``None``.
 
     .. code:: python
 
@@ -73,37 +88,53 @@ def pop_bbox_cols(
         rsgispy.vectorattrs.spatial.pop_bbox_cols("polys.gpkg", "polys")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
+    is_gdf_input = isinstance(vec_file, geopandas.GeoDataFrame)
     gdf = read_vec_gdf(vec_file, vec_lyr)
     _populate_bbox_columns(
         gdf, x_min_col, x_max_col, y_min_col, y_max_col, fill_empty_zero=True
     )
+    if out_vec_file is not None:
+        write_vec_gdf(
+            gdf,
+            out_vec_file,
+            out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+            out_format=out_format,
+            out_compress=out_compress,
+        )
+        return None
+    if is_gdf_input:
+        return gdf
     write_vec_gdf(
         gdf,
-        vec_file,
-        vec_lyr,
+        vec_file,  # type: ignore[arg-type]
+        out_vec_lyr if out_vec_lyr is not None else vec_lyr,
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def add_geom_bbox_cols(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     min_x_col: str = "MinX",
     max_x_col: str = "MaxX",
     min_y_col: str = "MinY",
     max_y_col: str = "MaxY",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
-    Add geometry bounding-box columns and write to a new vector file.
+    Add geometry bounding-box columns and write to a new vector file (or return
+    an updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+    ``None``).
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param min_x_col: Output MinX column name (Default = ``'MinX'``).
@@ -115,6 +146,8 @@ def add_geom_bbox_cols(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -129,6 +162,8 @@ def add_geom_bbox_cols(
     _populate_bbox_columns(
         base_gdf, min_x_col, max_x_col, min_y_col, max_y_col, fill_empty_zero=False
     )
+    if out_vec_file is None:
+        return base_gdf
     write_vec_gdf(
         base_gdf,
         out_vec_file,
@@ -136,31 +171,34 @@ def add_geom_bbox_cols(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def annotate_vec_selection(
-    vec_in_file: str,
+    vec_in_file: VectorInput,
     vec_in_lyr: Optional[str],
-    vec_sel_file: str,
+    vec_sel_file: VectorInput,
     vec_sel_lyr: Optional[str],
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_col_name: str = "sel_feats",
     out_format: str = "GPKG",
     tmp_col_name: str = "tmp_sel_join_fid",
     vec_in_epsg: Optional[int] = None,
     vec_sel_epsg: Optional[int] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Annotate features in ``vec_in_file`` with a boolean column indicating
     whether each feature intersects any feature in ``vec_sel_file``.
 
-    :param vec_in_file: Input vector file path.
+    :param vec_in_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_in_lyr: Input vector layer name (or ``None``).
-    :param vec_sel_file: Selection vector file path.
+    :param vec_sel_file: Selection vector file path or
+                         :class:`geopandas.GeoDataFrame`.
     :param vec_sel_lyr: Selection vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_col_name: Output boolean column name (Default = ``'sel_feats'``).
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
@@ -173,6 +211,8 @@ def annotate_vec_selection(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Annotated :class:`geopandas.GeoDataFrame` when ``out_vec_file``
+             is ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -193,6 +233,8 @@ def annotate_vec_selection(
 
     in_gdf[out_col_name] = in_gdf[tmp_col_name].isin(in_sel_gdf[tmp_col_name])
     in_gdf = in_gdf.drop(columns=[tmp_col_name])
+    if out_vec_file is None:
+        return in_gdf
     write_vec_gdf(
         in_gdf,
         out_vec_file,
@@ -200,31 +242,35 @@ def annotate_vec_selection(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def perform_spatial_join(
-    vec_base_file: str,
+    vec_base_file: VectorInput,
     vec_base_lyr: Optional[str],
-    vec_join_file: str,
+    vec_join_file: VectorInput,
     vec_join_lyr: Optional[str],
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     join_how: str = "inner",
     join_op: str = "within",
     vec_base_epsg: Optional[int] = None,
     vec_join_epsg: Optional[int] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Perform a spatial attribute join between two vector layers using
     :func:`geopandas.sjoin`.
 
-    :param vec_base_file: Base vector file providing output geometries.
+    :param vec_base_file: Base vector file or :class:`geopandas.GeoDataFrame`
+                          providing output geometries.
     :param vec_base_lyr: Base vector layer name (or ``None``).
-    :param vec_join_file: Vector file providing attributes to join.
+    :param vec_join_file: Vector file or :class:`geopandas.GeoDataFrame`
+                          providing attributes to join.
     :param vec_join_lyr: Join vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param join_how: Join type (``'left'``, ``'right'``, or ``'inner'``;
@@ -238,6 +284,8 @@ def perform_spatial_join(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Joined :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -263,6 +311,8 @@ def perform_spatial_join(
     joined_gdf = geopandas.sjoin(
         base_gdf, join_gdf, how=join_how, predicate=join_op
     )
+    if out_vec_file is None:
+        return joined_gdf
     if len(joined_gdf) > 0:
         write_vec_gdf(
             joined_gdf,
@@ -271,3 +321,4 @@ def perform_spatial_join(
             out_format=out_format,
             out_compress=out_compress,
         )
+    return None

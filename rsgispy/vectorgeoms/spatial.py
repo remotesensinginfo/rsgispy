@@ -4,6 +4,7 @@ hulls, bounding-box queries, R-tree spatial indexing, and layer-to-layer
 spatial predicate checks using ``geopandas``, ``shapely``, and ``rtree``.
 """
 
+import os
 from typing import List, Optional, Sequence, Tuple, Union
 
 import geopandas
@@ -13,8 +14,9 @@ from shapely.geometry.base import BaseGeometry
 
 import rsgispy
 from rsgispy.vectorprocess import (
+    VectorInput,
     extract_geom_pts,
-    prepare_out_vec_file,
+    prepare_optional_out_vec,
     read_vec_gdf,
     read_vec_info,
     resolve_out_lyr_name,
@@ -62,14 +64,14 @@ def get_geom_pts(
 
 
 def get_vec_lyr_as_pts(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     use_pbar: bool = True,
 ) -> List[Tuple[float, float]]:
     """
     Extract all vertex coordinates from every feature in a vector layer.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param use_pbar: Show progress bar (Default = ``True``).
     :return: List of ``(x, y)`` coordinate tuples.
@@ -80,7 +82,7 @@ def get_vec_lyr_as_pts(
 
         pts = rsgispy.vectorgeoms.spatial.get_vec_lyr_as_pts("polys.gpkg", "polys")
     """
-    in_gdf = read_vec_gdf(vec_file, vec_lyr)
+    in_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     pts_lst: List[Tuple[float, float]] = []
     pbar_cls = rsgispy.get_tqdm()
     for geom in pbar_cls(
@@ -92,9 +94,9 @@ def get_vec_lyr_as_pts(
 
 
 def create_alpha_shape(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Union[str, os.PathLike],
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
     alpha_val: Optional[float] = None,
@@ -108,7 +110,7 @@ def create_alpha_shape(
     input vector layer using the ``alphashape`` package and write the result
     via ``geopandas``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param out_vec_file: Output vector file path.
     :param out_vec_lyr: Output vector layer name.
@@ -143,7 +145,7 @@ def create_alpha_shape(
             "The 'alphashape' package is required for create_alpha_shape."
         ) from err
 
-    prepare_out_vec_file(out_vec_file, del_exist_vec=del_exist_vec)
+    out_path = prepare_optional_out_vec(out_vec_file, del_exist_vec=del_exist_vec)
     pts = get_vec_lyr_as_pts(vec_file, vec_lyr, use_pbar=False)
     if len(pts) < 3:
         raise rsgispy.RSGISPyException(
@@ -191,7 +193,7 @@ def create_alpha_shape(
         out_gdf = geopandas.GeoDataFrame(
             {"geometry": [out_alpha_shape]}, crs=crs_info
         )
-        out_lyr = resolve_out_lyr_name(out_vec_file, out_vec_lyr)
+        out_lyr = resolve_out_lyr_name(out_path, out_vec_lyr)
         write_vec_gdf(
             out_gdf,
             out_vec_file,
@@ -205,14 +207,14 @@ def create_alpha_shape(
 
 
 def get_geoms_as_bboxs(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
 ) -> List[Tuple[float, float, float, float]]:
     """
     Return the bounding box ``(minx, maxx, miny, maxy)`` of each feature in a
     vector layer.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :return: List of ``(minx, maxx, miny, maxy)`` bounding-box tuples.
 
@@ -222,7 +224,7 @@ def get_geoms_as_bboxs(
 
         bboxes = rsgispy.vectorgeoms.spatial.get_geoms_as_bboxs("polys.gpkg", "polys")
     """
-    base_gdf = read_vec_gdf(vec_file, vec_lyr)
+    base_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     geom_bounds = base_gdf.geometry.bounds
     return [
         (float(x0), float(x1), float(y0), float(y1))
@@ -236,14 +238,14 @@ def get_geoms_as_bboxs(
 
 
 def bbox_intersects_vec_lyr(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     bbox: Union[Tuple[float, float, float, float], Sequence[float]],
 ) -> bool:
     """
     Test whether any feature in a vector layer intersects ``bbox``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param bbox: Bounding box ``(xMin, xMax, yMin, yMax)`` in the layer's CRS.
     :return: ``True`` if at least one geometry intersects ``bbox``.
@@ -256,7 +258,7 @@ def bbox_intersects_vec_lyr(
             "polys.gpkg", "polys", (0.0, 20.0, 0.0, 20.0)
         )
     """
-    in_gdf = read_vec_gdf(vec_file, vec_lyr)
+    in_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     geoms = in_gdf.geometry[in_gdf.geometry.notna()]
     if len(geoms) == 0:
         return False
@@ -266,7 +268,7 @@ def bbox_intersects_vec_lyr(
 
 
 def create_rtree_index(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     use_pbar: bool = True,
 ):
@@ -274,7 +276,7 @@ def create_rtree_index(
     Build an ``rtree`` spatial index and corresponding Shapely geometry list for
     a vector layer.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param use_pbar: Show progress bar (Default = ``True``).
     :return: Tuple ``(idx_obj, geom_lst)`` where ``idx_obj`` is an
@@ -295,7 +297,7 @@ def create_rtree_index(
             "The 'rtree' package is required for create_rtree_index."
         ) from err
 
-    in_gdf = read_vec_gdf(vec_file, vec_lyr)
+    in_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     idx_obj = rtree.index.Index(interleaved=False)
     geom_lst: List[BaseGeometry] = []
     pbar_cls = rsgispy.get_tqdm()
@@ -344,9 +346,9 @@ def bbox_intersects_index(
 
 
 def _check_vec_spatial_predicate(
-    vec_base_file: str,
+    vec_base_file: VectorInput,
     vec_base_lyr: Optional[str],
-    vec_comp_file: str,
+    vec_comp_file: VectorInput,
     vec_comp_lyr: Optional[str],
     predicate: str,
     require_all_comp: bool = False,
@@ -357,8 +359,8 @@ def _check_vec_spatial_predicate(
     spatial indexing.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    base_gdf = read_vec_gdf(vec_base_file, vec_base_lyr)
-    comp_gdf = read_vec_gdf(vec_comp_file, vec_comp_lyr)
+    base_gdf = read_vec_gdf(vec_base_file, vec_base_lyr, copy=False)
+    comp_gdf = read_vec_gdf(vec_comp_file, vec_comp_lyr, copy=False)
 
     base_geoms = base_gdf.geometry[base_gdf.geometry.notna()]
     comp_geoms = comp_gdf.geometry[comp_gdf.geometry.notna()]
@@ -403,9 +405,9 @@ def _check_vec_spatial_predicate(
 
 
 def vec_intersects_vec(
-    vec_base_file: str,
+    vec_base_file: VectorInput,
     vec_base_lyr: Optional[str],
-    vec_comp_file: str,
+    vec_comp_file: VectorInput,
     vec_comp_lyr: Optional[str],
     use_pbar: bool = True,
 ) -> bool:
@@ -413,9 +415,9 @@ def vec_intersects_vec(
     Test whether any geometry in ``vec_comp_file`` intersects any geometry in
     ``vec_base_file``.
 
-    :param vec_base_file: Base vector file path.
+    :param vec_base_file: Base vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_base_lyr: Base vector layer name (or ``None``).
-    :param vec_comp_file: Comparison vector file path.
+    :param vec_comp_file: Comparison vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_comp_lyr: Comparison vector layer name (or ``None``).
     :param use_pbar: Show progress bar (Default = ``True``).
     :return: ``True`` if an intersection exists.
@@ -440,9 +442,9 @@ def vec_intersects_vec(
 
 
 def vec_overlaps_vec(
-    vec_base_file: str,
+    vec_base_file: VectorInput,
     vec_base_lyr: Optional[str],
-    vec_comp_file: str,
+    vec_comp_file: VectorInput,
     vec_comp_lyr: Optional[str],
     use_pbar: bool = True,
 ) -> bool:
@@ -450,9 +452,9 @@ def vec_overlaps_vec(
     Test whether any geometry in ``vec_comp_file`` overlaps any geometry in
     ``vec_base_file``.
 
-    :param vec_base_file: Base vector file path.
+    :param vec_base_file: Base vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_base_lyr: Base vector layer name (or ``None``).
-    :param vec_comp_file: Comparison vector file path.
+    :param vec_comp_file: Comparison vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_comp_lyr: Comparison vector layer name (or ``None``).
     :param use_pbar: Show progress bar (Default = ``True``).
     :return: ``True`` if an overlap exists.
@@ -477,9 +479,9 @@ def vec_overlaps_vec(
 
 
 def vec_within_vec(
-    vec_base_file: str,
+    vec_base_file: VectorInput,
     vec_base_lyr: Optional[str],
-    vec_comp_file: str,
+    vec_comp_file: VectorInput,
     vec_comp_lyr: Optional[str],
     use_pbar: bool = True,
 ) -> bool:
@@ -487,9 +489,9 @@ def vec_within_vec(
     Test whether every geometry in ``vec_comp_file`` lies within at least one
     geometry in ``vec_base_file``.
 
-    :param vec_base_file: Base vector file path.
+    :param vec_base_file: Base vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_base_lyr: Base vector layer name (or ``None``).
-    :param vec_comp_file: Comparison vector file path.
+    :param vec_comp_file: Comparison vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_comp_lyr: Comparison vector layer name (or ``None``).
     :param use_pbar: Show progress bar (Default = ``True``).
     :return: ``True`` if all comparison geometries are within base geometries.
@@ -514,18 +516,18 @@ def vec_within_vec(
 
 
 def vec_contains_vec(
-    vec_base_file: str,
+    vec_base_file: VectorInput,
     vec_base_lyr: Optional[str],
-    vec_comp_file: str,
+    vec_comp_file: VectorInput,
     vec_comp_lyr: Optional[str],
     use_pbar: bool = True,
 ) -> bool:
     """
     Test whether ``vec_base_file`` contains every geometry in ``vec_comp_file``.
 
-    :param vec_base_file: Base vector file path.
+    :param vec_base_file: Base vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_base_lyr: Base vector layer name (or ``None``).
-    :param vec_comp_file: Comparison vector file path.
+    :param vec_comp_file: Comparison vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_comp_lyr: Comparison vector layer name (or ``None``).
     :param use_pbar: Show progress bar (Default = ``True``).
     :return: ``True`` if every comparison geometry is contained by a base
@@ -551,9 +553,9 @@ def vec_contains_vec(
 
 
 def vec_touches_vec(
-    vec_base_file: str,
+    vec_base_file: VectorInput,
     vec_base_lyr: Optional[str],
-    vec_comp_file: str,
+    vec_comp_file: VectorInput,
     vec_comp_lyr: Optional[str],
     use_pbar: bool = True,
 ) -> bool:
@@ -561,9 +563,9 @@ def vec_touches_vec(
     Test whether any geometry in ``vec_comp_file`` touches any geometry in
     ``vec_base_file``.
 
-    :param vec_base_file: Base vector file path.
+    :param vec_base_file: Base vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_base_lyr: Base vector layer name (or ``None``).
-    :param vec_comp_file: Comparison vector file path.
+    :param vec_comp_file: Comparison vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_comp_lyr: Comparison vector layer name (or ``None``).
     :param use_pbar: Show progress bar (Default = ``True``).
     :return: ``True`` if a touching pair exists.
@@ -588,9 +590,9 @@ def vec_touches_vec(
 
 
 def vec_crosses_vec(
-    vec_base_file: str,
+    vec_base_file: VectorInput,
     vec_base_lyr: Optional[str],
-    vec_comp_file: str,
+    vec_comp_file: VectorInput,
     vec_comp_lyr: Optional[str],
     use_pbar: bool = True,
 ) -> bool:
@@ -598,9 +600,9 @@ def vec_crosses_vec(
     Test whether any geometry in ``vec_comp_file`` crosses any geometry in
     ``vec_base_file``.
 
-    :param vec_base_file: Base vector file path.
+    :param vec_base_file: Base vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_base_lyr: Base vector layer name (or ``None``).
-    :param vec_comp_file: Comparison vector file path.
+    :param vec_comp_file: Comparison vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_comp_lyr: Comparison vector layer name (or ``None``).
     :param use_pbar: Show progress bar (Default = ``True``).
     :return: ``True`` if a crossing pair exists.

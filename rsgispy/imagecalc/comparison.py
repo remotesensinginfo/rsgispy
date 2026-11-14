@@ -2,9 +2,6 @@
 The imagecalc.comparison module provides image difference, equality checks,
 correlation, mutual information, and Earth Mover's Distance utilities using
 ``rasterio``.
-
-Functions requiring ``scipy`` and/or ``scikit-learn`` are only defined and
-exported when those optional dependencies are installed.
 """
 
 from contextlib import ExitStack
@@ -29,6 +26,7 @@ try:
 
     HAVE_SCIPY = True
 except ImportError:
+    scipy = None  # type: ignore[assignment]
     HAVE_SCIPY = False
 
 try:
@@ -36,24 +34,17 @@ try:
 
     HAVE_SKLEARN = True
 except ImportError:
+    sklearn = None  # type: ignore[assignment]
     HAVE_SKLEARN = False
 
 __all__ = [
     "calc_img_difference",
     "are_imgs_equal",
     "are_img_bands_equal",
+    "calc_img_correlation",
+    "calc_img_earth_move_dist",
+    "calc_img_mutual_info",
 ]
-
-if HAVE_SCIPY:
-    __all__.extend(
-        [
-            "calc_img_correlation",
-            "calc_img_earth_move_dist",
-        ]
-    )
-
-if HAVE_SKLEARN:
-    __all__.append("calc_img_mutual_info")
 
 
 def _extract_valid_paired_pixels(
@@ -371,211 +362,215 @@ def are_img_bands_equal(
     )
 
 
-if HAVE_SCIPY:
+def calc_img_correlation(
+    in_a_img: str,
+    in_b_img: str,
+    img_a_band: int,
+    img_b_band: int,
+    img_a_no_data: Optional[float] = None,
+    img_b_no_data: Optional[float] = None,
+    corr_stat_method: int = rsgispy.STATS_CORR_PEARSONS,
+) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Calculate the correlation coefficient and p-value between two image
+    bands over their spatial intersection using SciPy.
 
-    def calc_img_correlation(
-        in_a_img: str,
-        in_b_img: str,
-        img_a_band: int,
-        img_b_band: int,
-        img_a_no_data: Optional[float] = None,
-        img_b_no_data: Optional[float] = None,
-        corr_stat_method: int = rsgispy.STATS_CORR_PEARSONS,
-    ) -> Tuple[Optional[float], Optional[float]]:
-        """
-        Calculate the correlation coefficient and p-value between two image
-        bands over their spatial intersection using SciPy.
+    :param in_a_img: Path to input image A.
+    :param in_b_img: Path to input image B.
+    :param img_a_band: 1-based band index within ``in_a_img``.
+    :param img_b_band: 1-based band index within ``in_b_img``.
+    :param img_a_no_data: No-data value in image A (``None`` reads header).
+    :param img_b_no_data: No-data value in image B (``None`` reads header).
+    :param corr_stat_method: Correlation method ``rsgispy.STATS_CORR_*``
+                             (Default = ``rsgispy.STATS_CORR_PEARSONS``).
+    :return: Tuple ``(correlation_coefficient, p_value)``, or ``(None, None)``
+             if 5 or fewer valid paired pixels exist.
 
-        :param in_a_img: Path to input image A.
-        :param in_b_img: Path to input image B.
-        :param img_a_band: 1-based band index within ``in_a_img``.
-        :param img_b_band: 1-based band index within ``in_b_img``.
-        :param img_a_no_data: No-data value in image A (``None`` reads header).
-        :param img_b_no_data: No-data value in image B (``None`` reads header).
-        :param corr_stat_method: Correlation method ``rsgispy.STATS_CORR_*``
-                                 (Default = ``rsgispy.STATS_CORR_PEARSONS``).
-        :return: Tuple ``(correlation_coefficient, p_value)``, or ``(None, None)``
-                 if 5 or fewer valid paired pixels exist.
+    .. code:: python
 
-        .. code:: python
+        import rsgispy
+        import rsgispy.imagecalc.comparison
 
-            import rsgispy
-            import rsgispy.imagecalc.comparison
-
-            r_val, p_val = rsgispy.imagecalc.comparison.calc_img_correlation(
-                in_a_img="img_a.tif",
-                in_b_img="img_b.tif",
-                img_a_band=1,
-                img_b_band=1,
-                corr_stat_method=rsgispy.STATS_CORR_PEARSONS,
-            )
-        """
-        # pylint: disable=too-many-arguments,too-many-positional-arguments
-        arr_a, arr_b = _extract_valid_paired_pixels(
-            in_a_img,
-            in_b_img,
-            img_a_band,
-            img_b_band,
-            img_a_no_data,
-            img_b_no_data,
+        r_val, p_val = rsgispy.imagecalc.comparison.calc_img_correlation(
+            in_a_img="img_a.tif",
+            in_b_img="img_b.tif",
+            img_a_band=1,
+            img_b_band=1,
+            corr_stat_method=rsgispy.STATS_CORR_PEARSONS,
         )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    rsgispy.check_optional_dep(HAVE_SCIPY, "calc_img_correlation", "scipy", "stats")
+    arr_a, arr_b = _extract_valid_paired_pixels(
+        in_a_img,
+        in_b_img,
+        img_a_band,
+        img_b_band,
+        img_a_no_data,
+        img_b_no_data,
+    )
 
-        if arr_a.size <= 5 or arr_b.size <= 5:
-            return None, None
+    if arr_a.size <= 5 or arr_b.size <= 5:
+        return None, None
 
-        if corr_stat_method == rsgispy.STATS_CORR_PEARSONS:
-            coeff, p_val = scipy.stats.pearsonr(arr_a, arr_b)
-        elif corr_stat_method == rsgispy.STATS_CORR_SPEARMAN:
-            coeff, p_val = scipy.stats.spearmanr(arr_a, arr_b)
-        elif corr_stat_method == rsgispy.STATS_CORR_KENDALL_TAU:
-            coeff, p_val = scipy.stats.kendalltau(arr_a, arr_b)
-        elif corr_stat_method == rsgispy.STATS_CORR_POINT_BISERIAL:
-            coeff, p_val = scipy.stats.pointbiserialr(arr_a, arr_b)
-        else:
-            raise rsgispy.RSGISPyException(
-                "Do not recognise the correlation method specified."
-            )
-        return float(coeff), float(p_val)
-
-    def calc_img_earth_move_dist(
-        in_a_img: str,
-        in_b_img: str,
-        img_a_band: int,
-        img_b_band: int,
-        img_a_no_data: Optional[float] = None,
-        img_b_no_data: Optional[float] = None,
-        hist_a_bins: Optional[int] = None,
-        hist_b_bins: Optional[int] = None,
-        use_glb_range: Optional[bool] = None,
-    ) -> Optional[float]:
-        """
-        Calculate the Earth Mover's (Wasserstein) distance between the value
-        distributions of two image bands using SciPy.
-
-        :param in_a_img: Path to input image A.
-        :param in_b_img: Path to input image B.
-        :param img_a_band: 1-based band index within ``in_a_img``.
-        :param img_b_band: 1-based band index within ``in_b_img``.
-        :param img_a_no_data: No-data value in image A (``None`` reads header).
-        :param img_b_no_data: No-data value in image B (``None`` reads header).
-        :param hist_a_bins: Number of histogram bins for image A (Default = ``10``).
-        :param hist_b_bins: Number of histogram bins for image B (Default = ``10``).
-        :param use_glb_range: If ``True``, share a common ``[min, max]`` range
-                              across both histograms.
-        :return: Earth Mover's distance, or ``None`` if <= 5 valid pixels exist.
-
-        .. code:: python
-
-            import rsgispy.imagecalc.comparison
-
-            emd = rsgispy.imagecalc.comparison.calc_img_earth_move_dist(
-                in_a_img="img_a.tif",
-                in_b_img="img_b.tif",
-                img_a_band=1,
-                img_b_band=1,
-                hist_a_bins=20,
-                hist_b_bins=20,
-            )
-        """
-        # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-        arr_a, arr_b = _extract_valid_paired_pixels(
-            in_a_img,
-            in_b_img,
-            img_a_band,
-            img_b_band,
-            img_a_no_data,
-            img_b_no_data,
+    if corr_stat_method == rsgispy.STATS_CORR_PEARSONS:
+        coeff, p_val = scipy.stats.pearsonr(arr_a, arr_b)
+    elif corr_stat_method == rsgispy.STATS_CORR_SPEARMAN:
+        coeff, p_val = scipy.stats.spearmanr(arr_a, arr_b)
+    elif corr_stat_method == rsgispy.STATS_CORR_KENDALL_TAU:
+        coeff, p_val = scipy.stats.kendalltau(arr_a, arr_b)
+    elif corr_stat_method == rsgispy.STATS_CORR_POINT_BISERIAL:
+        coeff, p_val = scipy.stats.pointbiserialr(arr_a, arr_b)
+    else:
+        raise rsgispy.RSGISPyException(
+            "Do not recognise the correlation method specified."
         )
-
-        if arr_a.size <= 5 or arr_b.size <= 5:
-            return None
-
-        img_range: Optional[Tuple[float, float]] = None
-        if use_glb_range:
-            img_min = float(min(np.min(arr_a), np.min(arr_b)))
-            img_max = float(max(np.max(arr_a), np.max(arr_b)))
-            img_range = (img_min, img_max)
-
-        bins_a = 10 if hist_a_bins is None else int(hist_a_bins)
-        bins_b = 10 if hist_b_bins is None else int(hist_b_bins)
-        hist_a, _ = np.histogram(arr_a, bins=bins_a, range=img_range)
-        hist_b, _ = np.histogram(arr_b, bins=bins_b, range=img_range)
-
-        hist_a_prob = hist_a / float(arr_a.size)
-        hist_b_prob = hist_b / float(arr_b.size)
-        em_val = scipy.stats.wasserstein_distance(hist_a_prob, hist_b_prob)
-        return float(em_val)
+    return float(coeff), float(p_val)
 
 
-if HAVE_SKLEARN:
+def calc_img_earth_move_dist(
+    in_a_img: str,
+    in_b_img: str,
+    img_a_band: int,
+    img_b_band: int,
+    img_a_no_data: Optional[float] = None,
+    img_b_no_data: Optional[float] = None,
+    hist_a_bins: Optional[int] = None,
+    hist_b_bins: Optional[int] = None,
+    use_glb_range: Optional[bool] = None,
+) -> Optional[float]:
+    """
+    Calculate the Earth Mover's (Wasserstein) distance between the value
+    distributions of two image bands using SciPy.
 
-    def calc_img_mutual_info(
-        in_a_img: str,
-        in_b_img: str,
-        img_a_band: int,
-        img_b_band: int,
-        img_a_no_data: Optional[float] = None,
-        img_b_no_data: Optional[float] = None,
-        hist_bins: int = 100,
-        img_a_min: Optional[float] = None,
-        img_a_max: Optional[float] = None,
-        img_b_min: Optional[float] = None,
-        img_b_max: Optional[float] = None,
-    ) -> Optional[float]:
-        """
-        Calculate the mutual information score between two image bands over
-        their spatial intersection using scikit-learn.
+    :param in_a_img: Path to input image A.
+    :param in_b_img: Path to input image B.
+    :param img_a_band: 1-based band index within ``in_a_img``.
+    :param img_b_band: 1-based band index within ``in_b_img``.
+    :param img_a_no_data: No-data value in image A (``None`` reads header).
+    :param img_b_no_data: No-data value in image B (``None`` reads header).
+    :param hist_a_bins: Number of histogram bins for image A (Default = ``10``).
+    :param hist_b_bins: Number of histogram bins for image B (Default = ``10``).
+    :param use_glb_range: If ``True``, share a common ``[min, max]`` range
+                          across both histograms.
+    :return: Earth Mover's distance, or ``None`` if <= 5 valid pixels exist.
 
-        :param in_a_img: Path to input image A.
-        :param in_b_img: Path to input image B.
-        :param img_a_band: 1-based band index within ``in_a_img``.
-        :param img_b_band: 1-based band index within ``in_b_img``.
-        :param img_a_no_data: No-data value in image A (``None`` reads header).
-        :param img_b_no_data: No-data value in image B (``None`` reads header).
-        :param hist_bins: Number of 2D histogram bins (Default = ``100``).
-        :param img_a_min: Optional exclusive minimum threshold for image A.
-        :param img_a_max: Optional exclusive maximum threshold for image A.
-        :param img_b_min: Optional exclusive minimum threshold for image B.
-        :param img_b_max: Optional exclusive maximum threshold for image B.
-        :return: Mutual information score, or ``None`` if <= 5 valid pixels exist.
+    .. code:: python
 
-        .. code:: python
+        import rsgispy.imagecalc.comparison
 
-            import rsgispy.imagecalc.comparison
-
-            mi_val = rsgispy.imagecalc.comparison.calc_img_mutual_info(
-                in_a_img="img_a.tif",
-                in_b_img="img_b.tif",
-                img_a_band=1,
-                img_b_band=1,
-                hist_bins=64,
-            )
-        """
-        # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-        arr_a, arr_b = _extract_valid_paired_pixels(
-            in_a_img,
-            in_b_img,
-            img_a_band,
-            img_b_band,
-            img_a_no_data,
-            img_b_no_data,
+        emd = rsgispy.imagecalc.comparison.calc_img_earth_move_dist(
+            in_a_img="img_a.tif",
+            in_b_img="img_b.tif",
+            img_a_band=1,
+            img_b_band=1,
+            hist_a_bins=20,
+            hist_b_bins=20,
         )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    rsgispy.check_optional_dep(
+        HAVE_SCIPY, "calc_img_earth_move_dist", "scipy", "stats"
+    )
+    arr_a, arr_b = _extract_valid_paired_pixels(
+        in_a_img,
+        in_b_img,
+        img_a_band,
+        img_b_band,
+        img_a_no_data,
+        img_b_no_data,
+    )
 
-        if (
-            img_a_min is not None
-            and img_a_max is not None
-            and img_b_min is not None
-            and img_b_max is not None
-        ):
-            msk_a = (arr_a > img_a_min) & (arr_a < img_a_max)
-            msk_b = (arr_b > img_b_min) & (arr_b < img_b_max)
-            msk = msk_a & msk_b
-            arr_a = arr_a[msk]
-            arr_b = arr_b[msk]
+    if arr_a.size <= 5 or arr_b.size <= 5:
+        return None
 
-        if arr_a.size <= 5 or arr_b.size <= 5:
-            return None
+    img_range: Optional[Tuple[float, float]] = None
+    if use_glb_range:
+        img_min = float(min(np.min(arr_a), np.min(arr_b)))
+        img_max = float(max(np.max(arr_a), np.max(arr_b)))
+        img_range = (img_min, img_max)
 
-        c_xy = np.histogram2d(arr_a, arr_b, hist_bins)[0]
-        mi_val = sklearn.metrics.mutual_info_score(None, None, contingency=c_xy)
-        return float(mi_val)
+    bins_a = 10 if hist_a_bins is None else int(hist_a_bins)
+    bins_b = 10 if hist_b_bins is None else int(hist_b_bins)
+    hist_a, _ = np.histogram(arr_a, bins=bins_a, range=img_range)
+    hist_b, _ = np.histogram(arr_b, bins=bins_b, range=img_range)
+
+    hist_a_prob = hist_a / float(arr_a.size)
+    hist_b_prob = hist_b / float(arr_b.size)
+    em_val = scipy.stats.wasserstein_distance(hist_a_prob, hist_b_prob)
+    return float(em_val)
+
+
+def calc_img_mutual_info(
+    in_a_img: str,
+    in_b_img: str,
+    img_a_band: int,
+    img_b_band: int,
+    img_a_no_data: Optional[float] = None,
+    img_b_no_data: Optional[float] = None,
+    hist_bins: int = 100,
+    img_a_min: Optional[float] = None,
+    img_a_max: Optional[float] = None,
+    img_b_min: Optional[float] = None,
+    img_b_max: Optional[float] = None,
+) -> Optional[float]:
+    """
+    Calculate the mutual information score between two image bands over
+    their spatial intersection using scikit-learn.
+
+    :param in_a_img: Path to input image A.
+    :param in_b_img: Path to input image B.
+    :param img_a_band: 1-based band index within ``in_a_img``.
+    :param img_b_band: 1-based band index within ``in_b_img``.
+    :param img_a_no_data: No-data value in image A (``None`` reads header).
+    :param img_b_no_data: No-data value in image B (``None`` reads header).
+    :param hist_bins: Number of 2D histogram bins (Default = ``100``).
+    :param img_a_min: Optional exclusive minimum threshold for image A.
+    :param img_a_max: Optional exclusive maximum threshold for image A.
+    :param img_b_min: Optional exclusive minimum threshold for image B.
+    :param img_b_max: Optional exclusive maximum threshold for image B.
+    :return: Mutual information score, or ``None`` if <= 5 valid pixels exist.
+
+    .. code:: python
+
+        import rsgispy.imagecalc.comparison
+
+        mi_val = rsgispy.imagecalc.comparison.calc_img_mutual_info(
+            in_a_img="img_a.tif",
+            in_b_img="img_b.tif",
+            img_a_band=1,
+            img_b_band=1,
+            hist_bins=64,
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    rsgispy.check_optional_dep(
+        HAVE_SKLEARN, "calc_img_mutual_info", "scikit-learn", "stats"
+    )
+    arr_a, arr_b = _extract_valid_paired_pixels(
+        in_a_img,
+        in_b_img,
+        img_a_band,
+        img_b_band,
+        img_a_no_data,
+        img_b_no_data,
+    )
+
+    if (
+        img_a_min is not None
+        and img_a_max is not None
+        and img_b_min is not None
+        and img_b_max is not None
+    ):
+        msk_a = (arr_a > img_a_min) & (arr_a < img_a_max)
+        msk_b = (arr_b > img_b_min) & (arr_b < img_b_max)
+        msk = msk_a & msk_b
+        arr_a = arr_a[msk]
+        arr_b = arr_b[msk]
+
+    if arr_a.size <= 5 or arr_b.size <= 5:
+        return None
+
+    c_xy = np.histogram2d(arr_a, arr_b, hist_bins)[0]
+    mi_val = sklearn.metrics.mutual_info_score(None, None, contingency=c_xy)
+    return float(mi_val)

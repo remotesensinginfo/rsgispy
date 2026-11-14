@@ -684,3 +684,141 @@ def test_vectorgeoms_create(tmp_path):
         y_intervals=[0.5],
     )
     assert vu_meta.get_vec_feat_count(transects_gpkg, "trans") == 3
+
+
+def test_vectorgeoms_gdf_in_memory():
+    """Test GeoDataFrame inputs and optional in-memory outputs across vectorgeoms."""
+    a_gdf = gpd.GeoDataFrame(
+        {"cls": ["A", "B"]},
+        geometry=[box(0.0, 0.0, 10.0, 10.0), box(10.0, 0.0, 20.0, 10.0)],
+        crs="EPSG:32630",
+    )
+    b_gdf = gpd.GeoDataFrame(
+        {"roi": ["R1"]},
+        geometry=[box(5.0, 0.0, 15.0, 10.0)],
+        crs="EPSG:32630",
+    )
+
+    # Spatial inspection
+    assert vg_spatial.get_geoms_as_bboxs(b_gdf, None) == [(5.0, 15.0, 0.0, 10.0)]
+    assert vg_spatial.bbox_intersects_vec_lyr(b_gdf, None, (0.0, 8.0, 0.0, 8.0)) is True
+    assert vg_spatial.vec_intersects_vec(a_gdf, None, b_gdf, None, use_pbar=False) is True
+
+    # Overlay
+    inter_gdf = vg_overlay.vec_lyr_intersection_gp(a_gdf, None, b_gdf, None)
+    assert isinstance(inter_gdf, gpd.GeoDataFrame)
+    assert inter_gdf.area.sum() == pytest.approx(100.0)
+
+    clip_gdf = vg_overlay.clip_vec_lyr(a_gdf, None, b_gdf, None)
+    assert clip_gdf.area.sum() == pytest.approx(100.0)
+
+    merge_gdf = vg_overlay.clip_and_merge_with_roi(
+        a_gdf, None, b_gdf, None, dissolve_lyr=True, explode_rslt_lyr=True
+    )
+    assert merge_gdf.area.sum() == pytest.approx(100.0)
+
+    # Polygons
+    cent_gdf = vg_polys.calc_poly_centroids(a_gdf, None)
+    assert cent_gdf.geometry.x.tolist() == pytest.approx([5.0, 15.0])
+
+    buf_gdf = vg_polys.buffer_vec_layer_gp(a_gdf, None, 1.0)
+    assert buf_gdf.area.iloc[0] > 100.0
+
+    shift_gdf = vg_polys.shiftxy_vec_lyr(a_gdf, None, 10.0, -5.0)
+    assert tuple(shift_gdf.total_bounds) == pytest.approx((10.0, -5.0, 30.0, 5.0))
+
+    dis_gdf = vg_polys.vec_lyr_dissolve(
+        gpd.GeoDataFrame(
+            {"cls": ["X", "X", "Y"]},
+            geometry=[box(0, 0, 5, 5), box(5, 0, 10, 5), box(20, 0, 25, 5)],
+            crs="EPSG:32630",
+        ),
+        None,
+        "cls",
+    )
+    assert len(dis_gdf) == 2
+
+    # Lines
+    line_gdf = gpd.GeoDataFrame(
+        {"id": [1]}, geometry=[LineString([(0.0, 0.0), (100.0, 0.0)])], crs="EPSG:32630"
+    )
+    orthg_gdf = vg_lines.create_orthg_lines(
+        line_gdf, None, pt_step=25.0, line_len=10.0, use_pbar=False
+    )
+    assert len(orthg_gdf) == 3
+
+    pts_gdf = vg_lines.split_lines_to_reg_pts(
+        line_gdf, None, pt_step=25.0, use_pbar=False
+    )
+    assert len(pts_gdf) == 3
+
+    ray_gdf = gpd.GeoDataFrame(
+        {"uid": [1], "start_x": [0.0], "start_y": [5.0]},
+        geometry=[LineString([(0.0, 5.0), (40.0, 5.0)])],
+        crs="EPSG:32630",
+    )
+    wall_gdf = gpd.GeoDataFrame(
+        {"id": [1]}, geometry=[box(10.0, 0.0, 30.0, 10.0)], crs="EPSG:32630"
+    )
+    closest_gdf = vg_lines.closest_line_intersection(
+        ray_gdf, None, wall_gdf, None, use_pbar=False
+    )
+    assert closest_gdf["len"].iloc[0] == pytest.approx(10.0)
+
+    track_gdf = vg_lines.pts_to_line_geoms(
+        gpd.GeoDataFrame(
+            {"seq": [2, 1]},
+            geometry=[Point(10.0, 0.0), Point(0.0, 0.0)],
+            crs="EPSG:32630",
+        ),
+        None,
+        sort_col="seq",
+    )
+    assert list(track_gdf.geometry.iloc[0].coords) == [(0.0, 0.0), (10.0, 0.0)]
+
+    rays_gdf = vg_lines.create_angle_lines_from_points(
+        pts_gdf, None, angle=90.0, line_len=5.0, use_pbar=False
+    )
+    assert len(rays_gdf) == 12
+
+    coast_gdf = gpd.GeoDataFrame(
+        {"id": [1]}, geometry=[LineString([(0.0, 10.0), (20.0, 10.0)])], crs="EPSG:32630"
+    )
+    trans_gdf = gpd.GeoDataFrame(
+        {"LRR": [1.0, 2.0]},
+        geometry=[
+            LineString([(5.0, 0.0), (5.0, 20.0)]),
+            LineString([(15.0, 0.0), (15.0, 20.0)]),
+        ],
+        crs="EPSG:32630",
+    )
+    pred_gdf = vg_lines.estimate_future_coastline(
+        coast_gdf,
+        None,
+        datetime.date(2020, 1, 1),
+        trans_gdf,
+        None,
+        None,
+        None,
+        datetime.date(2021, 1, 1),
+        use_pbar=False,
+    )
+    assert isinstance(pred_gdf, gpd.GeoDataFrame)
+    assert len(list(pred_gdf.geometry.iloc[0].coords)) == 2
+
+    # Create
+    pt_boxes_gdf = vg_create.create_bboxs_for_pts(
+        pts_gdf, None, 20.0, 10.0, use_pbar=False
+    )
+    assert pt_boxes_gdf.area.tolist() == pytest.approx([200.0, 200.0, 200.0])
+
+    if _can_import("h3"):
+        roi_wgs = gpd.GeoDataFrame(
+            {"id": [1]},
+            geometry=[box(-4.2, 52.3, -3.9, 52.5)],
+            crs="EPSG:4326",
+        )
+        hex_gdf = vg_create.create_hex_grid_polys(roi_wgs, None, 6, use_pbar=False)
+        assert isinstance(hex_gdf, gpd.GeoDataFrame)
+        assert len(hex_gdf) > 0
+

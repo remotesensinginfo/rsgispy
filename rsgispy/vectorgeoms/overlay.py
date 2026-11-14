@@ -13,8 +13,9 @@ import pandas
 import rsgispy
 import rsgispy.tools.strings
 from rsgispy.vectorprocess import (
+    VectorInput,
     check_format_name,
-    prepare_out_vec_file,
+    prepare_optional_out_vec,
     read_vec_gdf,
     resolve_out_lyr_name,
     validate_columns_exist,
@@ -34,61 +35,67 @@ __all__ = [
 
 
 def _overlay_vec_lyrs(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    vec_over_file: str,
+    vec_over_file: VectorInput,
     vec_over_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]],
     out_vec_lyr: Optional[str],
     out_format: str,
     del_exist_vec: bool,
     how: str,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """Shared implementation for ``geopandas.overlay`` vector layer operations."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    prepare_out_vec_file(out_vec_file, del_exist_vec=del_exist_vec)
-    out_lyr = resolve_out_lyr_name(out_vec_file, out_vec_lyr)
+    out_path = prepare_optional_out_vec(out_vec_file, del_exist_vec=del_exist_vec)
+    out_lyr = resolve_out_lyr_name(out_path, out_vec_lyr)
 
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     over_data_gdf = read_vec_gdf(vec_over_file, vec_over_lyr)
     res_gdf = geopandas.overlay(data_gdf, over_data_gdf, how=how)
 
+    if out_path is None:
+        return res_gdf
     if (res_gdf is not None) and len(res_gdf) > 0:
         write_vec_gdf(
             res_gdf,
-            out_vec_file,
+            out_path,
             out_lyr,
             out_format=out_format,
             out_compress=out_compress,
         )
+    return None
 
 
 def vec_lyr_intersection_gp(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    vec_over_file: str,
+    vec_over_file: VectorInput,
     vec_over_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Perform a geometric intersection between ``vec_file`` and ``vec_over_file``
     using ``geopandas``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param vec_over_file: Overlay vector file path.
+    :param vec_over_file: Overlay vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_over_lyr: Overlay vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: Result :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -99,7 +106,7 @@ def vec_lyr_intersection_gp(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    _overlay_vec_lyrs(
+    return _overlay_vec_lyrs(
         vec_file,
         vec_lyr,
         vec_over_file,
@@ -114,30 +121,34 @@ def vec_lyr_intersection_gp(
 
 
 def vec_lyr_difference_gp(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    vec_over_file: str,
+    vec_over_file: VectorInput,
     vec_over_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Perform a geometric difference between ``vec_file`` and ``vec_over_file``
     using ``geopandas``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param vec_over_file: Overlay vector file path to subtract.
+    :param vec_over_file: Overlay vector file path or :class:`geopandas.GeoDataFrame`
+                          to subtract.
     :param vec_over_lyr: Overlay vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: Result :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -148,7 +159,7 @@ def vec_lyr_difference_gp(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    _overlay_vec_lyrs(
+    return _overlay_vec_lyrs(
         vec_file,
         vec_lyr,
         vec_over_file,
@@ -163,30 +174,33 @@ def vec_lyr_difference_gp(
 
 
 def vec_lyr_sym_difference_gp(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    vec_over_file: str,
+    vec_over_file: VectorInput,
     vec_over_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Perform a symmetric difference between ``vec_file`` and ``vec_over_file``
     using ``geopandas``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param vec_over_file: Overlay vector file path.
+    :param vec_over_file: Overlay vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_over_lyr: Overlay vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: Result :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -197,7 +211,7 @@ def vec_lyr_sym_difference_gp(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    _overlay_vec_lyrs(
+    return _overlay_vec_lyrs(
         vec_file,
         vec_lyr,
         vec_over_file,
@@ -212,30 +226,33 @@ def vec_lyr_sym_difference_gp(
 
 
 def vec_lyr_identity_gp(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    vec_over_file: str,
+    vec_over_file: VectorInput,
     vec_over_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Perform a geometric identity overlay between ``vec_file`` and
     ``vec_over_file`` using ``geopandas``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param vec_over_file: Overlay vector file path.
+    :param vec_over_file: Overlay vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_over_lyr: Overlay vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: Result :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -246,7 +263,7 @@ def vec_lyr_identity_gp(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    _overlay_vec_lyrs(
+    return _overlay_vec_lyrs(
         vec_file,
         vec_lyr,
         vec_over_file,
@@ -261,30 +278,33 @@ def vec_lyr_identity_gp(
 
 
 def vec_lyr_union_gp(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    vec_over_file: str,
+    vec_over_file: VectorInput,
     vec_over_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Perform a geometric union between ``vec_file`` and ``vec_over_file``
     using ``geopandas``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param vec_over_file: Overlay vector file path.
+    :param vec_over_file: Overlay vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_over_lyr: Overlay vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: Result :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -295,7 +315,7 @@ def vec_lyr_union_gp(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    _overlay_vec_lyrs(
+    return _overlay_vec_lyrs(
         vec_file,
         vec_lyr,
         vec_over_file,
@@ -310,27 +330,31 @@ def vec_lyr_union_gp(
 
 
 def clip_vec_lyr(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    vec_roi_file: str,
+    vec_roi_file: VectorInput,
     vec_roi_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Clip a vector layer to the region of interest defined by ``vec_roi_file``
     using ``geopandas.clip``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param vec_roi_file: ROI polygon vector file path.
+    :param vec_roi_file: ROI polygon vector file path or
+                         :class:`geopandas.GeoDataFrame`.
     :param vec_roi_lyr: ROI polygon vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: Clipped :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -341,9 +365,11 @@ def clip_vec_lyr(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    base_gdf = read_vec_gdf(vec_file, vec_lyr)
-    roi_gdf = read_vec_gdf(vec_roi_file, vec_roi_lyr)
+    base_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
+    roi_gdf = read_vec_gdf(vec_roi_file, vec_roi_lyr, copy=False)
     clipped_gdf = geopandas.clip(base_gdf, roi_gdf, keep_geom_type=True)
+    if out_vec_file is None:
+        return clipped_gdf
     write_vec_gdf(
         clipped_gdf,
         out_vec_file,
@@ -351,14 +377,15 @@ def clip_vec_lyr(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def clip_and_merge_with_roi(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    vec_roi_file: str,
+    vec_roi_file: VectorInput,
     vec_roi_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     dissolve_lyr: bool = False,
@@ -367,17 +394,19 @@ def clip_and_merge_with_roi(
     roi_rgn_val: int = 0,
     data_rgn_val: int = 1,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Clip the polygon vector layer (``vec_file``) using the ROI polygon layer
     (``vec_roi_file``) and merge the clipped features with the remaining
     background ROI area, tagging each polygon in ``ref_col_name``.
 
-    :param vec_file: Input polygon vector file path.
+    :param vec_file: Input polygon vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param vec_roi_file: ROI polygon vector file path.
+    :param vec_roi_file: ROI polygon vector file path or
+                         :class:`geopandas.GeoDataFrame`.
     :param vec_roi_lyr: ROI polygon vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param dissolve_lyr: Dissolve clipped features prior to merging with the
@@ -389,6 +418,8 @@ def clip_and_merge_with_roi(
     :param roi_rgn_val: Attribute value for background ROI polygons (Default = ``0``).
     :param data_rgn_val: Attribute value for input data polygons (Default = ``1``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: Merged :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -419,6 +450,9 @@ def clip_and_merge_with_roi(
     if explode_rslt_lyr:
         out_data_gdf = out_data_gdf.explode(index_parts=False)
 
+    if out_vec_file is None:
+        return out_data_gdf
+
     out_lyr = resolve_out_lyr_name(out_vec_file, out_vec_lyr)
     write_vec_gdf(
         out_data_gdf,
@@ -427,15 +461,16 @@ def clip_and_merge_with_roi(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def clip_vec_into_sets(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    vec_roi_file: str,
+    vec_roi_file: VectorInput,
     vec_roi_lyr: Optional[str],
     roi_att_col: str,
-    out_vec_dir: str,
+    out_vec_dir: Union[str, os.PathLike],
     out_vec_base_pre: str = "",
     out_vec_base_post: str = "",
     out_vec_ext: str = "gpkg",
@@ -449,9 +484,11 @@ def clip_vec_into_sets(
     of ``roi_att_col`` in ``vec_roi_file``. Supports both standard OGR/GDAL
     vector formats and GeoParquet inputs/outputs.
 
-    :param vec_file: Input vector file path to clip.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`
+                     to clip.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param vec_roi_file: ROI polygon vector file path.
+    :param vec_roi_file: ROI polygon vector file path or
+                         :class:`geopandas.GeoDataFrame`.
     :param vec_roi_lyr: ROI vector layer name (or ``None``).
     :param roi_att_col: Column in ``vec_roi_file`` defining each subset.
     :param out_vec_dir: Output directory (created if missing).
@@ -476,10 +513,11 @@ def clip_vec_into_sets(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    os.makedirs(out_vec_dir, exist_ok=True)
+    out_dir = os.fspath(out_vec_dir)
+    os.makedirs(out_dir, exist_ok=True)
 
-    data_gdf = read_vec_gdf(vec_file, vec_lyr)
-    roi_gdf = read_vec_gdf(vec_roi_file, vec_roi_lyr)
+    data_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
+    roi_gdf = read_vec_gdf(vec_roi_file, vec_roi_lyr, copy=False)
 
     validate_columns_exist(roi_gdf, [roi_att_col])
     unq_roi_vals = roi_gdf[roi_att_col].unique()
@@ -505,7 +543,7 @@ def clip_vec_into_sets(
         if out_name_lower:
             out_vec_lyr = out_vec_lyr.lower()
 
-        out_vec_file = os.path.join(out_vec_dir, f"{out_vec_lyr}.{out_vec_ext}")
+        out_vec_file = os.path.join(out_dir, f"{out_vec_lyr}.{out_vec_ext}")
         write_vec_gdf(
             roi_data_gdf,
             out_vec_file,

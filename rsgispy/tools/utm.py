@@ -8,7 +8,14 @@ Adapted from https://github.com/Turbo87/utm/blob/master/utm/conversion.py.
 from typing import List, Optional, Sequence, Tuple, Union
 
 import numpy
-import scipy.stats
+
+try:
+    import scipy.stats
+
+    HAVE_SCIPY = True
+except ImportError:
+    scipy = None  # type: ignore[assignment]
+    HAVE_SCIPY = False
 
 import rsgispy
 import rsgispy.tools.maths
@@ -558,8 +565,11 @@ def latlon_to_mode_utm_zone_number(
         mode_zone = rsgispy.tools.utm.latlon_to_mode_utm_zone_number(lats, lons)
     """
     utm_zones = latlon_arr_to_utm_zone_number(latitude, longitude)
-    mode_res = scipy.stats.mode(utm_zones)
-    return int(numpy.asarray(mode_res.mode).flat[0])
+    if HAVE_SCIPY:
+        mode_res = scipy.stats.mode(utm_zones)
+        return int(numpy.asarray(mode_res.mode).flat[0])
+    vals, counts = numpy.unique(utm_zones, return_counts=True)
+    return int(vals[numpy.argmax(counts)])
 
 
 def zone_number_to_central_longitude(zone_number: int) -> float:

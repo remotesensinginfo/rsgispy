@@ -3,8 +3,8 @@ The tools.checkdatasets module contains functions for validating raster,
 vector, and HDF5 datasets using ``rasterio``, ``pyogrio``, and optionally ``h5py``
 without requiring GDAL's ``osgeo`` bindings.
 
-Functions requiring ``h5py`` are only defined and exported when ``h5py`` is
-installed.
+Functions requiring ``h5py`` raise :class:`rsgispy.RSGISPyException` at runtime
+if the optional dependency is not installed.
 """
 
 import glob
@@ -26,6 +26,7 @@ try:
 
     HAVE_H5PY = True
 except ImportError:
+    h5py = None  # type: ignore[assignment]
     HAVE_H5PY = False
 
 __all__ = [
@@ -36,16 +37,10 @@ __all__ = [
     "run_check_gdal_vector_file",
     "run_check_gdal_vector_files",
     "cmp_to_ref_imgs",
+    "check_hdf5_file",
+    "run_check_hdf5_file",
+    "run_check_hdf5_files",
 ]
-
-if HAVE_H5PY:
-    __all__.extend(
-        [
-            "check_hdf5_file",
-            "run_check_hdf5_file",
-            "run_check_hdf5_files",
-        ]
-    )
 
 
 def _validate_file_exists_and_size(
@@ -268,7 +263,6 @@ def check_gdal_image_file(
         return False, err_str
 
     if HAVE_H5PY and os.path.splitext(input_img)[1].lower() == ".kea":
-        # pylint: disable-next=possibly-used-before-assignment
         file_ok, err_str = check_hdf5_file(input_img)
         if not file_ok:
             return False, err_str or "Error with KEA/HDF5 file."
@@ -619,131 +613,135 @@ def run_check_gdal_vector_files(
     )
 
 
-if HAVE_H5PY:
+def check_hdf5_file(input_file: str) -> Tuple[bool, str]:
+    """
+    Check whether an HDF5 file (including ``.kea`` rasters) is readable and valid.
 
-    def check_hdf5_file(input_file: str) -> Tuple[bool, str]:
-        """
-        Check whether an HDF5 file (including ``.kea`` rasters) is readable and valid.
+    :param input_file: Path to the HDF5 file.
+    :return: Tuple ``(is_valid, err_str)``.
 
-        :param input_file: Path to the HDF5 file.
-        :return: Tuple ``(is_valid, err_str)``.
+    .. code:: python
 
-        .. code:: python
+        import rsgispy.tools.checkdatasets
 
-            import rsgispy.tools.checkdatasets
+        file_ok, err_str = rsgispy.tools.checkdatasets.check_hdf5_file("img.kea")
+    """
+    rsgispy.check_optional_dep(HAVE_H5PY, "check_hdf5_file", "h5py", "imaging")
 
-            file_ok, err_str = rsgispy.tools.checkdatasets.check_hdf5_file("img.kea")
-        """
-
-        def _check_h5_var(h5_obj: Any) -> Tuple[bool, str]:
-            try:
-                if isinstance(h5_obj, h5py.Dataset):
-                    _ = h5_obj.shape
-                    _ = h5_obj.dtype
-                    return True, ""
-                if isinstance(h5_obj, h5py.Group):
-                    for child_obj in h5_obj.values():
-                        lcl_ok, lcl_err = _check_h5_var(child_obj)
-                        if not lcl_ok:
-                            return False, lcl_err
-            except Exception as err:  # pylint: disable=broad-exception-caught
-                return False, str(err)
-            return True, ""
-
-        if not os.path.exists(input_file):
-            return False, "File does not exist."
-
+    def _check_h5_var(h5_obj: Any) -> Tuple[bool, str]:
         try:
-            with h5py.File(input_file, "r") as f_h5:
-                for child_obj in f_h5.values():
-                    glb_ok, err_str = _check_h5_var(child_obj)
-                    if not glb_ok:
-                        return False, err_str
+            if isinstance(h5_obj, h5py.Dataset):
+                _ = h5_obj.shape
+                _ = h5_obj.dtype
+                return True, ""
+            if isinstance(h5_obj, h5py.Group):
+                for child_obj in h5_obj.values():
+                    lcl_ok, lcl_err = _check_h5_var(child_obj)
+                    if not lcl_ok:
+                        return False, lcl_err
         except Exception as err:  # pylint: disable=broad-exception-caught
             return False, str(err)
-
         return True, ""
 
-    def _run_check_hdf5_file(file_params: Sequence[Any]) -> bool:
-        """Worker entrypoint for multiprocessing HDF5 validation."""
-        input_file, rm_err, print_err = file_params
+    if not os.path.exists(input_file):
+        return False, "File does not exist."
 
-        try:
-            file_ok, err_str = check_hdf5_file(input_file)
-            if not file_ok:
-                _handle_failed_file(
-                    input_file, err_str, rm_err=rm_err, print_err=print_err
-                )
-        except Exception as err:  # pylint: disable=broad-exception-caught
-            _handle_failed_file(input_file, str(err), rm_err=rm_err, print_err=print_err)
-            file_ok = False
+    try:
+        with h5py.File(input_file, "r") as f_h5:
+            for child_obj in f_h5.values():
+                glb_ok, err_str = _check_h5_var(child_obj)
+                if not glb_ok:
+                    return False, err_str
+    except Exception as err:  # pylint: disable=broad-exception-caught
+        return False, str(err)
 
-        return file_ok
+    return True, ""
 
-    def run_check_hdf5_file(
-        input_file: str,
-        rm_err: bool = False,
-        print_err: bool = True,
-        timeout: int = 4,
-    ) -> bool:
-        """
-        Validate a single HDF5 file inside a guarded subprocess with timeout.
 
-        :param input_file: File path to the HDF5 file.
-        :param rm_err: Delete the file if validation fails.
-        :param print_err: Print failure details to stdout.
-        :param timeout: Timeout in seconds (Default: ``4``).
-        :return: ``True`` if the file passed checks, ``False`` otherwise.
+def _run_check_hdf5_file(file_params: Sequence[Any]) -> bool:
+    """Worker entrypoint for multiprocessing HDF5 validation."""
+    input_file, rm_err, print_err = file_params
 
-        .. code:: python
-
-            import rsgispy.tools.checkdatasets
-
-            file_ok = rsgispy.tools.checkdatasets.run_check_hdf5_file(
-                "img.kea", timeout=10
+    try:
+        file_ok, err_str = check_hdf5_file(input_file)
+        if not file_ok:
+            _handle_failed_file(
+                input_file, err_str, rm_err=rm_err, print_err=print_err
             )
-        """
-        return _run_checks_in_pool(
-            [input_file],
-            _run_check_hdf5_file,
-            lambda path: (path, rm_err, print_err),
-            timeout=timeout,
-            rm_err=rm_err,
+    except Exception as err:  # pylint: disable=broad-exception-caught
+        _handle_failed_file(input_file, str(err), rm_err=rm_err, print_err=print_err)
+        file_ok = False
+
+    return file_ok
+
+
+def run_check_hdf5_file(
+    input_file: str,
+    rm_err: bool = False,
+    print_err: bool = True,
+    timeout: int = 4,
+) -> bool:
+    """
+    Validate a single HDF5 file inside a guarded subprocess with timeout.
+
+    :param input_file: File path to the HDF5 file.
+    :param rm_err: Delete the file if validation fails.
+    :param print_err: Print failure details to stdout.
+    :param timeout: Timeout in seconds (Default: ``4``).
+    :return: ``True`` if the file passed checks, ``False`` otherwise.
+
+    .. code:: python
+
+        import rsgispy.tools.checkdatasets
+
+        file_ok = rsgispy.tools.checkdatasets.run_check_hdf5_file(
+            "img.kea", timeout=10
         )
+    """
+    rsgispy.check_optional_dep(HAVE_H5PY, "run_check_hdf5_file", "h5py", "imaging")
+    return _run_checks_in_pool(
+        [input_file],
+        _run_check_hdf5_file,
+        lambda path: (path, rm_err, print_err),
+        timeout=timeout,
+        rm_err=rm_err,
+    )
 
-    def run_check_hdf5_files(
-        input_files: List[str],
-        rm_err: bool = False,
-        print_err: bool = True,
-        print_file_names: bool = False,
-        timeout: int = 4,
-    ) -> bool:
-        """
-        Validate a list of HDF5 files inside a guarded subprocess pool with timeout.
 
-        :param input_files: List of HDF5 file paths.
-        :param rm_err: Delete invalid files.
-        :param print_err: Print failure details to stdout.
-        :param print_file_names: Print each file path before checking it.
-        :param timeout: Per-file timeout in seconds (Default: ``4``).
-        :return: ``True`` if all files passed checks, ``False`` otherwise.
+def run_check_hdf5_files(
+    input_files: List[str],
+    rm_err: bool = False,
+    print_err: bool = True,
+    print_file_names: bool = False,
+    timeout: int = 4,
+) -> bool:
+    """
+    Validate a list of HDF5 files inside a guarded subprocess pool with timeout.
 
-        .. code:: python
+    :param input_files: List of HDF5 file paths.
+    :param rm_err: Delete invalid files.
+    :param print_err: Print failure details to stdout.
+    :param print_file_names: Print each file path before checking it.
+    :param timeout: Per-file timeout in seconds (Default: ``4``).
+    :return: ``True`` if all files passed checks, ``False`` otherwise.
 
-            import rsgispy.tools.checkdatasets
+    .. code:: python
 
-            all_ok = rsgispy.tools.checkdatasets.run_check_hdf5_files(
-                ["img1.kea", "img2.kea"], timeout=10
-            )
-        """
-        return _run_checks_in_pool(
-            input_files,
-            _run_check_hdf5_file,
-            lambda path: (path, rm_err, print_err),
-            timeout=timeout,
-            rm_err=rm_err,
-            print_file_names=print_file_names,
+        import rsgispy.tools.checkdatasets
+
+        all_ok = rsgispy.tools.checkdatasets.run_check_hdf5_files(
+            ["img1.kea", "img2.kea"], timeout=10
         )
+    """
+    rsgispy.check_optional_dep(HAVE_H5PY, "run_check_hdf5_files", "h5py", "imaging")
+    return _run_checks_in_pool(
+        input_files,
+        _run_check_hdf5_file,
+        lambda path: (path, rm_err, print_err),
+        timeout=timeout,
+        rm_err=rm_err,
+        print_file_names=print_file_names,
+    )
 
 
 def _read_raster_geom_signature(

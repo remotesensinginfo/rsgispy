@@ -2,8 +2,8 @@
 The tools.ftp module provides FTP directory traversal, download/upload,
 and tracking database utilities.
 
-Functions requiring ``pysondb`` are only defined and exported when
-``pysondb`` is installed.
+Functions requiring ``pysondb`` raise :class:`rsgispy.RSGISPyException` if
+``pysondb`` is not installed.
 """
 
 import ftplib
@@ -20,6 +20,7 @@ try:
 
     HAVE_PYSONDB = True
 except ImportError:
+    pysondb = None  # type: ignore[assignment]
     HAVE_PYSONDB = False
 
 __all__ = [
@@ -27,16 +28,10 @@ __all__ = [
     "download_ftp_file",
     "download_curl_ftp_file",
     "upload_ftp_file",
+    "create_file_listings_db",
+    "filter_file_listings_db",
+    "download_files_use_lst_db",
 ]
-
-if HAVE_PYSONDB:
-    __all__.extend(
-        [
-            "create_file_listings_db",
-            "filter_file_listings_db",
-            "download_files_use_lst_db",
-        ]
-    )
 
 
 def _ftp_list_with_retries(
@@ -178,114 +173,119 @@ def get_ftp_file_listings(
     return ftp_files, non_dirs_lst
 
 
-if HAVE_PYSONDB:
+def create_file_listings_db(
+    db_json: str,
+    ftp_url: str,
+    ftp_path: str,
+    ftp_user: str = "",
+    ftp_pass: str = "",
+    ftp_timeout: int = 300,
+    try_n_times: int = 5,
+    mlsd_not_avail: bool = False,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Traverse an FTP server directory tree and save file listings to a ``pysondb``
+    JSON database.
 
-    def create_file_listings_db(
-        db_json: str,
-        ftp_url: str,
-        ftp_path: str,
-        ftp_user: str = "",
-        ftp_pass: str = "",
-        ftp_timeout: int = 300,
-        try_n_times: int = 5,
-        mlsd_not_avail: bool = False,
-        use_pbar: bool = True,
-    ) -> None:
-        """
-        Traverse an FTP server directory tree and save file listings to a ``pysondb``
-        JSON database.
+    :param db_json: Path to the output JSON database file.
+    :param ftp_url: FTP server hostname.
+    :param ftp_path: Root path on the FTP server.
+    :param ftp_user: FTP username.
+    :param ftp_pass: FTP password.
+    :param ftp_timeout: Connection timeout in seconds (Default = ``300``).
+    :param try_n_times: Number of retries per directory listing (Default = ``5``).
+    :param mlsd_not_avail: Fallback to ``LIST`` when ``MLSD`` is unsupported.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
-        :param db_json: Path to the output JSON database file.
-        :param ftp_url: FTP server hostname.
-        :param ftp_path: Root path on the FTP server.
-        :param ftp_user: FTP username.
-        :param ftp_pass: FTP password.
-        :param ftp_timeout: Connection timeout in seconds (Default = ``300``).
-        :param try_n_times: Number of retries per directory listing (Default = ``5``).
-        :param mlsd_not_avail: Fallback to ``LIST`` when ``MLSD`` is unsupported.
-        :param use_pbar: If ``True``, display a tqdm progress bar during processing
-                         (Default = ``True``).
+    .. code:: python
 
-        .. code:: python
-
-            import rsgispy.tools.ftp
-            rsgispy.tools.ftp.create_file_listings_db(
-                "ftp_files.json", "ftp.example.com", "/pub/data"
-            )
-        """
-        # pylint: disable=too-many-arguments,too-many-positional-arguments
-        tqdm_cls = rsgispy.get_tqdm()
-        _, non_dirs_lst = get_ftp_file_listings(
-            ftp_url,
-            ftp_path,
-            ftp_user,
-            ftp_pass,
-            ftp_timeout,
-            try_n_times,
-            mlsd_not_avail,
+        import rsgispy.tools.ftp
+        rsgispy.tools.ftp.create_file_listings_db(
+            "ftp_files.json", "ftp.example.com", "/pub/data"
         )
-        lst_db = pysondb.getDb(db_json)
-        db_data = [
-            {
-                "ftp_url": ftp_url,
-                "rmt_path": c_file,
-                "lcl_path": "",
-                "downloaded": False,
-            }
-            for c_file in tqdm_cls(non_dirs_lst, disable=not use_pbar)
-        ]
-        if db_data:
-            lst_db.addMany(db_data)
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    rsgispy.check_optional_dep(
+        HAVE_PYSONDB, "create_file_listings_db", "pysondb", "dataaccess"
+    )
+    tqdm_cls = rsgispy.get_tqdm()
+    _, non_dirs_lst = get_ftp_file_listings(
+        ftp_url,
+        ftp_path,
+        ftp_user,
+        ftp_pass,
+        ftp_timeout,
+        try_n_times,
+        mlsd_not_avail,
+    )
+    lst_db = pysondb.getDb(db_json)
+    db_data = [
+        {
+            "ftp_url": ftp_url,
+            "rmt_path": c_file,
+            "lcl_path": "",
+            "downloaded": False,
+        }
+        for c_file in tqdm_cls(non_dirs_lst, disable=not use_pbar)
+    ]
+    if db_data:
+        lst_db.addMany(db_data)
 
-    def filter_file_listings_db(
-        db_json: str,
-        filter_vals: List[str],
-        out_db_file: str,
-        filter_path: bool = False,
-        use_pbar: bool = True,
-    ) -> None:
-        """
-        Filter a ``pysondb`` FTP listings database for paths/filenames containing any
-        string in ``filter_vals`` and write matching records to ``out_db_file``.
 
-        :param db_json: Input JSON database file path.
-        :param filter_vals: Substrings to match.
-        :param out_db_file: Output filtered JSON database file path.
-        :param filter_path: Match against full remote path when ``True`` (Default = ``False``).
-        :param use_pbar: If ``True``, display a tqdm progress bar during filtering
-                         (Default = ``True``).
+def filter_file_listings_db(
+    db_json: str,
+    filter_vals: List[str],
+    out_db_file: str,
+    filter_path: bool = False,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Filter a ``pysondb`` FTP listings database for paths/filenames containing any
+    string in ``filter_vals`` and write matching records to ``out_db_file``.
 
-        .. code:: python
+    :param db_json: Input JSON database file path.
+    :param filter_vals: Substrings to match.
+    :param out_db_file: Output filtered JSON database file path.
+    :param filter_path: Match against full remote path when ``True`` (Default = ``False``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during filtering
+                     (Default = ``True``).
 
-            import rsgispy.tools.ftp
-            rsgispy.tools.ftp.filter_file_listings_db(
-                "ftp_files.json", [".tif", ".xml"], "filtered_files.json"
+    .. code:: python
+
+        import rsgispy.tools.ftp
+        rsgispy.tools.ftp.filter_file_listings_db(
+            "ftp_files.json", [".tif", ".xml"], "filtered_files.json"
+        )
+    """
+    rsgispy.check_optional_dep(
+        HAVE_PYSONDB, "filter_file_listings_db", "pysondb", "dataaccess"
+    )
+    tqdm_cls = rsgispy.get_tqdm()
+    lst_db = pysondb.getDb(db_json)
+    db_data = lst_db.getAll()
+
+    out_db_data = []
+    for file_rcd in tqdm_cls(db_data, disable=not use_pbar):
+        target = (
+            file_rcd["rmt_path"]
+            if filter_path
+            else os.path.basename(file_rcd["rmt_path"])
+        )
+        if any(val in target for val in filter_vals):
+            out_db_data.append(
+                {
+                    "ftp_url": file_rcd["ftp_url"],
+                    "rmt_path": file_rcd["rmt_path"],
+                    "lcl_path": file_rcd["lcl_path"],
+                    "downloaded": file_rcd["downloaded"],
+                }
             )
-        """
-        tqdm_cls = rsgispy.get_tqdm()
-        lst_db = pysondb.getDb(db_json)
-        db_data = lst_db.getAll()
 
-        out_db_data = []
-        for file_rcd in tqdm_cls(db_data, disable=not use_pbar):
-            target = (
-                file_rcd["rmt_path"]
-                if filter_path
-                else os.path.basename(file_rcd["rmt_path"])
-            )
-            if any(val in target for val in filter_vals):
-                out_db_data.append(
-                    {
-                        "ftp_url": file_rcd["ftp_url"],
-                        "rmt_path": file_rcd["rmt_path"],
-                        "lcl_path": file_rcd["lcl_path"],
-                        "downloaded": file_rcd["downloaded"],
-                    }
-                )
-
-        if out_db_data:
-            lst_out_db = pysondb.getDb(out_db_file)
-            lst_out_db.addMany(out_db_data)
+    if out_db_data:
+        lst_out_db = pysondb.getDb(out_db_file)
+        lst_out_db.addMany(out_db_data)
 
 
 def download_ftp_file(
@@ -399,67 +399,68 @@ def download_curl_ftp_file(
         return False
 
 
-if HAVE_PYSONDB:
+def download_files_use_lst_db(
+    db_json: str,
+    out_dir_path: str,
+    ftp_timeout: int = 300,
+    ftp_user: Optional[str] = None,
+    ftp_pass: Optional[str] = None,
+    create_dir_struct: bool = False,
+    use_curl: bool = False,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Download pending files listed in a ``pysondb`` FTP listings database.
 
-    def download_files_use_lst_db(
-        db_json: str,
-        out_dir_path: str,
-        ftp_timeout: int = 300,
-        ftp_user: Optional[str] = None,
-        ftp_pass: Optional[str] = None,
-        create_dir_struct: bool = False,
-        use_curl: bool = False,
-        use_pbar: bool = True,
-    ) -> None:
-        """
-        Download pending files listed in a ``pysondb`` FTP listings database.
+    :param db_json: Path to the JSON database file.
+    :param out_dir_path: Local output root directory.
+    :param ftp_timeout: Timeout in seconds (Default = ``300``).
+    :param ftp_user: Optional FTP username.
+    :param ftp_pass: Optional FTP password.
+    :param create_dir_struct: Preserve remote directory hierarchy when ``True``.
+    :param use_curl: Use :func:`download_curl_ftp_file` instead of :func:`download_ftp_file`.
+    :param use_pbar: If ``True``, display a tqdm progress bar during downloads
+                     (Default = ``True``).
 
-        :param db_json: Path to the JSON database file.
-        :param out_dir_path: Local output root directory.
-        :param ftp_timeout: Timeout in seconds (Default = ``300``).
-        :param ftp_user: Optional FTP username.
-        :param ftp_pass: Optional FTP password.
-        :param create_dir_struct: Preserve remote directory hierarchy when ``True``.
-        :param use_curl: Use :func:`download_curl_ftp_file` instead of :func:`download_ftp_file`.
-        :param use_pbar: If ``True``, display a tqdm progress bar during downloads
-                         (Default = ``True``).
+    .. code:: python
 
-        .. code:: python
+        import rsgispy.tools.ftp
+        rsgispy.tools.ftp.download_files_use_lst_db(
+            "ftp_files.json", "./downloads", create_dir_struct=True
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    rsgispy.check_optional_dep(
+        HAVE_PYSONDB, "download_files_use_lst_db", "pysondb", "dataaccess"
+    )
+    tqdm_cls = rsgispy.get_tqdm()
+    lst_db = pysondb.getDb(db_json)
+    dwld_files = lst_db.getByQuery({"downloaded": False})
 
-            import rsgispy.tools.ftp
-            rsgispy.tools.ftp.download_files_use_lst_db(
-                "ftp_files.json", "./downloads", create_dir_struct=True
+    for dwn_file in tqdm_cls(dwld_files, disable=not use_pbar):
+        basename = os.path.basename(dwn_file["rmt_path"])
+        if create_dir_struct:
+            dir_path = os.path.dirname(dwn_file["rmt_path"]).lstrip("/")
+            local_dir_path = os.path.join(out_dir_path, dir_path)
+            os.makedirs(local_dir_path, exist_ok=True)
+            local_path = os.path.join(local_dir_path, basename)
+        else:
+            local_path = os.path.join(out_dir_path, basename)
+
+        dl_fn = download_curl_ftp_file if use_curl else download_ftp_file
+        dwnlded = dl_fn(
+            ftp_url=dwn_file["ftp_url"],
+            remote_file=dwn_file["rmt_path"],
+            local_file=local_path,
+            ftp_timeout=ftp_timeout,
+            ftp_user=ftp_user,
+            ftp_pass=ftp_pass,
+            print_info=False,
+        )
+        if dwnlded:
+            lst_db.updateById(
+                dwn_file["id"], {"lcl_path": local_path, "downloaded": True}
             )
-        """
-        # pylint: disable=too-many-arguments,too-many-positional-arguments
-        tqdm_cls = rsgispy.get_tqdm()
-        lst_db = pysondb.getDb(db_json)
-        dwld_files = lst_db.getByQuery({"downloaded": False})
-
-        for dwn_file in tqdm_cls(dwld_files, disable=not use_pbar):
-            basename = os.path.basename(dwn_file["rmt_path"])
-            if create_dir_struct:
-                dir_path = os.path.dirname(dwn_file["rmt_path"]).lstrip("/")
-                local_dir_path = os.path.join(out_dir_path, dir_path)
-                os.makedirs(local_dir_path, exist_ok=True)
-                local_path = os.path.join(local_dir_path, basename)
-            else:
-                local_path = os.path.join(out_dir_path, basename)
-
-            dl_fn = download_curl_ftp_file if use_curl else download_ftp_file
-            dwnlded = dl_fn(
-                ftp_url=dwn_file["ftp_url"],
-                remote_file=dwn_file["rmt_path"],
-                local_file=local_path,
-                ftp_timeout=ftp_timeout,
-                ftp_user=ftp_user,
-                ftp_pass=ftp_pass,
-                print_info=False,
-            )
-            if dwnlded:
-                lst_db.updateById(
-                    dwn_file["id"], {"lcl_path": local_path, "downloaded": True}
-                )
 
 
 def upload_ftp_file(

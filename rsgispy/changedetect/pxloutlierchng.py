@@ -33,21 +33,17 @@ from rsgispy.imageutils.stats import pop_img_stats, pop_thmt_img_stats
 from rsgispy.tools.plotting import plot_histogram_threshold
 from rsgispy.tools.thresholding import (
     HAVE_SCIPY,
+    calc_kurt_skew_threshold,
     calc_li_threshold,
     calc_otsu_threshold,
 )
-
-if HAVE_SCIPY:
-    from rsgispy.tools.thresholding import calc_kurt_skew_threshold
 
 __all__: List[str] = [
     "find_class_pyod_outliers",
     "find_class_otsu_outliers",
     "find_class_li_outliers",
+    "find_class_kurt_skew_outliers",
 ]
-
-if HAVE_SCIPY:
-    __all__.append("find_class_kurt_skew_outliers")
 
 _OUTLIER_CLR_LUT = {
     0: [0, 0, 0, 0],
@@ -480,117 +476,118 @@ def find_class_li_outliers(
     return chng_thres
 
 
-if HAVE_SCIPY:
+def find_class_kurt_skew_outliers(
+    input_img: str,
+    in_msk_img: str,
+    output_img: str,
+    vld_min: float,
+    vld_max: float,
+    init_thres: float,
+    low_thres: bool,
+    contamination: float = 10.0,
+    only_kurtosis: bool = False,
+    img_mask_val: int = 1,
+    img_band: int = 1,
+    img_val_no_data: Optional[float] = None,
+    gdalformat: str = "GTIFF",
+    plot_thres_file: Optional[str] = None,
+    use_pbar: bool = True,
+) -> float:
+    """
+    Find outliers within a masked class by optimising histogram skewness
+    and kurtosis (requires ``scipy``).
 
-    def find_class_kurt_skew_outliers(
-        input_img: str,
-        in_msk_img: str,
-        output_img: str,
-        vld_min: float,
-        vld_max: float,
-        init_thres: float,
-        low_thres: bool,
-        contamination: float = 10.0,
-        only_kurtosis: bool = False,
-        img_mask_val: int = 1,
-        img_band: int = 1,
-        img_val_no_data: Optional[float] = None,
-        gdalformat: str = "GTIFF",
-        plot_thres_file: Optional[str] = None,
-        use_pbar: bool = True,
-    ) -> float:
-        """
-        Find outliers within a masked class by optimising histogram skewness
-        and kurtosis (requires ``scipy``).
+    Output pixel values are ``0`` (outside mask / no-data), ``1`` (within mask,
+    not outlier), and ``2`` (within mask, outlier).
 
-        Output pixel values are ``0`` (outside mask / no-data), ``1`` (within mask,
-        not outlier), and ``2`` (within mask, outlier).
+    :param input_img: Path to the input raster image file.
+    :param in_msk_img: Path to the mask image defining the class of interest.
+    :param output_img: Path to the output ``uint8`` thematic image file.
+    :param vld_min: Minimum threshold bound for valid values.
+    :param vld_max: Maximum threshold bound for valid values.
+    :param init_thres: Initial estimate of the change threshold.
+    :param low_thres: If ``True``, values below the threshold are outliers; if
+                      ``False``, values above the threshold are outliers.
+    :param contamination: Estimated outlier percentage in ``[1, 100]``
+                          (Default = ``10.0``).
+    :param only_kurtosis: If ``True``, optimise kurtosis alone instead of
+                          ``abs(kurtosis) + abs(skew)`` (Default = ``False``).
+    :param img_mask_val: Pixel value in ``in_msk_img`` defining the target class
+                         (Default = ``1``).
+    :param img_band: 1-based band index within ``input_img`` (Default = ``1``).
+    :param img_val_no_data: Optional no-data value for ``input_img`` (inferred
+                            from image metadata if ``None``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param plot_thres_file: Optional output image path for a histogram plot
+                            showing the computed threshold.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
+    :return: Computed threshold value.
 
-        :param input_img: Path to the input raster image file.
-        :param in_msk_img: Path to the mask image defining the class of interest.
-        :param output_img: Path to the output ``uint8`` thematic image file.
-        :param vld_min: Minimum threshold bound for valid values.
-        :param vld_max: Maximum threshold bound for valid values.
-        :param init_thres: Initial estimate of the change threshold.
-        :param low_thres: If ``True``, values below the threshold are outliers; if
-                          ``False``, values above the threshold are outliers.
-        :param contamination: Estimated outlier percentage in ``[1, 100]``
-                              (Default = ``10.0``).
-        :param only_kurtosis: If ``True``, optimise kurtosis alone instead of
-                              ``abs(kurtosis) + abs(skew)`` (Default = ``False``).
-        :param img_mask_val: Pixel value in ``in_msk_img`` defining the target class
-                             (Default = ``1``).
-        :param img_band: 1-based band index within ``input_img`` (Default = ``1``).
-        :param img_val_no_data: Optional no-data value for ``input_img`` (inferred
-                                from image metadata if ``None``).
-        :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-        :param plot_thres_file: Optional output image path for a histogram plot
-                                showing the computed threshold.
-        :param use_pbar: If ``True``, display a tqdm progress bar during processing
-                         (Default = ``True``).
-        :return: Computed threshold value.
+    .. code:: python
 
-        .. code:: python
+        import rsgispy.changedetect.pxloutlierchng as poc
 
-            import rsgispy.changedetect.pxloutlierchng as poc
-
-            thres = poc.find_class_kurt_skew_outliers(
-                "img.tif",
-                "mask.tif",
-                "outliers_ks.tif",
-                vld_min=0.0,
-                vld_max=0.8,
-                init_thres=0.3,
-                low_thres=True,
-            )
-        """
-        # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-        ensure_file_exists(input_img, "Input image")
-        ensure_file_exists(in_msk_img, "Mask image")
-
-        if img_val_no_data is None:
-            img_val_no_data = get_img_no_data_value(input_img, img_band)
-
-        msk_arr_vals = extract_img_pxl_vals_in_msk(
-            input_img,
-            [img_band],
-            in_msk_img,
-            img_mask_val,
-            img_val_no_data,
-            use_pbar=use_pbar,
+        thres = poc.find_class_kurt_skew_outliers(
+            "img.tif",
+            "mask.tif",
+            "outliers_ks.tif",
+            vld_min=0.0,
+            vld_max=0.8,
+            init_thres=0.3,
+            low_thres=True,
         )
-        if msk_arr_vals.shape[0] == 0:
-            raise rsgispy.RSGISPyException(
-                "No valid pixels were found within the specified mask value."
-            )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    rsgispy.check_optional_dep(
+        HAVE_SCIPY, "find_class_kurt_skew_outliers", "scipy", "stats"
+    )
+    ensure_file_exists(input_img, "Input image")
+    ensure_file_exists(in_msk_img, "Mask image")
 
-        vals_1d = msk_arr_vals[:, 0]
-        chng_thres = float(
-            calc_kurt_skew_threshold(
-                vals_1d,
-                vld_max,
-                vld_min,
-                init_thres,
-                low_thres,
-                contamination,
-                only_kurtosis,
-            )
+    if img_val_no_data is None:
+        img_val_no_data = get_img_no_data_value(input_img, img_band)
+
+    msk_arr_vals = extract_img_pxl_vals_in_msk(
+        input_img,
+        [img_band],
+        in_msk_img,
+        img_mask_val,
+        img_val_no_data,
+        use_pbar=use_pbar,
+    )
+    if msk_arr_vals.shape[0] == 0:
+        raise rsgispy.RSGISPyException(
+            "No valid pixels were found within the specified mask value."
         )
 
-        _apply_threshold_mask_raster(
-            input_img=input_img,
-            in_msk_img=in_msk_img,
-            output_img=output_img,
-            chng_thres=chng_thres,
-            low_thres=low_thres,
-            img_mask_val=img_mask_val,
-            img_band=img_band,
-            img_val_no_data=img_val_no_data,
-            gdalformat=gdalformat,
-            use_pbar=use_pbar,
+    vals_1d = msk_arr_vals[:, 0]
+    chng_thres = float(
+        calc_kurt_skew_threshold(
+            vals_1d,
+            vld_max,
+            vld_min,
+            init_thres,
+            low_thres,
+            contamination,
+            only_kurtosis,
         )
+    )
 
-        if plot_thres_file is not None:
-            plot_histogram_threshold(vals_1d, plot_thres_file, threshold=chng_thres)
+    _apply_threshold_mask_raster(
+        input_img=input_img,
+        in_msk_img=in_msk_img,
+        output_img=output_img,
+        chng_thres=chng_thres,
+        low_thres=low_thres,
+        img_mask_val=img_mask_val,
+        img_band=img_band,
+        img_val_no_data=img_val_no_data,
+        gdalformat=gdalformat,
+        use_pbar=use_pbar,
+    )
 
-        return chng_thres
+    if plot_thres_file is not None:
+        plot_histogram_threshold(vals_1d, plot_thres_file, threshold=chng_thres)
+
+    return chng_thres

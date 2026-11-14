@@ -87,7 +87,7 @@ Encoding, Distance, Least-Cost Path, Filling, Sampling & Unmixing
 * :doc:`imagecalc/leastcostpath` — Least-cost path calculation across raster cost surfaces.
 * :doc:`imagecalc/fill` — K-nearest-neighbour region filling.
 * :doc:`imagecalc/calc_pt_win_smpls` — Windowed summary statistics around point samples.
-* :doc:`imagecalc/spectralunmixing` — Linear spectral unmixing, PPI, error metrics, and endmember utilities.
+* :doc:`imagecalc/spectralunmixing` — Linear spectral unmixing, Spectral Angle Mapper (SAM), PPI, error metrics, and endmember utilities.
 
 .. toctree::
    :maxdepth: 1

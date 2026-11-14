@@ -2,8 +2,9 @@
 The tools.accuracy module provides classification and regression accuracy
 assessment utilities.
 
-Functions requiring ``scipy`` and/or ``scikit-learn`` are only defined and
-exported when those optional dependencies are installed.
+Functions requiring ``scipy`` and/or ``scikit-learn`` raise
+:class:`rsgispy.RSGISPyException` if those optional dependencies are not
+installed.
 """
 
 from typing import Any, List, Sequence, Tuple, Union
@@ -17,6 +18,7 @@ try:
 
     HAVE_SCIPY = True
 except ImportError:
+    scipy = None  # type: ignore[assignment]
     HAVE_SCIPY = False
 
 try:
@@ -24,218 +26,220 @@ try:
 
     HAVE_SKLEARN = True
 except ImportError:
+    sklearn = None  # type: ignore[assignment]
     HAVE_SKLEARN = False
 
 __all__ = [
     "bias_score",
     "decompose_bias_variance",
+    "accuracy_scores_binary",
+    "bin_accuracy_scores_prob",
 ]
 
-if HAVE_SKLEARN:
-    __all__.append("accuracy_scores_binary")
 
-if HAVE_SCIPY and HAVE_SKLEARN:
-    __all__.append("bin_accuracy_scores_prob")
+def bin_accuracy_scores_prob(
+    y_true: Union[numpy.ndarray, Sequence[int]],
+    y_prob: Union[numpy.ndarray, Sequence[float]],
+) -> List[Any]:
+    """
+    Calculate probabilistic binary classification accuracy metrics using
+    scikit-learn and SciPy.
 
+    :param y_true: 1D binary class labels (0 = absence, 1 = presence).
+    :param y_prob: 1D predicted probability scores.
+    :return: ``[metric_names, scores_array]``.
 
-if HAVE_SCIPY and HAVE_SKLEARN:
+    .. code:: python
 
-    def bin_accuracy_scores_prob(
-        y_true: Union[numpy.ndarray, Sequence[int]],
-        y_prob: Union[numpy.ndarray, Sequence[float]],
-    ) -> List[Any]:
-        """
-        Calculate probabilistic binary classification accuracy metrics using
-        scikit-learn and SciPy.
-
-        :param y_true: 1D binary class labels (0 = absence, 1 = presence).
-        :param y_prob: 1D predicted probability scores.
-        :return: ``[metric_names, scores_array]``.
-
-        .. code:: python
-
-            import rsgispy.tools.accuracy
-            names, scores = rsgispy.tools.accuracy.bin_accuracy_scores_prob(
-                [0, 1, 0, 1], [0.1, 0.9, 0.2, 0.8]
-            )
-        """
-        # pylint: disable=too-many-locals
-        y_true_arr = numpy.asarray(y_true)
-        y_prob_arr = numpy.asarray(y_prob)
-        if y_true_arr.ndim != 1:
-            raise rsgispy.RSGISPyException(
-                "ERROR: the true labels are not in a 1D array."
-            )
-        if y_prob_arr.ndim != 1:
-            raise rsgispy.RSGISPyException(
-                "ERROR: the probability of presence values are not in a 1D array."
-            )
-        if y_true_arr.size != y_prob_arr.size:
-            raise rsgispy.RSGISPyException(
-                "ERROR: unequal number of binary labels and probabilities."
-            )
-
-        y_true_u8 = y_true_arr.astype("uint8")
-        if numpy.min(y_true_u8) != 0 or numpy.max(y_true_u8) != 1:
-            raise rsgispy.RSGISPyException(
-                "ERROR: the true labels are not binary (zero or one values)."
-            )
-
-        roc_auc = sklearn.metrics.roc_auc_score(y_true_u8, y_prob_arr)
-        average_precision = sklearn.metrics.average_precision_score(
-            y_true_u8, y_prob_arr
+        import rsgispy.tools.accuracy
+        names, scores = rsgispy.tools.accuracy.bin_accuracy_scores_prob(
+            [0, 1, 0, 1], [0.1, 0.9, 0.2, 0.8]
         )
-        brier_score = sklearn.metrics.brier_score_loss(y_true_u8, y_prob_arr)
-        log_loss_score = sklearn.metrics.log_loss(y_true_u8, y_prob_arr)
-        r_val = scipy.stats.pointbiserialr(y_true_u8, y_prob_arr)[0]
+    """
+    # pylint: disable=too-many-locals
+    rsgispy.check_optional_dep(
+        HAVE_SKLEARN, "bin_accuracy_scores_prob", "scikit-learn", "stats"
+    )
+    rsgispy.check_optional_dep(
+        HAVE_SCIPY, "bin_accuracy_scores_prob", "scipy", "stats"
+    )
+    y_true_arr = numpy.asarray(y_true)
+    y_prob_arr = numpy.asarray(y_prob)
+    if y_true_arr.ndim != 1:
+        raise rsgispy.RSGISPyException(
+            "ERROR: the true labels are not in a 1D array."
+        )
+    if y_prob_arr.ndim != 1:
+        raise rsgispy.RSGISPyException(
+            "ERROR: the probability of presence values are not in a 1D array."
+        )
+    if y_true_arr.size != y_prob_arr.size:
+        raise rsgispy.RSGISPyException(
+            "ERROR: unequal number of binary labels and probabilities."
+        )
 
-        metrics = [
-            "Test AUC",
-            "Point-Biserial r",
-            "Av. Precision",
-            "Brier Score",
-            "Log-Loss Score",
+    y_true_u8 = y_true_arr.astype("uint8")
+    if numpy.min(y_true_u8) != 0 or numpy.max(y_true_u8) != 1:
+        raise rsgispy.RSGISPyException(
+            "ERROR: the true labels are not binary (zero or one values)."
+        )
+
+    roc_auc = sklearn.metrics.roc_auc_score(y_true_u8, y_prob_arr)
+    average_precision = sklearn.metrics.average_precision_score(
+        y_true_u8, y_prob_arr
+    )
+    brier_score = sklearn.metrics.brier_score_loss(y_true_u8, y_prob_arr)
+    log_loss_score = sklearn.metrics.log_loss(y_true_u8, y_prob_arr)
+    r_val = scipy.stats.pointbiserialr(y_true_u8, y_prob_arr)[0]
+
+    metrics = [
+        "Test AUC",
+        "Point-Biserial r",
+        "Av. Precision",
+        "Brier Score",
+        "Log-Loss Score",
+    ]
+    scores = numpy.array(
+        [roc_auc, r_val, average_precision, brier_score, log_loss_score]
+    ).round(decimals=6)
+    return [metrics, scores]
+
+
+def accuracy_scores_binary(
+    y_true: Union[numpy.ndarray, Sequence[int]],
+    y_pred: Union[numpy.ndarray, Sequence[int]],
+) -> List[numpy.ndarray]:
+    """
+    Calculate accuracy metrics for a binary classification.
+
+    :param y_true: Observed 1D binary labels (0 = absence, 1 = presence).
+    :param y_pred: Predicted 1D binary labels (0 = absence, 1 = presence).
+    :return: ``[metrics_array, scores_array]``.
+
+    .. code:: python
+
+        import rsgispy.tools.accuracy
+        metrics, scores = rsgispy.tools.accuracy.accuracy_scores_binary(
+            [0, 1, 0, 1], [0, 1, 1, 1]
+        )
+    """
+    # pylint: disable=too-many-locals
+    rsgispy.check_optional_dep(
+        HAVE_SKLEARN, "accuracy_scores_binary", "scikit-learn", "stats"
+    )
+    y_true_arr = numpy.asarray(y_true)
+    y_pred_arr = numpy.asarray(y_pred)
+    if y_true_arr.ndim != 1:
+        raise rsgispy.RSGISPyException(
+            "ERROR: the true labels are not in a 1D array."
+        )
+    if y_pred_arr.ndim != 1:
+        raise rsgispy.RSGISPyException(
+            "ERROR: the predicted labels are not in a 1D array."
+        )
+    if y_true_arr.size != y_pred_arr.size:
+        raise rsgispy.RSGISPyException(
+            "ERROR: unequal number of binary labels."
+        )
+
+    y_true_u8 = y_true_arr.astype("uint8")
+    y_pred_u8 = y_pred_arr.astype("uint8")
+    if numpy.min(y_true_u8) != 0 or numpy.max(y_true_u8) != 1:
+        raise rsgispy.RSGISPyException(
+            "ERROR: the true labels are not binary (zero or one values)."
+        )
+    if numpy.min(y_pred_u8) != 0 or numpy.max(y_pred_u8) != 1:
+        raise rsgispy.RSGISPyException(
+            "ERROR: the predicted labels are not binary (zero or one values)."
+        )
+
+    metrics = numpy.array(
+        [
+            "Prevalence",
+            "Overall Diagnostic Power",
+            "Correct Classification Rate",
+            "Misclassification Rate",
+            "Presence Predictive Power",
+            "Absence Predictive Power",
+            "Accuracy",
+            "Balanced Accuracy",
+            "Sensitivity",
+            "Specificity",
+            "Precision",
+            "F1 Score",
+            "Matthews Correlation",
+            "Cohen Kappa",
+            "Normalised Mutual Information",
+            "Hanssen-Kuiper skill",
         ]
-        scores = numpy.array(
-            [roc_auc, r_val, average_precision, brier_score, log_loss_score]
-        ).round(decimals=6)
-        return [metrics, scores]
+    )
 
+    try:
+        n_presence = numpy.where(y_true_u8 == 1)[0].size
+        n_absence = numpy.where(y_true_u8 == 0)[0].size
 
-if HAVE_SKLEARN:
+        tp_cnt = numpy.where((y_true_u8 == 1) & (y_pred_u8 == 1))[0].size
+        ta_cnt = numpy.where((y_true_u8 == 0) & (y_pred_u8 == 0))[0].size
+        fp_cnt = numpy.where((y_true_u8 == 1) & (y_pred_u8 == 0))[0].size
+        fa_cnt = numpy.where((y_true_u8 == 0) & (y_pred_u8 == 1))[0].size
 
-    def accuracy_scores_binary(
-        y_true: Union[numpy.ndarray, Sequence[int]],
-        y_pred: Union[numpy.ndarray, Sequence[int]],
-    ) -> List[numpy.ndarray]:
-        """
-        Calculate accuracy metrics for a binary classification.
+        prevalence = (tp_cnt / fa_cnt) / y_true_u8.size
+        odp = 1.0 - prevalence
+        ccr = (tp_cnt + ta_cnt) / y_true_u8.size
+        mr_val = (fp_cnt + fa_cnt) / y_true_u8.size
 
-        :param y_true: Observed 1D binary labels (0 = absence, 1 = presence).
-        :param y_pred: Predicted 1D binary labels (0 = absence, 1 = presence).
-        :return: ``[metrics_array, scores_array]``.
+        sensitivity = tp_cnt / n_presence
+        ppp = tp_cnt / (tp_cnt + fp_cnt)
+        app = ta_cnt / (ta_cnt + fa_cnt)
+        specificity = ta_cnt / n_absence
 
-        .. code:: python
-
-            import rsgispy.tools.accuracy
-            metrics, scores = rsgispy.tools.accuracy.accuracy_scores_binary(
-                [0, 1, 0, 1], [0, 1, 1, 1]
+        accuracy = (tp_cnt + ta_cnt) / (n_presence + n_absence)
+        balanced_accuracy = ((tp_cnt / n_presence) + (ta_cnt / n_absence)) / 2.0
+        precision = tp_cnt / (tp_cnt + fp_cnt)
+        f1_val = 2.0 * tp_cnt / ((2.0 * tp_cnt) + fp_cnt + fa_cnt)
+        mcc = ((tp_cnt * ta_cnt) - (fp_cnt * fa_cnt)) / (
+            (
+                (tp_cnt + fp_cnt)
+                * (tp_cnt + fa_cnt)
+                * (ta_cnt + fp_cnt)
+                * (ta_cnt + fa_cnt)
             )
-        """
-        # pylint: disable=too-many-locals
-        y_true_arr = numpy.asarray(y_true)
-        y_pred_arr = numpy.asarray(y_pred)
-        if y_true_arr.ndim != 1:
-            raise rsgispy.RSGISPyException(
-                "ERROR: the true labels are not in a 1D array."
-            )
-        if y_pred_arr.ndim != 1:
-            raise rsgispy.RSGISPyException(
-                "ERROR: the predicted labels are not in a 1D array."
-            )
-        if y_true_arr.size != y_pred_arr.size:
-            raise rsgispy.RSGISPyException(
-                "ERROR: unequal number of binary labels."
-            )
-
-        y_true_u8 = y_true_arr.astype("uint8")
-        y_pred_u8 = y_pred_arr.astype("uint8")
-        if numpy.min(y_true_u8) != 0 or numpy.max(y_true_u8) != 1:
-            raise rsgispy.RSGISPyException(
-                "ERROR: the true labels are not binary (zero or one values)."
-            )
-        if numpy.min(y_pred_u8) != 0 or numpy.max(y_pred_u8) != 1:
-            raise rsgispy.RSGISPyException(
-                "ERROR: the predicted labels are not binary (zero or one values)."
-            )
-
-        metrics = numpy.array(
-            [
-                "Prevalence",
-                "Overall Diagnostic Power",
-                "Correct Classification Rate",
-                "Misclassification Rate",
-                "Presence Predictive Power",
-                "Absence Predictive Power",
-                "Accuracy",
-                "Balanced Accuracy",
-                "Sensitivity",
-                "Specificity",
-                "Precision",
-                "F1 Score",
-                "Matthews Correlation",
-                "Cohen Kappa",
-                "Normalised Mutual Information",
-                "Hanssen-Kuiper skill",
-            ]
+            ** 0.5
         )
+        tss = sensitivity + specificity - 1.0
+        nmi_val = sklearn.metrics.normalized_mutual_info_score(
+            y_true_u8, y_pred_u8
+        )
+        kappa_val = sklearn.metrics.cohen_kappa_score(y_true_u8, y_pred_u8)
 
-        try:
-            n_presence = numpy.where(y_true_u8 == 1)[0].size
-            n_absence = numpy.where(y_true_u8 == 0)[0].size
+        scores = numpy.array(
+            [
+                prevalence,
+                odp,
+                ccr,
+                mr_val,
+                ppp,
+                app,
+                accuracy,
+                balanced_accuracy,
+                sensitivity,
+                specificity,
+                precision,
+                f1_val,
+                mcc,
+                kappa_val,
+                nmi_val,
+                tss,
+            ]
+        ).round(decimals=6)
+    except Exception:  # pylint: disable=broad-exception-caught
+        scores = numpy.zeros(len(metrics))
 
-            tp_cnt = numpy.where((y_true_u8 == 1) & (y_pred_u8 == 1))[0].size
-            ta_cnt = numpy.where((y_true_u8 == 0) & (y_pred_u8 == 0))[0].size
-            fp_cnt = numpy.where((y_true_u8 == 1) & (y_pred_u8 == 0))[0].size
-            fa_cnt = numpy.where((y_true_u8 == 0) & (y_pred_u8 == 1))[0].size
-
-            prevalence = (tp_cnt / fa_cnt) / y_true_u8.size
-            odp = 1.0 - prevalence
-            ccr = (tp_cnt + ta_cnt) / y_true_u8.size
-            mr_val = (fp_cnt + fa_cnt) / y_true_u8.size
-
-            sensitivity = tp_cnt / n_presence
-            ppp = tp_cnt / (tp_cnt + fp_cnt)
-            app = ta_cnt / (ta_cnt + fa_cnt)
-            specificity = ta_cnt / n_absence
-
-            accuracy = (tp_cnt + ta_cnt) / (n_presence + n_absence)
-            balanced_accuracy = ((tp_cnt / n_presence) + (ta_cnt / n_absence)) / 2.0
-            precision = tp_cnt / (tp_cnt + fp_cnt)
-            f1_val = 2.0 * tp_cnt / ((2.0 * tp_cnt) + fp_cnt + fa_cnt)
-            mcc = ((tp_cnt * ta_cnt) - (fp_cnt * fa_cnt)) / (
-                (
-                    (tp_cnt + fp_cnt)
-                    * (tp_cnt + fa_cnt)
-                    * (ta_cnt + fp_cnt)
-                    * (ta_cnt + fa_cnt)
-                )
-                ** 0.5
-            )
-            tss = sensitivity + specificity - 1.0
-            nmi_val = sklearn.metrics.normalized_mutual_info_score(
-                y_true_u8, y_pred_u8
-            )
-            kappa_val = sklearn.metrics.cohen_kappa_score(y_true_u8, y_pred_u8)
-
-            scores = numpy.array(
-                [
-                    prevalence,
-                    odp,
-                    ccr,
-                    mr_val,
-                    ppp,
-                    app,
-                    accuracy,
-                    balanced_accuracy,
-                    sensitivity,
-                    specificity,
-                    precision,
-                    f1_val,
-                    mcc,
-                    kappa_val,
-                    nmi_val,
-                    tss,
-                ]
-            ).round(decimals=6)
-        except Exception:  # pylint: disable=broad-exception-caught
-            scores = numpy.zeros(len(metrics))
-
-        if metrics.size != scores.size:
-            raise rsgispy.RSGISPyException(
-                "ERROR: unable to calculate accuracy metrics."
-            )
-        return [metrics, scores]
+    if metrics.size != scores.size:
+        raise rsgispy.RSGISPyException(
+            "ERROR: unable to calculate accuracy metrics."
+        )
+    return [metrics, scores]
 
 
 def bias_score(

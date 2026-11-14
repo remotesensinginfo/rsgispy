@@ -20,7 +20,8 @@ bands as rows and endmember class names as columns**.
   (non-negative and sum-to-one, requires ``scipy``)
 
 Functions wrapping ``pysptools``, ``cvxopt``, and ``pymcr`` are also retained
-and exported when those optional dependencies are installed.
+for compatibility and raise :class:`rsgispy.RSGISPyException` with
+installation instructions if their optional dependencies are not installed.
 """
 
 from contextlib import ExitStack
@@ -58,6 +59,7 @@ try:
 
     HAVE_SCIPY = True
 except ImportError:
+    scipy = None  # type: ignore[assignment]
     HAVE_SCIPY = False
 
 try:
@@ -85,6 +87,10 @@ try:
 
     HAVE_PYMCR = True
 except ImportError:
+    ConstraintNonneg = None
+    ConstraintNorm = None
+    McrAR = None
+    _PyMcrNNLS = None
     HAVE_PYMCR = False
 
 EndmemberInput = Union[pandas.DataFrame, str, os.PathLike]
@@ -135,24 +141,21 @@ __all__: List[str] = [
     "plot_endmembers",
     "are_endmembers_equal",
     "spec_unmix_ucls",
+    "spec_unmix_nnls",
+    "spec_unmix_fcls",
+    "spec_unmix_spts_ucls",
+    "spec_unmix_spts_nnls",
+    "spec_unmix_spts_fcls",
+    "spec_unmix_pymcr_nnls",
+    "spec_unmix_pymcr_fcls",
     "exhcon_linear_spec_unmix",
     "rescale_unmixing_results",
     "predict_refl_linear_unmixing",
     "calc_unmixing_rmse_residual_err",
     "summarise_multi_endmember_linear_unmixing",
     "calc_ppi",
+    "spectral_angle_mapper",
 ]
-
-if HAVE_SCIPY:
-    __all__.extend(["spec_unmix_nnls", "spec_unmix_fcls"])
-
-if HAVE_PYSPTOOLS:
-    __all__.extend(["spec_unmix_spts_ucls", "spec_unmix_spts_nnls"])
-    if HAVE_CVXOPT:
-        __all__.append("spec_unmix_spts_fcls")
-
-if HAVE_PYMCR:
-    __all__.extend(["spec_unmix_pymcr_nnls", "spec_unmix_pymcr_fcls"])
 
 
 class ImageEndmemberInfo:
@@ -1317,535 +1320,817 @@ def spec_unmix_ucls(
     )
 
 
-if HAVE_SCIPY:
+def _scipy_nnls_loop(
+    vld_pxls: np.ndarray, end_t: np.ndarray
+) -> np.ndarray:
+    """Fallback row-wise Lawson–Hanson NNLS solver via ``scipy.optimize.nnls``."""
+    n_pxls = vld_pxls.shape[0]
+    m = end_t.shape[1]
+    out = np.empty((n_pxls, m), dtype=np.float64)
+    for idx in range(n_pxls):
+        out[idx] = scipy.optimize.nnls(end_t, vld_pxls[idx])[0]
+    return out
 
-    def _scipy_nnls_solver(
-        vld_pxls: np.ndarray, endmembers_arr: np.ndarray
-    ) -> np.ndarray:
-        """Direct Lawson–Hanson NNLS solver using ``scipy.optimize.nnls``."""
-        end_t = endmembers_arr.T
-        n_pxls = vld_pxls.shape[0]
-        m = endmembers_arr.shape[0]
-        out = np.empty((n_pxls, m), dtype=np.float64)
-        for idx in range(n_pxls):
-            out[idx] = scipy.optimize.nnls(end_t, vld_pxls[idx])[0]
+
+def _scipy_nnls_solver(
+    vld_pxls: np.ndarray, endmembers_arr: np.ndarray
+) -> np.ndarray:
+    """
+    Batched active-set (Lawson–Hanson) NNLS solver using NumPy/SciPy.
+
+    Solves batches sharing the same passive variable set in a single linear
+    least-squares call, falling back to ``scipy.optimize.nnls`` for high
+    endmember counts (``m > 20``) or degenerate active sets.
+    """
+    # pylint: disable=too-many-locals
+    rsgispy.check_optional_dep(HAVE_SCIPY, "spec_unmix_nnls", "scipy", "unmixing")
+    end_t = np.ascontiguousarray(endmembers_arr.T, dtype=np.float64)
+    n_pxls = vld_pxls.shape[0]
+    m = endmembers_arr.shape[0]
+    if n_pxls == 0 or m == 0:
+        return np.empty((n_pxls, m), dtype=np.float64)
+    if m > 20:
+        return _scipy_nnls_loop(vld_pxls, end_t)
+
+    x0 = np.linalg.lstsq(end_t, vld_pxls.T, rcond=None)[0].T
+    out = np.empty((n_pxls, m), dtype=np.float64)
+    unconstrained_ok = np.all(x0 >= -1e-12, axis=1)
+    if np.any(unconstrained_ok):
+        out[unconstrained_ok] = np.clip(x0[unconstrained_ok], 0.0, None)
+
+    rem_idx = np.flatnonzero(~unconstrained_ok)
+    if rem_idx.size == 0:
         return out
 
-    def _scipy_fcls_solver(
-        vld_pxls: np.ndarray, endmembers_arr: np.ndarray
-    ) -> np.ndarray:
-        """
-        Scale-invariant Heinz & Chang (2001) FCLS solver using
-        ``scipy.optimize.nnls``.
-        """
-        m = endmembers_arr.shape[0]
-        n_pxls = vld_pxls.shape[0]
-        scale = max(float(np.max(np.abs(endmembers_arr))), 1e-12)
-        delta = 1e-5 / scale
-        end_aug = np.vstack(
-            [delta * endmembers_arr.T, np.ones((1, m), dtype=np.float64)]
+    y_rem = np.ascontiguousarray(vld_pxls[rem_idx], dtype=np.float64)
+    n_rem = y_rem.shape[0]
+    x_mat = np.zeros((n_rem, m), dtype=np.float64)
+    p_mask = np.zeros((n_rem, m), dtype=bool)
+    active = np.ones(n_rem, dtype=bool)
+
+    e_norm = max(float(np.linalg.norm(end_t)), 1e-12)
+    y_norms = np.maximum(np.linalg.norm(y_rem, axis=1), 1e-12)
+    weights = np.int64(1) << np.arange(m, dtype=np.int64)
+
+    for _ in range(max(3 * m, 10)):
+        act_idx = np.flatnonzero(active)
+        if act_idx.size == 0:
+            break
+        grad = (x_mat[act_idx] @ end_t.T - y_rem[act_idx]) @ end_t
+        masked_grad = np.where(~p_mask[act_idx], grad, np.inf)
+        best_col = np.argmin(masked_grad, axis=1)
+        min_g = masked_grad[np.arange(act_idx.size), best_col]
+        tol_act = (
+            1e-11
+            * e_norm
+            * np.maximum(
+                e_norm * np.linalg.norm(x_mat[act_idx], axis=1), y_norms[act_idx]
+            )
         )
-        pxls_aug = np.hstack(
-            [delta * vld_pxls, np.ones((n_pxls, 1), dtype=np.float64)]
-        )
-        out = np.empty((n_pxls, m), dtype=np.float64)
-        for idx in range(n_pxls):
-            out[idx] = scipy.optimize.nnls(end_aug, pxls_aug[idx])[0]
-        out = np.clip(out, 0.0, None)
-        row_sums = np.sum(out, axis=1, keepdims=True)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            out = np.where(row_sums > 0.0, out / row_sums, 0.0)
+        conv = min_g >= -tol_act
+        if np.any(conv):
+            active[act_idx[conv]] = False
+        need_add = act_idx[~conv]
+        if need_add.size == 0:
+            break
+        p_mask[need_add, best_col[~conv]] = True
+
+        for _ in range(m + 2):
+            keys = p_mask[need_add] @ weights
+            s_mat = np.zeros((need_add.size, m), dtype=np.float64)
+            for key in np.unique(keys):
+                if key == 0:
+                    continue
+                row_sel = np.flatnonzero(keys == key)
+                cols = np.flatnonzero((key & weights) != 0)
+                s_sub = np.linalg.lstsq(
+                    end_t[:, cols], y_rem[need_add[row_sel]].T, rcond=None
+                )[0].T
+                s_mat[np.ix_(row_sel, cols)] = s_sub
+
+            neg_mask = np.any((s_mat <= -1e-12) & p_mask[need_add], axis=1)
+            if np.any(~neg_mask):
+                x_mat[need_add[~neg_mask]] = np.clip(s_mat[~neg_mask], 0.0, None)
+            if not np.any(neg_mask):
+                break
+
+            fix = need_add[neg_mask]
+            s_fix = s_mat[neg_mask]
+            x_fix = x_mat[fix]
+            valid_step = p_mask[fix] & (s_fix <= 0.0) & (x_fix > s_fix)
+            denom = np.where(valid_step, x_fix - s_fix, 1.0)
+            ratios = np.where(valid_step, x_fix / denom, np.inf)
+            alpha = np.min(ratios, axis=1, keepdims=True)
+            alpha = np.where(np.isfinite(alpha), alpha, 0.0)
+            x_new = x_fix + alpha * (s_fix - x_fix)
+            x_new[x_new < 1e-12] = 0.0
+            x_mat[fix] = x_new
+            p_mask[fix] &= x_new > 0.0
+            need_add = fix
+
+    if np.any(active):
+        rem_act = np.flatnonzero(active)
+        x_mat[rem_act] = _scipy_nnls_loop(y_rem[rem_act], end_t)
+
+    out[rem_idx] = np.clip(x_mat, 0.0, None)
+    return out
+
+
+def _solve_simplex_eq_subset(
+    end_t: np.ndarray,
+    y_mat: np.ndarray,
+    cols: np.ndarray,
+    null_basis: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Solve equality-constrained least squares (sum = 1) on passive columns."""
+    k = int(cols.size)
+    if k == 1:
+        return np.ones((y_mat.shape[0], 1), dtype=np.float64)
+    if null_basis is None:
+        q_full, _ = np.linalg.qr(np.ones((k, 1), dtype=np.float64), mode="complete")
+        null_basis = q_full[:, 1:]
+    e_sub = end_t[:, cols]
+    x0 = np.full(k, 1.0 / float(k), dtype=np.float64)
+    rhs = y_mat.T - (e_sub @ x0)[:, None]
+    w_coef = np.linalg.lstsq(e_sub @ null_basis, rhs, rcond=None)[0]
+    return (x0[:, None] + null_basis @ w_coef).T
+
+
+def _scipy_fcls_heinz_chang_loop(
+    vld_pxls: np.ndarray, endmembers_arr: np.ndarray
+) -> np.ndarray:
+    """Fallback row-wise Heinz & Chang (2001) FCLS via ``scipy.optimize.nnls``."""
+    m = endmembers_arr.shape[0]
+    n_pxls = vld_pxls.shape[0]
+    scale = max(float(np.max(np.abs(endmembers_arr))), 1e-12)
+    delta = 1e-5 / scale
+    end_aug = np.vstack(
+        [delta * endmembers_arr.T, np.ones((1, m), dtype=np.float64)]
+    )
+    pxls_aug = np.hstack(
+        [delta * vld_pxls, np.ones((n_pxls, 1), dtype=np.float64)]
+    )
+    out = np.empty((n_pxls, m), dtype=np.float64)
+    for idx in range(n_pxls):
+        out[idx] = scipy.optimize.nnls(end_aug, pxls_aug[idx])[0]
+    out = np.clip(out, 0.0, None)
+    row_sums = np.sum(out, axis=1, keepdims=True)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out = np.where(row_sums > 0.0, out / row_sums, 0.0)
+    return out
+
+
+def _scipy_fcls_solver(
+    vld_pxls: np.ndarray, endmembers_arr: np.ndarray
+) -> np.ndarray:
+    """
+    Batched affine-nullspace active-set FCLS solver (non-negative, sum-to-one).
+
+    Minimises :math:`\\|E^T x - y\\|_2` directly on the simplex
+    :math:`x \\ge 0, \\mathbf{1}^T x = 1` across pixel batches sharing the same
+    active set, with scale-invariant KKT checks and ``scipy.optimize.nnls``
+    fallback for high endmember counts (``m > 20``) or degenerate pixels.
+    """
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+    rsgispy.check_optional_dep(HAVE_SCIPY, "spec_unmix_fcls", "scipy", "unmixing")
+    end_t = np.ascontiguousarray(endmembers_arr.T, dtype=np.float64)
+    n_pxls = vld_pxls.shape[0]
+    m = endmembers_arr.shape[0]
+    if n_pxls == 0 or m == 0:
+        return np.empty((n_pxls, m), dtype=np.float64)
+    if m == 1:
+        return np.ones((n_pxls, 1), dtype=np.float64)
+    if m > 20:
+        return _scipy_fcls_heinz_chang_loop(vld_pxls, endmembers_arr)
+
+    null_cache: Dict[int, np.ndarray] = {}
+
+    def _get_null(k_size: int) -> np.ndarray:
+        if k_size not in null_cache:
+            q_full, _ = np.linalg.qr(
+                np.ones((k_size, 1), dtype=np.float64), mode="complete"
+            )
+            null_cache[k_size] = q_full[:, 1:]
+        return null_cache[k_size]
+
+    all_cols = np.arange(m, dtype=np.int64)
+    x_full = _solve_simplex_eq_subset(
+        end_t, vld_pxls, all_cols, null_basis=_get_null(m)
+    )
+    out = np.empty((n_pxls, m), dtype=np.float64)
+    ok_full = np.all(x_full >= -1e-12, axis=1)
+    if np.any(ok_full):
+        xf = np.clip(x_full[ok_full], 0.0, None)
+        xf_sum = np.sum(xf, axis=1, keepdims=True)
+        out[ok_full] = np.where(xf_sum > 0.0, xf / xf_sum, 0.0)
+
+    rem_idx = np.flatnonzero(~ok_full)
+    if rem_idx.size == 0:
         return out
 
-    def spec_unmix_nnls(
-        input_img: str,
-        valid_msk_img: Optional[str],
-        valid_msk_val: int,
-        output_img: str,
-        endmembers: EndmemberInput,
-        gdalformat: str = "GTIFF",
-        gain: float = 1,
-        weight: Optional[float] = None,
-        file_format: Optional[str] = None,
-        calc_stats: bool = True,
-        use_pbar: bool = True,
-    ) -> None:
-        """
-        **[Recommended]** Perform non-negative least-squares (NNLS) linear
-        spectral unmixing using ``scipy.optimize.nnls``.
+    y_rem = np.ascontiguousarray(vld_pxls[rem_idx], dtype=np.float64)
+    n_rem = y_rem.shape[0]
+    diffs = y_rem[:, None, :] - endmembers_arr[None, :, :]
+    best_v = np.argmin(np.sum(diffs * diffs, axis=2), axis=1)
 
-        .. tip::
+    x_mat = np.zeros((n_rem, m), dtype=np.float64)
+    p_mask = np.zeros((n_rem, m), dtype=bool)
+    x_mat[np.arange(n_rem), best_v] = 1.0
+    p_mask[np.arange(n_rem), best_v] = True
+    active = np.ones(n_rem, dtype=bool)
 
-           This NumPy/SciPy function is the recommended implementation for NNLS
-           unmixing in ``rsgispy``. Unlike ``pysptools.abundance_maps.amaps.NNLS``,
-           it solves :math:`\\min_{x \\ge 0} \\| E^T x - y \\|_2` directly
-           without squaring the system via normal equations, and requires only
-           ``scipy`` (no ``pysptools`` or ``pyMCR``).
+    e_norm = max(float(np.linalg.norm(end_t)), 1e-12)
+    y_norms = np.maximum(np.linalg.norm(y_rem, axis=1), 1e-12)
+    weights = np.int64(1) << np.arange(m, dtype=np.int64)
 
-        :param input_img: Path to the input image file.
-        :param valid_msk_img: Optional path to the valid pixel mask image file
-                              (if ``None``, all finite positive pixels are
-                              unmixed).
-        :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid
-                              pixels.
-        :param output_img: Path to the output unmixed abundance image file.
-        :param endmembers: :class:`pandas.DataFrame` (columns = class names,
-                           rows = bands) or file path readable by
-                           :func:`read_endmembers_df`.
-        :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-        :param gain: Gain divisor applied to image and endmember spectra when
-                     greater than ``1`` (Default = ``1``).
-        :param weight: Optional Scarth et al. (2010) sum-to-one weight.
-        :param file_format: Optional format override when ``endmembers`` is a
-                            file path (Default = ``None``).
-        :param calc_stats: If ``True``, populate image statistics and pyramids
-                           (Default = ``True``).
-        :param use_pbar: If ``True``, display a tqdm progress bar during
-                         processing (Default = ``True``).
+    for _ in range(max(3 * m, 10)):
+        act_idx = np.flatnonzero(active)
+        if act_idx.size == 0:
+            break
+        grad = (x_mat[act_idx] @ end_t.T - y_rem[act_idx]) @ end_t
+        p_act = p_mask[act_idx]
+        p_counts = np.maximum(np.sum(p_act, axis=1), 1)
+        mu = np.sum(grad * p_act, axis=1) / p_counts
+        reduced = grad - mu[:, None]
+        masked_red = np.where(~p_act, reduced, np.inf)
+        best_col = np.argmin(masked_red, axis=1)
+        min_red = masked_red[np.arange(act_idx.size), best_col]
+        tol_act = 1e-11 * e_norm * np.maximum(e_norm, y_norms[act_idx])
+        conv = min_red >= -tol_act
+        if np.any(conv):
+            active[act_idx[conv]] = False
+        need_add = act_idx[~conv]
+        if need_add.size == 0:
+            break
+        p_mask[need_add, best_col[~conv]] = True
 
-        .. code:: python
-
-            import rsgispy.imagecalc.spectralunmixing as su
-
-            su.spec_unmix_nnls(
-                "img.tif", "mask.tif", 1, "unmix_nnls.tif", "endmembers.csv"
-            )
-        """
-        # pylint: disable=too-many-arguments,too-many-positional-arguments
-        _run_windowed_unmixer(
-            input_img=input_img,
-            valid_msk_img=valid_msk_img,
-            valid_msk_val=valid_msk_val,
-            output_img=output_img,
-            endmembers=endmembers,
-            solver_fn=_scipy_nnls_solver,
-            gdalformat=gdalformat,
-            gain=gain,
-            weight=weight,
-            file_format=file_format,
-            calc_stats=calc_stats,
-            use_pbar=use_pbar,
-        )
-
-    def spec_unmix_fcls(
-        input_img: str,
-        valid_msk_img: Optional[str],
-        valid_msk_val: int,
-        output_img: str,
-        endmembers: EndmemberInput,
-        gdalformat: str = "GTIFF",
-        gain: float = 1,
-        file_format: Optional[str] = None,
-        calc_stats: bool = True,
-        use_pbar: bool = True,
-    ) -> None:
-        """
-        **[Recommended]** Perform fully constrained least-squares (FCLS:
-        non-negative and sum-to-one) linear spectral unmixing using a
-        scale-invariant Heinz & Chang (2001) formulation via
-        ``scipy.optimize.nnls``.
-
-        .. tip::
-
-           This NumPy/SciPy function is the recommended implementation for FCLS
-           unmixing in ``rsgispy``. It avoids the compiled ``cvxopt`` dependency
-           required by :func:`spec_unmix_spts_fcls` while delivering high
-           accuracy and substantially faster runtime.
-
-        :param input_img: Path to the input image file.
-        :param valid_msk_img: Optional path to the valid pixel mask image file
-                              (if ``None``, all finite positive pixels are
-                              unmixed).
-        :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid
-                              pixels.
-        :param output_img: Path to the output unmixed abundance image file.
-        :param endmembers: :class:`pandas.DataFrame` (columns = class names,
-                           rows = bands) or file path readable by
-                           :func:`read_endmembers_df`.
-        :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-        :param gain: Gain divisor applied to image and endmember spectra when
-                     greater than ``1`` (Default = ``1``).
-        :param file_format: Optional format override when ``endmembers`` is a
-                            file path (Default = ``None``).
-        :param calc_stats: If ``True``, populate image statistics and pyramids
-                           (Default = ``True``).
-        :param use_pbar: If ``True``, display a tqdm progress bar during
-                         processing (Default = ``True``).
-
-        .. code:: python
-
-            import rsgispy.imagecalc.spectralunmixing as su
-
-            su.spec_unmix_fcls(
-                "img.tif", "mask.tif", 1, "unmix_fcls.tif", "endmembers.csv"
-            )
-        """
-        # pylint: disable=too-many-arguments,too-many-positional-arguments
-        _run_windowed_unmixer(
-            input_img=input_img,
-            valid_msk_img=valid_msk_img,
-            valid_msk_val=valid_msk_val,
-            output_img=output_img,
-            endmembers=endmembers,
-            solver_fn=_scipy_fcls_solver,
-            gdalformat=gdalformat,
-            gain=gain,
-            weight=None,
-            file_format=file_format,
-            calc_stats=calc_stats,
-            use_pbar=use_pbar,
-        )
-
-
-if HAVE_PYSPTOOLS:
-
-    def spec_unmix_spts_ucls(
-        input_img: str,
-        valid_msk_img: Optional[str],
-        valid_msk_val: int,
-        output_img: str,
-        endmembers: EndmemberInput,
-        gdalformat: str = "GTIFF",
-        gain: float = 1,
-        weight: Optional[float] = None,
-        file_format: Optional[str] = None,
-        calc_stats: bool = True,
-        use_pbar: bool = True,
-    ) -> None:
-        """
-        Perform unconstrained least-squares (UCLS) spectral unmixing using
-        ``pysptools``.
-
-        .. note::
-
-           Prefer the recommended pure-NumPy :func:`spec_unmix_ucls` function
-           for general workflows; this function is retained for ``pysptools``
-           compatibility.
-
-        :param input_img: Path to the input image file.
-        :param valid_msk_img: Optional path to the valid pixel mask image file.
-        :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels.
-        :param output_img: Path to the output unmixed abundance image file.
-        :param endmembers: :class:`pandas.DataFrame` (columns = class names,
-                           rows = bands) or file path readable by
-                           :func:`read_endmembers_df`.
-        :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-        :param gain: Gain divisor applied to image and endmember spectra when
-                     greater than ``1`` (Default = ``1``).
-        :param weight: Optional Scarth et al. (2010) sum-to-one weight.
-        :param file_format: Optional format override when ``endmembers`` is a
-                            file path (Default = ``None``).
-        :param calc_stats: If ``True``, populate image statistics and pyramids
-                           (Default = ``True``).
-        :param use_pbar: If ``True``, display a tqdm progress bar during processing
-                         (Default = ``True``).
-
-        .. code:: python
-
-            import rsgispy.imagecalc.spectralunmixing as su
-
-            su.spec_unmix_spts_ucls(
-                "img.tif", "mask.tif", 1, "unmix_ucls.tif", "endmembers.csv"
-            )
-        """
-        # pylint: disable=too-many-arguments,too-many-positional-arguments
-        _run_windowed_unmixer(
-            input_img=input_img,
-            valid_msk_img=valid_msk_img,
-            valid_msk_val=valid_msk_val,
-            output_img=output_img,
-            endmembers=endmembers,
-            solver_fn=_spts_amaps.UCLS,
-            gdalformat=gdalformat,
-            gain=gain,
-            weight=weight,
-            file_format=file_format,
-            calc_stats=calc_stats,
-            use_pbar=use_pbar,
-        )
-
-    def spec_unmix_spts_nnls(
-        input_img: str,
-        valid_msk_img: Optional[str],
-        valid_msk_val: int,
-        output_img: str,
-        endmembers: EndmemberInput,
-        gdalformat: str = "GTIFF",
-        gain: float = 1,
-        weight: Optional[float] = None,
-        file_format: Optional[str] = None,
-        calc_stats: bool = True,
-        use_pbar: bool = True,
-    ) -> None:
-        """
-        Perform non-negative least-squares (NNLS) spectral unmixing using
-        ``pysptools``.
-
-        .. note::
-
-           Prefer the recommended SciPy :func:`spec_unmix_nnls` function for
-           general workflows; ``spec_unmix_nnls`` solves the direct NNLS
-           problem without squaring normal equations.
-
-        :param input_img: Path to the input image file.
-        :param valid_msk_img: Optional path to the valid pixel mask image file.
-        :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels.
-        :param output_img: Path to the output unmixed abundance image file.
-        :param endmembers: :class:`pandas.DataFrame` (columns = class names,
-                           rows = bands) or file path readable by
-                           :func:`read_endmembers_df`.
-        :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-        :param gain: Gain divisor applied to image and endmember spectra when
-                     greater than ``1`` (Default = ``1``).
-        :param weight: Optional Scarth et al. (2010) sum-to-one weight.
-        :param file_format: Optional format override when ``endmembers`` is a
-                            file path (Default = ``None``).
-        :param calc_stats: If ``True``, populate image statistics and pyramids
-                           (Default = ``True``).
-        :param use_pbar: If ``True``, display a tqdm progress bar during processing
-                         (Default = ``True``).
-
-        .. code:: python
-
-            import rsgispy.imagecalc.spectralunmixing as su
-
-            su.spec_unmix_spts_nnls(
-                "img.tif", "mask.tif", 1, "unmix_nnls.tif", "endmembers.csv"
-            )
-        """
-        # pylint: disable=too-many-arguments,too-many-positional-arguments
-        _run_windowed_unmixer(
-            input_img=input_img,
-            valid_msk_img=valid_msk_img,
-            valid_msk_val=valid_msk_val,
-            output_img=output_img,
-            endmembers=endmembers,
-            solver_fn=_spts_amaps.NNLS,
-            gdalformat=gdalformat,
-            gain=gain,
-            weight=weight,
-            file_format=file_format,
-            calc_stats=calc_stats,
-            use_pbar=use_pbar,
-        )
-
-    if HAVE_CVXOPT:
-
-        def spec_unmix_spts_fcls(
-            input_img: str,
-            valid_msk_img: Optional[str],
-            valid_msk_val: int,
-            output_img: str,
-            endmembers: EndmemberInput,
-            gdalformat: str = "GTIFF",
-            gain: float = 1,
-            file_format: Optional[str] = None,
-            calc_stats: bool = True,
-            use_pbar: bool = True,
-        ) -> None:
-            """
-            Perform fully constrained least-squares (FCLS: non-negative and
-            sum-to-one) spectral unmixing using ``pysptools`` and ``cvxopt``.
-
-            .. note::
-
-               Prefer the recommended SciPy :func:`spec_unmix_fcls` function
-               for general workflows; it does not require ``cvxopt`` or
-               ``pysptools`` and runs substantially faster.
-
-            :param input_img: Path to the input image file.
-            :param valid_msk_img: Optional path to the valid pixel mask image
-                                  file.
-            :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid
-                                  pixels.
-            :param output_img: Path to the output unmixed abundance image file.
-            :param endmembers: :class:`pandas.DataFrame` (columns = class names,
-                               rows = bands) or file path readable by
-                               :func:`read_endmembers_df`.
-            :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-            :param gain: Gain divisor applied to image and endmember spectra when
-                         greater than ``1`` (Default = ``1``).
-            :param file_format: Optional format override when ``endmembers`` is
-                                a file path (Default = ``None``).
-            :param calc_stats: If ``True``, populate image statistics and
-                               pyramids (Default = ``True``).
-            :param use_pbar: If ``True``, display a tqdm progress bar during
-                             processing (Default = ``True``).
-
-            .. code:: python
-
-                import rsgispy.imagecalc.spectralunmixing as su
-
-                su.spec_unmix_spts_fcls(
-                    "img.tif", "mask.tif", 1, "unmix_fcls.tif", "endmembers.csv"
+        for _ in range(m + 2):
+            keys = p_mask[need_add] @ weights
+            s_mat = np.zeros((need_add.size, m), dtype=np.float64)
+            for key in np.unique(keys):
+                if key == 0:
+                    continue
+                row_sel = np.flatnonzero(keys == key)
+                cols = np.flatnonzero((key & weights) != 0)
+                s_sub = _solve_simplex_eq_subset(
+                    end_t,
+                    y_rem[need_add[row_sel]],
+                    cols,
+                    null_basis=_get_null(int(cols.size)) if cols.size > 1 else None,
                 )
-            """
-            # pylint: disable=too-many-arguments,too-many-positional-arguments
-            _run_windowed_unmixer(
-                input_img=input_img,
-                valid_msk_img=valid_msk_img,
-                valid_msk_val=valid_msk_val,
-                output_img=output_img,
-                endmembers=endmembers,
-                solver_fn=_spts_amaps.FCLS,
-                gdalformat=gdalformat,
-                gain=gain,
-                weight=None,
-                file_format=file_format,
-                calc_stats=calc_stats,
-                use_pbar=use_pbar,
-            )
+                s_mat[np.ix_(row_sel, cols)] = s_sub
+
+            neg_mask = np.any((s_mat <= -1e-12) & p_mask[need_add], axis=1)
+            if np.any(~neg_mask):
+                s_ok = np.clip(s_mat[~neg_mask], 0.0, None)
+                s_sum = np.sum(s_ok, axis=1, keepdims=True)
+                s_ok = np.where(s_sum > 0.0, s_ok / s_sum, 0.0)
+                x_mat[need_add[~neg_mask]] = s_ok
+            if not np.any(neg_mask):
+                break
+
+            fix = need_add[neg_mask]
+            s_fix = s_mat[neg_mask]
+            x_fix = x_mat[fix]
+            valid_step = p_mask[fix] & (s_fix <= 0.0) & (x_fix > s_fix)
+            denom = np.where(valid_step, x_fix - s_fix, 1.0)
+            ratios = np.where(valid_step, x_fix / denom, np.inf)
+            alpha = np.min(ratios, axis=1, keepdims=True)
+            alpha = np.where(np.isfinite(alpha), alpha, 0.0)
+            x_new = x_fix + alpha * (s_fix - x_fix)
+            x_new[x_new < 1e-12] = 0.0
+            row_s = np.sum(x_new, axis=1, keepdims=True)
+            x_new = np.where(row_s > 0.0, x_new / row_s, x_fix)
+            x_mat[fix] = x_new
+            p_mask[fix] &= x_new > 0.0
+            no_passive = ~np.any(p_mask[fix], axis=1)
+            if np.any(no_passive):
+                empty_rows = fix[no_passive]
+                p_mask[empty_rows, np.argmax(x_mat[empty_rows], axis=1)] = True
+            need_add = fix
+
+    if np.any(active):
+        rem_act = np.flatnonzero(active)
+        x_mat[rem_act] = _scipy_fcls_heinz_chang_loop(y_rem[rem_act], endmembers_arr)
+
+    x_mat = np.clip(x_mat, 0.0, None)
+    row_sums = np.sum(x_mat, axis=1, keepdims=True)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        x_mat = np.where(row_sums > 0.0, x_mat / row_sums, 0.0)
+    out[rem_idx] = x_mat
+    return out
 
 
-if HAVE_PYMCR:
+def spec_unmix_nnls(
+    input_img: str,
+    valid_msk_img: Optional[str],
+    valid_msk_val: int,
+    output_img: str,
+    endmembers: EndmemberInput,
+    gdalformat: str = "GTIFF",
+    gain: float = 1,
+    weight: Optional[float] = None,
+    file_format: Optional[str] = None,
+    calc_stats: bool = True,
+    use_pbar: bool = True,
+) -> None:
+    """
+    **[Recommended]** Perform non-negative least-squares (NNLS) linear
+    spectral unmixing using a batched active-set solver backed by
+    ``scipy.optimize.nnls``.
 
-    def _pymcr_nnls_solver(vld_pxls: np.ndarray, endmembers_arr: np.ndarray) -> np.ndarray:
-        """Fit PyMCR NNLS model and return abundance matrix."""
-        mcrar = McrAR(
-            max_iter=100,
-            st_regr=_PyMcrNNLS(),
-            c_regr=_PyMcrNNLS(),
-            c_constraints=[ConstraintNonneg()],
+    .. tip::
+
+       This NumPy/SciPy function is the recommended implementation for NNLS
+       unmixing in ``rsgispy``. Unlike ``pysptools.abundance_maps.amaps.NNLS``,
+       it solves :math:`\\min_{x \\ge 0} \\| E^T x - y \\|_2` directly
+       without squaring the system via normal equations, and requires only
+       ``scipy`` (no ``pysptools`` or ``pyMCR``).
+
+    :param input_img: Path to the input image file.
+    :param valid_msk_img: Optional path to the valid pixel mask image file
+                          (if ``None``, all finite positive pixels are
+                          unmixed).
+    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid
+                          pixels.
+    :param output_img: Path to the output unmixed abundance image file.
+    :param endmembers: :class:`pandas.DataFrame` (columns = class names,
+                       rows = bands) or file path readable by
+                       :func:`read_endmembers_df`.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param gain: Gain divisor applied to image and endmember spectra when
+                 greater than ``1`` (Default = ``1``).
+    :param weight: Optional Scarth et al. (2010) sum-to-one weight.
+    :param file_format: Optional format override when ``endmembers`` is a
+                        file path (Default = ``None``).
+    :param calc_stats: If ``True``, populate image statistics and pyramids
+                       (Default = ``True``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during
+                     processing (Default = ``True``).
+
+    .. code:: python
+
+        import rsgispy.imagecalc.spectralunmixing as su
+
+        su.spec_unmix_nnls(
+            "img.tif", "mask.tif", 1, "unmix_nnls.tif", "endmembers.csv"
         )
-        mcrar.fit(vld_pxls, ST=endmembers_arr)
-        return mcrar.C_opt_
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    rsgispy.check_optional_dep(HAVE_SCIPY, "spec_unmix_nnls", "scipy", "unmixing")
+    _run_windowed_unmixer(
+        input_img=input_img,
+        valid_msk_img=valid_msk_img,
+        valid_msk_val=valid_msk_val,
+        output_img=output_img,
+        endmembers=endmembers,
+        solver_fn=_scipy_nnls_solver,
+        gdalformat=gdalformat,
+        gain=gain,
+        weight=weight,
+        file_format=file_format,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
+    )
 
-    def _pymcr_fcls_solver(vld_pxls: np.ndarray, endmembers_arr: np.ndarray) -> np.ndarray:
-        """Fit PyMCR FCLS model and return abundance matrix."""
-        mcrar = McrAR(
-            max_iter=200,
-            st_regr=_PyMcrNNLS(),
-            c_regr=_PyMcrNNLS(),
-            c_constraints=[ConstraintNonneg(), ConstraintNorm()],
+
+def spec_unmix_fcls(
+    input_img: str,
+    valid_msk_img: Optional[str],
+    valid_msk_val: int,
+    output_img: str,
+    endmembers: EndmemberInput,
+    gdalformat: str = "GTIFF",
+    gain: float = 1,
+    file_format: Optional[str] = None,
+    calc_stats: bool = True,
+    use_pbar: bool = True,
+) -> None:
+    """
+    **[Recommended]** Perform fully constrained least-squares (FCLS:
+    non-negative and sum-to-one) linear spectral unmixing using a
+    batched affine-nullspace active-set solver with ``scipy.optimize.nnls``
+    fallback.
+
+    .. tip::
+
+       This NumPy/SciPy function is the recommended implementation for FCLS
+       unmixing in ``rsgispy``. It avoids the compiled ``cvxopt`` dependency
+       required by :func:`spec_unmix_spts_fcls` while delivering high
+       accuracy and substantially faster runtime.
+
+    :param input_img: Path to the input image file.
+    :param valid_msk_img: Optional path to the valid pixel mask image file
+                          (if ``None``, all finite positive pixels are
+                          unmixed).
+    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid
+                          pixels.
+    :param output_img: Path to the output unmixed abundance image file.
+    :param endmembers: :class:`pandas.DataFrame` (columns = class names,
+                       rows = bands) or file path readable by
+                       :func:`read_endmembers_df`.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param gain: Gain divisor applied to image and endmember spectra when
+                 greater than ``1`` (Default = ``1``).
+    :param file_format: Optional format override when ``endmembers`` is a
+                        file path (Default = ``None``).
+    :param calc_stats: If ``True``, populate image statistics and pyramids
+                       (Default = ``True``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during
+                     processing (Default = ``True``).
+
+    .. code:: python
+
+        import rsgispy.imagecalc.spectralunmixing as su
+
+        su.spec_unmix_fcls(
+            "img.tif", "mask.tif", 1, "unmix_fcls.tif", "endmembers.csv"
         )
-        mcrar.fit(vld_pxls, ST=endmembers_arr)
-        return mcrar.C_opt_
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    rsgispy.check_optional_dep(HAVE_SCIPY, "spec_unmix_fcls", "scipy", "unmixing")
+    _run_windowed_unmixer(
+        input_img=input_img,
+        valid_msk_img=valid_msk_img,
+        valid_msk_val=valid_msk_val,
+        output_img=output_img,
+        endmembers=endmembers,
+        solver_fn=_scipy_fcls_solver,
+        gdalformat=gdalformat,
+        gain=gain,
+        weight=None,
+        file_format=file_format,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
+    )
 
-    def spec_unmix_pymcr_nnls(
-        input_img: str,
-        valid_msk_img: Optional[str],
-        valid_msk_val: int,
-        output_img: str,
-        endmembers: EndmemberInput,
-        gdalformat: str = "GTIFF",
-        gain: float = 1,
-        weight: Optional[float] = None,
-        file_format: Optional[str] = None,
-        calc_stats: bool = True,
-        use_pbar: bool = True,
-    ) -> None:
-        """
-        Perform non-negative least-squares (NNLS) spectral unmixing using
-        ``pymcr``.
 
-        .. note::
+def spec_unmix_spts_ucls(
+    input_img: str,
+    valid_msk_img: Optional[str],
+    valid_msk_val: int,
+    output_img: str,
+    endmembers: EndmemberInput,
+    gdalformat: str = "GTIFF",
+    gain: float = 1,
+    weight: Optional[float] = None,
+    file_format: Optional[str] = None,
+    calc_stats: bool = True,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Perform unconstrained least-squares (UCLS) spectral unmixing using
+    ``pysptools``.
 
-           Prefer the recommended SciPy :func:`spec_unmix_nnls` function for
-           general workflows.
+    .. note::
 
-        :param input_img: Path to the input image file.
-        :param valid_msk_img: Optional path to the valid pixel mask image file.
-        :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels.
-        :param output_img: Path to the output unmixed abundance image file.
-        :param endmembers: :class:`pandas.DataFrame` (columns = class names,
-                           rows = bands) or file path readable by
-                           :func:`read_endmembers_df`.
-        :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-        :param gain: Gain divisor applied to image and endmember spectra when
-                     greater than ``1`` (Default = ``1``).
-        :param weight: Optional Scarth et al. (2010) sum-to-one weight.
-        :param file_format: Optional format override when ``endmembers`` is a
-                            file path (Default = ``None``).
-        :param calc_stats: If ``True``, populate image statistics and pyramids
-                           (Default = ``True``).
-        :param use_pbar: If ``True``, display a tqdm progress bar during processing
-                         (Default = ``True``).
+       Prefer the recommended pure-NumPy :func:`spec_unmix_ucls` function
+       for general workflows; this function is retained for ``pysptools``
+       compatibility.
 
-        .. code:: python
+    :param input_img: Path to the input image file.
+    :param valid_msk_img: Optional path to the valid pixel mask image file.
+    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels.
+    :param output_img: Path to the output unmixed abundance image file.
+    :param endmembers: :class:`pandas.DataFrame` (columns = class names,
+                       rows = bands) or file path readable by
+                       :func:`read_endmembers_df`.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param gain: Gain divisor applied to image and endmember spectra when
+                 greater than ``1`` (Default = ``1``).
+    :param weight: Optional Scarth et al. (2010) sum-to-one weight.
+    :param file_format: Optional format override when ``endmembers`` is a
+                        file path (Default = ``None``).
+    :param calc_stats: If ``True``, populate image statistics and pyramids
+                       (Default = ``True``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
-            import rsgispy.imagecalc.spectralunmixing as su
+    .. code:: python
 
-            su.spec_unmix_pymcr_nnls(
-                "img.tif", "mask.tif", 1, "unmix_pymcr_nnls.tif", "endmembers.csv"
-            )
-        """
-        # pylint: disable=too-many-arguments,too-many-positional-arguments
-        _run_windowed_unmixer(
-            input_img=input_img,
-            valid_msk_img=valid_msk_img,
-            valid_msk_val=valid_msk_val,
-            output_img=output_img,
-            endmembers=endmembers,
-            solver_fn=_pymcr_nnls_solver,
-            gdalformat=gdalformat,
-            gain=gain,
-            weight=weight,
-            file_format=file_format,
-            calc_stats=calc_stats,
-            use_pbar=use_pbar,
+        import rsgispy.imagecalc.spectralunmixing as su
+
+        su.spec_unmix_spts_ucls(
+            "img.tif", "mask.tif", 1, "unmix_ucls.tif", "endmembers.csv"
         )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    rsgispy.check_optional_dep(
+        HAVE_PYSPTOOLS, "spec_unmix_spts_ucls", "pysptools", "unmixing"
+    )
+    _run_windowed_unmixer(
+        input_img=input_img,
+        valid_msk_img=valid_msk_img,
+        valid_msk_val=valid_msk_val,
+        output_img=output_img,
+        endmembers=endmembers,
+        solver_fn=_spts_amaps.UCLS,
+        gdalformat=gdalformat,
+        gain=gain,
+        weight=weight,
+        file_format=file_format,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
+    )
 
-    def spec_unmix_pymcr_fcls(
-        input_img: str,
-        valid_msk_img: Optional[str],
-        valid_msk_val: int,
-        output_img: str,
-        endmembers: EndmemberInput,
-        gdalformat: str = "GTIFF",
-        gain: float = 1,
-        file_format: Optional[str] = None,
-        calc_stats: bool = True,
-        use_pbar: bool = True,
-    ) -> None:
-        """
-        Perform fully constrained least-squares (FCLS: non-negative and
-        sum-to-one) spectral unmixing using ``pymcr``.
 
-        .. note::
+def spec_unmix_spts_nnls(
+    input_img: str,
+    valid_msk_img: Optional[str],
+    valid_msk_val: int,
+    output_img: str,
+    endmembers: EndmemberInput,
+    gdalformat: str = "GTIFF",
+    gain: float = 1,
+    weight: Optional[float] = None,
+    file_format: Optional[str] = None,
+    calc_stats: bool = True,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Perform non-negative least-squares (NNLS) spectral unmixing using
+    ``pysptools``.
 
-           Prefer the recommended SciPy :func:`spec_unmix_fcls` function for
-           general workflows.
+    .. note::
 
-        :param input_img: Path to the input image file.
-        :param valid_msk_img: Optional path to the valid pixel mask image file.
-        :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels.
-        :param output_img: Path to the output unmixed abundance image file.
-        :param endmembers: :class:`pandas.DataFrame` (columns = class names,
-                           rows = bands) or file path readable by
-                           :func:`read_endmembers_df`.
-        :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-        :param gain: Gain divisor applied to image and endmember spectra when
-                     greater than ``1`` (Default = ``1``).
-        :param file_format: Optional format override when ``endmembers`` is a
-                            file path (Default = ``None``).
-        :param calc_stats: If ``True``, populate image statistics and pyramids
-                           (Default = ``True``).
-        :param use_pbar: If ``True``, display a tqdm progress bar during processing
-                         (Default = ``True``).
+       Prefer the recommended SciPy :func:`spec_unmix_nnls` function for
+       general workflows; ``spec_unmix_nnls`` solves the direct NNLS
+       problem without squaring normal equations.
 
-        .. code:: python
+    :param input_img: Path to the input image file.
+    :param valid_msk_img: Optional path to the valid pixel mask image file.
+    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels.
+    :param output_img: Path to the output unmixed abundance image file.
+    :param endmembers: :class:`pandas.DataFrame` (columns = class names,
+                       rows = bands) or file path readable by
+                       :func:`read_endmembers_df`.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param gain: Gain divisor applied to image and endmember spectra when
+                 greater than ``1`` (Default = ``1``).
+    :param weight: Optional Scarth et al. (2010) sum-to-one weight.
+    :param file_format: Optional format override when ``endmembers`` is a
+                        file path (Default = ``None``).
+    :param calc_stats: If ``True``, populate image statistics and pyramids
+                       (Default = ``True``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
-            import rsgispy.imagecalc.spectralunmixing as su
+    .. code:: python
 
-            su.spec_unmix_pymcr_fcls(
-                "img.tif", "mask.tif", 1, "unmix_pymcr_fcls.tif", "endmembers.csv"
-            )
-        """
-        # pylint: disable=too-many-arguments,too-many-positional-arguments
-        _run_windowed_unmixer(
-            input_img=input_img,
-            valid_msk_img=valid_msk_img,
-            valid_msk_val=valid_msk_val,
-            output_img=output_img,
-            endmembers=endmembers,
-            solver_fn=_pymcr_fcls_solver,
-            gdalformat=gdalformat,
-            gain=gain,
-            weight=None,
-            file_format=file_format,
-            calc_stats=calc_stats,
-            use_pbar=use_pbar,
+        import rsgispy.imagecalc.spectralunmixing as su
+
+        su.spec_unmix_spts_nnls(
+            "img.tif", "mask.tif", 1, "unmix_nnls.tif", "endmembers.csv"
         )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    rsgispy.check_optional_dep(
+        HAVE_PYSPTOOLS, "spec_unmix_spts_nnls", "pysptools", "unmixing"
+    )
+    _run_windowed_unmixer(
+        input_img=input_img,
+        valid_msk_img=valid_msk_img,
+        valid_msk_val=valid_msk_val,
+        output_img=output_img,
+        endmembers=endmembers,
+        solver_fn=_spts_amaps.NNLS,
+        gdalformat=gdalformat,
+        gain=gain,
+        weight=weight,
+        file_format=file_format,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
+    )
+
+
+def spec_unmix_spts_fcls(
+    input_img: str,
+    valid_msk_img: Optional[str],
+    valid_msk_val: int,
+    output_img: str,
+    endmembers: EndmemberInput,
+    gdalformat: str = "GTIFF",
+    gain: float = 1,
+    file_format: Optional[str] = None,
+    calc_stats: bool = True,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Perform fully constrained least-squares (FCLS: non-negative and
+    sum-to-one) spectral unmixing using ``pysptools`` and ``cvxopt``.
+
+    .. note::
+
+       Prefer the recommended SciPy :func:`spec_unmix_fcls` function
+       for general workflows; it does not require ``cvxopt`` or
+       ``pysptools`` and runs substantially faster.
+
+    :param input_img: Path to the input image file.
+    :param valid_msk_img: Optional path to the valid pixel mask image
+                          file.
+    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid
+                          pixels.
+    :param output_img: Path to the output unmixed abundance image file.
+    :param endmembers: :class:`pandas.DataFrame` (columns = class names,
+                       rows = bands) or file path readable by
+                       :func:`read_endmembers_df`.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param gain: Gain divisor applied to image and endmember spectra when
+                 greater than ``1`` (Default = ``1``).
+    :param file_format: Optional format override when ``endmembers`` is
+                        a file path (Default = ``None``).
+    :param calc_stats: If ``True``, populate image statistics and
+                       pyramids (Default = ``True``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during
+                     processing (Default = ``True``).
+
+    .. code:: python
+
+        import rsgispy.imagecalc.spectralunmixing as su
+
+        su.spec_unmix_spts_fcls(
+            "img.tif", "mask.tif", 1, "unmix_fcls.tif", "endmembers.csv"
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    rsgispy.check_optional_dep(
+        HAVE_PYSPTOOLS, "spec_unmix_spts_fcls", "pysptools", "unmixing"
+    )
+    rsgispy.check_optional_dep(
+        HAVE_CVXOPT, "spec_unmix_spts_fcls", "cvxopt", "unmixing"
+    )
+    _run_windowed_unmixer(
+        input_img=input_img,
+        valid_msk_img=valid_msk_img,
+        valid_msk_val=valid_msk_val,
+        output_img=output_img,
+        endmembers=endmembers,
+        solver_fn=_spts_amaps.FCLS,
+        gdalformat=gdalformat,
+        gain=gain,
+        weight=None,
+        file_format=file_format,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
+    )
+
+
+def _pymcr_nnls_solver(vld_pxls: np.ndarray, endmembers_arr: np.ndarray) -> np.ndarray:
+    """Fit PyMCR NNLS model and return abundance matrix."""
+    mcrar = McrAR(
+        max_iter=100,
+        st_regr=_PyMcrNNLS(),
+        c_regr=_PyMcrNNLS(),
+        c_constraints=[ConstraintNonneg()],
+    )
+    mcrar.fit(vld_pxls, ST=endmembers_arr)
+    return mcrar.C_opt_
+
+
+def _pymcr_fcls_solver(vld_pxls: np.ndarray, endmembers_arr: np.ndarray) -> np.ndarray:
+    """Fit PyMCR FCLS model and return abundance matrix."""
+    mcrar = McrAR(
+        max_iter=200,
+        st_regr=_PyMcrNNLS(),
+        c_regr=_PyMcrNNLS(),
+        c_constraints=[ConstraintNonneg(), ConstraintNorm()],
+    )
+    mcrar.fit(vld_pxls, ST=endmembers_arr)
+    return mcrar.C_opt_
+
+
+def spec_unmix_pymcr_nnls(
+    input_img: str,
+    valid_msk_img: Optional[str],
+    valid_msk_val: int,
+    output_img: str,
+    endmembers: EndmemberInput,
+    gdalformat: str = "GTIFF",
+    gain: float = 1,
+    weight: Optional[float] = None,
+    file_format: Optional[str] = None,
+    calc_stats: bool = True,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Perform non-negative least-squares (NNLS) spectral unmixing using
+    ``pymcr``.
+
+    .. note::
+
+       Prefer the recommended SciPy :func:`spec_unmix_nnls` function for
+       general workflows.
+
+    :param input_img: Path to the input image file.
+    :param valid_msk_img: Optional path to the valid pixel mask image file.
+    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels.
+    :param output_img: Path to the output unmixed abundance image file.
+    :param endmembers: :class:`pandas.DataFrame` (columns = class names,
+                       rows = bands) or file path readable by
+                       :func:`read_endmembers_df`.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param gain: Gain divisor applied to image and endmember spectra when
+                 greater than ``1`` (Default = ``1``).
+    :param weight: Optional Scarth et al. (2010) sum-to-one weight.
+    :param file_format: Optional format override when ``endmembers`` is a
+                        file path (Default = ``None``).
+    :param calc_stats: If ``True``, populate image statistics and pyramids
+                       (Default = ``True``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
+
+    .. code:: python
+
+        import rsgispy.imagecalc.spectralunmixing as su
+
+        su.spec_unmix_pymcr_nnls(
+            "img.tif", "mask.tif", 1, "unmix_pymcr_nnls.tif", "endmembers.csv"
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    rsgispy.check_optional_dep(
+        HAVE_PYMCR, "spec_unmix_pymcr_nnls", "pyMCR", "unmixing"
+    )
+    _run_windowed_unmixer(
+        input_img=input_img,
+        valid_msk_img=valid_msk_img,
+        valid_msk_val=valid_msk_val,
+        output_img=output_img,
+        endmembers=endmembers,
+        solver_fn=_pymcr_nnls_solver,
+        gdalformat=gdalformat,
+        gain=gain,
+        weight=weight,
+        file_format=file_format,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
+    )
+
+
+def spec_unmix_pymcr_fcls(
+    input_img: str,
+    valid_msk_img: Optional[str],
+    valid_msk_val: int,
+    output_img: str,
+    endmembers: EndmemberInput,
+    gdalformat: str = "GTIFF",
+    gain: float = 1,
+    file_format: Optional[str] = None,
+    calc_stats: bool = True,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Perform fully constrained least-squares (FCLS: non-negative and
+    sum-to-one) spectral unmixing using ``pymcr``.
+
+    .. note::
+
+       Prefer the recommended SciPy :func:`spec_unmix_fcls` function for
+       general workflows.
+
+    :param input_img: Path to the input image file.
+    :param valid_msk_img: Optional path to the valid pixel mask image file.
+    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels.
+    :param output_img: Path to the output unmixed abundance image file.
+    :param endmembers: :class:`pandas.DataFrame` (columns = class names,
+                       rows = bands) or file path readable by
+                       :func:`read_endmembers_df`.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param gain: Gain divisor applied to image and endmember spectra when
+                 greater than ``1`` (Default = ``1``).
+    :param file_format: Optional format override when ``endmembers`` is a
+                        file path (Default = ``None``).
+    :param calc_stats: If ``True``, populate image statistics and pyramids
+                       (Default = ``True``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
+
+    .. code:: python
+
+        import rsgispy.imagecalc.spectralunmixing as su
+
+        su.spec_unmix_pymcr_fcls(
+            "img.tif", "mask.tif", 1, "unmix_pymcr_fcls.tif", "endmembers.csv"
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    rsgispy.check_optional_dep(
+        HAVE_PYMCR, "spec_unmix_pymcr_fcls", "pyMCR", "unmixing"
+    )
+    _run_windowed_unmixer(
+        input_img=input_img,
+        valid_msk_img=valid_msk_img,
+        valid_msk_val=valid_msk_val,
+        output_img=output_img,
+        endmembers=endmembers,
+        solver_fn=_pymcr_fcls_solver,
+        gdalformat=gdalformat,
+        gain=gain,
+        weight=None,
+        file_format=file_format,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
+    )
 
 
 def rescale_unmixing_results(
@@ -2464,3 +2749,247 @@ def calc_ppi(
             calc_pyramids=True,
             use_pbar=use_pbar,
         )
+
+
+def spectral_angle_mapper(
+    input_img: str,
+    endmembers: EndmemberInput,
+    output_img: str,
+    out_class_img: Optional[str] = None,
+    out_min_angle_img: Optional[str] = None,
+    gdalformat: str = "GTIFF",
+    img_gain: float = 1,
+    endmembers_gain: float = 1,
+    file_format: Optional[str] = None,
+    degrees: bool = False,
+    max_angle: Optional[float] = None,
+    valid_msk_img: Optional[str] = None,
+    valid_msk_val: int = 1,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Compute Spectral Angle Mapper (SAM; Kruse et al., 1993) spectral angles
+    between every pixel spectrum in ``input_img`` and reference endmembers,
+    processed window-by-window without loading full images into memory.
+
+    For a pixel spectrum :math:`x` and endmember spectrum :math:`e`, the
+    spectral angle is
+    :math:`\\theta = \\arccos(\\langle x, e \\rangle / (\\|x\\|\\|e\\|))`,
+    providing illumination- and gain-invariant similarity scoring in
+    ``[0, pi]`` radians (or ``[0, 180]`` degrees when ``degrees=True``).
+
+    :param input_img: Path to the input multi-band reflectance/radiance image.
+    :param endmembers: :class:`pandas.DataFrame` (bands as rows, endmember class
+                       names as columns) or path readable by
+                       :func:`read_endmembers_df`.
+    :param output_img: Path to the output ``float32`` multi-band spectral angle
+                       raster (one band per endmember class).
+    :param out_class_img: Optional output thematic classification raster path
+                          assigning each pixel the 1-based index of the
+                          smallest spectral angle (``0`` for nodata/zero-norm
+                          or when exceeding ``max_angle``).
+    :param out_min_angle_img: Optional single-band ``float32`` output raster
+                              recording the minimum spectral angle per pixel.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param img_gain: Gain divisor applied to ``input_img`` when ``> 1``
+                     (Default = ``1``).
+    :param endmembers_gain: Gain divisor applied to ``endmembers`` when ``> 1``
+                            (Default = ``1``).
+    :param file_format: Optional table format override when ``endmembers`` is a
+                        file path (Default = ``None``).
+    :param degrees: If ``True``, output angles (and interpret ``max_angle``) in
+                    degrees rather than radians (Default = ``False``).
+    :param max_angle: Optional maximum spectral angle threshold for
+                      ``out_class_img``; pixels whose minimum angle exceeds
+                      ``max_angle`` are assigned class ``0`` (unclassified).
+    :param valid_msk_img: Optional single-band valid-region mask raster file.
+    :param valid_msk_val: Pixel value identifying valid pixels in
+                          ``valid_msk_img`` (Default = ``1``).
+    :param no_data_val: Explicit input nodata value overriding metadata
+                        (Default = ``None``).
+    :param calc_stats: If ``True``, compute statistics and pyramids on output
+                       rasters (Default = ``True``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
+
+    .. code:: python
+
+        import rsgispy.imagecalc.spectralunmixing as su
+
+        su.spectral_angle_mapper(
+            "refl.tif",
+            "endmembers.csv",
+            "sam_angles.tif",
+            out_class_img="sam_class.tif",
+            out_min_angle_img="sam_min_angle.tif",
+            degrees=True,
+            max_angle=15.0,
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+    ensure_file_exists(input_img, "Input image")
+    em_names, n_em, n_em_bands, em_arr = _prepare_endmembers_array(
+        endmembers, gain=endmembers_gain, file_format=file_format
+    )
+    if n_em == 0:
+        raise rsgispy.RSGISPyException(
+            "Endmembers table must contain at least one class column."
+        )
+
+    em_norms = np.linalg.norm(em_arr, axis=1, keepdims=True)
+    if np.any(em_norms == 0.0) or not np.all(np.isfinite(em_norms)):
+        raise rsgispy.RSGISPyException(
+            "All endmember spectra must be finite and have non-zero norm."
+        )
+    em_unit = em_arr / em_norms  # (n_em, n_bands)
+
+    in_list = [input_img]
+    if valid_msk_img is not None:
+        ensure_file_exists(valid_msk_img, "Valid mask image")
+        in_list.append(valid_msk_img)
+
+    out_float_nd = -9999.0
+    cls_dtype = "uint8" if n_em <= 255 else "uint16"
+    cls_np_dtype = np.uint8 if n_em <= 255 else np.uint16
+
+    with ExitStack() as stack:
+        datasets, paths = open_multi_image_datasets(stack, in_list)
+        src = datasets[paths[0]]
+        msk_ds = datasets[paths[1]] if valid_msk_img is not None else None
+        if int(src.count) != n_em_bands:
+            raise rsgispy.RSGISPyException(
+                f"Input image band count ({src.count}) does not match "
+                f"endmember band count ({n_em_bands})."
+            )
+
+        grid = compute_spatial_intersection(datasets)
+        img_off = grid.offsets[paths[0]]
+        msk_off = grid.offsets[paths[1]] if msk_ds is not None else None
+        eff_nd = no_data_val if no_data_val is not None else src.nodata
+
+        dst_angles = open_output_dataset(
+            stack=stack,
+            output_img=output_img,
+            gdalformat=gdalformat,
+            out_rio_dtype="float32",
+            grid=grid,
+            count=n_em,
+        )
+        dst_angles.nodata = out_float_nd
+
+        dst_min = None
+        if out_min_angle_img is not None:
+            dst_min = open_output_dataset(
+                stack=stack,
+                output_img=out_min_angle_img,
+                gdalformat=gdalformat,
+                out_rio_dtype="float32",
+                grid=grid,
+                count=1,
+            )
+            dst_min.nodata = out_float_nd
+
+        dst_cls = None
+        if out_class_img is not None:
+            dst_cls = open_output_dataset(
+                stack=stack,
+                output_img=out_class_img,
+                gdalformat=gdalformat,
+                out_rio_dtype=cls_dtype,
+                grid=grid,
+                count=1,
+            )
+            dst_cls.nodata = 0
+
+        for dst_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
+            col_off, row_off = int(dst_win.col_off), int(dst_win.row_off)
+            win_w, win_h = int(dst_win.width), int(dst_win.height)
+            n_pxls = win_h * win_w
+            img_win = Window(
+                img_off[0] + col_off, img_off[1] + row_off, win_w, win_h
+            )
+            blk = src.read(window=img_win, out_dtype=np.float64)
+            vld = np.all(np.isfinite(blk), axis=0)
+            if eff_nd is not None and math.isfinite(float(eff_nd)):
+                vld &= np.all(blk != float(eff_nd), axis=0)
+            if msk_ds is not None and msk_off is not None:
+                msk_win = Window(
+                    msk_off[0] + col_off, msk_off[1] + row_off, win_w, win_h
+                )
+                vld &= msk_ds.read(1, window=msk_win) == valid_msk_val
+
+            vld_flat = vld.ravel()
+            angles_out = np.full(
+                (n_pxls, n_em), out_float_nd, dtype=np.float32
+            )
+            min_out = np.full(n_pxls, out_float_nd, dtype=np.float32)
+            cls_out = np.zeros(n_pxls, dtype=cls_np_dtype)
+
+            if np.any(vld_flat):
+                pxls = np.moveaxis(blk, 0, -1).reshape(-1, n_em_bands)[
+                    vld_flat
+                ]
+                if img_gain > 1:
+                    pxls = pxls / float(img_gain)
+                norms = np.linalg.norm(pxls, axis=1)
+                non_zero = norms > 0.0
+                if np.any(non_zero):
+                    nz_unit = pxls[non_zero] / norms[non_zero, None]
+                    cos_sim = np.clip(nz_unit @ em_unit.T, -1.0, 1.0)
+                    sam_vals = np.arccos(cos_sim)
+                    if degrees:
+                        sam_vals = np.degrees(sam_vals)
+
+                    nz_indices = np.flatnonzero(vld_flat)[non_zero]
+                    angles_out[nz_indices] = sam_vals.astype(np.float32)
+                    best_idx = np.argmin(sam_vals, axis=1)
+                    best_ang = sam_vals[np.arange(sam_vals.shape[0]), best_idx]
+                    min_out[nz_indices] = best_ang.astype(np.float32)
+
+                    cls_vals = (best_idx + 1).astype(cls_np_dtype)
+                    if max_angle is not None:
+                        cls_vals = np.where(
+                            best_ang <= float(max_angle), cls_vals, 0
+                        ).astype(cls_np_dtype)
+                    cls_out[nz_indices] = cls_vals
+
+            out_cube = np.moveaxis(
+                angles_out.reshape((win_h, win_w, n_em)), -1, 0
+            )
+            dst_angles.write(out_cube, window=dst_win)
+            if dst_min is not None:
+                dst_min.write(min_out.reshape((1, win_h, win_w)), window=dst_win)
+            if dst_cls is not None:
+                dst_cls.write(cls_out.reshape((1, win_h, win_w)), window=dst_win)
+
+    set_band_names(output_img, em_names, feedback=False)
+    if out_min_angle_img is not None:
+        set_band_names(out_min_angle_img, ["min_angle"], feedback=False)
+
+    if calc_stats:
+        pop_img_stats(
+            output_img,
+            no_data_val=out_float_nd,
+            calc_pyramids=True,
+            use_pbar=use_pbar,
+        )
+        if out_min_angle_img is not None:
+            pop_img_stats(
+                out_min_angle_img,
+                no_data_val=out_float_nd,
+                calc_pyramids=True,
+                use_pbar=use_pbar,
+            )
+        if out_class_img is not None:
+            pop_thmt_img_stats(
+                out_class_img,
+                add_clr_tab=True,
+                calc_pyramids=True,
+                ignore_zero=True,
+                use_pbar=use_pbar,
+            )

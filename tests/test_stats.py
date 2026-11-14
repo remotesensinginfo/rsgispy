@@ -231,10 +231,12 @@ def test_optional_scipy_and_sklearn_missing():
         both_blocked = {**blocked_scipy, **blocked_sklearn}
         t_mod = _fresh_import("rsgispy.tools.thresholding", both_blocked)
         assert not t_mod.HAVE_SCIPY
-        assert not hasattr(t_mod, "calc_kurt_skew_threshold")
-        assert "calc_kurt_skew_threshold" not in t_mod.__all__
+        assert hasattr(t_mod, "calc_kurt_skew_threshold")
+        assert "calc_kurt_skew_threshold" in t_mod.__all__
         assert hasattr(t_mod, "calc_otsu_threshold")
         assert "calc_otsu_threshold" in t_mod.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            t_mod.calc_kurt_skew_threshold(np.array([1.0, 2.0, 3.0]), 3.0, 1.0, 2.0)
 
         f_mod = _fresh_import("rsgispy.tools.featureselection", both_blocked)
         assert not f_mod.HAVE_SCIPY
@@ -245,32 +247,51 @@ def test_optional_scipy_and_sklearn_missing():
             "corr_feature_selection",
             "breusch_pagan_test",
         ):
-            assert not hasattr(f_mod, fn_name)
-            assert fn_name not in f_mod.__all__
+            assert hasattr(f_mod, fn_name)
+            assert fn_name in f_mod.__all__
         assert hasattr(f_mod, "cqv_threshold")
         assert "cqv_threshold" in f_mod.__all__
+        dummy_df = pd.DataFrame({"a": [1.0, 2.0, 3.0], "y": [1.0, 2.0, 3.0]})
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            f_mod.calc_pandas_vif(dummy_df)
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            f_mod.lassolars_feature_selection(dummy_df, ["y"], ["a"])
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            f_mod.corr_feature_selection(dummy_df, ["y"], ["a"])
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            f_mod.breusch_pagan_test(dummy_df[["a"]].to_numpy(), dummy_df["y"].to_numpy())
 
         a_mod = _fresh_import("rsgispy.tools.accuracy", both_blocked)
         assert not a_mod.HAVE_SCIPY
         assert not a_mod.HAVE_SKLEARN
         for fn_name in ("accuracy_scores_binary", "bin_accuracy_scores_prob"):
-            assert not hasattr(a_mod, fn_name)
-            assert fn_name not in a_mod.__all__
+            assert hasattr(a_mod, fn_name)
+            assert fn_name in a_mod.__all__
         assert hasattr(a_mod, "bias_score")
         assert "bias_score" in a_mod.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            a_mod.accuracy_scores_binary(np.array([0, 1]), np.array([0, 1]))
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            a_mod.bin_accuracy_scores_prob(np.array([0, 1]), np.array([0.1, 0.9]))
 
         # Missing scipy only (when sklearn is installed)
         if orig_featsel.HAVE_SKLEARN or importlib.util.find_spec("sklearn") is not None:
             t_mod = _fresh_import("rsgispy.tools.thresholding", blocked_scipy)
             assert not t_mod.HAVE_SCIPY
-            assert not hasattr(t_mod, "calc_kurt_skew_threshold")
+            assert hasattr(t_mod, "calc_kurt_skew_threshold")
+            with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+                t_mod.calc_kurt_skew_threshold(np.array([1.0, 2.0, 3.0]), 3.0, 1.0, 2.0)
 
             f_mod = _fresh_import("rsgispy.tools.featureselection", blocked_scipy)
             assert not f_mod.HAVE_SCIPY
             assert f_mod.HAVE_SKLEARN
             for fn_name in ("corr_feature_selection", "breusch_pagan_test"):
-                assert not hasattr(f_mod, fn_name)
-                assert fn_name not in f_mod.__all__
+                assert hasattr(f_mod, fn_name)
+                assert fn_name in f_mod.__all__
+            with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+                f_mod.corr_feature_selection(dummy_df, ["y"], ["a"])
+            with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+                f_mod.breusch_pagan_test(dummy_df[["a"]].to_numpy(), dummy_df["y"].to_numpy())
             for fn_name in ("calc_pandas_vif", "lassolars_feature_selection", "cqv_threshold"):
                 assert hasattr(f_mod, fn_name)
                 assert fn_name in f_mod.__all__
@@ -278,8 +299,10 @@ def test_optional_scipy_and_sklearn_missing():
             a_mod = _fresh_import("rsgispy.tools.accuracy", blocked_scipy)
             assert not a_mod.HAVE_SCIPY
             assert a_mod.HAVE_SKLEARN
-            assert not hasattr(a_mod, "bin_accuracy_scores_prob")
+            assert hasattr(a_mod, "bin_accuracy_scores_prob")
             assert hasattr(a_mod, "accuracy_scores_binary")
+            with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+                a_mod.bin_accuracy_scores_prob(np.array([0, 1]), np.array([0.1, 0.9]))
 
         # Missing sklearn only (when scipy is installed)
         if orig_featsel.HAVE_SCIPY or importlib.util.find_spec("scipy") is not None:
@@ -292,16 +315,28 @@ def test_optional_scipy_and_sklearn_missing():
                 "corr_feature_selection",
                 "breusch_pagan_test",
             ):
-                assert not hasattr(f_mod, fn_name)
-                assert fn_name not in f_mod.__all__
+                assert hasattr(f_mod, fn_name)
+                assert fn_name in f_mod.__all__
+            with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+                f_mod.calc_pandas_vif(dummy_df)
+            with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+                f_mod.lassolars_feature_selection(dummy_df, ["y"], ["a"])
+            with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+                f_mod.corr_feature_selection(dummy_df, ["y"], ["a"])
+            with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+                f_mod.breusch_pagan_test(dummy_df[["a"]].to_numpy(), dummy_df["y"].to_numpy())
             assert hasattr(f_mod, "cqv_threshold")
 
             a_mod = _fresh_import("rsgispy.tools.accuracy", blocked_sklearn)
             assert a_mod.HAVE_SCIPY
             assert not a_mod.HAVE_SKLEARN
             for fn_name in ("accuracy_scores_binary", "bin_accuracy_scores_prob"):
-                assert not hasattr(a_mod, fn_name)
-                assert fn_name not in a_mod.__all__
+                assert hasattr(a_mod, fn_name)
+                assert fn_name in a_mod.__all__
+            with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+                a_mod.accuracy_scores_binary(np.array([0, 1]), np.array([0, 1]))
+            with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+                a_mod.bin_accuracy_scores_prob(np.array([0, 1]), np.array([0.1, 0.9]))
             assert hasattr(a_mod, "bias_score")
     finally:
         sys.modules["rsgispy.tools.thresholding"] = orig_thresh

@@ -17,10 +17,11 @@ import rsgispy
 import rsgispy.tools.files
 import rsgispy.tools.geometry
 from rsgispy.vectorprocess import (
+    VectorInput,
     is_geoparquet_file,
     is_geoparquet_format,
     list_vec_layers,
-    prepare_out_vec_file,
+    prepare_optional_out_vec,
     read_vec_gdf,
     resolve_out_lyr_name,
     validate_columns_exist,
@@ -45,21 +46,23 @@ __all__ = [
 
 
 def convert_polys_to_lines_gp(
-    vec_poly_file: str,
+    vec_poly_file: VectorInput,
     vec_poly_lyr: Optional[str],
-    vec_line_file: str,
+    vec_line_file: Optional[Union[str, os.PathLike]] = None,
     vec_line_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     exterior_lines: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Convert a polygon vector layer to a line vector layer using ``geopandas``.
 
-    :param vec_poly_file: Input polygon vector file path.
+    :param vec_poly_file: Input polygon vector file path or
+                          :class:`geopandas.GeoDataFrame`.
     :param vec_poly_lyr: Input vector layer name (or ``None``).
-    :param vec_line_file: Output line vector file path.
+    :param vec_line_file: Output line vector file path, or ``None`` to return an
+                          in-memory :class:`geopandas.GeoDataFrame`.
     :param vec_line_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, overwrite existing ``vec_line_file``
@@ -72,6 +75,8 @@ def convert_polys_to_lines_gp(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Line :class:`geopandas.GeoDataFrame` when ``vec_line_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -82,10 +87,10 @@ def convert_polys_to_lines_gp(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    prepare_out_vec_file(vec_line_file, del_exist_vec=del_exist_vec)
-    out_lyr = resolve_out_lyr_name(vec_line_file, vec_line_lyr)
+    out_path = prepare_optional_out_vec(vec_line_file, del_exist_vec=del_exist_vec)
+    out_lyr = resolve_out_lyr_name(out_path, vec_line_lyr)
 
-    data_gdf = read_vec_gdf(vec_poly_file, vec_poly_lyr)
+    data_gdf = read_vec_gdf(vec_poly_file, vec_poly_lyr, copy=False)
     out_gdf = data_gdf.copy()
     if exterior_lines:
         ext_geoms = []
@@ -108,36 +113,42 @@ def convert_polys_to_lines_gp(
     else:
         out_gdf["geometry"] = data_gdf.geometry.boundary
 
+    if out_path is None:
+        return out_gdf
     write_vec_gdf(
         out_gdf,
-        vec_line_file,
+        out_path,
         out_lyr,
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def calc_poly_centroids(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_format: str,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_format: str = "GPKG",
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Create a point vector layer containing the centroid of each polygon feature.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param out_format: Output vector format driver (e.g., ``'GPKG'``).
-    :param out_vec_file: Output centroid vector file path.
+    :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_vec_file: Output centroid vector file path, or ``None`` to return
+                         an in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_compress: Optional GeoParquet compression setting (``None`` to
                          infer from extension or write uncompressed, ``True``
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Centroid :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -148,9 +159,11 @@ def calc_poly_centroids(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    in_gdf = read_vec_gdf(vec_file, vec_lyr)
+    in_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     out_gdf = in_gdf.copy()
     out_gdf["geometry"] = in_gdf.geometry.centroid
+    if out_vec_file is None:
+        return out_gdf
     write_vec_gdf(
         out_gdf,
         out_vec_file,
@@ -158,24 +171,26 @@ def calc_poly_centroids(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def explode_vec_lyr(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Explode multi-part geometries (e.g., ``MultiPolygon``,
     ``MultiLineString``, ``MultiPoint``) into single-part features using
     ``geopandas``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name (can be ``None`` for single-layer
                         formats).
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
@@ -184,6 +199,8 @@ def explode_vec_lyr(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Exploded :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -194,8 +211,10 @@ def explode_vec_lyr(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    data_gdf = read_vec_gdf(vec_file, vec_lyr)
+    data_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     data_explode_gdf = data_gdf.explode(index_parts=False)
+    if out_vec_file is None:
+        return data_explode_gdf
     if len(data_explode_gdf) > 0:
         write_vec_gdf(
             data_explode_gdf,
@@ -204,11 +223,12 @@ def explode_vec_lyr(
             out_format=out_format,
             out_compress=out_compress,
         )
+    return None
 
 
 def explode_vec_files(
-    in_vec_files: Sequence[str],
-    output_dir: str,
+    in_vec_files: Sequence[Union[str, os.PathLike]],
+    output_dir: Union[str, os.PathLike],
     out_format: str = "GPKG",
     out_vec_ext: str = "gpkg",
     use_pbar: bool = True,
@@ -240,14 +260,16 @@ def explode_vec_files(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    os.makedirs(output_dir, exist_ok=True)
+    out_dir = os.fspath(output_dir)
+    os.makedirs(out_dir, exist_ok=True)
     pbar_cls = rsgispy.get_tqdm()
     for vec_file in pbar_cls(
         in_vec_files, total=len(in_vec_files), disable=not use_pbar
     ):
-        lyrs = list_vec_layers(vec_file)
-        basename = rsgispy.tools.files.get_file_basename(vec_file)
-        out_vec_file = os.path.join(output_dir, f"{basename}.{out_vec_ext}")
+        vec_path = os.fspath(vec_file)
+        lyrs = list_vec_layers(vec_path)
+        basename = rsgispy.tools.files.get_file_basename(vec_path)
+        out_vec_file = os.path.join(out_dir, f"{basename}.{out_vec_ext}")
         if (
             is_geoparquet_format(out_format) or is_geoparquet_file(out_vec_file)
         ) and (len(lyrs) > 1):
@@ -256,7 +278,7 @@ def explode_vec_files(
             )
         for lyr in lyrs:
             explode_vec_lyr(
-                vec_file,
+                vec_path,
                 lyr,
                 out_vec_file,
                 lyr,
@@ -266,24 +288,25 @@ def explode_vec_files(
 
 
 def simplify_geometries(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     tolerance: float,
-    out_format: str,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_format: str = "GPKG",
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Simplify vector geometries using the Douglas-Peucker algorithm with
     topology preservation.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param tolerance: Simplification tolerance in CRS units.
-    :param out_format: Output vector format driver (e.g., ``'GPKG'``).
-    :param out_vec_file: Output vector file path.
+    :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
@@ -292,6 +315,8 @@ def simplify_geometries(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Simplified :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -302,17 +327,20 @@ def simplify_geometries(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    prepare_out_vec_file(out_vec_file, del_exist_vec=del_exist_vec)
-    in_gdf = read_vec_gdf(vec_file, vec_lyr)
+    out_path = prepare_optional_out_vec(out_vec_file, del_exist_vec=del_exist_vec)
+    in_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     out_gdf = in_gdf.copy()
     out_gdf["geometry"] = in_gdf.geometry.simplify(tolerance, preserve_topology=True)
+    if out_path is None:
+        return out_gdf
     write_vec_gdf(
         out_gdf,
-        out_vec_file,
+        out_path,
         out_vec_lyr,
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def _remove_holes_from_polygon(
@@ -333,24 +361,26 @@ def _remove_holes_from_polygon(
 
 
 def delete_polygon_holes(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_format: str,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_format: str = "GPKG",
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     area_thres: Optional[float] = None,
     del_exist_vec: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Delete interior holes from input polygons whose area is below or equal to
     ``area_thres`` (or all holes if ``area_thres`` is ``None``).
 
-    :param vec_file: Input polygon vector file path.
+    :param vec_file: Input polygon vector file path or
+                     :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param out_format: Output vector format driver (e.g., ``'GPKG'``).
-    :param out_vec_file: Output vector file path.
+    :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param area_thres: Area threshold in CRS units squared; if ``None``, all
                        holes are removed.
@@ -362,6 +392,8 @@ def delete_polygon_holes(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Cleaned :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -373,8 +405,8 @@ def delete_polygon_holes(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    prepare_out_vec_file(out_vec_file, del_exist_vec=del_exist_vec)
-    in_gdf = read_vec_gdf(vec_file, vec_lyr)
+    out_path = prepare_optional_out_vec(out_vec_file, del_exist_vec=del_exist_vec)
+    in_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     pbar_cls = rsgispy.get_tqdm()
     out_geoms = []
 
@@ -398,20 +430,23 @@ def delete_polygon_holes(
 
     out_gdf = in_gdf.copy()
     out_gdf["geometry"] = out_geoms
+    if out_path is None:
+        return out_gdf
     write_vec_gdf(
         out_gdf,
-        out_vec_file,
+        out_path,
         out_vec_lyr,
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def buffer_vec_layer_gp(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     buf_dist: float,
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
@@ -420,16 +455,17 @@ def buffer_vec_layer_gp(
     cap_style: int = 1,
     join_style: int = 1,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Buffer the geometries in a vector layer using ``geopandas``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param buf_dist: Buffer distance in CRS units (negative values shrink
                      polygons or indicate the right-hand side when
                      ``buf_sgl_sided=True``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
@@ -447,6 +483,8 @@ def buffer_vec_layer_gp(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Buffered :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -466,8 +504,8 @@ def buffer_vec_layer_gp(
             "join_style must be one of round = 1, mitre = 2 or bevel = 3"
         )
 
-    prepare_out_vec_file(out_vec_file, del_exist_vec=del_exist_vec)
-    out_lyr = resolve_out_lyr_name(out_vec_file, out_vec_lyr)
+    out_path = prepare_optional_out_vec(out_vec_file, del_exist_vec=del_exist_vec)
+    out_lyr = resolve_out_lyr_name(out_path, out_vec_lyr)
 
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     data_gdf["geometry"] = data_gdf["geometry"].buffer(
@@ -477,34 +515,38 @@ def buffer_vec_layer_gp(
         cap_style=cap_style,
         join_style=join_style,
     )
+    if out_path is None:
+        return data_gdf
     write_vec_gdf(
         data_gdf,
-        out_vec_file,
+        out_path,
         out_lyr,
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def split_vec_by_grid(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     x_grid_size: float,
     y_grid_size: float,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Split an input vector layer along a regular grid of spacing
     ``(x_grid_size, y_grid_size)`` covering its bounding extent.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param x_grid_size: Grid cell width in CRS units.
     :param y_grid_size: Grid cell height in CRS units.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
@@ -512,6 +554,8 @@ def split_vec_by_grid(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Split :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -522,7 +566,7 @@ def split_vec_by_grid(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    in_vec_gdf = read_vec_gdf(vec_file, vec_lyr)
+    in_vec_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     xmin, ymin, xmax, ymax = in_vec_gdf.total_bounds
     tile_bboxes = rsgispy.tools.geometry.get_bbox_grid(
         (float(xmin), float(xmax), float(ymin), float(ymax)),
@@ -537,6 +581,8 @@ def split_vec_by_grid(
         {"geometry": polygons}, crs=in_vec_gdf.crs
     )
     vec_split_gdf = in_vec_gdf.overlay(grid_gdf, how="intersection")
+    if out_vec_file is None:
+        return vec_split_gdf
     write_vec_gdf(
         vec_split_gdf,
         out_vec_file,
@@ -544,26 +590,28 @@ def split_vec_by_grid(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def rm_polys_area(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     area_thres: float,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     less_than: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Filter polygons by keeping features whose area is either strictly less than
     or strictly greater than ``area_thres``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param area_thres: Area threshold in CRS units squared.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param less_than: When ``True`` (default), keep features with
@@ -574,6 +622,8 @@ def rm_polys_area(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Filtered :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -584,13 +634,15 @@ def rm_polys_area(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    in_vec_gdf = read_vec_gdf(vec_file, vec_lyr)
+    in_vec_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     if less_than:
         area_msk = in_vec_gdf.area < area_thres
     else:
         area_msk = in_vec_gdf.area > area_thres
-    vec_sel_gdf = in_vec_gdf.loc[area_msk]
+    vec_sel_gdf = in_vec_gdf.loc[area_msk].copy()
 
+    if out_vec_file is None:
+        return vec_sel_gdf
     if len(vec_sel_gdf) > 0:
         write_vec_gdf(
             vec_sel_gdf,
@@ -599,26 +651,28 @@ def rm_polys_area(
             out_format=out_format,
             out_compress=out_compress,
         )
+    return None
 
 
 def create_bbox_vec_lyr(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     whole_num_grid: bool = False,
     whole_num_base_grid: float = 10.0,
     whole_num_round: Optional[int] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Create a single-polygon vector layer representing the bounding box of
     ``vec_file``, optionally snapped to a whole-number grid.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param whole_num_grid: Snap bounding box onto a whole-number grid via
@@ -631,6 +685,8 @@ def create_bbox_vec_lyr(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Bounding-box :class:`geopandas.GeoDataFrame` when ``out_vec_file``
+             is ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -641,7 +697,7 @@ def create_bbox_vec_lyr(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    in_vec_gdf = read_vec_gdf(vec_file, vec_lyr)
+    in_vec_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     x_min, y_min, x_max, y_max = in_vec_gdf.total_bounds
 
     if whole_num_grid:
@@ -656,6 +712,8 @@ def create_bbox_vec_lyr(
         {"geometry": [shapely.geometry.box(x_min, y_min, x_max, y_max)]},
         crs=in_vec_gdf.crs,
     )
+    if out_vec_file is None:
+        return bbox_gdf
     write_vec_gdf(
         bbox_gdf,
         out_vec_file,
@@ -663,24 +721,26 @@ def create_bbox_vec_lyr(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def vec_lyr_dissolve(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     vec_col: str,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Dissolve vector features by grouping on categorical attribute ``vec_col``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param vec_col: Categorical column name to dissolve on.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
@@ -688,6 +748,8 @@ def vec_lyr_dissolve(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Dissolved :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -698,9 +760,11 @@ def vec_lyr_dissolve(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    data_gdf = read_vec_gdf(vec_file, vec_lyr)
+    data_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     validate_columns_exist(data_gdf, [vec_col])
     dis_data_gdf = data_gdf.dissolve(vec_col, as_index=False)
+    if out_vec_file is None:
+        return dis_data_gdf
     write_vec_gdf(
         dis_data_gdf,
         out_vec_file,
@@ -708,27 +772,31 @@ def vec_lyr_dissolve(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def thin_vector_geoms(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    grid_vec_file: str,
+    grid_vec_file: VectorInput,
     grid_vec_lyr: Optional[str],
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Thin vector geometries (typically points) using a polygon grid so that at
     most one feature intersecting each grid cell is retained.
 
-    :param vec_file: Input vector file path to thin.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`
+                     to thin.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param grid_vec_file: Grid polygon vector file path.
+    :param grid_vec_file: Grid polygon vector file path or
+                          :class:`geopandas.GeoDataFrame`.
     :param grid_vec_lyr: Grid polygon vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
@@ -736,6 +804,8 @@ def thin_vector_geoms(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Thinned :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -746,7 +816,7 @@ def thin_vector_geoms(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    pts_gdf = read_vec_gdf(vec_file, vec_lyr)
+    pts_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     grid_gdf = read_vec_gdf(grid_vec_file, grid_vec_lyr)
     grid_gdf["unq_id"] = numpy.arange(1, len(grid_gdf) + 1, 1, dtype=int)
 
@@ -756,6 +826,8 @@ def thin_vector_geoms(
     pts_join_gdf.drop_duplicates(
         subset="unq_id", keep="first", inplace=True, ignore_index=False
     )
+    if out_vec_file is None:
+        return pts_join_gdf
     if len(pts_join_gdf) > 0:
         write_vec_gdf(
             pts_join_gdf,
@@ -764,27 +836,29 @@ def thin_vector_geoms(
             out_format=out_format,
             out_compress=out_compress,
         )
+    return None
 
 
 def shiftxy_vec_lyr(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     x_shift: float,
     y_shift: float,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Translate (shift) all geometries in a vector layer by ``(x_shift, y_shift)``
     in the layer's coordinate reference system units.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param x_shift: Shift along the X axis in CRS units.
     :param y_shift: Shift along the Y axis in CRS units.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
@@ -792,6 +866,8 @@ def shiftxy_vec_lyr(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Shifted :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -802,11 +878,13 @@ def shiftxy_vec_lyr(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    base_gdf = read_vec_gdf(vec_file, vec_lyr)
+    base_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     shifted_gdf = base_gdf.copy()
     shifted_gdf["geometry"] = base_gdf.geometry.translate(
         xoff=x_shift, yoff=y_shift
     )
+    if out_vec_file is None:
+        return shifted_gdf
     write_vec_gdf(
         shifted_gdf,
         out_vec_file,
@@ -814,3 +892,4 @@ def shiftxy_vec_lyr(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None

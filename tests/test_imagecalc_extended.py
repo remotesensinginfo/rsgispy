@@ -699,14 +699,32 @@ def test_optional_scipy_sklearn_guards(monkeypatch):
 
         assert cmp_fresh.HAVE_SCIPY is False
         assert cmp_fresh.HAVE_SKLEARN is False
-        assert not hasattr(cmp_fresh, "calc_img_correlation")
-        assert not hasattr(cmp_fresh, "calc_img_earth_move_dist")
-        assert not hasattr(cmp_fresh, "calc_img_mutual_info")
-        assert hasattr(cmp_fresh, "calc_img_difference")
+        for fn_name in (
+            "calc_img_correlation",
+            "calc_img_earth_move_dist",
+            "calc_img_mutual_info",
+            "calc_img_difference",
+        ):
+            assert hasattr(cmp_fresh, fn_name)
+            assert fn_name in cmp_fresh.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            cmp_fresh.calc_img_correlation("a.tif", "b.tif", 1, 1)
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            cmp_fresh.calc_img_earth_move_dist("a.tif", "b.tif", 1, 1)
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            cmp_fresh.calc_img_mutual_info("a.tif", "b.tif", 1, 1)
 
         assert dist_fresh.HAVE_SCIPY is False
-        assert not hasattr(dist_fresh, "calc_dist_to_img_vals")
-        assert not hasattr(dist_fresh, "buffer_img_pxl_vals")
+        for fn_name in ("calc_dist_to_img_vals", "buffer_img_pxl_vals"):
+            assert hasattr(dist_fresh, fn_name)
+            assert fn_name in dist_fresh.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            dist_fresh.calc_dist_to_img_vals("in.tif", [1], "out.tif")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            dist_fresh.buffer_img_pxl_vals("in.tif", [1], "out.tif", 10.0)
 
         assert fill_fresh.HAVE_SCIPY is False
-        assert not hasattr(fill_fresh, "calc_fill_regions_knn")
+        assert hasattr(fill_fresh, "calc_fill_regions_knn")
+        assert "calc_fill_regions_knn" in fill_fresh.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            fill_fresh.calc_fill_regions_knn("in.tif", 0, "fill.tif", 1, "out.tif")

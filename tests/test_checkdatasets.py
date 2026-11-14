@@ -7,10 +7,12 @@ from unittest.mock import patch
 
 import geopandas
 import numpy
+import pytest
 import rasterio
 from rasterio.transform import from_origin
 import shapely.geometry
 
+import rsgispy
 import rsgispy.tools as rtools
 from rsgispy.tools import checkdatasets
 
@@ -242,11 +244,18 @@ def test_optional_h5py_missing(tmp_path):
 
         assert not mod.HAVE_H5PY
         for fn_name in h5_only:
-            assert not hasattr(mod, fn_name)
-            assert fn_name not in mod.__all__
+            assert hasattr(mod, fn_name)
+            assert fn_name in mod.__all__
         for fn_name in always_avail:
             assert hasattr(mod, fn_name)
             assert fn_name in mod.__all__
+
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            mod.check_hdf5_file(str(tif))
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            mod.run_check_hdf5_file(str(tif))
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            mod.run_check_hdf5_files([str(tif)])
 
         ok, err = mod.check_gdal_image_file(str(tif), chk_proj=True, epsg_code=32630)
         assert ok is True

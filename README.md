@@ -2,7 +2,7 @@
 
 **rsgispy** is a pure Python reimplementation of the [Remote Sensing and GIS Software Library (RSGISLib)](https://www.rsgislib.org) designed to be easy to install, cross-platform, and straightforward to maintain while preserving a familiar API.
 
-Instead of wrapping compiled C++ extensions and GDAL SWIG (`osgeo`) bindings, `rsgispy` builds directly on standard modern Python geospatial libraries—including `rasterio`, `geopandas`, `shapely`, `pyproj`, `numpy`, `matplotlib`, and `pymu-eval`and is distributed under the Apache-2.0 licence.
+Instead of wrapping compiled C++ extensions and GDAL SWIG (`osgeo`) bindings, `rsgispy` builds directly on standard modern Python geospatial libraries—including `rasterio`, `geopandas`, `shapely`, `pyproj`, `numpy`, `pandas`, `matplotlib`, and `pymu-eval`—and is distributed under the Apache-2.0 licence.
 
 ## What is it for?
 
@@ -16,7 +16,6 @@ Instead of wrapping compiled C++ extensions and GDAL SWIG (`osgeo`) bindings, `r
 ## Who should use it?
 
 - **Existing RSGISLib users** who want a `pip` installable, pure-Python alternative without C++/GDAL compilation constraints, while retaining familiar subpackage names, data type constants (`TYPE_*`), and workflows. Note, while the functionality is similar, `rsgispy` is not a drop-in replacement for RSGISLib and some workflows may require minor adjustments as the module structure has been reorganised and some functions have been renamed or restructured. Also, it is important to note that `rsgispy` is still under active development and some features from RSGISLib may not yet be implemented but RSGISLib will not be maintained in the long term and will shortly be deprecated in favour of `rsgispy`.
-- 
 - **Remote sensing researchers & Earth observation practitioners** building reproducible satellite, airborne, or UAV processing pipelines in Python or Jupyter notebooks.
 - **GIS analysts & data engineers** working with Cloud-Optimised GeoTIFFs, GeoParquet, and multi-layer raster/vector stacks on Linux, macOS, or Windows (Python 3.9–3.14).
 
@@ -26,7 +25,6 @@ Instead of wrapping compiled C++ extensions and GDAL SWIG (`osgeo`) bindings, `r
 
 - **Origins (2008–2009)**: RSGISLib was started in April 2008 by Pete Bunting in the Department of Geography and Earth Sciences at Aberystwyth University to consolidate research code for environmental remote sensing and vegetation science. Dan Clewley joined in 2008, and the library was released publicly as open-source software (GPLv3) in November 2009, with Nathan Thomas later joining the core team around 2015.
 - **Technical evolution**: Originally implemented in C++ atop GDAL/OGR, Boost, GSL, HDF5/KEA, and muParser, RSGISLib initially exposed over 300 commands through an XML scripting interface (`rsgisexe`) before introducing Python bindings around 2013–2014 and integrating closely with GDAL Raster Attribute Tables, the KEA image format, and RIOS. In 2021–2022, RSGISLib 5.0 overhauled the module layout, streamlined dependencies, and formalised automated testing across more than 800 tools.
-- 
 - **Motivation for `rsgispy`**: While RSGISLib's C++ core offered strong performance, maintaining and distributing compiled binaries across platforms and Python versions remained complex outside `conda-forge`. `rsgispy` modernises and restructures those workflows in pure Python with zero `osgeo`/`rsgislib` dependencies, making installation via `pip` lightweight and transparent.
 
 ### RSGISLib Publication & Citation
@@ -74,7 +72,7 @@ If you use `rsgispy` or build on concepts from RSGISLib in academic work, please
 
 ### Minimal installation
 
-Install `rsgispy` with only its core dependencies (`geopandas`, `matplotlib`, `matplotlib-scalebar`, `numpy`, `pymu-eval`, `pyproj`, `rasterio`, `shapely`, and `tqdm`):
+Install `rsgispy` with only its core dependencies (`geopandas`, `matplotlib`, `matplotlib-scalebar`, `numpy`, `pandas`, `pymu-eval`, `pyproj`, `rasterio`, `shapely`, and `tqdm`):
 
 ```bash
 pip install .

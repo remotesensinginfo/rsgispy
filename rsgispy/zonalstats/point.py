@@ -3,11 +3,13 @@ The zonalstats.point module provides point-in-pixel zonal extraction functions
 using ``rasterio`` and ``geopandas``.
 """
 
+import os
 from typing import List, Optional, Union
 
 import geopandas
 
 import rsgispy
+from rsgispy.vectorprocess import VectorInput
 from rsgispy.zonalstats._helpers import (
     is_valid_pixel_value as _is_valid_pixel_value,
     open_validated_zonal_inputs as _open_validated_zonal_inputs,
@@ -23,7 +25,7 @@ __all__ = [
 
 
 def ext_point_band_values_file(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     input_img: str,
     img_band: int,
@@ -35,12 +37,18 @@ def ext_point_band_values_file(
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
+) -> Optional[geopandas.GeoDataFrame]:
     """
-    Extract raster band pixel values at point locations in ``vec_file``.
+    Extract raster band pixel values at point locations in ``vec_file``
+    (a vector file path or an in-memory :class:`geopandas.GeoDataFrame`).
 
-    :param vec_file: Input point vector file path (updated in-place on disk).
-    :param vec_lyr: Vector layer name (or ``None`` for single-layer formats).
+    :param vec_file: Input point vector file path (updated in-place on disk
+                     unless ``out_vec_file`` is given) or
+                     :class:`geopandas.GeoDataFrame`.
+    :param vec_lyr: Vector layer name (or ``None`` for single-layer formats /
+                    in-memory GeoDataFrames).
     :param input_img: Path to the input raster image.
     :param img_band: 1-based band index within ``input_img``.
     :param min_thres: Lower inclusive threshold for valid pixel values.
@@ -58,6 +66,16 @@ def ext_point_band_values_file(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :param out_vec_file: Optional separate output vector file path. Required if
+                         writing to disk when ``vec_file`` is a
+                         :class:`geopandas.GeoDataFrame`; when ``vec_file`` is a
+                         ``GeoDataFrame`` and ``out_vec_file`` is ``None``, the
+                         updated GeoDataFrame is returned in memory.
+    :param out_vec_lyr: Optional output vector layer name (defaults to
+                        ``vec_lyr``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``vec_file`` is a
+             ``GeoDataFrame`` and ``out_vec_file`` is ``None``, otherwise
+             ``None``.
 
     .. code:: python
 
@@ -75,6 +93,7 @@ def ext_point_band_values_file(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
+    is_gdf_input = isinstance(vec_file, geopandas.GeoDataFrame)
     vec_gdf = _read_vec_file(vec_file, vec_lyr)
     vec_gdf = ext_point_band_values(
         vec_gdf,
@@ -88,11 +107,27 @@ def ext_point_band_values_file(
         vec_def_epsg=vec_def_epsg,
         use_pbar=use_pbar,
     )
-    _write_vec_file(vec_gdf, vec_file, vec_lyr, out_compress=out_compress)
+    if out_vec_file is not None:
+        _write_vec_file(
+            vec_gdf,
+            out_vec_file,
+            out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+            out_compress=out_compress,
+        )
+        return None
+    if is_gdf_input:
+        return vec_gdf
+    _write_vec_file(
+        vec_gdf,
+        vec_file,  # type: ignore[arg-type]
+        out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+        out_compress=out_compress,
+    )
+    return None
 
 
 def ext_point_band_values(
-    vec_gdf: geopandas.GeoDataFrame,
+    vec_gdf: VectorInput,
     input_img: str,
     img_band: int,
     min_thres: float,
@@ -102,15 +137,19 @@ def ext_point_band_values(
     reproj_vec: bool = False,
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
+    vec_lyr: Optional[str] = None,
 ) -> geopandas.GeoDataFrame:
     """
     Extract raster band pixel values at point locations in a
-    :class:`geopandas.GeoDataFrame`.
+    :class:`geopandas.GeoDataFrame` or vector file path.
 
-    The GeoDataFrame is updated in-place and returned (original CRS and
-    geometries are preserved even when ``reproj_vec=True``).
+    When given a :class:`geopandas.GeoDataFrame`, it is updated in-place and
+    returned (original CRS and geometries are preserved even when
+    ``reproj_vec=True``). When given a file path, the layer is loaded into a
+    new GeoDataFrame and returned.
 
-    :param vec_gdf: Input GeoDataFrame containing point geometries.
+    :param vec_gdf: Input :class:`geopandas.GeoDataFrame` or vector file path
+                    containing point geometries.
     :param input_img: Path to the input raster image.
     :param img_band: 1-based band index within ``input_img``.
     :param min_thres: Lower inclusive threshold for valid pixel values.
@@ -123,6 +162,7 @@ def ext_point_band_values(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param vec_lyr: Optional layer name when ``vec_gdf`` is a file path.
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
     .. code:: python
@@ -144,6 +184,9 @@ def ext_point_band_values(
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if vec_gdf is None:
         raise rsgispy.RSGISPyException("The inputted vector layer was None")
+
+    if isinstance(vec_gdf, (str, os.PathLike)):
+        vec_gdf = _read_vec_file(vec_gdf, vec_lyr)
 
     if not out_field:
         raise rsgispy.RSGISPyException(

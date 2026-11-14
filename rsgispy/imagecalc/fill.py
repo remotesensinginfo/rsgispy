@@ -1,9 +1,6 @@
 """
 The imagecalc.fill module provides spatial k-nearest-neighbour region filling
 utilities using ``rasterio`` and ``scipy``.
-
-Functions requiring ``scipy`` are only defined and exported when ``scipy`` is
-installed.
 """
 
 from contextlib import ExitStack
@@ -28,12 +25,10 @@ try:
 
     HAVE_SCIPY = True
 except ImportError:
+    scipy = None  # type: ignore[assignment]
     HAVE_SCIPY = False
 
-__all__: List[str] = []
-
-if HAVE_SCIPY:
-    __all__.append("calc_fill_regions_knn")
+__all__: List[str] = ["calc_fill_regions_knn"]
 
 
 def _summarise_neighbours(nbr_vals: np.ndarray, summary: int) -> np.ndarray:
@@ -105,137 +100,136 @@ def _collect_reference_points(
     return np.concatenate(coords_list, axis=0), np.concatenate(vals_list, axis=0)
 
 
-if HAVE_SCIPY:
+def calc_fill_regions_knn(
+    in_ref_img: str,
+    ref_no_data: Union[int, float],
+    in_fill_regions_img: str,
+    fill_region_val: Union[int, float],
+    output_img: str,
+    k: int = 5,
+    summary: int = rsgispy.SUMTYPE_MODE,
+    gdalformat: str = "GTIFF",
+    datatype: int = rsgispy.TYPE_32INT,
+    use_pbar: bool = True,
+    creation_opts: Optional[Mapping[str, Any]] = None,
+) -> None:
+    """
+    Fill regions in ``in_fill_regions_img`` equal to ``fill_region_val``
+    using spatial k-nearest neighbours sampled from ``in_ref_img``.
 
-    def calc_fill_regions_knn(
-        in_ref_img: str,
-        ref_no_data: Union[int, float],
-        in_fill_regions_img: str,
-        fill_region_val: Union[int, float],
-        output_img: str,
-        k: int = 5,
-        summary: int = rsgispy.SUMTYPE_MODE,
-        gdalformat: str = "GTIFF",
-        datatype: int = rsgispy.TYPE_32INT,
-        use_pbar: bool = True,
-        creation_opts: Optional[Mapping[str, Any]] = None,
-    ) -> None:
-        """
-        Fill regions in ``in_fill_regions_img`` equal to ``fill_region_val``
-        using spatial k-nearest neighbours sampled from ``in_ref_img``.
+    Pixels outside the target fill regions are written as ``0``. Both input
+    images must share the same CRS/projection.
 
-        Pixels outside the target fill regions are written as ``0``. Both input
-        images must share the same CRS/projection.
+    :param in_ref_img: Path to the reference image (can differ in resolution).
+    :param ref_no_data: No-data value in ``in_ref_img`` excluded from KNN.
+    :param in_fill_regions_img: Path to the mask image defining fill regions.
+    :param fill_region_val: Pixel value in ``in_fill_regions_img`` to fill.
+    :param output_img: Path to the output image file.
+    :param k: Number of nearest neighbours (Default = ``5``).
+    :param summary: Summary method ``rsgispy.SUMTYPE_*`` (Mode, Median, Max,
+                    Min, Mean, Sum, or Range; Default = ``SUMTYPE_MODE``).
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
+                     (Default = ``rsgispy.TYPE_32INT``).
+    :param use_pbar: If True, display a tqdm progress bar (Default = True).
+    :param creation_opts: Optional mapping of GDAL creation options.
 
-        :param in_ref_img: Path to the reference image (can differ in resolution).
-        :param ref_no_data: No-data value in ``in_ref_img`` excluded from KNN.
-        :param in_fill_regions_img: Path to the mask image defining fill regions.
-        :param fill_region_val: Pixel value in ``in_fill_regions_img`` to fill.
-        :param output_img: Path to the output image file.
-        :param k: Number of nearest neighbours (Default = ``5``).
-        :param summary: Summary method ``rsgispy.SUMTYPE_*`` (Mode, Median, Max,
-                        Min, Mean, Sum, or Range; Default = ``SUMTYPE_MODE``).
-        :param gdalformat: GDAL/rasterio driver format for the output file
-                           (Default = ``'GTIFF'``).
-        :param datatype: Output data type constant from ``rsgispy.TYPE_*``
-                         (Default = ``rsgispy.TYPE_32INT``).
-        :param use_pbar: If True, display a tqdm progress bar (Default = True).
-        :param creation_opts: Optional mapping of GDAL creation options.
+    .. code:: python
 
-        .. code:: python
+        import rsgispy
+        import rsgispy.imagecalc.fill
 
-            import rsgispy
-            import rsgispy.imagecalc.fill
-
-            rsgispy.imagecalc.fill.calc_fill_regions_knn(
-                in_ref_img="ref_classes.tif",
-                ref_no_data=0,
-                in_fill_regions_img="fill_mask.tif",
-                fill_region_val=1,
-                output_img="filled_classes.tif",
-                k=5,
-                summary=rsgispy.SUMTYPE_MODE,
-            )
-        """
-        # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-        ensure_file_exists(in_ref_img, label="Reference image")
-        ensure_file_exists(in_fill_regions_img, label="Fill regions image")
-        if k < 1:
-            raise rsgispy.RSGISPyException("k must be >= 1.")
-
-        valid_summaries = (
-            rsgispy.SUMTYPE_MODE,
-            rsgispy.SUMTYPE_MEDIAN,
-            rsgispy.SUMTYPE_MAX,
-            rsgispy.SUMTYPE_MIN,
-            rsgispy.SUMTYPE_MEAN,
-            rsgispy.SUMTYPE_SUM,
-            rsgispy.SUMTYPE_RANGE,
+        rsgispy.imagecalc.fill.calc_fill_regions_knn(
+            in_ref_img="ref_classes.tif",
+            ref_no_data=0,
+            in_fill_regions_img="fill_mask.tif",
+            fill_region_val=1,
+            output_img="filled_classes.tif",
+            k=5,
+            summary=rsgispy.SUMTYPE_MODE,
         )
-        if summary not in valid_summaries:
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    rsgispy.check_optional_dep(HAVE_SCIPY, "calc_fill_regions_knn", "scipy", "stats")
+    ensure_file_exists(in_ref_img, label="Reference image")
+    ensure_file_exists(in_fill_regions_img, label="Fill regions image")
+    if k < 1:
+        raise rsgispy.RSGISPyException("k must be >= 1.")
+
+    valid_summaries = (
+        rsgispy.SUMTYPE_MODE,
+        rsgispy.SUMTYPE_MEDIAN,
+        rsgispy.SUMTYPE_MAX,
+        rsgispy.SUMTYPE_MIN,
+        rsgispy.SUMTYPE_MEAN,
+        rsgispy.SUMTYPE_SUM,
+        rsgispy.SUMTYPE_RANGE,
+    )
+    if summary not in valid_summaries:
+        raise rsgispy.RSGISPyException(
+            "Summary method not recognised/available."
+        )
+
+    if not do_gdal_layers_have_same_proj(in_ref_img, in_fill_regions_img):
+        raise rsgispy.RSGISPyException(
+            "The reference image and fill regions image "
+            "do not have the same projection."
+        )
+
+    ref_coords, ref_vals = _collect_reference_points(in_ref_img, ref_no_data)
+    k_eff = min(int(k), int(ref_vals.size))
+    kd_tree = scipy.spatial.cKDTree(ref_coords)
+
+    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
+
+    with ExitStack() as stack:
+        try:
+            fill_src = stack.enter_context(
+                rasterio.open(in_fill_regions_img, "r")
+            )
+        except Exception as err:
             raise rsgispy.RSGISPyException(
-                "Summary method not recognised/available."
-            )
+                f"Could not open fill regions image '{in_fill_regions_img}': {err}"
+            ) from err
 
-        if not do_gdal_layers_have_same_proj(in_ref_img, in_fill_regions_img):
-            raise rsgispy.RSGISPyException(
-                "The reference image and fill regions image "
-                "do not have the same projection."
-            )
+        grid = compute_spatial_intersection({in_fill_regions_img: fill_src})
+        dst = open_output_dataset(
+            stack=stack,
+            output_img=output_img,
+            gdalformat=gdalformat,
+            out_rio_dtype=out_rio_dtype,
+            grid=grid,
+            count=1,
+            creation_opts=creation_opts,
+        )
 
-        ref_coords, ref_vals = _collect_reference_points(in_ref_img, ref_no_data)
-        k_eff = min(int(k), int(ref_vals.size))
-        kd_tree = scipy.spatial.cKDTree(ref_coords)
+        for out_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
+            win_h = int(out_win.height)
+            win_w = int(out_win.width)
+            in_block = fill_src.read(1, window=out_win)
+            out_arr = np.zeros((win_h, win_w), dtype=out_np_dtype)
 
-        out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
-        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
-
-        with ExitStack() as stack:
-            try:
-                fill_src = stack.enter_context(
-                    rasterio.open(in_fill_regions_img, "r")
+            fill_mask = in_block == fill_region_val
+            if np.any(fill_mask):
+                loc_rows, loc_cols = np.nonzero(fill_mask)
+                abs_rows = loc_rows + int(out_win.row_off)
+                abs_cols = loc_cols + int(out_win.col_off)
+                query_pts = _pixel_centres_from_indices(
+                    fill_src.transform, abs_rows, abs_cols
                 )
-            except Exception as err:
-                raise rsgispy.RSGISPyException(
-                    f"Could not open fill regions image '{in_fill_regions_img}': {err}"
-                ) from err
-
-            grid = compute_spatial_intersection({in_fill_regions_img: fill_src})
-            dst = open_output_dataset(
-                stack=stack,
-                output_img=output_img,
-                gdalformat=gdalformat,
-                out_rio_dtype=out_rio_dtype,
-                grid=grid,
-                count=1,
-                creation_opts=creation_opts,
-            )
-
-            for out_win in iter_dataset_windows(
-                grid.height, grid.width, use_pbar=use_pbar
-            ):
-                win_h = int(out_win.height)
-                win_w = int(out_win.width)
-                in_block = fill_src.read(1, window=out_win)
-                out_arr = np.zeros((win_h, win_w), dtype=out_np_dtype)
-
-                fill_mask = in_block == fill_region_val
-                if np.any(fill_mask):
-                    loc_rows, loc_cols = np.nonzero(fill_mask)
-                    abs_rows = loc_rows + int(out_win.row_off)
-                    abs_cols = loc_cols + int(out_win.col_off)
-                    query_pts = _pixel_centres_from_indices(
-                        fill_src.transform, abs_rows, abs_cols
-                    )
-                    _, idxs = kd_tree.query(query_pts, k=k_eff)
-                    nbr_vals = ref_vals[idxs].reshape(loc_rows.size, k_eff)
-                    fill_vals = _summarise_neighbours(nbr_vals, summary)
-                    out_arr[loc_rows, loc_cols] = fill_vals.astype(
-                        out_np_dtype, copy=False
-                    )
-
-                dst.write(
-                    cast_result_block(out_arr, win_h, win_w, out_np_dtype),
-                    1,
-                    window=out_win,
+                _, idxs = kd_tree.query(query_pts, k=k_eff)
+                nbr_vals = ref_vals[idxs].reshape(loc_rows.size, k_eff)
+                fill_vals = _summarise_neighbours(nbr_vals, summary)
+                out_arr[loc_rows, loc_cols] = fill_vals.astype(
+                    out_np_dtype, copy=False
                 )
+
+            dst.write(
+                cast_result_block(out_arr, win_h, win_w, out_np_dtype),
+                1,
+                window=out_win,
+            )

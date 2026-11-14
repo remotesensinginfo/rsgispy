@@ -4,6 +4,7 @@ dropping, and tabular export functions for vector attribute tables using
 ``geopandas``.
 """
 
+import os
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 import geopandas
@@ -12,6 +13,7 @@ import numpy
 import rsgispy
 import rsgispy.tools.stats
 from rsgispy.vectorprocess import (
+    VectorInput,
     cast_col_data,
     infer_parquet_compression,
     read_vec_gdf,
@@ -89,19 +91,25 @@ def write_vec_column_to_layer(
 
 
 def write_vec_column(
-    out_vec_file: str,
+    out_vec_file: VectorInput,
     out_vec_lyr: Optional[str],
     att_column: str,
     att_col_datatype: Any,
     att_col_data: Sequence[Any],
     out_format: Optional[str] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+    dest_vec_file: Optional[Union[str, os.PathLike]] = None,
+) -> Optional[geopandas.GeoDataFrame]:
     """
-    Write or update an attribute column in an existing vector file using
-    ``geopandas``.
+    Write or update an attribute column in an existing vector file or
+    :class:`geopandas.GeoDataFrame` using ``geopandas``.
 
-    :param out_vec_file: Path to the vector file to update.
+    When ``out_vec_file`` is an in-memory :class:`geopandas.GeoDataFrame` and
+    ``dest_vec_file`` is ``None``, a copy with the added/updated column is
+    returned without writing to disk.
+
+    :param out_vec_file: Path to the vector file to update, or input
+                         :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Layer name within ``out_vec_file`` (or ``None``).
     :param att_column: Name of the output attribute column.
     :param att_col_datatype: Target column type (e.g., ``int``, ``float``,
@@ -115,6 +123,10 @@ def write_vec_column(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :param dest_vec_file: Optional separate output file path.
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is a
+             ``GeoDataFrame`` and ``dest_vec_file`` is ``None``, otherwise
+             ``None``.
 
     .. code:: python
 
@@ -125,26 +137,40 @@ def write_vec_column(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
+    is_gdf_input = isinstance(out_vec_file, geopandas.GeoDataFrame)
     gdf = read_vec_gdf(out_vec_file, out_vec_lyr)
     write_vec_column_to_layer(gdf, att_column, att_col_datatype, att_col_data)
+    if dest_vec_file is not None:
+        write_vec_gdf(
+            gdf,
+            dest_vec_file,
+            out_vec_lyr,
+            out_format=out_format,
+            out_compress=out_compress,
+        )
+        return None
+    if is_gdf_input:
+        return gdf
     write_vec_gdf(
         gdf,
-        out_vec_file,
+        out_vec_file,  # type: ignore[arg-type]
         out_vec_lyr,
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def read_vec_column(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     att_column: str,
 ) -> List[Any]:
     """
-    Read a single attribute column from a vector file into a Python list.
+    Read a single attribute column from a vector file or
+    :class:`geopandas.GeoDataFrame` into a Python list.
 
-    :param vec_file: Path to the input vector file.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param att_column: Name of the attribute column to read.
     :return: List of column values in feature order.
@@ -157,7 +183,7 @@ def read_vec_column(
             "polys.gpkg", "polys", "class_name"
         )
     """
-    gdf = read_vec_gdf(vec_file, vec_lyr)
+    gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     if att_column not in gdf.columns:
         raise rsgispy.RSGISPyException(
             f"The specified column '{att_column}' does not exist in the input "
@@ -167,14 +193,15 @@ def read_vec_column(
 
 
 def read_vec_columns(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     att_columns: Sequence[str],
 ) -> List[Dict[str, Any]]:
     """
-    Read multiple attribute columns from a vector file as a list of dicts.
+    Read multiple attribute columns from a vector file or
+    :class:`geopandas.GeoDataFrame` as a list of dicts.
 
-    :param vec_file: Path to the input vector file.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param att_columns: Sequence of attribute column names to read.
     :return: List of dictionaries keyed by column name, one per feature.
@@ -187,7 +214,7 @@ def read_vec_columns(
             "polys.gpkg", "polys", ["id", "class_name"]
         )
     """
-    gdf = read_vec_gdf(vec_file, vec_lyr)
+    gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     validate_columns_exist(gdf, att_columns)
 
     sub_df = gdf[list(att_columns)]
@@ -198,22 +225,24 @@ def read_vec_columns(
 
 
 def drop_vec_cols(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     drop_cols: Sequence[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     chk_cols_present: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
-    Remove specified columns from a vector layer and write a new vector file.
+    Remove specified columns from a vector layer and write a new vector file
+    or return an updated :class:`geopandas.GeoDataFrame`.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param drop_cols: Sequence of column names to drop.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param chk_cols_present: If ``True``, silently ignore column names not
@@ -223,6 +252,8 @@ def drop_vec_cols(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -245,6 +276,8 @@ def drop_vec_cols(
     if cols_to_drop:
         data_gdf = data_gdf.drop(columns=cols_to_drop)
 
+    if out_vec_file is None:
+        return data_gdf
     write_vec_gdf(
         data_gdf,
         out_vec_file,
@@ -252,24 +285,27 @@ def drop_vec_cols(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def rename_vec_cols(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     rname_cols_lut: Dict[str, str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
-    Rename columns in a vector layer and write a new vector file.
+    Rename columns in a vector layer and write a new vector file or return
+    an updated :class:`geopandas.GeoDataFrame`.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param rname_cols_lut: Mapping ``{"old_name": "new_name"}``.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
@@ -277,6 +313,8 @@ def rename_vec_cols(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -289,6 +327,8 @@ def rename_vec_cols(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     data_gdf = data_gdf.rename(columns=rname_cols_lut)
+    if out_vec_file is None:
+        return data_gdf
     write_vec_gdf(
         data_gdf,
         out_vec_file,
@@ -296,24 +336,26 @@ def rename_vec_cols(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def sort_vec_lyr(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]],
     out_vec_lyr: Optional[str],
     sort_by: Union[str, List[str]],
     ascending: Union[bool, List[bool]],
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Sort features in a vector layer by one or more attribute columns.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param sort_by: Single column name or list of column names to sort by.
     :param ascending: Boolean or list of booleans matching ``sort_by``
@@ -324,6 +366,8 @@ def sort_vec_lyr(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Sorted :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -344,11 +388,13 @@ def sort_vec_lyr(
                 "If lists, the length of sort_by and ascending must be the same."
             )
 
-    base_gdf = read_vec_gdf(vec_file, vec_lyr)
+    base_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     cols_to_check = [sort_by] if isinstance(sort_by, str) else sort_by
     validate_columns_exist(base_gdf, cols_to_check)
 
-    sorted_gdf = base_gdf.sort_values(by=sort_by, ascending=ascending)
+    sorted_gdf = base_gdf.sort_values(by=sort_by, ascending=ascending).copy()
+    if out_vec_file is None:
+        return sorted_gdf
     write_vec_gdf(
         sorted_gdf,
         out_vec_file,
@@ -356,17 +402,18 @@ def sort_vec_lyr(
         out_format=out_format,
         out_compress=out_compress,
     )
+    return None
 
 
 def get_unq_col_values(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     col_name: str,
 ) -> numpy.ndarray:
     """
     Return the unique values within an attribute column.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param col_name: Name of the column to inspect.
     :return: NumPy array of unique values in ``col_name``.
@@ -379,13 +426,13 @@ def get_unq_col_values(
             "polys.gpkg", "polys", "landcover"
         )
     """
-    gdf = read_vec_gdf(vec_file, vec_lyr)
+    gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     validate_columns_exist(gdf, [col_name])
     return numpy.asarray(gdf[col_name].unique())
 
 
 def get_vec_cols_as_array(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     cols: Sequence[str],
     lower_limit: Optional[float] = None,
@@ -396,7 +443,7 @@ def get_vec_cols_as_array(
     NumPy array, optionally filtering out rows outside ``(lower_limit,
     upper_limit)`` or containing non-finite values.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param cols: Sequence of column names to read.
     :param lower_limit: Optional exclusive lower bound applied across all columns.
@@ -411,7 +458,7 @@ def get_vec_cols_as_array(
             "samples.gpkg", "samples", ["b1", "b2"], lower_limit=0.0
         )
     """
-    gdf = read_vec_gdf(vec_file, vec_lyr)
+    gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     validate_columns_exist(gdf, cols)
     out_arr = gdf.loc[:, list(cols)].to_numpy(dtype=float)
     return rsgispy.tools.stats.mask_data_to_valid(
@@ -420,14 +467,14 @@ def get_vec_cols_as_array(
 
 
 def export_vec_attrs_to_csv(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    output_file: str,
+    output_file: Union[str, os.PathLike],
 ) -> None:
     """
     Export the attribute table of a vector layer (excluding geometry) to CSV.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param output_file: Output CSV file path.
 
@@ -442,20 +489,20 @@ def export_vec_attrs_to_csv(
     data_df = read_vec_gdf(vec_file, vec_lyr)
     if "geometry" in data_df.columns:
         data_df = data_df.drop(columns=["geometry"])
-    data_df.to_csv(output_file)
+    data_df.to_csv(os.fspath(output_file))
 
 
 def export_vec_attrs_to_excel(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    output_file: str,
+    output_file: Union[str, os.PathLike],
     out_sheet_name: str = "Sheet1",
 ) -> None:
     """
     Export the attribute table of a vector layer (excluding geometry) to an
     Excel ``.xlsx`` workbook.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param output_file: Output Excel file path.
     :param out_sheet_name: Worksheet name (Default = ``'Sheet1'``).
@@ -468,17 +515,18 @@ def export_vec_attrs_to_excel(
             "polys.gpkg", "polys", "attrs.xlsx"
         )
     """
+    out_path = os.fspath(output_file)
     data_df = read_vec_gdf(vec_file, vec_lyr)
     if "geometry" in data_df.columns:
         data_df = data_df.drop(columns=["geometry"])
     try:
         data_df.to_excel(
-            output_file, sheet_name=out_sheet_name, engine="xlsxwriter"
+            out_path, sheet_name=out_sheet_name, engine="xlsxwriter"
         )
     except ImportError:
         try:
             data_df.to_excel(
-                output_file, sheet_name=out_sheet_name, engine="openpyxl"
+                out_path, sheet_name=out_sheet_name, engine="openpyxl"
             )
         except ImportError as err:
             raise rsgispy.RSGISPyException(
@@ -487,9 +535,9 @@ def export_vec_attrs_to_excel(
 
 
 def export_vec_attrs_to_parquet(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    output_file: str,
+    output_file: Union[str, os.PathLike],
     gzip_output: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
@@ -497,7 +545,7 @@ def export_vec_attrs_to_parquet(
     Export the attribute table of a vector layer (excluding geometry) to a
     Parquet file.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param output_file: Output Parquet file path.
     :param gzip_output: If ``True`` and ``out_compress`` is ``None``, compress
@@ -516,17 +564,18 @@ def export_vec_attrs_to_parquet(
             "polys.gpkg", "polys", "attrs.parquet"
         )
     """
+    out_path = os.fspath(output_file)
     data_df = read_vec_gdf(vec_file, vec_lyr)
     if "geometry" in data_df.columns:
         data_df = data_df.drop(columns=["geometry"])
     if out_compress is not None:
-        comp = infer_parquet_compression(output_file, out_compress=out_compress)
+        comp = infer_parquet_compression(out_path, out_compress=out_compress)
     elif gzip_output:
         comp = "gzip"
     else:
-        comp = infer_parquet_compression(output_file, out_compress=None)
+        comp = infer_parquet_compression(out_path, out_compress=None)
     try:
-        data_df.to_parquet(output_file, compression=comp)
+        data_df.to_parquet(out_path, compression=comp)
     except ImportError as err:
         raise rsgispy.RSGISPyException(
             "Writing Parquet files requires 'pyarrow' or 'fastparquet'."

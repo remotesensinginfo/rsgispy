@@ -497,8 +497,12 @@ def test_optional_requests_missing_dataaccess(tmp_path):
             "download_scn",
             "download_scns",
         ):
-            assert not hasattr(odata_mod, fn_name)
-            assert fn_name not in odata_mod.__all__
+            assert hasattr(odata_mod, fn_name)
+            assert fn_name in odata_mod.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            odata_mod.get_access_token("user", "pass")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            odata_mod.query_scn_lst("S2", (0.0, 1.0, 0.0, 1.0))
         assert (
             odata_mod.get_sensor_collection_name(odata_mod.RSGIS_ODATA_SEN2)
             == "SENTINEL-2"
@@ -514,8 +518,14 @@ def test_optional_requests_missing_dataaccess(tmp_path):
             "find_all_granules",
             "cmr_download_file_http",
         ):
-            assert not hasattr(cmr_mod, sym_name)
-            assert sym_name not in cmr_mod.__all__
+            assert hasattr(cmr_mod, sym_name)
+            assert sym_name in cmr_mod.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            cmr_mod.SessionWithHeaderNASARedirection("user", "pass")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            cmr_mod.get_prods_info("MOD09GA")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            cmr_mod.find_granules("MOD09GA", "061")
 
         assert hasattr(cmr_mod, "get_total_file_size")
         assert "get_total_file_size" in cmr_mod.__all__
@@ -542,7 +552,7 @@ def test_optional_requests_missing_dataaccess(tmp_path):
 
 
 def test_optional_pysondb_missing_dataaccess():
-    """Verify nasa_cmr omits pysondb functions when pysondb is missing."""
+    """Verify nasa_cmr exposes pysondb functions and raises RSGISPyException."""
     import importlib
     import sys
     from unittest.mock import patch
@@ -556,8 +566,12 @@ def test_optional_pysondb_missing_dataaccess():
 
         assert not cmr_mod.HAVE_PYSONDB
         for fn_name in ("create_cmr_dwnld_db", "download_granules_use_dwnld_db"):
-            assert not hasattr(cmr_mod, fn_name)
-            assert fn_name not in cmr_mod.__all__
+            assert hasattr(cmr_mod, fn_name)
+            assert fn_name in cmr_mod.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            cmr_mod.create_cmr_dwnld_db("db.json", [], "application/x-hdfeos")
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            cmr_mod.download_granules_use_dwnld_db("db.json", ".", "creds.txt")
         assert hasattr(cmr_mod, "get_total_file_size")
         assert "get_total_file_size" in cmr_mod.__all__
     finally:

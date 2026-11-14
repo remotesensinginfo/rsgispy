@@ -393,3 +393,113 @@ def test_spatial_attrs_and_vectorstats(tmp_path):
 
     with pytest.raises(rsgispy.RSGISPyException):
         vs_vario.calc_empirical_semivariogram(polys_gpkg, "polys", "val")
+
+
+def test_vectorattrs_gdf_in_memory(tmp_path):
+    """Test VectorInput GeoDataFrame input and in-memory GeoDataFrame returns in vectorattrs."""
+    polys_gdf = gpd.GeoDataFrame(
+        {
+            "cls": ["Forest", "Water", "Forest"],
+            "val": [10.0, 250.0, -5.0],
+            "yr": [2024, 2025, 2026],
+            "mo": [1, 6, 12],
+            "dy": [5, 15, 25],
+            "raw_str": ["Alpha-1", "Beta 2!", "Gamma  3"],
+        },
+        geometry=[
+            box(0.0, 0.0, 10.0, 10.0),
+            box(20.0, 0.0, 40.0, 10.0),
+            box(50.0, 0.0, 60.0, 20.0),
+        ],
+        crs="EPSG:32630",
+    )
+    orig_cols = list(polys_gdf.columns)
+
+    assert va_io.read_vec_column(polys_gdf, None, "cls") == [
+        "Forest",
+        "Water",
+        "Forest",
+    ]
+    assert len(va_io.read_vec_columns(polys_gdf, None, ["cls", "val"])) == 3
+    assert set(va_io.get_unq_col_values(polys_gdf, None, "cls")) == {
+        "Forest",
+        "Water",
+    }
+
+    written_gdf = va_io.write_vec_column(
+        polys_gdf, None, "score", float, [1.5, 2.5, 3.5]
+    )
+    assert isinstance(written_gdf, gpd.GeoDataFrame)
+    assert written_gdf["score"].tolist() == [1.5, 2.5, 3.5]
+    assert list(polys_gdf.columns) == orig_cols
+
+    dropped_gdf = va_io.drop_vec_cols(written_gdf, None, ["raw_str"])
+    assert "raw_str" not in dropped_gdf.columns
+
+    renamed_gdf = va_io.rename_vec_cols(dropped_gdf, None, {"cls": "lc"})
+    assert "lc" in renamed_gdf.columns
+
+    sorted_gdf = va_io.sort_vec_lyr(renamed_gdf, None, None, None, "val", False)
+    assert sorted_gdf["val"].tolist() == [250.0, 10.0, -5.0]
+
+    csv_out = str(tmp_path / "gdf_attrs.csv")
+    va_io.export_vec_attrs_to_csv(polys_gdf, None, csv_out)
+    assert os.path.exists(csv_out)
+
+    # vectorattrs.columns in-memory chaining
+    fid_gdf = va_cols.add_fid_col(polys_gdf, None, out_col="fid_val")
+    assert fid_gdf["fid_val"].tolist() == [1, 2, 3]
+    assert list(polys_gdf.columns) == orig_cols
+
+    unq_gdf = va_cols.add_unq_numeric_col(fid_gdf, None, "cls", "cls_id")
+    assert unq_gdf["cls_id"].tolist() == [1, 2, 1]
+
+    num_gdf = va_cols.add_numeric_col(unq_gdf, None, "wt", out_val=5)
+    assert num_gdf["wt"].tolist() == [5, 5, 5]
+
+    lut_gdf = va_cols.add_numeric_col_lut(
+        num_gdf, None, "cls", {"Forest": 1.5, "Water": 2.5}, "cls_wt", col_dtype="float"
+    )
+    assert lut_gdf["cls_wt"].tolist() == [1.5, 2.5, 1.5]
+
+    rng_gdf = va_cols.add_numeric_col_range_lut(
+        lut_gdf, None, "val", None, None, "val_bin", {1: (0.0, 100.0), 2: (100.0, 500.0)}
+    )
+    assert rng_gdf["val_bin"].tolist() == [1, 2, 0]
+
+    str_gdf = va_cols.add_string_col(rng_gdf, None, "tag", out_val="v1")
+    assert str_gdf["tag"].tolist() == ["v1", "v1", "v1"]
+
+    repl_gdf = va_cols.find_replace_str_vec_lyr(
+        str_gdf, None, None, None, ["cls"], {"Forest": "Woodland"}
+    )
+    assert repl_gdf["cls"].tolist() == ["Woodland", "Water", "Woodland"]
+
+    date_gdf = va_cols.create_date_col(repl_gdf, None, "yr", "mo", "dy", "obs_dt")
+    assert len(date_gdf["obs_dt"]) == 3
+
+    # vectorattrs.spatial in-memory
+    bbox_gdf = va_spatial.add_geom_bbox_cols(polys_gdf, None)
+    assert bbox_gdf["MaxX"].tolist() == [10.0, 40.0, 60.0]
+    assert list(polys_gdf.columns) == orig_cols
+
+    pop_res = va_spatial.pop_bbox_cols(polys_gdf, None)
+    assert isinstance(pop_res, gpd.GeoDataFrame)
+    assert pop_res["xmax"].tolist() == [10.0, 40.0, 60.0]
+
+    roi_gdf = gpd.GeoDataFrame(
+        {"roi": [1]}, geometry=[box(0.0, 0.0, 25.0, 15.0)], crs="EPSG:32630"
+    )
+    ann_gdf = va_spatial.annotate_vec_selection(polys_gdf, None, roi_gdf, None)
+    assert ann_gdf["sel_feats"].tolist() == [True, True, False]
+
+    pts_gdf = gpd.GeoDataFrame(
+        {"pid": [1, 2]},
+        geometry=[Point(5.0, 5.0), Point(25.0, 5.0)],
+        crs="EPSG:32630",
+    )
+    sjoin_gdf = va_spatial.perform_spatial_join(
+        pts_gdf, None, polys_gdf, None, join_op="within"
+    )
+    assert len(sjoin_gdf) == 2
+
