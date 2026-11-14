@@ -2,10 +2,12 @@
 Tests for :mod:`rsgispy.imagecalc.spectralunmixing`.
 """
 
+import importlib.util
 import inspect
 
 import geopandas
 import numpy as np
+import pandas
 import pytest
 import rasterio
 from rasterio.transform import from_origin
@@ -15,8 +17,19 @@ import rsgispy
 import rsgispy.imagecalc.spectralunmixing as su
 import rsgispy.zonalstats as zs
 
+HAVE_PYARROW = importlib.util.find_spec("pyarrow") is not None
+HAVE_OPENPYXL = importlib.util.find_spec("openpyxl") is not None
+HAVE_TABLES = importlib.util.find_spec("tables") is not None
 
-def _write_raster(path, data, origin=(0.0, 100.0), res=10.0, nodata=None):
+
+def _write_raster(
+    path,
+    data,
+    origin=(0.0, 100.0),
+    res=10.0,
+    nodata=None,
+    descriptions=None,
+):
     """Write a 3D ``(bands, height, width)`` GeoTIFF raster."""
     count, height, width = data.shape
     with rasterio.open(
@@ -32,10 +45,32 @@ def _write_raster(path, data, origin=(0.0, 100.0), res=10.0, nodata=None):
         nodata=nodata,
     ) as dst:
         dst.write(data)
+        if descriptions is not None:
+            for b_idx, desc in enumerate(descriptions, start=1):
+                dst.set_band_description(b_idx, desc)
+
+
+def _write_legacy_mtxt(path, em_arr):
+    """Write a legacy RSGISLib ``.mtxt`` matrix file for conversion tests."""
+    m, n = em_arr.shape
+    vals = []
+    for n_idx in range(n):
+        for m_idx in range(m):
+            vals.append(repr(float(em_arr[m_idx, n_idx])))
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(f"m={m}\n")
+        handle.write(f"n={n}\n")
+        handle.write(",".join(vals) + "\n")
 
 
 def test_exports_and_default_gdalformat():
     """Verify recommended/optional unmixing exports and GTIFF defaults."""
+    assert hasattr(su, "read_endmembers_df")
+    assert hasattr(su, "write_endmembers_df")
+    assert hasattr(su, "convert_mtxt_to_df")
+    assert not hasattr(su, "read_endmembers_mtxt")
+    assert not hasattr(su, "write_endmembers_mtxt")
+
     funcs = [
         su.spec_unmix_ucls,
         su.exhcon_linear_spec_unmix,
@@ -59,80 +94,162 @@ def test_exports_and_default_gdalformat():
         assert sig.parameters["gdalformat"].default == "GTIFF"
 
 
-def test_mtxt_roundtrip_and_equality(tmp_path):
-    """Verify .mtxt write, read (with gain/weight), plot, and equality checks."""
-    em_file = tmp_path / "em.mtxt"
-    em_file2 = tmp_path / "em2.mtxt"
-    plot_file = tmp_path / "em.png"
+def test_df_roundtrip_formats_plot_and_equality(tmp_path):
+    """Verify DataFrame write/read across user-chosen formats, plot, and equality."""
+    em_df = pandas.DataFrame(
+        {"Soil": [0.2, 0.4, 0.8], "Veg": [0.6, 0.2, 0.1]},
+        index=pandas.Index(["blue", "green", "nir"], name="band"),
+    )
 
-    em = np.array([[0.2, 0.4, 0.8], [0.6, 0.2, 0.1]], dtype=np.float64)
-    su.write_endmembers_mtxt(em, str(em_file))
-    su.write_endmembers_mtxt(em + 0.00001, str(em_file2))
+    formats = [
+        ("csv", "em.csv", None),
+        ("tsv", "em.tsv", None),
+        ("json", "em.json", None),
+        ("pickle", "em.pkl", None),
+        ("csv_override", "em_custom.dat", "csv"),
+    ]
+    if HAVE_PYARROW:
+        formats.extend(
+            [
+                ("parquet", "em.parquet", None),
+                ("feather", "em.feather", None),
+            ]
+        )
+    if HAVE_OPENPYXL:
+        formats.append(("excel", "em.xlsx", None))
+    if HAVE_TABLES:
+        formats.append(("hdf", "em.h5", None))
 
-    m, n, read_em = su.read_endmembers_mtxt(str(em_file))
-    assert (m, n) == (2, 3)
-    np.testing.assert_allclose(read_em, em)
+    for _, fname, fmt_override in formats:
+        out_path = tmp_path / fname
+        su.write_endmembers_df(em_df, out_path, file_format=fmt_override)
+        assert out_path.exists()
 
-    m_g, n_g, read_gw = su.read_endmembers_mtxt(str(em_file), gain=2.0, weight=5.0)
-    assert (m_g, n_g) == (2, 4)
-    np.testing.assert_allclose(read_gw[:, :3], em / 2.0)
-    np.testing.assert_allclose(read_gw[:, 3], [5.0, 5.0])
+        read_back = su.read_endmembers_df(out_path, file_format=fmt_override)
+        assert list(read_back.columns) == ["Soil", "Veg"]
+        assert list(read_back.index) == ["blue", "green", "nir"]
+        np.testing.assert_allclose(read_back.to_numpy(), em_df.to_numpy(), atol=1e-9)
+        assert su.are_endmembers_equal(em_df, read_back, flt_dif=1e-7)
 
-    assert su.are_endmembers_equal(str(em_file), str(em_file2), flt_dif=0.0001)
-    assert not su.are_endmembers_equal(str(em_file), str(em_file2), flt_dif=1e-7)
+    # Hand-crafted CSV without an index column should preserve class columns
+    plain_csv = tmp_path / "plain.csv"
+    plain_csv.write_text("Soil,Veg\n0.2,0.6\n0.4,0.2\n0.8,0.1\n", encoding="utf-8")
+    plain_df = su.read_endmembers_df(plain_csv, gain=2.0)
+    assert list(plain_df.columns) == ["Soil", "Veg"]
+    assert list(plain_df.index) == ["band_1", "band_2", "band_3"]
+    np.testing.assert_allclose(plain_df.to_numpy(), em_df.to_numpy() / 2.0)
 
+    # Equality respects flt_dif and class column names
+    em_df_close = em_df + 1e-5
+    em_df_renamed = em_df.rename(columns={"Veg": "Forest"})
+    assert su.are_endmembers_equal(em_df, em_df_close, flt_dif=1e-4)
+    assert not su.are_endmembers_equal(em_df, em_df_close, flt_dif=1e-7)
+    assert not su.are_endmembers_equal(em_df, em_df_renamed, check_names=True)
+    assert su.are_endmembers_equal(em_df, em_df_renamed, check_names=False)
+
+    # Plot works directly from DataFrame and from file path
+    plot_from_df = tmp_path / "em_df.png"
+    plot_from_csv = tmp_path / "em_csv.png"
     su.plot_endmembers(
-        str(em_file),
-        ["Soil", "Veg"],
-        str(plot_file),
-        plot_title="Test Endmembers",
+        em_df,
+        str(plot_from_df),
+        plot_title="Test Endmembers (DF)",
         wavelengths=[480, 560, 660],
     )
-    assert plot_file.exists() and plot_file.stat().st_size > 0
+    su.plot_endmembers(str(tmp_path / "em.csv"), str(plot_from_csv))
+    assert plot_from_df.exists() and plot_from_df.stat().st_size > 0
+    assert plot_from_csv.exists() and plot_from_csv.stat().st_size > 0
+
+
+def test_convert_mtxt_to_df(tmp_path):
+    """Verify legacy .mtxt conversion returns DataFrame and optionally writes to disk."""
+    mtxt_path = tmp_path / "legacy.mtxt"
+    out_csv = tmp_path / "converted.csv"
+    em_arr = np.array([[0.2, 0.4, 0.8], [0.6, 0.2, 0.1]], dtype=np.float64)
+    _write_legacy_mtxt(mtxt_path, em_arr)
+
+    default_df = su.convert_mtxt_to_df(mtxt_path)
+    assert default_df.shape == (3, 2)
+    assert list(default_df.columns) == ["endmember_1", "endmember_2"]
+    assert list(default_df.index) == ["band_1", "band_2", "band_3"]
+    np.testing.assert_allclose(default_df.to_numpy().T, em_arr)
+
+    named_df = su.convert_mtxt_to_df(
+        mtxt_path,
+        endmember_names=["Soil", "Veg"],
+        band_names=["B2", "B3", "B8"],
+        gain=2.0,
+        out_file=out_csv,
+    )
+    assert list(named_df.columns) == ["Soil", "Veg"]
+    assert list(named_df.index) == ["B2", "B3", "B8"]
+    np.testing.assert_allclose(named_df.to_numpy().T, em_arr / 2.0)
+
+    reread_df = su.read_endmembers_df(out_csv)
+    assert su.are_endmembers_equal(named_df, reread_df, flt_dif=1e-9)
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        su.convert_mtxt_to_df(mtxt_path, endmember_names=["OnlyOne"])
+    with pytest.raises(rsgispy.RSGISPyException):
+        su.convert_mtxt_to_df(mtxt_path, band_names=["B1", "B2"])
 
 
 def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
-    """Verify extract_avg_endmembers extracts per-polygon mean spectra cleanly."""
+    """Verify extract_avg_endmembers returns a DataFrame with class columns."""
     assert zs.METHOD_POLYCONTAINSPIXELCENTER == 1
     assert zs.METHOD_POLYOVERLAPSPIXEL == 2
 
     img_path = tmp_path / "img.tif"
     vec_path = tmp_path / "rois.gpkg"
-    out_base = tmp_path / "extracted_em"
+    out_csv = tmp_path / "extracted_em.csv"
 
     # 4x4 grid, origin (0, 40), res=10 -> x in [0, 40], y in [0, 40]
     arr = np.zeros((3, 4, 4), dtype=np.float32)
     arr[:, :2, :2] = np.array([0.2, 0.4, 0.8])[:, None, None]
+    arr[:, :2, 2:] = np.array([0.4, 0.6, 0.4])[:, None, None]
     arr[:, 2:, 2:] = np.array([0.6, 0.2, 0.1])[:, None, None]
-    _write_raster(img_path, arr, origin=(0.0, 40.0), res=10.0)
+    _write_raster(
+        img_path,
+        arr,
+        origin=(0.0, 40.0),
+        res=10.0,
+        descriptions=["Blue", "Green", "NIR"],
+    )
 
+    # Two polygons share class "Soil" (means [0.2,0.4,0.8] and [0.4,0.6,0.4] -> [0.3,0.5,0.6])
     gdf = geopandas.GeoDataFrame(
-        {"cls": ["A", "B"]},
-        geometry=[box(0.0, 20.0, 20.0, 40.0), box(20.0, 0.0, 40.0, 20.0)],
+        {"landcover": ["Soil", "Soil", "Veg"]},
+        geometry=[
+            box(0.0, 20.0, 20.0, 40.0),
+            box(20.0, 20.0, 40.0, 40.0),
+            box(20.0, 0.0, 40.0, 20.0),
+        ],
         crs="EPSG:32630",
     )
     gdf.to_file(vec_path, driver="GPKG", layer="rois")
 
-    su.extract_avg_endmembers(
+    em_df = su.extract_avg_endmembers(
         str(img_path),
         str(vec_path),
         "rois",
-        str(out_base),
+        out_file=str(out_csv),
+        class_col="landcover",
         pxl_in_poly_method=zs.METHOD_POLYCONTAINSPIXELCENTER,
     )
 
-    mtxt_path = tmp_path / "extracted_em.mtxt"
-    assert mtxt_path.exists()
-    m, n, em = su.read_endmembers_mtxt(str(mtxt_path))
-    assert (m, n) == (2, 3)
-    np.testing.assert_allclose(em[0], [0.2, 0.4, 0.8], atol=1e-6)
-    np.testing.assert_allclose(em[1], [0.6, 0.2, 0.1], atol=1e-6)
+    assert isinstance(em_df, pandas.DataFrame)
+    assert list(em_df.columns) == ["Soil", "Veg"]
+    assert list(em_df.index) == ["Blue", "Green", "NIR"]
+    np.testing.assert_allclose(em_df["Soil"].to_numpy(), [0.3, 0.5, 0.6], atol=1e-6)
+    np.testing.assert_allclose(em_df["Veg"].to_numpy(), [0.6, 0.2, 0.1], atol=1e-6)
+    assert out_csv.exists()
+    assert su.are_endmembers_equal(em_df, su.read_endmembers_df(out_csv))
 
 
 def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
     """Verify exhaustive constrained unmixing, rescaling, prediction, error, and PPI."""
     img_path = tmp_path / "refl.tif"
-    em_path = tmp_path / "em.mtxt"
+    em_path = tmp_path / "em.csv"
     exh_path = tmp_path / "exh.tif"
     resc_path = tmp_path / "resc.tif"
     pred_path = tmp_path / "pred.tif"
@@ -141,7 +258,11 @@ def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
 
     em1 = np.array([0.2, 0.4, 0.8], dtype=np.float64)
     em2 = np.array([0.6, 0.2, 0.1], dtype=np.float64)
-    su.write_endmembers_mtxt(np.vstack([em1, em2]), str(em_path))
+    em_df = pandas.DataFrame(
+        {"Soil": em1, "Veg": em2},
+        index=pandas.Index(["Blue", "Green", "NIR"], name="band"),
+    )
+    su.write_endmembers_df(em_df, str(em_path))
 
     # Build a 2x2 image: exact EM1, exact EM2, 50/50 mix (of unnormed), zeros
     arr = np.zeros((3, 2, 2), dtype=np.float32)
@@ -156,12 +277,13 @@ def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
         str(exh_path),
         gdalformat="GTIFF",
         datatype=rsgispy.TYPE_32FLOAT,
-        endmember_file=str(em_path),
+        endmembers=str(em_path),
         step_res=0.1,
         use_pbar=False,
     )
     with rasterio.open(exh_path) as src:
         out_exh = src.read()
+        assert list(src.descriptions) == ["Soil", "Veg", "RMSE"]
     assert out_exh.shape == (3, 2, 2)
     np.testing.assert_allclose(out_exh[:, 0, 0], [1.0, 0.0, 0.0], atol=1e-5)
     np.testing.assert_allclose(out_exh[:, 0, 1], [0.0, 1.0, 0.0], atol=1e-5)
@@ -184,7 +306,7 @@ def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
     np.testing.assert_allclose(resc[:, 0, 1], [0.0, 1.0], atol=1e-6)
     np.testing.assert_allclose(resc[:, 1, 1], [0.0, 0.0], atol=1e-6)
 
-    # Exact abundance raster -> predicted reflectance and zero error
+    # Exact abundance raster -> predicted reflectance (in-memory DataFrame) and zero error
     exact_coef = np.array(
         [[[1.0, 0.0], [0.5, 0.0]], [[0.0, 1.0], [0.5, 0.0]]],
         dtype=np.float32,
@@ -194,13 +316,14 @@ def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
 
     su.predict_refl_linear_unmixing(
         str(exact_coef_path),
-        str(em_path),
+        em_df,
         str(pred_path),
         calc_stats=False,
         use_pbar=False,
     )
     with rasterio.open(pred_path) as src:
         pred = src.read()
+        assert list(src.descriptions) == ["Blue", "Green", "NIR"]
     np.testing.assert_allclose(pred, arr, atol=1e-6)
 
     su.calc_unmixing_rmse_residual_err(
@@ -232,10 +355,9 @@ def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
 
 
 def test_summarise_multi_endmember_linear_unmixing(tmp_path):
-    """Verify multi-model summary picks the lower-RMSPE model per pixel."""
+    """Verify multi-model summary picks lower-RMSPE model using DataFrame/file columns."""
     refl_path = tmp_path / "refl.tif"
-    em_a_path = tmp_path / "em_a.mtxt"
-    em_b_path = tmp_path / "em_b.mtxt"
+    em_a_path = tmp_path / "em_a.csv"
     unmix_a_path = tmp_path / "unmix_a.tif"
     unmix_b_path = tmp_path / "unmix_b.tif"
     out_unmix = tmp_path / "best_unmix.tif"
@@ -245,8 +367,9 @@ def test_summarise_multi_endmember_linear_unmixing(tmp_path):
     em_soil = np.array([0.5, 0.4, 0.2], dtype=np.float64)
     em_water = np.array([0.2, 0.1, 0.05], dtype=np.float64)
 
-    su.write_endmembers_mtxt(np.vstack([em_veg, em_soil]), str(em_a_path))
-    su.write_endmembers_mtxt(np.vstack([em_veg, em_water]), str(em_b_path))
+    em_a_df = pandas.DataFrame({"Veg": em_veg, "Soil": em_soil})
+    em_b_df = pandas.DataFrame({"Veg": em_veg, "Water": em_water})
+    su.write_endmembers_df(em_a_df, str(em_a_path))
 
     # Left half: pure soil (perfectly explained by model A); right half: pure water (model B)
     refl = np.zeros((3, 2, 2), dtype=np.float32)
@@ -262,8 +385,12 @@ def test_summarise_multi_endmember_linear_unmixing(tmp_path):
     coef_b[1, :, 1] = 1.0  # model B gets col 1 exact (Water=1) and fails col 0
     _write_raster(unmix_b_path, coef_b, origin=(0.0, 20.0), res=10.0)
 
-    info_a = su.ImageEndmemberInfo(str(unmix_a_path), str(em_a_path), ["Veg", "Soil"])
-    info_b = su.ImageEndmemberInfo(str(unmix_b_path), str(em_b_path), ["Veg", "Water"])
+    # Mix file path (class names inferred from CSV columns) and in-memory DataFrame
+    info_a = su.ImageEndmemberInfo(str(unmix_a_path), str(em_a_path))
+    info_b = su.ImageEndmemberInfo(str(unmix_b_path), em_b_df)
+    assert info_a == su.ImageEndmemberInfo(str(unmix_a_path), str(em_a_path))
+    assert info_b == su.ImageEndmemberInfo(str(unmix_b_path), em_b_df.copy())
+    assert info_a != info_b
 
     su.summarise_multi_endmember_linear_unmixing(
         str(refl_path),
@@ -292,11 +419,12 @@ def test_pysptools_unmixers(tmp_path):
     """Verify PySptools UCLS, NNLS, and FCLS end-to-end when installed."""
     img_path = tmp_path / "refl.tif"
     msk_path = tmp_path / "msk.tif"
-    em_path = tmp_path / "em.mtxt"
+    em_path = tmp_path / "em.csv"
 
     em1 = np.array([0.2, 0.4, 0.8], dtype=np.float64)
     em2 = np.array([0.6, 0.2, 0.1], dtype=np.float64)
-    su.write_endmembers_mtxt(np.vstack([em1, em2]), str(em_path))
+    em_df = pandas.DataFrame({"Soil": em1, "Veg": em2})
+    su.write_endmembers_df(em_df, str(em_path))
 
     arr = np.zeros((3, 2, 2), dtype=np.float32)
     arr[:, 0, 0] = 0.3 * em1 + 0.7 * em2
@@ -310,16 +438,28 @@ def test_pysptools_unmixers(tmp_path):
 
     out_ucls = tmp_path / "ucls.tif"
     su.spec_unmix_spts_ucls(
-        str(img_path), str(msk_path), 1, str(out_ucls), str(em_path),
-        calc_stats=False, use_pbar=False,
+        str(img_path),
+        str(msk_path),
+        1,
+        str(out_ucls),
+        str(em_path),
+        calc_stats=False,
+        use_pbar=False,
     )
     with rasterio.open(out_ucls) as src:
+        assert list(src.descriptions) == ["Soil", "Veg"]
         np.testing.assert_allclose(src.read()[:, 0, 0], [0.3, 0.7], atol=1e-3)
 
     out_nnls = tmp_path / "nnls.tif"
     su.spec_unmix_spts_nnls(
-        str(img_path), str(msk_path), 1, str(out_nnls), str(em_path),
-        weight=10.0, calc_stats=False, use_pbar=False,
+        str(img_path),
+        str(msk_path),
+        1,
+        str(out_nnls),
+        em_df,
+        weight=10.0,
+        calc_stats=False,
+        use_pbar=False,
     )
     with rasterio.open(out_nnls) as src:
         np.testing.assert_allclose(src.read()[:, 0, 0], [0.3, 0.7], atol=1e-2)
@@ -327,8 +467,13 @@ def test_pysptools_unmixers(tmp_path):
     if su.HAVE_CVXOPT:
         out_fcls = tmp_path / "fcls.tif"
         su.spec_unmix_spts_fcls(
-            str(img_path), str(msk_path), 1, str(out_fcls), str(em_path),
-            calc_stats=False, use_pbar=False,
+            str(img_path),
+            str(msk_path),
+            1,
+            str(out_fcls),
+            str(em_path),
+            calc_stats=False,
+            use_pbar=False,
         )
         with rasterio.open(out_fcls) as src:
             np.testing.assert_allclose(src.read()[:, 0, 0], [0.3, 0.7], atol=1e-2)
@@ -339,11 +484,12 @@ def test_pymcr_unmixers(tmp_path):
     """Verify PyMCR NNLS and FCLS end-to-end when installed."""
     img_path = tmp_path / "refl.tif"
     msk_path = tmp_path / "msk.tif"
-    em_path = tmp_path / "em.mtxt"
+    em_path = tmp_path / "em.json"
 
     em1 = np.array([0.2, 0.4, 0.8], dtype=np.float64)
     em2 = np.array([0.6, 0.2, 0.1], dtype=np.float64)
-    su.write_endmembers_mtxt(np.vstack([em1, em2]), str(em_path))
+    em_df = pandas.DataFrame({"Soil": em1, "Veg": em2})
+    su.write_endmembers_df(em_df, str(em_path))
 
     arr = np.zeros((3, 2, 2), dtype=np.float32)
     arr[:, 0, 0] = 0.3 * em1 + 0.7 * em2
@@ -357,31 +503,43 @@ def test_pymcr_unmixers(tmp_path):
 
     out_nnls = tmp_path / "pymcr_nnls.tif"
     su.spec_unmix_pymcr_nnls(
-        str(img_path), str(msk_path), 1, str(out_nnls), str(em_path),
-        calc_stats=False, use_pbar=False,
+        str(img_path),
+        str(msk_path),
+        1,
+        str(out_nnls),
+        str(em_path),
+        calc_stats=False,
+        use_pbar=False,
     )
     with rasterio.open(out_nnls) as src:
+        assert list(src.descriptions) == ["Soil", "Veg"]
         np.testing.assert_allclose(src.read()[:, 0, 0], [0.3, 0.7], atol=1e-2)
 
     out_fcls = tmp_path / "pymcr_fcls.tif"
     su.spec_unmix_pymcr_fcls(
-        str(img_path), str(msk_path), 1, str(out_fcls), str(em_path),
-        calc_stats=False, use_pbar=False,
+        str(img_path),
+        str(msk_path),
+        1,
+        str(out_fcls),
+        em_df,
+        calc_stats=False,
+        use_pbar=False,
     )
     with rasterio.open(out_fcls) as src:
         np.testing.assert_allclose(src.read()[:, 0, 0], [0.3, 0.7], atol=1e-2)
 
 
 def test_recommended_numpy_ucls_unmixer(tmp_path):
-    """Verify recommended pure-NumPy UCLS unmixing with and without a mask."""
+    """Verify recommended pure-NumPy UCLS unmixing with DataFrame and CSV files."""
     img_path = tmp_path / "refl.tif"
     msk_path = tmp_path / "msk.tif"
-    em_path = tmp_path / "em.mtxt"
+    em_path = tmp_path / "em.csv"
 
     em1 = np.array([0.2, 0.4, 0.8], dtype=np.float64)
     em2 = np.array([0.6, 0.2, 0.1], dtype=np.float64)
     em3 = np.array([0.3, 0.7, 0.2], dtype=np.float64)
-    su.write_endmembers_mtxt(np.vstack([em1, em2, em3]), str(em_path))
+    em_df = pandas.DataFrame({"Soil": em1, "Veg": em2, "Water": em3})
+    su.write_endmembers_df(em_df, str(em_path))
 
     arr = np.zeros((3, 2, 2), dtype=np.float32)
     arr[:, 0, 0] = 0.2 * em1 + 0.5 * em2 + 0.3 * em3
@@ -405,6 +563,7 @@ def test_recommended_numpy_ucls_unmixer(tmp_path):
     )
     with rasterio.open(out_masked) as src:
         res = src.read()
+        assert list(src.descriptions) == ["Soil", "Veg", "Water"]
     np.testing.assert_allclose(res[:, 0, 0], [0.2, 0.5, 0.3], atol=1e-5)
     np.testing.assert_allclose(res[:, 0, 1], [0.8, 0.2, 0.0], atol=1e-5)
     np.testing.assert_allclose(res[:, 1, 0], [0.0, 0.0, 0.0], atol=1e-6)
@@ -416,28 +575,30 @@ def test_recommended_numpy_ucls_unmixer(tmp_path):
         None,
         1,
         str(out_nomask),
-        str(em_path),
+        em_df,
         weight=10.0,
         calc_stats=False,
         use_pbar=False,
     )
     with rasterio.open(out_nomask) as src:
         res_nm = src.read()
+        assert list(src.descriptions) == ["Soil", "Veg", "Water"]
     np.testing.assert_allclose(res_nm[:, 1, 0], [0.0, 0.0, 1.0], atol=1e-5)
     np.testing.assert_allclose(res_nm[:, 1, 1], [0.0, 0.0, 0.0], atol=1e-6)
 
 
 @pytest.mark.skipif(not su.HAVE_SCIPY, reason="scipy not installed")
 def test_recommended_scipy_nnls_fcls_unmixers(tmp_path):
-    """Verify recommended SciPy NNLS and FCLS unmixers including constraints."""
+    """Verify recommended SciPy NNLS and FCLS unmixers using DataFrame and files."""
     img_path = tmp_path / "refl.tif"
     msk_path = tmp_path / "msk.tif"
-    em_path = tmp_path / "em.mtxt"
+    em_path = tmp_path / "em.csv"
 
     em1 = np.array([0.1, 0.2, 0.7, 0.3], dtype=np.float64)
     em2 = np.array([0.6, 0.3, 0.1, 0.2], dtype=np.float64)
     em3 = np.array([0.2, 0.6, 0.3, 0.7], dtype=np.float64)
-    su.write_endmembers_mtxt(np.vstack([em1, em2, em3]), str(em_path))
+    em_df = pandas.DataFrame({"Soil": em1, "Veg": em2, "Shadow": em3})
+    su.write_endmembers_df(em_df, str(em_path))
 
     arr = np.zeros((4, 2, 2), dtype=np.float32)
     arr[:, 0, 0] = 0.25 * em1 + 0.45 * em2 + 0.30 * em3
@@ -463,6 +624,7 @@ def test_recommended_scipy_nnls_fcls_unmixers(tmp_path):
     )
     with rasterio.open(out_nnls) as src:
         nnls_arr = src.read()
+        assert list(src.descriptions) == ["Soil", "Veg", "Shadow"]
     assert np.all(nnls_arr >= -1e-7)
     np.testing.assert_allclose(nnls_arr[:, 0, 0], [0.25, 0.45, 0.30], atol=1e-5)
     np.testing.assert_allclose(nnls_arr[:, 1, 0], [0.0, 1.4, 0.2], atol=1e-5)
@@ -473,22 +635,26 @@ def test_recommended_scipy_nnls_fcls_unmixers(tmp_path):
         str(msk_path),
         1,
         str(out_fcls),
-        str(em_path),
+        em_df,
         calc_stats=False,
         use_pbar=False,
     )
     with rasterio.open(out_fcls) as src:
         fcls_arr = src.read()
+        assert list(src.descriptions) == ["Soil", "Veg", "Shadow"]
     assert np.all(fcls_arr >= -1e-7)
     np.testing.assert_allclose(np.sum(fcls_arr, axis=0), 1.0, atol=1e-5)
     np.testing.assert_allclose(fcls_arr[:, 0, 0], [0.25, 0.45, 0.30], atol=1e-5)
     np.testing.assert_allclose(fcls_arr[:, 0, 1], [1.0, 0.0, 0.0], atol=1e-5)
 
-    # Scale-invariance check (reflectance scaled by 10000 with gain=1)
+    # Scale-invariance check (reflectance scaled by 10000 with gain=1) using Parquet or JSON
     scaled_img = tmp_path / "refl_scaled.tif"
-    scaled_em = tmp_path / "em_scaled.mtxt"
-    _write_raster(scaled_img, (arr * 10000.0).astype(np.float32), origin=(0.0, 20.0), res=10.0)
-    su.write_endmembers_mtxt(np.vstack([em1, em2, em3]) * 10000.0, str(scaled_em))
+    ext = ".parquet" if HAVE_PYARROW else ".json"
+    scaled_em = tmp_path / f"em_scaled{ext}"
+    _write_raster(
+        scaled_img, (arr * 10000.0).astype(np.float32), origin=(0.0, 20.0), res=10.0
+    )
+    su.write_endmembers_df(em_df * 10000.0, str(scaled_em))
     out_fcls_scaled = tmp_path / "scipy_fcls_scaled.tif"
     su.spec_unmix_fcls(
         str(scaled_img),
