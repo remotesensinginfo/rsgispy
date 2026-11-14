@@ -56,7 +56,7 @@ _CLI_RESAMPLE_MAP: Dict[str, Resampling] = {
     "rms": Resampling.rms,
 }
 
-_COLORINTERP_MAP: Dict[str, ColorInterp] = {
+_COLOUR_INTERP_MAP: Dict[str, ColorInterp] = {
     c.name.lower(): c for c in ColorInterp
 }
 
@@ -107,8 +107,8 @@ class TranslateConfig:
     band_scale: Optional[Union[float, Sequence[float]]] = None
     band_offset: Optional[Union[float, Sequence[float]]] = None
     expand: Optional[str] = None
-    color_interp_list: Optional[List[ColorInterp]] = None
-    color_interp_per_band: Dict[int, ColorInterp] = field(default_factory=dict)
+    colour_interp_list: Optional[List[ColorInterp]] = None
+    colour_interp_per_band: Dict[int, ColorInterp] = field(default_factory=dict)
     mask_band: Optional[Union[int, str]] = None
     no_gcp: bool = False
     gcps: List[GroundControlPoint] = field(default_factory=list)
@@ -177,8 +177,8 @@ def _resolve_resampling(alg: Union[int, Resampling, str]) -> Resampling:
     raise rsgispy.RSGISPyException(f"Unsupported resampling method: {alg!r}.")
 
 
-def _parse_colorinterp_value(val: Union[str, int, ColorInterp]) -> ColorInterp:
-    """Resolve a color interpretation string, integer, or ColorInterp enum."""
+def _parse_colour_interp_value(val: Union[str, int, ColorInterp]) -> ColorInterp:
+    """Resolve a colour interpretation string, integer, or ColorInterp enum."""
     if isinstance(val, ColorInterp):
         return val
     if isinstance(val, (int, np.integer)) and not isinstance(val, bool):
@@ -186,13 +186,13 @@ def _parse_colorinterp_value(val: Union[str, int, ColorInterp]) -> ColorInterp:
             return ColorInterp(int(val))
         except ValueError as err:
             raise rsgispy.RSGISPyException(
-                f"Invalid color interpretation value: {val!r}."
+                f"Invalid colour interpretation value: {val!r}."
             ) from err
     if isinstance(val, str):
         key = val.strip().lower()
-        if key in _COLORINTERP_MAP:
-            return _COLORINTERP_MAP[key]
-    raise rsgispy.RSGISPyException(f"Unsupported color interpretation: {val!r}.")
+        if key in _COLOUR_INTERP_MAP:
+            return _COLOUR_INTERP_MAP[key]
+    raise rsgispy.RSGISPyException(f"Unsupported colour interpretation: {val!r}.")
 
 
 def _parse_crs_input(srs_def: Any) -> Optional[rasterio.crs.CRS]:
@@ -390,14 +390,14 @@ def _parse_cli_tokens(tokens: Sequence[str], cfg: TranslateConfig) -> None:
         elif tok == "-colorinterp":
             c_str = _consume_args(tokens, idx, 1, tok)[0]
             idx += 1
-            cfg.color_interp_list = [
-                _parse_colorinterp_value(part) for part in c_str.split(",")
+            cfg.colour_interp_list = [
+                _parse_colour_interp_value(part) for part in c_str.split(",")
             ]
         elif tok.startswith("-colorinterp_"):
             band_idx = int(tok.split("_", 1)[1])
             c_str = _consume_args(tokens, idx, 1, tok)[0]
             idx += 1
-            cfg.color_interp_per_band[band_idx] = _parse_colorinterp_value(
+            cfg.colour_interp_per_band[band_idx] = _parse_colour_interp_value(
                 c_str
             )
         elif tok == "-stats":
@@ -564,19 +564,19 @@ def build_translate_config(
     if kwargs.get("expand") is not None:
         cfg.expand = str(kwargs["expand"]).strip().lower()
 
-    ci_kw = kwargs.get("color_interp")
+    ci_kw = kwargs.get("colour_interp")
     if ci_kw is not None:
         if isinstance(ci_kw, (str, ColorInterp)):
             parts = ci_kw.split(",") if isinstance(ci_kw, str) else [ci_kw]
-            cfg.color_interp_list = [
-                _parse_colorinterp_value(p) for p in parts
+            cfg.colour_interp_list = [
+                _parse_colour_interp_value(p) for p in parts
             ]
         elif isinstance(ci_kw, Mapping):
             for k, v in ci_kw.items():
-                cfg.color_interp_per_band[int(k)] = _parse_colorinterp_value(v)
+                cfg.colour_interp_per_band[int(k)] = _parse_colour_interp_value(v)
         elif isinstance(ci_kw, Sequence):
-            cfg.color_interp_list = [
-                _parse_colorinterp_value(p) for p in ci_kw
+            cfg.colour_interp_list = [
+                _parse_colour_interp_value(p) for p in ci_kw
             ]
 
     if kwargs.get("mask_band") is not None:
@@ -906,12 +906,12 @@ def resolve_scale_specs(
     return specs
 
 
-def expand_colormap_block(
+def expand_colourmap_block(
     block: np.ndarray,
     cmap: Mapping[int, Tuple[int, int, int, int]],
     mode: str,
 ) -> np.ndarray:
-    """Expand a single-band indexed block ``(1, H, W)`` into gray/RGB/RGBA."""
+    """Expand a single-band indexed block ``(1, H, W)`` into greyscale/RGB/RGBA."""
     if mode not in ("gray", "rgb", "rgba"):
         raise rsgispy.RSGISPyException(
             f"Unsupported -expand mode '{mode}' (expected 'gray', 'rgb', or 'rgba')."

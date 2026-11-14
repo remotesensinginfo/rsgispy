@@ -31,7 +31,7 @@ from rsgispy.imageutils._translate import (
     TranslateConfig,
     _parse_crs_input,
     build_translate_config,
-    expand_colormap_block,
+    expand_colourmap_block,
     has_per_dataset_mask,
     resolve_output_grid,
     resolve_scale_specs,
@@ -381,7 +381,7 @@ def _write_warp_metadata(
     dst_alpha_band: int,
     cfg: WarpConfig,
 ) -> None:
-    """Copy metadata tags, band descriptions, and colorinterp to ``dst``."""
+    """Copy metadata tags, band descriptions, and colour interpretation to ``dst``."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-branches,too-many-locals
     first_src = src_datasets[0]
@@ -678,7 +678,7 @@ def gdal_warp(
     :param no_metadata: Do not copy metadata from source datasets (``-nomd``).
     :param meta_conflict_value: Replacement value for conflicting metadata across
                                 multiple inputs (``-cvmd``).
-    :param set_ci: Set output color interpretation from source bands (``-setci``).
+    :param set_ci: Set output colour interpretation from source bands (``-setci``).
     :param open_options: Source dataset open options (``-oo``).
     :param dst_open_options: Existing destination open options (``-doo``).
     :param use_pbar: Display a tqdm progress bar during cutline masking.
@@ -996,7 +996,7 @@ def _write_translate_metadata(
     src_win: Window,
     cfg: TranslateConfig,
 ) -> None:
-    """Apply nodata, tags, band metadata, colorinterp, scales/offsets, and GCPs."""
+    """Apply nodata, tags, band metadata, colour interpretation, scales/offsets, and GCPs."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     if out_nodata is not None:
@@ -1033,13 +1033,13 @@ def _write_translate_metadata(
                 except ValueError:
                     pass
 
-    if cfg.color_interp_list is not None:
-        if len(cfg.color_interp_list) != out_count:
+    if cfg.colour_interp_list is not None:
+        if len(cfg.colour_interp_list) != out_count:
             raise rsgispy.RSGISPyException(
-                f"color_interp has {len(cfg.color_interp_list)} items, "
+                f"colour_interp has {len(cfg.colour_interp_list)} items, "
                 f"expected {out_count}."
             )
-        dst.colorinterp = list(cfg.color_interp_list)
+        dst.colorinterp = list(cfg.colour_interp_list)
     else:
         if cfg.expand == "gray":
             ci_list = [ColorInterp.gray]
@@ -1054,7 +1054,7 @@ def _write_translate_metadata(
             ]
         else:
             ci_list = [src.colorinterp[b - 1] for b in src_bands]
-        for b_idx, ci_val in cfg.color_interp_per_band.items():
+        for b_idx, ci_val in cfg.colour_interp_per_band.items():
             validate_band_index(b_idx, out_count, "output")
             ci_list[b_idx - 1] = ci_val
         dst.colorinterp = ci_list
@@ -1144,7 +1144,7 @@ def gdal_translate(
     band_scale: Optional[Union[float, Sequence[float]]] = None,
     band_offset: Optional[Union[float, Sequence[float]]] = None,
     expand: Optional[str] = None,
-    color_interp: Optional[
+    colour_interp: Optional[
         Union[
             str,
             ColorInterp,
@@ -1208,9 +1208,9 @@ def gdal_translate(
     :param exponent: Power exponent(s) for non-linear ``scale_params`` (``-exponent``).
     :param band_scale: Assign output band scale metadata (``-a_scale``).
     :param band_offset: Assign output band offset metadata (``-a_offset``).
-    :param expand: Expand single-band indexed colormap to ``'gray'``, ``'rgb'``,
+    :param expand: Expand single-band indexed colour table to ``'gray'``, ``'rgb'``,
                    or ``'rgba'`` (``-expand``).
-    :param color_interp: Assign band color interpretation(s) (``-colorinterp``).
+    :param colour_interp: Assign band colour interpretation(s) (``-colorinterp``).
     :param mask_band: Output per-dataset mask: ``'none'``, ``'auto'``, or 1-based
                       source band index (``-mask``).
     :param no_gcp: Drop source GCPs (``-nogcp``).
@@ -1266,7 +1266,7 @@ def gdal_translate(
         band_scale=band_scale,
         band_offset=band_offset,
         expand=expand,
-        color_interp=color_interp,
+        colour_interp=colour_interp,
         mask_band=mask_band,
         no_gcp=no_gcp,
         gcps=gcps,
@@ -1301,13 +1301,13 @@ def gdal_translate(
         if cfg.expand is not None:
             if len(src_bands) != 1:
                 raise rsgispy.RSGISPyException(
-                    "-expand requires a single input band with a color table."
+                    "-expand requires a single input band with a colour table."
                 )
             try:
                 cmap_expand = src.colormap(src_bands[0])
             except ValueError as err:
                 raise rsgispy.RSGISPyException(
-                    "Input band has no color table for -expand."
+                    "Input band has no colour table for -expand."
                 ) from err
             out_count = {"gray": 1, "rgb": 3, "rgba": 4}[cfg.expand]
         else:
@@ -1396,7 +1396,7 @@ def gdal_translate(
                     data, src, src_bands, cfg, scale_specs, out_nodata
                 )
             if cfg.expand is not None and cmap_expand is not None:
-                data = expand_colormap_block(data, cmap_expand, cfg.expand)
+                data = expand_colourmap_block(data, cmap_expand, cfg.expand)
             if int_info is not None:
                 if do_math:
                     data = np.rint(data)

@@ -114,12 +114,12 @@ def dtm_aspect_median_filter(
                 asp_halo, (win_size, win_size)
             ).reshape(win_h, win_w, -1)
 
-            center_asp = asp_halo[
+            centre_asp = asp_halo[
                 win_h_size : win_h_size + win_h,
                 win_h_size : win_h_size + win_w,
             ][..., None]
             ang_diff = np.abs(
-                np.mod((asp_wins - center_asp) + 180.0, 360.0) - 180.0
+                np.mod((asp_wins - centre_asp) + 180.0, 360.0) - 180.0
             )
             asp_match = np.isfinite(ang_diff) & (ang_diff <= aspect_range)
             dem_valid = _valid_mask(dem_wins, no_data_val)

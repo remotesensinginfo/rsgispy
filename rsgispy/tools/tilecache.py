@@ -92,14 +92,14 @@ def get_tile_for_point(
         import rsgispy.tools.tilecache
         tx, ty, z = rsgispy.tools.tilecache.get_tile_for_point(-4.08, 52.41, zoom=12)
     """
-    meter_x = lon_deg * ORIGIN_SHIFT / 180.0
-    meter_y = math.log(math.tan((90.0 + lat_deg) * math.pi / 360.0)) / (
+    metre_x = lon_deg * ORIGIN_SHIFT / 180.0
+    metre_y = math.log(math.tan((90.0 + lat_deg) * math.pi / 360.0)) / (
         math.pi / 180.0
     )
-    meter_y = meter_y * ORIGIN_SHIFT / 180.0
+    metre_y = metre_y * ORIGIN_SHIFT / 180.0
 
-    pixel_x = abs(round((meter_x + ORIGIN_SHIFT) / resolution(zoom)))
-    pixel_y = abs(round((meter_y - ORIGIN_SHIFT) / resolution(zoom)))
+    pixel_x = abs(round((metre_x + ORIGIN_SHIFT) / resolution(zoom)))
+    pixel_y = abs(round((metre_y - ORIGIN_SHIFT) / resolution(zoom)))
 
     tile_x = int(math.ceil(pixel_x / float(tile_size)) - 1)
     tile_y = int(math.ceil(pixel_y / float(tile_size)) - 1)
@@ -190,12 +190,12 @@ def get_web_mercator_xy(
     truncate: bool = False,
 ) -> Tuple[float, float]:
     """
-    Convert WGS84 ``(lon_deg, lat_deg)`` to Web Mercator ``(meter_x, meter_y)``.
+    Convert WGS84 ``(lon_deg, lat_deg)`` to Web Mercator ``(metre_x, metre_y)``.
 
     :param lon_deg: Longitude in degrees.
     :param lat_deg: Latitude in degrees.
     :param truncate: Clamp coordinates to valid lon/lat limits first.
-    :return: ``(meter_x, meter_y)``.
+    :return: ``(metre_x, metre_y)``.
 
     .. code:: python
 
@@ -205,24 +205,24 @@ def get_web_mercator_xy(
     if truncate:
         lon_deg, lat_deg = truncate_lng_lat(lon_deg, lat_deg)
 
-    meter_x = lon_deg * ORIGIN_SHIFT / 180.0
-    meter_y = math.log(math.tan((90.0 + lat_deg) * math.pi / 360.0)) / (
+    metre_x = lon_deg * ORIGIN_SHIFT / 180.0
+    metre_y = math.log(math.tan((90.0 + lat_deg) * math.pi / 360.0)) / (
         math.pi / 180.0
     )
-    meter_y = meter_y * ORIGIN_SHIFT / 180.0
-    return meter_x, meter_y
+    metre_y = metre_y * ORIGIN_SHIFT / 180.0
+    return metre_x, metre_y
 
 
 def get_xy_mercator_lonlat(
-    meter_x: float,
-    meter_y: float,
+    metre_x: float,
+    metre_y: float,
     truncate: bool = False,
 ) -> Tuple[float, float]:
     """
-    Convert Web Mercator ``(meter_x, meter_y)`` to WGS84 ``(lon_deg, lat_deg)``.
+    Convert Web Mercator ``(metre_x, metre_y)`` to WGS84 ``(lon_deg, lat_deg)``.
 
-    :param meter_x: X coordinate in Web Mercator metres.
-    :param meter_y: Y coordinate in Web Mercator metres.
+    :param metre_x: X coordinate in Web Mercator metres.
+    :param metre_y: Y coordinate in Web Mercator metres.
     :param truncate: Clamp output coordinates to valid lon/lat limits.
     :return: ``(lon_deg, lat_deg)``.
 
@@ -231,8 +231,8 @@ def get_xy_mercator_lonlat(
         import rsgispy.tools.tilecache
         lon, lat = rsgispy.tools.tilecache.get_xy_mercator_lonlat(-454183.0, 6874676.0)
     """
-    lon_deg = (meter_x / ORIGIN_SHIFT) * 180.0
-    lat_deg = (meter_y / ORIGIN_SHIFT) * 180.0
+    lon_deg = (metre_x / ORIGIN_SHIFT) * 180.0
+    lat_deg = (metre_y / ORIGIN_SHIFT) * 180.0
     lat_deg = (
         180.0
         / math.pi

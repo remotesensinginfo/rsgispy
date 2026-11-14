@@ -124,7 +124,7 @@ def _select_tile_matrix(
             f"Zoom level '{zoom_level}' was not found in TileMatrixSet."
         )
 
-    m_per_unit = _meters_per_crs_unit(tms_crs)
+    m_per_unit = _metres_per_crs_unit(tms_crs)
     bbox_w = max(1e-9, float(wmts_bbox[1]) - float(wmts_bbox[0]))
     selected = matrices[0]
     for tm in matrices:
@@ -136,7 +136,7 @@ def _select_tile_matrix(
     return selected
 
 
-def _meters_per_crs_unit(crs_obj: pyproj.CRS) -> float:
+def _metres_per_crs_unit(crs_obj: pyproj.CRS) -> float:
     """Return approximate metres per linear/angular CRS axis unit."""
     if crs_obj.is_geographic:
         return 6378137.0 * math.pi / 180.0
@@ -216,7 +216,7 @@ def get_wmts_as_img(
         wmts_bbox = tuple(float(v) for v in bbox[:4])
 
     tm = _select_tile_matrix(tms_obj, zoom_level, wmts_bbox, tms_crs)
-    pxl_res = (float(tm.scaledenominator) * 0.00028) / _meters_per_crs_unit(tms_crs)
+    pxl_res = (float(tm.scaledenominator) * 0.00028) / _metres_per_crs_unit(tms_crs)
     tile_w = int(tm.tilewidth)
     tile_h = int(tm.tileheight)
     tile_span_x = tile_w * pxl_res

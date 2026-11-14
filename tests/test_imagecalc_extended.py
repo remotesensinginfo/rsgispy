@@ -585,7 +585,7 @@ def test_distance_and_buffer_functions(tmp_path):
     with rasterio.open(d_full) as s1, rasterio.open(d_tiled_mc) as s3:
         np.testing.assert_allclose(s1.read(1), s3.read(1))
 
-    # Empty target mask must return out_no_data_val everywhere (no corner artifact)
+    # Empty target mask must return out_no_data_val everywhere (no corner artefact)
     d_empty = tmp_path / "d_empty.tif"
     ic_dist.calc_dist_to_img_vals(
         str(in_p),
@@ -597,7 +597,7 @@ def test_distance_and_buffer_functions(tmp_path):
     with rasterio.open(d_empty) as s_emp:
         np.testing.assert_allclose(s_emp.read(1), np.full((8, 8), -999.0, dtype=np.float32))
 
-    # Buffer mask (< 15m around value 1 -> center + 4-neighbours within 10m)
+    # Buffer mask (< 15m around value 1 -> centre + 4-neighbours within 10m)
     ic_dist.buffer_img_pxl_vals(
         str(in_p),
         str(buf_p),

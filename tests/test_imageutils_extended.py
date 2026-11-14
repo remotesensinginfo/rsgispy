@@ -675,7 +675,7 @@ def test_gdal_translate_resize_resample_and_ovr(tmp_path):
 
 
 def test_gdal_translate_scale_unscale_and_expand(tmp_path):
-    """Test unscale, scale_params, exponent, expand colormap, and strict."""
+    """Test unscale, scale_params, exponent, expand colour table, and strict."""
     dn = np.array(
         [
             [[0, 50, 100, 255], [10, 20, 30, 40]],
@@ -750,7 +750,7 @@ def test_gdal_translate_scale_unscale_and_expand(tmp_path):
             use_pbar=False,
         )
 
-    # Colormap expansion (GTiff palette stores RGB and reads alpha=255)
+    # Colour table expansion (GTiff palette stores RGB and reads alpha=255)
     pal_in = tmp_path / "pal_in.tif"
     _write_test_tif(pal_in, np.array([[0, 1]], dtype=np.uint8))
     with rasterio.open(pal_in, "r+") as ds:
@@ -803,7 +803,7 @@ def test_gdal_translate_metadata_spatial_mask_gcps_and_cli(tmp_path):
         no_data_val="none",
         band_scale=[0.5, 0.25],
         band_offset=[1.0, 2.0],
-        color_interp=["blue", "green"],
+        colour_interp=["blue", "green"],
         metadata={"AUTHOR": "rsgispy"},
         domain_metadata={"MYDOM": {"K": "V"}},
         no_metadata=True,

@@ -48,8 +48,8 @@ def _write_continuous_raster(path, data, x_min=500000.0, y_max=5200000.0, res=10
         dst.write(data_3d)
 
 
-def _write_thematic_raster(path, data, colormap=None, x_min=500000.0, y_max=5200000.0, res=10.0, crs="EPSG:32630"):
-    """Helper to write a 1-band uint8 GeoTIFF with optional colormap."""
+def _write_thematic_raster(path, data, clr_tab=None, x_min=500000.0, y_max=5200000.0, res=10.0, crs="EPSG:32630"):
+    """Helper to write a 1-band uint8 GeoTIFF with optional colour table."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     height, width = data.shape
     with rasterio.open(
@@ -65,8 +65,8 @@ def _write_thematic_raster(path, data, colormap=None, x_min=500000.0, y_max=5200
         nodata=0,
     ) as dst:
         dst.write(data[np.newaxis, ...].astype(np.uint8))
-        if colormap is not None:
-            dst.write_colormap(1, colormap)
+        if clr_tab is not None:
+            dst.write_colormap(1, clr_tab)
 
 
 def test_calc_y_fig_size_and_extent_and_ticks():
@@ -292,7 +292,7 @@ def test_plotting_imshow_and_stretches(tmp_path):
 
 
 def test_create_raster_cmap_img_map(tmp_path):
-    """Test create_raster_cmap_img_map with linear and log normalization."""
+    """Test create_raster_cmap_img_map with linear and log normalisation."""
     arr = np.linspace(1.0, 100.0, 64, dtype=np.float32).reshape(8, 8)
     tif = tmp_path / "cmap.tif"
     _write_continuous_raster(str(tif), arr, nodata=None)
@@ -331,7 +331,7 @@ def test_thematic_raster_map(tmp_path):
         3: (0, 0, 255, 255),
     }
     thmt_tif = tmp_path / "thmt.tif"
-    _write_thematic_raster(str(thmt_tif), cls_arr, colormap=ctab)
+    _write_thematic_raster(str(thmt_tif), cls_arr, clr_tab=ctab)
 
     img_rgba, ext, patches = plotting.get_thematic_raster_mpl_imshow(
         str(thmt_tif),
@@ -353,9 +353,9 @@ def test_thematic_raster_map(tmp_path):
     assert ax.get_title() == "Thematic"
     plt.close(fig)
 
-    # Missing color table raises RSGISPyException
+    # Missing colour table raises RSGISPyException
     no_ct_tif = tmp_path / "no_ct.tif"
-    _write_thematic_raster(str(no_ct_tif), cls_arr, colormap=None)
+    _write_thematic_raster(str(no_ct_tif), cls_arr, clr_tab=None)
     with pytest.raises(rsgispy.RSGISPyException):
         plotting.get_thematic_raster_mpl_imshow(str(no_ct_tif))
 

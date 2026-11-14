@@ -57,7 +57,7 @@ def calc_semivariogram(
     out_plot_file: Optional[str] = None,
     max_lag: Union[float, str] = "median",
     n_lags: int = 25,
-    normalize_vals: bool = False,
+    normalise_vals: bool = False,
 ) -> Any:
     """
     Calculate empirical semi-variance for spatial point data using ``skgstat``.
@@ -68,7 +68,7 @@ def calc_semivariogram(
     :param out_plot_file: Optional output image path for variogram plot.
     :param max_lag: Maximum lag distance or ``'median'`` / ``'mean'``.
     :param n_lags: Number of lag bins (Default = 25).
-    :param normalize_vals: Normalise values to ``[0, 1]`` when True.
+    :param normalise_vals: Normalise values to ``[0, 1]`` when True.
     :return: ``pandas.DataFrame`` with ``distance``, ``semivariance``, and ``count``.
 
     .. code:: python
@@ -99,7 +99,7 @@ def calc_semivariogram(
     vario_obj = skgstat.Variogram(
         pts_coords,
         data_vals,
-        normalize=normalize_vals,
+        normalize=normalise_vals,
         maxlag=max_lag,
         n_lags=n_lags,
     )
@@ -128,7 +128,7 @@ def calc_semivariogram(
         ax1.set_xlabel("Distance")
         ax1.set_ylabel("Semi-Variance")
 
-        if normalize_vals:
+        if normalise_vals:
             ax1.set_xlim([0, 1.05])
             ax1.set_ylim([0, 1.05])
 

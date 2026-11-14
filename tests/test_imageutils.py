@@ -1275,7 +1275,7 @@ def test_colour_interp_thematic_and_colour_table(tmp_path):
     )
 
     info = rsgispy.imageutils.colourtable.get_colour_tab_info(str(img_path), img_band=1)
-    # GeoTIFF colormap stores RGB (alpha defaults to 255 unless index == nodata)
+    # GeoTIFF colour table stores RGB (alpha defaults to 255 unless index == nodata)
     assert info[0]["red"] == 0 and info[0]["green"] == 0 and info[0]["blue"] == 0
     assert info[1] == {"red": 255, "green": 0, "blue": 0, "alpha": 255}
     assert info[2] == {"red": 0, "green": 255, "blue": 0, "alpha": 255}

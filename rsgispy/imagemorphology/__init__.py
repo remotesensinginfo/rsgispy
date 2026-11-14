@@ -181,17 +181,17 @@ def _compute_local_minima_block(
     nbr_mask = op_mask & (ii != half) & (jj != half)
     has_nbrs = bool(np.any(nbr_mask))
 
-    centers = padded[:, half : half + out_h, half : half + out_w]
+    centres = padded[:, half : half + out_h, half : half + out_w]
     windows = sliding_window_view(padded, (win_size, win_size), axis=(1, 2))
     nbr_vals = windows[:, :, :, nbr_mask] if has_nbrs else None
 
     if combined:
-        center_min = np.min(centers, axis=0)
+        centre_min = np.min(centres, axis=0)
         if nbr_vals is not None:
             cmp_mask = (
-                nbr_vals < center_min[None, :, :, None]
+                nbr_vals < centre_min[None, :, :, None]
                 if allow_equal
-                else nbr_vals <= center_min[None, :, :, None]
+                else nbr_vals <= centre_min[None, :, :, None]
             )
             is_minima = ~np.any(cmp_mask, axis=(0, 3))
         else:
@@ -206,9 +206,9 @@ def _compute_local_minima_block(
         if nbr_vals is not None:
             band_nbrs = nbr_vals[b_idx]
             cmp_mask = (
-                band_nbrs < centers[b_idx, :, :, None]
+                band_nbrs < centres[b_idx, :, :, None]
                 if allow_equal
-                else band_nbrs <= centers[b_idx, :, :, None]
+                else band_nbrs <= centres[b_idx, :, :, None]
             )
             is_minima = ~np.any(cmp_mask, axis=-1)
         else:

@@ -265,15 +265,15 @@ def _sharpen_single_high_band(
     band_min: float,
     band_max: float,
 ) -> np.ndarray:
-    """Vectorized Shepherd & Dymond linear sharpening for one high-res band."""
+    """Vectorised Shepherd & Dymond linear sharpening for one high-res band."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     half = win_size // 2
     win_h = high_halo.shape[0] - (2 * half)
     win_w = high_halo.shape[1] - (2 * half)
 
-    h_center = high_halo[half : half + win_h, half : half + win_w]
-    l_center = low_halo[half : half + win_h, half : half + win_w]
-    v_center = valid_halo[half : half + win_h, half : half + win_w]
+    h_centre = high_halo[half : half + win_h, half : half + win_w]
+    l_centre = low_halo[half : half + win_h, half : half + win_w]
+    v_centre = valid_halo[half : half + win_h, half : half + win_w]
 
     h_wins = np.lib.stride_tricks.sliding_window_view(
         high_halo, (win_size, win_size)
@@ -300,14 +300,14 @@ def _sharpen_single_high_band(
     s_hh = (dh * dh).sum(axis=2)
     s_hl = (dh * dl).sum(axis=2)
 
-    can_fit = v_center & (n_valid >= 3) & (s_hh > 1e-12)
+    can_fit = v_centre & (n_valid >= 3) & (s_hh > 1e-12)
     slope = np.divide(
         s_hl, s_hh, out=np.zeros_like(s_hh), where=can_fit
     )
-    pred = mean_l + slope * (h_center - mean_h)
+    pred = mean_l + slope * (h_centre - mean_h)
     pred = np.clip(pred, band_min, band_max)
 
-    out = np.where(v_center, l_center, float(no_data_val))
+    out = np.where(v_centre, l_centre, float(no_data_val))
     out = np.where(can_fit, pred, out)
     return out
 
@@ -328,12 +328,12 @@ def _sharpen_multi_high_bands(
     win_w = low_halo.shape[1] - (2 * half)
     n_high = len(high_halos)
 
-    h_centers = np.stack(
+    h_centres = np.stack(
         [arr[half : half + win_h, half : half + win_w] for arr in high_halos],
         axis=2,
     )
-    l_center = low_halo[half : half + win_h, half : half + win_w]
-    v_center = valid_halo[half : half + win_h, half : half + win_w]
+    l_centre = low_halo[half : half + win_h, half : half + win_w]
+    v_centre = valid_halo[half : half + win_h, half : half + win_w]
 
     h_wins = np.stack(
         [
@@ -351,8 +351,8 @@ def _sharpen_multi_high_bands(
         valid_halo, (win_size, win_size)
     ).reshape(win_h, win_w, -1)
 
-    out = np.where(v_center, l_center, float(no_data_val))
-    rows, cols = np.where(v_center)
+    out = np.where(v_centre, l_centre, float(no_data_val))
+    rows, cols = np.where(v_centre)
     for r_idx, c_idx in zip(rows.tolist(), cols.tolist()):
         vmask = v_wins[r_idx, c_idx]
         if int(vmask.sum()) < n_high + 2:
@@ -363,7 +363,7 @@ def _sharpen_multi_high_bands(
         )
         y_vec = l_wins[r_idx, c_idx][vmask]
         coefs, _, _, _ = np.linalg.lstsq(x_design, y_vec, rcond=None)
-        val = float(coefs[0] + np.dot(coefs[1:], h_centers[r_idx, c_idx]))
+        val = float(coefs[0] + np.dot(coefs[1:], h_centres[r_idx, c_idx]))
         out[r_idx, c_idx] = min(max(val, band_min), band_max)
     return out
 

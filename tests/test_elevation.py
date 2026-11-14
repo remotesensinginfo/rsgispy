@@ -163,7 +163,7 @@ def test_hillshade_shadow_and_ray_angles(tmp_path):
 
 def test_filtering_fill_detrend_and_fusion(tmp_path):
     """Test dtm_aspect_median_filter, fill_dem_soille_gratin_1994, plane_fit_detreat_dem, fft_dem_fusion, resampling_detread_dem."""
-    # 1. dtm_aspect_median_filter: spike at center (2, 2) with differing aspect shouldn't affect neighbors with matching aspect
+    # 1. dtm_aspect_median_filter: spike at centre (2, 2) with differing aspect shouldn't affect neighbours with matching aspect
     dtm = np.full((5, 5), 10.0, dtype=np.float32)
     dtm[2, 2] = 999.0
     asp = np.full((5, 5), 90.0, dtype=np.float32)
@@ -212,7 +212,7 @@ def test_filtering_fill_detrend_and_fusion(tmp_path):
         # Lowest rim cell is 4, so pit at (2, 2) must be filled to 4
         assert fld_ds.read(1)[2, 2] == 4
 
-    # 3. plane_fit_detreat_dem on exact planar DEM preserves value at center
+    # 3. plane_fit_detreat_dem on exact planar DEM preserves value at centre
     yy, xx = np.mgrid[0:6, 0:6]
     plane = (2.0 * xx + 3.0 * yy + 10.0).astype(np.float32)
     plane_path = tmp_path / "plane.tif"

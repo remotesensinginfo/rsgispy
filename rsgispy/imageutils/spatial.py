@@ -34,7 +34,7 @@ __all__ = [
 ]
 
 
-def _block_center_coords(
+def _block_centre_coords(
     transform: rasterio.Affine,
     col_off: int,
     row_off: int,
@@ -93,7 +93,7 @@ def calc_wgs84_pixel_area(
             count=1,
         )
         for win in iter_dataset_windows(src.height, src.width):
-            _, y_grid = _block_center_coords(
+            _, y_grid = _block_centre_coords(
                 src.transform,
                 int(win.col_off),
                 int(win.row_off),
@@ -138,7 +138,7 @@ def calc_wgs84_pixel_size(
             count=2,
         )
         for win in iter_dataset_windows(src.height, src.width):
-            _, y_grid = _block_center_coords(
+            _, y_grid = _block_centre_coords(
                 src.transform,
                 int(win.col_off),
                 int(win.row_off),
@@ -186,7 +186,7 @@ def calc_pixel_locations(
             count=2,
         )
         for win in iter_dataset_windows(src.height, src.width):
-            x_grid, y_grid = _block_center_coords(
+            x_grid, y_grid = _block_centre_coords(
                 src.transform,
                 int(win.col_off),
                 int(win.row_off),
@@ -243,7 +243,7 @@ def calc_wgs84_pixel_locations(
         dst.nodata = 0.0
 
         for win in iter_dataset_windows(src.height, src.width):
-            x_grid, y_grid = _block_center_coords(
+            x_grid, y_grid = _block_centre_coords(
                 src.transform,
                 int(win.col_off),
                 int(win.row_off),
@@ -323,7 +323,7 @@ def _eval_grid_cell(
     pts_y: np.ndarray,
     pts_z: np.ndarray,
 ) -> float:
-    """Evaluate a point-neighborhood grid metric at coordinate ``(px, py)``."""
+    """Evaluate a point-neighbourhood grid metric at coordinate ``(px, py)``."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-return-statements,too-many-branches
     nodata = params["nodata"]
     min_pts = int(params.get("min_points", 0))
@@ -550,7 +550,7 @@ def grid_scattered_pts(
                 f"No valid point values found in column '{vec_col}'."
             )
 
-        x_grid, y_grid = _block_center_coords(
+        x_grid, y_grid = _block_centre_coords(
             src.transform, 0, 0, src.width, src.height
         )
         if alg == "invdistnn":

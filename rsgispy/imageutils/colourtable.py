@@ -159,9 +159,9 @@ def set_img_band_colour_interp(
 
     with rasterio.open(input_img, "r+") as dst:
         _validate_band_index(img_band, dst.count, input_img)
-        colorinterps = list(dst.colorinterp)
-        colorinterps[img_band - 1] = ci_enum
-        dst.colorinterp = colorinterps
+        clr_interps = list(dst.colorinterp)
+        clr_interps[img_band - 1] = ci_enum
+        dst.colorinterp = clr_interps
 
 
 def get_colour_tab_info(
@@ -308,6 +308,6 @@ def define_colour_table(
                 f"got '{dst.dtypes[img_band - 1]}'."
             )
         dst.write_colormap(img_band, cmap)
-        colorinterps = list(dst.colorinterp)
-        colorinterps[img_band - 1] = ColorInterp.palette
-        dst.colorinterp = colorinterps
+        clr_interps = list(dst.colorinterp)
+        clr_interps[img_band - 1] = ColorInterp.palette
+        dst.colorinterp = clr_interps

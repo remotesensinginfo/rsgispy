@@ -59,7 +59,7 @@ def _summarise_neighbours(nbr_vals: np.ndarray, summary: int) -> np.ndarray:
     raise rsgispy.RSGISPyException("Summary method not recognised/available.")
 
 
-def _pixel_centers_from_indices(
+def _pixel_centres_from_indices(
     transform: rasterio.Affine, rows: np.ndarray, cols: np.ndarray
 ) -> np.ndarray:
     """Compute ``(N, 2)`` pixel-centre ``(x, y)`` coordinates for ``(rows, cols)``."""
@@ -93,7 +93,7 @@ def _collect_reference_points(
             abs_rows = loc_rows + int(win.row_off)
             abs_cols = loc_cols + int(win.col_off)
             coords_list.append(
-                _pixel_centers_from_indices(ref_src.transform, abs_rows, abs_cols)
+                _pixel_centres_from_indices(ref_src.transform, abs_rows, abs_cols)
             )
             vals_list.append(arr[valid])
 
@@ -224,7 +224,7 @@ if HAVE_SCIPY:
                     loc_rows, loc_cols = np.nonzero(fill_mask)
                     abs_rows = loc_rows + int(out_win.row_off)
                     abs_cols = loc_cols + int(out_win.col_off)
-                    query_pts = _pixel_centers_from_indices(
+                    query_pts = _pixel_centres_from_indices(
                         fill_src.transform, abs_rows, abs_cols
                     )
                     _, idxs = kd_tree.query(query_pts, k=k_eff)

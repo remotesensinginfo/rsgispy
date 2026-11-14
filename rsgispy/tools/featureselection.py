@@ -295,7 +295,7 @@ if HAVE_SKLEARN:
             optimal_alpha = float(alpha_val)
 
         print(
-            f"Using regularization parameter (alpha) for the Lasso estimator of: "
+            f"Using regularisation parameter (alpha) for the Lasso estimator of: "
             f"{optimal_alpha}"
         )
 

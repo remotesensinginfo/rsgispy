@@ -117,7 +117,7 @@ def test_create_circular_op_and_single_band_dilate_erode_gradient(tmp_path):
     with rasterio.open(grad_out) as gds:
         grad = gds.read(1)
         assert gds.dtypes[0] == "float32"
-        # Center (4, 4) surrounded entirely by 5.0 -> grad=0; boundary pixel (3, 3) -> 5 - 1 = 4
+        # Centre (4, 4) surrounded entirely by 5.0 -> grad=0; boundary pixel (3, 3) -> 5 - 1 = 4
         assert grad[4, 4] == pytest.approx(0.0)
         assert grad[3, 3] == pytest.approx(4.0)
 

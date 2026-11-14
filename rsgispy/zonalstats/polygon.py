@@ -80,7 +80,7 @@ def _read_polygon_pixels(
     thresholds: Optional[Tuple[float, float]] = None,
 ) -> numpy.ndarray:
     """
-    Rasterize ``geom`` over its intersecting raster window and return a 1D array
+    Rasterise ``geom`` over its intersecting raster window and return a 1D array
     of pixel values matching the polygon, nodata, and optional threshold filters.
     """
     if geom is None or geom.is_empty:

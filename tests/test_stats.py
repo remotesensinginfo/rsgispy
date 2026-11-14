@@ -197,7 +197,7 @@ def test_thresholding_masking_normalisation_and_variogram(tmp_path):
             vals,
             out_data_file=str(out_csv),
             out_plot_file=str(out_png),
-            normalize_vals=True,
+            normalise_vals=True,
         )
     assert list(vario_df["count"]) == [2, 3, 1]
     assert out_csv.exists()

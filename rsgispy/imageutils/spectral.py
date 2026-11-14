@@ -387,13 +387,13 @@ def whiten_image(
 
     img_flat = np.moveaxis(img_arr, 0, 2).reshape(-1, n_bands)
     valid_data = img_flat[valid_mask].astype(np.float64)
-    centered = valid_data - valid_data.mean(axis=0, keepdims=True)
-    cov = (centered.T @ centered) / (n_valid - 1)
+    centred = valid_data - valid_data.mean(axis=0, keepdims=True)
+    cov = (centred.T @ centred) / (n_valid - 1)
     _, s_vals, vh_mat = np.linalg.svd(cov)
     safe_s = np.where(s_vals > 1e-12, s_vals, 1.0)
     inv_sqrt = np.where(s_vals > 1e-12, safe_s**-0.5, 0.0)
     whiten_mat = vh_mat.T @ np.diag(inv_sqrt) @ vh_mat
-    whitened = (centered @ whiten_mat).astype(np.float32)
+    whitened = (centred @ whiten_mat).astype(np.float32)
 
     create_copy_img(
         input_img, output_img, n_bands, 0, gdalformat, rsgispy.TYPE_32FLOAT

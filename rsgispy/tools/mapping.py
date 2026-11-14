@@ -77,13 +77,13 @@ def _add_scale_bar(
     scale_bar_loc: str,
 ) -> None:
     """Add a ScaleBar artist to ``ax``, converting degrees to metres for EPSG:4326."""
-    distance_meters = 1.0
+    distance_metres = 1.0
     if epsg_code == 4326:
-        distance_meters = rsgispy.tools.projection.great_circle_distance(
+        distance_metres = rsgispy.tools.projection.great_circle_distance(
             wgs84_p1=(bbox[0], bbox[3]),
             wgs84_p2=(bbox[0] + 1.0, bbox[3]),
         )
-    ax.add_artist(ScaleBar(distance_meters, location=scale_bar_loc))
+    ax.add_artist(ScaleBar(distance_metres, location=scale_bar_loc))
 
 
 def _finalize_map_axis(
@@ -1063,7 +1063,7 @@ def create_choropleth_vec_lyr_map(
     :param vec_col: Column name used to colour features.
     :param bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)`` for the display extent.
     :param title_str: Optional map title (Default = None).
-    :param vec_fill_cmap: Matplotlib colormap name or object (Default = ``'viridis'``).
+    :param vec_fill_cmap: Matplotlib colour map name or object (Default = ``'viridis'``).
     :param vec_var_norm: Optional Matplotlib Normalize instance.
     :param vec_line_clr: Edge line colour (Default = ``'black'``).
     :param vec_line_width: Edge line width (Default = 0.25).
@@ -1147,7 +1147,7 @@ def create_raster_cmap_img_map(
     plot_zorder: float = 1.0,
 ) -> Tuple[matplotlib.colors.Colormap, Optional[matplotlib.colors.Normalize]]:
     """
-    Display a single-band raster layer on ``ax`` using a Matplotlib colormap and
+    Display a single-band raster layer on ``ax`` using a Matplotlib colour map and
     optional value normalisation.
 
     :param ax: Matplotlib axis to which the image is added.
@@ -1159,7 +1159,7 @@ def create_raster_cmap_img_map(
     :param show_scale_bar: Whether to add a scale bar (Default = True).
     :param use_grid: Whether to enable axis gridlines (Default = False).
     :param show_map_axis: Whether to display axis ticks and frame (Default = True).
-    :param cmap_name: Matplotlib colormap name (Default = ``'viridis'``).
+    :param cmap_name: Matplotlib colour map name (Default = ``'viridis'``).
     :param norm_img_vals: Whether to normalise pixel values (Default = False).
     :param use_log_norm: Whether to use logarithmic normalisation (Default = False).
     :param norm_vmin: Minimum normalisation value (auto-computed if ``None``).
@@ -1168,7 +1168,7 @@ def create_raster_cmap_img_map(
     :param print_norm_vals: Print computed normalisation min/max values.
     :param scale_bar_loc: Scale bar placement string (Default = ``'upper right'``).
     :param plot_zorder: Drawing z-order (Default = 1.0).
-    :return: Tuple ``(c_cmap, c_norm)`` for creating a Matplotlib colorbar.
+    :return: Tuple ``(c_cmap, c_norm)`` for creating a Matplotlib colourbar.
 
     .. code:: python
 
@@ -1257,7 +1257,7 @@ def create_vec_pt_density_map(
     :param gp_vec: GeoDataFrame containing point geometries.
     :param bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)`` for the display extent.
     :param title_str: Optional map title (Default = None).
-    :param cmap_name: Matplotlib colormap name (Default = ``'viridis'``).
+    :param cmap_name: Matplotlib colour map name (Default = ``'viridis'``).
     :param use_log_norm: Use logarithmic density normalisation (Default = False).
     :param density_norm_vmin: Minimum density normalisation value (Default = 1.0).
     :param density_norm_vmax: Maximum density normalisation value (Default = None).
@@ -1268,7 +1268,7 @@ def create_vec_pt_density_map(
     :param sub_in_vec: Spatially subset vector layer to ``bbox`` before plotting.
     :param scale_bar_loc: Scale bar placement string (Default = ``'upper right'``).
     :param plot_zorder: Drawing z-order (Default = 1.0).
-    :return: Tuple ``(c_cmap, c_norm)`` for creating a Matplotlib colorbar.
+    :return: Tuple ``(c_cmap, c_norm)`` for creating a Matplotlib colourbar.
 
     .. code:: python
 

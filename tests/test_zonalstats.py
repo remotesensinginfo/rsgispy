@@ -140,7 +140,7 @@ def test_calc_zonal_poly_pts_and_test_poly_pts(tmp_path):
 
     # Poly covering 2x2 pixels (rows 0..1, cols 0..1 -> values 1, 2, 6, 7)
     big_poly = box(500000.0, 5199980.0, 500020.0, 5200000.0)
-    # Tiny poly strictly inside pixel (row=2, col=3 -> value 14) not containing pixel center (500035, 5199975)
+    # Tiny poly strictly inside pixel (row=2, col=3 -> value 14) not containing pixel centre (500035, 5199975)
     tiny_poly = box(500031.0, 5199971.0, 500033.0, 5199973.0)
 
     gpkg_path = str(tmp_path / "poly_pts.gpkg")
