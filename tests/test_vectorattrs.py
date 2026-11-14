@@ -2,7 +2,9 @@
 Tests for rsgispy.vectorattrs (io, columns, spatial) using geopandas.
 """
 
+import importlib
 import json
+import os
 import sys
 import types
 from unittest.mock import MagicMock, patch
@@ -21,6 +23,14 @@ import rsgispy.vectorattrs.spatial as va_spatial
 import rsgispy.vectorstats
 import rsgispy.vectorstats.metrics as vs_metrics
 import rsgispy.vectorstats.variogram as vs_vario
+
+
+def _can_import(mod_name: str) -> bool:
+    try:
+        importlib.import_module(mod_name)
+        return True
+    except ImportError:
+        return False
 
 
 def _make_polys_gpkg(path: str, layer: str = "polys") -> None:
@@ -116,15 +126,20 @@ def test_io_read_write_drop_rename_sort_export(tmp_path):
 
     # Exports
     csv_out = str(tmp_path / "attrs.csv")
-    xlsx_out = str(tmp_path / "attrs.xlsx")
-    pq_out = str(tmp_path / "attrs.parquet")
     va_io.export_vec_attrs_to_csv(gpkg, "polys", csv_out)
-    va_io.export_vec_attrs_to_excel(gpkg, "polys", xlsx_out, out_sheet_name="Data")
-    va_io.export_vec_attrs_to_parquet(gpkg, "polys", pq_out, gzip_output=False)
-
     assert "geometry" not in pd.read_csv(csv_out).columns
-    assert "geometry" not in pd.read_excel(xlsx_out, sheet_name="Data").columns
-    assert "geometry" not in pd.read_parquet(pq_out).columns
+
+    if _can_import("xlsxwriter") or _can_import("openpyxl"):
+        xlsx_out = str(tmp_path / "attrs.xlsx")
+        va_io.export_vec_attrs_to_excel(gpkg, "polys", xlsx_out, out_sheet_name="Data")
+        assert os.path.exists(xlsx_out)
+        if _can_import("openpyxl"):
+            assert "geometry" not in pd.read_excel(xlsx_out, sheet_name="Data").columns
+
+    if _can_import("pyarrow.parquet") or _can_import("fastparquet"):
+        pq_out = str(tmp_path / "attrs.parquet")
+        va_io.export_vec_attrs_to_parquet(gpkg, "polys", pq_out, gzip_output=False)
+        assert "geometry" not in pd.read_parquet(pq_out).columns
 
 
 def test_columns_creation_luts_text_dates_and_angles(tmp_path, monkeypatch):

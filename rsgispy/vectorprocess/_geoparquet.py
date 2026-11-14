@@ -6,8 +6,15 @@ import json
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy
-import pyarrow.parquet as pq
 import pyproj
+
+try:
+    import pyarrow.parquet as pq
+
+    HAVE_PYARROW = True
+except ImportError:
+    pq = None
+    HAVE_PYARROW = False
 
 import rsgispy
 from rsgispy.imageprocess import ensure_file_exists
@@ -96,6 +103,11 @@ def read_geoparquet_info(
     if vec_lyr is not None and vec_lyr != lyr_name:
         raise rsgispy.RSGISPyException(
             f"Could not find vector layer '{vec_lyr}' in '{vec_file}'."
+        )
+
+    if not HAVE_PYARROW or pq is None:
+        raise rsgispy.RSGISPyException(
+            "Reading GeoParquet metadata requires 'pyarrow'."
         )
 
     try:

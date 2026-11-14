@@ -5,12 +5,12 @@ modules in :mod:`rsgispy`.
 
 # pylint: disable=too-many-locals,too-many-statements,too-many-lines
 
+import importlib
 import os
 import types
 
 import geopandas
 import numpy
-import pyarrow.parquet as pq
 import pytest
 import rasterio
 from rasterio.transform import from_origin
@@ -42,6 +42,16 @@ import rsgispy.vectorutils.metadata as vu_meta
 import rsgispy.vectorutils.selection as vu_sel
 import rsgispy.zonalstats.point as zs_pt
 import rsgispy.zonalstats.polygon as zs_poly
+
+pq = pytest.importorskip("pyarrow.parquet")
+
+
+def _can_import(mod_name: str) -> bool:
+    try:
+        importlib.import_module(mod_name)
+        return True
+    except ImportError:
+        return False
 
 
 def _parquet_codec(path: str) -> str:
@@ -394,18 +404,19 @@ def test_vectorgeoms_geoparquet(tmp_path):
     assert _parquet_codec(pts_pq) == "ZSTD"
     assert vg_spatial.bbox_intersects_vec_lyr(pts_pq, None, (2.0, 8.0, 2.0, 8.0)) is True
 
-    hull_pq = str(tmp_path / "hull.parquet")
-    created, _ = vg_spatial.create_alpha_shape(
-        pts_pq,
-        None,
-        hull_pq,
-        None,
-        out_format="PARQUET",
-        alpha_vals=[0.5, 1.0],
-        out_compress="gzip",
-    )
-    assert created is True
-    assert _parquet_codec(hull_pq) == "GZIP"
+    if _can_import("alphashape"):
+        hull_pq = str(tmp_path / "hull.parquet")
+        created, _ = vg_spatial.create_alpha_shape(
+            pts_pq,
+            None,
+            hull_pq,
+            None,
+            out_format="PARQUET",
+            alpha_vals=[0.5, 1.0],
+            out_compress="gzip",
+        )
+        assert created is True
+        assert _parquet_codec(hull_pq) == "GZIP"
 
     # Lines
     lines_pq = str(tmp_path / "lines.parquet")

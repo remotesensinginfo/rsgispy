@@ -4,6 +4,7 @@ geopandas without osgeo dependencies.
 """
 
 import datetime
+import importlib
 import os
 
 import geopandas as gpd
@@ -28,6 +29,14 @@ import rsgispy.vectorgeoms.polygons as vg_polys
 import rsgispy.vectorgeoms.spatial as vg_spatial
 import rsgispy.vectorstats.metrics as vs_metrics
 import rsgispy.vectorutils.metadata as vu_meta
+
+
+def _can_import(mod_name: str) -> bool:
+    try:
+        importlib.import_module(mod_name)
+        return True
+    except ImportError:
+        return False
 
 
 def test_vectorgeoms_lines(tmp_path):
@@ -238,19 +247,20 @@ def test_vectorgeoms_overlay_and_polygons(tmp_path):
     )
     assert os.path.exists(os.path.join(sets_dir, "sub_r1.gpkg"))
 
-    sets_pq_dir = str(tmp_path / "sets_pq")
-    vg_overlay.clip_vec_into_sets(
-        a_gpkg,
-        "a",
-        b_gpkg,
-        "b",
-        "roi",
-        sets_pq_dir,
-        out_vec_ext="parquet.sz",
-        out_format="PARQUET",
-        use_pbar=False,
-    )
-    assert os.path.exists(os.path.join(sets_pq_dir, "R1.parquet.sz"))
+    if _can_import("pyarrow.parquet"):
+        sets_pq_dir = str(tmp_path / "sets_pq")
+        vg_overlay.clip_vec_into_sets(
+            a_gpkg,
+            "a",
+            b_gpkg,
+            "b",
+            "roi",
+            sets_pq_dir,
+            out_vec_ext="parquet.sz",
+            out_format="PARQUET",
+            use_pbar=False,
+        )
+        assert os.path.exists(os.path.join(sets_pq_dir, "R1.parquet.sz"))
 
     # Polygon with hole + multi-polygon tests
     hole_poly = Polygon(
@@ -396,18 +406,19 @@ def test_vectorgeoms_spatial_and_deduplication(tmp_path):
     lyr_pts = vg_spatial.get_vec_lyr_as_pts(pts_gpkg, "pts", use_pbar=False)
     assert len(lyr_pts) == 5
 
-    hull_gpkg = str(tmp_path / "hull.gpkg")
-    created, used_alpha = vg_spatial.create_alpha_shape(
-        pts_gpkg, "pts", hull_gpkg, "hull", alpha_vals=[0.5, 1.0]
-    )
-    assert created is True
-    assert used_alpha == 0.5
-    assert gpd.read_file(hull_gpkg, layer="hull").area.iloc[0] > 0.0
-
-    with pytest.raises(rsgispy.RSGISPyException):
-        vg_spatial.create_alpha_shape(
-            pts_gpkg, "pts", hull_gpkg, "hull", alpha_val=0.5, del_exist_vec=False
+    if _can_import("alphashape"):
+        hull_gpkg = str(tmp_path / "hull.gpkg")
+        created, used_alpha = vg_spatial.create_alpha_shape(
+            pts_gpkg, "pts", hull_gpkg, "hull", alpha_vals=[0.5, 1.0]
         )
+        assert created is True
+        assert used_alpha == 0.5
+        assert gpd.read_file(hull_gpkg, layer="hull").area.iloc[0] > 0.0
+
+        with pytest.raises(rsgispy.RSGISPyException):
+            vg_spatial.create_alpha_shape(
+                pts_gpkg, "pts", hull_gpkg, "hull", alpha_val=0.5, del_exist_vec=False
+            )
 
     base_gpkg = str(tmp_path / "base.gpkg")
     gpd.GeoDataFrame(
@@ -418,9 +429,10 @@ def test_vectorgeoms_spatial_and_deduplication(tmp_path):
     assert vg_spatial.bbox_intersects_vec_lyr(base_gpkg, "base", (5.0, 15.0, 5.0, 15.0)) is True
     assert vg_spatial.bbox_intersects_vec_lyr(base_gpkg, "base", (20.0, 30.0, 20.0, 30.0)) is False
 
-    rt_idx, geoms = vg_spatial.create_rtree_index(base_gpkg, "base", use_pbar=False)
-    assert vg_spatial.bbox_intersects_index(rt_idx, geoms, (5.0, 15.0, 5.0, 15.0)) is True
-    assert vg_spatial.bbox_intersects_index(rt_idx, geoms, (20.0, 30.0, 20.0, 30.0)) is False
+    if _can_import("rtree"):
+        rt_idx, geoms = vg_spatial.create_rtree_index(base_gpkg, "base", use_pbar=False)
+        assert vg_spatial.bbox_intersects_index(rt_idx, geoms, (5.0, 15.0, 5.0, 15.0)) is True
+        assert vg_spatial.bbox_intersects_index(rt_idx, geoms, (20.0, 30.0, 20.0, 30.0)) is False
 
     comp_in_gpkg = str(tmp_path / "comp_in.gpkg")
     gpd.GeoDataFrame(
@@ -608,29 +620,30 @@ def test_vectorgeoms_create(tmp_path):
     assert len(img_vecs) == 1
     assert os.path.basename(img_vecs[0]) == "scene.geojson"
 
-    hex_bbox_gpkg = str(tmp_path / "hex_bbox.gpkg")
-    vg_create.create_hex_grid_bbox(
-        (-4.2, -3.9, 52.3, 52.5), 4326, 6, hex_bbox_gpkg, "hex"
-    )
-    assert vu_meta.get_vec_feat_count(hex_bbox_gpkg, "hex") > 0
+    if _can_import("h3"):
+        hex_bbox_gpkg = str(tmp_path / "hex_bbox.gpkg")
+        vg_create.create_hex_grid_bbox(
+            (-4.2, -3.9, 52.3, 52.5), 4326, 6, hex_bbox_gpkg, "hex"
+        )
+        assert vu_meta.get_vec_feat_count(hex_bbox_gpkg, "hex") > 0
 
-    roi_wgs_gpkg = str(tmp_path / "roi_wgs.gpkg")
-    roi_poly_3d = Polygon([
-        (-4.2, 52.3, 0.0),
-        (-3.9, 52.3, 0.0),
-        (-3.9, 52.5, 0.0),
-        (-4.2, 52.5, 0.0),
-    ])
-    gpd.GeoDataFrame(
-        {"id": [1]},
-        geometry=[roi_poly_3d],
-        crs="EPSG:4326",
-    ).to_file(roi_wgs_gpkg, layer="roi", driver="GPKG")
-    hex_polys_gpkg = str(tmp_path / "hex_polys.gpkg")
-    vg_create.create_hex_grid_polys(
-        roi_wgs_gpkg, "roi", 6, hex_polys_gpkg, "hex", use_pbar=False
-    )
-    assert vu_meta.get_vec_feat_count(hex_polys_gpkg, "hex") > 0
+        roi_wgs_gpkg = str(tmp_path / "roi_wgs.gpkg")
+        roi_poly_3d = Polygon([
+            (-4.2, 52.3, 0.0),
+            (-3.9, 52.3, 0.0),
+            (-3.9, 52.5, 0.0),
+            (-4.2, 52.5, 0.0),
+        ])
+        gpd.GeoDataFrame(
+            {"id": [1]},
+            geometry=[roi_poly_3d],
+            crs="EPSG:4326",
+        ).to_file(roi_wgs_gpkg, layer="roi", driver="GPKG")
+        hex_polys_gpkg = str(tmp_path / "hex_polys.gpkg")
+        vg_create.create_hex_grid_polys(
+            roi_wgs_gpkg, "roi", 6, hex_polys_gpkg, "hex", use_pbar=False
+        )
+        assert vu_meta.get_vec_feat_count(hex_polys_gpkg, "hex") > 0
 
     rad_pts = str(tmp_path / "rad_pts.gpkg")
     vg_create.create_random_pts_in_radius(
