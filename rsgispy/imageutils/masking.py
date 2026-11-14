@@ -15,10 +15,12 @@ import rsgispy
 from rsgispy.imageprocess import (
     cast_result_block,
     compute_spatial_intersection,
-    get_default_block_size,
+    iter_dataset_windows,
     open_multi_image_datasets,
     open_output_dataset,
+    validate_band_index,
 )
+from rsgispy.imageutils._helpers import normalise_creation_options
 from rsgispy.imageutils.colourtable import set_img_thematic
 
 __all__ = [
@@ -67,22 +69,6 @@ class ImageBandInfo:
         )
 
 
-def _iter_grid_windows(
-    width: int, height: int, block_size: Optional[int] = None
-):
-    """Yield ``Window`` objects covering ``(width, height)`` in ``block_size`` tiles."""
-    bsize = get_default_block_size() if block_size is None else int(block_size)
-    if bsize <= 0:
-        raise rsgispy.RSGISPyException(
-            f"block_size must be a positive integer, got {bsize}."
-        )
-    for row_off in range(0, height, bsize):
-        win_h = min(bsize, height - row_off)
-        for col_off in range(0, width, bsize):
-            win_w = min(bsize, width - col_off)
-            yield Window(col_off, row_off, win_w, win_h)
-
-
 def mask_img(
     input_img: str,
     in_msk_img: str,
@@ -92,6 +78,7 @@ def mask_img(
     out_value: float,
     mask_value: Union[float, int, Sequence[Union[float, int]]],
     options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Mask ``input_img`` using ``in_msk_img``: wherever band 1 of ``in_msk_img``
@@ -106,6 +93,8 @@ def mask_img(
     :param out_value: Value written to masked pixels in the output image.
     :param mask_value: Scalar or sequence of mask values in ``in_msk_img`` to mask.
     :param options: Optional GDAL creation options mapping.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -132,7 +121,7 @@ def mask_img(
 
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
-    creation_opts = dict(options) if isinstance(options, Mapping) else None
+    creation_opts = normalise_creation_options(options)
 
     with ExitStack() as stack:
         datasets, paths = open_multi_image_datasets(
@@ -161,7 +150,9 @@ def mask_img(
             if desc:
                 dst.set_band_description(bidx, desc)
 
-        for out_win in _iter_grid_windows(grid.width, grid.height):
+        for out_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
             win_w = int(out_win.width)
             win_h = int(out_win.height)
             in_win = Window(
@@ -195,7 +186,8 @@ def gen_finite_mask(
     input_img: str,
     output_img: str,
     gdalformat: str = "GTIFF",
-    options: Optional[Mapping[str, Any]] = None,
+    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Generate a binary thematic mask (``1`` where all bands are finite, ``0`` where
@@ -205,6 +197,8 @@ def gen_finite_mask(
     :param output_img: Path to the output mask image file (8-bit unsigned).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param options: Optional GDAL creation options mapping.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -212,7 +206,7 @@ def gen_finite_mask(
 
         rsgispy.imageutils.masking.gen_finite_mask("in_img.tif", "finite_msk.tif")
     """
-    creation_opts = dict(options) if isinstance(options, Mapping) else None
+    creation_opts = normalise_creation_options(options)
     with ExitStack() as stack:
         datasets, paths = open_multi_image_datasets(stack, [input_img])
         grid = compute_spatial_intersection(datasets)
@@ -229,7 +223,9 @@ def gen_finite_mask(
             creation_opts=creation_opts,
         )
 
-        for out_win in _iter_grid_windows(grid.width, grid.height):
+        for out_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
             arr = in_ds.read(window=out_win, out_dtype=np.float64)
             finite_msk = np.all(np.isfinite(arr), axis=0).astype(np.uint8)
             dst.write(finite_msk, 1, window=out_win)
@@ -242,7 +238,8 @@ def gen_valid_mask(
     output_img: str,
     gdalformat: str = "GTIFF",
     no_data_val: float = 0.0,
-    options: Optional[Mapping[str, Any]] = None,
+    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Generate a binary thematic valid-pixel mask (``1`` where all bands across all
@@ -253,6 +250,8 @@ def gen_valid_mask(
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param no_data_val: Value representing no-data (Default = ``0.0``).
     :param options: Optional GDAL creation options mapping.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -262,14 +261,14 @@ def gen_valid_mask(
             ["img1.tif", "img2.tif"], "valid_msk.tif", no_data_val=0.0
         )
     """
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if isinstance(input_imgs, (str, os.PathLike)):
         img_list: List[Union[str, os.PathLike]] = [input_imgs]
     else:
         img_list = list(input_imgs)
 
     nd_is_nan = math.isnan(float(no_data_val))
-    creation_opts = dict(options) if isinstance(options, Mapping) else None
+    creation_opts = normalise_creation_options(options)
 
     with ExitStack() as stack:
         datasets, paths = open_multi_image_datasets(stack, img_list)
@@ -286,7 +285,9 @@ def gen_valid_mask(
             creation_opts=creation_opts,
         )
 
-        for out_win in _iter_grid_windows(grid.width, grid.height):
+        for out_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
             win_w = int(out_win.width)
             win_h = int(out_win.height)
             valid = np.ones((win_h, win_w), dtype=bool)
@@ -314,7 +315,8 @@ def gen_img_edge_mask(
     output_img: str,
     gdalformat: str,
     n_edge_pxls: int,
-    options: Optional[Mapping[str, Any]] = None,
+    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Generate a binary thematic mask highlighting image border pixels (``1`` within
@@ -325,6 +327,8 @@ def gen_img_edge_mask(
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param n_edge_pxls: Number of edge pixels along each side to mark as ``1``.
     :param options: Optional GDAL creation options mapping.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -334,14 +338,14 @@ def gen_img_edge_mask(
             "in_img.tif", "edge_msk.tif", "GTIFF", 5
         )
     """
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     edge_px = int(n_edge_pxls)
     if edge_px < 0:
         raise rsgispy.RSGISPyException(
             f"n_edge_pxls must be non-negative, got {n_edge_pxls}."
         )
 
-    creation_opts = dict(options) if isinstance(options, Mapping) else None
+    creation_opts = normalise_creation_options(options)
     with ExitStack() as stack:
         datasets, _ = open_multi_image_datasets(stack, [input_img])
         grid = compute_spatial_intersection(datasets)
@@ -357,7 +361,9 @@ def gen_img_edge_mask(
             creation_opts=creation_opts,
         )
 
-        for out_win in _iter_grid_windows(grid.width, grid.height):
+        for out_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
             row0 = int(out_win.row_off)
             col0 = int(out_win.col_off)
             win_h = int(out_win.height)
@@ -380,7 +386,8 @@ def mask_all_band_zero_vals(
     output_img: str,
     gdalformat: str,
     out_val: float = 1.0,
-    options: Optional[Mapping[str, Any]] = None,
+    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Replace zero/non-positive values in individual bands with ``out_val`` where
@@ -393,6 +400,8 @@ def mask_all_band_zero_vals(
     :param out_val: Replacement value when a pixel has positive band sum but
                     a band value ``<= 0`` (Default = ``1.0``).
     :param options: Optional GDAL creation options mapping.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -402,8 +411,8 @@ def mask_all_band_zero_vals(
             "in_img.tif", "out_img.tif", "GTIFF", out_val=1.0
         )
     """
-    # pylint: disable=too-many-locals
-    creation_opts = dict(options) if isinstance(options, Mapping) else None
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    creation_opts = normalise_creation_options(options)
     with ExitStack() as stack:
         datasets, paths = open_multi_image_datasets(stack, [input_img])
         grid = compute_spatial_intersection(datasets)
@@ -428,7 +437,9 @@ def mask_all_band_zero_vals(
             if desc:
                 dst.set_band_description(bidx, desc)
 
-        for out_win in _iter_grid_windows(grid.width, grid.height):
+        for out_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
             win_w = int(out_win.width)
             win_h = int(out_win.height)
             data = in_ds.read(window=out_win, out_dtype=np.float64)
@@ -444,6 +455,7 @@ def create_valid_mask(
     out_msk_file: str,
     gdalformat: str,
     tmp_dir: str = "",
+    use_pbar: bool = True,
 ) -> None:
     """
     Create a binary thematic valid-pixel mask (``1`` where all bands of every
@@ -455,6 +467,8 @@ def create_valid_mask(
     :param out_msk_file: Path to the output mask image file.
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param tmp_dir: Temporary directory path (accepted for API compatibility).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -501,10 +515,7 @@ def create_valid_mask(
                     f"ImageBandInfo for '{path}' specified an empty band list."
                 )
             for b_idx in bands:
-                if b_idx < 1 or b_idx > ds.count:
-                    raise rsgispy.RSGISPyException(
-                        f"Band {b_idx} is out of range for '{path}' ({ds.count} bands)."
-                    )
+                validate_band_index(b_idx, ds.count, path)
             band_checks.append((path, ds, bands))
 
         dst = open_output_dataset(
@@ -517,7 +528,9 @@ def create_valid_mask(
             output_exists=False,
         )
 
-        for out_win in _iter_grid_windows(grid.width, grid.height):
+        for out_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
             win_w = int(out_win.width)
             win_h = int(out_win.height)
             valid = np.ones((win_h, win_w), dtype=bool)

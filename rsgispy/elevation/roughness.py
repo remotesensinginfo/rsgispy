@@ -634,6 +634,7 @@ def calc_simple_roughness_profile_metrics(
     detrend: bool = True,
     detrend_poly_order: int = 1,
     export_plot_path: Optional[str] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate profile roughness metrics (RA, RR, RQ, MIF, RV, RP, RZ, RSK, RKU)
@@ -655,6 +656,7 @@ def calc_simple_roughness_profile_metrics(
     :param detrend: Whether to detrend the surface profiles. Default: ``True``.
     :param detrend_poly_order: Polynomial order used to detrend the profiles.
     :param export_plot_path: Optional directory to save diagnostic PNG plots.
+    :param use_pbar: Show a progress bar while processing points (Default = ``True``).
 
     .. code:: python
 
@@ -689,6 +691,7 @@ def calc_simple_roughness_profile_metrics(
         x_box_col=x_box_col,
         y_box_col=y_box_col,
         no_data_val=no_data_val,
+        use_pbar=use_pbar,
     )
 
 
@@ -707,6 +710,7 @@ def calc_munro_roughness_profile_metrics(
     detrend: bool = True,
     detrend_poly_order: int = 1,
     export_plot_path: Optional[str] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate Munro (1989) :math:`z_0` roughness metrics along the X and Y axes
@@ -727,6 +731,7 @@ def calc_munro_roughness_profile_metrics(
     :param detrend: Whether to detrend the surface profiles. Default: ``True``.
     :param detrend_poly_order: Polynomial order used to detrend the profiles.
     :param export_plot_path: Optional directory to save diagnostic PNG plots.
+    :param use_pbar: Show a progress bar while processing points (Default = ``True``).
 
     .. code:: python
 
@@ -761,6 +766,7 @@ def calc_munro_roughness_profile_metrics(
         x_box_col=x_box_col,
         y_box_col=y_box_col,
         no_data_val=no_data_val,
+        use_pbar=use_pbar,
     )
 
 
@@ -778,6 +784,7 @@ def calc_smith_roughness_metrics(
     no_data_val: Optional[float] = None,
     detrend: bool = True,
     export_plot_path: Optional[str] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate Smith et al. (2016) directional :math:`z_0` roughness metrics
@@ -797,6 +804,7 @@ def calc_smith_roughness_metrics(
     :param no_data_val: Image no-data value; ``None`` reads from header.
     :param detrend: Whether to plane-detrend the surface. Default: ``True``.
     :param export_plot_path: Optional directory to save diagnostic PNG plots.
+    :param use_pbar: Show a progress bar while processing points (Default = ``True``).
 
     .. code:: python
 
@@ -830,6 +838,7 @@ def calc_smith_roughness_metrics(
         x_box_col=x_box_col,
         y_box_col=y_box_col,
         no_data_val=no_data_val,
+        use_pbar=use_pbar,
     )
 
 
@@ -847,6 +856,7 @@ def calc_all_roughness_profile_metrics(
     no_data_val: Optional[float] = None,
     detrend: bool = True,
     detrend_poly_order: int = 1,
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate all roughness metrics (:class:`CalcProfileRoughMetrics`,
@@ -867,6 +877,7 @@ def calc_all_roughness_profile_metrics(
     :param no_data_val: Image no-data value; ``None`` reads from header.
     :param detrend: Whether to detrend the surfaces/profiles. Default: ``True``.
     :param detrend_poly_order: Polynomial order used to detrend 1D profiles.
+    :param use_pbar: Show a progress bar while processing points (Default = ``True``).
 
     .. code:: python
 
@@ -903,4 +914,5 @@ def calc_all_roughness_profile_metrics(
         x_box_col=x_box_col,
         y_box_col=y_box_col,
         no_data_val=no_data_val,
+        use_pbar=use_pbar,
     )

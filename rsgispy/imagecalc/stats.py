@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 """
 The imagecalc.stats module provides basic raster band summary statistics,
 pixel value counting, and unique value extraction using ``rasterio``.
@@ -717,51 +718,51 @@ def get_img_sum_stats_in_pxl(
             creation_opts=creation_opts,
         )
 
-        tqdm_cls = rsgispy.get_tqdm()
-        total_blocks = math.ceil(grid.height / io_grid_y) * math.ceil(
-            grid.width / io_grid_x
-        )
         inv_stats_transform = ~stats_src.transform
 
-        with tqdm_cls(total=total_blocks, disable=not use_pbar) as pbar:
-            for row_off in range(0, grid.height, io_grid_y):
-                win_h = min(io_grid_y, grid.height - row_off)
-                for col_off in range(0, grid.width, io_grid_x):
-                    win_w = min(io_grid_x, grid.width - col_off)
-                    out_win = Window(col_off, row_off, win_w, win_h)
+        for out_win in iter_dataset_windows(
+            grid.height,
+            grid.width,
+            block_size=io_grid_y,
+            block_width=io_grid_x,
+            use_pbar=use_pbar,
+        ):
+            col_off = int(out_win.col_off)
+            row_off = int(out_win.row_off)
+            win_w = int(out_win.width)
+            win_h = int(out_win.height)
 
-                    tl_x, tl_y = ref_src.transform @ (col_off, row_off)
-                    s_col_f, s_row_f = inv_stats_transform @ (tl_x, tl_y)
-                    s_win = Window(
-                        int(round(s_col_f)),
-                        int(round(s_row_f)),
-                        win_w * factor_x,
-                        win_h * factor_y,
-                    )
-                    sub = stats_src.read(
-                        stats_img_band,
-                        window=s_win,
-                        boundless=True,
-                        fill_value=np.nan,
-                        out_dtype=np.float64,
-                    )
-                    sub = _mask_nodata_nan(sub, stats_nd, use_no_data)
-                    sub_stack = (
-                        sub.reshape(win_h, factor_y, win_w, factor_x)
-                        .transpose(1, 3, 0, 2)
-                        .reshape(factor_y * factor_x, win_h, win_w)
-                    )
-                    out_bands = [
-                        cast_result_block(
-                            _calc_stack_stat(sub_stack, stat_id),
-                            win_h,
-                            win_w,
-                            out_np_dtype,
-                        )
-                        for stat_id in sum_stats
-                    ]
-                    dst.write(np.stack(out_bands, axis=0), window=out_win)
-                    pbar.update(1)
+            tl_x, tl_y = ref_src.transform @ (col_off, row_off)
+            s_col_f, s_row_f = inv_stats_transform @ (tl_x, tl_y)
+            s_win = Window(
+                int(round(s_col_f)),
+                int(round(s_row_f)),
+                win_w * factor_x,
+                win_h * factor_y,
+            )
+            sub = stats_src.read(
+                stats_img_band,
+                window=s_win,
+                boundless=True,
+                fill_value=np.nan,
+                out_dtype=np.float64,
+            )
+            sub = _mask_nodata_nan(sub, stats_nd, use_no_data)
+            sub_stack = (
+                sub.reshape(win_h, factor_y, win_w, factor_x)
+                .transpose(1, 3, 0, 2)
+                .reshape(factor_y * factor_x, win_h, win_w)
+            )
+            out_bands = [
+                cast_result_block(
+                    _calc_stack_stat(sub_stack, stat_id),
+                    win_h,
+                    win_w,
+                    out_np_dtype,
+                )
+                for stat_id in sum_stats
+            ]
+            dst.write(np.stack(out_bands, axis=0), window=out_win)
 
 
 def _estimate_bin_width(vals: np.ndarray, b_min: float, b_max: float) -> float:

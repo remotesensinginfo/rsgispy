@@ -104,6 +104,7 @@ def extract_img_pxl_sample(
     input_img: str,
     pxl_n_sample: int,
     no_data_val: Optional[float] = None,
+    use_pbar: bool = True,
 ) -> np.ndarray:
     """
     Extract every ``pxl_n_sample``-th valid pixel from ``input_img`` into a
@@ -112,6 +113,8 @@ def extract_img_pxl_sample(
     :param input_img: Path to the input image file.
     :param pxl_n_sample: Sampling stride (e.g., ``100`` keeps every 100th valid pixel).
     :param no_data_val: Optional no-data value to exclude across all bands.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
     :return: 2D NumPy array ``(n_sampled, n_bands)``.
 
     .. code:: python
@@ -137,7 +140,7 @@ def extract_img_pxl_sample(
     for _, band_arrays in iter_single_image_band_blocks(
         input_img=input_img,
         read_dtype=np_dtype,
-        use_pbar=True,
+        use_pbar=use_pbar,
     ):
         pxls = np.stack([b.ravel() for b in band_arrays], axis=1)
         if no_data_val is not None:
@@ -167,6 +170,7 @@ def extract_img_pxl_vals_in_msk(
     in_msk_img: str,
     img_mask_val: int,
     no_data_val: Optional[float] = None,
+    use_pbar: bool = True,
 ) -> np.ndarray:
     """
     Extract pixel values from ``img_bands`` of ``input_img`` where band 1 of
@@ -177,6 +181,8 @@ def extract_img_pxl_vals_in_msk(
     :param in_msk_img: Path to the mask image file (band 1 is used).
     :param img_mask_val: Mask value identifying pixels to extract.
     :param no_data_val: Optional no-data value to exclude across selected bands.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
     :return: 2D NumPy array ``(n_values, len(img_bands))``.
 
     .. code:: python
@@ -186,7 +192,7 @@ def extract_img_pxl_vals_in_msk(
             "input_img.tif", [1, 2, 3], "mask_img.tif", 1
         )
     """
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not img_bands:
         raise rsgispy.RSGISPyException(
             "img_bands must contain at least one band index."
@@ -207,7 +213,9 @@ def extract_img_pxl_vals_in_msk(
         msk_off_x, msk_off_y = grid.offsets[paths[1]]
 
         chunks: List[np.ndarray] = []
-        for dst_win in iter_dataset_windows(grid.height, grid.width):
+        for dst_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
             col_off, row_off = int(dst_win.col_off), int(dst_win.row_off)
             win_w, win_h = int(dst_win.width), int(dst_win.height)
             img_win = Window(
@@ -250,6 +258,7 @@ def assign_random_pxls(
     edge_pxl: int = 0,
     use_no_data: bool = True,
     rnd_seed: Optional[int] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Create a single-band ``uint8`` binary mask with ``n_pts`` randomly located
@@ -265,6 +274,8 @@ def assign_random_pxls(
     :param use_no_data: If ``True``, avoid pixels equal to the band no-data value
                         (Default = ``True``).
     :param rnd_seed: Optional random seed for reproducibility (Default = ``None``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -329,7 +340,13 @@ def assign_random_pxls(
         out_x_coords = (flat_sel % int_w) + x_min
 
     create_copy_img(
-        input_img, output_img, 1, 0, gdalformat, rsgispy.TYPE_8UINT
+        input_img,
+        output_img,
+        1,
+        0,
+        gdalformat,
+        rsgispy.TYPE_8UINT,
+        use_pbar=use_pbar,
     )
     set_img_pxl_values(output_img, 1, out_x_coords, out_y_coords, 1)
 
@@ -341,6 +358,7 @@ def generate_random_pxl_vals_img(
     low_val: int,
     up_val: int,
     rnd_seed: Optional[int] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Create a single-band ``int32`` raster matching ``input_img`` populated with
@@ -352,6 +370,8 @@ def generate_random_pxl_vals_img(
     :param low_val: Lower inclusive integer bound.
     :param up_val: Upper exclusive integer bound.
     :param rnd_seed: Optional random seed for reproducibility (Default = ``None``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -379,7 +399,9 @@ def generate_random_pxl_vals_img(
             out_rio_dtype="int32",
             count=1,
         )
-        for win in iter_dataset_windows(src.height, src.width):
+        for win in iter_dataset_windows(
+            src.height, src.width, use_pbar=use_pbar
+        ):
             blk = rng.integers(
                 int(low_val),
                 int(up_val),

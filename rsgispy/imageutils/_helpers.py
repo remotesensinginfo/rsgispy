@@ -83,12 +83,13 @@ def copy_raster_window(
     gdalformat: str,
     datatype: int,
     options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    use_pbar: bool = True,
 ) -> None:
     """Copy a pixel window ``(col_off, row_off, width, height)`` to ``output_img``."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
-    creation_opts = dict(options) if isinstance(options, Mapping) else None
+    creation_opts = normalise_creation_options(options)
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
@@ -118,7 +119,7 @@ def copy_raster_window(
             if desc:
                 dst.set_band_description(bidx, desc)
 
-        for dst_win in iter_dataset_windows(height, width, use_pbar=False):
+        for dst_win in iter_dataset_windows(height, width, use_pbar=use_pbar):
             src_win = Window(
                 col_off + int(dst_win.col_off),
                 row_off + int(dst_win.row_off),

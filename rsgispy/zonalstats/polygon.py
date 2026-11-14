@@ -190,6 +190,7 @@ def _calc_zonal_stats_core(
     vec_def_epsg: Optional[int] = None,
     percentile: Optional[float] = None,
     allow_centroid_fallback: bool = False,
+    use_pbar: bool = True,
 ) -> geopandas.GeoDataFrame:
     """Shared implementation for polygon zonal statistics with optional centroid fallback."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -208,7 +209,9 @@ def _calc_zonal_stats_core(
             key: [] for key, name in field_map.items() if name is not None
         }
         tqdm_cls = rsgispy.get_tqdm()
-        for geom in tqdm_cls(geom_series, total=len(vec_gdf)):
+        for geom in tqdm_cls(
+            geom_series, total=len(vec_gdf), disable=not use_pbar
+        ):
             vals = _read_polygon_pixels(
                 src,
                 img_band,
@@ -272,6 +275,7 @@ def calc_zonal_band_stats_file(
     mode_field: Optional[str] = None,
     median_field: Optional[str] = None,
     vec_def_epsg: Optional[int] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate zonal statistics for a raster band over polygons in ``vec_file``.
@@ -295,6 +299,8 @@ def calc_zonal_band_stats_file(
     :param mode_field: Output column name for modal value (or ``None``).
     :param median_field: Output column name for median value (or ``None``).
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -331,6 +337,7 @@ def calc_zonal_band_stats_file(
         mode_field=mode_field,
         median_field=median_field,
         vec_def_epsg=vec_def_epsg,
+        use_pbar=use_pbar,
     )
     _write_vec_file(vec_gdf, vec_file, vec_lyr)
 
@@ -351,6 +358,7 @@ def calc_zonal_band_stats(
     mode_field: Optional[str] = None,
     median_field: Optional[str] = None,
     vec_def_epsg: Optional[int] = None,
+    use_pbar: bool = True,
 ) -> geopandas.GeoDataFrame:
     """
     Calculate zonal statistics for a raster band over polygons in a
@@ -373,6 +381,8 @@ def calc_zonal_band_stats(
     :param mode_field: Output column name for modal value (or ``None``).
     :param median_field: Output column name for median value (or ``None``).
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
     .. code:: python
@@ -413,6 +423,7 @@ def calc_zonal_band_stats(
         field_map=field_map,
         vec_def_epsg=vec_def_epsg,
         allow_centroid_fallback=False,
+        use_pbar=use_pbar,
     )
 
 
@@ -423,6 +434,7 @@ def calc_zonal_poly_pts_band_stats_file(
     img_band: int,
     out_field: str,
     vec_def_epsg: Optional[int] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Extract raster band values at each polygon's centroid for ``vec_file``.
@@ -435,6 +447,8 @@ def calc_zonal_poly_pts_band_stats_file(
     :param img_band: 1-based band index within ``input_img``.
     :param out_field: Output column name in the vector layer.
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -456,6 +470,7 @@ def calc_zonal_poly_pts_band_stats_file(
         img_band,
         out_field,
         vec_def_epsg=vec_def_epsg,
+        use_pbar=use_pbar,
     )
     _write_vec_file(vec_gdf, vec_file, vec_lyr)
 
@@ -466,6 +481,7 @@ def calc_zonal_poly_pts_band_stats(
     img_band: int,
     out_field: str,
     vec_def_epsg: Optional[int] = None,
+    use_pbar: bool = True,
 ) -> geopandas.GeoDataFrame:
     """
     Extract raster band values at each polygon's centroid for a
@@ -478,6 +494,8 @@ def calc_zonal_poly_pts_band_stats(
     :param img_band: 1-based band index within ``input_img``.
     :param out_field: Output column name in ``vec_gdf``.
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
     .. code:: python
@@ -493,6 +511,7 @@ def calc_zonal_poly_pts_band_stats(
             out_field="b1_pt_val",
         )
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     if not out_field:
         raise rsgispy.RSGISPyException(
             "Output field specified as None or empty, a name needs to be given."
@@ -503,7 +522,9 @@ def calc_zonal_poly_pts_band_stats(
     ) as (src, _, geom_series):
         out_vals: List[float] = []
         tqdm_cls = rsgispy.get_tqdm()
-        for geom in tqdm_cls(geom_series, total=len(vec_gdf)):
+        for geom in tqdm_cls(
+            geom_series, total=len(vec_gdf), disable=not use_pbar
+        ):
             if geom is None or geom.is_empty:
                 out_vals.append(float("nan"))
             else:
@@ -538,6 +559,7 @@ def calc_zonal_band_stats_test_poly_pts_file(
     mode_field: Optional[str] = None,
     median_field: Optional[str] = None,
     vec_def_epsg: Optional[int] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate zonal statistics for polygons in ``vec_file``, falling back to the
@@ -562,6 +584,8 @@ def calc_zonal_band_stats_test_poly_pts_file(
     :param mode_field: Output column name for modal value (or ``None``).
     :param median_field: Output column name for median value (or ``None``).
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -600,6 +624,7 @@ def calc_zonal_band_stats_test_poly_pts_file(
         mode_field=mode_field,
         median_field=median_field,
         vec_def_epsg=vec_def_epsg,
+        use_pbar=use_pbar,
     )
     _write_vec_file(vec_gdf, vec_file, vec_lyr)
 
@@ -622,6 +647,7 @@ def calc_zonal_band_stats_test_poly_pts(
     mode_field: Optional[str] = None,
     median_field: Optional[str] = None,
     vec_def_epsg: Optional[int] = None,
+    use_pbar: bool = True,
 ) -> geopandas.GeoDataFrame:
     """
     Calculate zonal statistics for polygons in a :class:`geopandas.GeoDataFrame`,
@@ -647,6 +673,8 @@ def calc_zonal_band_stats_test_poly_pts(
     :param mode_field: Output column name for modal value (or ``None``).
     :param median_field: Output column name for median value (or ``None``).
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
     .. code:: python
@@ -689,6 +717,7 @@ def calc_zonal_band_stats_test_poly_pts(
         vec_def_epsg=vec_def_epsg,
         percentile=percentile,
         allow_centroid_fallback=True,
+        use_pbar=use_pbar,
     )
 
 
@@ -700,6 +729,7 @@ def calc_zonal_band_pxl_counts_file(
     vals_lut: Dict[int, str],
     total_field: str = "pxl_count",
     vec_def_epsg: Optional[int] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Count pixels matching specific integer values in ``vals_lut`` within each
@@ -712,6 +742,8 @@ def calc_zonal_band_pxl_counts_file(
     :param vals_lut: Mapping ``{pixel_value: output_field_name}``.
     :param total_field: Output column name for total pixels inside each polygon.
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -735,6 +767,7 @@ def calc_zonal_band_pxl_counts_file(
         vals_lut,
         total_field=total_field,
         vec_def_epsg=vec_def_epsg,
+        use_pbar=use_pbar,
     )
     _write_vec_file(vec_gdf, vec_file, vec_lyr)
 
@@ -746,6 +779,7 @@ def calc_zonal_band_pxl_counts(
     vals_lut: Dict[int, str],
     total_field: str = "pxl_count",
     vec_def_epsg: Optional[int] = None,
+    use_pbar: bool = True,
 ) -> geopandas.GeoDataFrame:
     """
     Count pixels matching specific integer values in ``vals_lut`` within each
@@ -759,6 +793,8 @@ def calc_zonal_band_pxl_counts(
     :param vals_lut: Mapping ``{pixel_value: output_field_name}``.
     :param total_field: Output column name for total pixels inside each polygon.
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
     .. code:: python
@@ -792,7 +828,9 @@ def calc_zonal_band_pxl_counts(
         }
 
         tqdm_cls = rsgispy.get_tqdm()
-        for geom in tqdm_cls(geom_series, total=len(vec_gdf)):
+        for geom in tqdm_cls(
+            geom_series, total=len(vec_gdf), disable=not use_pbar
+        ):
             vals = _read_polygon_pixels(src, img_band, geom, img_nodata=None)
             totals.append(float(vals.shape[0]))
             for pxl_val, count_list in counts_by_val.items():

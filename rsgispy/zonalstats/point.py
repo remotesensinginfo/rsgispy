@@ -33,6 +33,7 @@ def ext_point_band_values_file(
     out_field: str,
     reproj_vec: bool = False,
     vec_def_epsg: Optional[int] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Extract raster band pixel values at point locations in ``vec_file``.
@@ -49,6 +50,8 @@ def ext_point_band_values_file(
     :param reproj_vec: Reproject point coordinates on the fly when True if vector
                        and raster CRSs differ (Default = False).
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -77,6 +80,7 @@ def ext_point_band_values_file(
         out_field,
         reproj_vec=reproj_vec,
         vec_def_epsg=vec_def_epsg,
+        use_pbar=use_pbar,
     )
     _write_vec_file(vec_gdf, vec_file, vec_lyr)
 
@@ -91,6 +95,7 @@ def ext_point_band_values(
     out_field: str,
     reproj_vec: bool = False,
     vec_def_epsg: Optional[int] = None,
+    use_pbar: bool = True,
 ) -> geopandas.GeoDataFrame:
     """
     Extract raster band pixel values at point locations in a
@@ -110,6 +115,8 @@ def ext_point_band_values(
     :param reproj_vec: Reproject point coordinates on the fly when True if vector
                        and raster CRSs differ (Default = False).
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
     .. code:: python
@@ -153,7 +160,9 @@ def ext_point_band_values(
         out_no_data_f = float(out_no_data_val)
         out_vals: List[float] = []
         tqdm_cls = rsgispy.get_tqdm()
-        for geom in tqdm_cls(geom_series, total=len(vec_gdf)):
+        for geom in tqdm_cls(
+            geom_series, total=len(vec_gdf), disable=not use_pbar
+        ):
             if geom is None or geom.is_empty:
                 out_vals.append(out_no_data_f)
                 continue

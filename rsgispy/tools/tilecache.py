@@ -425,12 +425,14 @@ def get_tiles(
     return tiles
 
 
-def convert_between_tms_xyz(tiles_dir: str) -> None:
+def convert_between_tms_xyz(tiles_dir: str, use_pbar: bool = True) -> None:
     """
     Convert a tile cache directory tree between TMS and XYZ indexing in-situ
     by renaming tile files along the Y axis.
 
     :param tiles_dir: Root directory of the tile cache (``zoom/x/y.ext``).
+    :param use_pbar: If ``True``, display tqdm progress bars during conversion
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -445,15 +447,17 @@ def convert_between_tms_xyz(tiles_dir: str) -> None:
         and rsgispy.tools.maths.is_number(entry)
     ]
 
-    for zoom_dir in tqdm_cls(in_zoom_dirs, desc="overall"):
+    for zoom_dir in tqdm_cls(in_zoom_dirs, desc="overall", disable=not use_pbar):
         zoom = int(os.path.basename(zoom_dir))
         for x_entry in tqdm_cls(
-            os.listdir(zoom_dir), desc=f"zoom {zoom}", leave=False
+            os.listdir(zoom_dir), desc=f"zoom {zoom}", leave=False, disable=not use_pbar
         ):
             x_dir = os.path.join(zoom_dir, x_entry)
             if os.path.isdir(x_dir) and rsgispy.tools.maths.is_number(x_entry):
                 x_val = int(x_entry)
-                for y_file in tqdm_cls(os.listdir(x_dir), desc="y", leave=False):
+                for y_file in tqdm_cls(
+                    os.listdir(x_dir), desc="y", leave=False, disable=not use_pbar
+                ):
                     y_cur_file = os.path.join(x_dir, y_file)
                     y_in_str, img_ext = os.path.splitext(y_file)
                     if rsgispy.tools.maths.is_number(y_in_str):

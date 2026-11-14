@@ -159,12 +159,14 @@ def cqv_threshold(
 
 if HAVE_SCIPY and HAVE_SKLEARN:
 
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     def corr_feature_selection(
         df: Any,
         dep_vars: List[str],
         ind_vars: List[str],
         n_min_clusters: int = 3,
         n_max_clusters: int = 25,
+        use_pbar: bool = True,
     ) -> List[str]:
         """
         Perform correlation-based feature selection by clustering independent
@@ -175,6 +177,8 @@ if HAVE_SCIPY and HAVE_SKLEARN:
         :param ind_vars: List of independent (predictor) variable column names.
         :param n_min_clusters: Minimum cluster count in the search (Default = 3).
         :param n_max_clusters: Exclusive upper cluster count bound (Default = 25).
+        :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                         (Default = ``True``).
         :return: List of selected predictor column names.
 
         .. code:: python
@@ -225,7 +229,7 @@ if HAVE_SCIPY and HAVE_SKLEARN:
         n_clusters = numpy.arange(n_min_clusters, n_max_clusters, dtype="int64")
         tqdm_cls = rsgispy.get_tqdm()
         cluster_score = []
-        for n_clst in tqdm_cls(n_clusters):
+        for n_clst in tqdm_cls(n_clusters, disable=not use_pbar):
             x_lbls = _cluster_features(x_vals, int(n_clst))
             cluster_score.append(
                 sklearn.metrics.silhouette_score(x_vals.T, x_lbls, metric="correlation")

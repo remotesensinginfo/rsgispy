@@ -97,14 +97,8 @@ def resample_img_to_match(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    if not os.path.exists(in_ref_img):
-        raise rsgispy.RSGISPyException(
-            f"Reference image file does not exist: '{in_ref_img}'."
-        )
-    if not os.path.exists(in_process_img):
-        raise rsgispy.RSGISPyException(
-            f"Input process image file does not exist: '{in_process_img}'."
-        )
+    ensure_file_exists(in_ref_img, label="Reference image")
+    ensure_file_exists(in_process_img, label="Input process image")
 
     resampling_alg = rsgispy.get_rasterio_interp_type(interp_method)
 
@@ -126,6 +120,7 @@ def resample_img_to_match(
         datatype=datatype,
         options=options,
         no_data_val=no_data_val,
+        use_pbar=False,
     )
 
     num_threads = (os.cpu_count() or 1) if multicore else 1
@@ -222,10 +217,7 @@ def reproject_image(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-statements
-    if not os.path.exists(input_img):
-        raise rsgispy.RSGISPyException(
-            f"The input image file does not exist: '{input_img}'"
-        )
+    ensure_file_exists(input_img)
 
     resampling_alg = rsgispy.get_rasterio_interp_type(interp_method)
     out_crs = parse_epsg_crs(out_epsg)
@@ -610,7 +602,7 @@ def gdal_warp(
     set_ci: bool = False,
     open_options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
     dst_open_options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
-    use_pbar: bool = False,
+    use_pbar: bool = True,
 ) -> None:
     """
     Reproject, resample, mosaic, and/or clip one or more input rasters using
@@ -681,7 +673,7 @@ def gdal_warp(
     :param set_ci: Set output colour interpretation from source bands (``-setci``).
     :param open_options: Source dataset open options (``-oo``).
     :param dst_open_options: Existing destination open options (``-doo``).
-    :param use_pbar: Display a tqdm progress bar during cutline masking.
+    :param use_pbar: Display a tqdm progress bar during cutline masking (Default = ``True``).
 
     .. code:: python
 
@@ -1471,5 +1463,5 @@ def gdal_translate(
             no_data_val=out_nodata,
             calc_pyramids=False,
             use_approx=cfg.approx_stats,
-            use_pbar=False,
+            use_pbar=cfg.use_pbar,
         )

@@ -18,7 +18,6 @@ from rsgispy.imageprocess import (
     cast_result_block,
     compute_spatial_intersection,
     ensure_file_exists,
-    get_default_block_size,
     iter_dataset_windows,
     iter_image_blocks,
     normalise_band_defs,
@@ -240,30 +239,22 @@ def image_math(
             for band_idx in range(1, n_bands + 1):
                 dst.set_band_description(band_idx, exp)
 
-        block_size = get_default_block_size()
-        tqdm_cls = rsgispy.get_tqdm()
-        total_blocks = math.ceil(grid.height / block_size) * math.ceil(
-            grid.width / block_size
-        )
-
-        with tqdm_cls(total=total_blocks, disable=not use_pbar) as pbar:
-            for row_off in range(0, grid.height, block_size):
-                win_h = min(block_size, grid.height - row_off)
-                for col_off in range(0, grid.width, block_size):
-                    win_w = min(block_size, grid.width - col_off)
-                    out_win = Window(col_off, row_off, win_w, win_h)
-                    in_block = src.read(window=out_win, out_dtype=np.float64)
-                    out_bands = [
-                        cast_result_block(
-                            parser.eval({"b1": in_block[band_idx]}),
-                            win_h,
-                            win_w,
-                            out_np_dtype,
-                        )
-                        for band_idx in range(n_bands)
-                    ]
-                    dst.write(np.stack(out_bands, axis=0), window=out_win)
-                    pbar.update(1)
+        for out_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
+            win_h = int(out_win.height)
+            win_w = int(out_win.width)
+            in_block = src.read(window=out_win, out_dtype=np.float64)
+            out_bands = [
+                cast_result_block(
+                    parser.eval({"b1": in_block[band_idx]}),
+                    win_h,
+                    win_w,
+                    out_np_dtype,
+                )
+                for band_idx in range(n_bands)
+            ]
+            dst.write(np.stack(out_bands, axis=0), window=out_win)
 
 
 def image_band_math(

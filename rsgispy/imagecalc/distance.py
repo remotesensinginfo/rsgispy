@@ -20,6 +20,7 @@ import rsgispy
 from rsgispy.imageprocess import (
     compute_spatial_intersection,
     ensure_file_exists,
+    iter_dataset_windows,
     open_output_dataset,
     validate_band_index,
 )
@@ -258,6 +259,7 @@ if HAVE_SCIPY:
         tile_size: int = 2000,
         n_cores: int = -1,
         creation_opts: Optional[Mapping[str, Any]] = None,
+        use_pbar: bool = True,
     ) -> None:
         """
         Calculate Euclidean distance to ``pxl_vals`` across overlapping tiles
@@ -281,6 +283,8 @@ if HAVE_SCIPY:
         :param n_cores: Number of worker processes; ``<= 0`` uses all CPU cores
                         (Default = ``-1``).
         :param creation_opts: Optional mapping of GDAL creation options.
+        :param use_pbar: Show a progress bar during tiled processing
+                         (Default = ``True``).
 
         .. code:: python
 
@@ -330,33 +334,36 @@ if HAVE_SCIPY:
             width = src.width
             height = src.height
             tasks = []
-            for row_off in range(0, height, tile_size):
-                core_h = min(tile_size, height - row_off)
+            for win in iter_dataset_windows(
+                height, width, block_size=tile_size, use_pbar=False
+            ):
+                row_off = int(win.row_off)
+                col_off = int(win.col_off)
+                core_h = int(win.height)
+                core_w = int(win.width)
                 pad_r0 = max(0, row_off - y_ovl)
                 pad_r1 = min(height, row_off + core_h + y_ovl)
-                for col_off in range(0, width, tile_size):
-                    core_w = min(tile_size, width - col_off)
-                    pad_c0 = max(0, col_off - x_ovl)
-                    pad_c1 = min(width, col_off + core_w + x_ovl)
-                    tasks.append(
-                        (
-                            input_img,
-                            img_band,
-                            target_vals,
-                            sampling,
-                            float(max_dist),
-                            no_data_val,
-                            eff_out_nd,
-                            row_off,
-                            col_off,
-                            core_h,
-                            core_w,
-                            pad_r0,
-                            pad_c0,
-                            pad_r1 - pad_r0,
-                            pad_c1 - pad_c0,
-                        )
+                pad_c0 = max(0, col_off - x_ovl)
+                pad_c1 = min(width, col_off + core_w + x_ovl)
+                tasks.append(
+                    (
+                        input_img,
+                        img_band,
+                        target_vals,
+                        sampling,
+                        float(max_dist),
+                        no_data_val,
+                        eff_out_nd,
+                        row_off,
+                        col_off,
+                        core_h,
+                        core_w,
+                        pad_r0,
+                        pad_c0,
+                        pad_r1 - pad_r0,
+                        pad_c1 - pad_c0,
                     )
+                )
 
             grid = compute_spatial_intersection({input_img: src})
             dst = open_output_dataset(
@@ -370,17 +377,21 @@ if HAVE_SCIPY:
             )
             dst.nodata = eff_out_nd
 
+            tqdm_cls = rsgispy.get_tqdm()
             if eff_cores > 1 and len(tasks) > 1:
                 with Pool(eff_cores) as pool:
-                    results = pool.map(_dist_tile_worker, tasks)
-                for row_off, col_off, core_h, core_w, core_dist in results:
-                    dst.write(
-                        core_dist,
-                        1,
-                        window=Window(col_off, row_off, core_w, core_h),
-                    )
+                    for row_off, col_off, core_h, core_w, core_dist in tqdm_cls(
+                        pool.imap(_dist_tile_worker, tasks),
+                        total=len(tasks),
+                        disable=not use_pbar,
+                    ):
+                        dst.write(
+                            core_dist,
+                            1,
+                            window=Window(col_off, row_off, core_w, core_h),
+                        )
             else:
-                for task in tasks:
+                for task in tqdm_cls(tasks, disable=not use_pbar):
                     row_off, col_off, core_h, core_w, core_dist = (
                         _dist_tile_worker(task)
                     )

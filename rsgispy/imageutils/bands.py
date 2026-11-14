@@ -20,6 +20,7 @@ from rsgispy.imageprocess import (
     iter_dataset_windows,
     open_multi_image_datasets,
     open_output_dataset,
+    read_window_with_halo,
     validate_band_index,
     validate_crs_and_res,
 )
@@ -67,6 +68,7 @@ def select_img_bands(
     gdalformat: str,
     datatype: int,
     bands: Sequence[int],
+    use_pbar: bool = True,
 ) -> None:
     """
     Copy selected 1-based ``bands`` from ``input_img`` into a new raster
@@ -77,6 +79,8 @@ def select_img_bands(
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
     :param bands: Sequence of 1-based band indices to extract in order.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -87,7 +91,7 @@ def select_img_bands(
             "in_img.tif", "out_img.tif", "GTIFF", rsgispy.TYPE_16UINT, [1, 3, 5]
         )
     """
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
     if not bands:
         raise rsgispy.RSGISPyException(
@@ -118,7 +122,9 @@ def select_img_bands(
             if desc:
                 dst.set_band_description(out_idx, desc)
 
-        for win in iter_dataset_windows(src.height, src.width):
+        for win in iter_dataset_windows(
+            src.height, src.width, use_pbar=use_pbar
+        ):
             blk = np.stack(
                 [src.read(bidx, window=win) for bidx in band_list],
                 axis=0,
@@ -139,6 +145,7 @@ def stack_img_bands(
     no_data_val: Optional[float],
     gdalformat: str,
     datatype: int,
+    use_pbar: bool = True,
 ) -> None:
     """
     Stack all bands from ``input_imgs`` over their spatial intersection into a
@@ -155,6 +162,8 @@ def stack_img_bands(
     :param no_data_val: No-data value written where pixels are skipped.
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -171,7 +180,8 @@ def stack_img_bands(
             rsgispy.TYPE_16UINT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
     skip_is_nan = skip_value is not None and math.isnan(float(skip_value))
@@ -202,7 +212,9 @@ def stack_img_bands(
             for idx, bname in enumerate(band_names, start=1):
                 dst.set_band_description(idx, str(bname))
 
-        for dst_win in iter_dataset_windows(grid.height, grid.width):
+        for dst_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
             col_off, row_off = int(dst_win.col_off), int(dst_win.row_off)
             win_w, win_h = int(dst_win.width), int(dst_win.height)
             band_arrays = []
@@ -229,31 +241,6 @@ def stack_img_bands(
                 cast_result_block(stacked, win_h, win_w, out_np_dtype),
                 window=dst_win,
             )
-
-
-def _read_padded_block(
-    src: rasterio.DatasetReader,
-    band_idx: int,
-    win: Window,
-    pad: int,
-) -> np.ndarray:
-    """Read a band block with ``pad`` halo pixels, edge-padded at boundaries."""
-    # pylint: disable=too-many-locals
-    row_off, col_off = int(win.row_off), int(win.col_off)
-    win_h, win_w = int(win.height), int(win.width)
-    r0, r1 = row_off - pad, row_off + win_h + pad
-    c0, c1 = col_off - pad, col_off + win_w + pad
-    cr0, cr1 = max(0, r0), min(src.height, r1)
-    cc0, cc1 = max(0, c0), min(src.width, c1)
-    arr = src.read(
-        band_idx,
-        window=Window(cc0, cr0, cc1 - cc0, cr1 - cr0),
-        out_dtype=np.float64,
-    )
-    pads = ((cr0 - r0, r1 - cr1), (cc0 - c0, c1 - cc1))
-    if any(p > 0 for pair in pads for p in pair):
-        arr = np.pad(arr, pads, mode="edge")
-    return arr
 
 
 def _sharpen_single_high_band(
@@ -399,6 +386,7 @@ def sharpen_low_res_bands(
     no_data_val: float = 0,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
+    use_pbar: bool = True,
 ) -> None:
     """
     Sharpen lower-resolution image bands using local linear fitting against
@@ -416,6 +404,8 @@ def sharpen_low_res_bands(
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image
                      (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -430,7 +420,8 @@ def sharpen_low_res_bands(
             "in_img.tif", "sharp_img.tif", band_info
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches
     ensure_file_exists(input_img)
     if win_size < 3 or win_size % 2 == 0:
         raise rsgispy.RSGISPyException(
@@ -484,9 +475,12 @@ def sharpen_low_res_bands(
                 dst.set_band_description(out_idx, str(binfo.name))
 
         out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
-        for dst_win in iter_dataset_windows(src.height, src.width):
+        for dst_win in iter_dataset_windows(
+            src.height, src.width, use_pbar=use_pbar
+        ):
             high_halos = [
-                _read_padded_block(src, hb, dst_win, half) for hb in high_bands
+                read_window_with_halo(src, hb, dst_win, half)
+                for hb in high_bands
             ]
             high_valid = np.ones_like(high_halos[0], dtype=bool)
             for h_arr in high_halos:
@@ -498,7 +492,7 @@ def sharpen_low_res_bands(
             for binfo in band_info:
                 src_b = int(binfo.band)
                 if binfo.status == rsgispy.SHARP_RES_LOW:
-                    l_halo = _read_padded_block(src, src_b, dst_win, half)
+                    l_halo = read_window_with_halo(src, src_b, dst_win, half)
                     l_valid = high_valid & np.isfinite(l_halo)
                     if not nd_is_nan:
                         l_valid &= l_halo != no_data_val

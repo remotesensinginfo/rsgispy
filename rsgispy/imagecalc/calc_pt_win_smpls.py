@@ -195,6 +195,7 @@ def calc_pt_smpl_img_vals(
     x_box_col: str = "xbox",
     y_box_col: str = "ybox",
     no_data_val: Optional[float] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate summary values for an image window around each point in an input
@@ -218,6 +219,7 @@ def calc_pt_smpl_img_vals(
     :param x_box_col: Column name specifying half-window width in X pixels.
     :param y_box_col: Column name specifying half-window height in Y pixels.
     :param no_data_val: Image no-data value. If ``None``, taken from image header.
+    :param use_pbar: If True, display a tqdm progress bar (Default = True).
 
     .. code:: python
 
@@ -257,7 +259,9 @@ def calc_pt_smpl_img_vals(
         img_crs = src_ds.crs
         img_count = src_ds.count
 
-        for i, row in tqdm_cls(pts_gdf.iterrows(), total=len(pts_gdf)):
+        for i, row in tqdm_cls(
+            pts_gdf.iterrows(), total=len(pts_gdf), disable=not use_pbar
+        ):
             geom = row["geometry"]
             if geom is None or geom.is_empty:
                 raise rsgispy.RSGISPyException(

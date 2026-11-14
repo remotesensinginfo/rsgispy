@@ -435,3 +435,86 @@ def test_create_output_from_dataset(tmp_path):
         assert o_out.count == 1
         assert o_out.dtypes == ("uint8",)
         assert np.all(o_out.read(1) == 7)
+
+
+def test_iter_dataset_windows_block_width_and_pbar(monkeypatch):
+    """Test rectangular block_width windows and use_pbar toggling."""
+    wins = list(
+        rsgispy.imageprocess.iter_dataset_windows(
+            height=5, width=7, block_size=2, block_width=7, use_pbar=False
+        )
+    )
+    assert [(w.col_off, w.row_off, w.width, w.height) for w in wins] == [
+        (0, 0, 7, 2),
+        (0, 2, 7, 2),
+        (0, 4, 7, 1),
+    ]
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        list(
+            rsgispy.imageprocess.iter_dataset_windows(
+                5, 5, block_size=2, block_width=0, use_pbar=False
+            )
+        )
+
+    calls = []
+
+    class _RecorderPbar:
+        def __init__(self, *args, **kwargs):
+            calls.append(kwargs.get("disable"))
+            self.updates = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def update(self, n=1):
+            self.updates += n
+
+    monkeypatch.setattr(rsgispy, "get_tqdm", lambda: _RecorderPbar)
+    list(rsgispy.imageprocess.iter_dataset_windows(4, 4, block_size=2))
+    list(rsgispy.imageprocess.iter_dataset_windows(4, 4, block_size=2, use_pbar=False))
+    assert calls == [False, True]
+
+
+def test_read_window_with_halo_and_cast_clamp(tmp_path):
+    """Test read_window_with_halo edge padding and cast_result_block clamp_int."""
+    in_img = tmp_path / "halo.tif"
+    data = np.arange(1, 25, dtype=np.float32).reshape((2, 3, 4))
+    _create_test_raster(in_img, data)
+
+    with rasterio.open(in_img, "r") as src:
+        blk_2d = rsgispy.imageprocess.read_window_with_halo(
+            src,
+            1,
+            rasterio.windows.Window(0, 0, 2, 2),
+            pad=1,
+            out_dtype=np.float32,
+        )
+        assert blk_2d.shape == (4, 4)
+        # Top-left corner repeats pixel (0, 0) == 1.0
+        assert blk_2d[0, 0] == pytest.approx(1.0)
+        assert blk_2d[1, 1] == pytest.approx(1.0)
+        assert blk_2d[2, 2] == pytest.approx(6.0)
+
+        blk_3d = rsgispy.imageprocess.read_window_with_halo(
+            src,
+            None,
+            rasterio.windows.Window(2, 1, 2, 2),
+            pad=1,
+            out_dtype=np.float32,
+        )
+        assert blk_3d.shape == (2, 4, 4)
+        # Bottom-right corner repeats last pixel of each band (12.0, 24.0)
+        assert blk_3d[0, 3, 3] == pytest.approx(12.0)
+        assert blk_3d[1, 3, 3] == pytest.approx(24.0)
+
+    raw = np.array([[-5.0, 128.0], [300.0, np.nan]], dtype=np.float64)
+    clamped = rsgispy.imageprocess.cast_result_block(
+        raw, 2, 2, np.dtype(np.uint8), clamp_int=True
+    )
+    np.testing.assert_array_equal(
+        clamped, np.array([[0, 128], [255, 0]], dtype=np.uint8)
+    )

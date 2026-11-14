@@ -42,6 +42,7 @@ def _apply_spectral_pixel_func(
     datatype: int,
     calc_stats: bool,
     pixel_fn: Callable[[np.ndarray], np.ndarray],
+    use_pbar: bool = True,
 ) -> None:
     """Apply a per-pixel spectral transform over valid mask blocks."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -80,7 +81,9 @@ def _apply_spectral_pixel_func(
             if desc:
                 dst.set_band_description(bidx, desc)
 
-        for dst_win in iter_dataset_windows(grid.height, grid.width):
+        for dst_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
             col_off, row_off = int(dst_win.col_off), int(dst_win.row_off)
             win_w, win_h = int(dst_win.width), int(dst_win.height)
             img_win = Window(
@@ -121,6 +124,7 @@ def _apply_spectral_pixel_func(
             output_img,
             no_data_val=in_no_data,
             calc_pyramids=True,
+            use_pbar=use_pbar,
         )
 
 
@@ -134,6 +138,7 @@ def spectral_smoothing(
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
     calc_stats: bool = True,
+    use_pbar: bool = True,
 ) -> None:
     """
     Smooth spectra along the band axis using a Savitzky-Golay filter for pixels
@@ -150,6 +155,8 @@ def spectral_smoothing(
                      (Default = :data:`rsgispy.TYPE_32FLOAT`).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -187,6 +194,7 @@ def spectral_smoothing(
         datatype=datatype,
         calc_stats=calc_stats,
         pixel_fn=_smooth_fn,
+        use_pbar=use_pbar,
     )
 
 
@@ -199,6 +207,7 @@ def mask_outliners_data_values(
     upper: float = 95,
     gdalformat: str = "GTIFF",
     calc_stats: bool = True,
+    use_pbar: bool = True,
 ) -> None:
     """
     Mask per-pixel spectral outlier values outside the ``[lower, upper]``
@@ -214,6 +223,8 @@ def mask_outliners_data_values(
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -245,6 +256,7 @@ def mask_outliners_data_values(
         datatype=rsgispy.TYPE_32FLOAT,
         calc_stats=calc_stats,
         pixel_fn=_outlier_fn,
+        use_pbar=use_pbar,
     )
 
 
@@ -258,6 +270,7 @@ def polyfill_nan_data_values(
     mean_abs_diff: Optional[float] = None,
     gdalformat: str = "GTIFF",
     calc_stats: bool = True,
+    use_pbar: bool = True,
 ) -> None:
     """
     Fill missing (``NaN``) band values along each pixel's spectral profile using
@@ -275,6 +288,8 @@ def polyfill_nan_data_values(
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -329,6 +344,7 @@ def polyfill_nan_data_values(
         datatype=rsgispy.TYPE_32FLOAT,
         calc_stats=calc_stats,
         pixel_fn=_polyfill_fn,
+        use_pbar=use_pbar,
     )
 
 
@@ -338,6 +354,7 @@ def whiten_image(
     valid_msk_val: int,
     output_img: str,
     gdalformat: str,
+    use_pbar: bool = True,
 ) -> None:
     """
     Apply ZCA noise whitening to ``input_img`` over pixels matching
@@ -349,6 +366,8 @@ def whiten_image(
     :param valid_msk_val: Mask value identifying valid pixels.
     :param output_img: Path to the output float32 whitened image file.
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -357,7 +376,7 @@ def whiten_image(
             "input_img.tif", "valid_msk.tif", 1, "whitened_img.tif", "GTIFF"
         )
     """
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
     ensure_file_exists(valid_msk_img, label="Valid mask image")
 
@@ -396,7 +415,13 @@ def whiten_image(
     whitened = (centred @ whiten_mat).astype(np.float32)
 
     create_copy_img(
-        input_img, output_img, n_bands, 0, gdalformat, rsgispy.TYPE_32FLOAT
+        input_img,
+        output_img,
+        n_bands,
+        0,
+        gdalformat,
+        rsgispy.TYPE_32FLOAT,
+        use_pbar=use_pbar,
     )
     out_flat = np.zeros((vld_flat.shape[0], n_bands), dtype=np.float32)
     out_flat[valid_mask] = whitened

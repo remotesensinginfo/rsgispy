@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 import rasterio
 
+import rsgispy
 from rsgispy.elevation._helpers import (
     calc_slope_aspect_from_diffs as _calc_slope_aspect_from_diffs,
     prepare_3x3_horn_diffs as _prepare_3x3_horn_diffs,
@@ -109,6 +110,7 @@ def hillshade(
     azimuth: float,
     zenith: float,
     gdalformat: str,
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate a uint8 hillshade layer from an input elevation model.
@@ -118,6 +120,7 @@ def hillshade(
     :param azimuth: Solar azimuth angle in degrees ``[0, 360]`` (e.g., 315).
     :param zenith: Solar zenith angle in degrees ``[0, 90]`` (e.g., 45).
     :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
 
@@ -131,6 +134,7 @@ def hillshade(
             gdalformat="GTIFF",
         )
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     _validate_sun_angles(azimuth, zenith)
 
     def _block(
@@ -142,7 +146,9 @@ def hillshade(
     ) -> np.ndarray:
         return _calc_hillshade_block(dx, dy, n_vals, ew_res, ns_res, azimuth, zenith)
 
-    _process_single_dem_3x3(input_img, output_img, gdalformat, "uint8", _block)
+    _process_single_dem_3x3(
+        input_img, output_img, gdalformat, "uint8", _block, use_pbar=use_pbar
+    )
 
 
 def hillshade_pxl_res_img(
@@ -152,6 +158,7 @@ def hillshade_pxl_res_img(
     azimuth: float,
     zenith: float,
     gdalformat: str,
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate a uint8 hillshade layer from a DEM and an external 2-band pixel
@@ -163,6 +170,7 @@ def hillshade_pxl_res_img(
     :param azimuth: Solar azimuth angle in degrees ``[0, 360]`` (e.g., 315).
     :param zenith: Solar zenith angle in degrees ``[0, 90]`` (e.g., 45).
     :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
 
@@ -190,7 +198,13 @@ def hillshade_pxl_res_img(
         return _calc_hillshade_block(dx, dy, n_vals, ew_res, ns_res, azimuth, zenith)
 
     _process_pxl_res_dem_3x3(
-        in_dem_img, in_pxl_res_img, output_img, gdalformat, "uint8", _block
+        in_dem_img,
+        in_pxl_res_img,
+        output_img,
+        gdalformat,
+        "uint8",
+        _block,
+        use_pbar=use_pbar,
     )
 
 
@@ -201,6 +215,7 @@ def shadow_mask(
     zenith: float,
     max_height: float,
     gdalformat: str,
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate a binary shadow mask (``1`` = shadow, ``0`` = illuminated/nodata)
@@ -212,6 +227,7 @@ def shadow_mask(
     :param zenith: Solar zenith angle in degrees ``[0, 90]``.
     :param max_height: Maximum elevation threshold terminating upward ray tracing.
     :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param use_pbar: Show a progress bar during ray tracing (Default = ``True``).
 
     .. code:: python
 
@@ -288,7 +304,13 @@ def shadow_mask(
                     )
                 ) + 2
 
-                for _ in range(max_steps):
+                tqdm_cls = rsgispy.get_tqdm()
+                for _ in tqdm_cls(
+                    range(max_steps),
+                    desc="Shadow mask",
+                    unit="step",
+                    disable=not use_pbar,
+                ):
                     col_f += col_step
                     row_f += row_step
                     z_f += z_step
@@ -341,6 +363,7 @@ def local_incidence_angle(
     azimuth: float,
     zenith: float,
     gdalformat: str,
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate the local solar incidence angle (degrees) for each pixel of a DEM.
@@ -350,6 +373,7 @@ def local_incidence_angle(
     :param azimuth: Solar azimuth angle in degrees.
     :param zenith: Solar zenith angle in degrees.
     :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
 
@@ -363,6 +387,7 @@ def local_incidence_angle(
             gdalformat="GTIFF",
         )
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
 
     def _block(
         dx: np.ndarray,
@@ -383,7 +408,9 @@ def local_incidence_angle(
             fallback_val=float(zenith),
         )
 
-    _process_single_dem_3x3(input_img, output_img, gdalformat, "float32", _block)
+    _process_single_dem_3x3(
+        input_img, output_img, gdalformat, "float32", _block, use_pbar=use_pbar
+    )
 
 
 def local_existance_angle(
@@ -392,6 +419,7 @@ def local_existance_angle(
     azimuth: float,
     zenith: float,
     gdalformat: str,
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate the local sensor exitance (viewing) angle (degrees) for each pixel
@@ -402,6 +430,7 @@ def local_existance_angle(
     :param azimuth: Sensor/view azimuth angle in degrees.
     :param zenith: Sensor/view zenith angle in degrees.
     :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
 
@@ -415,6 +444,7 @@ def local_existance_angle(
             gdalformat="GTIFF",
         )
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
 
     def _block(
         dx: np.ndarray,
@@ -435,4 +465,6 @@ def local_existance_angle(
             fallback_val=0.0,
         )
 
-    _process_single_dem_3x3(input_img, output_img, gdalformat, "float32", _block)
+    _process_single_dem_3x3(
+        input_img, output_img, gdalformat, "float32", _block, use_pbar=use_pbar
+    )

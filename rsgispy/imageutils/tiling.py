@@ -11,6 +11,7 @@ from typing import List, Tuple
 import rasterio
 
 import rsgispy
+from rsgispy.imageprocess import ensure_file_exists
 from rsgispy.imageutils._helpers import copy_raster_window
 from rsgispy.imageutils.blank import create_blank_img_from_bbox
 from rsgispy.tools.files import does_path_exists_or_creatable
@@ -26,7 +27,7 @@ def _extract_tile_worker(
     task: Tuple[str, str, int, int, int, int, str, int]
 ) -> None:
     """Top-level picklable worker for :func:`create_tiles_multi_core`."""
-    copy_raster_window(*task)
+    copy_raster_window(*task, use_pbar=False)
 
 
 def _compute_axis_slices(
@@ -62,6 +63,7 @@ def create_tiles(
     gdalformat: str,
     datatype: int,
     out_img_ext: str,
+    use_pbar: bool = True,
 ) -> List[str]:
     """
     Split ``input_img`` into a grid of overlapping/non-overlapping tile files.
@@ -75,6 +77,7 @@ def create_tiles(
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant for the output tiles.
     :param out_img_ext: Output file extension (e.g., ``'tif'`` or ``'kea'``).
+    :param use_pbar: Show a progress bar over tile generation (Default = ``True``).
     :return: List of created tile file paths.
 
     .. code:: python
@@ -94,10 +97,7 @@ def create_tiles(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    if not os.path.exists(input_img):
-        raise rsgispy.RSGISPyException(
-            f"Input image file does not exist: '{input_img}'."
-        )
+    ensure_file_exists(input_img)
     if not does_path_exists_or_creatable(out_img_base):
         raise rsgispy.RSGISPyException(
             f"Output base directory is not writable or does not exist: '{out_img_base}'."
@@ -124,24 +124,26 @@ def create_tiles(
 
     x_ranges = _compute_axis_slices(img_w, t_w, overlap, x_off)
     y_ranges = _compute_axis_slices(img_h, t_h, overlap, y_off)
+    tile_coords = [(r0, r1, c0, c1) for r0, r1 in y_ranges for c0, c1 in x_ranges]
 
+    tqdm_cls = rsgispy.get_tqdm()
     out_files: List[str] = []
-    tile_idx = 0
-    for r0, r1 in y_ranges:
-        for c0, c1 in x_ranges:
-            out_file = f"{out_img_base}_tile{tile_idx}.{ext}"
-            copy_raster_window(
-                input_img=input_img,
-                output_img=out_file,
-                col_off=c0,
-                row_off=r0,
-                width=c1 - c0,
-                height=r1 - r0,
-                gdalformat=gdalformat,
-                datatype=datatype,
-            )
-            out_files.append(out_file)
-            tile_idx += 1
+    for tile_idx, (r0, r1, c0, c1) in enumerate(
+        tqdm_cls(tile_coords, desc="Creating tiles", unit="tile", disable=not use_pbar)
+    ):
+        out_file = f"{out_img_base}_tile{tile_idx}.{ext}"
+        copy_raster_window(
+            input_img=input_img,
+            output_img=out_file,
+            col_off=c0,
+            row_off=r0,
+            width=c1 - c0,
+            height=r1 - r0,
+            gdalformat=gdalformat,
+            datatype=datatype,
+            use_pbar=False,
+        )
+        out_files.append(out_file)
 
     return out_files
 
@@ -155,6 +157,7 @@ def create_tiles_multi_core(
     datatype: int,
     out_img_ext: str,
     n_cores: int = 1,
+    use_pbar: bool = True,
 ) -> None:
     """
     Create non-overlapping raster tiles using single or multiple CPU cores, named
@@ -168,6 +171,7 @@ def create_tiles_multi_core(
     :param datatype: ``rsgispy.TYPE_*`` constant for the output tiles.
     :param out_img_ext: Output file extension (e.g., ``'tif'`` or ``'kea'``).
     :param n_cores: Number of worker processes (Default = ``1``).
+    :param use_pbar: Show a progress bar over tile generation (Default = ``True``).
 
     .. code:: python
 
@@ -185,10 +189,7 @@ def create_tiles_multi_core(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    if not os.path.exists(input_img):
-        raise rsgispy.RSGISPyException(
-            f"Input image file does not exist: '{input_img}'."
-        )
+    ensure_file_exists(input_img)
     if not does_path_exists_or_creatable(out_img_base):
         raise rsgispy.RSGISPyException(
             f"Output base path is not creatable: '{out_img_base}'."
@@ -230,11 +231,22 @@ def create_tiles_multi_core(
                 )
             )
 
+    tqdm_cls = rsgispy.get_tqdm()
     if int(n_cores) > 1 and len(tasks) > 1:
         with multiprocessing.Pool(processes=int(n_cores)) as pool:
-            pool.map(_extract_tile_worker, tasks)
+            list(
+                tqdm_cls(
+                    pool.imap(_extract_tile_worker, tasks),
+                    total=len(tasks),
+                    desc="Creating tiles",
+                    unit="tile",
+                    disable=not use_pbar,
+                )
+            )
     else:
-        for task in tasks:
+        for task in tqdm_cls(
+            tasks, desc="Creating tiles", unit="tile", disable=not use_pbar
+        ):
             _extract_tile_worker(task)
 
 
@@ -251,6 +263,7 @@ def create_raster_tiles_bbox(
     datatype: int = rsgispy.TYPE_8UINT,
     out_img_pxl_val: float = 0.0,
     out_img_n_bands: int = 1,
+    use_pbar: bool = True,
 ) -> None:
     """
     Create a regular grid of blank raster tiles covering ``bbox``.
@@ -268,6 +281,7 @@ def create_raster_tiles_bbox(
     :param datatype: ``rsgispy.TYPE_*`` constant (Default = ``rsgispy.TYPE_8UINT``).
     :param out_img_pxl_val: Initial pixel value (Default = ``0.0``).
     :param out_img_n_bands: Number of bands in each tile (Default = ``1``).
+    :param use_pbar: Show a progress bar over tile generation (Default = ``True``).
 
     .. code:: python
 
@@ -301,24 +315,33 @@ def create_raster_tiles_bbox(
     ext = out_img_ext.lstrip(".")
     n_x_tiles = max(1, math.ceil(bbox_width / float(tile_x_size)))
     n_y_tiles = max(1, math.ceil(bbox_height / float(tile_y_size)))
+    tile_indices = [
+        (x_idx, y_idx) for y_idx in range(n_y_tiles) for x_idx in range(n_x_tiles)
+    ]
 
-    for y_idx in range(n_y_tiles):
+    tqdm_cls = rsgispy.get_tqdm()
+    for x_idx, y_idx in tqdm_cls(
+        tile_indices,
+        desc="Creating tile grids",
+        unit="tile",
+        disable=not use_pbar,
+    ):
         c_max_y = y_max - (y_idx * float(tile_y_size))
         c_min_y = c_max_y - float(tile_y_size)
-        for x_idx in range(n_x_tiles):
-            c_min_x = x_min + (x_idx * float(tile_x_size))
-            c_max_x = c_min_x + float(tile_x_size)
-            tile_bbox = (c_min_x, c_max_x, c_min_y, c_max_y)
-            tile_base = out_tile_name.format(f"{x_idx}_{y_idx}")
-            out_img = os.path.join(out_tile_dir, f"{tile_base}.{ext}")
-            create_blank_img_from_bbox(
-                bbox=tile_bbox,
-                epsg_code=out_epsg,
-                output_img=out_img,
-                out_img_res=out_img_res,
-                out_img_pxl_val=out_img_pxl_val,
-                out_img_n_bands=out_img_n_bands,
-                gdalformat=gdalformat,
-                datatype=datatype,
-                snap_to_grid=False,
-            )
+        c_min_x = x_min + (x_idx * float(tile_x_size))
+        c_max_x = c_min_x + float(tile_x_size)
+        tile_bbox = (c_min_x, c_max_x, c_min_y, c_max_y)
+        tile_base = out_tile_name.format(f"{x_idx}_{y_idx}")
+        out_img = os.path.join(out_tile_dir, f"{tile_base}.{ext}")
+        create_blank_img_from_bbox(
+            bbox=tile_bbox,
+            epsg_code=out_epsg,
+            output_img=out_img,
+            out_img_res=out_img_res,
+            out_img_pxl_val=out_img_pxl_val,
+            out_img_n_bands=out_img_n_bands,
+            gdalformat=gdalformat,
+            datatype=datatype,
+            snap_to_grid=False,
+            use_pbar=False,
+        )

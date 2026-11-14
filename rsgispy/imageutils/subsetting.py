@@ -36,6 +36,7 @@ def subset_bbox(
     min_y: float,
     max_y: float,
     options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Subset ``input_img`` to the bounding box ``(min_x, max_x, min_y, max_y)``,
@@ -50,6 +51,7 @@ def subset_bbox(
     :param min_y: Minimum Y coordinate in ``input_img`` CRS.
     :param max_y: Maximum Y coordinate in ``input_img`` CRS.
     :param options: Optional GDAL creation options mapping.
+    :param use_pbar: Show a progress bar during subsetting (Default = ``True``).
 
     .. code:: python
 
@@ -118,6 +120,7 @@ def subset_bbox(
         gdalformat=gdalformat,
         datatype=datatype,
         options=options,
+        use_pbar=use_pbar,
     )
 
 
@@ -127,6 +130,7 @@ def subset_to_img(
     output_img: str,
     gdalformat: str,
     datatype: int,
+    use_pbar: bool = True,
 ) -> None:
     """
     Subset ``input_img`` to the spatial bounding box of ``in_roi_img``.
@@ -136,6 +140,7 @@ def subset_to_img(
     :param output_img: Path to the output subset image file.
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
+    :param use_pbar: Show a progress bar during subsetting (Default = ``True``).
 
     .. code:: python
 
@@ -149,6 +154,7 @@ def subset_to_img(
             rsgispy.TYPE_32FLOAT,
         )
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     ensure_file_exists(input_img)
     ensure_file_exists(in_roi_img, label="ROI image")
 
@@ -170,6 +176,7 @@ def subset_to_img(
         max_x=roi_bbox[1],
         min_y=roi_bbox[2],
         max_y=roi_bbox[3],
+        use_pbar=use_pbar,
     )
 
 
@@ -180,6 +187,7 @@ def subset(
     output_img: str,
     gdalformat: str,
     datatype: int,
+    use_pbar: bool = True,
 ) -> None:
     """
     Subset ``input_img`` to the bounding box of a vector file/layer.
@@ -190,6 +198,7 @@ def subset(
     :param output_img: Path to the output subset image file.
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
+    :param use_pbar: Show a progress bar during subsetting (Default = ``True``).
 
     .. code:: python
 
@@ -234,4 +243,5 @@ def subset(
         max_x=max_x,
         min_y=min_y,
         max_y=max_y,
+        use_pbar=use_pbar,
     )

@@ -5,7 +5,6 @@ percentile calculation functions using ``rasterio``.
 
 from contextlib import ExitStack
 import math
-import os
 from typing import Any, List, Mapping, Optional, Sequence
 
 import numpy as np
@@ -15,8 +14,10 @@ from rasterio.windows import Window
 import rsgispy
 from rsgispy.imageprocess import (
     BandDefn,
+    IntersectionGrid,
     compute_spatial_intersection,
-    get_default_block_size,
+    ensure_file_exists,
+    iter_dataset_windows,
     iter_image_blocks,
     open_input_datasets,
     open_multi_image_datasets,
@@ -33,6 +34,31 @@ __all__ = [
     "calc_imgs_pxl_percentiles",
     "calc_img_band_pxl_percentiles",
 ]
+
+
+def _read_grid_blocks(
+    datasets: Mapping[str, Any],
+    img_paths: Sequence[str],
+    grid: IntersectionGrid,
+    out_win: Window,
+) -> List[np.ndarray]:
+    """Read float32 blocks aligned to ``out_win`` for each image in ``img_paths``."""
+    col_off = int(out_win.col_off)
+    row_off = int(out_win.row_off)
+    win_w = int(out_win.width)
+    win_h = int(out_win.height)
+    return [
+        datasets[path].read(
+            window=Window(
+                grid.offsets[path][0] + col_off,
+                grid.offsets[path][1] + row_off,
+                win_w,
+                win_h,
+            ),
+            out_dtype=np.float32,
+        )
+        for path in img_paths
+    ]
 
 
 def calc_band_percentile(
@@ -60,10 +86,7 @@ def calc_band_percentile(
     """
     if percentile < 0.0 or percentile > 1.0:
         raise rsgispy.RSGISPyException("Percentile value must be between 0 - 1.")
-    if not os.path.exists(input_img):
-        raise rsgispy.RSGISPyException(
-            f"Input image file does not exist: '{input_img}'."
-        )
+    ensure_file_exists(input_img)
 
     pct_val = float(percentile) * 100.0
     out_vals: List[float] = []
@@ -118,14 +141,8 @@ def calc_band_percentile_msk(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     validate_percentiles_0_100(percentiles)
-    if not os.path.exists(input_img):
-        raise rsgispy.RSGISPyException(
-            f"Input image file does not exist: '{input_img}'."
-        )
-    if not os.path.exists(in_msk_img):
-        raise rsgispy.RSGISPyException(
-            f"Mask image file does not exist: '{in_msk_img}'."
-        )
+    ensure_file_exists(input_img)
+    ensure_file_exists(in_msk_img, label="Mask image")
 
     with rasterio.open(input_img, "r") as img_src:
         n_bands = img_src.count
@@ -236,39 +253,18 @@ def calc_imgs_pxl_percentiles(
             creation_opts=creation_opts,
         )
 
-        block_size = get_default_block_size()
-        tqdm_cls = rsgispy.get_tqdm()
-        total_blocks = math.ceil(grid.height / block_size) * math.ceil(
-            grid.width / block_size
-        )
-
-        with tqdm_cls(total=total_blocks, disable=not use_pbar) as pbar:
-            for row_off in range(0, grid.height, block_size):
-                win_h = min(block_size, grid.height - row_off)
-                for col_off in range(0, grid.width, block_size):
-                    win_w = min(block_size, grid.width - col_off)
-                    out_win = Window(col_off, row_off, win_w, win_h)
-                    img_blocks = [
-                        datasets[path].read(
-                            window=Window(
-                                grid.offsets[path][0] + col_off,
-                                grid.offsets[path][1] + row_off,
-                                win_w,
-                                win_h,
-                            ),
-                            out_dtype=np.float32,
-                        )
-                        for path in img_paths
-                    ]
-                    pct_arr = compute_nanpercentiles(
-                        np.concatenate(img_blocks, axis=0),
-                        percentiles,
-                        no_data_val,
-                    )
-                    dst.write(
-                        pct_arr.astype(out_np_dtype, copy=False), window=out_win
-                    )
-                    pbar.update(1)
+        for out_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
+            img_blocks = _read_grid_blocks(datasets, img_paths, grid, out_win)
+            pct_arr = compute_nanpercentiles(
+                np.concatenate(img_blocks, axis=0),
+                percentiles,
+                no_data_val,
+            )
+            dst.write(
+                pct_arr.astype(out_np_dtype, copy=False), window=out_win
+            )
 
 
 def calc_img_band_pxl_percentiles(
@@ -334,42 +330,19 @@ def calc_img_band_pxl_percentiles(
             creation_opts=creation_opts,
         )
 
-        block_size = get_default_block_size()
-        tqdm_cls = rsgispy.get_tqdm()
-        total_blocks = math.ceil(grid.height / block_size) * math.ceil(
-            grid.width / block_size
-        )
-
-        with tqdm_cls(total=total_blocks, disable=not use_pbar) as pbar:
-            for row_off in range(0, grid.height, block_size):
-                win_h = min(block_size, grid.height - row_off)
-                for col_off in range(0, grid.width, block_size):
-                    win_w = min(block_size, grid.width - col_off)
-                    out_win = Window(col_off, row_off, win_w, win_h)
-                    img_blocks = [
-                        datasets[path].read(
-                            window=Window(
-                                grid.offsets[path][0] + col_off,
-                                grid.offsets[path][1] + row_off,
-                                win_w,
-                                win_h,
-                            ),
-                            out_dtype=np.float32,
-                        )
-                        for path in img_paths
-                    ]
-                    out_percent_arrs = [
-                        compute_nanpercentiles(
-                            np.stack(
-                                [blk[b_idx] for blk in img_blocks], axis=0
-                            ),
-                            percentiles,
-                            no_data_val,
-                        )
-                        for b_idx in range(n_bands)
-                    ]
-                    out_arr = np.concatenate(out_percent_arrs, axis=0).astype(
-                        out_np_dtype, copy=False
-                    )
-                    dst.write(out_arr, window=out_win)
-                    pbar.update(1)
+        for out_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
+            img_blocks = _read_grid_blocks(datasets, img_paths, grid, out_win)
+            out_percent_arrs = [
+                compute_nanpercentiles(
+                    np.stack([blk[b_idx] for blk in img_blocks], axis=0),
+                    percentiles,
+                    no_data_val,
+                )
+                for b_idx in range(n_bands)
+            ]
+            out_arr = np.concatenate(out_percent_arrs, axis=0).astype(
+                out_np_dtype, copy=False
+            )
+            dst.write(out_arr, window=out_win)

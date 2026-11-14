@@ -55,6 +55,7 @@ def calc_wgs84_pixel_area(
     output_img: str,
     scale: float = 10000,
     gdalformat: str = "GTIFF",
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate the area (in square metres scaled by ``scale``) of each pixel
@@ -67,6 +68,7 @@ def calc_wgs84_pixel_area(
     :param output_img: Path to the output single-band float64 area image.
     :param scale: Divisor converting square metres to target units (Default = ``10000``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
 
@@ -92,7 +94,7 @@ def calc_wgs84_pixel_area(
             out_rio_dtype="float64",
             count=1,
         )
-        for win in iter_dataset_windows(src.height, src.width):
+        for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             _, y_grid = _block_centre_coords(
                 src.transform,
                 int(win.col_off),
@@ -108,6 +110,7 @@ def calc_wgs84_pixel_size(
     input_img: str,
     output_img: str,
     gdalformat: str = "GTIFF",
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate the X (band 1) and Y (band 2) pixel dimensions in metres for a
@@ -116,6 +119,7 @@ def calc_wgs84_pixel_size(
     :param input_img: Path to the input WGS84 raster image file.
     :param output_img: Path to the output 2-band float64 image.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
 
@@ -137,7 +141,7 @@ def calc_wgs84_pixel_size(
             out_rio_dtype="float64",
             count=2,
         )
-        for win in iter_dataset_windows(src.height, src.width):
+        for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             _, y_grid = _block_centre_coords(
                 src.transform,
                 int(win.col_off),
@@ -157,6 +161,7 @@ def calc_pixel_locations(
     input_img: str,
     output_img: str,
     gdalformat: str,
+    use_pbar: bool = True,
 ) -> None:
     """
     Create a 2-band float64 raster storing pixel-centre X (band 1) and Y
@@ -165,6 +170,7 @@ def calc_pixel_locations(
     :param input_img: Path to the reference input image file.
     :param output_img: Path to the output 2-band coordinate image file.
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
+    :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
 
@@ -185,7 +191,7 @@ def calc_pixel_locations(
             out_rio_dtype="float64",
             count=2,
         )
-        for win in iter_dataset_windows(src.height, src.width):
+        for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             x_grid, y_grid = _block_centre_coords(
                 src.transform,
                 int(win.col_off),
@@ -202,6 +208,7 @@ def calc_wgs84_pixel_locations(
     input_img: str,
     output_img: str,
     gdalformat: str,
+    use_pbar: bool = True,
 ) -> None:
     """
     Create a 2-band float32 raster storing WGS84 (EPSG:4326) longitude (band 1)
@@ -210,6 +217,7 @@ def calc_wgs84_pixel_locations(
     :param input_img: Path to the reference input image file.
     :param output_img: Path to the output 2-band WGS84 coordinate image file.
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
+    :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
 
@@ -242,7 +250,7 @@ def calc_wgs84_pixel_locations(
         )
         dst.nodata = 0.0
 
-        for win in iter_dataset_windows(src.height, src.width):
+        for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             x_grid, y_grid = _block_centre_coords(
                 src.transform,
                 int(win.col_off),
@@ -324,7 +332,8 @@ def _eval_grid_cell(
     pts_z: np.ndarray,
 ) -> float:
     """Evaluate a point-neighbourhood grid metric at coordinate ``(px, py)``."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-return-statements,too-many-branches
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-return-statements,too-many-branches
     nodata = params["nodata"]
     min_pts = int(params.get("min_points", 0))
     max_pts = int(params.get("max_points", 0))
@@ -479,6 +488,7 @@ def grid_scattered_pts(
     no_data_val: float = 0.0,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
+    use_pbar: bool = True,
 ) -> None:
     """
     Interpolate scattered vector points from ``vec_file`` (attribute column
@@ -500,6 +510,7 @@ def grid_scattered_pts(
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image
                      (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param use_pbar: Show a progress bar during gridding (Default = ``True``).
 
     .. code:: python
 
@@ -563,7 +574,13 @@ def grid_scattered_pts(
             out_arr = np.full(
                 (src.height, src.width), out_nodata, dtype=np.float64
             )
-            for r_idx in range(src.height):
+            tqdm_cls = rsgispy.get_tqdm()
+            for r_idx in tqdm_cls(
+                range(src.height),
+                desc="Gridding",
+                unit="row",
+                disable=not use_pbar,
+            ):
                 for c_idx in range(src.width):
                     out_arr[r_idx, c_idx] = _eval_grid_cell(
                         alg,

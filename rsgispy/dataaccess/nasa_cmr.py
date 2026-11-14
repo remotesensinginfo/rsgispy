@@ -272,10 +272,13 @@ if HAVE_REQUESTS:
         page_size: int = 100,
         max_n_pages: int = 100,
         other_params: Optional[Dict[str, str]] = None,
+        use_pbar: bool = True,
     ) -> List[Dict]:
         """
         Paginate through :func:`find_granules` up to ``max_n_pages`` pages.
 
+        :param use_pbar: If ``True``, display a tqdm progress bar during pagination
+                         (Default = ``True``).
         :return: Combined list of granule metadata dictionaries.
 
         .. code:: python
@@ -292,13 +295,11 @@ if HAVE_REQUESTS:
                 max_n_pages=10,
             )
         """
-        # pylint: disable=import-outside-toplevel
-        import tqdm
-
+        tqdm_cls = rsgispy.get_tqdm()
         rtn_granules: List[Dict] = []
         print("Note. Progress bar is for the maximum number of pages...")
         print("Hopefully you do not need the maximum so it will be quicker...")
-        for i in tqdm.tqdm(range(max_n_pages)):
+        for i in tqdm_cls(range(max_n_pages), disable=not use_pbar):
             page_granules = find_granules(
                 prod_short_name=prod_short_name,
                 version=version,
@@ -322,12 +323,14 @@ if HAVE_REQUESTS:
 
         return rtn_granules
 
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     def cmr_download_file_http(
         input_url: str,
         out_file_path: str,
         username: str,
         password: str,
         no_except: bool = True,
+        use_pbar: bool = True,
     ) -> bool:
         """
         Download a CMR granule file over HTTP using Earthdata redirect authentication.
@@ -337,6 +340,8 @@ if HAVE_REQUESTS:
         :param username: Earthdata username.
         :param password: Earthdata password.
         :param no_except: If ``True``, print errors and return ``False`` instead of raising.
+        :param use_pbar: If ``True``, display a tqdm progress bar during download
+                         (Default = ``True``).
         :return: ``True`` if download succeeded.
 
         .. code:: python
@@ -350,9 +355,7 @@ if HAVE_REQUESTS:
                 password="earthdata_password",
             )
         """
-        # pylint: disable=import-outside-toplevel
-        import tqdm
-
+        tqdm_cls = rsgispy.get_tqdm()
         session_http = SessionWithHeaderNASARedirection(username, password)
         session_http.headers["User-Agent"] = f"rsgispy/{rsgispy.get_rsgispy_version()}"
 
@@ -366,8 +369,10 @@ if HAVE_REQUESTS:
                     n_chunks = int(total / chunk_size) + 1
 
                     with open(tmp_dwnld_path, "wb") as out_fh:
-                        for chunk in tqdm.tqdm(
-                            resp.iter_content(chunk_size=chunk_size), total=n_chunks
+                        for chunk in tqdm_cls(
+                            resp.iter_content(chunk_size=chunk_size),
+                            total=n_chunks,
+                            disable=not use_pbar,
                         ):
                             if chunk:
                                 out_fh.write(chunk)
@@ -405,6 +410,7 @@ if HAVE_PYSONDB:
         db_json: str,
         granule_lst: List[Dict],
         dwnld_file_mime_type: str,
+        use_pbar: bool = True,
     ) -> List[str]:
         """
         Build a pysondb JSON download-tracking database from a CMR granule list.
@@ -413,6 +419,8 @@ if HAVE_PYSONDB:
         :param granule_lst: List of granules from :func:`find_granules` or
                             :func:`find_all_granules`.
         :param dwnld_file_mime_type: Link MIME type (e.g., ``"application/x-hdfeos"``).
+        :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                         (Default = ``True``).
         :return: List of ``producer_granule_id`` values with no matching URL.
 
         .. code:: python
@@ -426,12 +434,10 @@ if HAVE_PYSONDB:
                 dwnld_file_mime_type="application/x-hdfeos",
             )
         """
-        # pylint: disable=import-outside-toplevel
-        import tqdm
-
+        tqdm_cls = rsgispy.get_tqdm()
         db_data = []
         granules_no_url = []
-        for granule in tqdm.tqdm(granule_lst):
+        for granule in tqdm_cls(granule_lst, disable=not use_pbar):
             id_val = granule["id"]
             producer_granule_id = granule["producer_granule_id"]
             granule_size = granule["granule_size"]
@@ -465,6 +471,7 @@ if HAVE_PYSONDB:
         out_path: str,
         user_pass_file: str,
         use_wget: bool = False,
+        use_pbar: bool = True,
     ) -> None:
         """
         Download pending granules recorded in a JSON database created by
@@ -474,6 +481,8 @@ if HAVE_PYSONDB:
         :param out_path: Local directory for downloaded files.
         :param user_pass_file: Path to the base64-encoded username/password file.
         :param use_wget: If ``True``, download using ``wget`` instead of ``requests``.
+        :param use_pbar: If ``True``, display tqdm progress bars during downloads
+                         (Default = ``True``).
 
         .. code:: python
 
@@ -490,12 +499,13 @@ if HAVE_PYSONDB:
                 "The requests module is required when use_wget=False."
             )
 
+        tqdm_cls = rsgispy.get_tqdm()
         username, password = rsgispy.tools.credentials.get_username_password(user_pass_file)
 
         lst_db = pysondb.getDb(db_json)
         dwld_files = lst_db.getByQuery({"downloaded": False})
 
-        for dwn_file in dwld_files:
+        for dwn_file in tqdm_cls(dwld_files, disable=not use_pbar):
             out_file_path = os.path.join(out_path, dwn_file["producer_granule_id"])
             print(f"Downloading: {out_file_path}")
             if use_wget:
@@ -512,6 +522,7 @@ if HAVE_PYSONDB:
                     out_file_path=out_file_path,
                     username=username,
                     password=password,
+                    use_pbar=use_pbar,
                 )
 
             if dwn_success:

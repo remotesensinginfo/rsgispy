@@ -80,8 +80,6 @@ import datetime
 import os
 from typing import Dict, List, Optional, Tuple, Union
 
-import tqdm
-
 import rsgispy
 import rsgispy.tools.geometry
 import rsgispy.tools.hashing
@@ -533,7 +531,12 @@ if HAVE_REQUESTS:
             )
         return None
 
-    def download_scn(access_token: str, scn_info: Dict, out_path: str) -> None:
+    def download_scn(
+        access_token: str,
+        scn_info: Dict,
+        out_path: str,
+        use_pbar: bool = True,
+    ) -> None:
         """
         Download a single Copernicus OData scene to ``out_path``.
 
@@ -543,6 +546,8 @@ if HAVE_REQUESTS:
         :param access_token: OAuth2 bearer token from :func:`get_access_token`.
         :param scn_info: Scene dictionary from :func:`query_scn` or :func:`query_scn_lst`.
         :param out_path: Output directory where the downloaded zip will be saved.
+        :param use_pbar: If ``True``, display a tqdm progress bar during download
+                         (Default = ``True``).
 
         .. code:: python
 
@@ -596,11 +601,14 @@ if HAVE_REQUESTS:
         tmp_file_path = os.path.join(out_path, f"{scn_name}.incomplete")
         chunk_size = 8192
         n_chunks = int(scn_size / chunk_size) + 1
+        tqdm_cls = rsgispy.get_tqdm()
 
         if rsgispy.tools.http.check_http_response(resp_obj, scn_url):
             with open(tmp_file_path, "wb") as file:
-                for chunk in tqdm.tqdm(
-                    resp_obj.iter_content(chunk_size=chunk_size), total=n_chunks
+                for chunk in tqdm_cls(
+                    resp_obj.iter_content(chunk_size=chunk_size),
+                    total=n_chunks,
+                    disable=not use_pbar,
                 ):
                     if chunk:
                         file.write(chunk)
@@ -620,6 +628,7 @@ if HAVE_REQUESTS:
         scns_info: List[Dict],
         out_path: str,
         no_except: bool = True,
+        use_pbar: bool = True,
     ) -> None:
         """
         Download a list of scenes using :func:`download_scn`.
@@ -628,6 +637,8 @@ if HAVE_REQUESTS:
         :param scns_info: List of scene dictionaries from :func:`query_scn_lst`.
         :param out_path: Output directory where scenes will be saved.
         :param no_except: If ``True`` (default), print exceptions and continue.
+        :param use_pbar: If ``True``, display a tqdm progress bar during downloads
+                         (Default = ``True``).
 
         .. code:: python
 
@@ -639,9 +650,10 @@ if HAVE_REQUESTS:
             )
             cdse.download_scns(token, scns, "./downloads")
         """
-        for scn_info in scns_info:
+        tqdm_cls = rsgispy.get_tqdm()
+        for scn_info in tqdm_cls(scns_info, disable=not use_pbar):
             try:
-                download_scn(access_token, scn_info, out_path)
+                download_scn(access_token, scn_info, out_path, use_pbar=use_pbar)
             except rsgispy.RSGISPyException as exc:
                 if no_except:
                     print(exc)

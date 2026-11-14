@@ -15,10 +15,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import geopandas
 import pandas
 import shapely.geometry
-import tqdm
 from PIL import Image
 from PIL.ExifTags import TAGS
 
+import rsgispy
 import rsgispy.tools.files
 
 try:
@@ -180,6 +180,7 @@ def split_photos_by_time(
     date_time_tag: str = "DateTime",
     date_time_format: str = "%Y:%m:%d %H:%M:%S",
     out_date_time_format: str = "%Y%m%d_%H%M%S",
+    use_pbar: bool = True,
 ) -> None:
     """
     Split a set of images (e.g., from drone surveys) into subdirectories by time.
@@ -196,6 +197,8 @@ def split_photos_by_time(
                           (default: ``"DateTime"``).
     :param date_time_format: ``datetime.strptime`` format for the EXIF timestamp.
     :param out_date_time_format: ``datetime.strftime`` format for cluster folder names.
+    :param use_pbar: If ``True``, display a tqdm progress bar during copying
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -243,6 +246,7 @@ def split_photos_by_time(
 
         _merge_overlapping_clusters(img_clusters, time_split_secs)
 
+    tqdm_cls = rsgispy.get_tqdm()
     for img_cluster in img_clusters:
         if img_cluster.start_time is None:
             continue
@@ -251,7 +255,7 @@ def split_photos_by_time(
         out_dir_path = os.path.join(output_base_dir, out_dir_name)
         print(f"Output Directory: {out_dir_path}")
         os.makedirs(out_dir_path, exist_ok=True)
-        for img in tqdm.tqdm(img_cluster.images):
+        for img in tqdm_cls(img_cluster.images, disable=not use_pbar):
             shutil.copy(img, out_dir_path)
 
 
@@ -629,6 +633,7 @@ if HAVE_EXIFTOOL:
         gimbal_pitch: float,
         gimbal_yaw: float,
         overwrite: bool = False,
+        use_pbar: bool = True,
     ) -> None:
         """
         Write external GPS and attitude metadata into image EXIF/XMP tags.
@@ -643,6 +648,8 @@ if HAVE_EXIFTOOL:
         :param gimbal_pitch: Gimbal pitch angle in degrees.
         :param gimbal_yaw: Gimbal yaw angle in degrees.
         :param overwrite: If ``True``, overwrite the original image files in place.
+        :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                         (Default = ``True``).
 
         .. code:: python
 
@@ -660,8 +667,9 @@ if HAVE_EXIFTOOL:
             )
         """
         n_imgs = 0
+        tqdm_cls = rsgispy.get_tqdm()
         with exiftool.ExifToolHelper() as et:
-            for _, row in tqdm.tqdm(gps_data_df.iterrows()):
+            for _, row in tqdm_cls(gps_data_df.iterrows(), disable=not use_pbar):
                 input_img = os.path.join(input_imgs_dir, row["image"])
                 if not os.path.exists(input_img):
                     continue

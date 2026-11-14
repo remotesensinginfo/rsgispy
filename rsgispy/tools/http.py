@@ -204,6 +204,7 @@ if HAVE_REQUESTS:
         password: Optional[str] = None,
         no_except: bool = True,
         timeout: float = 60.0,
+        use_pbar: bool = True,
     ) -> bool:
         """
         Download a file from ``input_url`` to ``out_file_path``, staging to
@@ -215,6 +216,8 @@ if HAVE_REQUESTS:
         :param password: Optional basic-auth password.
         :param no_except: Return ``False`` on failure instead of raising when ``True``.
         :param timeout: Request timeout in seconds (Default = ``60.0``).
+        :param use_pbar: If ``True``, display a tqdm progress bar during download
+                         (Default = ``True``).
         :return: ``True`` if download succeeded, ``False`` otherwise.
 
         .. code:: python
@@ -247,7 +250,9 @@ if HAVE_REQUESTS:
 
                     with open(tmp_dwnld_path, "wb") as out_fp:
                         for chunk in tqdm_cls(
-                            resp.iter_content(chunk_size=chunk_size), total=n_chunks
+                            resp.iter_content(chunk_size=chunk_size),
+                            total=n_chunks,
+                            disable=not use_pbar,
                         ):
                             if chunk:
                                 out_fp.write(chunk)
@@ -338,12 +343,15 @@ if HAVE_PYSONDB:
     def create_file_listings_db(
         db_json: str,
         file_urls: Dict[str, str],
+        use_pbar: bool = True,
     ) -> None:
         """
         Build a ``pysondb`` JSON tracking database for HTTP file URLs.
 
         :param db_json: Path to the JSON database file.
         :param file_urls: Mapping of ``filename -> URL``.
+        :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                         (Default = ``True``).
 
         .. code:: python
 
@@ -361,7 +369,7 @@ if HAVE_PYSONDB:
                 "lcl_path": "",
                 "downloaded": False,
             }
-            for c_file in tqdm_cls(file_urls)
+            for c_file in tqdm_cls(file_urls, disable=not use_pbar)
         ]
         if db_data:
             lst_db.addMany(db_data)
@@ -374,6 +382,7 @@ if HAVE_PYSONDB:
         use_wget: bool = False,
         wget_time_out: int = 60,
         check_file_exists: bool = False,
+        use_pbar: bool = True,
     ) -> None:
         """
         Download pending files listed in a ``pysondb`` JSON database via HTTP or ``wget``.
@@ -385,6 +394,8 @@ if HAVE_PYSONDB:
         :param use_wget: Use ``wget`` instead of ``requests`` when ``True``.
         :param wget_time_out: ``wget`` timeout in seconds (Default = ``60``).
         :param check_file_exists: Skip downloading if target file already exists locally.
+        :param use_pbar: If ``True``, display tqdm progress bars during download
+                         (Default = ``True``).
 
         .. code:: python
 
@@ -399,11 +410,12 @@ if HAVE_PYSONDB:
                 "The requests module is required when use_wget=False."
             )
 
+        tqdm_cls = rsgispy.get_tqdm()
         lst_db = pysondb.getDb(db_json)
         dwld_files = lst_db.getByQuery({"downloaded": False})
         os.makedirs(out_dir_path, exist_ok=True)
 
-        for dwn_file in dwld_files:
+        for dwn_file in tqdm_cls(dwld_files, disable=not use_pbar):
             basename = dwn_file["file_name"]
             lcl_path = os.path.join(out_dir_path, basename)
             file_exists = os.path.exists(lcl_path) if check_file_exists else False
@@ -419,13 +431,13 @@ if HAVE_PYSONDB:
                         input_url_md5=None,
                     )
                 else:
-                    # pylint: disable-next=possibly-used-before-assignment
-                    dwnlded = download_file_http(
+                    dwnlded = download_file_http(  # pylint: disable=possibly-used-before-assignment
                         input_url=dwn_file["http_url"],
                         out_file_path=lcl_path,
                         username=http_user,
                         password=http_pass,
                         no_except=True,
+                        use_pbar=use_pbar,
                     )
             else:
                 dwnlded = True

@@ -85,6 +85,7 @@ if HAVE_IMAGEIO:
         out_x_size: int = 720,
         out_y_size: Optional[int] = None,
         tmp_dir: str = "./tmp",
+        use_pbar: bool = True,
     ) -> None:
         """
         Animate a list of input image files into a GIF using ``imageio``.
@@ -97,6 +98,8 @@ if HAVE_IMAGEIO:
         :param out_x_size: Target width when ``resize=True`` (Default = ``720``).
         :param out_y_size: Target height when ``resize=True`` (proportional if ``None``).
         :param tmp_dir: Directory for temporary resized images when ``resize=True``.
+        :param use_pbar: If ``True``, display tqdm progress bars during processing
+                         (Default = ``True``).
 
         .. code:: python
 
@@ -116,7 +119,9 @@ if HAVE_IMAGEIO:
 
             os.makedirs(lcl_tmp_dir, exist_ok=True)
             ani_input_imgs: List[str] = []
-            for in_img in tqdm_cls(input_imgs, desc="Resizing"):
+            for in_img in tqdm_cls(
+                input_imgs, desc="Resizing", disable=not use_pbar
+            ):
                 basename = rsgispy.tools.files.get_file_basename(in_img)
                 out_resize_img = os.path.join(lcl_tmp_dir, f"{basename}_resize.png")
                 with Image.open(in_img) as lcl_img_obj:
@@ -134,7 +139,9 @@ if HAVE_IMAGEIO:
             with imageio_v2.get_writer(
                 output_img, mode="i", fps=fps, loop=loop
             ) as writer:
-                for in_img in tqdm_cls(ani_input_imgs, desc="Animating"):
+                for in_img in tqdm_cls(
+                    ani_input_imgs, desc="Animating", disable=not use_pbar
+                ):
                     image = imageio_v2.imread(in_img)
                     writer.append_data(image)
         finally:
@@ -218,12 +225,16 @@ if HAVE_PYMUPDF:
         """Open a PDF document using PyMuPDF (``pymupdf`` or ``fitz``)."""
         return fitz_mod, fitz_mod.Document(input_pdf)
 
-    def extract_images_from_pdf(input_pdf: str, output_dir: str) -> None:
+    def extract_images_from_pdf(
+        input_pdf: str, output_dir: str, use_pbar: bool = True
+    ) -> None:
         """
         Extract embedded images from a PDF file and save them as PNG files.
 
         :param input_pdf: Path to the input PDF file.
         :param output_dir: Output directory where PNG images will be saved.
+        :param use_pbar: If ``True``, display tqdm progress bars during extraction
+                         (Default = ``True``).
 
         .. code:: python
 
@@ -234,9 +245,14 @@ if HAVE_PYMUPDF:
         os.makedirs(output_dir, exist_ok=True)
         pdf_mod, doc = _open_pdf_doc(input_pdf)
         try:
-            for page_idx in tqdm_cls(range(len(doc)), desc="pages"):
+            for page_idx in tqdm_cls(
+                range(len(doc)), desc="pages", disable=not use_pbar
+            ):
                 for img_info in tqdm_cls(
-                    doc.get_page_images(page_idx), desc="Page", leave=False
+                    doc.get_page_images(page_idx),
+                    desc="Page",
+                    leave=False,
+                    disable=not use_pbar,
                 ):
                     xref = img_info[0]
                     pix = pdf_mod.Pixmap(doc, xref)

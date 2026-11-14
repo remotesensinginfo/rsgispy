@@ -12,7 +12,7 @@ import rasterio
 from rasterio.windows import Window
 
 import rsgispy
-from rsgispy.imageprocess import bbox_from_dataset
+from rsgispy.imageprocess import bbox_from_dataset, validate_band_index
 import rsgispy.tools.geometry
 
 
@@ -37,10 +37,7 @@ def open_raster_band_info(
     img_band: int,
 ) -> Tuple[pyproj.CRS, Optional[float], Tuple[float, float, float, float]]:
     """Validate raster CRS and band index, returning ``(crs, nodata, bbox)``."""
-    if img_band < 1 or img_band > src.count:
-        raise rsgispy.RSGISPyException(
-            f"Could not find image band '{img_band}' in '{input_img}'."
-        )
+    validate_band_index(img_band, src.count, input_img)
     if src.crs is None:
         raise rsgispy.RSGISPyException(
             f"Could not retrieve a projection from '{input_img}'."

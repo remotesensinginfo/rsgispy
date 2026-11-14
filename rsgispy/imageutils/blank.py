@@ -5,18 +5,17 @@ buffered, and bbox-defined raster datasets using ``rasterio``.
 
 from contextlib import ExitStack
 import math
-import os
 from typing import Any, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import rasterio
 from rasterio.transform import Affine
-from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imageprocess import (
     IntersectionGrid,
-    get_default_block_size,
+    ensure_file_exists,
+    iter_dataset_windows,
     open_output_dataset,
 )
 from rsgispy.imageutils._helpers import (
@@ -77,6 +76,7 @@ def create_blank_img(
     datatype: int = rsgispy.TYPE_32FLOAT,
     options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
     no_data_val: Optional[float] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Create a new blank raster image with the specified dimensions, resolution,
@@ -100,6 +100,8 @@ def create_blank_img(
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
     :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
     :param no_data_val: Optional no-data value to set on the output dataset.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -151,16 +153,15 @@ def create_blank_img(
         if no_data_val is not None:
             dst.nodata = no_data_val
 
-        block_size = get_default_block_size()
-        for row_off in range(0, grid.height, block_size):
-            win_h = min(block_size, grid.height - row_off)
-            for col_off in range(0, grid.width, block_size):
-                win_w = min(block_size, grid.width - col_off)
-                win = Window(col_off, row_off, win_w, win_h)
-                block = np.full(
-                    (int(n_bands), win_h, win_w), pxl_val, dtype=out_np_dtype
-                )
-                dst.write(block, window=win)
+        for win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
+            block = np.full(
+                (int(n_bands), int(win.height), int(win.width)),
+                pxl_val,
+                dtype=out_np_dtype,
+            )
+            dst.write(block, window=win)
 
 
 def create_copy_img(
@@ -172,6 +173,7 @@ def create_copy_img(
     datatype: int,
     options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
     no_data_val: Optional[float] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Create a new blank raster image matching the spatial extent, resolution,
@@ -185,6 +187,8 @@ def create_copy_img(
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
     :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
     :param no_data_val: Optional no-data value to set on the output dataset.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -196,10 +200,7 @@ def create_copy_img(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    if not os.path.exists(input_img):
-        raise rsgispy.RSGISPyException(
-            f"Input image file does not exist: '{input_img}'."
-        )
+    ensure_file_exists(input_img)
 
     with rasterio.open(input_img, "r") as src:
         width = src.width
@@ -225,6 +226,7 @@ def create_copy_img(
         datatype=datatype,
         options=options,
         no_data_val=no_data_val,
+        use_pbar=use_pbar,
     )
 
 
@@ -237,6 +239,7 @@ def create_blank_buf_img_from_ref_img(
     buf_spt_ext: Optional[float] = None,
     no_data_val: Optional[float] = None,
     options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Create a new blank image based on ``input_img`` buffered on all sides by
@@ -251,6 +254,8 @@ def create_blank_buf_img_from_ref_img(
                         with ``buf_pxl_ext``).
     :param no_data_val: Optional no-data value. If ``None``, read from ``input_img``.
     :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -271,10 +276,7 @@ def create_blank_buf_img_from_ref_img(
         raise rsgispy.RSGISPyException(
             "You cannot specify both the buf_pxl_ext or buf_spt_ext value."
         )
-    if not os.path.exists(input_img):
-        raise rsgispy.RSGISPyException(
-            f"Input image file does not exist: '{input_img}'."
-        )
+    ensure_file_exists(input_img)
 
     with rasterio.open(input_img, "r") as src:
         if no_data_val is None:
@@ -317,6 +319,7 @@ def create_blank_buf_img_from_ref_img(
         datatype=datatype,
         options=options,
         no_data_val=float(no_data_val),
+        use_pbar=use_pbar,
     )
 
 
@@ -332,6 +335,7 @@ def create_blank_img_from_bbox(
     snap_to_grid: bool = False,
     options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
     no_data_val: Optional[float] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Create a new blank image file from a bounding box ``(xMin, xMax, yMin, yMax)``
@@ -349,6 +353,8 @@ def create_blank_img_from_bbox(
                          whole multiples of ``out_img_res`` (Default = False).
     :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
     :param no_data_val: Optional no-data value to set on the output dataset.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -401,4 +407,5 @@ def create_blank_img_from_bbox(
         datatype=datatype,
         options=options,
         no_data_val=no_data_val,
+        use_pbar=use_pbar,
     )

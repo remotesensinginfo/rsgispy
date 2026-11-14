@@ -16,8 +16,8 @@ import numpy
 import pyproj
 import rasterio
 from rasterio.windows import Window
-import tqdm
 
+import rsgispy
 import rsgispy.tools.files
 import rsgispy.tools.jsonio
 
@@ -762,6 +762,7 @@ def cmp_to_ref_imgs(
     input_img_ext: str,
     rm_errs: bool = False,
     output_file: Optional[str] = None,
+    use_pbar: bool = True,
 ) -> Dict[str, List[str]]:
     """
     Compare images in ``input_img_dir`` against reference images for matching
@@ -775,6 +776,8 @@ def cmp_to_ref_imgs(
     :param input_img_ext: File extension (without leading dot, e.g., ``"tif"``).
     :param rm_errs: Delete input images that fail comparison when ``True``.
     :param output_file: Optional JSON report output path.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
     :return: Report dictionary with keys ``checked``, ``not_checked``,
              ``errors``, and ``ref_no_match``.
 
@@ -788,6 +791,7 @@ def cmp_to_ref_imgs(
             input_img_ext="tif",
         )
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     input_imgs = glob.glob(os.path.join(input_img_dir, f"*.{input_img_ext}"))
     input_imgs_lut: Dict[str, List[Any]] = {
         rsgispy.tools.files.get_file_basename(img): [img, False]
@@ -801,8 +805,9 @@ def cmp_to_ref_imgs(
         "ref_no_match": [],
     }
     n_errs = 0
+    tqdm_cls = rsgispy.get_tqdm()
 
-    for ref_img in tqdm.tqdm(ref_imgs):
+    for ref_img in tqdm_cls(ref_imgs, disable=not use_pbar):
         ref_base = rsgispy.tools.files.get_file_basename(ref_img)
         matched_entries = [
             (chk_base, entry[0])

@@ -6,7 +6,7 @@ band combining, and binary mask bit-packing functions using ``rasterio``.
 from contextlib import ExitStack
 import math
 import os
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 import numpy as np
 import rasterio
@@ -19,11 +19,14 @@ from rsgispy.imageprocess import (
     IntersectionGrid,
     cast_result_block,
     compute_spatial_intersection,
-    get_default_block_size,
+    ensure_file_exists,
+    iter_dataset_windows,
     open_multi_image_datasets,
     open_output_dataset,
+    validate_band_index,
     validate_crs_and_res,
 )
+from rsgispy.imageutils._helpers import normalise_creation_options
 from rsgispy.imageutils.colourtable import set_img_thematic
 from rsgispy.tools.jsonio import write_dict_to_json
 from rsgispy.tools.maths import create_var_list
@@ -46,7 +49,8 @@ def create_img_mosaic(
     overlap_behaviour: int,
     gdalformat: str,
     datatype: int,
-    options: Optional[Mapping[str, Any]] = None,
+    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Mosaic a list of images sharing a CRS, pixel resolution, and band count.
@@ -61,6 +65,8 @@ def create_img_mosaic(
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
     :param options: Optional GDAL creation options mapping.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -77,7 +83,8 @@ def create_img_mosaic(
             rsgispy.TYPE_16UINT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     if overlap_behaviour not in (0, 1, 2):
         raise rsgispy.RSGISPyException(
             f"overlap_behaviour must be 0, 1, or 2, got {overlap_behaviour}."
@@ -85,11 +92,10 @@ def create_img_mosaic(
 
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
-    creation_opts = dict(options) if isinstance(options, Mapping) else None
+    creation_opts = normalise_creation_options(options)
     skip_idx = int(skip_band) - 1
     skip_is_nan = math.isnan(float(skip_val))
     bg_is_nan = math.isnan(float(background_val))
-    block_size = get_default_block_size()
 
     with ExitStack() as stack:
         datasets, paths = open_multi_image_datasets(stack, input_imgs)
@@ -143,16 +149,13 @@ def create_img_mosaic(
                 if desc:
                     dst_init.set_band_description(bidx, desc)
 
-            for r0 in range(0, out_h, block_size):
-                win_h = min(block_size, out_h - r0)
-                for c0 in range(0, out_w, block_size):
-                    win_w = min(block_size, out_w - c0)
-                    bg_block = np.full(
-                        (n_bands, win_h, win_w),
-                        background_val,
-                        dtype=out_np_dtype,
-                    )
-                    dst_init.write(bg_block, window=Window(c0, r0, win_w, win_h))
+            for out_win in iter_dataset_windows(out_h, out_w, use_pbar=False):
+                bg_block = np.full(
+                    (n_bands, int(out_win.height), int(out_win.width)),
+                    background_val,
+                    dtype=out_np_dtype,
+                )
+                dst_init.write(bg_block, window=out_win)
 
         dst = stack.enter_context(rasterio.open(output_img, "r+"))
         for path in paths:
@@ -160,46 +163,51 @@ def create_img_mosaic(
             ds_col = int(round((float(ds.bounds.left) - min_x) / x_res))
             ds_row = int(round((max_y - float(ds.bounds.top)) / y_res))
 
-            for r0 in range(0, ds.height, block_size):
-                win_h = min(block_size, ds.height - r0)
-                for c0 in range(0, ds.width, block_size):
-                    win_w = min(block_size, ds.width - c0)
-                    in_win = Window(c0, r0, win_w, win_h)
-                    dst_win = Window(ds_col + c0, ds_row + r0, win_w, win_h)
+            for in_win in iter_dataset_windows(
+                ds.height, ds.width, use_pbar=use_pbar
+            ):
+                win_w = int(in_win.width)
+                win_h = int(in_win.height)
+                dst_win = Window(
+                    ds_col + int(in_win.col_off),
+                    ds_row + int(in_win.row_off),
+                    win_w,
+                    win_h,
+                )
 
-                    in_block = ds.read(window=in_win, out_dtype=np.float64)
-                    in_skip = in_block[skip_idx]
-                    in_valid = (
-                        ~np.isnan(in_skip)
-                        if skip_is_nan
-                        else (in_skip != float(skip_val))
+                in_block = ds.read(window=in_win, out_dtype=np.float64)
+                in_skip = in_block[skip_idx]
+                in_valid = (
+                    ~np.isnan(in_skip)
+                    if skip_is_nan
+                    else (in_skip != float(skip_val))
+                )
+
+                out_block = dst.read(window=dst_win)
+                if overlap_behaviour == 0:
+                    take_in = in_valid
+                else:
+                    out_skip = out_block[skip_idx].astype(np.float64)
+                    out_is_bg = (
+                        np.isnan(out_skip)
+                        if bg_is_nan
+                        else (out_skip == float(background_val))
                     )
-
-                    out_block = dst.read(window=dst_win)
-                    if overlap_behaviour == 0:
-                        take_in = in_valid
+                    if overlap_behaviour == 1:
+                        take_in = in_valid & (
+                            out_is_bg | (in_skip < out_skip)
+                        )
                     else:
-                        out_skip = out_block[skip_idx].astype(np.float64)
-                        out_is_bg = (
-                            np.isnan(out_skip)
-                            if bg_is_nan
-                            else (out_skip == float(background_val))
+                        take_in = in_valid & (
+                            out_is_bg | (in_skip > out_skip)
                         )
-                        if overlap_behaviour == 1:
-                            take_in = in_valid & (
-                                out_is_bg | (in_skip < out_skip)
-                            )
-                        else:
-                            take_in = in_valid & (
-                                out_is_bg | (in_skip > out_skip)
-                            )
 
-                    if np.any(take_in):
-                        cast_in = cast_result_block(
-                            in_block, win_h, win_w, out_np_dtype
-                        )
-                        out_block[:, take_in] = cast_in[:, take_in]
-                        dst.write(out_block, window=dst_win)
+                if np.any(take_in):
+                    cast_in = cast_result_block(
+                        in_block, win_h, win_w, out_np_dtype
+                    )
+                    out_block[:, take_in] = cast_in[:, take_in]
+                    dst.write(out_block, window=dst_win)
 
 
 def include_imgs(
@@ -207,6 +215,7 @@ def include_imgs(
     include_imgs: Sequence[str],
     input_bands: Optional[Sequence[int]] = None,
     skip_val: Optional[float] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Insert pixel values from ``include_imgs`` into an existing ``input_img`` in place.
@@ -216,6 +225,8 @@ def include_imgs(
     :param input_bands: Optional 1-based band subset from each included image
                         (mapped sequentially onto bands ``1..N`` of ``input_img``).
     :param skip_val: Optional pixel value to skip (preserving existing base values).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -225,14 +236,10 @@ def include_imgs(
         )
     """
     # pylint: disable=redefined-outer-name,too-many-locals,too-many-branches
-    if not os.path.exists(input_img):
-        raise rsgispy.RSGISPyException(
-            f"Base image file does not exist: '{input_img}'."
-        )
+    ensure_file_exists(input_img, label="Base image")
     if not include_imgs:
         raise rsgispy.RSGISPyException("include_imgs must not be empty.")
 
-    block_size = get_default_block_size()
     with ExitStack() as stack:
         base_ds = stack.enter_context(rasterio.open(input_img, "r+"))
         base_dtype = np.dtype(base_ds.dtypes[0])
@@ -269,10 +276,7 @@ def include_imgs(
                 cur_src_bands = dst_bands
             else:
                 for b_idx in src_bands:
-                    if b_idx < 1 or b_idx > inc_ds.count:
-                        raise rsgispy.RSGISPyException(
-                            f"Band {b_idx} is out of range for '{inc_path}' ({inc_ds.count} bands)."
-                        )
+                    validate_band_index(b_idx, inc_ds.count, inc_path)
                 cur_src_bands = src_bands
 
             col_off = int(
@@ -291,37 +295,43 @@ def include_imgs(
                     f"Included image '{inc_path}' falls outside the extent of '{input_img}'."
                 )
 
-            for r0 in range(0, inc_ds.height, block_size):
-                win_h = min(block_size, inc_ds.height - r0)
-                for c0 in range(0, inc_ds.width, block_size):
-                    win_w = min(block_size, inc_ds.width - c0)
-                    in_win = Window(c0, r0, win_w, win_h)
-                    dst_win = Window(col_off + c0, row_off + r0, win_w, win_h)
+            for in_win in iter_dataset_windows(
+                inc_ds.height, inc_ds.width, use_pbar=use_pbar
+            ):
+                win_w = int(in_win.width)
+                win_h = int(in_win.height)
+                dst_win = Window(
+                    col_off + int(in_win.col_off),
+                    row_off + int(in_win.row_off),
+                    win_w,
+                    win_h,
+                )
 
-                    inc_arr = inc_ds.read(
-                        cur_src_bands, window=in_win, out_dtype=np.float64
-                    )
-                    cast_inc = cast_result_block(
-                        inc_arr, win_h, win_w, base_dtype
-                    )
+                inc_arr = inc_ds.read(
+                    cur_src_bands, window=in_win, out_dtype=np.float64
+                )
+                cast_inc = cast_result_block(
+                    inc_arr, win_h, win_w, base_dtype
+                )
 
-                    if skip_val is not None:
-                        base_arr = base_ds.read(dst_bands, window=dst_win)
-                        valid = (
-                            ~np.isnan(inc_arr)
-                            if skip_is_nan
-                            else (inc_arr != float(skip_val))
-                        )
-                        base_arr[valid] = cast_inc[valid]
-                        base_ds.write(base_arr, dst_bands, window=dst_win)
-                    else:
-                        base_ds.write(cast_inc, dst_bands, window=dst_win)
+                if skip_val is not None:
+                    base_arr = base_ds.read(dst_bands, window=dst_win)
+                    valid = (
+                        ~np.isnan(inc_arr)
+                        if skip_is_nan
+                        else (inc_arr != float(skip_val))
+                    )
+                    base_arr[valid] = cast_inc[valid]
+                    base_ds.write(base_arr, dst_bands, window=dst_win)
+                else:
+                    base_ds.write(cast_inc, dst_bands, window=dst_win)
 
 
 def include_imgs_with_overlap(
     input_img: str,
     include_imgs: Sequence[str],
     overlap: int,
+    use_pbar: bool = True,
 ) -> None:
     """
     Insert cropped cores (removing ``overlap`` border pixels from all four sides)
@@ -330,6 +340,8 @@ def include_imgs_with_overlap(
     :param input_img: Path to the existing base image updated in place.
     :param include_imgs: Sequence of overlapping tile/image paths.
     :param overlap: Number of border pixels to crop from each side.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -339,10 +351,7 @@ def include_imgs_with_overlap(
         )
     """
     # pylint: disable=redefined-outer-name,too-many-locals
-    if not os.path.exists(input_img):
-        raise rsgispy.RSGISPyException(
-            f"Base image file does not exist: '{input_img}'."
-        )
+    ensure_file_exists(input_img, label="Base image")
     if not include_imgs:
         raise rsgispy.RSGISPyException("include_imgs must not be empty.")
     ovl = int(overlap)
@@ -351,7 +360,6 @@ def include_imgs_with_overlap(
             f"overlap must be non-negative, got {overlap}."
         )
 
-    block_size = get_default_block_size()
     with ExitStack() as stack:
         base_ds = stack.enter_context(rasterio.open(input_img, "r+"))
         base_dtype = np.dtype(base_ds.dtypes[0])
@@ -396,15 +404,18 @@ def include_imgs_with_overlap(
                     f"Cropped image '{inc_path}' falls outside the extent of '{input_img}'."
                 )
 
-            for r0 in range(0, crop_h, block_size):
-                win_h = min(block_size, crop_h - r0)
-                for c0 in range(0, crop_w, block_size):
-                    win_w = min(block_size, crop_w - c0)
-                    src_win = Window(ovl + c0, ovl + r0, win_w, win_h)
-                    dst_win = Window(dst_col + c0, dst_row + r0, win_w, win_h)
-                    data = inc_ds.read(window=src_win)
-                    out_arr = cast_result_block(data, win_h, win_w, base_dtype)
-                    base_ds.write(out_arr, window=dst_win)
+            for win in iter_dataset_windows(crop_h, crop_w, use_pbar=use_pbar):
+                win_w = int(win.width)
+                win_h = int(win.height)
+                col_off = int(win.col_off)
+                row_off = int(win.row_off)
+                src_win = Window(ovl + col_off, ovl + row_off, win_w, win_h)
+                dst_win = Window(
+                    dst_col + col_off, dst_row + row_off, win_w, win_h
+                )
+                data = inc_ds.read(window=src_win)
+                out_arr = cast_result_block(data, win_h, win_w, base_dtype)
+                base_ds.write(out_arr, window=dst_win)
 
 
 def combine_imgs_to_band(
@@ -413,7 +424,8 @@ def combine_imgs_to_band(
     gdalformat: str,
     datatype: int,
     no_data_val: float = 0.0,
-    options: Optional[Mapping[str, Any]] = None,
+    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    use_pbar: bool = True,
 ) -> None:
     """
     Combine all bands across ``input_imgs`` into a single-band output image by
@@ -426,6 +438,8 @@ def combine_imgs_to_band(
     :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
     :param no_data_val: No-data value ignored during combination (Default = ``0.0``).
     :param options: Optional GDAL creation options mapping.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -441,9 +455,8 @@ def combine_imgs_to_band(
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
-    creation_opts = dict(options) if isinstance(options, Mapping) else None
+    creation_opts = normalise_creation_options(options)
     nd_is_nan = math.isnan(float(no_data_val))
-    block_size = get_default_block_size()
 
     with ExitStack() as stack:
         datasets, paths = open_multi_image_datasets(stack, input_imgs)
@@ -461,37 +474,39 @@ def combine_imgs_to_band(
         )
         dst.nodata = float(no_data_val)
 
-        for r0 in range(0, grid.height, block_size):
-            win_h = min(block_size, grid.height - r0)
-            for c0 in range(0, grid.width, block_size):
-                win_w = min(block_size, grid.width - c0)
-                out_win = Window(c0, r0, win_w, win_h)
-                out_arr = np.full(
-                    (win_h, win_w), float(no_data_val), dtype=np.float64
-                )
+        for out_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
+            col_off = int(out_win.col_off)
+            row_off = int(out_win.row_off)
+            win_w = int(out_win.width)
+            win_h = int(out_win.height)
+            out_arr = np.full(
+                (win_h, win_w), float(no_data_val), dtype=np.float64
+            )
 
-                for path in paths:
-                    ds = datasets[path]
-                    base_col, base_row = grid.offsets[path]
-                    in_win = Window(
-                        base_col + c0, base_row + r0, win_w, win_h
+            for path in paths:
+                ds = datasets[path]
+                base_col, base_row = grid.offsets[path]
+                in_win = Window(
+                    base_col + col_off, base_row + row_off, win_w, win_h
+                )
+                for b_idx in range(1, ds.count + 1):
+                    arr = ds.read(
+                        b_idx, window=in_win, out_dtype=np.float64
                     )
-                    for b_idx in range(1, ds.count + 1):
-                        arr = ds.read(
-                            b_idx, window=in_win, out_dtype=np.float64
-                        )
-                        valid = (
-                            ~np.isnan(arr)
-                            if nd_is_nan
-                            else (arr != float(no_data_val))
-                        )
-                        out_arr[valid] = arr[valid]
+                    valid = (
+                        ~np.isnan(arr)
+                        if nd_is_nan
+                        else (arr != float(no_data_val))
+                    )
+                    out_arr[valid] = arr[valid]
 
-                dst.write(
-                    cast_result_block(out_arr, win_h, win_w, out_np_dtype),
-                    1,
-                    window=out_win,
-                )
+            dst.write(
+                cast_result_block(out_arr, win_h, win_w, out_np_dtype),
+                1,
+                window=out_win,
+            )
 
 
 def combine_binary_masks(
@@ -499,6 +514,7 @@ def combine_binary_masks(
     output_img: str,
     out_lut_file: str,
     gdalformat: str = "GTIFF",
+    use_pbar: bool = True,
 ) -> None:
     """
     Combine up to 8 binary masks (where value ``1`` indicates presence) into a
@@ -510,6 +526,8 @@ def combine_binary_masks(
     :param output_img: Path to the 8-bit unsigned bit-packed output image.
     :param out_lut_file: Path to the output JSON lookup table file.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -532,7 +550,6 @@ def combine_binary_masks(
 
     keys: List[str] = list(msk_imgs_dict.keys())
     img_paths: List[str] = [os.fspath(msk_imgs_dict[k]) for k in keys]
-    block_size = get_default_block_size()
 
     with ExitStack() as stack:
         datasets, resolved_paths = open_multi_image_datasets(stack, img_paths)
@@ -548,23 +565,25 @@ def combine_binary_masks(
             output_exists=False,
         )
 
-        for r0 in range(0, grid.height, block_size):
-            win_h = min(block_size, grid.height - r0)
-            for c0 in range(0, grid.width, block_size):
-                win_w = min(block_size, grid.width - c0)
-                out_win = Window(c0, r0, win_w, win_h)
-                bits = np.zeros((win_h, win_w, len(keys)), dtype=np.uint8)
-                for idx, path in enumerate(resolved_paths):
-                    ds = datasets[path]
-                    base_col, base_row = grid.offsets[path]
-                    in_win = Window(
-                        base_col + c0, base_row + r0, win_w, win_h
-                    )
-                    arr = ds.read(1, window=in_win)
-                    bits[:, :, idx] = (arr == 1).astype(np.uint8)
+        for out_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
+            col_off = int(out_win.col_off)
+            row_off = int(out_win.row_off)
+            win_w = int(out_win.width)
+            win_h = int(out_win.height)
+            bits = np.zeros((win_h, win_w, len(keys)), dtype=np.uint8)
+            for idx, path in enumerate(resolved_paths):
+                ds = datasets[path]
+                base_col, base_row = grid.offsets[path]
+                in_win = Window(
+                    base_col + col_off, base_row + row_off, win_w, win_h
+                )
+                arr = ds.read(1, window=in_win)
+                bits[:, :, idx] = (arr == 1).astype(np.uint8)
 
-                packed = np.packbits(bits, axis=-1)[:, :, 0]
-                dst.write(packed, 1, window=out_win)
+            packed = np.packbits(bits, axis=-1)[:, :, 0]
+            dst.write(packed, 1, window=out_win)
 
     set_img_thematic(output_img)
 

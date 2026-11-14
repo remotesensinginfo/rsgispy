@@ -4,7 +4,6 @@ raster thematic metadata, band colour interpretation, and colour tables using
 ``rasterio``.
 """
 
-import os
 from typing import Dict, List, Mapping, Sequence, Tuple, Union
 
 import rasterio
@@ -39,10 +38,7 @@ def set_img_thematic(input_img: str) -> None:
 
         rsgispy.imageutils.colourtable.set_img_thematic("cls_img.tif")
     """
-    if not os.path.exists(input_img):
-        raise rsgispy.RSGISPyException(
-            f"Input image file does not exist: '{input_img}'."
-        )
+    _ensure_img_exists(input_img)
     try:
         with rasterio.open(input_img, "r+") as dst:
             for bidx in range(1, dst.count + 1):
@@ -65,10 +61,7 @@ def set_img_not_thematic(input_img: str) -> None:
 
         rsgispy.imageutils.colourtable.set_img_not_thematic("img.tif")
     """
-    if not os.path.exists(input_img):
-        raise rsgispy.RSGISPyException(
-            f"Input image file does not exist: '{input_img}'."
-        )
+    _ensure_img_exists(input_img)
     try:
         with rasterio.open(input_img, "r+") as dst:
             for bidx in range(1, dst.count + 1):

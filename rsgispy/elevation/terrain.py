@@ -35,6 +35,7 @@ def slope(
     output_img: str,
     gdalformat: str,
     unit: str = "degrees",
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate a slope layer from an input elevation model.
@@ -43,6 +44,7 @@ def slope(
     :param output_img: Path to the output slope image file.
     :param gdalformat: GDAL/rasterio driver format for the output file.
     :param unit: Output angular unit, either ``'degrees'`` or ``'radians'``.
+    :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
 
@@ -69,7 +71,9 @@ def slope(
             return np.degrees(slope_rad).astype(np.float32)
         return slope_rad.astype(np.float32)
 
-    _process_single_dem_3x3(input_img, output_img, gdalformat, "float32", _block)
+    _process_single_dem_3x3(
+        input_img, output_img, gdalformat, "float32", _block, use_pbar=use_pbar
+    )
 
 
 def slope_pxl_res_img(
@@ -78,6 +82,7 @@ def slope_pxl_res_img(
     output_img: str,
     gdalformat: str,
     unit: str = "degrees",
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate a slope layer from a DEM and an external 2-band pixel resolution
@@ -91,6 +96,7 @@ def slope_pxl_res_img(
     :param output_img: Path to the output slope image file.
     :param gdalformat: GDAL/rasterio driver format for the output file.
     :param unit: Output angular unit, either ``'degrees'`` or ``'radians'``.
+    :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
 
@@ -104,6 +110,7 @@ def slope_pxl_res_img(
             unit="degrees",
         )
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     unit_norm = _validate_slope_unit(unit)
 
     def _block(
@@ -119,7 +126,13 @@ def slope_pxl_res_img(
         return slope_rad.astype(np.float32)
 
     _process_pxl_res_dem_3x3(
-        in_dem_img, in_pxl_res_img, output_img, gdalformat, "float32", _block
+        in_dem_img,
+        in_pxl_res_img,
+        output_img,
+        gdalformat,
+        "float32",
+        _block,
+        use_pbar=use_pbar,
     )
 
 
@@ -127,6 +140,7 @@ def aspect(
     input_img: str,
     output_img: str,
     gdalformat: str,
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate an aspect layer (in degrees clockwise from North, ``[0, 360)``,
@@ -135,6 +149,7 @@ def aspect(
     :param input_img: Path to the input DEM image file.
     :param output_img: Path to the output aspect image file.
     :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
 
@@ -157,7 +172,9 @@ def aspect(
         _, aspect_deg, _ = _calc_slope_aspect_from_diffs(dx, dy, n_vals, ew_res, ns_res)
         return aspect_deg.astype(np.float32)
 
-    _process_single_dem_3x3(input_img, output_img, gdalformat, "float32", _block)
+    _process_single_dem_3x3(
+        input_img, output_img, gdalformat, "float32", _block, use_pbar=use_pbar
+    )
 
 
 def aspect_pxl_res_img(
@@ -165,6 +182,7 @@ def aspect_pxl_res_img(
     in_pxl_res_img: str,
     output_img: str,
     gdalformat: str,
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate an aspect layer from a DEM and an external 2-band pixel resolution
@@ -174,6 +192,7 @@ def aspect_pxl_res_img(
     :param in_pxl_res_img: Path to the 2-band pixel resolution image file.
     :param output_img: Path to the output aspect image file.
     :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
 
@@ -198,7 +217,13 @@ def aspect_pxl_res_img(
         return aspect_deg.astype(np.float32)
 
     _process_pxl_res_dem_3x3(
-        in_dem_img, in_pxl_res_img, output_img, gdalformat, "float32", _block
+        in_dem_img,
+        in_pxl_res_img,
+        output_img,
+        gdalformat,
+        "float32",
+        _block,
+        use_pbar=use_pbar,
     )
 
 
@@ -206,6 +231,7 @@ def catagorise_aspect(
     input_img: str,
     output_img: str,
     gdalformat: str,
+    use_pbar: bool = True,
 ) -> None:
     """
     Categorise an aspect image (in degrees) into 8 classes (1-8 for 45-degree
@@ -214,6 +240,7 @@ def catagorise_aspect(
     :param input_img: Path to the input aspect image file (in degrees).
     :param output_img: Path to the output categorised uint8 image file.
     :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
 
@@ -238,7 +265,9 @@ def catagorise_aspect(
             count=1,
         )
 
-        for out_win in iter_dataset_windows(src.height, src.width):
+        for out_win in iter_dataset_windows(
+            src.height, src.width, use_pbar=use_pbar
+        ):
             arr = src.read(1, window=out_win, out_dtype=np.float64)
             nan_mask = np.isnan(arr)
             finite_vals = arr[~nan_mask]

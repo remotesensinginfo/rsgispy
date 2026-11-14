@@ -106,7 +106,7 @@ class WarpConfig:
     no_metadata: bool = False
     meta_conflict_value: Optional[str] = None
     set_ci: bool = False
-    use_pbar: bool = False
+    use_pbar: bool = True
 
 
 def _parse_nodata_values(
@@ -476,8 +476,8 @@ def _apply_warp_kwargs_part2(cfg: WarpConfig, kwargs: Mapping[str, Any]) -> None
         cfg.meta_conflict_value = str(kwargs["meta_conflict_value"])
     if kwargs.get("set_ci"):
         cfg.set_ci = True
-    if kwargs.get("use_pbar"):
-        cfg.use_pbar = True
+    if kwargs.get("use_pbar") is False:
+        cfg.use_pbar = False
 
 
 def build_warp_config(
@@ -841,7 +841,7 @@ def apply_cutline_to_dataset(
     fill_values: Sequence[float],
     dst_alpha_band: int,
     blend_dist: float,
-    use_pbar: bool = False,
+    use_pbar: bool = True,
 ) -> None:
     """
     Mask ``dst`` pixels outside ``cutline_geoms`` and optionally feather inside

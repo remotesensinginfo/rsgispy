@@ -9,13 +9,13 @@ from typing import Any, Callable, Optional, Tuple
 
 import numpy as np
 import rasterio
-from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imageprocess import (
     create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
+    read_window_with_halo,
 )
 
 
@@ -39,44 +39,6 @@ def validate_slope_unit(unit: str) -> str:
             "The unit option needs to be specified as either 'degrees' or 'radians'."
         )
     return unit_norm
-
-
-def read_window_with_halo(
-    src: rasterio.DatasetReader,
-    band: int,
-    out_win: Window,
-    pad: int,
-    out_dtype: Any = np.float64,
-) -> np.ndarray:
-    """Read a window expanded by ``pad`` pixels, edge-padding at image borders."""
-    # pylint: disable=too-many-locals
-    col_off = int(out_win.col_off)
-    row_off = int(out_win.row_off)
-    win_w = int(out_win.width)
-    win_h = int(out_win.height)
-
-    r0 = row_off - pad
-    r1 = row_off + win_h + pad
-    c0 = col_off - pad
-    c1 = col_off + win_w + pad
-
-    cr0 = max(0, r0)
-    cr1 = min(src.height, r1)
-    cc0 = max(0, c0)
-    cc1 = min(src.width, c1)
-
-    arr = src.read(
-        band,
-        window=Window(cc0, cr0, cc1 - cc0, cr1 - cr0),
-        out_dtype=out_dtype,
-    )
-    pads = (
-        (cr0 - r0, r1 - cr1),
-        (cc0 - c0, c1 - cc1),
-    )
-    if any(p > 0 for pair in pads for p in pair):
-        arr = np.pad(arr, pads, mode="edge")
-    return arr
 
 
 def valid_mask(arr: np.ndarray, no_data_val: Optional[float]) -> np.ndarray:
@@ -161,9 +123,10 @@ def process_single_dem_3x3(
     gdalformat: str,
     out_rio_dtype: str,
     block_fn: Callable[[np.ndarray, np.ndarray, np.ndarray, float, float], np.ndarray],
+    use_pbar: bool = True,
 ) -> None:
     """Run a 3x3 windowed calculation block-by-block over a single DEM raster."""
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
@@ -180,7 +143,9 @@ def process_single_dem_3x3(
             count=1,
         )
 
-        for out_win in iter_dataset_windows(src.height, src.width):
+        for out_win in iter_dataset_windows(
+            src.height, src.width, use_pbar=use_pbar
+        ):
             dem_halo = read_window_with_halo(src, 1, out_win, pad=1)
             dx, dy, n_vals = prepare_3x3_horn_diffs(dem_halo, no_data_val)
             out_arr = block_fn(dx, dy, n_vals, ew_res, ns_res)
@@ -196,6 +161,7 @@ def process_pxl_res_dem_3x3(
     block_fn: Callable[
         [np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray], np.ndarray
     ],
+    use_pbar: bool = True,
 ) -> None:
     """Run a 3x3 windowed calculation using per-pixel E-W/N-S resolution bands."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -224,7 +190,9 @@ def process_pxl_res_dem_3x3(
             count=1,
         )
 
-        for out_win in iter_dataset_windows(dem_src.height, dem_src.width):
+        for out_win in iter_dataset_windows(
+            dem_src.height, dem_src.width, use_pbar=use_pbar
+        ):
             dem_halo = read_window_with_halo(dem_src, 1, out_win, pad=1)
             dx, dy, n_vals = prepare_3x3_horn_diffs(dem_halo, no_data_val)
             ew_res = res_src.read(1, window=out_win, out_dtype=np.float64)

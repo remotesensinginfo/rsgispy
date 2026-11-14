@@ -14,16 +14,14 @@ import rasterio
 from rasterio.transform import Affine
 
 import rsgispy
-from rsgispy.elevation._helpers import (
-    read_window_with_halo as _read_window_with_halo,
-    valid_mask as _valid_mask,
-)
+from rsgispy.elevation._helpers import valid_mask as _valid_mask
 from rsgispy.imageprocess import (
     IntersectionGrid,
     create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
     open_output_dataset,
+    read_window_with_halo as _read_window_with_halo,
 )
 import rsgispy.imageutils.warp
 import rsgispy.tools.files
@@ -44,6 +42,7 @@ def dtm_aspect_median_filter(
     aspect_range: float,
     win_h_size: int,
     gdalformat: str,
+    use_pbar: bool = True,
 ) -> None:
     """
     Filter a DTM for noise using a median filter restricted to neighbouring pixels
@@ -58,6 +57,7 @@ def dtm_aspect_median_filter(
     :param aspect_range: Angular tolerance around the centre pixel aspect (degrees).
     :param win_h_size: Half-window size in pixels (full window is ``2 * win_h_size + 1``).
     :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param use_pbar: Show a progress bar during filtering (Default = ``True``).
 
     .. code:: python
 
@@ -100,7 +100,9 @@ def dtm_aspect_median_filter(
             count=1,
         )
 
-        for out_win in iter_dataset_windows(dem_src.height, dem_src.width):
+        for out_win in iter_dataset_windows(
+            dem_src.height, dem_src.width, use_pbar=use_pbar
+        ):
             win_h = int(out_win.height)
             win_w = int(out_win.width)
 
@@ -284,6 +286,7 @@ def plane_fit_detreat_dem(
     output_img: str,
     gdalformat: str,
     win_size: int,
+    use_pbar: bool = True,
 ) -> None:
     """
     Detrend a DEM by fitting a local least-squares plane ``z = a*x + b*y + c``
@@ -294,6 +297,7 @@ def plane_fit_detreat_dem(
     :param output_img: Path to the output detrended DEM image file.
     :param gdalformat: GDAL/rasterio driver format for the output file.
     :param win_size: Odd window size in pixels (``>= 3``) for plane fitting.
+    :param use_pbar: Show a progress bar during filtering (Default = ``True``).
 
     .. code:: python
 
@@ -334,7 +338,9 @@ def plane_fit_detreat_dem(
             count=1,
         )
 
-        for out_win in iter_dataset_windows(src.height, src.width):
+        for out_win in iter_dataset_windows(
+            src.height, src.width, use_pbar=use_pbar
+        ):
             win_h = int(out_win.height)
             win_w = int(out_win.width)
             dem_halo = _read_window_with_halo(src, 1, out_win, pad=half)

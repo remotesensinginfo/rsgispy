@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 """
 The imageprocess module contains reusable utilities for reading, validating,
 and processing raster images in blocks using rasterio.
@@ -480,6 +481,7 @@ def cast_result_block(
     win_h: int,
     win_w: int,
     out_np_dtype: np.dtype,
+    clamp_int: bool = False,
 ) -> np.ndarray:
     """
     Convert a block calculation result to an array of the target NumPy dtype.
@@ -488,6 +490,9 @@ def cast_result_block(
     :param win_h: Height of the current window in pixels.
     :param win_w: Width of the current window in pixels.
     :param out_np_dtype: Target NumPy dtype for the output raster.
+    :param clamp_int: If ``True`` and ``out_np_dtype`` is an integer dtype,
+                      clamp values to the dtype's valid range before casting
+                      (Default = ``False``).
     :return: NumPy array of shape ``(win_h, win_w)`` or ``(bands, win_h, win_w)``.
 
     .. code:: python
@@ -509,7 +514,69 @@ def cast_result_block(
     with np.errstate(invalid="ignore"):
         if np.issubdtype(out_np_dtype, np.integer):
             arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+            if clamp_int:
+                info = np.iinfo(out_np_dtype)
+                arr = np.clip(arr, info.min, info.max)
         return arr.astype(out_np_dtype, copy=False)
+
+
+def read_window_with_halo(
+    src: DatasetReader,
+    band: Union[int, Sequence[int], None],
+    out_win: Window,
+    pad: int,
+    out_dtype: Any = np.float64,
+) -> np.ndarray:
+    """
+    Read a raster window expanded by ``pad`` pixels, edge-padding at image borders.
+
+    :param src: Opened rasterio :class:`rasterio.io.DatasetReader`.
+    :param band: 1-based band index (returns 2D array), sequence of 1-based
+                 band indices, or ``None`` for all bands (returns 3D array).
+    :param out_win: Core output :class:`rasterio.windows.Window`.
+    :param pad: Number of halo pixels to include around ``out_win``.
+    :param out_dtype: NumPy dtype to cast read values into (Default = ``float64``).
+    :return: Padded NumPy array of shape ``(win_h + 2*pad, win_w + 2*pad)`` for
+             a single band or ``(bands, win_h + 2*pad, win_w + 2*pad)``.
+
+    .. code:: python
+
+        import rasterio
+        from rasterio.windows import Window
+        import rsgispy.imageprocess
+
+        with rasterio.open("img.tif", "r") as src:
+            blk = rsgispy.imageprocess.read_window_with_halo(
+                src, 1, Window(0, 0, 128, 128), pad=1
+            )
+    """
+    # pylint: disable=too-many-locals
+    col_off = int(out_win.col_off)
+    row_off = int(out_win.row_off)
+    win_w = int(out_win.width)
+    win_h = int(out_win.height)
+
+    r0 = row_off - pad
+    r1 = row_off + win_h + pad
+    c0 = col_off - pad
+    c1 = col_off + win_w + pad
+
+    cr0 = max(0, r0)
+    cr1 = min(src.height, r1)
+    cc0 = max(0, c0)
+    cc1 = min(src.width, c1)
+
+    read_win = Window(cc0, cr0, cc1 - cc0, cr1 - cr0)
+    if band is None:
+        arr = src.read(window=read_win, out_dtype=out_dtype)
+    else:
+        arr = src.read(band, window=read_win, out_dtype=out_dtype)
+
+    spatial_pads = ((cr0 - r0, r1 - cr1), (cc0 - c0, c1 - cc1))
+    if any(p > 0 for pair in spatial_pads for p in pair):
+        pads = ((0, 0), *spatial_pads) if arr.ndim == 3 else spatial_pads
+        arr = np.pad(arr, pads, mode="edge")
+    return arr
 
 
 def open_input_datasets(
@@ -728,6 +795,7 @@ def iter_dataset_windows(
     width: int,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
+    block_width: Optional[int] = None,
 ) -> Iterator[Window]:
     """
     Iterate over processing block windows across a raster of dimensions
@@ -735,10 +803,13 @@ def iter_dataset_windows(
 
     :param height: Raster height in pixels.
     :param width: Raster width in pixels.
-    :param block_size: Window block size in pixels. If ``None``, resolved at runtime
-                       via :func:`get_default_block_size`.
+    :param block_size: Window block height (and default width) in pixels. If
+                       ``None``, resolved at runtime via
+                       :func:`get_default_block_size`.
     :param use_pbar: If ``True``, display a tqdm progress bar during iteration
                      (Default = ``True``).
+    :param block_width: Optional window block width in pixels. Defaults to
+                        ``block_size`` when ``None``.
     :return: Iterator yielding :class:`rasterio.windows.Window` tiles.
 
     .. code:: python
@@ -757,13 +828,22 @@ def iter_dataset_windows(
     else:
         blk_sz = int(block_size)
 
+    if block_width is None:
+        blk_w = blk_sz
+    elif int(block_width) <= 0:
+        raise rsgispy.RSGISPyException(
+            f"block_width must be a positive integer, got {block_width}."
+        )
+    else:
+        blk_w = int(block_width)
+
     tqdm_cls = rsgispy.get_tqdm()
-    total_blocks = math.ceil(height / blk_sz) * math.ceil(width / blk_sz)
+    total_blocks = math.ceil(height / blk_sz) * math.ceil(width / blk_w)
     with tqdm_cls(total=total_blocks, disable=not use_pbar) as pbar:
         for row_off in range(0, height, blk_sz):
             win_h = min(blk_sz, height - row_off)
-            for col_off in range(0, width, blk_sz):
-                win_w = min(blk_sz, width - col_off)
+            for col_off in range(0, width, blk_w):
+                win_w = min(blk_w, width - col_off)
                 yield Window(col_off, row_off, win_w, win_h)
                 pbar.update(1)
 
@@ -804,39 +884,25 @@ def iter_image_blocks(
                 print(win, block_vars["b1"].shape)
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    if block_size is None:
-        block_size = get_default_block_size()
-    elif block_size <= 0:
-        raise rsgispy.RSGISPyException(
-            f"block_size must be a positive integer, got {block_size}."
-        )
+    for out_win in iter_dataset_windows(
+        grid.height, grid.width, block_size=block_size, use_pbar=use_pbar
+    ):
+        col_off = int(out_win.col_off)
+        row_off = int(out_win.row_off)
+        win_w = int(out_win.width)
+        win_h = int(out_win.height)
 
-    tqdm_cls = rsgispy.get_tqdm()
-    total_blocks = math.ceil(grid.height / block_size) * math.ceil(
-        grid.width / block_size
-    )
+        block_vars: Dict[str, np.ndarray] = {}
+        for b_def in norm_defs:
+            assert b_def.input_img is not None
+            assert b_def.band_name is not None
+            base_col, base_row = grid.offsets[b_def.input_img]
+            in_win = Window(base_col + col_off, base_row + row_off, win_w, win_h)
+            block_vars[b_def.band_name] = datasets[b_def.input_img].read(
+                b_def.img_band, window=in_win, out_dtype=read_dtype
+            )
 
-    with tqdm_cls(total=total_blocks, disable=not use_pbar) as pbar:
-        for row_off in range(0, grid.height, block_size):
-            win_h = min(block_size, grid.height - row_off)
-            for col_off in range(0, grid.width, block_size):
-                win_w = min(block_size, grid.width - col_off)
-                out_win = Window(col_off, row_off, win_w, win_h)
-
-                block_vars: Dict[str, np.ndarray] = {}
-                for b_def in norm_defs:
-                    assert b_def.input_img is not None
-                    assert b_def.band_name is not None
-                    base_col, base_row = grid.offsets[b_def.input_img]
-                    in_win = Window(
-                        base_col + col_off, base_row + row_off, win_w, win_h
-                    )
-                    block_vars[b_def.band_name] = datasets[b_def.input_img].read(
-                        b_def.img_band, window=in_win, out_dtype=read_dtype
-                    )
-
-                yield out_win, block_vars
-                pbar.update(1)
+        yield out_win, block_vars
 
 
 def iter_single_image_band_blocks(

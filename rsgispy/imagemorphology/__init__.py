@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 """
 The imagemorphology module contains functions for performing morphological
 operations on raster images using ``rasterio`` and ``numpy``.
@@ -6,7 +7,7 @@ operations on raster images using ``rasterio`` and ``numpy``.
 from contextlib import ExitStack
 import os
 import tempfile
-from typing import Any, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
@@ -16,8 +17,9 @@ from rasterio.windows import Window
 import rsgispy
 from rsgispy.imageprocess import (
     IntersectionGrid,
+    cast_result_block,
     ensure_file_exists,
-    get_default_block_size,
+    iter_dataset_windows,
     open_output_dataset,
 )
 
@@ -110,36 +112,6 @@ def _load_morph_operator(
     return np.ones((size_int, size_int), dtype=bool)
 
 
-def _cast_to_output_dtype(arr: np.ndarray, np_dtype: Any) -> np.ndarray:
-    """
-    Cast ``arr`` to ``np_dtype``, clamping integer types to their valid range
-    to match GDAL raster casting semantics.
-    """
-    target_dtype = np.dtype(np_dtype)
-    if np.issubdtype(target_dtype, np.integer):
-        info = np.iinfo(target_dtype)
-        return np.clip(arr, info.min, info.max).astype(target_dtype)
-    return arr.astype(target_dtype)
-
-
-def _iter_block_windows(
-    width: int, height: int, block_size: int, full_width_strips: bool
-) -> List[Window]:
-    """Build block windows covering ``width x height``."""
-    windows: List[Window] = []
-    if full_width_strips:
-        for row_off in range(0, height, block_size):
-            win_h = min(block_size, height - row_off)
-            windows.append(Window(0, row_off, width, win_h))
-    else:
-        for row_off in range(0, height, block_size):
-            win_h = min(block_size, height - row_off)
-            for col_off in range(0, width, block_size):
-                win_w = min(block_size, width - col_off)
-                windows.append(Window(col_off, row_off, win_w, win_h))
-    return windows
-
-
 def _fill_minima_band(
     out_band: np.ndarray,
     is_minima: np.ndarray,
@@ -228,6 +200,7 @@ def _run_window_morphology(
     combined: bool = False,
     sequencial_out: bool = False,
     allow_equal: bool = True,
+    use_pbar: bool = True,
 ) -> None:
     """Apply a windowed morphological operation across ``input_img`` block-by-block."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -237,8 +210,6 @@ def _run_window_morphology(
 
     win_size = op_mask.shape[0]
     half = win_size // 2
-    block_size = get_default_block_size()
-    tqdm_cls = rsgispy.get_tqdm()
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
@@ -254,59 +225,68 @@ def _run_window_morphology(
         )
 
         use_strips = op_kind == "local_minima" and sequencial_out
-        windows = _iter_block_windows(
-            src.width, src.height, block_size, full_width_strips=use_strips
-        )
         seq_counters = np.ones(out_count, dtype=np.int64)
 
-        with tqdm_cls(total=len(windows)) as pbar:
-            for out_win in windows:
-                halo_win = Window(
-                    int(out_win.col_off) - half,
-                    int(out_win.row_off) - half,
-                    int(out_win.width) + (2 * half),
-                    int(out_win.height) + (2 * half),
-                )
-                padded = src.read(
-                    window=halo_win,
-                    boundless=True,
-                    fill_value=0.0,
-                ).astype(np.float32)
+        for out_win in iter_dataset_windows(
+            src.height,
+            src.width,
+            block_width=src.width if use_strips else None,
+            use_pbar=use_pbar,
+        ):
+            halo_win = Window(
+                int(out_win.col_off) - half,
+                int(out_win.row_off) - half,
+                int(out_win.width) + (2 * half),
+                int(out_win.height) + (2 * half),
+            )
+            padded = src.read(
+                window=halo_win,
+                boundless=True,
+                fill_value=0.0,
+            ).astype(np.float32)
 
-                if op_kind == "local_minima":
-                    raw_out = _compute_local_minima_block(
-                        padded=padded,
-                        op_mask=op_mask,
-                        combined=combined,
-                        allow_equal=allow_equal,
-                        sequencial_out=sequencial_out,
-                        seq_counters=seq_counters,
+            if op_kind == "local_minima":
+                raw_out = _compute_local_minima_block(
+                    padded=padded,
+                    op_mask=op_mask,
+                    combined=combined,
+                    allow_equal=allow_equal,
+                    sequencial_out=sequencial_out,
+                    seq_counters=seq_counters,
+                )
+            else:
+                win_view = sliding_window_view(
+                    padded, (win_size, win_size), axis=(1, 2)
+                )
+                active = win_view[:, :, :, op_mask]
+                reduce_axes: Tuple[int, ...] = (0, -1) if combined else (-1,)
+
+                if op_kind == "dilate":
+                    raw_out = np.max(active, axis=reduce_axes)
+                elif op_kind == "erode":
+                    raw_out = np.min(active, axis=reduce_axes)
+                elif op_kind == "gradiant":
+                    raw_out = np.max(active, axis=reduce_axes) - np.min(
+                        active, axis=reduce_axes
                     )
                 else:
-                    win_view = sliding_window_view(
-                        padded, (win_size, win_size), axis=(1, 2)
+                    raise rsgispy.RSGISPyException(
+                        f"Unsupported morphology operation: '{op_kind}'."
                     )
-                    active = win_view[:, :, :, op_mask]
-                    reduce_axes: Tuple[int, ...] = (0, -1) if combined else (-1,)
 
-                    if op_kind == "dilate":
-                        raw_out = np.max(active, axis=reduce_axes)
-                    elif op_kind == "erode":
-                        raw_out = np.min(active, axis=reduce_axes)
-                    elif op_kind == "gradiant":
-                        raw_out = np.max(active, axis=reduce_axes) - np.min(
-                            active, axis=reduce_axes
-                        )
-                    else:
-                        raise rsgispy.RSGISPyException(
-                            f"Unsupported morphology operation: '{op_kind}'."
-                        )
+                if combined:
+                    raw_out = raw_out[np.newaxis, :, :]
 
-                    if combined:
-                        raw_out = raw_out[np.newaxis, :, :]
-
-                dst.write(_cast_to_output_dtype(raw_out, out_np_dtype), window=out_win)
-                pbar.update(1)
+            dst.write(
+                cast_result_block(
+                    raw_out,
+                    int(out_win.height),
+                    int(out_win.width),
+                    out_np_dtype,
+                    clamp_int=True,
+                ),
+                window=out_win,
+            )
 
 
 def _subtract_images(
@@ -315,13 +295,12 @@ def _subtract_images(
     output_img: str,
     gdalformat: str,
     datatype: int,
+    use_pbar: bool = True,
 ) -> None:
     """Write ``pos_img - neg_img`` block-by-block to ``output_img``."""
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = rsgispy.get_numpy_datatype(datatype)
-    block_size = get_default_block_size()
-    tqdm_cls = rsgispy.get_tqdm()
 
     with ExitStack() as stack:
         pos_ds = stack.enter_context(rasterio.open(pos_img, "r"))
@@ -336,16 +315,22 @@ def _subtract_images(
             count=pos_ds.count,
         )
 
-        windows = _iter_block_windows(
-            pos_ds.width, pos_ds.height, block_size, full_width_strips=False
-        )
-        with tqdm_cls(total=len(windows)) as pbar:
-            for out_win in windows:
-                diff = pos_ds.read(window=out_win).astype(np.float64) - neg_ds.read(
-                    window=out_win
-                ).astype(np.float64)
-                dst.write(_cast_to_output_dtype(diff, out_np_dtype), window=out_win)
-                pbar.update(1)
+        for out_win in iter_dataset_windows(
+            pos_ds.height, pos_ds.width, use_pbar=use_pbar
+        ):
+            diff = pos_ds.read(window=out_win).astype(np.float64) - neg_ds.read(
+                window=out_win
+            ).astype(np.float64)
+            dst.write(
+                cast_result_block(
+                    diff,
+                    int(out_win.height),
+                    int(out_win.width),
+                    out_np_dtype,
+                    clamp_int=True,
+                ),
+                window=out_win,
+            )
 
 
 def _run_two_step_seq(
@@ -358,6 +343,7 @@ def _run_two_step_seq(
     first_op: str,
     second_op: str,
     niters: int = 1,
+    use_pbar: bool = True,
 ) -> None:
     """
     Execute ``niters`` iterations of ``first_op`` followed by ``second_op``
@@ -396,6 +382,7 @@ def _run_two_step_seq(
                 gdalformat=step_fmt,
                 datatype=datatype,
                 op_kind=first_op,
+                use_pbar=use_pbar,
             )
             _run_window_morphology(
                 input_img=step_tmp,
@@ -404,6 +391,7 @@ def _run_two_step_seq(
                 gdalformat=out_fmt,
                 datatype=datatype,
                 op_kind=second_op,
+                use_pbar=use_pbar,
             )
             cur_in = step_out
 
@@ -456,6 +444,7 @@ def image_dilate(
     op_size: int,
     gdalformat: str,
     datatype: int,
+    use_pbar: bool = True,
 ) -> None:
     """
     Perform morphological dilation independently on each band of ``input_img``.
@@ -468,6 +457,8 @@ def image_dilate(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -494,6 +485,7 @@ def image_dilate(
         datatype=datatype,
         op_kind="dilate",
         combined=False,
+        use_pbar=use_pbar,
     )
 
 
@@ -505,6 +497,7 @@ def image_erode(
     op_size: int,
     gdalformat: str,
     datatype: int,
+    use_pbar: bool = True,
 ) -> None:
     """
     Perform morphological erosion independently on each band of ``input_img``.
@@ -517,6 +510,8 @@ def image_erode(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -543,6 +538,7 @@ def image_erode(
         datatype=datatype,
         op_kind="erode",
         combined=False,
+        use_pbar=use_pbar,
     )
 
 
@@ -554,6 +550,7 @@ def image_gradiant(
     op_size: int,
     gdalformat: str,
     datatype: int,
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate morphological gradient (dilation minus erosion) independently for
@@ -567,6 +564,8 @@ def image_gradiant(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_32FLOAT``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -593,6 +592,7 @@ def image_gradiant(
         datatype=datatype,
         op_kind="gradiant",
         combined=False,
+        use_pbar=use_pbar,
     )
 
 
@@ -604,6 +604,7 @@ def image_dilate_combined_out(
     op_size: int,
     gdalformat: str,
     datatype: int,
+    use_pbar: bool = True,
 ) -> None:
     """
     Perform morphological dilation across all bands of ``input_img`` and write
@@ -617,6 +618,8 @@ def image_dilate_combined_out(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -643,6 +646,7 @@ def image_dilate_combined_out(
         datatype=datatype,
         op_kind="dilate",
         combined=True,
+        use_pbar=use_pbar,
     )
 
 
@@ -654,6 +658,7 @@ def image_erode_combined_out(
     op_size: int,
     gdalformat: str,
     datatype: int,
+    use_pbar: bool = True,
 ) -> None:
     """
     Perform morphological erosion across all bands of ``input_img`` and write a
@@ -667,6 +672,8 @@ def image_erode_combined_out(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -693,6 +700,7 @@ def image_erode_combined_out(
         datatype=datatype,
         op_kind="erode",
         combined=True,
+        use_pbar=use_pbar,
     )
 
 
@@ -704,6 +712,7 @@ def image_gradiant_combined_out(
     op_size: int,
     gdalformat: str,
     datatype: int,
+    use_pbar: bool = True,
 ) -> None:
     """
     Calculate morphological gradient across all bands of ``input_img`` and write
@@ -717,6 +726,8 @@ def image_gradiant_combined_out(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_32FLOAT``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -743,6 +754,7 @@ def image_gradiant_combined_out(
         datatype=datatype,
         op_kind="gradiant",
         combined=True,
+        use_pbar=use_pbar,
     )
 
 
@@ -756,6 +768,7 @@ def image_local_minima(
     op_size: int,
     gdalformat: str,
     datatype: int,
+    use_pbar: bool = True,
 ) -> None:
     """
     Identify local minima independently in each band of ``input_img`` using the
@@ -774,6 +787,8 @@ def image_local_minima(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -804,6 +819,7 @@ def image_local_minima(
         combined=False,
         sequencial_out=sequencial_out,
         allow_equal=allow_equal,
+        use_pbar=use_pbar,
     )
 
 
@@ -817,6 +833,7 @@ def image_local_minima_combined_out(
     op_size: int,
     gdalformat: str,
     datatype: int,
+    use_pbar: bool = True,
 ) -> None:
     """
     Identify local minima across all bands of ``input_img`` and write a single
@@ -835,6 +852,8 @@ def image_local_minima_combined_out(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -865,6 +884,7 @@ def image_local_minima_combined_out(
         combined=True,
         sequencial_out=sequencial_out,
         allow_equal=allow_equal,
+        use_pbar=use_pbar,
     )
 
 
@@ -878,6 +898,7 @@ def image_opening(
     gdalformat: str,
     datatype: int,
     niters: int = 1,
+    use_pbar: bool = True,
 ) -> None:
     """
     Perform morphological opening (erosion followed by dilation) on ``input_img``.
@@ -893,6 +914,8 @@ def image_opening(
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
     :param niters: Number of opening iterations (Default = ``1``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -922,6 +945,7 @@ def image_opening(
         first_op="erode",
         second_op="dilate",
         niters=niters,
+        use_pbar=use_pbar,
     )
 
 
@@ -935,6 +959,7 @@ def image_closing(
     gdalformat: str,
     datatype: int,
     niters: int = 1,
+    use_pbar: bool = True,
 ) -> None:
     """
     Perform morphological closing (dilation followed by erosion) on ``input_img``.
@@ -950,6 +975,8 @@ def image_closing(
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
     :param niters: Number of closing iterations (Default = ``1``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -979,6 +1006,7 @@ def image_closing(
         first_op="dilate",
         second_op="erode",
         niters=niters,
+        use_pbar=use_pbar,
     )
 
 
@@ -991,6 +1019,7 @@ def image_black_top_hat(
     op_size: int,
     gdalformat: str,
     datatype: int,
+    use_pbar: bool = True,
 ) -> None:
     """
     Perform a morphological black top-hat transform (closing minus input image).
@@ -1005,6 +1034,8 @@ def image_black_top_hat(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -1042,6 +1073,7 @@ def image_black_top_hat(
             first_op="dilate",
             second_op="erode",
             niters=1,
+            use_pbar=use_pbar,
         )
         _subtract_images(
             pos_img=closed_img,
@@ -1049,6 +1081,7 @@ def image_black_top_hat(
             output_img=output_img,
             gdalformat=gdalformat,
             datatype=datatype,
+            use_pbar=use_pbar,
         )
 
 
@@ -1061,6 +1094,7 @@ def image_white_top_hat(
     op_size: int,
     gdalformat: str,
     datatype: int,
+    use_pbar: bool = True,
 ) -> None:
     """
     Perform a morphological white top-hat transform (input image minus opening).
@@ -1075,6 +1109,8 @@ def image_white_top_hat(
     :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
     :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
     :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -1112,6 +1148,7 @@ def image_white_top_hat(
             first_op="erode",
             second_op="dilate",
             niters=1,
+            use_pbar=use_pbar,
         )
         _subtract_images(
             pos_img=input_img,
@@ -1119,4 +1156,5 @@ def image_white_top_hat(
             output_img=output_img,
             gdalformat=gdalformat,
             datatype=datatype,
+            use_pbar=use_pbar,
         )
