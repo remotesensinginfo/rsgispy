@@ -51,16 +51,18 @@ Conditional (Ternary) Expressions
        band_defs=band_defns,
    )
 
-Band Mathematics & Value Rescaling
-----------------------------------
+Band Mathematics, Spectral Indices & Value Rescaling
+----------------------------------------------------
 
 * :doc:`imagecalc/maths` — muParser band/image expressions, proportions, and area under curve.
+* :doc:`imagecalc/calcindices` — Unified multi-band spectral index stack calculator with gain/offset scaling.
 * :doc:`imagecalc/rescale` — Linear rescaling and gain/offset/nodata transformations.
 
 .. toctree::
    :maxdepth: 1
 
    imagecalc/maths
+   imagecalc/calcindices
    imagecalc/rescale
 
 Statistics, Percentiles & Comparison

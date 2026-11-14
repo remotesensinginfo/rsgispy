@@ -5,6 +5,7 @@ transforms, region filling, percentiles, and windowed point sampling using
 ``rasterio``:
 
 * :mod:`rsgispy.imagecalc.calc_pt_win_smpls` — windowed point sampling calculators
+* :mod:`rsgispy.imagecalc.calcindices` — multi-band spectral index calculations
 * :mod:`rsgispy.imagecalc.comparison` — difference, equality, correlation, MI, and EMD
 * :mod:`rsgispy.imagecalc.distance` — proximity distance transforms and buffering
 * :mod:`rsgispy.imagecalc.encoding` — integer recoding and one-hot category encoding
