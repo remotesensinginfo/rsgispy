@@ -19,10 +19,17 @@ from rasterio.features import geometry_mask
 from rasterio.transform import Affine
 from rasterio.warp import calculate_default_transform, transform_bounds
 from rasterio.windows import transform as window_transform
-from scipy import ndimage
 import shapely.geometry
 import shapely.ops
 import shapely.wkt
+
+try:
+    from scipy import ndimage
+
+    HAVE_SCIPY = True
+except ImportError:
+    ndimage = None  # type: ignore[assignment]
+    HAVE_SCIPY = False
 
 import rsgispy
 from rsgispy.imageprocess import iter_dataset_windows, validate_band_index
@@ -858,6 +865,9 @@ def apply_cutline_to_dataset(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if blend_dist > 0.0:
+        rsgispy.check_optional_dep(
+            HAVE_SCIPY, "gdal_warp (cutline_blend)", "scipy", "stats"
+        )
         inside = geometry_mask(
             cutline_geoms,
             out_shape=(dst.height, dst.width),

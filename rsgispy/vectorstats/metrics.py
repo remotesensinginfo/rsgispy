@@ -8,8 +8,15 @@ from typing import Any, Dict, List, Optional, Union
 
 import geopandas
 import numpy
-import scipy.spatial
 import shapely.geometry
+
+try:
+    import scipy.spatial
+
+    HAVE_SCIPY = True
+except ImportError:
+    scipy = None  # type: ignore[assignment]
+    HAVE_SCIPY = False
 
 import rsgispy
 from rsgispy.vectorprocess import (
@@ -429,6 +436,7 @@ def calc_npts_in_radius(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
+    rsgispy.check_optional_dep(HAVE_SCIPY, "calc_npts_in_radius", "scipy", "stats")
     in_gdf = read_vec_gdf(vec_in_file, vec_in_lyr)
     if get_gdf_geom_type(in_gdf) != rsgispy.GEOM_PT:
         raise rsgispy.RSGISPyException("Vector geometry type must be points.")

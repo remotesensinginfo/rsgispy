@@ -11,8 +11,16 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 import pyproj
 import rasterio
-from scipy.interpolate import LinearNDInterpolator
-from scipy.spatial import cKDTree
+
+try:
+    from scipy.interpolate import LinearNDInterpolator
+    from scipy.spatial import cKDTree
+
+    HAVE_SCIPY = True
+except ImportError:
+    LinearNDInterpolator = None  # type: ignore[assignment,misc]
+    cKDTree = None  # type: ignore[assignment,misc]
+    HAVE_SCIPY = False
 
 import rsgispy
 from rsgispy.imageprocess import (
@@ -409,6 +417,7 @@ def _grid_invdistnn(
 ) -> np.ndarray:
     """Evaluate k-nearest inverse distance weighting across the target grid."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    rsgispy.check_optional_dep(HAVE_SCIPY, "grid_scattered_pts", "scipy", "stats")
     out_nodata = params["nodata"]
     power = params.get("power", 2.0)
     radius = params.get("radius", 1.0)
@@ -465,6 +474,7 @@ def _grid_linear(
 ) -> np.ndarray:
     """Evaluate Delaunay linear interpolation across the target grid."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
+    rsgispy.check_optional_dep(HAVE_SCIPY, "grid_scattered_pts", "scipy", "stats")
     out_nodata = params["nodata"]
     radius = params.get("radius", -1.0)
     interp = LinearNDInterpolator(
