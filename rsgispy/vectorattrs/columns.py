@@ -44,6 +44,7 @@ def add_fid_col(
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
     out_col: str = "fid",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Add a 1-based unique integer feature ID column to a vector layer.
@@ -54,6 +55,11 @@ def add_fid_col(
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_col: Output FID column name (Default = ``'fid'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -66,7 +72,13 @@ def add_fid_col(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     base_gdf = read_vec_gdf(vec_file, vec_lyr)
     base_gdf[out_col] = numpy.arange(1, len(base_gdf) + 1, 1, dtype=int)
-    write_vec_gdf(base_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        base_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def add_unq_numeric_col(
@@ -78,6 +90,7 @@ def add_unq_numeric_col(
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
     lut_json_file: Optional[str] = None,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Add a sequential integer ID column (starting at ``1``) mapped from unique
@@ -91,6 +104,11 @@ def add_unq_numeric_col(
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param lut_json_file: Optional path to write the JSON lookup table.
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -115,7 +133,13 @@ def add_unq_numeric_col(
         lut["id"][str(idx)] = py_val
         lut["val"][str(py_val)] = idx
 
-    write_vec_gdf(base_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        base_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
     if lut_json_file is not None:
         rsgispy.tools.jsonio.write_dict_to_json(lut, lut_json_file)
 
@@ -129,6 +153,7 @@ def add_numeric_col(
     out_val: float = 1,
     out_format: str = "GPKG",
     out_col_int: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Add a constant numeric column to a vector layer.
@@ -142,6 +167,11 @@ def add_numeric_col(
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_col_int: If ``True``, store values as integers; otherwise float
                         (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -155,7 +185,13 @@ def add_numeric_col(
     base_gdf = read_vec_gdf(vec_file, vec_lyr)
     dtype = int if out_col_int else float
     base_gdf[out_col] = numpy.full(len(base_gdf), out_val, dtype=dtype)
-    write_vec_gdf(base_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        base_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def add_numeric_col_lut(
@@ -168,6 +204,7 @@ def add_numeric_col_lut(
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
     col_dtype: str = "int",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Add a numeric column derived from ``ref_col`` via a dictionary lookup table.
@@ -182,6 +219,11 @@ def add_numeric_col_lut(
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param col_dtype: Output column data type (``'int'`` or ``'float'``;
                       Default = ``'int'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -213,7 +255,13 @@ def add_numeric_col_lut(
         sel_rows = base_gdf[ref_col] == lut_key
         base_gdf.loc[sel_rows, out_col] = out_val
 
-    write_vec_gdf(base_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        base_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def add_numeric_col_range_lut(
@@ -225,6 +273,7 @@ def add_numeric_col_range_lut(
     out_vec_col: str,
     val_lut: Dict[int, Tuple[float, float]],
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Add a numeric class column using half-open ``[lower, upper)`` value ranges.
@@ -240,6 +289,11 @@ def add_numeric_col_range_lut(
     :param val_lut: Dictionary mapping output integer code to ``(low, high)``
                     bounds checked as ``low <= val < high``.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -265,7 +319,13 @@ def add_numeric_col_range_lut(
         out_arr[(vals_arr >= low_val) & (vals_arr < high_val)] = out_code
 
     data_gdf[out_vec_col] = out_arr
-    write_vec_gdf(data_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        data_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def add_numeric_col_from_lst_lut(
@@ -277,6 +337,7 @@ def add_numeric_col_from_lst_lut(
     out_vec_file: str,
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Add an integer column derived from ``ref_col`` using a sequence of
@@ -290,6 +351,11 @@ def add_numeric_col_from_lst_lut(
     :param out_vec_file: Output vector file path.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -315,7 +381,13 @@ def add_numeric_col_from_lst_lut(
         out_vals[ref_vals == match_val] = out_int
 
     base_gdf[out_col] = out_vals
-    write_vec_gdf(base_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        base_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def add_string_col(
@@ -326,6 +398,7 @@ def add_string_col(
     out_vec_lyr: Optional[str],
     out_val: str = "str_val",
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Add a constant string column to a vector layer.
@@ -337,6 +410,11 @@ def add_string_col(
     :param out_vec_lyr: Output vector layer name.
     :param out_val: Constant string assigned to all rows (Default = ``'str_val'``).
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -349,7 +427,13 @@ def add_string_col(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     base_gdf = read_vec_gdf(vec_file, vec_lyr)
     base_gdf[out_col] = [str(out_val)] * len(base_gdf)
-    write_vec_gdf(base_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        base_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def add_string_col_lut(
@@ -361,6 +445,7 @@ def add_string_col_lut(
     out_vec_file: str,
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Add a string column derived from ``ref_col`` via a dictionary lookup table.
@@ -373,6 +458,11 @@ def add_string_col_lut(
     :param out_vec_file: Output vector file path.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -397,7 +487,13 @@ def add_string_col_lut(
         sel_rows = base_gdf[ref_col] == lut_key
         base_gdf.loc[sel_rows, out_col] = str(out_str)
 
-    write_vec_gdf(base_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        base_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def add_ran_vals_cols(
@@ -408,6 +504,7 @@ def add_ran_vals_cols(
     out_format: str = "GPKG",
     out_col: str = "ran_vals",
     rnd_seed: Optional[int] = None,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Add a column populated with random integers in ``[1, 10 * n_rows)``.
@@ -421,6 +518,11 @@ def add_ran_vals_cols(
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_col: Output column name (Default = ``'ran_vals'``).
     :param rnd_seed: Optional seed for NumPy's random generator.
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -436,7 +538,13 @@ def add_ran_vals_cols(
     n_rows = len(data_gdf)
     high = max(2, n_rows * 10)
     data_gdf[out_col] = rng.integers(low=1, high=high, size=n_rows)
-    write_vec_gdf(data_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        data_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def _format_coord_component(
@@ -480,6 +588,7 @@ def create_name_col(
     replace_dec_pt: bool = True,
     dec_pt_val: str = "",
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create a feature name column formatted from X and Y coordinate attributes.
@@ -512,6 +621,11 @@ def create_name_col(
     :param dec_pt_val: Replacement string for decimal points (Default = ``''``).
     :param use_pbar: If ``True``, display a tqdm progress bar while generating
                      names (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -567,7 +681,13 @@ def create_name_col(
         names.append(name)
 
     base_gdf[out_col] = names
-    write_vec_gdf(base_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        base_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def check_str_col(
@@ -582,6 +702,7 @@ def check_str_col(
     rm_spaces: bool = False,
     rm_punc: bool = False,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Sanitise values in a string column using :func:`rsgispy.tools.strings.check_str`.
@@ -599,6 +720,11 @@ def check_str_col(
                     (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar while cleaning
                      values (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -626,7 +752,13 @@ def check_str_col(
     ]
 
     base_gdf[vec_col] = cleaned
-    write_vec_gdf(base_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        base_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def create_date_col(
@@ -639,6 +771,7 @@ def create_date_col(
     out_vec_file: str,
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create a date/datetime column from integer year, month, and day columns.
@@ -652,6 +785,11 @@ def create_date_col(
     :param out_vec_file: Output vector file path.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -672,7 +810,13 @@ def create_date_col(
         )
     ]
     data_gdf[out_date_col] = out_dates
-    write_vec_gdf(data_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        data_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def find_replace_str_vec_lyr(
@@ -683,6 +827,7 @@ def find_replace_str_vec_lyr(
     cols: Sequence[str],
     find_replace: Dict[str, str],
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Perform substring find-and-replace across specified string columns.
@@ -694,6 +839,11 @@ def find_replace_str_vec_lyr(
     :param cols: Sequence of string column names to update.
     :param find_replace: Mapping ``{"find_str": "replacement_str"}``.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -713,7 +863,13 @@ def find_replace_str_vec_lyr(
             series = series.str.replace(find_val, repl_val, regex=False)
         base_gdf[col] = series
 
-    write_vec_gdf(base_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        base_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def create_angle_sets(
@@ -726,6 +882,7 @@ def create_angle_sets(
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
     out_angle_set_col: str = "angle_set",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Partition point/feature azimuth angles (0–360 degrees) into mirrored
@@ -741,6 +898,11 @@ def create_angle_sets(
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_angle_set_col: Output integer sector ID column
                               (Default = ``'angle_set'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -793,7 +955,13 @@ def create_angle_sets(
                 angle_sets[(angles >= start_a) & (angles < end_a)] = idx
 
     data_gdf[out_angle_set_col] = angle_sets
-    write_vec_gdf(data_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        data_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def _split_wrapped_interval(start_ang: int, end_ang: int) -> List[Tuple[int, int]]:
@@ -829,6 +997,7 @@ def create_orthogonal_angle_sets(
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
     out_angle_set_col: str = "angle_set",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create two orthogonal mirrored angle sets (labelled ``1`` and ``2``;
@@ -845,6 +1014,11 @@ def create_orthogonal_angle_sets(
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_angle_set_col: Output integer sector ID column
                               (Default = ``'angle_set'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -887,4 +1061,10 @@ def create_orthogonal_angle_sets(
         angle_sets[(angles >= low_a) & (angles <= high_a)] = 2
 
     data_gdf[out_angle_set_col] = angle_sets
-    write_vec_gdf(data_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        data_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )

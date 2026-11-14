@@ -5,7 +5,7 @@ region-of-interest clipping functions using ``geopandas``.
 """
 
 import os
-from typing import Optional
+from typing import Optional, Union
 
 import geopandas
 import pandas
@@ -43,6 +43,7 @@ def _overlay_vec_lyrs(
     out_format: str,
     del_exist_vec: bool,
     how: str,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """Shared implementation for ``geopandas.overlay`` vector layer operations."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -54,7 +55,13 @@ def _overlay_vec_lyrs(
     res_gdf = geopandas.overlay(data_gdf, over_data_gdf, how=how)
 
     if (res_gdf is not None) and len(res_gdf) > 0:
-        write_vec_gdf(res_gdf, out_vec_file, out_lyr, out_format=out_format)
+        write_vec_gdf(
+            res_gdf,
+            out_vec_file,
+            out_lyr,
+            out_format=out_format,
+            out_compress=out_compress,
+        )
 
 
 def vec_lyr_intersection_gp(
@@ -66,6 +73,7 @@ def vec_lyr_intersection_gp(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Perform a geometric intersection between ``vec_file`` and ``vec_over_file``
@@ -80,6 +88,7 @@ def vec_lyr_intersection_gp(
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -100,6 +109,7 @@ def vec_lyr_intersection_gp(
         out_format,
         del_exist_vec,
         how="intersection",
+        out_compress=out_compress,
     )
 
 
@@ -112,6 +122,7 @@ def vec_lyr_difference_gp(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Perform a geometric difference between ``vec_file`` and ``vec_over_file``
@@ -126,6 +137,7 @@ def vec_lyr_difference_gp(
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -146,6 +158,7 @@ def vec_lyr_difference_gp(
         out_format,
         del_exist_vec,
         how="difference",
+        out_compress=out_compress,
     )
 
 
@@ -158,6 +171,7 @@ def vec_lyr_sym_difference_gp(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Perform a symmetric difference between ``vec_file`` and ``vec_over_file``
@@ -172,6 +186,7 @@ def vec_lyr_sym_difference_gp(
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -192,6 +207,7 @@ def vec_lyr_sym_difference_gp(
         out_format,
         del_exist_vec,
         how="symmetric_difference",
+        out_compress=out_compress,
     )
 
 
@@ -204,6 +220,7 @@ def vec_lyr_identity_gp(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Perform a geometric identity overlay between ``vec_file`` and
@@ -218,6 +235,7 @@ def vec_lyr_identity_gp(
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -238,6 +256,7 @@ def vec_lyr_identity_gp(
         out_format,
         del_exist_vec,
         how="identity",
+        out_compress=out_compress,
     )
 
 
@@ -250,6 +269,7 @@ def vec_lyr_union_gp(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Perform a geometric union between ``vec_file`` and ``vec_over_file``
@@ -264,6 +284,7 @@ def vec_lyr_union_gp(
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -284,6 +305,7 @@ def vec_lyr_union_gp(
         out_format,
         del_exist_vec,
         how="union",
+        out_compress=out_compress,
     )
 
 
@@ -295,6 +317,7 @@ def clip_vec_lyr(
     out_vec_file: str,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Clip a vector layer to the region of interest defined by ``vec_roi_file``
@@ -307,6 +330,7 @@ def clip_vec_lyr(
     :param out_vec_file: Output vector file path.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -320,7 +344,13 @@ def clip_vec_lyr(
     base_gdf = read_vec_gdf(vec_file, vec_lyr)
     roi_gdf = read_vec_gdf(vec_roi_file, vec_roi_lyr)
     clipped_gdf = geopandas.clip(base_gdf, roi_gdf, keep_geom_type=True)
-    write_vec_gdf(clipped_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        clipped_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def clip_and_merge_with_roi(
@@ -336,6 +366,7 @@ def clip_and_merge_with_roi(
     ref_col_name: str = "ref_bkgrd",
     roi_rgn_val: int = 0,
     data_rgn_val: int = 1,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Clip the polygon vector layer (``vec_file``) using the ROI polygon layer
@@ -357,6 +388,7 @@ def clip_and_merge_with_roi(
                          (Default = ``'ref_bkgrd'``).
     :param roi_rgn_val: Attribute value for background ROI polygons (Default = ``0``).
     :param data_rgn_val: Attribute value for input data polygons (Default = ``1``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -388,7 +420,13 @@ def clip_and_merge_with_roi(
         out_data_gdf = out_data_gdf.explode(index_parts=False)
 
     out_lyr = resolve_out_lyr_name(out_vec_file, out_vec_lyr)
-    write_vec_gdf(out_data_gdf, out_vec_file, out_lyr, out_format=out_format)
+    write_vec_gdf(
+        out_data_gdf,
+        out_vec_file,
+        out_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def clip_vec_into_sets(
@@ -404,6 +442,7 @@ def clip_vec_into_sets(
     out_format: str = "GPKG",
     out_name_lower: bool = False,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Clip a vector dataset into separate output files, one for each unique value
@@ -425,6 +464,7 @@ def clip_vec_into_sets(
     :param out_name_lower: Convert output filenames/layer names to lowercase
                            (Default = ``False``).
     :param use_pbar: Show progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -438,15 +478,8 @@ def clip_vec_into_sets(
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     os.makedirs(out_vec_dir, exist_ok=True)
 
-    if "parquet" in os.path.basename(vec_file).lower():
-        data_gdf = geopandas.read_parquet(vec_file)
-    else:
-        data_gdf = read_vec_gdf(vec_file, vec_lyr)
-
-    if "parquet" in os.path.basename(vec_roi_file).lower():
-        roi_gdf = geopandas.read_parquet(vec_roi_file)
-    else:
-        roi_gdf = read_vec_gdf(vec_roi_file, vec_roi_lyr)
+    data_gdf = read_vec_gdf(vec_file, vec_lyr)
+    roi_gdf = read_vec_gdf(vec_roi_file, vec_roi_lyr)
 
     validate_columns_exist(roi_gdf, [roi_att_col])
     unq_roi_vals = roi_gdf[roi_att_col].unique()
@@ -473,18 +506,10 @@ def clip_vec_into_sets(
             out_vec_lyr = out_vec_lyr.lower()
 
         out_vec_file = os.path.join(out_vec_dir, f"{out_vec_lyr}.{out_vec_ext}")
-
-        if out_format.upper() == "PARQUET":
-            out_compress = None
-            if "gzip" in out_vec_ext:
-                out_compress = "gzip"
-            elif "sz" in out_vec_ext:
-                out_compress = "snappy"
-            roi_data_gdf.to_parquet(out_vec_file, compression=out_compress)
-        else:
-            write_vec_gdf(
-                roi_data_gdf,
-                out_vec_file,
-                out_vec_lyr,
-                out_format=check_format_name(out_format),
-            )
+        write_vec_gdf(
+            roi_data_gdf,
+            out_vec_file,
+            out_vec_lyr,
+            out_format=check_format_name(out_format),
+            out_compress=out_compress,
+        )

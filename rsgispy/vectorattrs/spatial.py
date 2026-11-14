@@ -4,7 +4,7 @@ The vectorattrs.spatial module provides spatial attribute table enrichment
 joins) using ``geopandas``.
 """
 
-from typing import Optional
+from typing import Optional, Union
 
 import geopandas
 import numpy
@@ -47,6 +47,7 @@ def pop_bbox_cols(
     y_min_col: str = "ymin",
     y_max_col: str = "ymax",
     out_format: Optional[str] = None,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Populate geometry bounding-box columns in-place on an existing vector file.
@@ -59,6 +60,11 @@ def pop_bbox_cols(
     :param y_max_col: Output MaxY column name (Default = ``'ymax'``).
     :param out_format: Optional output driver name (inferred from extension
                        when ``None``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -71,7 +77,13 @@ def pop_bbox_cols(
     _populate_bbox_columns(
         gdf, x_min_col, x_max_col, y_min_col, y_max_col, fill_empty_zero=True
     )
-    write_vec_gdf(gdf, vec_file, vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        gdf,
+        vec_file,
+        vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def add_geom_bbox_cols(
@@ -84,6 +96,7 @@ def add_geom_bbox_cols(
     max_x_col: str = "MaxX",
     min_y_col: str = "MinY",
     max_y_col: str = "MaxY",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Add geometry bounding-box columns and write to a new vector file.
@@ -97,6 +110,11 @@ def add_geom_bbox_cols(
     :param max_x_col: Output MaxX column name (Default = ``'MaxX'``).
     :param min_y_col: Output MinY column name (Default = ``'MinY'``).
     :param max_y_col: Output MaxY column name (Default = ``'MaxY'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -111,7 +129,13 @@ def add_geom_bbox_cols(
     _populate_bbox_columns(
         base_gdf, min_x_col, max_x_col, min_y_col, max_y_col, fill_empty_zero=False
     )
-    write_vec_gdf(base_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        base_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def annotate_vec_selection(
@@ -126,6 +150,7 @@ def annotate_vec_selection(
     tmp_col_name: str = "tmp_sel_join_fid",
     vec_in_epsg: Optional[int] = None,
     vec_sel_epsg: Optional[int] = None,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Annotate features in ``vec_in_file`` with a boolean column indicating
@@ -143,6 +168,11 @@ def annotate_vec_selection(
                          (Default = ``'tmp_sel_join_fid'``).
     :param vec_in_epsg: Optional EPSG code override for ``vec_in_file``.
     :param vec_sel_epsg: Optional EPSG code override for ``vec_sel_file``.
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -163,7 +193,13 @@ def annotate_vec_selection(
 
     in_gdf[out_col_name] = in_gdf[tmp_col_name].isin(in_sel_gdf[tmp_col_name])
     in_gdf = in_gdf.drop(columns=[tmp_col_name])
-    write_vec_gdf(in_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        in_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def perform_spatial_join(
@@ -178,6 +214,7 @@ def perform_spatial_join(
     join_op: str = "within",
     vec_base_epsg: Optional[int] = None,
     vec_join_epsg: Optional[int] = None,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Perform a spatial attribute join between two vector layers using
@@ -196,6 +233,11 @@ def perform_spatial_join(
                     ``'contains'``; Default = ``'within'``).
     :param vec_base_epsg: Optional EPSG code override for ``vec_base_file``.
     :param vec_join_epsg: Optional EPSG code override for ``vec_join_file``.
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -222,4 +264,10 @@ def perform_spatial_join(
         base_gdf, join_gdf, how=join_how, predicate=join_op
     )
     if len(joined_gdf) > 0:
-        write_vec_gdf(joined_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+        write_vec_gdf(
+            joined_gdf,
+            out_vec_file,
+            out_vec_lyr,
+            out_format=out_format,
+            out_compress=out_compress,
+        )

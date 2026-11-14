@@ -10,7 +10,7 @@ Functions requiring ``exiftool`` are only defined and exported when
 import datetime
 import os
 import shutil
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import geopandas
 import pandas
@@ -20,6 +20,11 @@ from PIL.ExifTags import TAGS
 
 import rsgispy
 import rsgispy.tools.files
+from rsgispy.vectorprocess import (
+    is_geoparquet_file,
+    is_geoparquet_format,
+    write_vec_gdf,
+)
 
 try:
     import exiftool  # pylint: disable=import-error
@@ -359,13 +364,18 @@ if HAVE_EXIFTOOL:
         out_file: str,
         out_lyr: str,
         out_format: str,
+        out_compress: Optional[Union[str, bool]] = None,
     ) -> None:
         """Write a GeoDataFrame to disk, respecting GPKG layer naming."""
-        if out_format == "GPKG":
-            gdf.to_file(out_file, layer=out_lyr, driver=out_format)
-        else:
-            gdf.to_file(out_file, driver=out_format)
+        write_vec_gdf(
+            gdf,
+            out_vec_file=out_file,
+            out_vec_lyr=out_lyr,
+            out_format=out_format,
+            out_compress=out_compress,
+        )
 
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     def _write_flightline_outputs(
         img_info: Dict[str, List[Any]],
         pts_vec_file: str,
@@ -373,6 +383,7 @@ if HAVE_EXIFTOOL:
         line_vec_file: str,
         line_vec_lyr: str,
         out_format: str,
+        out_compress: Optional[Union[str, bool]] = None,
     ) -> None:
         """Create and write both the photo point layer and flightline segment layer."""
         imgs_df = pandas.DataFrame(img_info)
@@ -385,7 +396,25 @@ if HAVE_EXIFTOOL:
         if len(imgs_gdf) == 0:
             return
 
-        _write_vector_layer(imgs_gdf, pts_vec_file, pts_vec_lyr, out_format)
+        same_file = os.path.abspath(pts_vec_file) == os.path.abspath(
+            line_vec_file
+        )
+        is_pq = is_geoparquet_format(out_format) or is_geoparquet_file(
+            pts_vec_file
+        )
+        if is_pq and same_file and len(imgs_gdf) > 1:
+            raise rsgispy.RSGISPyException(
+                "GeoParquet only supports a single layer per file; specify "
+                "separate files for pts_vec_file and line_vec_file."
+            )
+
+        _write_vector_layer(
+            imgs_gdf,
+            pts_vec_file,
+            pts_vec_lyr,
+            out_format,
+            out_compress=out_compress,
+        )
 
         flightline_ids: List[int] = []
         flightline_geoms: List[shapely.geometry.LineString] = []
@@ -407,7 +436,11 @@ if HAVE_EXIFTOOL:
                 crs="EPSG:4326",
             )
             _write_vector_layer(
-                flightline_gdf, line_vec_file, line_vec_lyr, out_format
+                flightline_gdf,
+                line_vec_file,
+                line_vec_lyr,
+                out_format,
+                out_compress=out_compress,
             )
 
     def _parse_exif_datetime(date_str: str) -> datetime.datetime:
@@ -421,6 +454,7 @@ if HAVE_EXIFTOOL:
         line_vec_file: str,
         line_vec_lyr: str,
         out_format: str = "GPKG",
+        out_compress: Optional[Union[str, bool]] = None,
     ) -> None:
         """
         Create point and flightline vector layers from drone images containing GPS EXIF.
@@ -434,6 +468,11 @@ if HAVE_EXIFTOOL:
         :param line_vec_file: Output vector file for the flightline.
         :param line_vec_lyr: Output vector layer name for the flightline.
         :param out_format: Output vector format driver (default: ``"GPKG"``).
+        :param out_compress: Optional GeoParquet compression setting (``None`` to
+                             infer from extension or write uncompressed, ``True``
+                             for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                             or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                             ``'brotli'``, ``'lz4'``).
 
         .. code:: python
 
@@ -518,6 +557,7 @@ if HAVE_EXIFTOOL:
             line_vec_file,
             line_vec_lyr,
             out_format,
+            out_compress=out_compress,
         )
 
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -529,6 +569,7 @@ if HAVE_EXIFTOOL:
         line_vec_file: str,
         line_vec_lyr: str,
         out_format: str = "GPKG",
+        out_compress: Optional[Union[str, bool]] = None,
     ) -> None:
         """
         Create point and flightline vector layers from external GPS data and drone images.
@@ -543,6 +584,11 @@ if HAVE_EXIFTOOL:
         :param line_vec_file: Output vector file for the flightline.
         :param line_vec_lyr: Output vector layer name for the flightline.
         :param out_format: Output vector format driver (default: ``"GPKG"``).
+        :param out_compress: Optional GeoParquet compression setting (``None`` to
+                             infer from extension or write uncompressed, ``True``
+                             for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                             or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                             ``'brotli'``, ``'lz4'``).
 
         .. code:: python
 
@@ -622,6 +668,7 @@ if HAVE_EXIFTOOL:
             line_vec_file,
             line_vec_lyr,
             out_format,
+            out_compress=out_compress,
         )
 
     # pylint: disable=too-many-arguments,too-many-positional-arguments

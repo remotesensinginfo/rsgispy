@@ -447,7 +447,8 @@ def check_gdal_vector_file(
     max_file_size: Optional[int] = None,
 ) -> Tuple[bool, str]:
     """
-    Validate a vector file using ``pyogrio``.
+    Validate a vector file (OGR formats via ``pyogrio`` or GeoParquet via
+    ``pyarrow``).
 
     :param vec_file: Path to the vector file.
     :param chk_proj: Verify that a CRS is defined (Default: ``True``).
@@ -464,20 +465,20 @@ def check_gdal_vector_file(
         )
     """
     # pylint: disable=import-outside-toplevel
-    import pyogrio
+    from rsgispy.vectorprocess import list_vec_layers, read_vec_info
 
     file_ok, err_str = _validate_file_exists_and_size(vec_file, max_file_size)
     if not file_ok:
         return False, err_str
 
     try:
-        layers = pyogrio.list_layers(vec_file)
+        layers = list_vec_layers(vec_file)
         if len(layers) == 0:
             return False, "Vector data source contains no layers."
 
         first_info = None
-        for layer_name, _ in layers:
-            info = pyogrio.read_info(vec_file, layer=layer_name)
+        for layer_name in layers:
+            info = read_vec_info(vec_file, vec_lyr=layer_name)
             if first_info is None:
                 first_info = info
 

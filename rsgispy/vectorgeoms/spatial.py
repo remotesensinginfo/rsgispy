@@ -7,7 +7,6 @@ spatial predicate checks using ``geopandas``, ``shapely``, and ``rtree``.
 from typing import List, Optional, Sequence, Tuple, Union
 
 import geopandas
-import pyogrio
 import shapely.geometry
 import shapely.ops
 from shapely.geometry.base import BaseGeometry
@@ -17,6 +16,7 @@ from rsgispy.vectorprocess import (
     extract_geom_pts,
     prepare_out_vec_file,
     read_vec_gdf,
+    read_vec_info,
     resolve_out_lyr_name,
     write_vec_gdf,
 )
@@ -101,6 +101,7 @@ def create_alpha_shape(
     alpha_vals: Optional[Sequence[float]] = None,
     max_iter: int = 10000,
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> Tuple[bool, Optional[float]]:
     """
     Calculate a concave hull (alpha shape) polygon around all vertices of the
@@ -122,6 +123,7 @@ def create_alpha_shape(
                      (Default = ``10000``).
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
     :return: Tuple ``(vec_output, alpha_val)`` where ``vec_output`` indicates
              whether an output polygon was written.
 
@@ -185,13 +187,18 @@ def create_alpha_shape(
             lambda x, y, z=None: ((x * ran_x) + min_x, (y * ran_y) + min_y),
             alpha_shape_geom,
         )
-        info_kw = {"layer": vec_lyr} if vec_lyr is not None else {}
-        crs_info = pyogrio.read_info(vec_file, **info_kw).get("crs")
+        crs_info = read_vec_info(vec_file, vec_lyr).get("crs")
         out_gdf = geopandas.GeoDataFrame(
             {"geometry": [out_alpha_shape]}, crs=crs_info
         )
         out_lyr = resolve_out_lyr_name(out_vec_file, out_vec_lyr)
-        write_vec_gdf(out_gdf, out_vec_file, out_lyr, out_format=out_format)
+        write_vec_gdf(
+            out_gdf,
+            out_vec_file,
+            out_lyr,
+            out_format=out_format,
+            out_compress=out_compress,
+        )
         vec_output = True
 
     return vec_output, alpha_val

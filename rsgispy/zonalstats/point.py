@@ -3,7 +3,7 @@ The zonalstats.point module provides point-in-pixel zonal extraction functions
 using ``rasterio`` and ``geopandas``.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import geopandas
 
@@ -34,6 +34,7 @@ def ext_point_band_values_file(
     reproj_vec: bool = False,
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Extract raster band pixel values at point locations in ``vec_file``.
@@ -52,6 +53,11 @@ def ext_point_band_values_file(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -82,7 +88,7 @@ def ext_point_band_values_file(
         vec_def_epsg=vec_def_epsg,
         use_pbar=use_pbar,
     )
-    _write_vec_file(vec_gdf, vec_file, vec_lyr)
+    _write_vec_file(vec_gdf, vec_file, vec_lyr, out_compress=out_compress)
 
 
 def ext_point_band_values(

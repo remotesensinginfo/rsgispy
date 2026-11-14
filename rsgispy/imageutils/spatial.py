@@ -8,7 +8,6 @@ from contextlib import ExitStack
 import math
 from typing import Dict, Optional, Tuple
 
-import geopandas
 import numpy as np
 import pyproj
 import rasterio
@@ -24,6 +23,7 @@ from rsgispy.imageprocess import (
 )
 from rsgispy.imageutils.metadata import get_img_res
 from rsgispy.tools.geometry import degrees_to_metres
+from rsgispy.vectorprocess import read_vec_gdf
 
 __all__ = [
     "calc_wgs84_pixel_area",
@@ -528,11 +528,7 @@ def grid_scattered_pts(
     ensure_file_exists(vec_file, label="Vector")
     ensure_file_exists(input_img)
 
-    gdf = (
-        geopandas.read_file(vec_file, layer=vec_lyr)
-        if vec_lyr is not None
-        else geopandas.read_file(vec_file)
-    )
+    gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
     if gdf.empty:
         raise rsgispy.RSGISPyException(
             f"Vector layer '{vec_lyr}' in '{vec_file}' contains no features."

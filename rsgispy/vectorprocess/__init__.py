@@ -17,12 +17,33 @@ from shapely.geometry.base import BaseGeometry
 import rsgispy
 from rsgispy.imageprocess import ensure_file_exists
 import rsgispy.tools.files
+from rsgispy.vectorprocess._geoparquet import read_geoparquet_info
 
 CRSLike = Union[pyproj.CRS, int, str]
 
 _LEGACY_OGR_INT_TYPES = {0, 12}
 _LEGACY_OGR_FLOAT_TYPES = {2}
 _LEGACY_OGR_STR_TYPES = {4}
+
+_GEOPARQUET_EXTS: Tuple[str, ...] = (".parquet", ".geoparquet", ".pq")
+_PARQUET_COMP_SUFFIX_MAP: Dict[str, str] = {
+    "gzip": "gzip",
+    "gz": "gzip",
+    "snappy": "snappy",
+    "sz": "snappy",
+    "zstd": "zstd",
+    "zst": "zstd",
+    "brotli": "brotli",
+    "br": "brotli",
+    "lz4": "lz4",
+}
+_PARQUET_COMP_ALIASES: Dict[str, str] = {
+    "gz": "gzip",
+    "sz": "snappy",
+    "zst": "zstd",
+    "br": "brotli",
+}
+_PARQUET_VALID_COMPRESSIONS = {"snappy", "gzip", "brotli", "lz4", "zstd"}
 
 _VEC_FORMAT_TO_EXT: Dict[str, str] = {
     "gpkg": "gpkg",
@@ -32,13 +53,115 @@ _VEC_FORMAT_TO_EXT: Dict[str, str] = {
     "gml": "gml",
     "flatgeobuf": "fgb",
     "parquet": "parquet",
+    "geoparquet": "parquet",
 }
+
+
+def is_geoparquet_file(vec_file: str) -> bool:
+    """
+    Return ``True`` if ``vec_file`` has a GeoParquet file extension (including
+    compressed extensions such as ``.parquet.gzip`` or ``.parquet.sz``).
+
+    :param vec_file: Vector file path.
+    :return: ``True`` if path corresponds to a GeoParquet file.
+
+    .. code:: python
+
+        import rsgispy.vectorprocess
+
+        is_pq = rsgispy.vectorprocess.is_geoparquet_file("polys.parquet.gzip")
+    """
+    lower_path = vec_file.lower().strip()
+    if lower_path.endswith(_GEOPARQUET_EXTS):
+        return True
+    for ext in _GEOPARQUET_EXTS:
+        for suffix in _PARQUET_COMP_SUFFIX_MAP:
+            if lower_path.endswith(f"{ext}.{suffix}"):
+                return True
+    return False
+
+
+def is_geoparquet_format(vec_format: Optional[str]) -> bool:
+    """
+    Return ``True`` if ``vec_format`` names the GeoParquet/Parquet driver.
+
+    :param vec_format: Vector format/driver string or ``None``.
+    :return: ``True`` if ``vec_format`` refers to Parquet/GeoParquet.
+
+    .. code:: python
+
+        import rsgispy.vectorprocess
+
+        is_pq = rsgispy.vectorprocess.is_geoparquet_format("PARQUET")
+    """
+    if vec_format is None:
+        return False
+    return vec_format.lower().strip() in ("parquet", "geoparquet")
+
+
+def infer_parquet_compression(
+    out_vec_file: str,
+    out_compress: Optional[Union[str, bool]] = None,
+) -> Optional[str]:
+    """
+    Resolve the Arrow/Parquet compression codec for an output GeoParquet file.
+
+    * ``None`` (default): infer codec from ``out_vec_file`` extension when it
+      has a recognised compression suffix (e.g., ``.parquet.gzip``,
+      ``.parquet.gz``, ``.parquet.sz``, ``.parquet.zstd``, ``.parquet.zst``,
+      ``.parquet.br``, ``.parquet.brotli``, ``.parquet.lz4``); otherwise write
+      uncompressed (``None``).
+    * ``False`` or ``'none'`` / ``'uncompressed'``: write uncompressed (``None``).
+    * ``True``: use default ``'snappy'`` compression.
+    * Explicit codec name (case-insensitive, with aliases ``'gz'``, ``'sz'``,
+      ``'zst'``, ``'br'``): validate against ``{'snappy', 'gzip', 'brotli',
+      'lz4', 'zstd'}``.
+
+    :param out_vec_file: Output GeoParquet file path.
+    :param out_compress: Requested compression setting or ``None``.
+    :return: Compression codec string for ``geopandas.GeoDataFrame.to_parquet``,
+             or ``None`` for uncompressed output.
+
+    .. code:: python
+
+        import rsgispy.vectorprocess
+
+        codec = rsgispy.vectorprocess.infer_parquet_compression(
+            "polys.parquet", out_compress="zstd"
+        )
+    """
+    if out_compress is None:
+        lower_path = out_vec_file.lower().strip()
+        for ext in _GEOPARQUET_EXTS:
+            for suffix, codec in _PARQUET_COMP_SUFFIX_MAP.items():
+                if lower_path.endswith(f"{ext}.{suffix}"):
+                    return codec
+        return None
+
+    if isinstance(out_compress, bool):
+        return "snappy" if out_compress else None
+
+    if isinstance(out_compress, str):
+        comp_key = out_compress.strip().lower()
+        if comp_key in ("none", "uncompressed", ""):
+            return None
+        comp_key = _PARQUET_COMP_ALIASES.get(comp_key, comp_key)
+        if comp_key not in _PARQUET_VALID_COMPRESSIONS:
+            raise rsgispy.RSGISPyException(
+                f"Unsupported GeoParquet compression codec '{out_compress}'. "
+                f"Supported codecs: {sorted(_PARQUET_VALID_COMPRESSIONS)}."
+            )
+        return comp_key
+
+    raise rsgispy.RSGISPyException(
+        f"Unsupported GeoParquet compression setting: {out_compress!r}"
+    )
 
 
 def check_format_name(vec_file_format: str) -> str:
     """
     Normalise vector driver names for ``geopandas`` / ``pyogrio``
-    (e.g. ``'GEOJSON'`` -> ``'GeoJSON'``).
+    (e.g. ``'GEOJSON'`` -> ``'GeoJSON'``, ``'PARQUET'`` -> ``'Parquet'``).
 
     :param vec_file_format: Input vector driver name.
     :return: Normalised driver name string.
@@ -49,8 +172,11 @@ def check_format_name(vec_file_format: str) -> str:
 
         fmt = rsgispy.vectorprocess.check_format_name("GEOJSON")
     """
-    if vec_file_format.lower() == "geojson":
+    low_fmt = vec_file_format.lower().strip()
+    if low_fmt == "geojson":
         return "GeoJSON"
+    if low_fmt in ("parquet", "geoparquet"):
+        return "Parquet"
     return vec_file_format
 
 
@@ -134,6 +260,40 @@ def prepare_out_vec_file(
             )
 
 
+def list_vec_layers(vec_file: str) -> List[str]:
+    """
+    List all layer names in ``vec_file`` (for GeoParquet files, returns the
+    single-element list containing the filename stem).
+
+    :param vec_file: Input vector file path.
+    :return: List of layer name strings.
+
+    .. code:: python
+
+        import rsgispy.vectorprocess
+
+        lyrs = rsgispy.vectorprocess.list_vec_layers("polys.parquet")
+    """
+    ensure_file_exists(vec_file, label="Vector file")
+    if is_geoparquet_file(vec_file):
+        info = read_geoparquet_info(vec_file)
+        return [str(info["layer_name"])]
+
+    try:
+        layers = pyogrio.list_layers(vec_file)
+    except Exception as err:
+        raise rsgispy.RSGISPyException(
+            f"Could not open vector file '{vec_file}': {err}"
+        ) from err
+
+    if len(layers) == 0:
+        raise rsgispy.RSGISPyException(
+            f"No vector layers found in file '{vec_file}'."
+        )
+
+    return [str(row[0]) for row in layers]
+
+
 def resolve_vec_layer(vec_file: str, vec_lyr: Optional[str] = None) -> str:
     """
     Validate ``vec_file`` exists and resolve ``vec_lyr`` (returning the first
@@ -149,20 +309,7 @@ def resolve_vec_layer(vec_file: str, vec_lyr: Optional[str] = None) -> str:
 
         lyr = rsgispy.vectorprocess.resolve_vec_layer("polys.gpkg")
     """
-    ensure_file_exists(vec_file, label="Vector file")
-    try:
-        layers = pyogrio.list_layers(vec_file)
-    except Exception as err:
-        raise rsgispy.RSGISPyException(
-            f"Could not open vector file '{vec_file}': {err}"
-        ) from err
-
-    if len(layers) == 0:
-        raise rsgispy.RSGISPyException(
-            f"No vector layers found in file '{vec_file}'."
-        )
-
-    lyr_names = [str(row[0]) for row in layers]
+    lyr_names = list_vec_layers(vec_file)
     if vec_lyr is None:
         return lyr_names[0]
     if vec_lyr not in lyr_names:
@@ -197,12 +344,12 @@ def resolve_out_lyr_name(
 
 def read_vec_info(vec_file: str, vec_lyr: Optional[str] = None) -> Dict[str, Any]:
     """
-    Return ``pyogrio.read_info`` metadata dictionary for ``vec_file`` /
-    ``vec_lyr``.
+    Return metadata dictionary (matching ``pyogrio.read_info``) for
+    ``vec_file`` / ``vec_lyr``, supporting both OGR formats and GeoParquet.
 
     :param vec_file: Input vector file path.
     :param vec_lyr: Optional layer name (first layer if ``None``).
-    :return: Metadata dictionary from ``pyogrio.read_info``.
+    :return: Metadata dictionary.
 
     .. code:: python
 
@@ -210,6 +357,9 @@ def read_vec_info(vec_file: str, vec_lyr: Optional[str] = None) -> Dict[str, Any
 
         info = rsgispy.vectorprocess.read_vec_info("polys.gpkg", "polys")
     """
+    if is_geoparquet_file(vec_file):
+        return read_geoparquet_info(vec_file, vec_lyr=vec_lyr)
+
     lyr_name = resolve_vec_layer(vec_file, vec_lyr)
     try:
         return pyogrio.read_info(vec_file, layer=lyr_name)
@@ -223,14 +373,17 @@ def read_vec_gdf(
     vec_file: str,
     vec_lyr: Optional[str] = None,
     epsg: Optional[int] = None,
+    bbox: Optional[Tuple[float, float, float, float]] = None,
 ) -> geopandas.GeoDataFrame:
     """
-    Read a vector file/layer into a :class:`geopandas.GeoDataFrame`, raising
-    :class:`rsgispy.RSGISPyException` on failure.
+    Read a vector file/layer into a :class:`geopandas.GeoDataFrame`, supporting
+    OGR formats and GeoParquet and raising :class:`rsgispy.RSGISPyException`
+    on failure.
 
     :param vec_file: Input vector file path.
     :param vec_lyr: Optional layer name.
     :param epsg: Optional EPSG code to assign (override without reprojecting).
+    :param bbox: Optional ``(minx, miny, maxx, maxy)`` spatial filter.
     :return: Loaded :class:`geopandas.GeoDataFrame`.
 
     .. code:: python
@@ -240,29 +393,53 @@ def read_vec_gdf(
         gdf = rsgispy.vectorprocess.read_vec_gdf("polys.gpkg", "polys")
     """
     ensure_file_exists(vec_file, label="Vector file")
-    read_kw = {"layer": vec_lyr} if vec_lyr is not None else {}
-    try:
-        gdf = geopandas.read_file(vec_file, **read_kw)
-    except Exception as err:
-        raise rsgispy.RSGISPyException(
-            f"Could not open '{vec_file}' (layer='{vec_lyr}'): {err}"
-        ) from err
+    if is_geoparquet_file(vec_file):
+        if vec_lyr is not None:
+            resolve_vec_layer(vec_file, vec_lyr)
+        try:
+            if bbox is not None:
+                try:
+                    gdf = geopandas.read_parquet(vec_file, bbox=bbox)
+                except ValueError:
+                    gdf = geopandas.read_parquet(vec_file)
+                    bbox_geom = shapely.geometry.box(*bbox)
+                    gdf = gdf[gdf.intersects(bbox_geom)].copy()
+            else:
+                gdf = geopandas.read_parquet(vec_file)
+        except Exception as err:
+            raise rsgispy.RSGISPyException(
+                f"Could not open GeoParquet file '{vec_file}': {err}"
+            ) from err
+    else:
+        read_kw: Dict[str, Any] = {}
+        if vec_lyr is not None:
+            read_kw["layer"] = vec_lyr
+        if bbox is not None:
+            read_kw["bbox"] = bbox
+        try:
+            gdf = geopandas.read_file(vec_file, **read_kw)
+        except Exception as err:
+            raise rsgispy.RSGISPyException(
+                f"Could not open '{vec_file}' (layer='{vec_lyr}'): {err}"
+            ) from err
 
     if epsg is not None:
         gdf = gdf.set_crs(epsg=int(epsg), allow_override=True)
     return gdf
 
 
-def write_vec_gdf(
+def write_vec_gdf(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     gdf: geopandas.GeoDataFrame,
     out_vec_file: str,
     out_vec_lyr: Optional[str] = None,
     out_format: Optional[str] = None,
     overwrite: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Write a :class:`geopandas.GeoDataFrame` to disk, handling GPKG layer naming,
-    driver normalisation, and optional file deletion when ``overwrite=True``.
+    GeoParquet compression, driver normalisation, and optional file deletion
+    when ``overwrite=True``.
 
     :param gdf: GeoDataFrame to write.
     :param out_vec_file: Destination vector file path.
@@ -270,6 +447,11 @@ def write_vec_gdf(
     :param out_format: Optional vector driver name.
     :param overwrite: If ``True``, delete an existing ``out_vec_file`` before
                       writing (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -282,7 +464,25 @@ def write_vec_gdf(
     if overwrite and os.path.exists(out_vec_file):
         delete_vec_file(out_vec_file, feedback=False)
 
+    parent_dir = os.path.dirname(os.path.abspath(out_vec_file))
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+
     fmt = check_format_name(out_format) if out_format is not None else None
+    is_pq = is_geoparquet_format(fmt) or (
+        fmt is None and is_geoparquet_file(out_vec_file)
+    )
+
+    if is_pq:
+        comp = infer_parquet_compression(out_vec_file, out_compress=out_compress)
+        try:
+            gdf.to_parquet(out_vec_file, compression=comp)
+        except Exception as err:
+            raise rsgispy.RSGISPyException(
+                f"Could not write GeoParquet file '{out_vec_file}': {err}"
+            ) from err
+        return
+
     is_gpkg = (
         fmt == "GPKG"
         if fmt is not None

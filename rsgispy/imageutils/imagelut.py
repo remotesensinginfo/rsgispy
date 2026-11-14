@@ -4,16 +4,25 @@ image look-up tables (LUTs) using rasterio and geopandas.
 """
 
 import os
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple, Union
 import uuid
 
 import geopandas as gpd
+import pandas
 import rasterio
 from rasterio.warp import transform_bounds
 from shapely.geometry import box
 
 import rsgispy
 import rsgispy.imageutils.vrt
+from rsgispy.vectorprocess import (
+    is_geoparquet_file,
+    parse_crs_input,
+    read_vec_gdf,
+    read_vec_info,
+    resolve_vec_layer,
+    write_vec_gdf,
+)
 
 __all__ = [
     "create_img_extent_lut",
@@ -33,6 +42,7 @@ def create_img_extent_lut(
     out_proj_wgs84: bool = False,
     overwrite_lut_file: bool = False,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create a vector layer look-up table (LUT) storing the spatial extent,
@@ -43,7 +53,7 @@ def create_img_extent_lut(
     :param vec_file: Output vector file path (e.g., ``'ImgExtents.gpkg'``).
     :param vec_lyr: Output vector layer name (used for multi-layer formats such
                     as GeoPackage). If ``None``, the format default layer is used.
-    :param out_format: Output OGR/GeoPandas driver name (Default = ``'GPKG'``).
+    :param out_format: Output OGR/GeoPandas/Parquet driver name (Default = ``'GPKG'``).
     :param ignore_none_imgs: If True, images without a defined CRS are skipped;
                              otherwise a :class:`rsgispy.RSGISPyException` is raised
                              (Default = False).
@@ -53,6 +63,11 @@ def create_img_extent_lut(
                                before writing (Default = False).
     :param use_pbar: If True, display a tqdm progress bar while scanning images
                      (Default = True).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -67,7 +82,8 @@ def create_img_extent_lut(
             "GPKG",
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches
     if not input_imgs:
         raise rsgispy.RSGISPyException(
             "input_imgs must contain at least one image path."
@@ -121,19 +137,19 @@ def create_img_extent_lut(
             "No valid images with a defined CRS were found to create the LUT."
         )
 
-    if overwrite_lut_file and os.path.exists(vec_file):
-        os.remove(vec_file)
-
-    parent_dir = os.path.dirname(os.path.abspath(vec_file))
-    if parent_dir:
-        os.makedirs(parent_dir, exist_ok=True)
-
     lut_gdf = gpd.GeoDataFrame(
         {"filename": filenames, "path": paths},
         geometry=geoms,
         crs=out_crs,
     )
-    lut_gdf.to_file(vec_file, layer=vec_lyr, driver=out_format)
+    write_vec_gdf(
+        lut_gdf,
+        out_vec_file=vec_file,
+        out_vec_lyr=vec_lyr,
+        out_format=out_format,
+        overwrite=overwrite_lut_file,
+        out_compress=out_compress,
+    )
 
 
 def query_img_lut(
@@ -171,9 +187,9 @@ def query_img_lut(
         )
 
     min_x, max_x, min_y, max_y = (float(v) for v in scn_bbox[:4])
-    lut_gdf = gpd.read_file(
+    lut_gdf = read_vec_gdf(
         lut_db_file,
-        layer=lyr_name,
+        vec_lyr=lyr_name,
         bbox=(min_x, min_y, max_x, max_y),
     )
     if lut_gdf.empty:
@@ -209,11 +225,16 @@ def get_all_lut_imgs(
             f"LUT vector file does not exist: '{lut_db_file}'."
         )
 
-    lut_df = gpd.read_file(
-        lut_db_file,
-        layer=lyr_name,
-        ignore_geometry=True,
-    )
+    if is_geoparquet_file(lut_db_file):
+        if lyr_name is not None:
+            resolve_vec_layer(lut_db_file, lyr_name)
+        lut_df = pandas.read_parquet(lut_db_file, columns=["path", "filename"])
+    else:
+        lut_df = gpd.read_file(
+            lut_db_file,
+            layer=lyr_name,
+            ignore_geometry=True,
+        )
     if lut_df.empty:
         return []
 
@@ -329,20 +350,26 @@ def query_file_lut(
             f"ROI vector file does not exist: '{roi_file}'."
         )
 
-    roi_gdf = gpd.read_file(roi_file, layer=roi_lyr)
+    roi_gdf = read_vec_gdf(roi_file, vec_lyr=roi_lyr)
     if roi_gdf.empty:
         return []
 
-    lut_hdr = gpd.read_file(lut_db_file, layer=lyr_name, rows=0)
+    lut_info = read_vec_info(lut_db_file, vec_lyr=lyr_name)
+    lut_crs_raw = lut_info.get("crs")
+    lut_crs = parse_crs_input(lut_crs_raw) if lut_crs_raw else None
     if (
-        lut_hdr.crs is not None
+        lut_crs is not None
         and roi_gdf.crs is not None
-        and lut_hdr.crs != roi_gdf.crs
+        and lut_crs != roi_gdf.crs
     ):
-        roi_gdf = roi_gdf.to_crs(lut_hdr.crs)
+        roi_gdf = roi_gdf.to_crs(lut_crs)
 
     roi_bounds = tuple(float(v) for v in roi_gdf.total_bounds)
-    lut_gdf = gpd.read_file(lut_db_file, layer=lyr_name, bbox=roi_bounds)
+    lut_gdf = read_vec_gdf(
+        lut_db_file,
+        vec_lyr=lyr_name,
+        bbox=(roi_bounds[0], roi_bounds[1], roi_bounds[2], roi_bounds[3]),
+    )
     if lut_gdf.empty:
         return []
 

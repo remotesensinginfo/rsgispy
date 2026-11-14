@@ -18,7 +18,7 @@ zonal statistics functions using ``rasterio`` and ``geopandas``.
 """
 
 import math
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import geopandas
 import numpy
@@ -276,6 +276,7 @@ def calc_zonal_band_stats_file(
     median_field: Optional[str] = None,
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Calculate zonal statistics for a raster band over polygons in ``vec_file``.
@@ -301,6 +302,11 @@ def calc_zonal_band_stats_file(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -339,7 +345,7 @@ def calc_zonal_band_stats_file(
         vec_def_epsg=vec_def_epsg,
         use_pbar=use_pbar,
     )
-    _write_vec_file(vec_gdf, vec_file, vec_lyr)
+    _write_vec_file(vec_gdf, vec_file, vec_lyr, out_compress=out_compress)
 
 
 def calc_zonal_band_stats(
@@ -435,6 +441,7 @@ def calc_zonal_poly_pts_band_stats_file(
     out_field: str,
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Extract raster band values at each polygon's centroid for ``vec_file``.
@@ -449,6 +456,11 @@ def calc_zonal_poly_pts_band_stats_file(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -472,7 +484,7 @@ def calc_zonal_poly_pts_band_stats_file(
         vec_def_epsg=vec_def_epsg,
         use_pbar=use_pbar,
     )
-    _write_vec_file(vec_gdf, vec_file, vec_lyr)
+    _write_vec_file(vec_gdf, vec_file, vec_lyr, out_compress=out_compress)
 
 
 def calc_zonal_poly_pts_band_stats(
@@ -560,6 +572,7 @@ def calc_zonal_band_stats_test_poly_pts_file(
     median_field: Optional[str] = None,
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Calculate zonal statistics for polygons in ``vec_file``, falling back to the
@@ -586,6 +599,11 @@ def calc_zonal_band_stats_test_poly_pts_file(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -626,7 +644,7 @@ def calc_zonal_band_stats_test_poly_pts_file(
         vec_def_epsg=vec_def_epsg,
         use_pbar=use_pbar,
     )
-    _write_vec_file(vec_gdf, vec_file, vec_lyr)
+    _write_vec_file(vec_gdf, vec_file, vec_lyr, out_compress=out_compress)
 
 
 def calc_zonal_band_stats_test_poly_pts(
@@ -730,6 +748,7 @@ def calc_zonal_band_pxl_counts_file(
     total_field: str = "pxl_count",
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Count pixels matching specific integer values in ``vals_lut`` within each
@@ -744,6 +763,11 @@ def calc_zonal_band_pxl_counts_file(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -769,7 +793,7 @@ def calc_zonal_band_pxl_counts_file(
         vec_def_epsg=vec_def_epsg,
         use_pbar=use_pbar,
     )
-    _write_vec_file(vec_gdf, vec_file, vec_lyr)
+    _write_vec_file(vec_gdf, vec_file, vec_lyr, out_compress=out_compress)
 
 
 def calc_zonal_band_pxl_counts(

@@ -205,6 +205,7 @@ def spatial_select(
     vec_epsg: Optional[int] = None,
     vec_roi_epsg: Optional[int] = None,
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Select features from ``vec_file`` that spatially match features in
@@ -223,6 +224,7 @@ def spatial_select(
     :param vec_roi_epsg: Optional EPSG code override for ``vec_roi_file``.
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -273,6 +275,7 @@ def spatial_select(
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
         out_format=out_format,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
 
 
@@ -297,6 +300,7 @@ def spatial_select_bbox(
     out_format: str = "GPKG",
     bbox_epsg: Optional[int] = None,
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> bool:
     """
     Select features intersecting a bounding box ``(MinX, MaxX, MinY, MaxY)``
@@ -312,6 +316,7 @@ def spatial_select_bbox(
                       input vector layer CRS.
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
     :return: ``True`` if at least one feature intersected ``bbox``, else
              ``False``.
 
@@ -338,6 +343,7 @@ def spatial_select_bbox(
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
         out_format=out_format,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
     return len(sel_gdf) > 0
 
@@ -352,6 +358,7 @@ def subset_vec_lyr_to_feat_bboxs(
     out_file_end: str = "gpkg",
     out_format: str = "GPKG",
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> List[str]:
     """
     Subset a vector layer once for each feature bounding box in a reference
@@ -368,6 +375,7 @@ def subset_vec_lyr_to_feat_bboxs(
     :param out_format: Output vector driver name (Default = ``'GPKG'``).
     :param use_pbar: If ``True``, display a tqdm progress bar across bounding
                      boxes (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting.
     :return: List of created output file paths.
 
     .. code:: python
@@ -393,6 +401,7 @@ def subset_vec_lyr_to_feat_bboxs(
             out_vec_lyr=out_lyr_name,
             out_format=out_format,
             overwrite=True,
+            out_compress=out_compress,
         )
         out_files.append(out_vec_file)
     return out_files
@@ -498,6 +507,7 @@ def subset_by_attribute(
     out_format: str = "GPKG",
     match_type: str = "equals",
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Subset features in a vector layer whose values in ``sub_col`` match any
@@ -515,6 +525,7 @@ def subset_by_attribute(
                        or ``'start'``.
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -563,6 +574,7 @@ def subset_by_attribute(
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
         out_format=out_format,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
 
 
@@ -575,6 +587,7 @@ def select_feats_str_search(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Select features where string column ``select_col`` contains ``select_val``
@@ -589,6 +602,7 @@ def select_feats_str_search(
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -615,6 +629,7 @@ def select_feats_str_search(
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
         out_format=out_format,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
 
 
@@ -627,6 +642,7 @@ def drop_rows_by_attribute(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Drop features whose value in ``sub_col`` matches any value in ``sub_vals``.
@@ -640,6 +656,7 @@ def drop_rows_by_attribute(
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -666,6 +683,7 @@ def drop_rows_by_attribute(
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
         out_format=out_format,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
 
 
@@ -677,6 +695,7 @@ def drop_rows_by_multi_attributes(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Drop features matching any column/value pair in ``drop_atts``.
@@ -689,6 +708,7 @@ def drop_rows_by_multi_attributes(
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -719,6 +739,7 @@ def drop_rows_by_multi_attributes(
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
         out_format=out_format,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
 
 
@@ -731,6 +752,7 @@ def rm_attrib_duplicates(
     out_format: str = "GPKG",
     keep_rows: str = "First",
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Remove rows with duplicate values in ``dup_col`` from a vector layer.
@@ -746,6 +768,7 @@ def rm_attrib_duplicates(
                       ``'Last'``, or ``'RemoveAll'``.
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -781,6 +804,7 @@ def rm_attrib_duplicates(
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
         out_format=out_format,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
 
 
@@ -800,6 +824,7 @@ def match_closest_vec_pts(
     out_att_prefix: str = "match_",
     use_pbar: bool = True,
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> bool:
     """
     Find the closest point in ``vec_match_file`` for each point in
@@ -830,6 +855,7 @@ def match_closest_vec_pts(
                      (Default = ``True``).
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
     :return: ``True`` if at least one point matched and was written, else
              ``False``.
 
@@ -900,6 +926,7 @@ def match_closest_vec_pts(
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
         out_format=out_format,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
     return True
 
@@ -915,6 +942,7 @@ def split_vec_lyr_random_subset(
     out_format: str = "GPKG",
     rnd_seed: Optional[int] = None,
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Split a vector layer into a random sample of ``n_smpl`` features and a
@@ -931,6 +959,7 @@ def split_vec_lyr_random_subset(
     :param rnd_seed: Optional random seed for reproducibility.
     :param del_exist_vec: If ``True``, delete existing output files first
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -959,6 +988,7 @@ def split_vec_lyr_random_subset(
         out_vec_lyr=resolve_out_lyr_name(out_rmain_vec_file, out_rmain_vec_lyr),
         out_format=out_format,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
     write_vec_gdf(
         smpl_gdf,
@@ -966,6 +996,7 @@ def split_vec_lyr_random_subset(
         out_vec_lyr=resolve_out_lyr_name(out_smpl_vec_file, out_smpl_vec_lyr),
         out_format=out_format,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
 
 
@@ -978,6 +1009,7 @@ def vec_lyr_random_subset(
     out_format: str = "GPKG",
     rnd_seed: Optional[int] = None,
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Write a random subset of ``n_smpl`` features from an input vector layer.
@@ -991,6 +1023,7 @@ def vec_lyr_random_subset(
     :param rnd_seed: Optional random seed for reproducibility.
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -1016,6 +1049,7 @@ def vec_lyr_random_subset(
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
         out_format=out_format,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
 
 
@@ -1031,6 +1065,7 @@ def create_train_test_smpls(
     tmp_dir: Optional[str] = None,
     rnd_seed: Optional[int] = None,
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Split a vector dataset into disjoint training and testing subsets, adding a
@@ -1049,6 +1084,7 @@ def create_train_test_smpls(
     :param rnd_seed: Optional random seed for reproducibility.
     :param del_exist_vec: If ``True``, delete existing output files first
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -1087,6 +1123,7 @@ def create_train_test_smpls(
         out_vec_lyr=resolve_out_lyr_name(out_train_vec_file, out_train_vec_lyr),
         out_format=out_format,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
     write_vec_gdf(
         test_gdf,
@@ -1094,6 +1131,7 @@ def create_train_test_smpls(
         out_vec_lyr=resolve_out_lyr_name(out_test_vec_file, out_test_vec_lyr),
         out_format=out_format,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
 
 
@@ -1111,6 +1149,7 @@ def create_train_test_valid_smpls(
     prop_valid: float = 0.2,
     rnd_seed: Optional[int] = None,
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Split a vector dataset into mutually disjoint training, testing, and
@@ -1132,6 +1171,7 @@ def create_train_test_valid_smpls(
     :param rnd_seed: Optional random seed for reproducibility.
     :param del_exist_vec: If ``True``, delete existing output files first
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -1180,6 +1220,7 @@ def create_train_test_valid_smpls(
         out_vec_lyr=resolve_out_lyr_name(out_test_vec_file, out_test_vec_lyr),
         out_format=out_format,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
     write_vec_gdf(
         valid_gdf,
@@ -1189,6 +1230,7 @@ def create_train_test_valid_smpls(
         ),
         out_format=out_format,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
     write_vec_gdf(
         train_gdf,
@@ -1198,6 +1240,7 @@ def create_train_test_valid_smpls(
         ),
         out_format=out_format,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
 
 
@@ -1214,6 +1257,7 @@ def create_n_random_subsets(
     replacement: bool = False,
     rnd_seed: Optional[int] = None,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> List[str]:
     """
     Create ``n_subs`` random (optionally bootstrapped) subsets of features from
@@ -1236,6 +1280,7 @@ def create_n_random_subsets(
                      distinct reproducible samples).
     :param use_pbar: If ``True``, display a tqdm progress bar across subsets
                      (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting.
     :return: List of created output vector file paths.
 
     .. code:: python
@@ -1277,6 +1322,7 @@ def create_n_random_subsets(
             out_vec_lyr=out_lyr,
             out_format=out_format,
             overwrite=True,
+            out_compress=out_compress,
         )
         out_files.append(out_file)
     return out_files

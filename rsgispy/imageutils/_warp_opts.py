@@ -36,6 +36,7 @@ from rsgispy.imageutils._translate import (
     _resolve_resampling,
     _split_kv,
 )
+from rsgispy.vectorprocess import is_geoparquet_file, read_vec_gdf
 
 
 @dataclass
@@ -594,14 +595,22 @@ def load_cutline_geometries(
     elif isinstance(cfg.cutline, (str, os.PathLike)):
         cl_str = os.fspath(cfg.cutline)
         if os.path.exists(cl_str):
-            read_kw: Dict[str, Any] = {}
-            if cfg.cutline_layer is not None:
-                read_kw["layer"] = cfg.cutline_layer
-            if cfg.cutline_where is not None:
-                read_kw["where"] = cfg.cutline_where
-            if cfg.cutline_sql is not None:
-                read_kw["sql"] = cfg.cutline_sql
-            gdf = geopandas.read_file(cl_str, **read_kw)
+            if is_geoparquet_file(cl_str):
+                if cfg.cutline_where is not None or cfg.cutline_sql is not None:
+                    raise rsgispy.RSGISPyException(
+                        "cutline_where and cutline_sql are not supported for "
+                        "GeoParquet cutline files."
+                    )
+                gdf = read_vec_gdf(cl_str, vec_lyr=cfg.cutline_layer)
+            else:
+                read_kw: Dict[str, Any] = {}
+                if cfg.cutline_layer is not None:
+                    read_kw["layer"] = cfg.cutline_layer
+                if cfg.cutline_where is not None:
+                    read_kw["where"] = cfg.cutline_where
+                if cfg.cutline_sql is not None:
+                    read_kw["sql"] = cfg.cutline_sql
+                gdf = geopandas.read_file(cl_str, **read_kw)
         else:
             stripped = cl_str.strip()
             if stripped.startswith("{"):

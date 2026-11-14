@@ -3,10 +3,11 @@ Tools for downloading OpenStreetMap (OSM) data.
 """
 
 from importlib.util import find_spec
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import rsgispy
 import rsgispy.tools.geometry
+from rsgispy.vectorprocess import write_vec_gdf
 
 # pylint: disable=invalid-name
 OSMNX_AVAIL = True
@@ -129,22 +130,27 @@ def get_osm_gdf(
         raise
 
 
+# pylint: disable=too-many-arguments,too-many-positional-arguments
 def _write_osm_gdf(
     data_gdf: Any,
     out_vec_file: str,
     out_vec_lyr: str,
     out_format: str,
     out_vec_epsg: int,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """Reproject and write a non-empty OSM GeoDataFrame to disk."""
     if out_vec_epsg != 4326:
         data_gdf = data_gdf.to_crs(epsg=out_vec_epsg)
 
     if len(data_gdf) > 0:
-        if out_format == "GPKG":
-            data_gdf.to_file(out_vec_file, layer=out_vec_lyr, driver=out_format)
-        else:
-            data_gdf.to_file(out_vec_file, driver=out_format)
+        write_vec_gdf(
+            data_gdf,
+            out_vec_file=out_vec_file,
+            out_vec_lyr=out_vec_lyr,
+            out_format=out_format,
+            out_compress=out_compress,
+        )
     else:
         print("The geodataframe was empty - check the geometry type, tags and ROI.")
 
@@ -160,6 +166,7 @@ def get_osm_to_file(
     out_format: str = "GPKG",
     out_vec_epsg: int = 4326,
     clip_to_roi: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Download OpenStreetMap data and write it to a vector file.
@@ -173,6 +180,11 @@ def get_osm_to_file(
     :param out_format: Output vector driver (default: ``"GPKG"``).
     :param out_vec_epsg: Target EPSG code for output vector (default: 4326).
     :param clip_to_roi: If ``True``, clip returned geometries to ``bbox``.
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -194,7 +206,14 @@ def get_osm_to_file(
         bbox_epsg=bbox_epsg,
         clip_to_roi=clip_to_roi,
     )
-    _write_osm_gdf(data_gdf, out_vec_file, out_vec_lyr, out_format, out_vec_epsg)
+    _write_osm_gdf(
+        data_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format,
+        out_vec_epsg,
+        out_compress=out_compress,
+    )
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -208,6 +227,7 @@ def get_osm_multi_to_file(
     out_format: str = "GPKG",
     out_vec_epsg: int = 4326,
     clip_to_roi: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Download OpenStreetMap data for multiple tag queries and merge into one file.
@@ -221,6 +241,11 @@ def get_osm_multi_to_file(
     :param out_format: Output vector driver (default: ``"GPKG"``).
     :param out_vec_epsg: Target EPSG code for output vector (default: 4326).
     :param clip_to_roi: If ``True``, clip returned geometries to ``bbox``.
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -261,6 +286,13 @@ def get_osm_multi_to_file(
     if data_lst:
         data_gdf = pandas.concat(data_lst)
         data_gdf = data_gdf.set_crs(epsg=4326, allow_override=True)
-        _write_osm_gdf(data_gdf, out_vec_file, out_vec_lyr, out_format, out_vec_epsg)
+        _write_osm_gdf(
+            data_gdf,
+            out_vec_file,
+            out_vec_lyr,
+            out_format,
+            out_vec_epsg,
+            out_compress=out_compress,
+        )
     else:
         print("The geodataframes were empty - check the geometry type, tags and ROI.")

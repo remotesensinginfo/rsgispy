@@ -7,7 +7,6 @@ by bounding box, reference raster image, or vector layer using ``rasterio`` and
 import math
 from typing import Any, Mapping, Optional, Sequence, Union
 
-import geopandas
 import rasterio
 
 import rsgispy
@@ -18,6 +17,7 @@ from rsgispy.tools.geometry import (
     do_bboxes_intersect,
     reproj_bbox,
 )
+from rsgispy.vectorprocess import read_vec_gdf
 
 __all__ = [
     "subset_bbox",
@@ -217,10 +217,7 @@ def subset(
     ensure_file_exists(input_img)
     ensure_file_exists(vec_file, label="Vector")
 
-    if vec_lyr is not None:
-        gdf = geopandas.read_file(vec_file, layer=vec_lyr)
-    else:
-        gdf = geopandas.read_file(vec_file)
+    gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
 
     if gdf.empty:
         raise rsgispy.RSGISPyException(

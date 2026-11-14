@@ -8,7 +8,6 @@ import math
 import os
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
-import geopandas
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
@@ -20,6 +19,7 @@ from rasterio.windows import Window
 import rsgispy
 from rsgispy.imageprocess import bbox_from_dataset, ensure_file_exists
 import rsgispy.tools.geometry
+from rsgispy.vectorprocess import read_vec_gdf, write_vec_gdf
 
 __all__ = [
     "RSGISCalcSumVals",
@@ -196,6 +196,7 @@ def calc_pt_smpl_img_vals(
     y_box_col: str = "ybox",
     no_data_val: Optional[float] = None,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Calculate summary values for an image window around each point in an input
@@ -212,7 +213,8 @@ def calc_pt_smpl_img_vals(
     :param out_vec_file: Path to the output vector file.
     :param out_vec_lyr: Output vector layer name (used for multi-layer formats
                         such as GeoPackage).
-    :param out_format: Output vector format/driver (e.g., ``'GPKG'``, ``'GeoJSON'``).
+    :param out_format: Output vector format/driver (e.g., ``'GPKG'``, ``'GeoJSON'``,
+                       ``'PARQUET'``).
     :param interp_method: Interpolation method used when resampling/rotating the
                           window. Default: ``rsgispy.INTERP_CUBIC``.
     :param angle_col: Optional column name specifying rotation angle in degrees.
@@ -220,6 +222,11 @@ def calc_pt_smpl_img_vals(
     :param y_box_col: Column name specifying half-window height in Y pixels.
     :param no_data_val: Image no-data value. If ``None``, taken from image header.
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -248,8 +255,7 @@ def calc_pt_smpl_img_vals(
         out_col_names.extend(col_names_tmp)
 
     rio_interp = rsgispy.get_rasterio_interp_type(interp_method)
-    read_kwargs = {"layer": vec_lyr} if vec_lyr is not None else {}
-    pts_gdf = geopandas.read_file(vec_file, **read_kwargs)
+    pts_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
     tqdm_cls = rsgispy.get_tqdm()
 
     with rasterio.open(input_img, "r") as src_ds:
@@ -306,10 +312,13 @@ def calc_pt_smpl_img_vals(
     for out_col in out_col_names:
         pts_gdf[out_col] = out_vals_dict[out_col]
 
-    if out_format.upper() == "GPKG" and out_vec_lyr is not None:
-        pts_gdf.to_file(out_vec_file, layer=out_vec_lyr, driver=out_format)
-    else:
-        pts_gdf.to_file(out_vec_file, driver=out_format)
+    write_vec_gdf(
+        pts_gdf,
+        out_vec_file=out_vec_file,
+        out_vec_lyr=out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 class RSGISDebugExportImg(RSGISCalcSumVals):

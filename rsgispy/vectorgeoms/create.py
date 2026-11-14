@@ -11,7 +11,6 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import geopandas
 import numpy as np
 import pandas
-import pyogrio
 import rasterio
 import rasterio.features
 import rasterio.transform
@@ -41,6 +40,9 @@ from rsgispy.vectorprocess import (
     build_atts_dataframe,
     check_format_name,
     get_file_vec_extension,
+    is_geoparquet_file,
+    is_geoparquet_format,
+    list_vec_layers,
     parse_crs_input,
     prepare_out_vec_file,
     read_vec_gdf,
@@ -91,6 +93,7 @@ def polygonise_raster_to_vec_lyr(
     replace_lyr: bool = True,
     pxl_val_fieldname: str = "PXLVAL",
     use_8_conn: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Polygonise connected pixel regions in ``input_img`` into a vector layer
@@ -113,6 +116,11 @@ def polygonise_raster_to_vec_lyr(
                               (Default = ``'PXLVAL'``).
     :param use_8_conn: If ``True``, use 8-connected pixel grouping; otherwise
                        4-connected (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -125,7 +133,12 @@ def polygonise_raster_to_vec_lyr(
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
     if (not replace_file) and (not replace_lyr) and os.path.exists(out_vec_file):
-        existing_lyrs = [str(row[0]) for row in pyogrio.list_layers(out_vec_file)]
+        if is_geoparquet_format(out_format) or is_geoparquet_file(out_vec_file):
+            raise rsgispy.RSGISPyException(
+                f"Output GeoParquet file '{out_vec_file}' already exists and "
+                "replace_file=False, replace_lyr=False."
+            )
+        existing_lyrs = list_vec_layers(out_vec_file)
         if out_vec_lyr in existing_lyrs:
             raise rsgispy.RSGISPyException(
                 f"Layer '{out_vec_lyr}' already exists in '{out_vec_file}' "
@@ -173,6 +186,7 @@ def polygonise_raster_to_vec_lyr(
         out_vec_lyr=out_vec_lyr,
         out_format=out_format,
         overwrite=replace_file,
+        out_compress=out_compress,
     )
 
 
@@ -186,6 +200,7 @@ def vectorise_pxls_to_pts(
     out_epsg_code: Optional[int] = None,
     del_exist_vec: bool = False,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create a point vector layer at the centre of every pixel in ``input_img``
@@ -202,6 +217,11 @@ def vectorise_pxls_to_pts(
                           (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar across raster
                      windows (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -254,6 +274,7 @@ def vectorise_pxls_to_pts(
             out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
             out_format=out_format,
             overwrite=del_exist_vec,
+            out_compress=out_compress,
         )
 
 
@@ -266,6 +287,7 @@ def extract_img_footprint(
     tmp_dir: Optional[str] = None,
     reproj_to: Optional[CRSLike] = None,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Extract the valid-data polygon footprint of ``input_img`` and annotate each
@@ -283,6 +305,11 @@ def extract_img_footprint(
                       for the output footprint layer.
     :param use_pbar: If ``True``, display a tqdm progress bar during mask
                      generation (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -356,6 +383,7 @@ def extract_img_footprint(
         out_vec_lyr=out_lyr,
         out_format=out_format,
         overwrite=True,
+        out_compress=out_compress,
     )
 
 
@@ -371,6 +399,7 @@ def create_poly_vec_for_lst_bboxs(
     max_y_col: int = 3,
     ignore_rows: int = 0,
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create a polygon vector layer from bounding boxes stored one per row in a
@@ -388,6 +417,11 @@ def create_poly_vec_for_lst_bboxs(
     :param ignore_rows: Number of header rows to skip (Default = ``0``).
     :param del_exist_vec: If ``True``, delete existing ``out_vec_file`` first
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -426,6 +460,7 @@ def create_poly_vec_for_lst_bboxs(
         epsg_code=epsg_code,
         bboxs=bboxes,
         overwrite=del_exist_vec,
+        out_compress=out_compress,
     )
 
 
@@ -438,6 +473,7 @@ def create_poly_vec_bboxs(
     atts: Optional[Dict[str, Sequence[Any]]] = None,
     att_types: Optional[Dict[str, Sequence[Any]]] = None,
     overwrite: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create a polygon vector layer from a sequence of ``(MinX, MaxX, MinY, MaxY)``
@@ -453,6 +489,11 @@ def create_poly_vec_bboxs(
     :param overwrite: If ``True``, replace an existing output file; set
                       ``False`` when adding multiple layers to a GeoPackage
                       (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -483,6 +524,7 @@ def create_poly_vec_bboxs(
         out_vec_lyr=vec_lyr,
         out_format=out_format,
         overwrite=overwrite,
+        out_compress=out_compress,
     )
 
 
@@ -497,6 +539,7 @@ def define_grid(
     out_epsg_code: Optional[int] = None,
     utm_grid: bool = False,
     utm_hemi: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create a regular polygon grid covering ``bbox``, optionally reprojected to
@@ -519,6 +562,11 @@ def define_grid(
     :param utm_hemi: If ``True``, distinguish Southern hemisphere UTM zones
                      (``utmXXs``); otherwise always use Northern hemisphere
                      (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -561,6 +609,7 @@ def define_grid(
             epsg_code=target_epsg,
             bboxs=grid_bboxes,
             overwrite=True,
+            out_compress=out_compress,
         )
         return
 
@@ -593,12 +642,21 @@ def define_grid(
                 out_epsg_code=utm_epsg,
                 utm_grid=False,
                 utm_hemi=False,
+                out_compress=out_compress,
             )
             return
 
     utm_zone_bboxs: List[Tuple[int, Tuple[float, float, float, float]]] = []
     for sub_wb in split_wgs84:
         utm_zone_bboxs.extend(rsgispy.tools.utm.split_wgs84_bbox_utm_zones(sub_wb))
+
+    if (
+        is_geoparquet_format(out_format) or is_geoparquet_file(out_vec_file)
+    ) and (len(utm_zone_bboxs) > 1):
+        raise rsgispy.RSGISPyException(
+            "GeoParquet does not support multiple layers in a single file; "
+            "multi-UTM-zone grids require a multi-layer format such as GPKG."
+        )
 
     first = True
     for zone_num, zone_bbox in utm_zone_bboxs:
@@ -614,6 +672,7 @@ def define_grid(
             epsg_code=utm_epsg,
             bboxs=grid_bboxes,
             overwrite=first,
+            out_compress=out_compress,
         )
         first = False
 
@@ -628,6 +687,7 @@ def write_pts_to_vec(
     atts: Optional[Dict[str, Sequence[Any]]] = None,
     att_types: Optional[Dict[str, Sequence[Any]]] = None,
     replace: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Write X/Y point coordinates and optional attributes to a vector layer.
@@ -642,6 +702,11 @@ def write_pts_to_vec(
     :param att_types: Optional mapping ``{'names': [...], 'types': [...]}``.
     :param replace: If ``True``, delete an existing ``out_vec_file`` before
                     writing (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -679,6 +744,7 @@ def write_pts_to_vec(
         out_vec_lyr=out_vec_lyr,
         out_format=out_format,
         overwrite=replace,
+        out_compress=out_compress,
     )
 
 
@@ -693,6 +759,7 @@ def create_bboxs_for_pts(
     del_exist_vec: bool = False,
     epsg_code: Optional[int] = None,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create rectangular polygon bounding boxes centred on each point in an input
@@ -710,6 +777,11 @@ def create_bboxs_for_pts(
     :param epsg_code: Optional EPSG code overriding the input layer CRS.
     :param use_pbar: If ``True``, display a tqdm progress bar across points
                      (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -748,6 +820,7 @@ def create_bboxs_for_pts(
         epsg_code=gdf.crs,
         bboxs=out_bboxs,
         overwrite=False,
+        out_compress=out_compress,
     )
 
 
@@ -761,6 +834,7 @@ def create_wgs84_vec_grid(
     overlap: Optional[float] = None,
     tile_names_col: str = "tile_names",
     tile_name_prefix: str = "",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create a regular WGS84 (``EPSG:4326``) grid of polygon tiles named by
@@ -777,6 +851,11 @@ def create_wgs84_vec_grid(
                            (Default = ``'tile_names'``).
     :param tile_name_prefix: Prefix prepended to every tile name
                              (Default = ``''``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -841,6 +920,7 @@ def create_wgs84_vec_grid(
         atts={tile_names_col: tile_names},
         att_types={"names": [tile_names_col], "types": [str]},
         overwrite=True,
+        out_compress=out_compress,
     )
 
 
@@ -853,6 +933,7 @@ def create_vec_for_imgs(
     out_file_ext: Optional[str] = None,
     del_exist_vec: bool = False,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> List[str]:
     """
     Create a single-feature geometry vector file (point at centre, diagonal
@@ -872,6 +953,11 @@ def create_vec_for_imgs(
                           (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar across images
                      (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
     :return: List of created output vector file paths.
 
     .. code:: python
@@ -935,6 +1021,7 @@ def create_vec_for_imgs(
             out_vec_lyr=basename,
             out_format=fmt,
             overwrite=del_exist_vec,
+            out_compress=out_compress,
         )
         out_files.append(out_vec_file)
 
@@ -962,6 +1049,7 @@ def create_hex_grid_bbox(
     out_vec_file: str,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create an H3 hexagon grid covering ``bbox`` and export it in ``bbox_epsg``.
@@ -973,6 +1061,11 @@ def create_hex_grid_bbox(
     :param out_vec_file: Output vector file path.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -1012,6 +1105,7 @@ def create_hex_grid_bbox(
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
         out_format=out_format,
         overwrite=True,
+        out_compress=out_compress,
     )
 
 
@@ -1062,6 +1156,7 @@ def create_hex_grid_polys(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create an H3 hexagon grid covering all polygons in ``vec_in_file`` and
@@ -1075,6 +1170,11 @@ def create_hex_grid_polys(
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param use_pbar: If ``True``, display a tqdm progress bar across polygons
                      (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -1117,6 +1217,7 @@ def create_hex_grid_polys(
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
         out_format=out_format,
         overwrite=True,
+        out_compress=out_compress,
     )
 
 
@@ -1131,6 +1232,7 @@ def create_random_pts_in_radius(
     out_format: str = "GPKG",
     rnd_seed: Optional[int] = None,
     n_pts_multi_bbox: float = 3.0,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Generate ``n_pts`` uniformly distributed random points inside a circle of
@@ -1148,6 +1250,11 @@ def create_random_pts_in_radius(
     :param rnd_seed: Optional random seed for reproducibility.
     :param n_pts_multi_bbox: Oversampling factor within the enclosing square
                              (Default = ``3.0``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -1199,6 +1306,7 @@ def create_random_pts_in_radius(
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
         out_format=out_format,
         overwrite=True,
+        out_compress=out_compress,
     )
 
 
@@ -1210,6 +1318,7 @@ def create_random_pts_in_bbox(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     rnd_seed: Optional[int] = None,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Generate ``n_pts`` uniformly distributed random points within
@@ -1222,6 +1331,11 @@ def create_random_pts_in_bbox(
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param rnd_seed: Optional random seed for reproducibility.
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -1251,4 +1365,5 @@ def create_random_pts_in_bbox(
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
         out_format=out_format,
         overwrite=True,
+        out_compress=out_compress,
     )

@@ -23,6 +23,8 @@ from rsgispy.vectorprocess import (
     bbox_to_rsgis,
     check_format_name,
     extract_geom_pts,
+    is_geoparquet_file,
+    is_geoparquet_format,
     parse_crs_input,
     prepare_out_vec_file,
     read_vec_gdf,
@@ -75,6 +77,7 @@ def create_copy_vec_lyr(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     replace: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create a copy of an input vector layer.
@@ -86,6 +89,11 @@ def create_copy_vec_lyr(
     :param out_format: Output vector format (Default = ``'GPKG'``).
     :param replace: If ``True``, delete ``out_vec_file`` before writing
                     (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -105,6 +113,7 @@ def create_copy_vec_lyr(
         out_vec_lyr=out_lyr,
         out_format=out_format,
         overwrite=replace,
+        out_compress=out_compress,
     )
 
 
@@ -118,6 +127,7 @@ def vector_translate(
     src_srs: Optional[CRSLike] = None,
     dst_srs: Optional[CRSLike] = None,
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Translate a vector layer between formats and optionally assign or reproject
@@ -136,6 +146,7 @@ def vector_translate(
                     ``pyproj.CRS``) to reproject the layer to.
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -168,9 +179,22 @@ def vector_translate(
 
     fmt = check_format_name(out_format)
     out_lyr = resolve_out_lyr_name(out_vec_file, out_vec_lyr or lyr_name)
+    is_pq = is_geoparquet_format(fmt) or is_geoparquet_file(out_vec_file)
     is_gpkg = fmt == "GPKG" or out_vec_file.lower().endswith(".gpkg")
 
     if access_mode == "append" and os.path.exists(out_vec_file):
+        if is_pq:
+            existing_gdf = read_vec_gdf(out_vec_file)
+            merged_gdf = _concat_gdfs([existing_gdf, gdf])
+            write_vec_gdf(
+                merged_gdf,
+                out_vec_file=out_vec_file,
+                out_vec_lyr=out_lyr,
+                out_format=fmt,
+                overwrite=True,
+                out_compress=out_compress,
+            )
+            return
         if is_gpkg:
             existing_lyrs = get_vec_lyrs_lst(out_vec_file)
             if out_lyr in existing_lyrs:
@@ -189,6 +213,7 @@ def vector_translate(
         out_vec_lyr=out_lyr,
         out_format=fmt,
         overwrite=overwrite_file,
+        out_compress=out_compress,
     )
 
 
@@ -203,6 +228,7 @@ def reproj_vec_lyr(
     in_epsg_code: Optional[int] = None,
     in_wkt_str: Optional[str] = None,
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Reproject a vector layer to a target EPSG code or WKT CRS string using
@@ -219,6 +245,7 @@ def reproj_vec_lyr(
     :param in_wkt_str: Optional input WKT CRS override applied before reprojecting.
     :param del_exist_vec: If ``True``, delete existing output file first
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -260,6 +287,7 @@ def reproj_vec_lyr(
         out_vec_file=out_vec_file,
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr or lyr_name),
         out_format=out_format,
+        out_compress=out_compress,
     )
 
 
@@ -271,6 +299,7 @@ def reproj_wgs84_vec_to_utm(
     use_hemi: bool = False,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> int:
     """
     Reproject a WGS84 (``EPSG:4326``) vector layer to the UTM zone containing its
@@ -286,6 +315,7 @@ def reproj_wgs84_vec_to_utm(
     :param out_format: Output vector format (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, delete existing output file first
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
     :return: Target UTM EPSG code used for reprojection.
 
     .. code:: python
@@ -324,6 +354,7 @@ def reproj_wgs84_vec_to_utm(
         vec_lyr=lyr_name,
         in_epsg_code=4326,
         del_exist_vec=del_exist_vec,
+        out_compress=out_compress,
     )
     return out_epsg
 
@@ -335,6 +366,7 @@ def redefine_vec_lyr_proj(
     out_vec_file: str,
     out_vec_lyr: str,
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Redefine the CRS metadata of a vector layer in place of reprojecting
@@ -346,6 +378,7 @@ def redefine_vec_lyr_proj(
     :param out_vec_file: Output vector file path.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -362,6 +395,7 @@ def redefine_vec_lyr_proj(
         out_vec_file=out_vec_file,
         out_vec_lyr=out_vec_lyr,
         out_format=out_format,
+        out_compress=out_compress,
     )
 
 
@@ -373,6 +407,7 @@ def merge_vec_files(
     out_epsg: Optional[int] = None,
     remove_cols: Optional[Sequence[str]] = None,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Merge all layers from a sequence of vector files into a single output
@@ -385,6 +420,7 @@ def merge_vec_files(
     :param out_epsg: Optional target EPSG code to unify differing projections.
     :param remove_cols: Optional column names to drop during merging.
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -426,6 +462,7 @@ def merge_vec_files(
         out_vec_file=out_vec_file,
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
         out_format=out_format,
+        out_compress=out_compress,
     )
 
 
@@ -437,6 +474,7 @@ def merge_vec_lyrs(
     out_epsg: Optional[int] = None,
     remove_cols: Optional[Sequence[str]] = None,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Merge specified ``{'file': ..., 'layer': ...}`` entries into a single
@@ -449,6 +487,7 @@ def merge_vec_lyrs(
     :param out_epsg: Optional target EPSG code to unify differing projections.
     :param remove_cols: Optional column names to drop during merging.
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -494,6 +533,7 @@ def merge_vec_lyrs(
         out_vec_file=out_vec_file,
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
         out_format=out_format,
+        out_compress=out_compress,
     )
 
 
@@ -505,6 +545,7 @@ def merge_vec_file_lyrs(
     out_epsg: Optional[int] = None,
     remove_cols: Optional[Sequence[str]] = None,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Merge all layers inside a single multi-layer vector file into a single
@@ -517,6 +558,7 @@ def merge_vec_file_lyrs(
     :param out_epsg: Optional target EPSG code.
     :param remove_cols: Optional column names to drop during merging.
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -535,6 +577,7 @@ def merge_vec_file_lyrs(
         out_epsg=out_epsg,
         remove_cols=remove_cols,
         use_pbar=use_pbar,
+        out_compress=out_compress,
     )
 
 
@@ -545,6 +588,7 @@ def merge_to_multi_lyr_vec(
     overwrite: bool = True,
     rename_dup_lyrs: bool = False,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Combine multiple input vector files or :class:`VecLayersInfoObj` descriptors
@@ -562,6 +606,8 @@ def merge_to_multi_lyr_vec(
                             raise :class:`rsgispy.RSGISPyException`
                             (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (when writing a
+                         single-layer GeoParquet file).
 
     .. code:: python
 
@@ -612,6 +658,13 @@ def merge_to_multi_lyr_vec(
                     )
                 )
 
+    is_pq = is_geoparquet_format(out_format) or is_geoparquet_file(out_vec_file)
+    if is_pq and len(entries) > 1:
+        raise rsgispy.RSGISPyException(
+            "GeoParquet does not support multiple layers in a single file; "
+            "use merge_vec_files or GPKG format."
+        )
+
     pbar_cls = rsgispy.get_tqdm()
     for entry in pbar_cls(entries, disable=not use_pbar):
         assert entry.vec_file is not None
@@ -631,6 +684,7 @@ def merge_to_multi_lyr_vec(
                 out_vec_file=out_vec_file,
                 out_vec_lyr=out_lyr,
                 out_format=out_format,
+                out_compress=out_compress,
             )
             seen_out_lyrs.add(out_lyr)
 
@@ -729,6 +783,7 @@ def merge_utm_vecs_wgs84(
     s_hemi_utm_file: Optional[str] = None,
     width_thres: float = 350.0,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Merge input vector files projected in UTM zones into a single WGS84
@@ -746,6 +801,7 @@ def merge_utm_vecs_wgs84(
     :param width_thres: Longitude width threshold in degrees for unwrapping
                         antimeridian polygons (Default = ``350.0``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -829,6 +885,7 @@ def merge_utm_vecs_wgs84(
             out_vec_file=out_vec_file,
             out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
             out_format=out_format,
+            out_compress=out_compress,
         )
 
 
@@ -841,6 +898,7 @@ def split_vec_lyr(
     out_vec_base: str,
     out_vec_ext: str,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> List[str]:
     """
     Split an input vector layer into sequential output files each containing at
@@ -854,6 +912,7 @@ def split_vec_lyr(
     :param out_vec_base: Output filename and layer name prefix.
     :param out_vec_ext: Output file extension without leading dot (e.g., ``'gpkg'``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting.
     :return: List of created output vector file paths.
 
     .. code:: python
@@ -887,6 +946,7 @@ def split_vec_lyr(
             out_vec_file=out_file,
             out_vec_lyr=out_lyr,
             out_format=out_format,
+            out_compress=out_compress,
         )
         out_files.append(out_file)
     return out_files
@@ -898,6 +958,7 @@ def split_feats_to_mlyrs(
     out_vec_file: str,
     out_format: str = "GPKG",
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Split every feature in an input vector layer into its own named layer
@@ -909,6 +970,8 @@ def split_feats_to_mlyrs(
     :param out_format: Output vector format supporting multiple layers
                        (Default = ``'GPKG'``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (when input
+                         contains at most one feature).
 
     .. code:: python
 
@@ -918,7 +981,14 @@ def split_feats_to_mlyrs(
             "polys.gpkg", "polys", "polys_multi.gpkg"
         )
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
+    is_pq = is_geoparquet_format(out_format) or is_geoparquet_file(out_vec_file)
+    if is_pq and len(gdf) > 1:
+        raise rsgispy.RSGISPyException(
+            "GeoParquet does not support multiple layers in a single file; "
+            "use split_vec_lyr instead."
+        )
     pbar_cls = rsgispy.get_tqdm()
     for i in pbar_cls(range(len(gdf)), disable=not use_pbar):
         row_gdf = gdf.iloc[[i]]
@@ -927,6 +997,7 @@ def split_feats_to_mlyrs(
             out_vec_file=out_vec_file,
             out_vec_lyr=f"veclyr_{i}",
             out_format=out_format,
+            out_compress=out_compress,
         )
 
 
@@ -942,6 +1013,7 @@ def split_by_attribute(
     dissolve: bool = False,
     chk_lyr_names: bool = True,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Split a vector layer by unique values in ``split_col_name`` into either
@@ -966,6 +1038,7 @@ def split_by_attribute(
                           punctuation from split layer/file names
                           (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting.
 
     .. code:: python
 
@@ -984,6 +1057,15 @@ def split_by_attribute(
         raise rsgispy.RSGISPyException(
             "out_vec_file must be specified when multi_layers=True."
         )
+    fmt = check_format_name(out_format)
+    if multi_layers and (
+        is_geoparquet_format(fmt)
+        or (out_vec_file is not None and is_geoparquet_file(out_vec_file))
+    ):
+        raise rsgispy.RSGISPyException(
+            "GeoParquet does not support multiple layers in a single file; "
+            "set multi_layers=False to write separate files."
+        )
     if (not multi_layers) and ((out_file_path is None) or (out_file_ext is None)):
         raise rsgispy.RSGISPyException(
             "out_file_path and out_file_ext must be specified when multi_layers=False."
@@ -992,7 +1074,6 @@ def split_by_attribute(
     base_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
     validate_columns_exist(base_gdf, [split_col_name])
     unq_vals = base_gdf[split_col_name].unique()
-    fmt = check_format_name(out_format)
 
     pbar_cls = rsgispy.get_tqdm()
     for val in pbar_cls(unq_vals, disable=not use_pbar):
@@ -1026,6 +1107,7 @@ def split_by_attribute(
                 out_vec_file=out_vec_file,
                 out_vec_lyr=val_str,
                 out_format="GPKG",
+                out_compress=out_compress,
             )
         else:
             assert out_file_path is not None
@@ -1039,4 +1121,5 @@ def split_by_attribute(
                 out_vec_file=c_out_file,
                 out_vec_lyr=c_out_lyr,
                 out_format=fmt,
+                out_compress=out_compress,
             )

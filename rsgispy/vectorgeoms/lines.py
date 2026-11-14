@@ -157,6 +157,7 @@ def create_orthg_lines(
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create a set of lines orthogonal to the lines in an input vector layer.
@@ -174,6 +175,11 @@ def create_orthg_lines(
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
     :param use_pbar: Show progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -250,7 +256,13 @@ def create_orthg_lines(
             geometry=geopandas.GeoSeries([], crs=in_gdf.crs),
             crs=in_gdf.crs,
         )
-    write_vec_gdf(out_gdf, out_vec_file, out_lyr, out_format=out_format)
+    write_vec_gdf(
+        out_gdf,
+        out_vec_file,
+        out_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def pandas_int_empty() -> numpy.ndarray:
@@ -272,6 +284,7 @@ def split_lines_to_reg_pts(
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Split a line vector layer into points placed at regular intervals
@@ -289,6 +302,11 @@ def split_lines_to_reg_pts(
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
     :param use_pbar: Show progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -363,7 +381,13 @@ def split_lines_to_reg_pts(
             geometry=geopandas.GeoSeries([], crs=in_gdf.crs),
             crs=in_gdf.crs,
         )
-    write_vec_gdf(out_gdf, out_vec_file, out_lyr, out_format=out_format)
+    write_vec_gdf(
+        out_gdf,
+        out_vec_file,
+        out_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def _calc_line_boundary_intersections(
@@ -380,6 +404,7 @@ def _calc_line_boundary_intersections(
     del_exist_vec: bool,
     mode: str,
     use_pbar: bool,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Shared implementation for line-to-object-boundary intersection modes:
@@ -511,7 +536,13 @@ def _calc_line_boundary_intersections(
             crs=objs_gdf.crs,
         )
 
-    write_vec_gdf(out_gdf, out_vec_file, out_lyr, out_format=out_format)
+    write_vec_gdf(
+        out_gdf,
+        out_vec_file,
+        out_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def closest_line_intersection(
@@ -527,6 +558,7 @@ def closest_line_intersection(
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Intersect each line with the boundaries of objects in ``vec_objs_file``,
@@ -546,6 +578,11 @@ def closest_line_intersection(
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
     :param use_pbar: Show progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -571,6 +608,7 @@ def closest_line_intersection(
         del_exist_vec=del_exist_vec,
         mode="closest",
         use_pbar=use_pbar,
+        out_compress=out_compress,
     )
 
 
@@ -587,6 +625,7 @@ def line_intersection_range(
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Intersect each line with the boundaries of objects in ``vec_objs_file``,
@@ -606,6 +645,11 @@ def line_intersection_range(
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
     :param use_pbar: Show progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -631,6 +675,7 @@ def line_intersection_range(
         del_exist_vec=del_exist_vec,
         mode="range",
         use_pbar=use_pbar,
+        out_compress=out_compress,
     )
 
 
@@ -647,6 +692,7 @@ def scnd_line_intersection_range(
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Intersect each line with the boundaries of objects in ``vec_objs_file``,
@@ -666,6 +712,11 @@ def scnd_line_intersection_range(
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
     :param use_pbar: Show progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -691,6 +742,7 @@ def scnd_line_intersection_range(
         del_exist_vec=del_exist_vec,
         mode="second",
         use_pbar=use_pbar,
+        out_compress=out_compress,
     )
 
 
@@ -701,6 +753,7 @@ def pts_to_line_geoms(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     sort_col: Optional[str] = None,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Convert a vector layer of points to a single line geometry. If the input
@@ -714,6 +767,11 @@ def pts_to_line_geoms(
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param sort_col: Optional attribute column name used to sort points prior
                      to creating the line.
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -746,7 +804,13 @@ def pts_to_line_geoms(
     line_gdf = geopandas.GeoDataFrame(
         {"id": [1], "geometry": [line_geom]}, crs=data_gdf.crs
     )
-    write_vec_gdf(line_gdf, out_vec_file, out_lyr, out_format=out_format)
+    write_vec_gdf(
+        line_gdf,
+        out_vec_file,
+        out_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def create_angle_lines_from_points(
@@ -758,6 +822,7 @@ def create_angle_lines_from_points(
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Generate radial line segments of length ``line_len`` at angular increments
@@ -771,6 +836,11 @@ def create_angle_lines_from_points(
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param use_pbar: Show progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -807,7 +877,13 @@ def create_angle_lines_from_points(
     out_gdf = geopandas.GeoDataFrame(
         {"pt_id": pt_ids, "geometry": geoms}, geometry="geometry", crs=pts_gdf.crs
     )
-    write_vec_gdf(out_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        out_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def estimate_future_coastline(
@@ -823,6 +899,7 @@ def estimate_future_coastline(
     out_format: str = "GeoJSON",
     trans_pt_order_land_first: bool = False,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Estimate a future coastline position using baseline coastline geometry and
@@ -842,6 +919,11 @@ def estimate_future_coastline(
                                       land-to-sea; ``False`` if sea-to-land
                                       (Default = ``False``).
     :param use_pbar: Show progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -931,7 +1013,13 @@ def estimate_future_coastline(
         geometry="geometry",
         crs=trans_data_gdf.crs,
     )
-    write_vec_gdf(out_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        out_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def create_lines_vec(
@@ -941,6 +1029,7 @@ def create_lines_vec(
     epsg_code: CRSLike,
     lines: Sequence[Sequence[Tuple[float, float]]],
     overwrite: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Write a sequence of polylines (each given as ``[(x, y), ...]`` vertices)
@@ -954,6 +1043,11 @@ def create_lines_vec(
     :param overwrite: If ``True``, delete an existing ``vec_file`` first;
                       set ``False`` when appending layers to a GeoPackage
                       (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -983,6 +1077,7 @@ def create_lines_vec(
         out_vec_lyr=vec_lyr,
         out_format=out_format,
         overwrite=overwrite,
+        out_compress=out_compress,
     )
 
 
@@ -993,6 +1088,7 @@ def create_img_transects(
     x_intervals: Optional[Sequence[float]] = None,
     y_intervals: Optional[Sequence[float]] = None,
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create axis-aligned transect lines across ``input_img`` at fractional
@@ -1006,6 +1102,11 @@ def create_img_transects(
     :param y_intervals: Sequence of fractional positions ``[0..1]`` along Y for
                         horizontal (East-West) transects.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -1057,4 +1158,5 @@ def create_img_transects(
         epsg_code=img_crs,
         lines=out_lines,
         overwrite=True,
+        out_compress=out_compress,
     )

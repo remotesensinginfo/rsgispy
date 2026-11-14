@@ -635,6 +635,7 @@ def calc_simple_roughness_profile_metrics(
     detrend_poly_order: int = 1,
     export_plot_path: Optional[str] = None,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Calculate profile roughness metrics (RA, RR, RQ, MIF, RV, RP, RZ, RSK, RKU)
@@ -657,6 +658,11 @@ def calc_simple_roughness_profile_metrics(
     :param detrend_poly_order: Polynomial order used to detrend the profiles.
     :param export_plot_path: Optional directory to save diagnostic PNG plots.
     :param use_pbar: Show a progress bar while processing points (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -692,6 +698,7 @@ def calc_simple_roughness_profile_metrics(
         y_box_col=y_box_col,
         no_data_val=no_data_val,
         use_pbar=use_pbar,
+        out_compress=out_compress,
     )
 
 
@@ -711,6 +718,7 @@ def calc_munro_roughness_profile_metrics(
     detrend_poly_order: int = 1,
     export_plot_path: Optional[str] = None,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Calculate Munro (1989) :math:`z_0` roughness metrics along the X and Y axes
@@ -732,6 +740,11 @@ def calc_munro_roughness_profile_metrics(
     :param detrend_poly_order: Polynomial order used to detrend the profiles.
     :param export_plot_path: Optional directory to save diagnostic PNG plots.
     :param use_pbar: Show a progress bar while processing points (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -767,6 +780,7 @@ def calc_munro_roughness_profile_metrics(
         y_box_col=y_box_col,
         no_data_val=no_data_val,
         use_pbar=use_pbar,
+        out_compress=out_compress,
     )
 
 
@@ -785,6 +799,7 @@ def calc_smith_roughness_metrics(
     detrend: bool = True,
     export_plot_path: Optional[str] = None,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Calculate Smith et al. (2016) directional :math:`z_0` roughness metrics
@@ -805,6 +820,11 @@ def calc_smith_roughness_metrics(
     :param detrend: Whether to plane-detrend the surface. Default: ``True``.
     :param export_plot_path: Optional directory to save diagnostic PNG plots.
     :param use_pbar: Show a progress bar while processing points (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -839,6 +859,7 @@ def calc_smith_roughness_metrics(
         y_box_col=y_box_col,
         no_data_val=no_data_val,
         use_pbar=use_pbar,
+        out_compress=out_compress,
     )
 
 
@@ -857,6 +878,7 @@ def calc_all_roughness_profile_metrics(
     detrend: bool = True,
     detrend_poly_order: int = 1,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Calculate all roughness metrics (:class:`CalcProfileRoughMetrics`,
@@ -878,6 +900,11 @@ def calc_all_roughness_profile_metrics(
     :param detrend: Whether to detrend the surfaces/profiles. Default: ``True``.
     :param detrend_poly_order: Polynomial order used to detrend 1D profiles.
     :param use_pbar: Show a progress bar while processing points (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -915,4 +942,5 @@ def calc_all_roughness_profile_metrics(
         y_box_col=y_box_col,
         no_data_val=no_data_val,
         use_pbar=use_pbar,
+        out_compress=out_compress,
     )

@@ -13,6 +13,7 @@ import rsgispy
 import rsgispy.tools.stats
 from rsgispy.vectorprocess import (
     cast_col_data,
+    infer_parquet_compression,
     read_vec_gdf,
     to_python_scalar,
     validate_columns_exist,
@@ -94,6 +95,7 @@ def write_vec_column(
     att_col_datatype: Any,
     att_col_data: Sequence[Any],
     out_format: Optional[str] = None,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Write or update an attribute column in an existing vector file using
@@ -108,6 +110,11 @@ def write_vec_column(
     :param att_col_data: Sequence of values matching the feature count.
     :param out_format: Optional output driver name (inferred from file
                        extension when ``None``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -120,7 +127,13 @@ def write_vec_column(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     gdf = read_vec_gdf(out_vec_file, out_vec_lyr)
     write_vec_column_to_layer(gdf, att_column, att_col_datatype, att_col_data)
-    write_vec_gdf(gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def read_vec_column(
@@ -192,6 +205,7 @@ def drop_vec_cols(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     chk_cols_present: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Remove specified columns from a vector layer and write a new vector file.
@@ -204,6 +218,11 @@ def drop_vec_cols(
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param chk_cols_present: If ``True``, silently ignore column names not
                              present in the layer (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -226,7 +245,13 @@ def drop_vec_cols(
     if cols_to_drop:
         data_gdf = data_gdf.drop(columns=cols_to_drop)
 
-    write_vec_gdf(data_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        data_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def rename_vec_cols(
@@ -236,6 +261,7 @@ def rename_vec_cols(
     out_vec_file: str,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Rename columns in a vector layer and write a new vector file.
@@ -246,6 +272,11 @@ def rename_vec_cols(
     :param out_vec_file: Output vector file path.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -258,7 +289,13 @@ def rename_vec_cols(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     data_gdf = data_gdf.rename(columns=rname_cols_lut)
-    write_vec_gdf(data_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        data_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def sort_vec_lyr(
@@ -269,6 +306,7 @@ def sort_vec_lyr(
     sort_by: Union[str, List[str]],
     ascending: Union[bool, List[bool]],
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Sort features in a vector layer by one or more attribute columns.
@@ -281,6 +319,11 @@ def sort_vec_lyr(
     :param ascending: Boolean or list of booleans matching ``sort_by``
                       (``True`` = ascending, ``False`` = descending).
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -306,7 +349,13 @@ def sort_vec_lyr(
     validate_columns_exist(base_gdf, cols_to_check)
 
     sorted_gdf = base_gdf.sort_values(by=sort_by, ascending=ascending)
-    write_vec_gdf(sorted_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        sorted_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def get_unq_col_values(
@@ -442,6 +491,7 @@ def export_vec_attrs_to_parquet(
     vec_lyr: Optional[str],
     output_file: str,
     gzip_output: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Export the attribute table of a vector layer (excluding geometry) to a
@@ -450,7 +500,13 @@ def export_vec_attrs_to_parquet(
     :param vec_file: Input vector file path.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param output_file: Output Parquet file path.
-    :param gzip_output: If ``True``, compress using ``gzip`` (Default = ``True``).
+    :param gzip_output: If ``True`` and ``out_compress`` is ``None``, compress
+                        using ``gzip`` (Default = ``True``).
+    :param out_compress: Optional Parquet compression setting (overrides
+                         ``gzip_output`` when provided: ``True`` for ``'snappy'``,
+                         ``False``/``'none'`` for uncompressed, or codec name
+                         ``'snappy'``, ``'gzip'``, ``'zstd'``, ``'brotli'``,
+                         ``'lz4'``).
 
     .. code:: python
 
@@ -463,11 +519,14 @@ def export_vec_attrs_to_parquet(
     data_df = read_vec_gdf(vec_file, vec_lyr)
     if "geometry" in data_df.columns:
         data_df = data_df.drop(columns=["geometry"])
+    if out_compress is not None:
+        comp = infer_parquet_compression(output_file, out_compress=out_compress)
+    elif gzip_output:
+        comp = "gzip"
+    else:
+        comp = infer_parquet_compression(output_file, out_compress=None)
     try:
-        if gzip_output:
-            data_df.to_parquet(output_file, compression="gzip")
-        else:
-            data_df.to_parquet(output_file)
+        data_df.to_parquet(output_file, compression=comp)
     except ImportError as err:
         raise rsgispy.RSGISPyException(
             "Writing Parquet files requires 'pyarrow' or 'fastparquet'."

@@ -38,6 +38,7 @@ def calc_vec_area(
     out_vec_file: str,
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Calculate the area of each polygon feature and store it in ``out_col``.
@@ -48,6 +49,11 @@ def calc_vec_area(
     :param out_vec_file: Output vector file path.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -60,7 +66,13 @@ def calc_vec_area(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     data_gdf[out_col] = data_gdf.geometry.area
-    write_vec_gdf(data_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        data_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def calc_vec_length(
@@ -70,6 +82,7 @@ def calc_vec_length(
     out_vec_file: str,
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Calculate the length (or perimeter) of each line/polygon feature and store
@@ -81,6 +94,11 @@ def calc_vec_length(
     :param out_vec_file: Output vector file path.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -93,7 +111,13 @@ def calc_vec_length(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     data_gdf[out_col] = data_gdf.geometry.length
-    write_vec_gdf(data_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        data_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def get_poly_hole_area(
@@ -152,6 +176,7 @@ def calc_vec_pt_dist_angle(
     y_centre: Optional[float] = None,
     angle_col: str = "angle",
     dist_col: str = "dist",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Calculate Euclidean distance and clockwise-from-north azimuth angle
@@ -169,6 +194,11 @@ def calc_vec_pt_dist_angle(
     :param y_centre: Optional reference Y coordinate.
     :param angle_col: Output azimuth column name (Default = ``'angle'``).
     :param dist_col: Output distance column name (Default = ``'dist'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -213,7 +243,13 @@ def calc_vec_pt_dist_angle(
     angles[angles_secs == 3] = -angles[angles_secs == 3] + 90.0
 
     data_gdf[angle_col] = angles
-    write_vec_gdf(data_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        data_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def calc_near_dist_to_feats(
@@ -225,6 +261,7 @@ def calc_near_dist_to_feats(
     out_vec_lyr: Optional[str],
     out_col: str = "dist",
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Compute nearest-feature distance from each feature in ``vec_file`` to
@@ -238,6 +275,11 @@ def calc_near_dist_to_feats(
     :param out_vec_lyr: Output vector layer name.
     :param out_col: Output distance column name (Default = ``'dist'``).
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -259,7 +301,13 @@ def calc_near_dist_to_feats(
         rsuffix="right",
         exclusive=True,
     )
-    write_vec_gdf(data_dist_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        data_dist_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def count_pt_intersects(
@@ -274,6 +322,7 @@ def count_pt_intersects(
     tmp_col_name: str = "tmp_join_fid",
     vec_in_epsg: Optional[int] = None,
     vec_pts_epsg: Optional[int] = None,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Count the number of points from ``vec_pts_file`` intersecting each polygon
@@ -292,6 +341,11 @@ def count_pt_intersects(
     :param tmp_col_name: Temporary join ID column name (Default = ``'tmp_join_fid'``).
     :param vec_in_epsg: Optional EPSG code override for ``vec_in_file``.
     :param vec_pts_epsg: Optional EPSG code override for ``vec_pts_file``.
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -328,7 +382,13 @@ def count_pt_intersects(
     ]
     in_count_gdf = in_count_gdf.drop(columns=drop_after)
 
-    write_vec_gdf(in_count_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        in_count_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def calc_npts_in_radius(
@@ -340,6 +400,7 @@ def calc_npts_in_radius(
     out_format: str = "GPKG",
     out_col_name: str = "n_pts_r",
     n_cores: int = 1,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Count how many other points lie within ``radius`` of each point feature.
@@ -353,6 +414,11 @@ def calc_npts_in_radius(
     :param out_col_name: Output neighbour count column (Default = ``'n_pts_r'``).
     :param n_cores: Number of worker threads for KD-tree queries (``-1`` uses
                     all cores; Default = ``1``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -379,7 +445,13 @@ def calc_npts_in_radius(
         return_length=True,
     )
     in_gdf[out_col_name] = n_pts - 1
-    write_vec_gdf(in_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        in_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def count_feats_per_att_val(

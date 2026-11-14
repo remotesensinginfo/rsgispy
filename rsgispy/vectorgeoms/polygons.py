@@ -7,17 +7,19 @@ filtering, dissolving, thinning, and coordinate shifting) using ``geopandas``,
 """
 
 import os
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Union
 
 import geopandas
 import numpy
-import pyogrio
 import shapely.geometry
 
 import rsgispy
 import rsgispy.tools.files
 import rsgispy.tools.geometry
 from rsgispy.vectorprocess import (
+    is_geoparquet_file,
+    is_geoparquet_format,
+    list_vec_layers,
     prepare_out_vec_file,
     read_vec_gdf,
     resolve_out_lyr_name,
@@ -50,6 +52,7 @@ def convert_polys_to_lines_gp(
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     exterior_lines: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Convert a polygon vector layer to a line vector layer using ``geopandas``.
@@ -64,6 +67,11 @@ def convert_polys_to_lines_gp(
     :param exterior_lines: If ``True``, extract only outer exterior rings as
                            lines; otherwise include interior hole boundaries
                            (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -100,7 +108,13 @@ def convert_polys_to_lines_gp(
     else:
         out_gdf["geometry"] = data_gdf.geometry.boundary
 
-    write_vec_gdf(out_gdf, vec_line_file, out_lyr, out_format=out_format)
+    write_vec_gdf(
+        out_gdf,
+        vec_line_file,
+        out_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def calc_poly_centroids(
@@ -109,6 +123,7 @@ def calc_poly_centroids(
     out_format: str,
     out_vec_file: str,
     out_vec_lyr: Optional[str],
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create a point vector layer containing the centroid of each polygon feature.
@@ -118,6 +133,11 @@ def calc_poly_centroids(
     :param out_format: Output vector format driver (e.g., ``'GPKG'``).
     :param out_vec_file: Output centroid vector file path.
     :param out_vec_lyr: Output vector layer name.
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -127,10 +147,17 @@ def calc_poly_centroids(
             "polys.gpkg", "polys", "GPKG", "centroids.gpkg", "centroids"
         )
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     in_gdf = read_vec_gdf(vec_file, vec_lyr)
     out_gdf = in_gdf.copy()
     out_gdf["geometry"] = in_gdf.geometry.centroid
-    write_vec_gdf(out_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        out_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def explode_vec_lyr(
@@ -139,6 +166,7 @@ def explode_vec_lyr(
     out_vec_file: str,
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Explode multi-part geometries (e.g., ``MultiPolygon``,
@@ -151,6 +179,11 @@ def explode_vec_lyr(
     :param out_vec_lyr: Output vector layer name (can be ``None`` for single-layer
                         formats).
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -160,11 +193,16 @@ def explode_vec_lyr(
             "multi.gpkg", "polys", "single.gpkg", "polys"
         )
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     data_explode_gdf = data_gdf.explode(index_parts=False)
     if len(data_explode_gdf) > 0:
         write_vec_gdf(
-            data_explode_gdf, out_vec_file, out_vec_lyr, out_format=out_format
+            data_explode_gdf,
+            out_vec_file,
+            out_vec_lyr,
+            out_format=out_format,
+            out_compress=out_compress,
         )
 
 
@@ -174,6 +212,7 @@ def explode_vec_files(
     out_format: str = "GPKG",
     out_vec_ext: str = "gpkg",
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Explode multi-part geometries across every layer in each file of
@@ -186,6 +225,11 @@ def explode_vec_files(
     :param out_vec_ext: Output file extension without leading dot
                         (Default = ``'gpkg'``).
     :param use_pbar: Show progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -195,16 +239,30 @@ def explode_vec_files(
             ["a.gpkg", "b.gpkg"], output_dir="exploded"
         )
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     os.makedirs(output_dir, exist_ok=True)
     pbar_cls = rsgispy.get_tqdm()
     for vec_file in pbar_cls(
         in_vec_files, total=len(in_vec_files), disable=not use_pbar
     ):
-        lyrs = [str(row[0]) for row in pyogrio.list_layers(vec_file)]
+        lyrs = list_vec_layers(vec_file)
         basename = rsgispy.tools.files.get_file_basename(vec_file)
         out_vec_file = os.path.join(output_dir, f"{basename}.{out_vec_ext}")
+        if (
+            is_geoparquet_format(out_format) or is_geoparquet_file(out_vec_file)
+        ) and (len(lyrs) > 1):
+            raise rsgispy.RSGISPyException(
+                "GeoParquet does not support multiple layers in a single file."
+            )
         for lyr in lyrs:
-            explode_vec_lyr(vec_file, lyr, out_vec_file, lyr, out_format=out_format)
+            explode_vec_lyr(
+                vec_file,
+                lyr,
+                out_vec_file,
+                lyr,
+                out_format=out_format,
+                out_compress=out_compress,
+            )
 
 
 def simplify_geometries(
@@ -215,6 +273,7 @@ def simplify_geometries(
     out_vec_file: str,
     out_vec_lyr: Optional[str],
     del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Simplify vector geometries using the Douglas-Peucker algorithm with
@@ -228,6 +287,11 @@ def simplify_geometries(
     :param out_vec_lyr: Output vector layer name.
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -242,7 +306,13 @@ def simplify_geometries(
     in_gdf = read_vec_gdf(vec_file, vec_lyr)
     out_gdf = in_gdf.copy()
     out_gdf["geometry"] = in_gdf.geometry.simplify(tolerance, preserve_topology=True)
-    write_vec_gdf(out_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        out_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def _remove_holes_from_polygon(
@@ -271,6 +341,7 @@ def delete_polygon_holes(
     area_thres: Optional[float] = None,
     del_exist_vec: bool = False,
     use_pbar: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Delete interior holes from input polygons whose area is below or equal to
@@ -286,6 +357,11 @@ def delete_polygon_holes(
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
     :param use_pbar: Show progress bar (Default = ``True``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -322,7 +398,13 @@ def delete_polygon_holes(
 
     out_gdf = in_gdf.copy()
     out_gdf["geometry"] = out_geoms
-    write_vec_gdf(out_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        out_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def buffer_vec_layer_gp(
@@ -337,6 +419,7 @@ def buffer_vec_layer_gp(
     buf_sgl_sided: bool = False,
     cap_style: int = 1,
     join_style: int = 1,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Buffer the geometries in a vector layer using ``geopandas``.
@@ -359,6 +442,11 @@ def buffer_vec_layer_gp(
                       (Default = ``1``).
     :param join_style: Join style: ``1`` (round), ``2`` (mitre), ``3`` (bevel)
                        (Default = ``1``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -389,7 +477,13 @@ def buffer_vec_layer_gp(
         cap_style=cap_style,
         join_style=join_style,
     )
-    write_vec_gdf(data_gdf, out_vec_file, out_lyr, out_format=out_format)
+    write_vec_gdf(
+        data_gdf,
+        out_vec_file,
+        out_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def split_vec_by_grid(
@@ -400,6 +494,7 @@ def split_vec_by_grid(
     out_vec_file: str,
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Split an input vector layer along a regular grid of spacing
@@ -412,6 +507,11 @@ def split_vec_by_grid(
     :param out_vec_file: Output vector file path.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -437,7 +537,13 @@ def split_vec_by_grid(
         {"geometry": polygons}, crs=in_vec_gdf.crs
     )
     vec_split_gdf = in_vec_gdf.overlay(grid_gdf, how="intersection")
-    write_vec_gdf(vec_split_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        vec_split_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def rm_polys_area(
@@ -448,6 +554,7 @@ def rm_polys_area(
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
     less_than: bool = True,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Filter polygons by keeping features whose area is either strictly less than
@@ -462,6 +569,11 @@ def rm_polys_area(
     :param less_than: When ``True`` (default), keep features with
                       ``area < area_thres``; when ``False``, keep features with
                       ``area > area_thres``.
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -480,7 +592,13 @@ def rm_polys_area(
     vec_sel_gdf = in_vec_gdf.loc[area_msk]
 
     if len(vec_sel_gdf) > 0:
-        write_vec_gdf(vec_sel_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+        write_vec_gdf(
+            vec_sel_gdf,
+            out_vec_file,
+            out_vec_lyr,
+            out_format=out_format,
+            out_compress=out_compress,
+        )
 
 
 def create_bbox_vec_lyr(
@@ -492,6 +610,7 @@ def create_bbox_vec_lyr(
     whole_num_grid: bool = False,
     whole_num_base_grid: float = 10.0,
     whole_num_round: Optional[int] = None,
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Create a single-polygon vector layer representing the bounding box of
@@ -507,6 +626,11 @@ def create_bbox_vec_lyr(
                            (Default = ``False``).
     :param whole_num_base_grid: Grid cell size in CRS units (Default = ``10.0``).
     :param whole_num_round: Optional decimal places to round coordinates.
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -532,7 +656,13 @@ def create_bbox_vec_lyr(
         {"geometry": [shapely.geometry.box(x_min, y_min, x_max, y_max)]},
         crs=in_vec_gdf.crs,
     )
-    write_vec_gdf(bbox_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        bbox_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def vec_lyr_dissolve(
@@ -542,6 +672,7 @@ def vec_lyr_dissolve(
     out_vec_file: str,
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Dissolve vector features by grouping on categorical attribute ``vec_col``.
@@ -552,6 +683,11 @@ def vec_lyr_dissolve(
     :param out_vec_file: Output vector file path.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -565,7 +701,13 @@ def vec_lyr_dissolve(
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     validate_columns_exist(data_gdf, [vec_col])
     dis_data_gdf = data_gdf.dissolve(vec_col, as_index=False)
-    write_vec_gdf(dis_data_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        dis_data_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def thin_vector_geoms(
@@ -576,6 +718,7 @@ def thin_vector_geoms(
     out_vec_file: str,
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Thin vector geometries (typically points) using a polygon grid so that at
@@ -588,6 +731,11 @@ def thin_vector_geoms(
     :param out_vec_file: Output vector file path.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -609,7 +757,13 @@ def thin_vector_geoms(
         subset="unq_id", keep="first", inplace=True, ignore_index=False
     )
     if len(pts_join_gdf) > 0:
-        write_vec_gdf(pts_join_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+        write_vec_gdf(
+            pts_join_gdf,
+            out_vec_file,
+            out_vec_lyr,
+            out_format=out_format,
+            out_compress=out_compress,
+        )
 
 
 def shiftxy_vec_lyr(
@@ -620,6 +774,7 @@ def shiftxy_vec_lyr(
     out_vec_file: str,
     out_vec_lyr: Optional[str],
     out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """
     Translate (shift) all geometries in a vector layer by ``(x_shift, y_shift)``
@@ -632,6 +787,11 @@ def shiftxy_vec_lyr(
     :param out_vec_file: Output vector file path.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
 
     .. code:: python
 
@@ -647,4 +807,10 @@ def shiftxy_vec_lyr(
     shifted_gdf["geometry"] = base_gdf.geometry.translate(
         xoff=x_shift, yoff=y_shift
     )
-    write_vec_gdf(shifted_gdf, out_vec_file, out_vec_lyr, out_format=out_format)
+    write_vec_gdf(
+        shifted_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )

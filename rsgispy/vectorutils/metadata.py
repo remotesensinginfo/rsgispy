@@ -10,7 +10,6 @@ import pyogrio
 import pyproj
 
 import rsgispy
-from rsgispy.imageprocess import ensure_file_exists
 from rsgispy.tools.geometry import reproj_bbox
 from rsgispy.vectorprocess import (
     bbox_to_rsgis,
@@ -18,6 +17,8 @@ from rsgispy.vectorprocess import (
     delete_vec_file,
     get_file_vec_extension,
     get_gdf_geom_type,
+    is_geoparquet_file,
+    list_vec_layers,
     read_vec_gdf,
     read_vec_info,
     resolve_vec_layer,
@@ -230,6 +231,8 @@ def get_vec_feat_count(
         return feat_count
     if not compute_count:
         return feat_count
+    if is_geoparquet_file(vec_file):
+        return int(len(read_vec_gdf(vec_file, vec_lyr=info["layer_name"])))
     df = pyogrio.read_dataframe(
         vec_file,
         layer=info["layer_name"],
@@ -295,16 +298,9 @@ def get_vec_lyrs_lst(vec_file: str) -> List[str]:
 
         layers = rsgispy.vectorutils.metadata.get_vec_lyrs_lst("dataset.gpkg")
     """
-    ensure_file_exists(vec_file, label="Vector file")
-    try:
-        layers = pyogrio.list_layers(vec_file)
-    except Exception as err:
-        raise rsgispy.RSGISPyException(
-            f"Could not open input file '{vec_file}': {err}"
-        ) from err
+    layers = list_vec_layers(vec_file)
     out_lyrs: List[str] = []
-    for row in layers:
-        name = str(row[0])
+    for name in layers:
         if name not in out_lyrs:
             out_lyrs.append(name)
     return out_lyrs
