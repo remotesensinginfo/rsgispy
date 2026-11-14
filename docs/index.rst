@@ -9,17 +9,95 @@ remote sensing and GIS raster processing using ``rasterio``, ``numpy``, ``pyproj
 Installation
 ------------
 
-Install ``rsgispy`` using ``pip``:
+Minimal Installation
+~~~~~~~~~~~~~~~~~~~~
+
+Install ``rsgispy`` with only its core dependencies (``geopandas``,
+``matplotlib``, ``matplotlib-scalebar``, ``numpy``, ``pymu-eval``, ``pyproj``,
+``rasterio``, ``shapely``, and ``tqdm``) using ``pip``:
 
 .. code-block:: bash
 
    pip install .
 
-To install with testing and documentation dependencies:
+This provides core raster and vector I/O, image maths, spectral indices,
+morphology, elevation derivatives, and basic vector operations.
+
+Optional Dependencies
+~~~~~~~~~~~~~~~~~~~~~
+
+Additional functionality uses optional third-party packages defined under
+``[project.optional-dependencies]`` in ``pyproject.toml``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 14 36 50
+
+   * - Extra
+     - Packages Installed
+     - Features / Modules Enabled
+   * - ``stats``
+     - ``scikit-gstat``, ``scikit-learn``, ``scipy``
+     - Empirical semi-variograms, accuracy/feature selection, thresholding,
+       KNN gap filling, distance transforms, and spatial interpolation.
+   * - ``vector``
+     - ``alphashape``, ``h3``, ``openpyxl``, ``pyarrow``, ``rtree``,
+       ``xlsxwriter``
+     - Alpha shapes, H3 hexagon grids, Excel table I/O, GeoParquet I/O, and
+       R-tree spatial indexing.
+   * - ``mapping``
+     - ``contextily``, ``mpl-scatter-density``, ``owslib``
+     - Tile basemaps, scatter density plots, and WMTS layer retrieval.
+   * - ``dataaccess``
+     - ``beautifulsoup4``, ``osmnx``, ``planet``, ``pycurl``, ``pysondb``,
+       ``requests``
+     - Copernicus OData, NASA CMR, OpenStreetMap, Planet API, HTTP/FTP
+       tracking databases, and web file discovery.
+   * - ``imaging``
+     - ``h5py``, ``imageio``, ``pillow``, ``pyexiftool``, ``pymupdf``,
+       ``qrcode``
+     - KEA/HDF5 validation, drone/EXIF metadata, animated GIFs, PDF page/image
+       utilities, and QR code generation.
+   * - ``jupyter``
+     - ``ipywidgets``
+     - Interactive Jupyter notebook progress bars.
+   * - ``all``
+     - ``stats``, ``vector``, ``mapping``, ``dataaccess``, ``imaging``,
+       ``jupyter``
+     - All optional runtime dependencies.
+   * - ``test``
+     - ``flake8``, ``pylint``, ``pytest``, ``pytest-cov``, ``stats``
+     - Running the test suite and linters.
+   * - ``docs``
+     - ``sphinx``, ``sphinx-rtd-theme``
+     - Building HTML documentation with Sphinx.
+   * - ``dev``
+     - ``all``, ``test``, ``docs``
+     - Full editable development environment with all optional, test, and
+       documentation dependencies.
+
+Install one or more extras by passing them in square brackets:
 
 .. code-block:: bash
 
-   pip install -e ".[test,docs]"
+   # Install specific optional feature groups
+   pip install ".[vector]"
+   pip install ".[stats,vector,mapping]"
+
+   # Install with all optional runtime dependencies
+   pip install ".[all]"
+
+   # Editable installs for testing, documentation, or full development
+   pip install -e ".[test]"
+   pip install -e ".[all,test]"
+   pip install -e ".[dev]"
+
+.. note::
+
+   On Linux, installing the ``dataaccess`` or ``all`` extras may require
+   ``libcurl4-openssl-dev`` and ``libssl-dev`` if ``pycurl`` is built from
+   source. Functions using ``pyexiftool`` (in ``imaging`` / ``all``) also
+   require the external ``exiftool`` command-line tool on ``PATH``.
 
 Quickstart
 ----------
