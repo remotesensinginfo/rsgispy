@@ -518,3 +518,57 @@ def test_read_window_with_halo_and_cast_clamp(tmp_path):
     np.testing.assert_array_equal(
         clamped, np.array([[0, 128], [255, 0]], dtype=np.uint8)
     )
+
+
+def test_validate_odd_window_size_and_halo_runner(tmp_path):
+    """Test odd window validation, halo padding, and run_window_halo_blocks."""
+    assert rsgispy.imageprocess.validate_odd_window_size(3) == 3
+    assert rsgispy.imageprocess.validate_odd_window_size(5, min_size=5, name="op") == 5
+    for bad in (1, 2, 4, -3, True, 3.5):
+        with pytest.raises(rsgispy.RSGISPyException):
+            rsgispy.imageprocess.validate_odd_window_size(bad)
+
+    in_img = tmp_path / "halo_runner.tif"
+    data = np.arange(1, 25, dtype=np.float32).reshape((2, 3, 4))
+    _create_test_raster(in_img, data)
+
+    with rasterio.open(in_img, "r") as src:
+        blk_const = rsgispy.imageprocess.read_window_with_halo(
+            src,
+            1,
+            rasterio.windows.Window(0, 0, 2, 2),
+            pad=(2, 1),
+            out_dtype=np.float32,
+            pad_mode="constant",
+            fill_value=-1.0,
+        )
+        assert blk_const.shape == (6, 4)
+        assert blk_const[0, 0] == pytest.approx(-1.0)
+        assert blk_const[2, 1] == pytest.approx(1.0)
+
+    out_per_band = tmp_path / "out_halo_band.tif"
+    rsgispy.imageprocess.run_window_halo_blocks(
+        str(in_img),
+        str(out_per_band),
+        win_shape=(3, 3),
+        block_fn=lambda h: h[1:-1, 1:-1] * 2.0,
+        per_band=True,
+        pad_mode="constant",
+        fill_value=0.0,
+        full_width_strips=True,
+        use_pbar=False,
+    )
+    with rasterio.open(out_per_band) as dst_b:
+        np.testing.assert_allclose(dst_b.read(), data * 2.0)
+
+    out_cube = tmp_path / "out_halo_cube.tif"
+    rsgispy.imageprocess.run_window_halo_blocks(
+        str(in_img),
+        str(out_cube),
+        win_shape=(3, 5),
+        block_fn=lambda h: h[:, 1:-1, 2:-2] + 1.0,
+        per_band=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out_cube) as dst_c:
+        np.testing.assert_allclose(dst_c.read(), data + 1.0)

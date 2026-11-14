@@ -1,15 +1,12 @@
 """
 Tests for extended rsgispy.imageutils submodules: metadata tags/formats/bands,
-checks, arrays, sampling, bands, gdal_translate, spatial, and spectral.
+checks, arrays, sampling, bands, gdal_translate, and spatial.
 """
 
-import json
 import math
-import os
 
 import geopandas
 import numpy as np
-import pandas
 import pytest
 import rasterio
 import rasterio.crs
@@ -20,7 +17,6 @@ from rasterio.warp import transform_bounds
 from shapely.geometry import Point, box
 
 import rsgispy
-import rsgispy.imageprocess as img_proc
 import rsgispy.imageutils.arrays as iu_arr
 import rsgispy.imageutils.bands as iu_bands
 import rsgispy.imageutils.checks as iu_chk
@@ -28,7 +24,6 @@ import rsgispy.imageutils.metadata as iu_meta
 import rsgispy.imageutils.rasterise as iu_ras
 import rsgispy.imageutils.sampling as iu_samp
 import rsgispy.imageutils.spatial as iu_spat
-import rsgispy.imageutils.spectral as iu_spec
 import rsgispy.imageutils.warp as iu_warp
 
 
@@ -458,109 +453,6 @@ def test_grid_scattered_pts(tmp_path):
     )
     with rasterio.open(near_out) as n_src:
         assert n_src.read(1)[0, 0] == pytest.approx(10.0)
-
-
-def test_spectral_smoothing_and_outlier_mask(tmp_path):
-    """Test spectral_smoothing (with calc_stats) and mask_outliners_data_values."""
-    n_bands = 7
-    wavelengths = np.arange(n_bands, dtype=np.float64)
-    clean_spec = 2.0 * wavelengths + 1.0
-    cube = np.broadcast_to(
-        clean_spec[:, None, None], (n_bands, 6, 6)
-    ).astype(np.float32).copy()
-
-    in_img = tmp_path / "spec.tif"
-    msk_img = tmp_path / "spec_msk.tif"
-    _write_test_tif(in_img, cube, nodata=0.0)
-    msk = np.zeros((6, 6), dtype=np.uint8)
-    msk[1:5, 1:5] = 1
-    _write_test_tif(msk_img, msk)
-
-    smooth_out = tmp_path / "smooth.tif"
-    iu_spec.spectral_smoothing(
-        str(in_img),
-        str(msk_img),
-        1,
-        str(smooth_out),
-        win_len=5,
-        polyorder=2,
-        gdalformat="GTIFF",
-        calc_stats=True,
-    )
-    with rasterio.open(smooth_out) as src:
-        sm = src.read()
-        assert np.allclose(sm[:, 2, 2], clean_spec, atol=1e-4)
-        assert np.allclose(sm[:, 0, 0], 0.0)
-        assert "STATISTICS_MEAN" in src.tags(1)
-
-    outl_arr = cube.copy()
-    outl_arr[3, 2, 2] = 500.0
-    outl_in = tmp_path / "outl_in.tif"
-    outl_out = tmp_path / "outl_out.tif"
-    _write_test_tif(outl_in, outl_arr)
-    iu_spec.mask_outliners_data_values(
-        str(outl_in),
-        str(msk_img),
-        1,
-        str(outl_out),
-        lower=5,
-        upper=85,
-        gdalformat="GTIFF",
-        calc_stats=False,
-    )
-    with rasterio.open(outl_out) as src:
-        assert np.isnan(src.read()[3, 2, 2])
-
-
-def test_polyfill_nan_data_values(tmp_path):
-    """Test polyfill_nan_data_values reconstructs NaN spectral bands."""
-    wavelengths = np.arange(7, dtype=np.float64)
-    clean_spec = 2.0 * wavelengths + 1.0
-    nan_arr = np.broadcast_to(
-        clean_spec[:, None, None], (7, 6, 6)
-    ).astype(np.float32).copy()
-    nan_arr[3, 2, 2] = np.nan
-
-    nan_in = tmp_path / "nan_in.tif"
-    msk_img = tmp_path / "poly_msk.tif"
-    poly_out = tmp_path / "poly_out.tif"
-    _write_test_tif(nan_in, nan_arr)
-    _write_test_tif(msk_img, np.ones((6, 6), dtype=np.uint8))
-
-    iu_spec.polyfill_nan_data_values(
-        str(nan_in),
-        wavelengths.tolist(),
-        str(msk_img),
-        1,
-        str(poly_out),
-        polyorder=2,
-        gdalformat="GTIFF",
-        calc_stats=False,
-    )
-    with rasterio.open(poly_out) as src:
-        assert src.read()[3, 2, 2] == pytest.approx(clean_spec[3], abs=1e-3)
-
-
-def test_whiten_image(tmp_path):
-    """Test whiten_image produces uncorrelated unit-variance valid spectra."""
-    rng = np.random.default_rng(99)
-    w_in_arr = rng.normal(0.0, 1.0, (3, 12, 12)).astype(np.float32)
-    w_in_arr[1] = (
-        w_in_arr[0] * 2.0
-        + rng.normal(0.0, 0.5, (12, 12)).astype(np.float32)
-    )
-    w_in = tmp_path / "w_in.tif"
-    w_msk = tmp_path / "w_msk.tif"
-    w_out = tmp_path / "w_out.tif"
-    _write_test_tif(w_in, w_in_arr)
-    _write_test_tif(w_msk, np.ones((12, 12), dtype=np.uint8))
-
-    iu_spec.whiten_image(
-        str(w_in), str(w_msk), 1, str(w_out), gdalformat="GTIFF"
-    )
-    with rasterio.open(w_out) as src:
-        cov = np.cov(src.read().reshape(3, -1))
-        assert np.allclose(cov, np.eye(3), atol=1e-2)
 
 
 def test_gdal_translate_bands_and_windows(tmp_path):
@@ -1430,236 +1322,3 @@ def test_imageutils_rasterise(tmp_path):
     )
     with rasterio.open(dist_zones) as src:
         assert set(np.unique(src.read(1))) == {0, 1, 2}
-
-
-def test_spectral_pca_and_mnf_windowed(tmp_path):
-    """Test streaming windowed PCA and MNF against full-matrix linear algebra."""
-    rng = np.random.default_rng(12345)
-    height, width, n_bands = 20, 20, 4
-    # Smooth low-frequency signal across spatial grid + per-band uncorrelated noise
-    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
-    s1 = np.sin(xx / 4.0) + np.cos(yy / 5.0)
-    s2 = 0.5 * xx / width - 0.3 * yy / height
-    clean = np.stack(
-        [
-            10.0 + 3.0 * s1 + 1.0 * s2,
-            20.0 + 6.0 * s1 - 2.0 * s2,
-            5.0 - 1.5 * s1 + 4.0 * s2,
-            12.0 + 0.5 * s1 + 0.5 * s2,
-        ],
-        axis=0,
-    )
-    # Give band 4 much higher independent pixel noise than bands 1..3
-    noise = rng.normal(0.0, 0.05, size=(n_bands, height, width))
-    noise[3] = rng.normal(0.0, 2.0, size=(height, width))
-    cube = (clean + noise).astype(np.float32)
-    cube[:, 0, 0] = -9999.0  # nodata pixel
-
-    in_img = str(tmp_path / "hyp_in.tif")
-    _write_test_tif(in_img, cube, nodata=-9999.0)
-    msk = np.ones((height, width), dtype=np.uint8)
-    msk[0, 1] = 0
-    msk_img = str(tmp_path / "hyp_msk.tif")
-    _write_test_tif(msk_img, msk)
-
-    pca_single = str(tmp_path / "pca_single.tif")
-    pca_multi = str(tmp_path / "pca_multi.tif")
-    pca_json = str(tmp_path / "pca_stats.json")
-
-    info_single = iu_spec.calc_pca(
-        in_img,
-        pca_single,
-        n_components=2,
-        valid_msk_img=msk_img,
-        valid_msk_val=1,
-        standardise=True,
-        out_stats_json=pca_json,
-        calc_stats=True,
-        use_pbar=False,
-    )
-    assert info_single["n_valid_pixels"] == height * width - 2
-    assert info_single["n_components"] == 2
-    assert os.path.exists(pca_json)
-    with open(pca_json, "r", encoding="utf-8") as handle:
-        loaded_json = json.load(handle)
-    assert loaded_json["eigenvalues"] == pytest.approx(info_single["eigenvalues"])
-
-    # Force multiple windows via block_size=7 and confirm bit-for-bit stats agreement
-    img_proc.set_default_block_size(7)
-    try:
-        info_multi = iu_spec.calc_pca(
-            in_img,
-            pca_multi,
-            n_components=2,
-            valid_msk_img=msk_img,
-            valid_msk_val=1,
-            standardise=True,
-            calc_stats=False,
-            use_pbar=False,
-        )
-    finally:
-        img_proc.reset_default_block_size()
-
-    assert info_multi["mean"] == pytest.approx(info_single["mean"], rel=1e-10)
-    assert info_multi["eigenvalues"] == pytest.approx(
-        info_single["eigenvalues"], rel=1e-10
-    )
-    with rasterio.open(pca_single) as s_src, rasterio.open(pca_multi) as m_src:
-        assert list(s_src.descriptions) == ["PC_1", "PC_2"]
-        np.testing.assert_allclose(s_src.read(), m_src.read(), rtol=1e-5, atol=1e-5)
-        assert s_src.read(1)[0, 0] == pytest.approx(-9999.0)
-        assert s_src.read(1)[0, 1] == pytest.approx(-9999.0)
-
-    # MNF single vs multi-window (verifying exact boundary-pair accumulation)
-    mnf_single = str(tmp_path / "mnf_single.tif")
-    mnf_multi = str(tmp_path / "mnf_multi.tif")
-    mnf_json = str(tmp_path / "mnf_stats.json")
-
-    mnf_s_info = iu_spec.calc_mnf(
-        in_img,
-        mnf_single,
-        n_components=3,
-        valid_msk_img=msk_img,
-        valid_msk_val=1,
-        noise_direction="both",
-        out_stats_json=mnf_json,
-        calc_stats=True,
-        use_pbar=False,
-    )
-    img_proc.set_default_block_size(7)
-    try:
-        mnf_m_info = iu_spec.calc_mnf(
-            in_img,
-            mnf_multi,
-            n_components=3,
-            valid_msk_img=msk_img,
-            valid_msk_val=1,
-            noise_direction="both",
-            calc_stats=False,
-            use_pbar=False,
-        )
-    finally:
-        img_proc.reset_default_block_size()
-
-    assert mnf_s_info["n_noise_pairs"] == mnf_m_info["n_noise_pairs"]
-    assert mnf_s_info["mnf_eigenvalues"] == pytest.approx(
-        mnf_m_info["mnf_eigenvalues"], rel=1e-10
-    )
-    # Monotonically decreasing MNF eigenvalues (highest SNR first)
-    vals = mnf_s_info["mnf_eigenvalues"]
-    assert vals[0] > vals[1] > vals[2]
-    assert os.path.exists(mnf_json)
-
-    with rasterio.open(mnf_single) as s_src, rasterio.open(mnf_multi) as m_src:
-        assert list(s_src.descriptions) == ["MNF_1", "MNF_2", "MNF_3"]
-        np.testing.assert_allclose(s_src.read(), m_src.read(), rtol=1e-5, atol=1e-5)
-
-    with pytest.raises(rsgispy.RSGISPyException):
-        iu_spec.calc_mnf(in_img, str(tmp_path / "bad.tif"), noise_direction="diag")
-    with pytest.raises(rsgispy.RSGISPyException):
-        iu_spec.calc_pca(in_img, str(tmp_path / "bad_pca.tif"), n_components=9)
-
-
-def test_spectral_tasseled_cap_and_histogram_matching(tmp_path, monkeypatch):
-    """Test Tasseled Cap presets/custom coeffs, histogram matching, and SciPy guard."""
-    sensors = iu_spec.get_tasseled_cap_sensors()
-    assert {
-        "landsat5_tm",
-        "landsat7_etm",
-        "landsat8_oli",
-        "landsat9_oli",
-        "modis_nbar",
-        "sentinel2_msi",
-    }.issubset(set(sensors))
-
-    # Build a 6-band scaled reflectance raster (scaled by 10000)
-    in_6b = np.full((6, 4, 4), 1000.0, dtype=np.float32)
-    in_6b[:, 0, 0] = 0.0  # nodata
-    tct_in = str(tmp_path / "s2_in.tif")
-    _write_test_tif(tct_in, in_6b, nodata=0.0)
-
-    tct_out = str(tmp_path / "s2_tct.tif")
-    iu_spec.calc_tasseled_cap(
-        tct_in,
-        tct_out,
-        sensor="sentinel2_msi",
-        gain=10000.0,
-        out_no_data_val=-9999.0,
-        calc_stats=True,
-        use_pbar=False,
-    )
-    with rasterio.open(tct_out) as src:
-        arr = src.read()
-        assert list(src.descriptions) == ["Brightness", "Greenness", "Wetness"]
-        # 0.1 * sum of Brightness coeffs = 0.1 * (0.3510+0.3813+0.3437+0.7196+0.2396+0.1949)
-        expected_bright = 0.1 * (0.3510 + 0.3813 + 0.3437 + 0.7196 + 0.2396 + 0.1949)
-        assert arr[0, 1, 1] == pytest.approx(expected_bright, abs=1e-5)
-        assert arr[0, 0, 0] == pytest.approx(-9999.0)
-
-    # Custom DataFrame coefficients with band subset
-    custom_df = pandas.DataFrame(
-        {"AxisA": [1.0, 0.0], "AxisB": [0.0, 2.0]}
-    )
-    custom_out = str(tmp_path / "custom_tct.tif")
-    iu_spec.calc_tasseled_cap(
-        tct_in,
-        custom_out,
-        bands=[1, 4],
-        coeffs=custom_df,
-        gain=1000.0,
-        calc_stats=False,
-        use_pbar=False,
-    )
-    with rasterio.open(custom_out) as src:
-        c_arr = src.read()
-        assert list(src.descriptions) == ["AxisA", "AxisB"]
-        assert c_arr[0, 1, 1] == pytest.approx(1.0)
-        assert c_arr[1, 1, 1] == pytest.approx(2.0)
-
-    with pytest.raises(rsgispy.RSGISPyException):
-        iu_spec.calc_tasseled_cap(tct_in, str(tmp_path / "bad_s.tif"), sensor="unknown")
-
-    # Histogram matching: source [0..50] uniform -> reference Gaussian centered at 200 std 20
-    rng = np.random.default_rng(42)
-    src_data = rng.uniform(0.0, 50.0, size=(2, 24, 24)).astype(np.float32)
-    src_data[:, 0, 0] = -9999.0
-    ref_data = rng.normal(200.0, 20.0, size=(2, 30, 30)).astype(np.float32)
-
-    hm_in = str(tmp_path / "hm_in.tif")
-    hm_ref = str(tmp_path / "hm_ref.tif")
-    hm_out = str(tmp_path / "hm_out.tif")
-    _write_test_tif(hm_in, src_data, nodata=-9999.0)
-    _write_test_tif(hm_ref, ref_data, nodata=-9999.0)
-
-    img_proc.set_default_block_size(10)
-    try:
-        iu_spec.histogram_matching(
-            hm_in,
-            hm_ref,
-            hm_out,
-            n_bins=1024,
-            calc_stats=True,
-            use_pbar=False,
-        )
-    finally:
-        img_proc.reset_default_block_size()
-
-    with rasterio.open(hm_out) as src:
-        matched = src.read()
-        assert matched[0, 0, 0] == pytest.approx(-9999.0)
-        valid_b1 = matched[0].ravel()
-        valid_b1 = valid_b1[valid_b1 != -9999.0]
-        assert float(np.mean(valid_b1)) == pytest.approx(
-            float(np.mean(ref_data[0])), abs=2.5
-        )
-        assert float(np.std(valid_b1)) == pytest.approx(
-            float(np.std(ref_data[0])), abs=2.5
-        )
-
-    # Friendly SciPy guard in spectral_smoothing
-    monkeypatch.setattr(iu_spec, "HAVE_SCIPY", False)
-    with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
-        iu_spec.spectral_smoothing(
-            tct_in, tct_in, 1, str(tmp_path / "no_scipy.tif")
-        )
-

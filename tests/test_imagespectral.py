@@ -1,10 +1,14 @@
 """
-Tests for :mod:`rsgispy.imagecalc.spectralunmixing`.
+Tests for :mod:`rsgispy.imagespectral` submodules
+(``classification``, ``endmembers``, ``indices``, ``preprocessing``,
+``transforms``, ``unmixing``).
 """
 
 import importlib.util
 import inspect
+import json
 import math
+import os
 
 import geopandas
 import numpy as np
@@ -15,7 +19,13 @@ from rasterio.transform import from_origin
 from shapely.geometry import box
 
 import rsgispy
-import rsgispy.imagecalc.spectralunmixing as su
+import rsgispy.imageprocess as img_proc
+import rsgispy.imagespectral.classification as sc
+import rsgispy.imagespectral.endmembers as em
+import rsgispy.imagespectral.indices as si
+import rsgispy.imagespectral.preprocessing as sp
+import rsgispy.imagespectral.transforms as st
+import rsgispy.imagespectral.unmixing as su
 import rsgispy.zonalstats as zs
 
 HAVE_PYARROW = importlib.util.find_spec("pyarrow") is not None
@@ -31,8 +41,12 @@ def _write_raster(
     nodata=None,
     descriptions=None,
 ):
-    """Write a 3D ``(bands, height, width)`` GeoTIFF raster."""
-    count, height, width = data.shape
+    """Write a 2D or 3D GeoTIFF raster."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    arr = np.asarray(data)
+    if arr.ndim == 2:
+        arr = arr[np.newaxis, :, :]
+    count, height, width = arr.shape
     with rasterio.open(
         path,
         "w",
@@ -40,12 +54,12 @@ def _write_raster(
         height=height,
         width=width,
         count=count,
-        dtype=str(data.dtype),
+        dtype=str(arr.dtype),
         crs="EPSG:32630",
         transform=from_origin(origin[0], origin[1], res, res),
         nodata=nodata,
     ) as dst:
-        dst.write(data)
+        dst.write(arr)
         if descriptions is not None:
             for b_idx, desc in enumerate(descriptions, start=1):
                 dst.set_band_description(b_idx, desc)
@@ -65,31 +79,41 @@ def _write_legacy_mtxt(path, em_arr):
 
 
 def test_exports_and_default_gdalformat():
-    """Verify recommended/optional unmixing exports and GTIFF defaults."""
-    assert hasattr(su, "read_endmembers_df")
-    assert hasattr(su, "write_endmembers_df")
-    assert hasattr(su, "convert_mtxt_to_df")
-    assert not hasattr(su, "read_endmembers_mtxt")
-    assert not hasattr(su, "write_endmembers_mtxt")
+    """Verify imagespectral exports across submodules and GTIFF defaults."""
+    assert hasattr(em, "read_endmembers_df")
+    assert hasattr(em, "write_endmembers_df")
+    assert hasattr(em, "convert_mtxt_to_df")
+    assert not hasattr(em, "read_endmembers_mtxt")
+    assert not hasattr(em, "write_endmembers_mtxt")
 
-    funcs = [
-        su.spec_unmix_ucls,
-        su.spec_unmix_nnls,
-        su.spec_unmix_fcls,
-        su.spec_unmix_spts_ucls,
-        su.spec_unmix_spts_nnls,
-        su.spec_unmix_spts_fcls,
-        su.spec_unmix_pymcr_nnls,
-        su.spec_unmix_pymcr_fcls,
-        su.exhcon_linear_spec_unmix,
-        su.rescale_unmixing_results,
-        su.predict_refl_linear_unmixing,
-        su.calc_unmixing_rmse_residual_err,
-        su.summarise_multi_endmember_linear_unmixing,
-        su.calc_ppi,
+    module_funcs = [
+        (su, su.spec_unmix_ucls),
+        (su, su.spec_unmix_nnls),
+        (su, su.spec_unmix_fcls),
+        (su, su.spec_unmix_spts_ucls),
+        (su, su.spec_unmix_spts_nnls),
+        (su, su.spec_unmix_spts_fcls),
+        (su, su.spec_unmix_pymcr_nnls),
+        (su, su.spec_unmix_pymcr_fcls),
+        (su, su.exhcon_linear_spec_unmix),
+        (su, su.rescale_unmixing_results),
+        (su, su.predict_refl_linear_unmixing),
+        (su, su.calc_unmixing_rmse_residual_err),
+        (su, su.summarise_multi_endmember_linear_unmixing),
+        (em, em.calc_ppi),
+        (sc, sc.spectral_angle_mapper),
+        (sc, sc.spectral_correlation_mapper),
+        (sp, sp.spectral_smoothing),
+        (sp, sp.mask_outliners_data_values),
+        (sp, sp.polyfill_nan_data_values),
+        (st, st.whiten_image),
+        (st, st.calc_pca),
+        (st, st.calc_mnf),
+        (st, st.calc_tasseled_cap),
+        (st, st.histogram_matching),
     ]
-    for fn in funcs:
-        assert fn.__name__ in su.__all__
+    for mod, fn in module_funcs:
+        assert fn.__name__ in mod.__all__
         sig = inspect.signature(fn)
         assert sig.parameters["gdalformat"].default == "GTIFF"
 
@@ -122,41 +146,38 @@ def test_df_roundtrip_formats_plot_and_equality(tmp_path):
 
     for _, fname, fmt_override in formats:
         out_path = tmp_path / fname
-        su.write_endmembers_df(em_df, out_path, file_format=fmt_override)
+        em.write_endmembers_df(em_df, out_path, file_format=fmt_override)
         assert out_path.exists()
 
-        read_back = su.read_endmembers_df(out_path, file_format=fmt_override)
+        read_back = em.read_endmembers_df(out_path, file_format=fmt_override)
         assert list(read_back.columns) == ["Soil", "Veg"]
         assert list(read_back.index) == ["blue", "green", "nir"]
         np.testing.assert_allclose(read_back.to_numpy(), em_df.to_numpy(), atol=1e-9)
-        assert su.are_endmembers_equal(em_df, read_back, flt_dif=1e-7)
+        assert em.are_endmembers_equal(em_df, read_back, flt_dif=1e-7)
 
-    # Hand-crafted CSV without an index column should preserve class columns
     plain_csv = tmp_path / "plain.csv"
     plain_csv.write_text("Soil,Veg\n0.2,0.6\n0.4,0.2\n0.8,0.1\n", encoding="utf-8")
-    plain_df = su.read_endmembers_df(plain_csv, gain=2.0)
+    plain_df = em.read_endmembers_df(plain_csv, gain=2.0)
     assert list(plain_df.columns) == ["Soil", "Veg"]
     assert list(plain_df.index) == ["band_1", "band_2", "band_3"]
     np.testing.assert_allclose(plain_df.to_numpy(), em_df.to_numpy() / 2.0)
 
-    # Equality respects flt_dif and class column names
     em_df_close = em_df + 1e-5
     em_df_renamed = em_df.rename(columns={"Veg": "Forest"})
-    assert su.are_endmembers_equal(em_df, em_df_close, flt_dif=1e-4)
-    assert not su.are_endmembers_equal(em_df, em_df_close, flt_dif=1e-7)
-    assert not su.are_endmembers_equal(em_df, em_df_renamed, check_names=True)
-    assert su.are_endmembers_equal(em_df, em_df_renamed, check_names=False)
+    assert em.are_endmembers_equal(em_df, em_df_close, flt_dif=1e-4)
+    assert not em.are_endmembers_equal(em_df, em_df_close, flt_dif=1e-7)
+    assert not em.are_endmembers_equal(em_df, em_df_renamed, check_names=True)
+    assert em.are_endmembers_equal(em_df, em_df_renamed, check_names=False)
 
-    # Plot works directly from DataFrame and from file path
     plot_from_df = tmp_path / "em_df.png"
     plot_from_csv = tmp_path / "em_csv.png"
-    su.plot_endmembers(
+    em.plot_endmembers(
         em_df,
         str(plot_from_df),
         plot_title="Test Endmembers (DF)",
         wavelengths=[480, 560, 660],
     )
-    su.plot_endmembers(str(tmp_path / "em.csv"), str(plot_from_csv))
+    em.plot_endmembers(str(tmp_path / "em.csv"), str(plot_from_csv))
     assert plot_from_df.exists() and plot_from_df.stat().st_size > 0
     assert plot_from_csv.exists() and plot_from_csv.stat().st_size > 0
 
@@ -168,13 +189,13 @@ def test_convert_mtxt_to_df(tmp_path):
     em_arr = np.array([[0.2, 0.4, 0.8], [0.6, 0.2, 0.1]], dtype=np.float64)
     _write_legacy_mtxt(mtxt_path, em_arr)
 
-    default_df = su.convert_mtxt_to_df(mtxt_path)
+    default_df = em.convert_mtxt_to_df(mtxt_path)
     assert default_df.shape == (3, 2)
     assert list(default_df.columns) == ["endmember_1", "endmember_2"]
     assert list(default_df.index) == ["band_1", "band_2", "band_3"]
     np.testing.assert_allclose(default_df.to_numpy().T, em_arr)
 
-    named_df = su.convert_mtxt_to_df(
+    named_df = em.convert_mtxt_to_df(
         mtxt_path,
         endmember_names=["Soil", "Veg"],
         band_names=["B2", "B3", "B8"],
@@ -185,13 +206,13 @@ def test_convert_mtxt_to_df(tmp_path):
     assert list(named_df.index) == ["B2", "B3", "B8"]
     np.testing.assert_allclose(named_df.to_numpy().T, em_arr / 2.0)
 
-    reread_df = su.read_endmembers_df(out_csv)
-    assert su.are_endmembers_equal(named_df, reread_df, flt_dif=1e-9)
+    reread_df = em.read_endmembers_df(out_csv)
+    assert em.are_endmembers_equal(named_df, reread_df, flt_dif=1e-9)
 
     with pytest.raises(rsgispy.RSGISPyException):
-        su.convert_mtxt_to_df(mtxt_path, endmember_names=["OnlyOne"])
+        em.convert_mtxt_to_df(mtxt_path, endmember_names=["OnlyOne"])
     with pytest.raises(rsgispy.RSGISPyException):
-        su.convert_mtxt_to_df(mtxt_path, band_names=["B1", "B2"])
+        em.convert_mtxt_to_df(mtxt_path, band_names=["B1", "B2"])
 
 
 def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
@@ -203,7 +224,6 @@ def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
     vec_path = tmp_path / "rois.gpkg"
     out_csv = tmp_path / "extracted_em.csv"
 
-    # 4x4 grid, origin (0, 40), res=10 -> x in [0, 40], y in [0, 40]
     arr = np.zeros((3, 4, 4), dtype=np.float32)
     arr[:, :2, :2] = np.array([0.2, 0.4, 0.8])[:, None, None]
     arr[:, :2, 2:] = np.array([0.4, 0.6, 0.4])[:, None, None]
@@ -216,7 +236,6 @@ def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
         descriptions=["Blue", "Green", "NIR"],
     )
 
-    # Two polygons share class "Soil" (means [0.2,0.4,0.8] and [0.4,0.6,0.4] -> [0.3,0.5,0.6])
     gdf = geopandas.GeoDataFrame(
         {"landcover": ["Soil", "Soil", "Veg"]},
         geometry=[
@@ -228,7 +247,7 @@ def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
     )
     gdf.to_file(vec_path, driver="GPKG", layer="rois")
 
-    em_df = su.extract_avg_endmembers(
+    em_df = em.extract_avg_endmembers(
         str(img_path),
         str(vec_path),
         "rois",
@@ -243,7 +262,7 @@ def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
     np.testing.assert_allclose(em_df["Soil"].to_numpy(), [0.3, 0.5, 0.6], atol=1e-6)
     np.testing.assert_allclose(em_df["Veg"].to_numpy(), [0.6, 0.2, 0.1], atol=1e-6)
     assert out_csv.exists()
-    assert su.are_endmembers_equal(em_df, su.read_endmembers_df(out_csv))
+    assert em.are_endmembers_equal(em_df, em.read_endmembers_df(out_csv))
 
 
 def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
@@ -262,9 +281,8 @@ def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
         {"Soil": em1, "Veg": em2},
         index=pandas.Index(["Blue", "Green", "NIR"], name="band"),
     )
-    su.write_endmembers_df(em_df, str(em_path))
+    em.write_endmembers_df(em_df, str(em_path))
 
-    # Build a 2x2 image: exact EM1, exact EM2, 50/50 mix (of unnormed), zeros
     arr = np.zeros((3, 2, 2), dtype=np.float32)
     arr[:, 0, 0] = em1
     arr[:, 0, 1] = em2
@@ -290,7 +308,6 @@ def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
     np.testing.assert_allclose(out_exh[:, 1, 1], [0.0, 0.0, 0.0], atol=1e-6)
     assert abs((out_exh[0, 1, 0] + out_exh[1, 1, 0]) - 1.0) < 1e-5
 
-    # Test rescale_unmixing_results with negative and >1 values
     raw_coef_path = tmp_path / "raw_coef.tif"
     raw_coef = np.array(
         [[[0.6, -0.2], [0.3, 0.0]], [[0.6, 0.8], [0.7, 0.0]]],
@@ -306,7 +323,6 @@ def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
     np.testing.assert_allclose(resc[:, 0, 1], [0.0, 1.0], atol=1e-6)
     np.testing.assert_allclose(resc[:, 1, 1], [0.0, 0.0], atol=1e-6)
 
-    # Exact abundance raster -> predicted reflectance (in-memory DataFrame) and zero error
     exact_coef = np.array(
         [[[1.0, 0.0], [0.5, 0.0]], [[0.0, 1.0], [0.5, 0.0]]],
         dtype=np.float32,
@@ -339,8 +355,7 @@ def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
         assert list(src.descriptions) == ["RMSE", "RMSPE", "Residual"]
     np.testing.assert_allclose(err, 0.0, atol=1e-5)
 
-    # PPI test
-    su.calc_ppi(
+    em.calc_ppi(
         str(img_path),
         str(ppi_path),
         niters=50,
@@ -369,27 +384,25 @@ def test_summarise_multi_endmember_linear_unmixing(tmp_path):
 
     em_a_df = pandas.DataFrame({"Veg": em_veg, "Soil": em_soil})
     em_b_df = pandas.DataFrame({"Veg": em_veg, "Water": em_water})
-    su.write_endmembers_df(em_a_df, str(em_a_path))
+    em.write_endmembers_df(em_a_df, str(em_a_path))
 
-    # Left half: pure soil (perfectly explained by model A); right half: pure water (model B)
     refl = np.zeros((3, 2, 2), dtype=np.float32)
     refl[:, :, 0] = em_soil[:, None]
     refl[:, :, 1] = em_water[:, None]
     _write_raster(refl_path, refl, origin=(0.0, 20.0), res=10.0)
 
     coef_a = np.zeros((2, 2, 2), dtype=np.float32)
-    coef_a[1, :, 0] = 1.0  # model A gets col 0 exact (Soil=1) and fails col 1 (0)
+    coef_a[1, :, 0] = 1.0
     _write_raster(unmix_a_path, coef_a, origin=(0.0, 20.0), res=10.0)
 
     coef_b = np.zeros((2, 2, 2), dtype=np.float32)
-    coef_b[1, :, 1] = 1.0  # model B gets col 1 exact (Water=1) and fails col 0
+    coef_b[1, :, 1] = 1.0
     _write_raster(unmix_b_path, coef_b, origin=(0.0, 20.0), res=10.0)
 
-    # Mix file path (class names inferred from CSV columns) and in-memory DataFrame
-    info_a = su.ImageEndmemberInfo(str(unmix_a_path), str(em_a_path))
-    info_b = su.ImageEndmemberInfo(str(unmix_b_path), em_b_df)
-    assert info_a == su.ImageEndmemberInfo(str(unmix_a_path), str(em_a_path))
-    assert info_b == su.ImageEndmemberInfo(str(unmix_b_path), em_b_df.copy())
+    info_a = em.ImageEndmemberInfo(str(unmix_a_path), str(em_a_path))
+    info_b = em.ImageEndmemberInfo(str(unmix_b_path), em_b_df)
+    assert info_a == em.ImageEndmemberInfo(str(unmix_a_path), str(em_a_path))
+    assert info_b == em.ImageEndmemberInfo(str(unmix_b_path), em_b_df.copy())
     assert info_a != info_b
 
     su.summarise_multi_endmember_linear_unmixing(
@@ -424,7 +437,7 @@ def test_pysptools_unmixers(tmp_path):
     em1 = np.array([0.2, 0.4, 0.8], dtype=np.float64)
     em2 = np.array([0.6, 0.2, 0.1], dtype=np.float64)
     em_df = pandas.DataFrame({"Soil": em1, "Veg": em2})
-    su.write_endmembers_df(em_df, str(em_path))
+    em.write_endmembers_df(em_df, str(em_path))
 
     arr = np.zeros((3, 2, 2), dtype=np.float32)
     arr[:, 0, 0] = 0.3 * em1 + 0.7 * em2
@@ -489,7 +502,7 @@ def test_pymcr_unmixers(tmp_path):
     em1 = np.array([0.2, 0.4, 0.8], dtype=np.float64)
     em2 = np.array([0.6, 0.2, 0.1], dtype=np.float64)
     em_df = pandas.DataFrame({"Soil": em1, "Veg": em2})
-    su.write_endmembers_df(em_df, str(em_path))
+    em.write_endmembers_df(em_df, str(em_path))
 
     arr = np.zeros((3, 2, 2), dtype=np.float32)
     arr[:, 0, 0] = 0.3 * em1 + 0.7 * em2
@@ -539,7 +552,7 @@ def test_recommended_numpy_ucls_unmixer(tmp_path):
     em2 = np.array([0.6, 0.2, 0.1], dtype=np.float64)
     em3 = np.array([0.3, 0.7, 0.2], dtype=np.float64)
     em_df = pandas.DataFrame({"Soil": em1, "Veg": em2, "Water": em3})
-    su.write_endmembers_df(em_df, str(em_path))
+    em.write_endmembers_df(em_df, str(em_path))
 
     arr = np.zeros((3, 2, 2), dtype=np.float32)
     arr[:, 0, 0] = 0.2 * em1 + 0.5 * em2 + 0.3 * em3
@@ -598,14 +611,12 @@ def test_recommended_scipy_nnls_fcls_unmixers(tmp_path):
     em2 = np.array([0.6, 0.3, 0.1, 0.2], dtype=np.float64)
     em3 = np.array([0.2, 0.6, 0.3, 0.7], dtype=np.float64)
     em_df = pandas.DataFrame({"Soil": em1, "Veg": em2, "Shadow": em3})
-    su.write_endmembers_df(em_df, str(em_path))
+    em.write_endmembers_df(em_df, str(em_path))
 
     arr = np.zeros((4, 2, 2), dtype=np.float32)
     arr[:, 0, 0] = 0.25 * em1 + 0.45 * em2 + 0.30 * em3
     arr[:, 0, 1] = em1
-    # Scaled sum != 1 pixel to test NNLS vs FCLS constraints
     arr[:, 1, 0] = 1.4 * em2 + 0.2 * em3
-    # Perturbed out-of-simplex pixel
     arr[:, 1, 1] = np.clip(1.2 * em1 - 0.15 * em2 + 0.05 * em3, 0.01, None)
     _write_raster(img_path, arr, origin=(0.0, 20.0), res=10.0)
 
@@ -647,14 +658,13 @@ def test_recommended_scipy_nnls_fcls_unmixers(tmp_path):
     np.testing.assert_allclose(fcls_arr[:, 0, 0], [0.25, 0.45, 0.30], atol=1e-5)
     np.testing.assert_allclose(fcls_arr[:, 0, 1], [1.0, 0.0, 0.0], atol=1e-5)
 
-    # Scale-invariance check (reflectance scaled by 10000 with gain=1) using Parquet or JSON
     scaled_img = tmp_path / "refl_scaled.tif"
     ext = ".parquet" if HAVE_PYARROW else ".json"
     scaled_em = tmp_path / f"em_scaled{ext}"
     _write_raster(
         scaled_img, (arr * 10000.0).astype(np.float32), origin=(0.0, 20.0), res=10.0
     )
-    su.write_endmembers_df(em_df * 10000.0, str(scaled_em))
+    em.write_endmembers_df(em_df * 10000.0, str(scaled_em))
     out_fcls_scaled = tmp_path / "scipy_fcls_scaled.tif"
     su.spec_unmix_fcls(
         str(scaled_img),
@@ -677,7 +687,6 @@ def test_batched_nnls_fcls_equivalence_and_edge_cases():
 
     rng = np.random.default_rng(123)
 
-    # m=1 single endmember edge case
     em1 = rng.uniform(0.1, 0.9, size=(1, 4))
     px1 = rng.uniform(0.1, 0.9, size=(10, 4))
     out_fcls1 = su._scipy_fcls_solver(px1, em1)  # pylint: disable=protected-access
@@ -686,11 +695,9 @@ def test_batched_nnls_fcls_equivalence_and_edge_cases():
     ref_nnls1 = np.array([scipy.optimize.nnls(em1.T, p)[0] for p in px1])
     np.testing.assert_allclose(out_nnls1, ref_nnls1, atol=1e-10)
 
-    # m=5 mixed interior and active-boundary pixels
     em5 = rng.uniform(0.05, 0.85, size=(5, 8))
     w_true = rng.dirichlet(np.ones(5) * 0.4, size=200)
     px5 = w_true @ em5 + rng.normal(0.0, 0.05, size=(200, 8))
-    # Include unscaled / negative-coefficient stress cases
     px5[:20] = -0.3 * em5[0] + 1.5 * em5[2] + rng.normal(0.0, 0.02, size=(20, 8))
 
     out_nnls5 = su._scipy_nnls_solver(px5, em5)  # pylint: disable=protected-access
@@ -701,12 +708,10 @@ def test_batched_nnls_fcls_equivalence_and_edge_cases():
     ref_fcls5 = su._scipy_fcls_heinz_chang_loop(px5, em5)  # pylint: disable=protected-access
     assert np.all(out_fcls5 >= -1e-12)
     np.testing.assert_allclose(np.sum(out_fcls5, axis=1), 1.0, atol=1e-10)
-    # Check residuals are at least as low as reference Heinz-Chang solver
     res_batched = np.sum((out_fcls5 @ em5 - px5) ** 2, axis=1)
     res_ref = np.sum((ref_fcls5 @ em5 - px5) ** 2, axis=1)
     assert np.all(res_batched <= res_ref + 1e-7)
 
-    # m=22 fallback path (m > 20)
     em22 = rng.uniform(0.1, 0.9, size=(22, 25))
     px22 = rng.uniform(0.1, 0.9, size=(5, 25))
     out_nnls22 = su._scipy_nnls_solver(px22, em22)  # pylint: disable=protected-access
@@ -724,22 +729,27 @@ def test_optional_dependency_friendly_errors(monkeypatch, tmp_path):
     dummy_out = str(tmp_path / "out.tif")
 
     checks = [
-        (su.spec_unmix_nnls, "HAVE_SCIPY", "scipy"),
-        (su.spec_unmix_fcls, "HAVE_SCIPY", "scipy"),
-        (su.spec_unmix_spts_ucls, "HAVE_PYSPTOOLS", "pysptools"),
-        (su.spec_unmix_spts_nnls, "HAVE_PYSPTOOLS", "pysptools"),
-        (su.spec_unmix_spts_fcls, "HAVE_PYSPTOOLS", "pysptools"),
-        (su.spec_unmix_spts_fcls, "HAVE_CVXOPT", "cvxopt"),
-        (su.spec_unmix_pymcr_nnls, "HAVE_PYMCR", "pyMCR"),
-        (su.spec_unmix_pymcr_fcls, "HAVE_PYMCR", "pyMCR"),
+        (su.spec_unmix_nnls, {"HAVE_SCIPY": False}, "scipy"),
+        (su.spec_unmix_fcls, {"HAVE_SCIPY": False}, "scipy"),
+        (su.spec_unmix_spts_ucls, {"HAVE_PYSPTOOLS": False}, "pysptools"),
+        (su.spec_unmix_spts_nnls, {"HAVE_PYSPTOOLS": False}, "pysptools"),
+        (su.spec_unmix_spts_fcls, {"HAVE_PYSPTOOLS": False}, "pysptools"),
+        (
+            su.spec_unmix_spts_fcls,
+            {"HAVE_PYSPTOOLS": True, "HAVE_CVXOPT": False},
+            "cvxopt",
+        ),
+        (su.spec_unmix_pymcr_nnls, {"HAVE_PYMCR": False}, "pyMCR"),
+        (su.spec_unmix_pymcr_fcls, {"HAVE_PYMCR": False}, "pyMCR"),
     ]
-    for fn, flag, pkg in checks:
-        monkeypatch.setattr(su, flag, False)
-        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
-            fn(dummy_in, None, 1, dummy_out, em_df)
-        with pytest.raises(rsgispy.RSGISPyException, match=pkg):
-            fn(dummy_in, None, 1, dummy_out, em_df)
-        monkeypatch.undo()
+    for fn, flags, pkg in checks:
+        with monkeypatch.context() as mp:
+            for flag, val in flags.items():
+                mp.setattr(su, flag, val)
+            with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+                fn(dummy_in, None, 1, dummy_out, em_df)
+            with pytest.raises(rsgispy.RSGISPyException, match=pkg):
+                fn(dummy_in, None, 1, dummy_out, em_df)
 
 
 def test_spectral_angle_mapper(tmp_path):
@@ -748,7 +758,7 @@ def test_spectral_angle_mapper(tmp_path):
     em_soil = np.array([3.0, 1.0, 1.0], dtype=np.float64)
     em_df = pandas.DataFrame({"Veg": em_veg, "Soil": em_soil})
     em_csv = tmp_path / "sam_em.csv"
-    su.write_endmembers_df(em_df, str(em_csv))
+    em.write_endmembers_df(em_df, str(em_csv))
 
     img_path = tmp_path / "sam_in.tif"
     msk_path = tmp_path / "sam_msk.tif"
@@ -756,13 +766,6 @@ def test_spectral_angle_mapper(tmp_path):
     out_cls = tmp_path / "sam_cls.tif"
     out_min = tmp_path / "sam_min.tif"
 
-    # 2x3 image:
-    # (0, 0): scaled Veg (3 * em_veg) -> exact angle 0 to Veg -> class 1
-    # (0, 1): scaled Soil (0.5 * em_soil) -> exact angle 0 to Soil -> class 2
-    # (0, 2): equal mix far from both -> large angle -> > max_angle=15 deg -> class 0
-    # (1, 0): valid pure Veg but masked out -> nodata / class 0
-    # (1, 1): nodata (-9999) -> nodata / class 0
-    # (1, 2): zero spectrum -> nodata / class 0
     cube = np.zeros((3, 2, 3), dtype=np.float32)
     cube[:, 0, 0] = (3.0 * em_veg).astype(np.float32)
     cube[:, 0, 1] = (0.5 * em_soil).astype(np.float32)
@@ -775,7 +778,7 @@ def test_spectral_angle_mapper(tmp_path):
     msk = np.array([[[1, 1, 1], [0, 1, 1]]], dtype=np.uint8)
     _write_raster(msk_path, msk, origin=(0.0, 20.0), res=10.0)
 
-    su.spectral_angle_mapper(
+    sc.spectral_angle_mapper(
         str(img_path),
         str(em_csv),
         str(out_ang),
@@ -794,9 +797,7 @@ def test_spectral_angle_mapper(tmp_path):
         assert list(src.descriptions) == ["Veg", "Soil"]
     assert ang[0, 0, 0] == pytest.approx(0.0, abs=1e-3)
     assert ang[1, 0, 1] == pytest.approx(0.0, abs=1e-3)
-    expected_deg = math.degrees(
-        math.acos(2.0 / math.sqrt(21.0))
-    )  # [0,0,5] vs [1,4,2]
+    expected_deg = math.degrees(math.acos(2.0 / math.sqrt(21.0)))
     assert ang[0, 0, 2] == pytest.approx(expected_deg, abs=1e-3)
     assert ang[0, 1, 0] == pytest.approx(-9999.0)
     assert ang[0, 1, 1] == pytest.approx(-9999.0)
@@ -806,28 +807,463 @@ def test_spectral_angle_mapper(tmp_path):
         cls = src.read(1)
     assert cls[0, 0] == 1
     assert cls[0, 1] == 2
-    assert cls[0, 2] == 0  # exceeds max_angle=15 deg
-    assert cls[1, 0] == 0  # masked out
-    assert cls[1, 1] == 0  # nodata
-    assert cls[1, 2] == 0  # zero norm
+    assert cls[0, 2] == 0
+    assert cls[1, 0] == 0
+    assert cls[1, 1] == 0
+    assert cls[1, 2] == 0
 
     with rasterio.open(out_min) as src:
         m_ang = src.read(1)
     assert m_ang[0, 0] == pytest.approx(0.0, abs=1e-3)
     assert m_ang[0, 1] == pytest.approx(0.0, abs=1e-3)
 
-    # Error handling: band mismatch and zero-norm endmember
     with pytest.raises(rsgispy.RSGISPyException):
-        su.spectral_angle_mapper(
+        sc.spectral_angle_mapper(
             str(img_path),
             pandas.DataFrame({"A": [1.0, 2.0]}),
             str(tmp_path / "bad_bands.tif"),
         )
     with pytest.raises(rsgispy.RSGISPyException):
-        su.spectral_angle_mapper(
+        sc.spectral_angle_mapper(
             str(img_path),
             pandas.DataFrame({"Zero": [0.0, 0.0, 0.0]}),
             str(tmp_path / "bad_zero.tif"),
         )
 
 
+def test_spectral_correlation_mapper(tmp_path):
+    """Test spectral_correlation_mapper affine invariance, thresholds, and nodata."""
+    em_veg = np.array([1.0, 4.0, 2.0, 3.0], dtype=np.float64)
+    em_soil = np.array([4.0, 2.0, 1.0, 0.0], dtype=np.float64)
+    em_df = pandas.DataFrame({"Veg": em_veg, "Soil": em_soil})
+
+    img_path = tmp_path / "scm_in.tif"
+    msk_path = tmp_path / "scm_msk.tif"
+    out_corr = tmp_path / "scm_corr.tif"
+    out_cls = tmp_path / "scm_cls.tif"
+    out_max = tmp_path / "scm_max.tif"
+
+    cube = np.zeros((4, 2, 3), dtype=np.float32)
+    cube[:, 0, 0] = (2.5 * em_veg + 10.0).astype(np.float32)
+    cube[:, 0, 1] = (0.5 * em_soil - 1.0).astype(np.float32)
+    cube[:, 0, 2] = (-em_veg + 5.0).astype(np.float32)
+    cube[:, 1, 0] = em_veg.astype(np.float32)
+    cube[:, 1, 1] = -9999.0
+    cube[:, 1, 2] = 5.0
+    _write_raster(img_path, cube, origin=(0.0, 20.0), res=10.0, nodata=-9999.0)
+
+    msk = np.array([[[1, 1, 1], [0, 1, 1]]], dtype=np.uint8)
+    _write_raster(msk_path, msk, origin=(0.0, 20.0), res=10.0)
+
+    sc.spectral_correlation_mapper(
+        str(img_path),
+        em_df,
+        str(out_corr),
+        out_class_img=str(out_cls),
+        out_max_corr_img=str(out_max),
+        min_corr=0.8,
+        valid_msk_img=str(msk_path),
+        valid_msk_val=1,
+        calc_stats=True,
+        use_pbar=False,
+    )
+
+    with rasterio.open(out_corr) as src:
+        corr = src.read()
+        assert list(src.descriptions) == ["Veg", "Soil"]
+    assert corr[0, 0, 0] == pytest.approx(1.0, abs=1e-5)
+    assert corr[1, 0, 1] == pytest.approx(1.0, abs=1e-5)
+    assert corr[0, 0, 2] == pytest.approx(-1.0, abs=1e-5)
+    assert corr[0, 1, 0] == pytest.approx(-9999.0)
+    assert corr[0, 1, 1] == pytest.approx(-9999.0)
+    assert corr[0, 1, 2] == pytest.approx(-9999.0)
+
+    with rasterio.open(out_cls) as src:
+        cls = src.read(1)
+    assert cls[0, 0] == 1
+    assert cls[0, 1] == 2
+    assert cls[0, 2] == 0
+    assert cls[1, 0] == 0
+    assert cls[1, 1] == 0
+    assert cls[1, 2] == 0
+
+    with rasterio.open(out_max) as src:
+        max_c = src.read(1)
+        assert list(src.descriptions) == ["max_corr"]
+    assert max_c[0, 0] == pytest.approx(1.0, abs=1e-5)
+    assert max_c[0, 1] == pytest.approx(1.0, abs=1e-5)
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        sc.spectral_correlation_mapper(
+            str(img_path),
+            pandas.DataFrame({"Const": [2.0, 2.0, 2.0, 2.0]}),
+            str(tmp_path / "bad_const.tif"),
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        sc.spectral_correlation_mapper(
+            str(img_path),
+            em_df,
+            str(tmp_path / "bad_thresh.tif"),
+            out_class_img=str(tmp_path / "bad_thresh_cls.tif"),
+            min_corr=1.5,
+        )
+    single_img = tmp_path / "single_band.tif"
+    _write_raster(single_img, np.ones((1, 2, 2), dtype=np.float32))
+    with pytest.raises(rsgispy.RSGISPyException):
+        sc.spectral_correlation_mapper(
+            str(single_img),
+            pandas.DataFrame({"A": [1.0]}),
+            str(tmp_path / "bad_1band.tif"),
+        )
+
+
+def test_spectral_smoothing_and_outlier_mask(tmp_path):
+    """Test spectral_smoothing (with calc_stats) and mask_outliners_data_values."""
+    n_bands = 7
+    wavelengths = np.arange(n_bands, dtype=np.float64)
+    clean_spec = 2.0 * wavelengths + 1.0
+    cube = (
+        np.broadcast_to(clean_spec[:, None, None], (n_bands, 6, 6))
+        .astype(np.float32)
+        .copy()
+    )
+
+    in_img = tmp_path / "spec.tif"
+    msk_img = tmp_path / "spec_msk.tif"
+    _write_raster(in_img, cube, nodata=0.0)
+    msk = np.zeros((6, 6), dtype=np.uint8)
+    msk[1:5, 1:5] = 1
+    _write_raster(msk_img, msk)
+
+    smooth_out = tmp_path / "smooth.tif"
+    sp.spectral_smoothing(
+        str(in_img),
+        str(msk_img),
+        1,
+        str(smooth_out),
+        win_len=5,
+        polyorder=2,
+        gdalformat="GTIFF",
+        calc_stats=True,
+    )
+    with rasterio.open(smooth_out) as src:
+        sm = src.read()
+        assert np.allclose(sm[:, 2, 2], clean_spec, atol=1e-4)
+        assert np.allclose(sm[:, 0, 0], 0.0)
+        assert "STATISTICS_MEAN" in src.tags(1)
+
+    outl_arr = cube.copy()
+    outl_arr[3, 2, 2] = 500.0
+    outl_in = tmp_path / "outl_in.tif"
+    outl_out = tmp_path / "outl_out.tif"
+    _write_raster(outl_in, outl_arr)
+    sp.mask_outliners_data_values(
+        str(outl_in),
+        str(msk_img),
+        1,
+        str(outl_out),
+        lower=5,
+        upper=85,
+        gdalformat="GTIFF",
+        calc_stats=False,
+    )
+    with rasterio.open(outl_out) as src:
+        assert np.isnan(src.read()[3, 2, 2])
+
+
+def test_polyfill_nan_data_values(tmp_path):
+    """Test polyfill_nan_data_values reconstructs NaN spectral bands."""
+    wavelengths = np.arange(7, dtype=np.float64)
+    clean_spec = 2.0 * wavelengths + 1.0
+    nan_arr = (
+        np.broadcast_to(clean_spec[:, None, None], (7, 6, 6))
+        .astype(np.float32)
+        .copy()
+    )
+    nan_arr[3, 2, 2] = np.nan
+
+    nan_in = tmp_path / "nan_in.tif"
+    msk_img = tmp_path / "poly_msk.tif"
+    poly_out = tmp_path / "poly_out.tif"
+    _write_raster(nan_in, nan_arr)
+    _write_raster(msk_img, np.ones((6, 6), dtype=np.uint8))
+
+    sp.polyfill_nan_data_values(
+        str(nan_in),
+        wavelengths.tolist(),
+        str(msk_img),
+        1,
+        str(poly_out),
+        polyorder=2,
+        gdalformat="GTIFF",
+        calc_stats=False,
+    )
+    with rasterio.open(poly_out) as src:
+        assert src.read()[3, 2, 2] == pytest.approx(clean_spec[3], abs=1e-3)
+
+
+def test_whiten_image(tmp_path):
+    """Test whiten_image produces uncorrelated unit-variance valid spectra."""
+    rng = np.random.default_rng(99)
+    w_in_arr = rng.normal(0.0, 1.0, (3, 12, 12)).astype(np.float32)
+    w_in_arr[1] = (
+        w_in_arr[0] * 2.0 + rng.normal(0.0, 0.5, (12, 12)).astype(np.float32)
+    )
+    w_in = tmp_path / "w_in.tif"
+    w_msk = tmp_path / "w_msk.tif"
+    w_out = tmp_path / "w_out.tif"
+    _write_raster(w_in, w_in_arr)
+    _write_raster(w_msk, np.ones((12, 12), dtype=np.uint8))
+
+    st.whiten_image(str(w_in), str(w_msk), 1, str(w_out), gdalformat="GTIFF")
+    with rasterio.open(w_out) as src:
+        cov = np.cov(src.read().reshape(3, -1))
+        assert np.allclose(cov, np.eye(3), atol=1e-2)
+
+
+def test_spectral_pca_and_mnf_windowed(tmp_path):
+    """Test streaming windowed PCA and MNF against full-matrix linear algebra."""
+    rng = np.random.default_rng(12345)
+    height, width, n_bands = 20, 20, 4
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    s1 = np.sin(xx / 4.0) + np.cos(yy / 5.0)
+    s2 = 0.5 * xx / width - 0.3 * yy / height
+    clean = np.stack(
+        [
+            10.0 + 3.0 * s1 + 1.0 * s2,
+            20.0 + 6.0 * s1 - 2.0 * s2,
+            5.0 - 1.5 * s1 + 4.0 * s2,
+            12.0 + 0.5 * s1 + 0.5 * s2,
+        ],
+        axis=0,
+    )
+    noise = rng.normal(0.0, 0.05, size=(n_bands, height, width))
+    noise[3] = rng.normal(0.0, 2.0, size=(height, width))
+    cube = (clean + noise).astype(np.float32)
+    cube[:, 0, 0] = -9999.0
+
+    in_img = str(tmp_path / "hyp_in.tif")
+    _write_raster(in_img, cube, nodata=-9999.0)
+    msk = np.ones((height, width), dtype=np.uint8)
+    msk[0, 1] = 0
+    msk_img = str(tmp_path / "hyp_msk.tif")
+    _write_raster(msk_img, msk)
+
+    pca_single = str(tmp_path / "pca_single.tif")
+    pca_multi = str(tmp_path / "pca_multi.tif")
+    pca_json = str(tmp_path / "pca_stats.json")
+
+    info_single = st.calc_pca(
+        in_img,
+        pca_single,
+        n_components=2,
+        valid_msk_img=msk_img,
+        valid_msk_val=1,
+        standardise=True,
+        out_stats_json=pca_json,
+        calc_stats=True,
+        use_pbar=False,
+    )
+    assert info_single["n_valid_pixels"] == height * width - 2
+    assert info_single["n_components"] == 2
+    assert os.path.exists(pca_json)
+    with open(pca_json, "r", encoding="utf-8") as handle:
+        loaded_json = json.load(handle)
+    assert loaded_json["eigenvalues"] == pytest.approx(info_single["eigenvalues"])
+
+    img_proc.set_default_block_size(7)
+    try:
+        info_multi = st.calc_pca(
+            in_img,
+            pca_multi,
+            n_components=2,
+            valid_msk_img=msk_img,
+            valid_msk_val=1,
+            standardise=True,
+            calc_stats=False,
+            use_pbar=False,
+        )
+    finally:
+        img_proc.reset_default_block_size()
+
+    assert info_multi["mean"] == pytest.approx(info_single["mean"], rel=1e-10)
+    assert info_multi["eigenvalues"] == pytest.approx(
+        info_single["eigenvalues"], rel=1e-10
+    )
+    with rasterio.open(pca_single) as s_src, rasterio.open(pca_multi) as m_src:
+        assert list(s_src.descriptions) == ["PC_1", "PC_2"]
+        np.testing.assert_allclose(s_src.read(), m_src.read(), rtol=1e-5, atol=1e-5)
+        assert s_src.read(1)[0, 0] == pytest.approx(-9999.0)
+        assert s_src.read(1)[0, 1] == pytest.approx(-9999.0)
+
+    mnf_single = str(tmp_path / "mnf_single.tif")
+    mnf_multi = str(tmp_path / "mnf_multi.tif")
+    mnf_json = str(tmp_path / "mnf_stats.json")
+
+    mnf_s_info = st.calc_mnf(
+        in_img,
+        mnf_single,
+        n_components=3,
+        valid_msk_img=msk_img,
+        valid_msk_val=1,
+        noise_direction="both",
+        out_stats_json=mnf_json,
+        calc_stats=True,
+        use_pbar=False,
+    )
+    img_proc.set_default_block_size(7)
+    try:
+        mnf_m_info = st.calc_mnf(
+            in_img,
+            mnf_multi,
+            n_components=3,
+            valid_msk_img=msk_img,
+            valid_msk_val=1,
+            noise_direction="both",
+            calc_stats=False,
+            use_pbar=False,
+        )
+    finally:
+        img_proc.reset_default_block_size()
+
+    assert mnf_s_info["n_noise_pairs"] == mnf_m_info["n_noise_pairs"]
+    assert mnf_s_info["mnf_eigenvalues"] == pytest.approx(
+        mnf_m_info["mnf_eigenvalues"], rel=1e-10
+    )
+    vals = mnf_s_info["mnf_eigenvalues"]
+    assert vals[0] > vals[1] > vals[2]
+    assert os.path.exists(mnf_json)
+
+    with rasterio.open(mnf_single) as s_src, rasterio.open(mnf_multi) as m_src:
+        assert list(s_src.descriptions) == ["MNF_1", "MNF_2", "MNF_3"]
+        np.testing.assert_allclose(s_src.read(), m_src.read(), rtol=1e-5, atol=1e-5)
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        st.calc_mnf(in_img, str(tmp_path / "bad.tif"), noise_direction="diag")
+    with pytest.raises(rsgispy.RSGISPyException):
+        st.calc_pca(in_img, str(tmp_path / "bad_pca.tif"), n_components=9)
+
+
+def test_spectral_tasseled_cap_and_histogram_matching(tmp_path, monkeypatch):
+    """Test Tasseled Cap presets/custom coeffs, histogram matching, and SciPy guard."""
+    sensors = st.get_tasseled_cap_sensors()
+    assert {
+        "landsat5_tm",
+        "landsat7_etm",
+        "landsat8_oli",
+        "landsat9_oli",
+        "modis_nbar",
+        "sentinel2_msi",
+    }.issubset(set(sensors))
+
+    in_6b = np.full((6, 4, 4), 1000.0, dtype=np.float32)
+    in_6b[:, 0, 0] = 0.0
+    tct_in = str(tmp_path / "s2_in.tif")
+    _write_raster(tct_in, in_6b, nodata=0.0)
+
+    tct_out = str(tmp_path / "s2_tct.tif")
+    st.calc_tasseled_cap(
+        tct_in,
+        tct_out,
+        sensor="sentinel2_msi",
+        gain=10000.0,
+        out_no_data_val=-9999.0,
+        calc_stats=True,
+        use_pbar=False,
+    )
+    with rasterio.open(tct_out) as src:
+        arr = src.read()
+        assert list(src.descriptions) == ["Brightness", "Greenness", "Wetness"]
+        expected_bright = 0.1 * (
+            0.3510 + 0.3813 + 0.3437 + 0.7196 + 0.2396 + 0.1949
+        )
+        assert arr[0, 1, 1] == pytest.approx(expected_bright, abs=1e-5)
+        assert arr[0, 0, 0] == pytest.approx(-9999.0)
+
+    custom_df = pandas.DataFrame({"AxisA": [1.0, 0.0], "AxisB": [0.0, 2.0]})
+    custom_out = str(tmp_path / "custom_tct.tif")
+    st.calc_tasseled_cap(
+        tct_in,
+        custom_out,
+        bands=[1, 4],
+        coeffs=custom_df,
+        gain=1000.0,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(custom_out) as src:
+        c_arr = src.read()
+        assert list(src.descriptions) == ["AxisA", "AxisB"]
+        assert c_arr[0, 1, 1] == pytest.approx(1.0)
+        assert c_arr[1, 1, 1] == pytest.approx(2.0)
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        st.calc_tasseled_cap(tct_in, str(tmp_path / "bad_s.tif"), sensor="unknown")
+
+    rng = np.random.default_rng(42)
+    src_data = rng.uniform(0.0, 50.0, size=(2, 24, 24)).astype(np.float32)
+    src_data[:, 0, 0] = -9999.0
+    ref_data = rng.normal(200.0, 20.0, size=(2, 30, 30)).astype(np.float32)
+
+    hm_in = str(tmp_path / "hm_in.tif")
+    hm_ref = str(tmp_path / "hm_ref.tif")
+    hm_out = str(tmp_path / "hm_out.tif")
+    _write_raster(hm_in, src_data, nodata=-9999.0)
+    _write_raster(hm_ref, ref_data, nodata=-9999.0)
+
+    img_proc.set_default_block_size(10)
+    try:
+        st.histogram_matching(
+            hm_in,
+            hm_ref,
+            hm_out,
+            n_bins=1024,
+            calc_stats=True,
+            use_pbar=False,
+        )
+    finally:
+        img_proc.reset_default_block_size()
+
+    with rasterio.open(hm_out) as src:
+        matched = src.read()
+        assert matched[0, 0, 0] == pytest.approx(-9999.0)
+        valid_b1 = matched[0].ravel()
+        valid_b1 = valid_b1[valid_b1 != -9999.0]
+        assert float(np.mean(valid_b1)) == pytest.approx(
+            float(np.mean(ref_data[0])), abs=2.5
+        )
+        assert float(np.std(valid_b1)) == pytest.approx(
+            float(np.std(ref_data[0])), abs=2.5
+        )
+
+    monkeypatch.setattr(sp, "HAVE_SCIPY", False)
+    with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+        sp.spectral_smoothing(tct_in, tct_in, 1, str(tmp_path / "no_scipy.tif"))
+
+
+def test_calc_area_under_curve(tmp_path):
+    """Test rsgispy.imagespectral.indices.calc_area_under_curve."""
+    assert inspect.signature(si.calc_area_under_curve).parameters["gdalformat"].default == "GTIFF"
+    in_p = tmp_path / "auc_in.tif"
+    out_p = tmp_path / "auc_out.tif"
+    arr = np.array(
+        [
+            [[1.0, 2.0], [3.0, 4.0]],
+            [[2.0, 2.0], [2.0, 2.0]],
+        ],
+        dtype=np.float32,
+    )
+    _write_raster(in_p, arr)
+
+    si.calc_area_under_curve(
+        str(in_p), [0.5, 2.0], str(out_p), use_pbar=False
+    )
+    with rasterio.open(out_p) as src:
+        np.testing.assert_allclose(
+            src.read(1), np.array([[4.5, 5.0], [5.5, 6.0]], dtype=np.float32)
+        )
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        si.calc_area_under_curve(str(in_p), None, str(out_p), use_pbar=False)
+    with pytest.raises(rsgispy.RSGISPyException):
+        si.calc_area_under_curve(str(in_p), [1.0], str(out_p), use_pbar=False)

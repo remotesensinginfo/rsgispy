@@ -12,7 +12,6 @@ from typing import List, Optional, Tuple
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 import rasterio
-from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imageprocess import (
@@ -21,6 +20,8 @@ from rsgispy.imageprocess import (
     ensure_file_exists,
     iter_dataset_windows,
     open_output_dataset,
+    run_window_halo_blocks,
+    validate_odd_window_size,
 )
 
 __all__ = [
@@ -67,10 +68,9 @@ def _parse_morph_op_file(morph_op_file: str) -> np.ndarray:
         raise rsgispy.RSGISPyException(
             "Morphological operator must be a square matrix."
         )
-    if rows < 3 or rows % 2 == 0:
-        raise rsgispy.RSGISPyException(
-            f"Morphological operator size must be an odd integer >= 3 (got {rows})."
-        )
+    validate_odd_window_size(
+        rows, min_size=3, name="Morphological operator size"
+    )
 
     tokens: List[float] = []
     for row_line in lines[2:]:
@@ -104,11 +104,7 @@ def _load_morph_operator(
     if use_op_file:
         return _parse_morph_op_file(morph_op_file)
 
-    size_int = int(op_size)
-    if size_int < 3 or size_int % 2 == 0:
-        raise rsgispy.RSGISPyException(
-            f"op_size must be an odd integer >= 3 (got {op_size})."
-        )
+    size_int = validate_odd_window_size(op_size, min_size=3, name="op_size")
     return np.ones((size_int, size_int), dtype=bool)
 
 
@@ -153,7 +149,7 @@ def _compute_local_minima_block(
     nbr_mask = op_mask & (ii != half) & (jj != half)
     has_nbrs = bool(np.any(nbr_mask))
 
-    centres = padded[:, half : half + out_h, half : half + out_w]
+    centres = padded[:, half:half + out_h, half:half + out_w]
     windows = sliding_window_view(padded, (win_size, win_size), axis=(1, 2))
     nbr_vals = windows[:, :, :, nbr_mask] if has_nbrs else None
 
@@ -205,88 +201,61 @@ def _run_window_morphology(
     """Apply a windowed morphological operation across ``input_img`` block-by-block."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
-    out_np_dtype = rsgispy.get_numpy_datatype(datatype)
-
-    win_size = op_mask.shape[0]
-    half = win_size // 2
-
-    with ExitStack() as stack:
-        src = stack.enter_context(rasterio.open(input_img, "r"))
-        grid = IntersectionGrid.from_dataset(src)
-        out_count = 1 if combined else src.count
-        dst = open_output_dataset(
-            stack=stack,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            out_rio_dtype=out_rio_dtype,
-            grid=grid,
-            count=out_count,
+    if op_kind not in ("dilate", "erode", "gradiant", "local_minima"):
+        raise rsgispy.RSGISPyException(
+            f"Unsupported morphology operation: '{op_kind}'."
         )
 
-        use_strips = op_kind == "local_minima" and sequencial_out
-        seq_counters = np.ones(out_count, dtype=np.int64)
+    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
+    out_np_dtype = rsgispy.get_numpy_datatype(datatype)
+    win_size = int(op_mask.shape[0])
+    use_strips = op_kind == "local_minima" and sequencial_out
+    with rasterio.open(input_img, "r") as src:
+        out_count = 1 if combined else int(src.count)
+    seq_counters = np.ones(out_count, dtype=np.int64)
+    reduce_axes: Tuple[int, ...] = (0, -1) if combined else (-1,)
 
-        for out_win in iter_dataset_windows(
-            src.height,
-            src.width,
-            block_width=src.width if use_strips else None,
-            use_pbar=use_pbar,
-        ):
-            halo_win = Window(
-                int(out_win.col_off) - half,
-                int(out_win.row_off) - half,
-                int(out_win.width) + (2 * half),
-                int(out_win.height) + (2 * half),
+    def _morph_block(padded: np.ndarray) -> np.ndarray:
+        if op_kind == "local_minima":
+            return _compute_local_minima_block(
+                padded=padded,
+                op_mask=op_mask,
+                combined=combined,
+                allow_equal=allow_equal,
+                sequencial_out=sequencial_out,
+                seq_counters=seq_counters,
             )
-            padded = src.read(
-                window=halo_win,
-                boundless=True,
-                fill_value=0.0,
-            ).astype(np.float32)
-
-            if op_kind == "local_minima":
-                raw_out = _compute_local_minima_block(
-                    padded=padded,
-                    op_mask=op_mask,
-                    combined=combined,
-                    allow_equal=allow_equal,
-                    sequencial_out=sequencial_out,
-                    seq_counters=seq_counters,
-                )
-            else:
-                win_view = sliding_window_view(
-                    padded, (win_size, win_size), axis=(1, 2)
-                )
-                active = win_view[:, :, :, op_mask]
-                reduce_axes: Tuple[int, ...] = (0, -1) if combined else (-1,)
-
-                if op_kind == "dilate":
-                    raw_out = np.max(active, axis=reduce_axes)
-                elif op_kind == "erode":
-                    raw_out = np.min(active, axis=reduce_axes)
-                elif op_kind == "gradiant":
-                    raw_out = np.max(active, axis=reduce_axes) - np.min(
-                        active, axis=reduce_axes
-                    )
-                else:
-                    raise rsgispy.RSGISPyException(
-                        f"Unsupported morphology operation: '{op_kind}'."
-                    )
-
-                if combined:
-                    raw_out = raw_out[np.newaxis, :, :]
-
-            dst.write(
-                cast_result_block(
-                    raw_out,
-                    int(out_win.height),
-                    int(out_win.width),
-                    out_np_dtype,
-                    clamp_int=True,
-                ),
-                window=out_win,
+        win_view = sliding_window_view(padded, (win_size, win_size), axis=(1, 2))
+        active = win_view[:, :, :, op_mask]
+        if op_kind == "dilate":
+            raw_out = np.max(active, axis=reduce_axes)
+        elif op_kind == "erode":
+            raw_out = np.min(active, axis=reduce_axes)
+        else:
+            raw_out = np.max(active, axis=reduce_axes) - np.min(
+                active, axis=reduce_axes
             )
+        if combined:
+            raw_out = raw_out[np.newaxis, :, :]
+        return raw_out
+
+    run_window_halo_blocks(
+        input_img=input_img,
+        output_img=output_img,
+        win_shape=(win_size, win_size),
+        block_fn=_morph_block,
+        gdalformat=gdalformat,
+        out_rio_dtype=out_rio_dtype,
+        out_np_dtype=out_np_dtype,
+        out_count=out_count,
+        per_band=False,
+        read_dtype=np.float32,
+        pad_mode="constant",
+        fill_value=0.0,
+        clamp_int=True,
+        full_width_strips=use_strips,
+        use_pbar=use_pbar,
+    )
 
 
 def _subtract_images(
@@ -415,11 +384,7 @@ def create_circular_op(output_file: str, op_size: int) -> None:
             op_size=5,
         )
     """
-    size_int = int(op_size)
-    if size_int < 1 or size_int % 2 == 0:
-        raise rsgispy.RSGISPyException(
-            f"op_size must be a positive odd integer (got {op_size})."
-        )
+    size_int = validate_odd_window_size(op_size, min_size=1, name="op_size")
 
     out_path = output_file if output_file.endswith(".gmtxt") else f"{output_file}.gmtxt"
     radius = (size_int - 1) // 2

@@ -211,6 +211,35 @@ def validate_band_index(img_band: int, n_bands: int, img_path: str) -> None:
         )
 
 
+def validate_odd_window_size(
+    size: int, min_size: int = 3, name: str = "filter_size"
+) -> int:
+    """
+    Validate that ``size`` is an odd integer >= ``min_size``.
+
+    :param size: Candidate window size.
+    :param min_size: Minimum permitted odd integer size (Default = ``3``).
+    :param name: Parameter name used in validation error messages.
+    :return: Validated integer size.
+
+    .. code:: python
+
+        import rsgispy.imageprocess
+
+        win_sz = rsgispy.imageprocess.validate_odd_window_size(5, name="op_size")
+    """
+    if (
+        isinstance(size, bool)
+        or not isinstance(size, (int, np.integer))
+        or int(size) < min_size
+        or int(size) % 2 == 0
+    ):
+        raise rsgispy.RSGISPyException(
+            f"{name} must be an odd integer >= {min_size}, got {size!r}."
+        )
+    return int(size)
+
+
 def bbox_from_dataset(src: DatasetReader) -> Tuple[float, float, float, float]:
     """
     Return ``(MinX, MaxX, MinY, MaxY)`` from an opened rasterio dataset.
@@ -524,20 +553,29 @@ def read_window_with_halo(
     src: DatasetReader,
     band: Union[int, Sequence[int], None],
     out_win: Window,
-    pad: int,
+    pad: Union[int, Tuple[int, int]],
     out_dtype: Any = np.float64,
+    pad_mode: str = "edge",
+    fill_value: float = 0.0,
 ) -> np.ndarray:
     """
-    Read a raster window expanded by ``pad`` pixels, edge-padding at image borders.
+    Read a raster window expanded by ``pad`` pixels, padding image borders
+    using ``pad_mode`` (``'edge'`` by default, or ``'constant'`` with
+    ``fill_value``).
 
     :param src: Opened rasterio :class:`rasterio.io.DatasetReader`.
     :param band: 1-based band index (returns 2D array), sequence of 1-based
                  band indices, or ``None`` for all bands (returns 3D array).
     :param out_win: Core output :class:`rasterio.windows.Window`.
-    :param pad: Number of halo pixels to include around ``out_win``.
+    :param pad: Halo padding around ``out_win`` as an integer (symmetric) or
+                ``(pad_y, pad_x)`` tuple.
     :param out_dtype: NumPy dtype to cast read values into (Default = ``float64``).
-    :return: Padded NumPy array of shape ``(win_h + 2*pad, win_w + 2*pad)`` for
-             a single band or ``(bands, win_h + 2*pad, win_w + 2*pad)``.
+    :param pad_mode: ``numpy.pad`` border mode (e.g., ``'edge'`` or
+                     ``'constant'``, Default = ``'edge'``).
+    :param fill_value: Fill constant used when ``pad_mode='constant'``
+                       (Default = ``0.0``).
+    :return: Padded NumPy array of shape ``(win_h + 2*pad_y, win_w + 2*pad_x)``
+             for a single band or ``(bands, win_h + 2*pad_y, win_w + 2*pad_x)``.
 
     .. code:: python
 
@@ -550,16 +588,21 @@ def read_window_with_halo(
                 src, 1, Window(0, 0, 128, 128), pad=1
             )
     """
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if isinstance(pad, tuple):
+        pad_y, pad_x = int(pad[0]), int(pad[1])
+    else:
+        pad_y = pad_x = int(pad)
+
     col_off = int(out_win.col_off)
     row_off = int(out_win.row_off)
     win_w = int(out_win.width)
     win_h = int(out_win.height)
 
-    r0 = row_off - pad
-    r1 = row_off + win_h + pad
-    c0 = col_off - pad
-    c1 = col_off + win_w + pad
+    r0 = row_off - pad_y
+    r1 = row_off + win_h + pad_y
+    c0 = col_off - pad_x
+    c1 = col_off + win_w + pad_x
 
     cr0 = max(0, r0)
     cr1 = min(src.height, r1)
@@ -575,7 +618,10 @@ def read_window_with_halo(
     spatial_pads = ((cr0 - r0, r1 - cr1), (cc0 - c0, c1 - cc1))
     if any(p > 0 for pair in spatial_pads for p in pair):
         pads = ((0, 0), *spatial_pads) if arr.ndim == 3 else spatial_pads
-        arr = np.pad(arr, pads, mode="edge")
+        if pad_mode == "constant":
+            arr = np.pad(arr, pads, mode="constant", constant_values=fill_value)
+        else:
+            arr = np.pad(arr, pads, mode=pad_mode)  # type: ignore[call-overload]
     return arr
 
 
@@ -1011,3 +1057,141 @@ def process_blocks(
             dst.write(out_arr, window=out_win)
         else:
             dst.write(out_arr, 1, window=out_win)
+
+
+def run_window_halo_blocks(
+    input_img: str,
+    output_img: str,
+    win_shape: Tuple[int, int],
+    block_fn: Callable[[np.ndarray], np.ndarray],
+    gdalformat: str = "GTIFF",
+    out_rio_dtype: str = "float32",
+    out_np_dtype: Optional[np.dtype] = None,
+    out_count: Optional[int] = None,
+    per_band: bool = False,
+    read_dtype: Any = np.float64,
+    pad_mode: str = "edge",
+    fill_value: float = 0.0,
+    out_nodata: Optional[float] = None,
+    clamp_int: bool = True,
+    full_width_strips: bool = False,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Process ``input_img`` block-by-block with a halo neighbourhood border and write
+    the transformed raster to ``output_img``.
+
+    :param input_img: Path to the input raster file.
+    :param output_img: Path to the output raster file.
+    :param win_shape: ``(window_height, window_width)`` defining halo radius
+                      ``(kh // 2, kw // 2)``.
+    :param block_fn: Callable accepting a halo-padded NumPy array (2D when
+                     ``per_band=True``, 3D ``(bands, H, W)`` when
+                     ``per_band=False``) and returning the core tile output.
+    :param gdalformat: Output GDAL/rasterio format name (Default = ``'GTIFF'``).
+    :param out_rio_dtype: Rasterio output dtype string (Default = ``'float32'``).
+    :param out_np_dtype: Target NumPy dtype for casting (defaults to
+                         ``np.dtype(out_rio_dtype)`` when ``None``).
+    :param out_count: Number of output bands (defaults to ``src.count``).
+    :param per_band: If ``True``, read and pass each band separately as a 2D
+                     halo array; if ``False``, read all bands together as a 3D
+                     halo cube (Default = ``False``).
+    :param read_dtype: NumPy dtype passed to :func:`read_window_with_halo`
+                       (Default = ``float64``).
+    :param pad_mode: Border padding mode passed to :func:`read_window_with_halo`
+                     (Default = ``'edge'``).
+    :param fill_value: Fill constant when ``pad_mode='constant'``
+                       (Default = ``0.0``).
+    :param out_nodata: Optional output nodata metadata value.
+    :param clamp_int: Clamp integer outputs to valid dtype bounds
+                      (Default = ``True``).
+    :param full_width_strips: If ``True``, iterate in full-width horizontal strips
+                              (Default = ``False``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.imageprocess as ip
+
+        ip.run_window_halo_blocks(
+            "in.tif",
+            "out.tif",
+            win_shape=(3, 3),
+            block_fn=lambda h: h[1:-1, 1:-1],
+            per_band=True,
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    ensure_file_exists(input_img)
+    target_np_dtype = (
+        np.dtype(out_rio_dtype)
+        if out_np_dtype is None
+        else np.dtype(out_np_dtype)
+    )
+    pad = (int(win_shape[0]) // 2, int(win_shape[1]) // 2)
+
+    with ExitStack() as stack:
+        src = stack.enter_context(rasterio.open(input_img, "r"))
+        dst = create_output_from_dataset(
+            stack=stack,
+            src=src,
+            output_img=output_img,
+            gdalformat=gdalformat,
+            out_rio_dtype=out_rio_dtype,
+            count=out_count,
+        )
+        if out_nodata is not None:
+            dst.nodata = out_nodata
+
+        blk_width = src.width if full_width_strips else None
+        for out_win in iter_dataset_windows(
+            src.height, src.width, block_width=blk_width, use_pbar=use_pbar
+        ):
+            win_h = int(out_win.height)
+            win_w = int(out_win.width)
+            if per_band:
+                for b_idx in range(1, src.count + 1):
+                    halo = read_window_with_halo(
+                        src,
+                        b_idx,
+                        out_win,
+                        pad=pad,
+                        out_dtype=read_dtype,
+                        pad_mode=pad_mode,
+                        fill_value=fill_value,
+                    )
+                    res = block_fn(halo)
+                    dst.write(
+                        cast_result_block(
+                            res,
+                            win_h,
+                            win_w,
+                            target_np_dtype,
+                            clamp_int=clamp_int,
+                        ),
+                        b_idx,
+                        window=out_win,
+                    )
+            else:
+                halo = read_window_with_halo(
+                    src,
+                    None,
+                    out_win,
+                    pad=pad,
+                    out_dtype=read_dtype,
+                    pad_mode=pad_mode,
+                    fill_value=fill_value,
+                )
+                res = block_fn(halo)
+                dst.write(
+                    cast_result_block(
+                        res,
+                        win_h,
+                        win_w,
+                        target_np_dtype,
+                        clamp_int=clamp_int,
+                    ),
+                    window=out_win,
+                )

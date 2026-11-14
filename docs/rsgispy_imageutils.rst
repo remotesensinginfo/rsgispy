@@ -78,12 +78,11 @@ Raster Creation, Copying & VRT
    imageutils/vrt
    imageutils/imagelut
 
-Band, Spectral & Array Operations
+Band, Sampling & Array Operations
 ---------------------------------
 
 * :doc:`imageutils/arrays` — NumPy array/raster conversion and pixel/column extraction.
 * :doc:`imageutils/bands` — Band selection, stacking, and pan-sharpening.
-* :doc:`imageutils/spectral` — Spectral smoothing, outlier masking, polyfill, whitening, PCA, MNF, Tasseled Cap, and histogram matching.
 * :doc:`imageutils/sampling` — Random and mask-based pixel sampling.
 
 .. toctree::
@@ -91,7 +90,6 @@ Band, Spectral & Array Operations
 
    imageutils/arrays
    imageutils/bands
-   imageutils/spectral
    imageutils/sampling
 
 Spatial Manipulation, Warping & Mosaicking

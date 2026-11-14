@@ -54,7 +54,7 @@ Conditional (Ternary) Expressions
 Band Mathematics, Spectral Indices & Value Rescaling
 ----------------------------------------------------
 
-* :doc:`imagecalc/maths` — muParser band/image expressions, proportions, and area under curve.
+* :doc:`imagecalc/maths` — muParser band/image expressions and true-pixel proportions.
 * :doc:`imagecalc/calcindices` — Unified multi-band spectral index stack calculator with gain/offset scaling.
 * :doc:`imagecalc/rescale` — Linear rescaling and gain/offset/nodata transformations.
 
@@ -79,15 +79,14 @@ Statistics, Percentiles & Comparison
    imagecalc/percentiles
    imagecalc/comparison
 
-Encoding, Distance, Least-Cost Path, Filling, Sampling & Unmixing
------------------------------------------------------------------
+Encoding, Distance, Least-Cost Path, Filling & Sampling
+--------------------------------------------------------
 
 * :doc:`imagecalc/encoding` — Integer recoding and one-hot category encoding.
 * :doc:`imagecalc/distance` — Distance-to-pixel-values (full and tiled) and morphological buffering.
 * :doc:`imagecalc/leastcostpath` — Least-cost path calculation across raster cost surfaces.
 * :doc:`imagecalc/fill` — K-nearest-neighbour region filling.
 * :doc:`imagecalc/calc_pt_win_smpls` — Windowed summary statistics around point samples.
-* :doc:`imagecalc/spectralunmixing` — Linear spectral unmixing, Spectral Angle Mapper (SAM), PPI, error metrics, and endmember utilities.
 
 .. toctree::
    :maxdepth: 1
@@ -97,4 +96,3 @@ Encoding, Distance, Least-Cost Path, Filling, Sampling & Unmixing
    imagecalc/leastcostpath
    imagecalc/fill
    imagecalc/calc_pt_win_smpls
-   imagecalc/spectralunmixing

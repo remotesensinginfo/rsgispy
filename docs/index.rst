@@ -136,9 +136,11 @@ Package Overview
 * :doc:`rsgispy_dataaccess` — Clients for Copernicus OData, NASA CMR, OSM, Planet, and USGS M2M.
 * :doc:`rsgispy_droneutils` — Drone photo organisation and metadata utilities.
 * :doc:`rsgispy_elevation` — Terrain derivatives, illumination, DEM filtering, fusion, and roughness.
-* :doc:`rsgispy_imagecalc` — Band maths, spectral indices, spectral unmixing, least-cost path, statistics, percentiles, comparison, encoding, and distance.
+* :doc:`rsgispy_imagecalc` — Band maths, spectral indices, least-cost path, statistics, percentiles, comparison, encoding, and distance.
+* :doc:`rsgispy_imagefilter` — Spatial moving-window statistical, edge, Gaussian, Kuwahara, Lee SAR, and kernel filters.
 * :doc:`rsgispy_imagemorphology` — Morphological raster filtering (dilation, erosion, opening, closing).
 * :doc:`rsgispy_imageprocess` — Block-processing engine, spatial intersection, and dataset validation.
+* :doc:`rsgispy_imagespectral` — Spectral classification (SAM, SCM), linear unmixing, endmembers, PPI, PCA, MNF, Tasseled Cap, histogram matching, whitening, and smoothing.
 * :doc:`rsgispy_imageutils` — Raster creation, rasterisation, metadata, masking, mosaicking, tiling, VRT, and warping.
 * :doc:`rsgispy_tools` — General geospatial, geometry, projection, plotting, mapping, and file utilities.
 * :doc:`rsgispy_vectorattrs` — Vector attribute table, column, and spatial join utilities.
@@ -158,8 +160,10 @@ Package Overview
    rsgispy_droneutils
    rsgispy_elevation
    rsgispy_imagecalc
+   rsgispy_imagefilter
    rsgispy_imagemorphology
    rsgispy_imageprocess
+   rsgispy_imagespectral
    rsgispy_imageutils
    rsgispy_tools
    rsgispy_vectorattrs

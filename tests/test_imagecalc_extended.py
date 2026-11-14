@@ -1,6 +1,6 @@
 """
 Tests for extended rsgispy.imagecalc modules: stats, comparison, encoding,
-rescale, distance, fill, and maths.calc_area_under_curve.
+rescale, distance, and fill.
 """
 
 import importlib
@@ -17,7 +17,6 @@ import rsgispy.imagecalc.comparison as ic_cmp
 import rsgispy.imagecalc.distance as ic_dist
 import rsgispy.imagecalc.encoding as ic_enc
 import rsgispy.imagecalc.fill as ic_fill
-import rsgispy.imagecalc.maths as ic_maths
 import rsgispy.imagecalc.rescale as ic_resc
 import rsgispy.imagecalc.stats as ic_stats
 
@@ -58,7 +57,6 @@ def test_default_gdalformat_is_gtiff():
         ic_stats.get_img_sum_stats_in_pxl,
         ic_stats.calc_mask_img_pxl_val_prob,
         ic_cmp.calc_img_difference,
-        ic_maths.calc_area_under_curve,
         ic_enc.recode_int_raster,
         ic_enc.one_hot_category_encoding,
         ic_resc.calc_img_rescale,
@@ -503,28 +501,6 @@ def test_comparison_functions(tmp_path):
         str(a_p), str(b_p), 1, 1, hist_a_bins=10, hist_b_bins=10, use_glb_range=True
     )
     assert emd_diff is not None and emd_diff >= 0.0
-
-
-def test_calc_area_under_curve(tmp_path):
-    """Test calc_area_under_curve weighted band sum."""
-    in_p = tmp_path / "auc_in.tif"
-    out_p = tmp_path / "auc_out.tif"
-    arr = np.array(
-        [
-            [[1.0, 2.0], [3.0, 4.0]],
-            [[2.0, 2.0], [2.0, 2.0]],
-        ],
-        dtype=np.float32,
-    )
-    _write_raster(in_p, arr)
-
-    ic_maths.calc_area_under_curve(
-        str(in_p), [0.5, 2.0], str(out_p), use_pbar=False
-    )
-    with rasterio.open(out_p) as src:
-        np.testing.assert_allclose(
-            src.read(1), np.array([[4.5, 5.0], [5.5, 6.0]], dtype=np.float32)
-        )
 
 
 def test_distance_and_buffer_functions(tmp_path):

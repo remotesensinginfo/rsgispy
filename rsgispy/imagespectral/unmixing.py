@@ -1,23 +1,18 @@
 # pylint: disable=too-many-lines
 """
-The imagecalc.spectralunmixing module provides linear spectral unmixing,
-endmember extraction/comparison, pixel purity index (PPI), error evaluation,
-and multi-endmember unmixing summary utilities using ``rasterio``, ``numpy``,
-and ``pandas``.
-
-Endmembers are stored and passed as :class:`pandas.DataFrame` tables (in
-memory or read from / written to disk in the user's chosen format such as
-CSV, TSV, Parquet, Feather, Excel, JSON, Pickle, or HDF5) with **spectral
-bands as rows and endmember class names as columns**.
+The imagespectral.unmixing module provides linear spectral unmixing solvers,
+abundance rescaling, reflectance prediction, RMSE/RMSPE evaluation, and
+multi-endmember model summarisation using ``rasterio``, ``numpy``, and
+``pandas``.
 
 **Recommended unmixing functions:**
 
 * :func:`spec_unmix_ucls` — vectorised unconstrained least squares (core
   ``numpy`` only)
-* :func:`spec_unmix_nnls` — direct Lawson–Hanson non-negative least squares
-  (requires ``scipy``)
-* :func:`spec_unmix_fcls` — scale-invariant fully constrained least squares
-  (non-negative and sum-to-one, requires ``scipy``)
+* :func:`spec_unmix_nnls` — batched active-set Lawson–Hanson non-negative
+  least squares (requires ``scipy``)
+* :func:`spec_unmix_fcls` — batched affine-nullspace fully constrained least
+  squares (non-negative and sum-to-one, requires ``scipy``)
 
 Functions wrapping ``pysptools``, ``cvxopt``, and ``pymcr`` are also retained
 for compatibility and raise :class:`rsgispy.RSGISPyException` with
@@ -25,19 +20,12 @@ installation instructions if their optional dependencies are not installed.
 """
 
 from contextlib import ExitStack
-import json
 import math
-import os
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple
 
-import geopandas
 import numpy as np
-import pandas
-import pyproj
 import rasterio
-from rasterio.features import rasterize
 from rasterio.windows import Window
-import rasterio.windows
 
 import rsgispy
 from rsgispy.imageprocess import (
@@ -49,10 +37,14 @@ from rsgispy.imageprocess import (
     open_multi_image_datasets,
     open_output_dataset,
 )
+from rsgispy.imagespectral.endmembers import (
+    EndmemberInput,
+    ImageEndmemberInfo,
+    coerce_endmembers_df,
+    prepare_endmembers_array,
+)
 from rsgispy.imageutils.metadata import set_band_names
 from rsgispy.imageutils.stats import pop_img_stats, pop_thmt_img_stats
-from rsgispy.tools.geometry import do_bboxes_intersect, reproj_bbox
-from rsgispy.vectorprocess import get_gdf_bbox, read_vec_gdf, resolve_vector_crs
 
 try:
     import scipy.optimize
@@ -93,53 +85,8 @@ except ImportError:
     _PyMcrNNLS = None
     HAVE_PYMCR = False
 
-EndmemberInput = Union[pandas.DataFrame, str, os.PathLike]
-
-_EXT_TO_FORMAT: Dict[str, str] = {
-    ".csv": "csv",
-    ".tsv": "tsv",
-    ".txt": "tsv",
-    ".parquet": "parquet",
-    ".pq": "parquet",
-    ".feather": "feather",
-    ".ftr": "feather",
-    ".xlsx": "excel",
-    ".xls": "excel",
-    ".xlsm": "excel",
-    ".json": "json",
-    ".pkl": "pickle",
-    ".pickle": "pickle",
-    ".h5": "hdf",
-    ".hdf5": "hdf",
-}
-
-_FORMAT_ALIASES: Dict[str, str] = {
-    "csv": "csv",
-    "tsv": "tsv",
-    "tab": "tsv",
-    "parquet": "parquet",
-    "pq": "parquet",
-    "feather": "feather",
-    "ftr": "feather",
-    "excel": "excel",
-    "xlsx": "excel",
-    "xls": "excel",
-    "json": "json",
-    "pickle": "pickle",
-    "pkl": "pickle",
-    "hdf": "hdf",
-    "hdf5": "hdf",
-    "h5": "hdf",
-}
-
 __all__: List[str] = [
-    "ImageEndmemberInfo",
-    "extract_avg_endmembers",
-    "read_endmembers_df",
-    "write_endmembers_df",
-    "convert_mtxt_to_df",
-    "plot_endmembers",
-    "are_endmembers_equal",
+    "exhcon_linear_spec_unmix",
     "spec_unmix_ucls",
     "spec_unmix_nnls",
     "spec_unmix_fcls",
@@ -148,814 +95,11 @@ __all__: List[str] = [
     "spec_unmix_spts_fcls",
     "spec_unmix_pymcr_nnls",
     "spec_unmix_pymcr_fcls",
-    "exhcon_linear_spec_unmix",
     "rescale_unmixing_results",
     "predict_refl_linear_unmixing",
     "calc_unmixing_rmse_residual_err",
     "summarise_multi_endmember_linear_unmixing",
-    "calc_ppi",
-    "spectral_angle_mapper",
 ]
-
-
-class ImageEndmemberInfo:
-    """
-    Container associating an unmixed abundance image with the endmembers
-    :class:`pandas.DataFrame` (or file path) and optional endmember class
-    names used to produce it.
-
-    :param in_unmix_img: Path to the linear unmixed abundance image file.
-    :param endmembers: :class:`pandas.DataFrame` (columns = class names,
-                       rows = bands) or file path readable by
-                       :func:`read_endmembers_df`.
-    :param endmember_names: Optional ordered sequence of endmember names
-                            matching the bands of ``in_unmix_img``. Inferred
-                            from the DataFrame columns when ``None``.
-    :param file_format: Optional format override when ``endmembers`` is a file
-                        path (e.g., ``'csv'``, ``'parquet'``, ``'excel'``,
-                        ``'json'``, ``'feather'``, ``'pickle'``).
-
-    .. code:: python
-
-        import rsgispy.imagecalc.spectralunmixing as su
-
-        info = su.ImageEndmemberInfo(
-            in_unmix_img="unmix.tif",
-            endmembers="endmembers.csv",
-        )
-    """
-
-    def __init__(
-        self,
-        in_unmix_img: str,
-        endmembers: EndmemberInput,
-        endmember_names: Optional[Sequence[str]] = None,
-        file_format: Optional[str] = None,
-    ) -> None:
-        self.in_unmix_img = in_unmix_img
-        self.endmembers = endmembers
-        self.file_format = file_format
-        if endmember_names is not None:
-            self.endmember_names: Optional[List[str]] = [str(n) for n in endmember_names]
-        elif isinstance(endmembers, pandas.DataFrame):
-            self.endmember_names = [str(c) for c in endmembers.columns]
-        else:
-            self.endmember_names = None
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, ImageEndmemberInfo):
-            return NotImplemented
-        if isinstance(self.endmembers, pandas.DataFrame) or isinstance(
-            other.endmembers, pandas.DataFrame
-        ):
-            if not (
-                isinstance(self.endmembers, pandas.DataFrame)
-                and isinstance(other.endmembers, pandas.DataFrame)
-            ):
-                return False
-            em_eq = self.endmembers.equals(other.endmembers)
-        else:
-            em_eq = os.fspath(self.endmembers) == os.fspath(other.endmembers)
-        return (
-            self.in_unmix_img == other.in_unmix_img
-            and em_eq
-            and self.endmember_names == other.endmember_names
-            and self.file_format == other.file_format
-        )
-
-    def __repr__(self) -> str:
-        return (
-            f"ImageEndmemberInfo(in_unmix_img={self.in_unmix_img!r}, "
-            f"endmembers={self.endmembers!r}, "
-            f"endmember_names={self.endmember_names!r}, "
-            f"file_format={self.file_format!r})"
-        )
-
-
-def _resolve_table_format(
-    file_path: Union[str, os.PathLike],
-    file_format: Optional[str] = None,
-) -> str:
-    """Resolve normalised table format from explicit ``file_format`` or suffix."""
-    if file_format is not None:
-        key = file_format.strip().lower().lstrip(".")
-        if key in _FORMAT_ALIASES:
-            return _FORMAT_ALIASES[key]
-        raise rsgispy.RSGISPyException(
-            f"Unsupported endmember file format '{file_format}'. Supported "
-            f"formats: {sorted(set(_FORMAT_ALIASES.values()))}."
-        )
-    ext = os.path.splitext(os.fspath(file_path))[1].lower()
-    if ext in _EXT_TO_FORMAT:
-        return _EXT_TO_FORMAT[ext]
-    raise rsgispy.RSGISPyException(
-        f"Cannot infer endmember file format from extension '{ext}' in "
-        f"'{os.fspath(file_path)}'. Specify 'file_format' explicitly."
-    )
-
-
-def _normalise_endmembers_df(df: pandas.DataFrame) -> pandas.DataFrame:
-    """Validate and normalise an endmembers DataFrame (rows=bands, cols=classes)."""
-    if not isinstance(df, pandas.DataFrame) or df.empty:
-        raise rsgispy.RSGISPyException(
-            "Endmembers DataFrame must be a non-empty pandas.DataFrame."
-        )
-    out = df.copy()
-    out.columns = [str(col) for col in out.columns]
-    if len(set(out.columns)) != len(out.columns):
-        raise rsgispy.RSGISPyException(
-            "Endmembers DataFrame column (class) names must be unique."
-        )
-    try:
-        for col in out.columns:
-            out[col] = pandas.to_numeric(out[col], errors="raise").astype(np.float64)
-    except (ValueError, TypeError) as err:
-        raise rsgispy.RSGISPyException(
-            f"All endmember class columns must contain numeric values: {err}"
-        ) from err
-    if out.index.name is None:
-        out.index = pandas.Index(out.index, name="band")
-    return out
-
-
-def _promote_band_index_if_present(df: pandas.DataFrame) -> pandas.DataFrame:
-    """
-    Detect an explicit band/unnamed index column loaded from CSV/TSV/Excel and
-    restore it as the DataFrame index; keep all columns when none is present.
-    """
-    if df.shape[1] >= 2:
-        first_col = str(df.columns[0])
-        is_idx_name = first_col.lower() in ("band", "__band__") or first_col.startswith(
-            "Unnamed:"
-        )
-        is_non_numeric = not pandas.api.types.is_numeric_dtype(df.iloc[:, 0])
-        if is_idx_name or is_non_numeric:
-            idx_vals = df.iloc[:, 0].astype(str)
-            rest = df.iloc[:, 1:].copy()
-            rest.index = pandas.Index(idx_vals, name="band")
-            return rest
-    out = df.copy()
-    out.index = pandas.Index(
-        [f"band_{i + 1}" for i in range(len(out))], name="band"
-    )
-    return out
-
-
-def read_endmembers_df(
-    endmembers_file: Union[str, os.PathLike],
-    file_format: Optional[str] = None,
-    gain: float = 1,
-    sheet_name: Union[int, str] = 0,
-) -> pandas.DataFrame:
-    """
-    Read spectral endmembers from a tabular file into a :class:`pandas.DataFrame`
-    with spectral bands as rows and endmember class names as columns.
-
-    Supported formats (specified via ``file_format`` or inferred from file
-    extension): ``'csv'``, ``'tsv'``, ``'parquet'``, ``'feather'``,
-    ``'excel'`` (``.xlsx``/``.xls``), ``'json'``, ``'pickle'``, and ``'hdf'``.
-
-    :param endmembers_file: Path to the input endmembers file.
-    :param file_format: Optional format name overriding extension detection
-                        (Default = ``None``).
-    :param gain: Optional gain divisor applied to spectral values when
-                 ``gain > 1`` (Default = ``1``).
-    :param sheet_name: Worksheet name or 0-based index when reading Excel files
-                       (Default = ``0``).
-    :return: :class:`pandas.DataFrame` of shape ``(n_bands, n_classes)`` where
-             column names are the endmember class names.
-
-    .. code:: python
-
-        import rsgispy.imagecalc.spectralunmixing as su
-
-        em_df = su.read_endmembers_df("endmembers.csv")
-        em_pq = su.read_endmembers_df("endmembers.parquet")
-    """
-    # pylint: disable=too-many-branches
-    path_str = os.fspath(endmembers_file)
-    ensure_file_exists(path_str, "Endmembers file")
-    fmt = _resolve_table_format(path_str, file_format)
-
-    if fmt == "csv":
-        raw_df = pandas.read_csv(path_str)
-        df = _promote_band_index_if_present(raw_df)
-    elif fmt == "tsv":
-        raw_df = pandas.read_csv(path_str, sep="\t")
-        df = _promote_band_index_if_present(raw_df)
-    elif fmt == "parquet":
-        try:
-            df = pandas.read_parquet(path_str)
-        except ImportError as err:
-            raise rsgispy.RSGISPyException(
-                "Reading Parquet endmember files requires 'pyarrow' or 'fastparquet'."
-            ) from err
-    elif fmt == "feather":
-        try:
-            raw_df = pandas.read_feather(path_str)
-        except ImportError as err:
-            raise rsgispy.RSGISPyException(
-                "Reading Feather endmember files requires 'pyarrow'."
-            ) from err
-        if "__band__" in raw_df.columns:
-            idx = pandas.Index(raw_df["__band__"].astype(str), name="band")
-            df = raw_df.drop(columns=["__band__"]).set_index(idx)
-        else:
-            df = raw_df
-    elif fmt == "excel":
-        try:
-            raw_df = pandas.read_excel(path_str, sheet_name=sheet_name)
-        except ImportError as err:
-            raise rsgispy.RSGISPyException(
-                "Reading Excel endmember files requires 'openpyxl'."
-            ) from err
-        df = _promote_band_index_if_present(raw_df)
-    elif fmt == "json":
-        with open(path_str, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-        if isinstance(payload, dict) and {"columns", "data"} <= set(payload.keys()):
-            df = pandas.DataFrame(
-                payload["data"],
-                columns=payload["columns"],
-                index=pandas.Index(payload["index"], name="band")
-                if "index" in payload
-                else None,
-            )
-        else:
-            df = pandas.read_json(path_str, orient="columns")
-    elif fmt == "pickle":
-        df = pandas.read_pickle(path_str)
-    else:  # hdf
-        try:
-            df = pandas.read_hdf(path_str)
-        except ImportError as err:
-            raise rsgispy.RSGISPyException(
-                "Reading HDF5 endmember files requires 'tables' (PyTables)."
-            ) from err
-
-    out_df = _normalise_endmembers_df(df)
-    if gain > 1:
-        out_df = out_df / float(gain)
-    return out_df
-
-
-def write_endmembers_df(
-    endmembers_df: pandas.DataFrame,
-    out_file: Union[str, os.PathLike],
-    file_format: Optional[str] = None,
-    sheet_name: str = "endmembers",
-) -> None:
-    """
-    Write an endmembers :class:`pandas.DataFrame` (bands as rows, endmember
-    class names as columns) to ``out_file`` in the user's chosen format.
-
-    Supported formats (specified via ``file_format`` or inferred from file
-    extension): ``'csv'``, ``'tsv'``, ``'parquet'``, ``'feather'``,
-    ``'excel'`` (``.xlsx``/``.xls``), ``'json'``, ``'pickle'``, and ``'hdf'``.
-
-    :param endmembers_df: :class:`pandas.DataFrame` with spectral bands as rows
-                          and endmember class names as columns.
-    :param out_file: Output file path.
-    :param file_format: Optional format name overriding extension detection
-                        (Default = ``None``).
-    :param sheet_name: Worksheet name when writing Excel files
-                       (Default = ``'endmembers'``).
-
-    .. code:: python
-
-        import pandas as pd
-        import rsgispy.imagecalc.spectralunmixing as su
-
-        em_df = pd.DataFrame(
-            {"Veg": [0.05, 0.45, 0.20], "Soil": [0.30, 0.35, 0.40]},
-            index=["blue", "nir", "swir1"],
-        )
-        su.write_endmembers_df(em_df, "endmembers.csv")
-        su.write_endmembers_df(em_df, "endmembers.parquet")
-    """
-    # pylint: disable=too-many-branches
-    path_str = os.fspath(out_file)
-    fmt = _resolve_table_format(path_str, file_format)
-    df = _normalise_endmembers_df(endmembers_df)
-
-    out_dir = os.path.dirname(os.path.abspath(path_str))
-    if out_dir and not os.path.exists(out_dir):
-        os.makedirs(out_dir, exist_ok=True)
-
-    if fmt == "csv":
-        df.to_csv(path_str, index=True)
-    elif fmt == "tsv":
-        df.to_csv(path_str, sep="\t", index=True)
-    elif fmt == "parquet":
-        try:
-            df.to_parquet(path_str, index=True)
-        except ImportError as err:
-            raise rsgispy.RSGISPyException(
-                "Writing Parquet endmember files requires 'pyarrow' or 'fastparquet'."
-            ) from err
-    elif fmt == "feather":
-        df_fth = df.reset_index(drop=True).copy()
-        df_fth.insert(0, "__band__", df.index.astype(str))
-        try:
-            df_fth.to_feather(path_str)
-        except ImportError as err:
-            raise rsgispy.RSGISPyException(
-                "Writing Feather endmember files requires 'pyarrow'."
-            ) from err
-    elif fmt == "excel":
-        try:
-            df.to_excel(path_str, sheet_name=sheet_name, index=True, engine="openpyxl")
-        except ImportError:
-            try:
-                df.to_excel(
-                    path_str, sheet_name=sheet_name, index=True, engine="xlsxwriter"
-                )
-            except ImportError as err:
-                raise rsgispy.RSGISPyException(
-                    "Writing Excel endmember files requires 'openpyxl' or 'xlsxwriter'."
-                ) from err
-    elif fmt == "json":
-        df.to_json(path_str, orient="split", indent=2)
-    elif fmt == "pickle":
-        df.to_pickle(path_str)
-    else:  # hdf
-        try:
-            df.to_hdf(path_str, key="endmembers", mode="w")
-        except ImportError as err:
-            raise rsgispy.RSGISPyException(
-                "Writing HDF5 endmember files requires 'tables' (PyTables)."
-            ) from err
-
-
-def convert_mtxt_to_df(
-    mtxt_file: Union[str, os.PathLike],
-    endmember_names: Optional[Sequence[str]] = None,
-    band_names: Optional[Sequence[str]] = None,
-    gain: float = 1,
-    out_file: Optional[Union[str, os.PathLike]] = None,
-    file_format: Optional[str] = None,
-) -> pandas.DataFrame:
-    """
-    Convert a legacy RSGISLib ``.mtxt`` endmembers matrix file into a
-    :class:`pandas.DataFrame` with spectral bands as rows and endmember class
-    names as columns.
-
-    Optionally writes the converted DataFrame to ``out_file`` in any format
-    supported by :func:`write_endmembers_df`.
-
-    :param mtxt_file: Path to the legacy ``.mtxt`` endmembers file.
-    :param endmember_names: Optional sequence of class names matching the ``m``
-                            endmembers in ``mtxt_file``. When ``None``, columns
-                            are named ``endmember_1``, ..., ``endmember_m``.
-    :param band_names: Optional sequence of band labels matching the ``n`` bands
-                       in ``mtxt_file``. When ``None``, rows are indexed
-                       ``band_1``, ..., ``band_n``.
-    :param gain: Optional gain divisor applied to endmember spectra when
-                 ``gain > 1`` (Default = ``1``).
-    :param out_file: Optional output file path to write the converted DataFrame.
-    :param file_format: Optional format override when ``out_file`` is given
-                        (Default = ``None``).
-    :return: Converted :class:`pandas.DataFrame` of shape
-             ``(n_bands, m_endmembers)``.
-
-    .. code:: python
-
-        import rsgispy.imagecalc.spectralunmixing as su
-
-        em_df = su.convert_mtxt_to_df(
-            "old_endmembers.mtxt",
-            endmember_names=["Veg", "Soil", "Water"],
-            out_file="endmembers.csv",
-        )
-    """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    path_str = os.fspath(mtxt_file)
-    ensure_file_exists(path_str, "Legacy endmembers (.mtxt) file")
-    with open(path_str, "r", encoding="utf-8") as handle:
-        data_lst = [line.strip() for line in handle if line.strip() != ""]
-
-    if len(data_lst) < 3:
-        raise rsgispy.RSGISPyException(
-            f"Invalid endmembers file format in '{path_str}'."
-        )
-
-    m = int(data_lst[0].split("=")[-1])
-    n = int(data_lst[1].split("=")[-1])
-    raw_vals = [val.strip() for val in data_lst[2].split(",") if val.strip() != ""]
-    if len(raw_vals) != m * n:
-        raise rsgispy.RSGISPyException(
-            f"Expected {m * n} values in '{path_str}', found {len(raw_vals)}."
-        )
-
-    # Legacy .mtxt stores values in column-major order across (m, n): band-outer,
-    # endmember-inner. Transpose to (n_bands, m_endmembers) for DataFrame.
-    end_mem_arr = np.zeros((m, n), dtype=np.float64)
-    idx = 0
-    for n_idx in range(n):
-        for m_idx in range(m):
-            end_mem_arr[m_idx, n_idx] = float(raw_vals[idx])
-            idx += 1
-
-    if gain > 1:
-        end_mem_arr = end_mem_arr / float(gain)
-
-    if endmember_names is not None:
-        if len(endmember_names) != m:
-            raise rsgispy.RSGISPyException(
-                f"Length of endmember_names ({len(endmember_names)}) does not "
-                f"match endmember count ({m}) in '{path_str}'."
-            )
-        col_names = [str(name) for name in endmember_names]
-    else:
-        col_names = [f"endmember_{i + 1}" for i in range(m)]
-
-    if band_names is not None:
-        if len(band_names) != n:
-            raise rsgispy.RSGISPyException(
-                f"Length of band_names ({len(band_names)}) does not match "
-                f"band count ({n}) in '{path_str}'."
-            )
-        row_idx = pandas.Index([str(b) for b in band_names], name="band")
-    else:
-        row_idx = pandas.Index([f"band_{i + 1}" for i in range(n)], name="band")
-
-    df = _normalise_endmembers_df(
-        pandas.DataFrame(end_mem_arr.T, index=row_idx, columns=col_names)
-    )
-    if out_file is not None:
-        write_endmembers_df(df, out_file, file_format=file_format)
-    return df
-
-
-def _coerce_endmembers_df(
-    endmembers: EndmemberInput,
-    gain: float = 1,
-    file_format: Optional[str] = None,
-) -> pandas.DataFrame:
-    """Resolve an in-memory DataFrame or file path into a validated DataFrame."""
-    if isinstance(endmembers, pandas.DataFrame):
-        df = _normalise_endmembers_df(endmembers)
-        if gain > 1:
-            df = df / float(gain)
-        return df
-    return read_endmembers_df(endmembers, file_format=file_format, gain=gain)
-
-
-def _prepare_endmembers_array(
-    endmembers: EndmemberInput,
-    gain: float = 1,
-    weight: Optional[float] = None,
-    file_format: Optional[str] = None,
-) -> Tuple[List[str], int, int, np.ndarray]:
-    """
-    Convert an endmembers DataFrame or file into solver matrix shape
-    ``(m_endmembers, n_bands [+ 1 if weight])`` plus class names.
-    """
-    df = _coerce_endmembers_df(endmembers, gain=gain, file_format=file_format)
-    names = [str(col) for col in df.columns]
-    # DataFrame has shape (n_bands, m_endmembers); transpose to (m, n_bands)
-    arr = df.to_numpy(dtype=np.float64).T
-    m, n = arr.shape
-    if weight is not None:
-        weights = np.full((m, 1), float(weight), dtype=np.float64)
-        arr = np.hstack([arr, weights])
-        n += 1
-    return names, m, n, arr
-
-
-def plot_endmembers(
-    endmembers: EndmemberInput,
-    out_plot_file: str,
-    endmember_names: Optional[Sequence[str]] = None,
-    plot_title: Optional[str] = None,
-    gain: float = 1,
-    wavelengths: Optional[Sequence[float]] = None,
-    file_format: Optional[str] = None,
-) -> None:
-    """
-    Plot spectral endmember signatures from a :class:`pandas.DataFrame` (or
-    endmembers file) and save the figure to disk.
-
-    :param endmembers: :class:`pandas.DataFrame` (columns = class names,
-                       rows = bands) or file path readable by
-                       :func:`read_endmembers_df`.
-    :param out_plot_file: Output image path for the saved figure.
-    :param endmember_names: Optional legend labels overriding DataFrame column
-                            names (must match endmember count if supplied).
-    :param plot_title: Optional plot title string.
-    :param gain: Optional gain divisor applied to endmember spectra
-                 (Default = ``1``).
-    :param wavelengths: Optional sequence of band wavelengths (band indices used
-                        when ``None``).
-    :param file_format: Optional format override when ``endmembers`` is a file
-                        path (Default = ``None``).
-
-    .. code:: python
-
-        import rsgispy.imagecalc.spectralunmixing as su
-
-        su.plot_endmembers(
-            "endmembers.csv",
-            "endmembers.png",
-            plot_title="Endmember Signatures",
-        )
-    """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    # pylint: disable=import-outside-toplevel
-    import matplotlib.pyplot as plt
-
-    df = _coerce_endmembers_df(endmembers, gain=gain, file_format=file_format)
-    n_bands, n_endmembers = df.shape
-    if endmember_names is not None:
-        if len(endmember_names) != n_endmembers:
-            raise rsgispy.RSGISPyException(
-                "The list of names provided does not match the number of "
-                "endmembers in the input table."
-            )
-        labels = [str(name) for name in endmember_names]
-    else:
-        labels = [str(col) for col in df.columns]
-
-    x_axis_lbl = "Wavelength"
-    if wavelengths is not None:
-        if not isinstance(wavelengths, (list, tuple, np.ndarray)):
-            raise rsgispy.RSGISPyException(
-                "If provided the wavelengths variable must be a sequence."
-            )
-        if len(wavelengths) != n_bands:
-            raise rsgispy.RSGISPyException(
-                "The number of wavelengths provided is not equal to the "
-                "number of image bands in the endmembers."
-            )
-        x_vals: Sequence[float] = list(wavelengths)
-    else:
-        x_vals = list(range(n_bands))
-        x_axis_lbl = "Band"
-
-    arr = df.to_numpy(dtype=np.float64)
-    fig = plt.figure(figsize=(7, 5), dpi=300)
-    try:
-        ax1 = fig.add_subplot(111)
-        for i in range(n_endmembers):
-            ax1.plot(x_vals, arr[:, i], label=labels[i])
-
-        if plot_title is not None:
-            ax1.set_title(plot_title)
-        ax1.set_xlabel(x_axis_lbl)
-        ax1.set_ylabel("Reflectance")
-        ax1.legend()
-        fig.savefig(out_plot_file)
-    finally:
-        plt.close(fig)
-
-
-def are_endmembers_equal(
-    ref_endmembers: EndmemberInput,
-    cmp_endmembers: EndmemberInput,
-    flt_dif: float = 0.0001,
-    check_names: bool = True,
-    ref_file_format: Optional[str] = None,
-    cmp_file_format: Optional[str] = None,
-) -> bool:
-    """
-    Compare two endmember tables (:class:`pandas.DataFrame` objects or file
-    paths) for shape, optional class column names, and element-wise equality
-    within ``flt_dif``.
-
-    :param ref_endmembers: Reference endmembers DataFrame or file path.
-    :param cmp_endmembers: Comparison endmembers DataFrame or file path.
-    :param flt_dif: Maximum allowed absolute floating-point difference
-                    (Default = ``0.0001``).
-    :param check_names: If ``True``, also require matching endmember column names
-                        in identical order (Default = ``True``).
-    :param ref_file_format: Optional format override for ``ref_endmembers``.
-    :param cmp_file_format: Optional format override for ``cmp_endmembers``.
-    :return: ``True`` if shapes (and optionally column names) match and all
-             entries differ by at most ``flt_dif``, ``False`` otherwise.
-
-    .. code:: python
-
-        import rsgispy.imagecalc.spectralunmixing as su
-
-        same = su.are_endmembers_equal("em_ref.csv", "em_cmp.parquet")
-    """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    ref_df = _coerce_endmembers_df(ref_endmembers, file_format=ref_file_format)
-    cmp_df = _coerce_endmembers_df(cmp_endmembers, file_format=cmp_file_format)
-
-    if ref_df.shape != cmp_df.shape:
-        return False
-    if check_names and list(ref_df.columns) != list(cmp_df.columns):
-        return False
-
-    return bool(
-        np.all(
-            np.abs(
-                ref_df.to_numpy(dtype=np.float64) - cmp_df.to_numpy(dtype=np.float64)
-            )
-            <= flt_dif
-        )
-    )
-
-
-def _feature_window(
-    geom_bounds: Tuple[float, float, float, float],
-    transform: rasterio.Affine,
-    width: int,
-    height: int,
-) -> Window:
-    """Compute a clipped integer pixel Window covering ``geom_bounds``."""
-    min_x, min_y, max_x, max_y = geom_bounds
-    raw = rasterio.windows.from_bounds(min_x, min_y, max_x, max_y, transform=transform)
-    c0 = max(0, int(math.floor(raw.col_off)))
-    r0 = max(0, int(math.floor(raw.row_off)))
-    c1 = min(width, int(math.ceil(raw.col_off + raw.width)))
-    r1 = min(height, int(math.ceil(raw.row_off + raw.height)))
-    return Window(c0, r0, max(0, c1 - c0), max(0, r1 - r0))
-
-
-def extract_avg_endmembers(
-    input_img: str,
-    vec_file: str,
-    vec_lyr: Optional[str] = None,
-    out_file: Optional[Union[str, os.PathLike]] = None,
-    class_col: Optional[str] = None,
-    endmember_names: Optional[Sequence[str]] = None,
-    file_format: Optional[str] = None,
-    pxl_in_poly_method: int = 1,
-) -> pandas.DataFrame:
-    """
-    Extract the mean spectral signature per class/polygon in ``vec_file`` and
-    return a :class:`pandas.DataFrame` (bands as rows, class names as columns).
-
-    When ``class_col`` is provided, polygons sharing the same class name are
-    aggregated together to compute the class mean spectrum. When ``out_file``
-    is provided, the DataFrame is also written to disk using
-    :func:`write_endmembers_df`.
-
-    :param input_img: Path to the input multi-band raster image file.
-    :param vec_file: Path to the input vector polygon file.
-    :param vec_lyr: Name of the vector layer (or ``None`` for default layer).
-    :param out_file: Optional output file path in any format supported by
-                     :func:`write_endmembers_df`.
-    :param class_col: Optional attribute column in ``vec_file`` providing the
-                      endmember class name for each polygon.
-    :param endmember_names: Optional explicit sequence of class names matching
-                            the polygon count (used when ``class_col`` is
-                            ``None``).
-    :param file_format: Optional format override when ``out_file`` is provided.
-    :param pxl_in_poly_method: Pixel-in-polygon selection constant from
-                               :mod:`rsgispy.zonalstats` (``METHOD_*``).
-                               Default = ``1`` (pixel centre within polygon).
-    :return: :class:`pandas.DataFrame` of shape ``(n_bands, n_classes)``.
-
-    .. code:: python
-
-        import rsgispy.imagecalc.spectralunmixing as su
-        import rsgispy.zonalstats as zs
-
-        em_df = su.extract_avg_endmembers(
-            "image.tif",
-            "rois.gpkg",
-            "rois",
-            out_file="endmembers.csv",
-            class_col="landcover",
-            pxl_in_poly_method=zs.METHOD_POLYCONTAINSPIXELCENTER,
-        )
-    """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
-    ensure_file_exists(input_img, "Input image")
-    ensure_file_exists(vec_file, "Input vector")
-
-    gdf = read_vec_gdf(vec_file, vec_lyr)
-    if gdf.empty:
-        raise rsgispy.RSGISPyException(
-            f"Vector layer '{vec_lyr or vec_file}' contains no features."
-        )
-
-    if class_col is not None:
-        if class_col not in gdf.columns:
-            raise rsgispy.RSGISPyException(
-                f"Column '{class_col}' was not found in vector layer."
-            )
-        poly_labels = [str(val) for val in gdf[class_col].tolist()]
-    elif endmember_names is not None:
-        if len(endmember_names) != len(gdf):
-            raise rsgispy.RSGISPyException(
-                f"Length of endmember_names ({len(endmember_names)}) does not "
-                f"match feature count ({len(gdf)})."
-            )
-        poly_labels = [str(name) for name in endmember_names]
-    else:
-        poly_labels = [f"endmember_{i + 1}" for i in range(len(gdf))]
-
-    all_touched = pxl_in_poly_method in (2, 3, 7, 8, 9)
-
-    with rasterio.open(input_img, "r") as src:
-        img_crs = pyproj.CRS.from_user_input(src.crs) if src.crs is not None else None
-        geom_series: geopandas.GeoSeries = gdf.geometry
-        if gdf.crs is not None and img_crs is not None:
-            vec_crs = resolve_vector_crs(gdf)
-            if vec_crs != img_crs:
-                geom_series = geom_series.to_crs(img_crs)
-                vec_bbox = reproj_bbox(get_gdf_bbox(gdf), vec_crs, img_crs)
-            else:
-                vec_bbox = get_gdf_bbox(gdf)
-        else:
-            vec_bbox = get_gdf_bbox(gdf)
-
-        bounds = src.bounds
-        img_bbox = (
-            float(bounds.left),
-            float(bounds.right),
-            float(bounds.bottom),
-            float(bounds.top),
-        )
-        if not do_bboxes_intersect(img_bbox, vec_bbox):
-            raise rsgispy.RSGISPyException("The vector layer and image do not overlap.")
-
-        descs = src.descriptions or ()
-        if len(descs) == src.count and all(d is not None and str(d).strip() for d in descs):
-            band_labels = [str(d).strip() for d in descs]
-        else:
-            band_labels = [f"band_{i + 1}" for i in range(src.count)]
-
-        nodata_val = src.nodata
-        class_pxls: Dict[str, List[np.ndarray]] = {}
-        class_order: List[str] = []
-
-        for idx, (geom, cls_lbl) in enumerate(zip(geom_series, poly_labels)):
-            if geom is None or geom.is_empty:
-                raise rsgispy.RSGISPyException(
-                    f"Polygon feature at index {idx} is empty or null."
-                )
-
-            win = _feature_window(geom.bounds, src.transform, src.width, src.height)
-            if win.width <= 0 or win.height <= 0:
-                raise rsgispy.RSGISPyException(
-                    f"Polygon feature at index {idx} does not intersect any raster pixels."
-                )
-
-            arr = src.read(window=win).astype(np.float64, copy=False)
-            sub_transform = rasterio.windows.transform(win, src.transform)
-            rv = rasterize(
-                [(geom, 1)],
-                out_shape=(int(win.height), int(win.width)),
-                transform=sub_transform,
-                fill=0,
-                dtype="uint8",
-                all_touched=all_touched,
-            )
-            mask = rv == 1
-            if not np.any(mask) and pxl_in_poly_method == 6:
-                rv = rasterize(
-                    [(geom, 1)],
-                    out_shape=(int(win.height), int(win.width)),
-                    transform=sub_transform,
-                    fill=0,
-                    dtype="uint8",
-                    all_touched=True,
-                )
-                mask = rv == 1
-
-            pxls = arr[:, mask].T  # (n_pxls, n_bands)
-            vld = np.all(np.isfinite(pxls), axis=1)
-            if nodata_val is not None and not (
-                isinstance(nodata_val, float) and math.isnan(nodata_val)
-            ):
-                vld &= np.all(pxls != nodata_val, axis=1)
-            pxls = pxls[vld]
-
-            if pxls.shape[0] == 0 and pxl_in_poly_method in (1, 5, 6):
-                centroid = geom.centroid
-                row, col = src.index(centroid.x, centroid.y)
-                if 0 <= row < src.height and 0 <= col < src.width:
-                    cent_win = Window(int(col), int(row), 1, 1)
-                    c_arr = src.read(window=cent_win).astype(np.float64).ravel()
-                    if np.all(np.isfinite(c_arr)):
-                        pxls = c_arr[np.newaxis, :]
-
-            if pxls.shape[0] == 0:
-                raise rsgispy.RSGISPyException(
-                    f"No valid pixels fell within polygon feature at index {idx}."
-                )
-
-            if cls_lbl not in class_pxls:
-                class_pxls[cls_lbl] = []
-                class_order.append(cls_lbl)
-            class_pxls[cls_lbl].append(pxls)
-
-    em_cols: Dict[str, np.ndarray] = {
-        cls_lbl: np.mean(np.vstack(class_pxls[cls_lbl]), axis=0)
-        for cls_lbl in class_order
-    }
-    em_df = _normalise_endmembers_df(
-        pandas.DataFrame(em_cols, index=pandas.Index(band_labels, name="band"))
-    )
-    if out_file is not None:
-        write_endmembers_df(em_df, out_file, file_format=file_format)
-    return em_df
 
 
 def _build_simplex_weights(n_endmembers: int, step_res: float) -> np.ndarray:
@@ -1034,7 +178,7 @@ def exhcon_linear_spec_unmix(
                      (Default = ``rsgispy.TYPE_32FLOAT``).
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
-                       :func:`read_endmembers_df`.
+                       :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
     :param step_res: Search step resolution in ``(0, 1]`` (Default = ``0.1``).
     :param gain: Multiplicative gain applied to output values
                  (Default = ``1.0``).
@@ -1047,7 +191,7 @@ def exhcon_linear_spec_unmix(
     .. code:: python
 
         import rsgispy
-        import rsgispy.imagecalc.spectralunmixing as su
+        import rsgispy.imagespectral.unmixing as su
 
         su.exhcon_linear_spec_unmix(
             input_img="s2_refl.tif",
@@ -1063,7 +207,7 @@ def exhcon_linear_spec_unmix(
     if endmembers is None:
         raise rsgispy.RSGISPyException("endmembers must be provided.")
 
-    em_names, m, n_bands, em_arr = _prepare_endmembers_array(
+    em_names, m, n_bands, em_arr = prepare_endmembers_array(
         endmembers, file_format=file_format
     )
     em_norms = np.linalg.norm(em_arr, axis=1, keepdims=True)
@@ -1121,14 +265,21 @@ def exhcon_linear_spec_unmix(
                 for start in range(0, n_valid, chunk_size):
                     end = min(start + chunk_size, n_valid)
                     sub_p = pxl_normed[start:end]
-                    sub_sq = pxl_sq[start:end, np.newaxis] + cand_sq_norms[np.newaxis, :]
+                    sub_sq = (
+                        pxl_sq[start:end, np.newaxis]
+                        + cand_sq_norms[np.newaxis, :]
+                    )
                     sq_dists = sub_sq - 2.0 * (sub_p @ cand_spectra_t)
                     best_c = np.argmin(sq_dists, axis=1)
-                    min_sq = np.maximum(0.0, sq_dists[np.arange(end - start), best_c])
+                    min_sq = np.maximum(
+                        0.0, sq_dists[np.arange(end - start), best_c]
+                    )
                     rmse = np.sqrt(min_sq / float(n_bands))
 
                     out_idx = v_idx[start:end]
-                    out_flat[out_idx, :m] = offset + (gain * cand_weights[best_c])
+                    out_flat[out_idx, :m] = offset + (
+                        gain * cand_weights[best_c]
+                    )
                     out_flat[out_idx, m] = offset + (gain * rmse)
 
             out_blk = np.moveaxis(
@@ -1159,18 +310,22 @@ def _run_windowed_unmixer(
     """Shared windowed linear spectral unmixing runner."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches
-    em_names, m, _, endmembers_arr = _prepare_endmembers_array(
+    em_names, m, _, endmembers_arr = prepare_endmembers_array(
         endmembers, gain=gain, weight=weight, file_format=file_format
     )
 
-    in_paths = [input_img] if valid_msk_img is None else [input_img, valid_msk_img]
+    in_paths = (
+        [input_img] if valid_msk_img is None else [input_img, valid_msk_img]
+    )
     with ExitStack() as stack:
         datasets, paths = open_multi_image_datasets(stack, in_paths)
         src_img = datasets[paths[0]]
         src_msk = datasets[paths[1]] if valid_msk_img is not None else None
         grid = compute_spatial_intersection(datasets)
 
-        expected_bands = endmembers_arr.shape[1] - (1 if weight is not None else 0)
+        expected_bands = endmembers_arr.shape[1] - (
+            1 if weight is not None else 0
+        )
         if src_img.count != expected_bands:
             raise rsgispy.RSGISPyException(
                 f"Input image '{input_img}' has {src_img.count} bands, expected "
@@ -1193,7 +348,9 @@ def _run_windowed_unmixer(
             grid.offsets[paths[1]] if valid_msk_img is not None else (0, 0)
         )
 
-        for win in iter_dataset_windows(grid.height, grid.width, use_pbar=use_pbar):
+        for win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
             win_h = int(win.height)
             win_w = int(win.width)
             img_win = Window(
@@ -1211,13 +368,19 @@ def _run_windowed_unmixer(
                     win_w,
                     win_h,
                 )
-                msk_vld = src_msk.read(1, window=msk_win).ravel() == valid_msk_val
+                msk_vld = (
+                    src_msk.read(1, window=msk_win).ravel() == valid_msk_val
+                )
             else:
                 msk_vld = np.ones(win_h * win_w, dtype=bool)
 
             if np.any(msk_vld):
-                img_blk = src_img.read(window=img_win).astype(np.float64, copy=False)
-                img_flat = np.moveaxis(img_blk, 0, -1).reshape(-1, src_img.count)
+                img_blk = src_img.read(window=img_win).astype(
+                    np.float64, copy=False
+                )
+                img_flat = np.moveaxis(img_blk, 0, -1).reshape(
+                    -1, src_img.count
+                )
 
                 vld = (
                     msk_vld
@@ -1230,7 +393,9 @@ def _run_windowed_unmixer(
                         vld_pxls = vld_pxls / float(gain)
                     if weight is not None:
                         w_col = np.full(
-                            (vld_pxls.shape[0], 1), float(weight), dtype=np.float64
+                            (vld_pxls.shape[0], 1),
+                            float(weight),
+                            dtype=np.float64,
                         )
                         vld_pxls = np.hstack([vld_pxls, w_col])
 
@@ -1249,7 +414,9 @@ def _run_windowed_unmixer(
         )
 
 
-def _numpy_ucls_solver(vld_pxls: np.ndarray, endmembers_arr: np.ndarray) -> np.ndarray:
+def _numpy_ucls_solver(
+    vld_pxls: np.ndarray, endmembers_arr: np.ndarray
+) -> np.ndarray:
     """Vectorised unconstrained least squares solver using ``numpy.linalg.lstsq``."""
     abundances, _, _, _ = np.linalg.lstsq(
         endmembers_arr.T, vld_pxls.T, rcond=None
@@ -1271,8 +438,8 @@ def spec_unmix_ucls(
     use_pbar: bool = True,
 ) -> None:
     """
-    Perform unconstrained least-squares (UCLS) linear spectral
-    unmixing using vectorised ``numpy.linalg.lstsq``.
+    **[Recommended]** Perform unconstrained least-squares (UCLS) linear
+    spectral unmixing using vectorised ``numpy.linalg.lstsq``.
 
     Requires only core ``numpy`` (no optional unmixing packages needed).
 
@@ -1283,7 +450,7 @@ def spec_unmix_ucls(
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
-                       :func:`read_endmembers_df`.
+                       :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param gain: Gain divisor applied to image and endmember spectra when
                  greater than ``1`` (Default = ``1``).
@@ -1297,7 +464,7 @@ def spec_unmix_ucls(
 
     .. code:: python
 
-        import rsgispy.imagecalc.spectralunmixing as su
+        import rsgispy.imagespectral.unmixing as su
 
         su.spec_unmix_ucls(
             "img.tif", "mask.tif", 1, "unmix_ucls.tif", "endmembers.csv"
@@ -1320,9 +487,7 @@ def spec_unmix_ucls(
     )
 
 
-def _scipy_nnls_loop(
-    vld_pxls: np.ndarray, end_t: np.ndarray
-) -> np.ndarray:
+def _scipy_nnls_loop(vld_pxls: np.ndarray, end_t: np.ndarray) -> np.ndarray:
     """Fallback row-wise Lawson–Hanson NNLS solver via ``scipy.optimize.nnls``."""
     n_pxls = vld_pxls.shape[0]
     m = end_t.shape[1]
@@ -1447,7 +612,9 @@ def _solve_simplex_eq_subset(
     if k == 1:
         return np.ones((y_mat.shape[0], 1), dtype=np.float64)
     if null_basis is None:
-        q_full, _ = np.linalg.qr(np.ones((k, 1), dtype=np.float64), mode="complete")
+        q_full, _ = np.linalg.qr(
+            np.ones((k, 1), dtype=np.float64), mode="complete"
+        )
         null_basis = q_full[:, 1:]
     e_sub = end_t[:, cols]
     x0 = np.full(k, 1.0 / float(k), dtype=np.float64)
@@ -1576,7 +743,9 @@ def _scipy_fcls_solver(
                     end_t,
                     y_rem[need_add[row_sel]],
                     cols,
-                    null_basis=_get_null(int(cols.size)) if cols.size > 1 else None,
+                    null_basis=_get_null(int(cols.size))
+                    if cols.size > 1
+                    else None,
                 )
                 s_mat[np.ix_(row_sel, cols)] = s_sub
 
@@ -1611,7 +780,9 @@ def _scipy_fcls_solver(
 
     if np.any(active):
         rem_act = np.flatnonzero(active)
-        x_mat[rem_act] = _scipy_fcls_heinz_chang_loop(y_rem[rem_act], endmembers_arr)
+        x_mat[rem_act] = _scipy_fcls_heinz_chang_loop(
+            y_rem[rem_act], endmembers_arr
+        )
 
     x_mat = np.clip(x_mat, 0.0, None)
     row_sums = np.sum(x_mat, axis=1, keepdims=True)
@@ -1656,7 +827,7 @@ def spec_unmix_nnls(
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
-                       :func:`read_endmembers_df`.
+                       :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param gain: Gain divisor applied to image and endmember spectra when
                  greater than ``1`` (Default = ``1``).
@@ -1670,7 +841,7 @@ def spec_unmix_nnls(
 
     .. code:: python
 
-        import rsgispy.imagecalc.spectralunmixing as su
+        import rsgispy.imagespectral.unmixing as su
 
         su.spec_unmix_nnls(
             "img.tif", "mask.tif", 1, "unmix_nnls.tif", "endmembers.csv"
@@ -1728,7 +899,7 @@ def spec_unmix_fcls(
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
-                       :func:`read_endmembers_df`.
+                       :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param gain: Gain divisor applied to image and endmember spectra when
                  greater than ``1`` (Default = ``1``).
@@ -1741,7 +912,7 @@ def spec_unmix_fcls(
 
     .. code:: python
 
-        import rsgispy.imagecalc.spectralunmixing as su
+        import rsgispy.imagespectral.unmixing as su
 
         su.spec_unmix_fcls(
             "img.tif", "mask.tif", 1, "unmix_fcls.tif", "endmembers.csv"
@@ -1794,7 +965,7 @@ def spec_unmix_spts_ucls(
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
-                       :func:`read_endmembers_df`.
+                       :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param gain: Gain divisor applied to image and endmember spectra when
                  greater than ``1`` (Default = ``1``).
@@ -1808,7 +979,7 @@ def spec_unmix_spts_ucls(
 
     .. code:: python
 
-        import rsgispy.imagecalc.spectralunmixing as su
+        import rsgispy.imagespectral.unmixing as su
 
         su.spec_unmix_spts_ucls(
             "img.tif", "mask.tif", 1, "unmix_ucls.tif", "endmembers.csv"
@@ -1863,7 +1034,7 @@ def spec_unmix_spts_nnls(
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
-                       :func:`read_endmembers_df`.
+                       :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param gain: Gain divisor applied to image and endmember spectra when
                  greater than ``1`` (Default = ``1``).
@@ -1877,7 +1048,7 @@ def spec_unmix_spts_nnls(
 
     .. code:: python
 
-        import rsgispy.imagecalc.spectralunmixing as su
+        import rsgispy.imagespectral.unmixing as su
 
         su.spec_unmix_spts_nnls(
             "img.tif", "mask.tif", 1, "unmix_nnls.tif", "endmembers.csv"
@@ -1926,14 +1097,13 @@ def spec_unmix_spts_fcls(
        ``pysptools`` and runs substantially faster.
 
     :param input_img: Path to the input image file.
-    :param valid_msk_img: Optional path to the valid pixel mask image
-                          file.
+    :param valid_msk_img: Optional path to the valid pixel mask image file.
     :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid
                           pixels.
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
-                       :func:`read_endmembers_df`.
+                       :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param gain: Gain divisor applied to image and endmember spectra when
                  greater than ``1`` (Default = ``1``).
@@ -1946,7 +1116,7 @@ def spec_unmix_spts_fcls(
 
     .. code:: python
 
-        import rsgispy.imagecalc.spectralunmixing as su
+        import rsgispy.imagespectral.unmixing as su
 
         su.spec_unmix_spts_fcls(
             "img.tif", "mask.tif", 1, "unmix_fcls.tif", "endmembers.csv"
@@ -1975,7 +1145,9 @@ def spec_unmix_spts_fcls(
     )
 
 
-def _pymcr_nnls_solver(vld_pxls: np.ndarray, endmembers_arr: np.ndarray) -> np.ndarray:
+def _pymcr_nnls_solver(
+    vld_pxls: np.ndarray, endmembers_arr: np.ndarray
+) -> np.ndarray:
     """Fit PyMCR NNLS model and return abundance matrix."""
     mcrar = McrAR(
         max_iter=100,
@@ -1987,7 +1159,9 @@ def _pymcr_nnls_solver(vld_pxls: np.ndarray, endmembers_arr: np.ndarray) -> np.n
     return mcrar.C_opt_
 
 
-def _pymcr_fcls_solver(vld_pxls: np.ndarray, endmembers_arr: np.ndarray) -> np.ndarray:
+def _pymcr_fcls_solver(
+    vld_pxls: np.ndarray, endmembers_arr: np.ndarray
+) -> np.ndarray:
     """Fit PyMCR FCLS model and return abundance matrix."""
     mcrar = McrAR(
         max_iter=200,
@@ -2027,7 +1201,7 @@ def spec_unmix_pymcr_nnls(
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
-                       :func:`read_endmembers_df`.
+                       :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param gain: Gain divisor applied to image and endmember spectra when
                  greater than ``1`` (Default = ``1``).
@@ -2041,7 +1215,7 @@ def spec_unmix_pymcr_nnls(
 
     .. code:: python
 
-        import rsgispy.imagecalc.spectralunmixing as su
+        import rsgispy.imagespectral.unmixing as su
 
         su.spec_unmix_pymcr_nnls(
             "img.tif", "mask.tif", 1, "unmix_pymcr_nnls.tif", "endmembers.csv"
@@ -2094,7 +1268,7 @@ def spec_unmix_pymcr_fcls(
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
-                       :func:`read_endmembers_df`.
+                       :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param gain: Gain divisor applied to image and endmember spectra when
                  greater than ``1`` (Default = ``1``).
@@ -2107,7 +1281,7 @@ def spec_unmix_pymcr_fcls(
 
     .. code:: python
 
-        import rsgispy.imagecalc.spectralunmixing as su
+        import rsgispy.imagespectral.unmixing as su
 
         su.spec_unmix_pymcr_fcls(
             "img.tif", "mask.tif", 1, "unmix_pymcr_fcls.tif", "endmembers.csv"
@@ -2154,7 +1328,7 @@ def rescale_unmixing_results(
 
     .. code:: python
 
-        import rsgispy.imagecalc.spectralunmixing as su
+        import rsgispy.imagespectral.unmixing as su
 
         su.rescale_unmixing_results("unmix_ucls.tif", "unmix_rescaled.tif")
     """
@@ -2208,7 +1382,7 @@ def predict_refl_linear_unmixing(
     :param in_unmix_coefs_img: Path to the input abundance coefficients image.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
-                       :func:`read_endmembers_df`.
+                       :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
     :param output_img: Path to the output predicted reflectance image.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param file_format: Optional format override when ``endmembers`` is a file
@@ -2220,7 +1394,7 @@ def predict_refl_linear_unmixing(
 
     .. code:: python
 
-        import rsgispy.imagecalc.spectralunmixing as su
+        import rsgispy.imagespectral.unmixing as su
 
         su.predict_refl_linear_unmixing(
             "unmix.tif", "endmembers.csv", "pred_refl.tif"
@@ -2228,7 +1402,7 @@ def predict_refl_linear_unmixing(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(in_unmix_coefs_img, "Input unmixing coefficients image")
-    em_df = _coerce_endmembers_df(endmembers, file_format=file_format)
+    em_df = coerce_endmembers_df(endmembers, file_format=file_format)
     endmembers_arr = em_df.to_numpy(dtype=np.float64).T
     m, n_bands = endmembers_arr.shape
     band_names = [str(idx) for idx in em_df.index]
@@ -2259,7 +1433,9 @@ def predict_refl_linear_unmixing(
                 np.float64, copy=False
             )
             coefs_flat = np.moveaxis(blk, 0, -1).reshape(-1, m)
-            pred_flat = (coefs_flat @ endmembers_arr).astype(np.float32, copy=False)
+            pred_flat = (coefs_flat @ endmembers_arr).astype(
+                np.float32, copy=False
+            )
             out_blk = np.moveaxis(
                 pred_flat.reshape((win_h, win_w, n_bands)), -1, 0
             )
@@ -2295,7 +1471,7 @@ def calc_unmixing_rmse_residual_err(
     :param input_unmix_img: Path to the unmixed abundance coefficients image.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
-                       :func:`read_endmembers_df`.
+                       :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
     :param output_img: Path to the 3-band output error image file.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param file_format: Optional format override when ``endmembers`` is a file
@@ -2307,19 +1483,21 @@ def calc_unmixing_rmse_residual_err(
 
     .. code:: python
 
-        import rsgispy.imagecalc.spectralunmixing as su
+        import rsgispy.imagespectral.unmixing as su
 
         su.calc_unmixing_rmse_residual_err(
             "s2_refl.tif", "unmix.tif", "endmembers.csv", "unmix_err.tif"
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    _, m, n_bands, endmembers_arr = _prepare_endmembers_array(
+    _, m, n_bands, endmembers_arr = prepare_endmembers_array(
         endmembers, file_format=file_format
     )
 
     with ExitStack() as stack:
-        datasets, paths = open_multi_image_datasets(stack, [input_img, input_unmix_img])
+        datasets, paths = open_multi_image_datasets(
+            stack, [input_img, input_unmix_img]
+        )
         src_orig = datasets[paths[0]]
         src_unmix = datasets[paths[1]]
         grid = compute_spatial_intersection(datasets)
@@ -2347,7 +1525,9 @@ def calc_unmixing_rmse_residual_err(
         orig_xoff, orig_yoff = grid.offsets[paths[0]]
         unmix_xoff, unmix_yoff = grid.offsets[paths[1]]
 
-        for win in iter_dataset_windows(grid.height, grid.width, use_pbar=use_pbar):
+        for win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
             win_h = int(win.height)
             win_w = int(win.width)
             orig_win = Window(
@@ -2363,7 +1543,9 @@ def calc_unmixing_rmse_residual_err(
                 win_h,
             )
 
-            orig_blk = src_orig.read(window=orig_win).astype(np.float64, copy=False)
+            orig_blk = src_orig.read(window=orig_win).astype(
+                np.float64, copy=False
+            )
             unmix_blk = src_unmix.read(
                 list(range(1, m + 1)), window=unmix_win
             ).astype(np.float64, copy=False)
@@ -2386,11 +1568,16 @@ def calc_unmixing_rmse_residual_err(
                     norm_diff = np.where(v_orig != 0.0, diff / v_orig, 0.0)
 
                 rmse = np.sqrt(np.sum(diff * diff, axis=1) / float(n_bands))
-                rmspe = np.sqrt(np.sum(norm_diff * norm_diff, axis=1) / float(n_bands)) * 100.0
+                rmspe = (
+                    np.sqrt(np.sum(norm_diff * norm_diff, axis=1) / float(n_bands))
+                    * 100.0
+                )
                 residual = np.sum(np.abs(diff), axis=1) / float(n_bands)
 
                 err_stack = np.stack([rmse, rmspe, residual], axis=-1)
-                err_stack = np.nan_to_num(err_stack, nan=0.0, posinf=0.0, neginf=0.0)
+                err_stack = np.nan_to_num(
+                    err_stack, nan=0.0, posinf=0.0, neginf=0.0
+                )
                 out_flat[vld] = err_stack.astype(np.float32, copy=False)
 
             out_blk = np.moveaxis(out_flat.reshape((win_h, win_w, 3)), -1, 0)
@@ -2421,7 +1608,8 @@ def summarise_multi_endmember_linear_unmixing(
     the lowest Root Mean Square Percentage Error (RMSPE) at each pixel.
 
     :param input_img: Path to the original input reflectance image file.
-    :param in_unmixed_datasets: Sequence of :class:`ImageEndmemberInfo`
+    :param in_unmixed_datasets: Sequence of
+                                :class:`rsgispy.imagespectral.endmembers.ImageEndmemberInfo`
                                 objects describing each candidate unmixing run.
     :param out_unmix_img: Path to the combined output abundance image file.
     :param out_ref_img: Path to the 1-based reference index image indicating
@@ -2436,10 +1624,11 @@ def summarise_multi_endmember_linear_unmixing(
 
     .. code:: python
 
-        import rsgispy.imagecalc.spectralunmixing as su
+        import rsgispy.imagespectral.endmembers as em
+        import rsgispy.imagespectral.unmixing as su
 
-        info_a = su.ImageEndmemberInfo("unmix_a.tif", "em_a.csv")
-        info_b = su.ImageEndmemberInfo("unmix_b.tif", "em_b.csv")
+        info_a = em.ImageEndmemberInfo("unmix_a.tif", "em_a.csv")
+        info_b = em.ImageEndmemberInfo("unmix_b.tif", "em_b.csv")
         su.summarise_multi_endmember_linear_unmixing(
             "s2_refl.tif",
             [info_a, info_b],
@@ -2450,7 +1639,10 @@ def summarise_multi_endmember_linear_unmixing(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     _ = tmp_dir
-    if not isinstance(in_unmixed_datasets, (list, tuple)) or not in_unmixed_datasets:
+    if (
+        not isinstance(in_unmixed_datasets, (list, tuple))
+        or not in_unmixed_datasets
+    ):
         raise rsgispy.RSGISPyException(
             "in_unmixed_datasets must be a non-empty list of ImageEndmemberInfo."
         )
@@ -2465,7 +1657,7 @@ def summarise_multi_endmember_linear_unmixing(
             raise rsgispy.RSGISPyException(
                 "in_unmixed_datasets must contain ImageEndmemberInfo instances."
             )
-        em_names, em_m, em_n, em_arr = _prepare_endmembers_array(
+        em_names, em_m, em_n, em_arr = prepare_endmembers_array(
             ds_info.endmembers, file_format=ds_info.file_format
         )
         if ds_info.endmember_names is not None:
@@ -2546,7 +1738,9 @@ def summarise_multi_endmember_linear_unmixing(
             for ds_names in resolved_ds_names
         ]
 
-        for win in iter_dataset_windows(grid.height, grid.width, use_pbar=use_pbar):
+        for win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
             win_h = int(win.height)
             win_w = int(win.width)
             n_pxls = win_h * win_w
@@ -2557,7 +1751,9 @@ def summarise_multi_endmember_linear_unmixing(
                 win_w,
                 win_h,
             )
-            orig_blk = src_orig.read(window=orig_win).astype(np.float64, copy=False)
+            orig_blk = src_orig.read(window=orig_win).astype(
+                np.float64, copy=False
+            )
             orig_flat = np.moveaxis(orig_blk, 0, -1).reshape(-1, src_orig.count)
             vld = np.logical_not(np.all(orig_flat == 0.0, axis=1)) & np.all(
                 np.isfinite(orig_flat), axis=1
@@ -2579,7 +1775,9 @@ def summarise_multi_endmember_linear_unmixing(
                         win_w,
                         win_h,
                     )
-                    u_blk = u_ds.read(window=u_win).astype(np.float64, copy=False)
+                    u_blk = u_ds.read(window=u_win).astype(
+                        np.float64, copy=False
+                    )
                     u_flat = np.moveaxis(u_blk, 0, -1).reshape(-1, u_ds.count)
                     v_coef = u_flat[vld]
 
@@ -2589,7 +1787,10 @@ def summarise_multi_endmember_linear_unmixing(
                     with np.errstate(divide="ignore", invalid="ignore"):
                         norm_diff = np.where(v_orig != 0.0, diff / v_orig, 0.0)
                     rmspe = (
-                        np.sqrt(np.sum(norm_diff * norm_diff, axis=1) / float(n_bands_m))
+                        np.sqrt(
+                            np.sum(norm_diff * norm_diff, axis=1)
+                            / float(n_bands_m)
+                        )
                         * 100.0
                     )
                     rmspe = np.where(np.isfinite(rmspe), rmspe, np.inf)
@@ -2601,8 +1802,12 @@ def summarise_multi_endmember_linear_unmixing(
                         best_rmspe[win_pxls] = rmspe[better]
                         best_ref[win_pxls] = ds_idx + 1
                         best_abund[win_pxls, :] = 0.0
-                        for local_b, global_b in enumerate(model_band_maps[ds_idx]):
-                            best_abund[win_pxls, global_b] = v_coef[better, local_b]
+                        for local_b, global_b in enumerate(
+                            model_band_maps[ds_idx]
+                        ):
+                            best_abund[win_pxls, global_b] = v_coef[
+                                better, local_b
+                            ]
 
             out_unmix_blk = np.moveaxis(
                 best_abund.reshape((win_h, win_w, n_out_bands)), -1, 0
@@ -2627,369 +1832,3 @@ def summarise_multi_endmember_linear_unmixing(
             ignore_zero=True,
             use_pbar=use_pbar,
         )
-
-
-def calc_ppi(
-    input_img: str,
-    output_img: str,
-    gdalformat: str = "GTIFF",
-    niters: int = 1000,
-    lthres: float = 0,
-    uthres: float = 0,
-    img_gain: float = 1,
-    seed: Optional[int] = None,
-    calc_stats: bool = True,
-    use_pbar: bool = True,
-) -> None:
-    """
-    Calculate the Pixel Purity Index (PPI) using random linear projections of
-    mean-centred spectral bands (Boardman et al., 1995).
-
-    :param input_img: Path to the input multi-band raster image file.
-    :param output_img: Path to the output ``uint16`` PPI count raster file.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param niters: Number of random skewer projections (Default = ``1000``).
-    :param lthres: Lower extreme threshold distance in scaled image units
-                   (Default = ``0``).
-    :param uthres: Upper extreme threshold distance in scaled image units
-                   (Default = ``0``).
-    :param img_gain: Gain divisor applied to input reflectance values when
-                     greater than ``1`` (Default = ``1``).
-    :param seed: Optional random seed for reproducible projections.
-    :param calc_stats: If ``True``, compute statistics and pyramids on
-                       ``output_img`` (Default = ``True``).
-    :param use_pbar: If ``True``, display a tqdm progress bar during iterations
-                     (Default = ``True``).
-
-    .. code:: python
-
-        import rsgispy.imagecalc.spectralunmixing as su
-
-        su.calc_ppi(
-            "pca_img.tif",
-            "ppi_out.tif",
-            gdalformat="GTIFF",
-            niters=500,
-            seed=42,
-        )
-    """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    ensure_file_exists(input_img, "Input image")
-    if niters < 1:
-        raise rsgispy.RSGISPyException("niters must be at least 1.")
-
-    pbar_cls = rsgispy.get_tqdm()
-    with ExitStack() as stack:
-        src = stack.enter_context(rasterio.open(input_img, "r"))
-        n_bands = src.count
-        height = src.height
-        width = src.width
-        n_pxls = height * width
-        nodatavals = src.nodatavals
-
-        img_data = np.zeros((n_bands, n_pxls), dtype=np.float32)
-        img_msk = np.ones(n_pxls, dtype=bool)
-
-        for b_idx in pbar_cls(
-            range(n_bands), desc="Importing bands", disable=not use_pbar
-        ):
-            band_arr = src.read(b_idx + 1).ravel().astype(np.float32, copy=False)
-            nd = nodatavals[b_idx]
-            b_vld = np.isfinite(band_arr)
-            if nd is not None and not (isinstance(nd, float) and math.isnan(nd)):
-                b_vld &= band_arr != nd
-            img_msk &= b_vld
-
-            if img_gain > 1:
-                band_arr = band_arr / float(img_gain)
-            band_tmp = np.where(b_vld, band_arr, np.nan)
-            band_mean = float(np.nanmean(band_tmp)) if np.any(b_vld) else 0.0
-            img_data[b_idx] = band_arr - band_mean
-
-        vld_data = img_data[:, img_msk].T  # (n_valid, n_bands)
-        counts = np.zeros(vld_data.shape[0], dtype=np.uint16)
-
-        if vld_data.shape[0] > 0:
-            rng = np.random.default_rng(seed)
-            for _ in pbar_cls(
-                range(niters), desc="Calculating PPI", disable=not use_pbar
-            ):
-                skewer = rng.random(n_bands) - 0.5
-                proj = vld_data @ skewer
-                s_min = float(np.min(proj))
-                s_max = float(np.max(proj))
-                if lthres == 0:
-                    counts[int(np.argmin(proj))] += 1
-                else:
-                    counts[proj <= (s_min + lthres)] += 1
-
-                if uthres == 0:
-                    counts[int(np.argmax(proj))] += 1
-                else:
-                    counts[proj >= (s_max - uthres)] += 1
-
-        out_full = np.zeros(n_pxls, dtype=np.uint16)
-        out_full[img_msk] = counts
-        out_img_arr = out_full.reshape((height, width))
-
-        dst = create_output_from_dataset(
-            stack=stack,
-            src=src,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            out_rio_dtype="uint16",
-            count=1,
-        )
-        dst.write(out_img_arr, 1)
-
-    if calc_stats:
-        pop_img_stats(
-            output_img,
-            no_data_val=0,
-            calc_pyramids=True,
-            use_pbar=use_pbar,
-        )
-
-
-def spectral_angle_mapper(
-    input_img: str,
-    endmembers: EndmemberInput,
-    output_img: str,
-    out_class_img: Optional[str] = None,
-    out_min_angle_img: Optional[str] = None,
-    gdalformat: str = "GTIFF",
-    img_gain: float = 1,
-    endmembers_gain: float = 1,
-    file_format: Optional[str] = None,
-    degrees: bool = False,
-    max_angle: Optional[float] = None,
-    valid_msk_img: Optional[str] = None,
-    valid_msk_val: int = 1,
-    no_data_val: Optional[float] = None,
-    calc_stats: bool = True,
-    use_pbar: bool = True,
-) -> None:
-    """
-    Compute Spectral Angle Mapper (SAM; Kruse et al., 1993) spectral angles
-    between every pixel spectrum in ``input_img`` and reference endmembers,
-    processed window-by-window without loading full images into memory.
-
-    For a pixel spectrum :math:`x` and endmember spectrum :math:`e`, the
-    spectral angle is
-    :math:`\\theta = \\arccos(\\langle x, e \\rangle / (\\|x\\|\\|e\\|))`,
-    providing illumination- and gain-invariant similarity scoring in
-    ``[0, pi]`` radians (or ``[0, 180]`` degrees when ``degrees=True``).
-
-    :param input_img: Path to the input multi-band reflectance/radiance image.
-    :param endmembers: :class:`pandas.DataFrame` (bands as rows, endmember class
-                       names as columns) or path readable by
-                       :func:`read_endmembers_df`.
-    :param output_img: Path to the output ``float32`` multi-band spectral angle
-                       raster (one band per endmember class).
-    :param out_class_img: Optional output thematic classification raster path
-                          assigning each pixel the 1-based index of the
-                          smallest spectral angle (``0`` for nodata/zero-norm
-                          or when exceeding ``max_angle``).
-    :param out_min_angle_img: Optional single-band ``float32`` output raster
-                              recording the minimum spectral angle per pixel.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param img_gain: Gain divisor applied to ``input_img`` when ``> 1``
-                     (Default = ``1``).
-    :param endmembers_gain: Gain divisor applied to ``endmembers`` when ``> 1``
-                            (Default = ``1``).
-    :param file_format: Optional table format override when ``endmembers`` is a
-                        file path (Default = ``None``).
-    :param degrees: If ``True``, output angles (and interpret ``max_angle``) in
-                    degrees rather than radians (Default = ``False``).
-    :param max_angle: Optional maximum spectral angle threshold for
-                      ``out_class_img``; pixels whose minimum angle exceeds
-                      ``max_angle`` are assigned class ``0`` (unclassified).
-    :param valid_msk_img: Optional single-band valid-region mask raster file.
-    :param valid_msk_val: Pixel value identifying valid pixels in
-                          ``valid_msk_img`` (Default = ``1``).
-    :param no_data_val: Explicit input nodata value overriding metadata
-                        (Default = ``None``).
-    :param calc_stats: If ``True``, compute statistics and pyramids on output
-                       rasters (Default = ``True``).
-    :param use_pbar: If ``True``, display a tqdm progress bar during processing
-                     (Default = ``True``).
-
-    .. code:: python
-
-        import rsgispy.imagecalc.spectralunmixing as su
-
-        su.spectral_angle_mapper(
-            "refl.tif",
-            "endmembers.csv",
-            "sam_angles.tif",
-            out_class_img="sam_class.tif",
-            out_min_angle_img="sam_min_angle.tif",
-            degrees=True,
-            max_angle=15.0,
-        )
-    """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
-    ensure_file_exists(input_img, "Input image")
-    em_names, n_em, n_em_bands, em_arr = _prepare_endmembers_array(
-        endmembers, gain=endmembers_gain, file_format=file_format
-    )
-    if n_em == 0:
-        raise rsgispy.RSGISPyException(
-            "Endmembers table must contain at least one class column."
-        )
-
-    em_norms = np.linalg.norm(em_arr, axis=1, keepdims=True)
-    if np.any(em_norms == 0.0) or not np.all(np.isfinite(em_norms)):
-        raise rsgispy.RSGISPyException(
-            "All endmember spectra must be finite and have non-zero norm."
-        )
-    em_unit = em_arr / em_norms  # (n_em, n_bands)
-
-    in_list = [input_img]
-    if valid_msk_img is not None:
-        ensure_file_exists(valid_msk_img, "Valid mask image")
-        in_list.append(valid_msk_img)
-
-    out_float_nd = -9999.0
-    cls_dtype = "uint8" if n_em <= 255 else "uint16"
-    cls_np_dtype = np.uint8 if n_em <= 255 else np.uint16
-
-    with ExitStack() as stack:
-        datasets, paths = open_multi_image_datasets(stack, in_list)
-        src = datasets[paths[0]]
-        msk_ds = datasets[paths[1]] if valid_msk_img is not None else None
-        if int(src.count) != n_em_bands:
-            raise rsgispy.RSGISPyException(
-                f"Input image band count ({src.count}) does not match "
-                f"endmember band count ({n_em_bands})."
-            )
-
-        grid = compute_spatial_intersection(datasets)
-        img_off = grid.offsets[paths[0]]
-        msk_off = grid.offsets[paths[1]] if msk_ds is not None else None
-        eff_nd = no_data_val if no_data_val is not None else src.nodata
-
-        dst_angles = open_output_dataset(
-            stack=stack,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            out_rio_dtype="float32",
-            grid=grid,
-            count=n_em,
-        )
-        dst_angles.nodata = out_float_nd
-
-        dst_min = None
-        if out_min_angle_img is not None:
-            dst_min = open_output_dataset(
-                stack=stack,
-                output_img=out_min_angle_img,
-                gdalformat=gdalformat,
-                out_rio_dtype="float32",
-                grid=grid,
-                count=1,
-            )
-            dst_min.nodata = out_float_nd
-
-        dst_cls = None
-        if out_class_img is not None:
-            dst_cls = open_output_dataset(
-                stack=stack,
-                output_img=out_class_img,
-                gdalformat=gdalformat,
-                out_rio_dtype=cls_dtype,
-                grid=grid,
-                count=1,
-            )
-            dst_cls.nodata = 0
-
-        for dst_win in iter_dataset_windows(
-            grid.height, grid.width, use_pbar=use_pbar
-        ):
-            col_off, row_off = int(dst_win.col_off), int(dst_win.row_off)
-            win_w, win_h = int(dst_win.width), int(dst_win.height)
-            n_pxls = win_h * win_w
-            img_win = Window(
-                img_off[0] + col_off, img_off[1] + row_off, win_w, win_h
-            )
-            blk = src.read(window=img_win, out_dtype=np.float64)
-            vld = np.all(np.isfinite(blk), axis=0)
-            if eff_nd is not None and math.isfinite(float(eff_nd)):
-                vld &= np.all(blk != float(eff_nd), axis=0)
-            if msk_ds is not None and msk_off is not None:
-                msk_win = Window(
-                    msk_off[0] + col_off, msk_off[1] + row_off, win_w, win_h
-                )
-                vld &= msk_ds.read(1, window=msk_win) == valid_msk_val
-
-            vld_flat = vld.ravel()
-            angles_out = np.full(
-                (n_pxls, n_em), out_float_nd, dtype=np.float32
-            )
-            min_out = np.full(n_pxls, out_float_nd, dtype=np.float32)
-            cls_out = np.zeros(n_pxls, dtype=cls_np_dtype)
-
-            if np.any(vld_flat):
-                pxls = np.moveaxis(blk, 0, -1).reshape(-1, n_em_bands)[
-                    vld_flat
-                ]
-                if img_gain > 1:
-                    pxls = pxls / float(img_gain)
-                norms = np.linalg.norm(pxls, axis=1)
-                non_zero = norms > 0.0
-                if np.any(non_zero):
-                    nz_unit = pxls[non_zero] / norms[non_zero, None]
-                    cos_sim = np.clip(nz_unit @ em_unit.T, -1.0, 1.0)
-                    sam_vals = np.arccos(cos_sim)
-                    if degrees:
-                        sam_vals = np.degrees(sam_vals)
-
-                    nz_indices = np.flatnonzero(vld_flat)[non_zero]
-                    angles_out[nz_indices] = sam_vals.astype(np.float32)
-                    best_idx = np.argmin(sam_vals, axis=1)
-                    best_ang = sam_vals[np.arange(sam_vals.shape[0]), best_idx]
-                    min_out[nz_indices] = best_ang.astype(np.float32)
-
-                    cls_vals = (best_idx + 1).astype(cls_np_dtype)
-                    if max_angle is not None:
-                        cls_vals = np.where(
-                            best_ang <= float(max_angle), cls_vals, 0
-                        ).astype(cls_np_dtype)
-                    cls_out[nz_indices] = cls_vals
-
-            out_cube = np.moveaxis(
-                angles_out.reshape((win_h, win_w, n_em)), -1, 0
-            )
-            dst_angles.write(out_cube, window=dst_win)
-            if dst_min is not None:
-                dst_min.write(min_out.reshape((1, win_h, win_w)), window=dst_win)
-            if dst_cls is not None:
-                dst_cls.write(cls_out.reshape((1, win_h, win_w)), window=dst_win)
-
-    set_band_names(output_img, em_names, feedback=False)
-    if out_min_angle_img is not None:
-        set_band_names(out_min_angle_img, ["min_angle"], feedback=False)
-
-    if calc_stats:
-        pop_img_stats(
-            output_img,
-            no_data_val=out_float_nd,
-            calc_pyramids=True,
-            use_pbar=use_pbar,
-        )
-        if out_min_angle_img is not None:
-            pop_img_stats(
-                out_min_angle_img,
-                no_data_val=out_float_nd,
-                calc_pyramids=True,
-                use_pbar=use_pbar,
-            )
-        if out_class_img is not None:
-            pop_thmt_img_stats(
-                out_class_img,
-                add_clr_tab=True,
-                calc_pyramids=True,
-                ignore_zero=True,
-                use_pbar=use_pbar,
-            )

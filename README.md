@@ -54,8 +54,10 @@ If you use `rsgispy` or build on concepts from RSGISLib in academic work, please
 | `rsgispy` | Core `TYPE_*` / `INTERP_*` constants, `RSGISPyException`, datatype helpers, and progress bars |
 | `rsgispy.changedetect` | Image differencing, ratioing, CVA, ISFA, IR-MAD, and per-class outlier change detection (`pxloutlierchng`) |
 | `rsgispy.imageprocess` | Windowed raster block-processing engine, spatial intersection, and dataset validation |
-| `rsgispy.imageutils` | Raster creation, rasterisation, metadata, masking, mosaicking, tiling, VRTs, warping, and spectral/spatial helpers |
-| `rsgispy.imagecalc` | Band/image maths (`pymu-eval`), spectral index stacks (`calcindices`), spectral unmixing (`spectralunmixing`), least-cost paths (`leastcostpath`), statistics, percentiles, comparison, encoding, distance, KNN fill, rescaling, and windowed sampling |
+| `rsgispy.imageutils` | Raster creation, rasterisation, metadata, masking, mosaicking, tiling, VRTs, warping, and spatial helpers |
+| `rsgispy.imagecalc` | Band/image maths (`pymu-eval`), spectral index stacks (`calcindices`), least-cost paths (`leastcostpath`), statistics, percentiles, comparison, encoding, distance, KNN fill, rescaling, and windowed sampling |
+| `rsgispy.imagespectral` | Spectral classification (SAM, SCM), linear spectral unmixing, endmembers & PPI, spectral curve summaries (`indices`), spectral pre-processing (smoothing, outlier masking, polyfill), and transforms (whitening, PCA, MNF, Tasseled Cap, histogram matching) |
+| `rsgispy.imagefilter` | Spatial moving-window filters (mean, median, min/max/mode, stddev, variance, difference, Kuwahara, Lee SAR, Sobel, Prewitt, Gaussian, Laplacian, and custom convolution kernels) |
 | `rsgispy.imagemorphology` | Morphological raster filtering (dilation, erosion, opening, closing) |
 | `rsgispy.elevation` | Terrain derivatives, solar illumination, DEM filtering, fusion, and surface roughness |
 | `rsgispy.vectorprocess` | Shared low-level vector I/O (including compressed GeoParquet), CRS, bounding-box, and attribute helpers |
