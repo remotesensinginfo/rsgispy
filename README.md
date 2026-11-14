@@ -54,9 +54,10 @@ If you use `rsgispy` or build on concepts from RSGISLib in academic work, please
 | Module / Subpackage | Purpose |
 | --- | --- |
 | `rsgispy` | Core `TYPE_*` / `INTERP_*` constants, `RSGISPyException`, datatype helpers, and progress bars |
+| `rsgispy.changedetect` | Image differencing, ratioing, CVA, ISFA, IR-MAD, and per-class outlier change detection (`pxloutlierchng`) |
 | `rsgispy.imageprocess` | Windowed raster block-processing engine, spatial intersection, and dataset validation |
 | `rsgispy.imageutils` | Raster creation, rasterisation, metadata, masking, mosaicking, tiling, VRTs, warping, and spectral/spatial helpers |
-| `rsgispy.imagecalc` | Band/image maths (`pymu-eval`), spectral index stacks (`calcindices`), statistics, percentiles, comparison, encoding, distance, KNN fill, rescaling, and windowed sampling |
+| `rsgispy.imagecalc` | Band/image maths (`pymu-eval`), spectral index stacks (`calcindices`), spectral unmixing (`spectralunmixing`), least-cost paths (`leastcostpath`), statistics, percentiles, comparison, encoding, distance, KNN fill, rescaling, and windowed sampling |
 | `rsgispy.imagemorphology` | Morphological raster filtering (dilation, erosion, opening, closing) |
 | `rsgispy.elevation` | Terrain derivatives, solar illumination, DEM filtering, fusion, and surface roughness |
 | `rsgispy.vectorprocess` | Shared low-level vector I/O (including compressed GeoParquet), CRS, bounding-box, and attribute helpers |
@@ -87,7 +88,8 @@ Optional feature groups can be installed individually or all together via `pip` 
 - `vector`: `alphashape`, `h3`, `openpyxl`, `pyarrow`, `rtree`, `xlsxwriter`
 - `mapping`: `contextily`, `mpl-scatter-density`, `owslib`
 - `dataaccess`: `beautifulsoup4`, `osmnx`, `planet`, `pycurl`, `pysondb`, `requests`
-- `imaging`: `h5py`, `imageio`, `pillow`, `pyexiftool`, `pymupdf`, `qrcode`
+- `imaging`: `h5py`, `imageio`, `pillow`, `pyexiftool`, `pymupdf`, `qrcode`, `scikit-image`
+- `unmixing`: `cvxopt`, `pyMCR`, `pysptools`, `scikit-learn`, `scipy`
 - `jupyter`: `ipywidgets`
 - `all`: all optional runtime dependencies above
 - `test`: `flake8`, `pylint`, `pytest`, `pytest-cov`, and `stats`

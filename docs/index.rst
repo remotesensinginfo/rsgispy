@@ -55,15 +55,21 @@ Additional functionality uses optional third-party packages defined under
        tracking databases, and web file discovery.
    * - ``imaging``
      - ``h5py``, ``imageio``, ``pillow``, ``pyexiftool``, ``pymupdf``,
-       ``qrcode``
+       ``qrcode``, ``scikit-image``
      - KEA/HDF5 validation, drone/EXIF metadata, animated GIFs, PDF page/image
-       utilities, and QR code generation.
+       utilities, QR codes, and least-cost path graph routing.
+   * - ``unmixing``
+     - ``cvxopt``, ``pyMCR``, ``pysptools``, ``scikit-learn``, ``scipy``
+     - Full optional spectral unmixing backends (``pysptools`` / ``pyMCR``)
+       and SciPy NNLS/FCLS unmixing (recommended NumPy/SciPy unmixing only
+       requires ``scipy``, also included in ``stats``), ISFA/IR-MAD change
+       detection, and K-means change thresholding.
    * - ``jupyter``
      - ``ipywidgets``
      - Interactive Jupyter notebook progress bars.
    * - ``all``
      - ``stats``, ``vector``, ``mapping``, ``dataaccess``, ``imaging``,
-       ``jupyter``
+       ``unmixing``, ``jupyter``
      - All optional runtime dependencies.
    * - ``test``
      - ``flake8``, ``pylint``, ``pytest``, ``pytest-cov``, ``stats``
@@ -126,10 +132,11 @@ Package Overview
 ----------------
 
 * :doc:`rsgispy` — Core data type constants, exception class, and interpolation mappings.
+* :doc:`rsgispy_changedetect` — Multi-temporal change detection (CVA, ISFA, IR-MAD) and class outlier detection.
 * :doc:`rsgispy_dataaccess` — Clients for Copernicus OData, NASA CMR, OSM, Planet, and USGS M2M.
 * :doc:`rsgispy_droneutils` — Drone photo organisation and metadata utilities.
 * :doc:`rsgispy_elevation` — Terrain derivatives, illumination, DEM filtering, fusion, and roughness.
-* :doc:`rsgispy_imagecalc` — Band maths, statistics, percentiles, comparison, encoding, and distance.
+* :doc:`rsgispy_imagecalc` — Band maths, spectral indices, spectral unmixing, least-cost path, statistics, percentiles, comparison, encoding, and distance.
 * :doc:`rsgispy_imagemorphology` — Morphological raster filtering (dilation, erosion, opening, closing).
 * :doc:`rsgispy_imageprocess` — Block-processing engine, spatial intersection, and dataset validation.
 * :doc:`rsgispy_imageutils` — Raster creation, rasterisation, metadata, masking, mosaicking, tiling, VRT, and warping.
@@ -146,6 +153,7 @@ Package Overview
    :caption: API Reference
 
    rsgispy
+   rsgispy_changedetect
    rsgispy_dataaccess
    rsgispy_droneutils
    rsgispy_elevation

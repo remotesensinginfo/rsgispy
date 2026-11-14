@@ -25,6 +25,7 @@ __all__ = [
     "linear_stretch_np_arr",
     "cumulative_stretch_np_arr",
     "stdev_stretch_np_arr",
+    "plot_histogram_threshold",
 ]
 
 
@@ -641,3 +642,69 @@ def stdev_stretch_np_arr(
         max_out_val=max_out_val,
         out_int_type=out_int_type,
     )
+
+
+def plot_histogram_threshold(
+    data: np.ndarray,
+    out_file: str,
+    threshold: Optional[float] = None,
+    title_str: Optional[str] = None,
+    hist_clr: str = "gray",
+    out_format: Optional[str] = None,
+    plot_dpi: int = 300,
+    n_bins: Optional[int] = None,
+) -> None:
+    """
+    Create a histogram plot for a 1D NumPy array and optionally display a
+    vertical threshold line.
+
+    :param data: 1D NumPy array of values to plot.
+    :param out_file: Output image file path for the saved plot.
+    :param threshold: Optional threshold value plotted as a vertical red line.
+    :param title_str: Optional plot title string.
+    :param hist_clr: Colour for the histogram bars (Default = ``'gray'``).
+    :param out_format: Output image format (inferred from extension if ``None``).
+    :param plot_dpi: Resolution in DPI for the saved figure (Default = ``300``).
+    :param n_bins: Number of histogram bins (estimated via Freedman-Diaconis rule
+                   if ``None``).
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.plotting
+
+        vals = np.concatenate([np.random.normal(2.0, 0.4, 200), np.random.normal(6.0, 0.4, 200)])
+        rsgispy.tools.plotting.plot_histogram_threshold(
+            vals, "hist_thres.png", threshold=4.0, title_str="Threshold"
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=import-outside-toplevel
+    import matplotlib.pyplot as plt
+    from rsgispy.tools.thresholding import get_nbins_histogram
+
+    data_arr = np.asarray(data, dtype=float).ravel()
+    data_arr = data_arr[np.isfinite(data_arr)]
+    if data_arr.size == 0:
+        raise rsgispy.RSGISPyException(
+            "Input data array contains no finite values to plot."
+        )
+
+    if n_bins is None:
+        iqr = float(np.percentile(data_arr, 75) - np.percentile(data_arr, 25))
+        data_span = float(np.max(data_arr) - np.min(data_arr))
+        if iqr > 0.0 and data_span > 0.0:
+            n_bins, _ = get_nbins_histogram(data_arr)
+        else:
+            n_bins = min(50, max(1, int(data_arr.size)))
+
+    fig, ax = plt.subplots()
+    try:
+        ax.hist(data_arr, bins=n_bins, color=hist_clr)
+        if threshold is not None:
+            ax.axvline(x=threshold, color="red")
+        if title_str is not None:
+            ax.set_title(title_str)
+        fig.savefig(out_file, format=out_format, dpi=plot_dpi)
+    finally:
+        plt.close(fig)

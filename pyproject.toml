@@ -83,12 +83,20 @@ imaging = [
     "pyexiftool>=0.5",
     "pymupdf>=1.22",
     "qrcode>=7.4",
+    "scikit-image>=0.20",
+]
+unmixing = [
+    "cvxopt>=1.3",
+    "pyMCR>=0.5",
+    "pysptools>=0.15",
+    "scikit-learn>=1.2",
+    "scipy>=1.7",
 ]
 jupyter = [
     "ipywidgets>=8.0",
 ]
 all = [
-    "rsgispy[stats,vector,mapping,dataaccess,imaging,jupyter]",
+    "rsgispy[stats,vector,mapping,dataaccess,imaging,unmixing,jupyter]",
 ]
 test = [
     "flake8>=6.0",

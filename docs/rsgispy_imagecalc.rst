@@ -79,18 +79,22 @@ Statistics, Percentiles & Comparison
    imagecalc/percentiles
    imagecalc/comparison
 
-Encoding, Distance, Filling & Sampling
---------------------------------------
+Encoding, Distance, Least-Cost Path, Filling, Sampling & Unmixing
+-----------------------------------------------------------------
 
 * :doc:`imagecalc/encoding` — Integer recoding and one-hot category encoding.
 * :doc:`imagecalc/distance` — Distance-to-pixel-values (full and tiled) and morphological buffering.
+* :doc:`imagecalc/leastcostpath` — Least-cost path calculation across raster cost surfaces.
 * :doc:`imagecalc/fill` — K-nearest-neighbour region filling.
 * :doc:`imagecalc/calc_pt_win_smpls` — Windowed summary statistics around point samples.
+* :doc:`imagecalc/spectralunmixing` — Linear spectral unmixing, PPI, error metrics, and endmember utilities.
 
 .. toctree::
    :maxdepth: 1
 
    imagecalc/encoding
    imagecalc/distance
+   imagecalc/leastcostpath
    imagecalc/fill
    imagecalc/calc_pt_win_smpls
+   imagecalc/spectralunmixing
