@@ -24,6 +24,7 @@ networking, and visualisation utilities:
 * :mod:`rsgispy.tools.stats` — masking, variograms, percentiles, and normalisation
 * :mod:`rsgispy.tools.strings` — UID generation, string parsing, and cleaning
 * :mod:`rsgispy.tools.system` — environment variables and CPU core count helpers
+* :mod:`rsgispy.tools.tables` — tabular DataFrame export and format/compression helpers
 * :mod:`rsgispy.tools.textio` — text and XML file reading/writing utilities
 * :mod:`rsgispy.tools.thresholding` — Otsu, Yen, ISODATA, Li, and tail thresholding
 * :mod:`rsgispy.tools.tilecache` — XYZ and TMS Web Mercator tile cache utilities

@@ -1,0 +1,79 @@
+"""
+Unit tests for rsgispy.tools.tables.
+"""
+
+import importlib.util
+
+import pandas as pd
+import pytest
+
+import rsgispy
+import rsgispy.tools.tables as tools_tables
+
+
+def test_resolve_table_output_spec():
+    """Verify table format and compression resolution."""
+    assert tools_tables.resolve_table_output_spec("out.csv") == ("csv", "infer")
+    assert tools_tables.resolve_table_output_spec("out.csv.gz") == ("csv", "infer")
+    assert tools_tables.resolve_table_output_spec(
+        "out.tsv", out_compress=True
+    ) == ("tsv", "gzip")
+    assert tools_tables.resolve_table_output_spec(
+        "out.csv", out_compress=False
+    ) == ("csv", None)
+    assert tools_tables.resolve_table_output_spec(
+        "out.parquet", out_compress="zstd"
+    ) == ("parquet", "zstd")
+    assert tools_tables.resolve_table_output_spec("out.parquet.gzip") == (
+        "parquet",
+        "gzip",
+    )
+    assert tools_tables.resolve_table_output_spec(
+        "out.dat", out_format="json"
+    ) == ("json", None)
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        tools_tables.resolve_table_output_spec("out.xml")
+    with pytest.raises(rsgispy.RSGISPyException):
+        tools_tables.resolve_table_output_spec("out.csv", out_format="invalid")
+    with pytest.raises(rsgispy.RSGISPyException):
+        tools_tables.resolve_table_output_spec(
+            "out.parquet", out_compress="badcodec"
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        tools_tables.resolve_table_output_spec(
+            "out.csv", out_compress=123  # type: ignore[arg-type]
+        )
+
+
+def test_write_dataframe_table(tmp_path):
+    """Verify writing DataFrames to CSV, compressed CSV, TSV, JSON, Pickle, and Parquet."""
+    df = pd.DataFrame({"id": [1, 2], "val": [3.5, 4.5]})
+
+    csv_path = tmp_path / "sub" / "table.csv"
+    tools_tables.write_dataframe_table(df, csv_path)
+    assert pd.read_csv(csv_path).equals(df)
+
+    csv_gz_path = tmp_path / "table.csv.gz"
+    tools_tables.write_dataframe_table(df, csv_gz_path)
+    assert pd.read_csv(csv_gz_path).equals(df)
+
+    tsv_path = tmp_path / "table.tsv"
+    tools_tables.write_dataframe_table(df, tsv_path)
+    assert pd.read_csv(tsv_path, sep="\t").equals(df)
+
+    json_path = tmp_path / "table.json"
+    tools_tables.write_dataframe_table(df, json_path)
+    assert len(pd.read_json(json_path)) == 2
+
+    pkl_path = tmp_path / "table.pkl"
+    tools_tables.write_dataframe_table(df, pkl_path)
+    assert pd.read_pickle(pkl_path).equals(df)
+
+    if importlib.util.find_spec("pyarrow") is not None:
+        import pyarrow.parquet as pq
+
+        pq_path = tmp_path / "table.parquet"
+        tools_tables.write_dataframe_table(df, pq_path, out_compress="zstd")
+        assert pq.ParquetFile(pq_path).metadata.row_group(0).column(0).compression == "ZSTD"
+        assert pd.read_parquet(pq_path).equals(df)

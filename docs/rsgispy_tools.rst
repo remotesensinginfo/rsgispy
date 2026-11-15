@@ -10,6 +10,7 @@ Files, Text, JSON, Archives & System
 ------------------------------------
 
 * :doc:`tools/files` — Path inspection, searching, locks, sorting, and temp directory contexts.
+* :doc:`tools/tables` — Exporting pandas DataFrames to Parquet (with compression) and tabular formats.
 * :doc:`tools/textio` — Reading/writing text files, line lists, and prettifying XML.
 * :doc:`tools/jsonio` — Reading and writing JSON and gzipped JSON files.
 * :doc:`tools/archives` — Creating and extracting zip, tar, tar.gz, and tar.bz2 archives.
@@ -21,6 +22,7 @@ Files, Text, JSON, Archives & System
    :maxdepth: 1
 
    tools/files
+   tools/tables
    tools/textio
    tools/jsonio
    tools/archives

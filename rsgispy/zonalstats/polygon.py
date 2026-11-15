@@ -15,14 +15,20 @@ zonal statistics functions using ``rasterio`` and ``geopandas``.
   centroid otherwise.
 * For categorical integer rasters, use :func:`calc_zonal_band_pxl_counts` or
   :func:`calc_zonal_band_pxl_counts_file`.
+* To export all individual pixels within polygons across selected bands to a
+  :class:`pandas.DataFrame` or tabular file (including compressed Parquet), use
+  :func:`export_poly_pxls_to_df`.
 """
+
+# pylint: disable=too-many-lines
 
 import math
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import rasterio
 from rasterio.features import rasterize
 from rasterio.windows import Window
@@ -30,10 +36,15 @@ import rasterio.windows
 
 import rsgispy
 import rsgispy.tools.stats
+from rsgispy.tools.tables import (
+    resolve_table_output_spec as _resolve_table_output_spec,
+    write_dataframe_table as _write_dataframe_table,
+)
 from rsgispy.vectorprocess import VectorInput
 from rsgispy.zonalstats._helpers import (
     is_valid_pixel_value as _is_valid_pixel_value,
     open_validated_zonal_inputs as _open_validated_zonal_inputs,
+    open_validated_zonal_multiband_inputs as _open_validated_zonal_multiband_inputs,
     read_vec_file as _read_vec_file,
     sample_point_pixel as _sample_point_pixel,
     write_vec_file as _write_vec_file,
@@ -48,6 +59,7 @@ __all__ = [
     "calc_zonal_band_stats_test_poly_pts",
     "calc_zonal_band_pxl_counts_file",
     "calc_zonal_band_pxl_counts",
+    "export_poly_pxls_to_df",
 ]
 
 
@@ -1023,3 +1035,285 @@ def calc_zonal_band_pxl_counts(
         vec_gdf[col_name] = counts_by_val[pxl_val]
 
     return vec_gdf
+
+
+def _resolve_poly_pxl_columns(
+    vec_gdf: gpd.GeoDataFrame,
+    bands_list: List[int],
+    band_names: Optional[Sequence[str]],
+    attr_cols: Optional[Sequence[str]],
+    include_coords: bool,
+) -> Tuple[List[str], List[str]]:
+    """Validate and return ``(band_col_names, attr_col_names)``."""
+    if band_names is None:
+        band_col_names = [f"band_{b}" for b in bands_list]
+    else:
+        band_col_names = [str(name) for name in band_names]
+        if any(not name.strip() for name in band_col_names):
+            raise rsgispy.RSGISPyException(
+                "band_names must contain non-empty strings."
+            )
+        if len(band_col_names) != len(bands_list):
+            raise rsgispy.RSGISPyException(
+                f"Number of band_names ({len(band_col_names)}) must match "
+                f"number of selected bands ({len(bands_list)})."
+            )
+
+    if len(set(band_col_names)) != len(band_col_names):
+        raise rsgispy.RSGISPyException(
+            f"Band output column names must be unique: {band_col_names}."
+        )
+
+    attr_col_names: List[str] = []
+    if attr_cols is not None:
+        attr_col_names = [str(c) for c in attr_cols]
+        missing = [c for c in attr_col_names if c not in vec_gdf.columns]
+        if missing:
+            raise rsgispy.RSGISPyException(
+                f"Attribute column(s) not found in vector layer: {missing}."
+            )
+        if "geometry" in attr_col_names:
+            raise rsgispy.RSGISPyException(
+                "Geometry column cannot be included in attr_cols."
+            )
+
+    reserved = {"poly_fid"} | ({"x", "y"} if include_coords else set())
+    all_cols = list(reserved) + attr_col_names + band_col_names
+    if len(set(all_cols)) != len(all_cols):
+        raise rsgispy.RSGISPyException(
+            "Output DataFrame column names collide across poly_fid, x/y, "
+            "attr_cols, and band_names."
+        )
+    return band_col_names, attr_col_names
+
+
+def _extract_poly_pxl_chunk(
+    src: rasterio.DatasetReader,
+    bands_list: List[int],
+    nodata_vals: List[Optional[float]],
+    geom: Any,
+    poly_fid: int,
+    band_col_names: List[str],
+    attr_values: Dict[str, Any],
+    mask_nodata: bool,
+    all_touched: bool,
+    include_coords: bool,
+) -> Optional[pd.DataFrame]:
+    """Extract all valid pixels inside ``geom`` for ``bands_list`` into a DataFrame."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals
+    if geom is None or geom.is_empty:
+        return None
+
+    window = _get_feature_window(
+        geom.bounds, src.transform, src.width, src.height
+    )
+    if window.width <= 0 or window.height <= 0:
+        return None
+
+    arr = src.read(bands_list, window=window)
+    sub_transform = rasterio.windows.transform(window, src.transform)
+    rv_array = rasterize(
+        [(geom, 1)],
+        out_shape=(int(window.height), int(window.width)),
+        transform=sub_transform,
+        fill=0,
+        dtype="uint8",
+        all_touched=all_touched,
+    )
+
+    valid_mask = rv_array == 1
+    if mask_nodata:
+        for b_idx, nodata in enumerate(nodata_vals):
+            if nodata is not None:
+                band_arr = arr[b_idx]
+                if isinstance(nodata, float) and math.isnan(nodata):
+                    valid_mask &= ~np.isnan(band_arr)
+                else:
+                    valid_mask &= band_arr != nodata
+
+    rows, cols = np.nonzero(valid_mask)
+    n_pxls = int(rows.shape[0])
+    if n_pxls == 0:
+        return None
+
+    data: Dict[str, Any] = {
+        "poly_fid": np.full(n_pxls, poly_fid, dtype=np.int64),
+    }
+    for attr_name, attr_val in attr_values.items():
+        data[attr_name] = [attr_val] * n_pxls
+
+    if include_coords:
+        xs, ys = rasterio.transform.xy(sub_transform, rows, cols, offset="center")
+        data["x"] = np.asarray(xs, dtype=np.float64)
+        data["y"] = np.asarray(ys, dtype=np.float64)
+
+    for b_idx, col_name in enumerate(band_col_names):
+        data[col_name] = arr[b_idx, rows, cols]
+
+    return pd.DataFrame(data)
+
+
+def export_poly_pxls_to_df(
+    vec_gdf: VectorInput,
+    input_img: str,
+    img_bands: Optional[Union[int, Sequence[int]]] = None,
+    out_file: Optional[Union[str, os.PathLike]] = None,
+    out_format: Optional[str] = None,
+    out_compress: Optional[Union[str, bool]] = None,
+    band_names: Optional[Sequence[str]] = None,
+    attr_cols: Optional[Sequence[str]] = None,
+    mask_nodata: bool = True,
+    all_touched: bool = False,
+    include_coords: bool = False,
+    reproj_vec: bool = False,
+    vec_def_epsg: Optional[int] = None,
+    vec_lyr: Optional[str] = None,
+    use_pbar: bool = True,
+) -> Optional[pd.DataFrame]:
+    """
+    Export all pixel values falling within each polygon of a vector layer to
+    a :class:`pandas.DataFrame` or tabular file (including compressed Parquet).
+
+    Each row in the exported table corresponds to one pixel inside a polygon,
+    with ``poly_fid`` identifying the 0-based polygon index, optional polygon
+    attribute columns (``attr_cols``), optional pixel-centre coordinates
+    (``x``, ``y``), and one column per selected raster band.
+
+    :param vec_gdf: Input :class:`geopandas.GeoDataFrame` or vector file path
+                    containing polygon geometries.
+    :param input_img: Path to the input raster image.
+    :param img_bands: 1-based band index, sequence of 1-based band indices, or
+                      ``None`` (default) to export all bands in ``input_img``.
+    :param out_file: Optional output file path (e.g., ``'pixels.parquet'``,
+                     ``'pixels.parquet.zstd'``, ``'pixels.csv'``). When
+                     ``None`` (default), returns the :class:`pandas.DataFrame`
+                     instead of writing to disk.
+    :param out_format: Optional output table format overriding extension
+                       detection (e.g., ``'parquet'``, ``'csv'``, ``'tsv'``,
+                       ``'feather'``, ``'excel'``, ``'json'``, ``'pickle'``,
+                       ``'hdf'``).
+    :param out_compress: Optional compression setting when writing to disk.
+                         For Parquet: ``None`` to infer from extension (e.g.,
+                         ``.parquet.gzip``, ``.parquet.zstd``) or write
+                         uncompressed; ``True`` for ``'snappy'``; ``False`` or
+                         ``'none'`` for uncompressed; or codec name
+                         ``'snappy'``, ``'gzip'``, ``'zstd'``, ``'brotli'``,
+                         or ``'lz4'``.
+    :param band_names: Optional sequence of output column names matching
+                       ``img_bands``. Defaults to ``'band_<n>'``.
+    :param attr_cols: Optional sequence of non-geometry column names from
+                      ``vec_gdf`` to copy onto each exported pixel row.
+    :param mask_nodata: If ``True`` (default), exclude pixels where any
+                        selected band matches the raster's nodata value.
+    :param all_touched: If ``True``, include all pixels touched by polygon
+                        boundaries; if ``False`` (default), include pixels
+                        whose centres fall inside the polygon.
+    :param include_coords: If ``True``, include pixel-centre ``x`` and ``y``
+                           columns in the raster CRS (Default = ``False``).
+    :param reproj_vec: Reproject vector geometries on the fly when ``True`` if
+                       vector and raster CRSs differ (Default = ``False``).
+    :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
+    :param vec_lyr: Optional layer name when ``vec_gdf`` is a file path.
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
+    :return: :class:`pandas.DataFrame` if ``out_file`` is ``None``, otherwise
+             ``None``.
+
+    .. code:: python
+
+        import rsgispy.zonalstats.polygon
+
+        pxls_df = rsgispy.zonalstats.polygon.export_poly_pxls_to_df(
+            vec_gdf="polygons.gpkg",
+            vec_lyr="polygons",
+            input_img="img.tif",
+            img_bands=[1, 2, 3],
+            band_names=["blue", "green", "red"],
+            attr_cols=["class_name"],
+        )
+        rsgispy.zonalstats.polygon.export_poly_pxls_to_df(
+            vec_gdf="polygons.gpkg",
+            vec_lyr="polygons",
+            input_img="img.tif",
+            img_bands=[1, 2, 3],
+            out_file="pixels.parquet",
+            out_compress="zstd",
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if vec_gdf is None:
+        raise rsgispy.RSGISPyException("The inputted vector layer was None")
+
+    if out_file is not None:
+        _resolve_table_output_spec(
+            out_file, out_format=out_format, out_compress=out_compress
+        )
+
+    if isinstance(vec_gdf, (str, os.PathLike)):
+        vec_gdf = _read_vec_file(vec_gdf, vec_lyr)
+
+    geom_types = set(vec_gdf.geom_type.dropna().unique())
+    if geom_types and not geom_types.issubset({"Polygon", "MultiPolygon"}):
+        raise rsgispy.RSGISPyException(
+            f"The layer geometry type must be Polygon or MultiPolygon: "
+            f"Got '{sorted(geom_types)}'."
+        )
+
+    chunks: List[pd.DataFrame] = []
+    with _open_validated_zonal_multiband_inputs(
+        vec_gdf,
+        input_img,
+        img_bands=img_bands,
+        vec_def_epsg=vec_def_epsg,
+        reproj_vec=reproj_vec,
+    ) as (src, nodata_vals, bands_list, geom_series):
+        band_col_names, attr_col_names = _resolve_poly_pxl_columns(
+            vec_gdf, bands_list, band_names, attr_cols, include_coords
+        )
+        tqdm_cls = rsgispy.get_tqdm()
+        for poly_fid, geom in enumerate(
+            tqdm_cls(geom_series, total=len(vec_gdf), disable=not use_pbar)
+        ):
+            attr_values = {
+                col: vec_gdf.iloc[poly_fid][col] for col in attr_col_names
+            }
+            chunk_df = _extract_poly_pxl_chunk(
+                src=src,
+                bands_list=bands_list,
+                nodata_vals=nodata_vals,
+                geom=geom,
+                poly_fid=poly_fid,
+                band_col_names=band_col_names,
+                attr_values=attr_values,
+                mask_nodata=mask_nodata,
+                all_touched=all_touched,
+                include_coords=include_coords,
+            )
+            if chunk_df is not None:
+                chunks.append(chunk_df)
+
+    if chunks:
+        out_df = pd.concat(chunks, ignore_index=True)
+    else:
+        empty_data: Dict[str, Any] = {
+            "poly_fid": pd.Series(dtype="int64"),
+        }
+        for col in attr_col_names:
+            empty_data[col] = pd.Series(dtype=vec_gdf[col].dtype)
+        if include_coords:
+            empty_data["x"] = pd.Series(dtype="float64")
+            empty_data["y"] = pd.Series(dtype="float64")
+        for col in band_col_names:
+            empty_data[col] = pd.Series(dtype="float64")
+        out_df = pd.DataFrame(empty_data)
+
+    if out_file is not None:
+        _write_dataframe_table(
+            out_df,
+            out_file,
+            out_format=out_format,
+            out_compress=out_compress,
+        )
+        return None
+    return out_df

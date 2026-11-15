@@ -2,8 +2,11 @@
 Tests for rsgispy.zonalstats using rasterio and geopandas.
 """
 
+import importlib.util
+
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import pytest
 import rasterio
 from rasterio.transform import from_origin
@@ -31,6 +34,27 @@ def _write_test_raster(path: str, data: np.ndarray, epsg: int = 32630, nodata=No
         nodata=nodata,
     ) as dst:
         dst.write(data, 1)
+
+
+def _write_multiband_test_raster(
+    path: str, data: np.ndarray, epsg: int = 32630, nodata=None
+) -> None:
+    """Write a 3D (bands, H, W) array as a GeoTIFF rooted at (500000, 5200000)."""
+    count, height, width = data.shape
+    transform = from_origin(500000.0, 5200000.0, 10.0, 10.0)
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=height,
+        width=width,
+        count=count,
+        dtype=data.dtype,
+        crs=f"EPSG:{epsg}",
+        transform=transform,
+        nodata=nodata,
+    ) as dst:
+        dst.write(data)
 
 
 def test_calc_zonal_band_stats_and_file(tmp_path):
@@ -371,3 +395,271 @@ def test_zonalstats_vector_input_gdf(tmp_path):
     assert list(pts_res["pt_val"]) == pytest.approx([1.0, 6.0])
     assert list(pts_gdf.columns) == orig_pts_cols
 
+
+def test_ext_point_band_values_multiband(tmp_path):
+    """Test ext_point_band_values and ext_point_band_values_file with band lists."""
+    b1 = np.array([[10.0, 20.0], [30.0, -9999.0]], dtype=np.float32)
+    b2 = np.array([[100.0, 200.0], [300.0, 400.0]], dtype=np.float32)
+    b3 = np.array([[1.5, 2.5], [999.0, 4.5]], dtype=np.float32)
+    tif_path = str(tmp_path / "mb3.tif")
+    _write_multiband_test_raster(tif_path, np.stack([b1, b2, b3]), nodata=-9999.0)
+
+    pts_gdf = gpd.GeoDataFrame(
+        {"id": [1, 2, 3, 4]},
+        geometry=[
+            Point(500005.0, 5199995.0),  # (0, 0): [10, 100, 1.5]
+            Point(500015.0, 5199985.0),  # (1, 1): [-9999, 400, 4.5]
+            Point(500005.0, 5199985.0),  # (1, 0): [30, 300, 999]
+            Point(500100.0, 5199995.0),  # out of bounds
+        ],
+        crs="EPSG:32630",
+    )
+
+    # List of bands with explicit field names
+    res_list = zs_pt.ext_point_band_values(
+        pts_gdf.copy(),
+        tif_path,
+        img_band=[1, 3],
+        min_thres=0.0,
+        max_thres=500.0,
+        out_no_data_val=-1.0,
+        out_field=["B1", "B3"],
+    )
+    assert list(res_list["b1"]) == pytest.approx([10.0, -1.0, 30.0, -1.0])
+    assert list(res_list["b3"]) == pytest.approx([1.5, 4.5, -1.0, -1.0])
+
+    # List of bands with prefix string
+    res_pref = zs_pt.ext_point_band_values(
+        pts_gdf.copy(),
+        tif_path,
+        img_band=[1, 2, 3],
+        min_thres=0.0,
+        max_thres=500.0,
+        out_no_data_val=-1.0,
+        out_field="S2",
+    )
+    assert list(res_pref["s2_1"]) == pytest.approx([10.0, -1.0, 30.0, -1.0])
+    assert list(res_pref["s2_2"]) == pytest.approx([100.0, 400.0, 300.0, -1.0])
+    assert list(res_pref["s2_3"]) == pytest.approx([1.5, 4.5, -1.0, -1.0])
+
+    # All bands (img_band=None) with default band_<n> names
+    res_all = zs_pt.ext_point_band_values(
+        pts_gdf.copy(),
+        tif_path,
+        img_band=None,
+        min_thres=0.0,
+        max_thres=500.0,
+        out_no_data_val=-1.0,
+    )
+    assert {"band_1", "band_2", "band_3"}.issubset(res_all.columns)
+    assert list(res_all["band_2"]) == pytest.approx([100.0, 400.0, 300.0, -1.0])
+
+    # File-based GPKG multi-band export via ext_point_band_values_file
+    pts_gpkg = str(tmp_path / "pts_mb.gpkg")
+    pts_gdf.to_file(pts_gpkg, layer="pts")
+    ret = zs_pt.ext_point_band_values_file(
+        pts_gpkg,
+        "pts",
+        tif_path,
+        img_band=[2, 3],
+        min_thres=0.0,
+        max_thres=500.0,
+        out_no_data_val=-1.0,
+        out_field=["green", "nir"],
+    )
+    assert ret is None
+    read_pts = gpd.read_file(pts_gpkg, layer="pts")
+    assert list(read_pts["green"]) == pytest.approx([100.0, 400.0, 300.0, -1.0])
+    assert list(read_pts["nir"]) == pytest.approx([1.5, 4.5, -1.0, -1.0])
+
+    # Validation errors
+    with pytest.raises(rsgispy.RSGISPyException):
+        zs_pt.ext_point_band_values(
+            pts_gdf.copy(), tif_path, [1, 2], 0.0, 500.0, -1.0, out_field=["only_one"]
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        zs_pt.ext_point_band_values(
+            pts_gdf.copy(), tif_path, [], 0.0, 500.0, -1.0, out_field=[]
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        zs_pt.ext_point_band_values(
+            pts_gdf.copy(), tif_path, [1, 99], 0.0, 500.0, -1.0
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        zs_pt.ext_point_band_values(
+            pts_gdf.copy(), tif_path, [1, 2], 0.0, 500.0, -1.0, out_field=["a", "A"]
+        )
+
+
+def test_export_poly_pxls_to_df(tmp_path):
+    """Test export_poly_pxls_to_df for DataFrame return, Parquet compression, and CSV."""
+    # 4x4 grid, 3 bands
+    b1 = np.array(
+        [
+            [1.0, 2.0, 3.0, 4.0],
+            [5.0, -9999.0, 7.0, 8.0],
+            [9.0, 10.0, 11.0, 12.0],
+            [13.0, 14.0, 15.0, 999.0],
+        ],
+        dtype=np.float32,
+    )
+    b2 = b1 * 10.0
+    b2[1, 1] = -9999.0
+    b3 = b1 + 100.0
+    b3[1, 1] = -9999.0
+    tif_path = str(tmp_path / "poly_mb.tif")
+    _write_multiband_test_raster(tif_path, np.stack([b1, b2, b3]), nodata=-9999.0)
+
+    # Poly 0: top-left 2x2 (4 pixels, 1 is nodata -> 3 valid pixels)
+    # Poly 1: bottom-right 2x2 (4 pixels, row3 col3 has b1=999 > max_thres=500 -> 3 valid)
+    polys_gdf = gpd.GeoDataFrame(
+        {"cls": ["forest", "urban"]},
+        geometry=[
+            box(500000.0, 5199980.0, 500020.0, 5200000.0),
+            box(500020.0, 5199960.0, 500040.0, 5199980.0),
+        ],
+        crs="EPSG:32630",
+    )
+
+    # 1. Return DataFrame in memory with selected bands, attr_cols, coords, and nodata masking
+    df = zs_poly.export_poly_pxls_to_df(
+        polys_gdf,
+        tif_path,
+        img_bands=[1, 3],
+        band_names=["blue", "nir"],
+        attr_cols=["cls"],
+        include_coords=True,
+        use_pbar=False,
+    )
+    assert isinstance(df, pd.DataFrame)
+    assert list(df.columns) == ["poly_fid", "cls", "x", "y", "blue", "nir"]
+    assert len(df) == 7
+    assert df[df["poly_fid"] == 0]["blue"].tolist() == pytest.approx([1.0, 2.0, 5.0])
+    assert df[df["poly_fid"] == 0]["nir"].tolist() == pytest.approx([101.0, 102.0, 105.0])
+    assert df[df["poly_fid"] == 0]["cls"].unique().tolist() == ["forest"]
+    assert df[df["poly_fid"] == 1]["blue"].tolist() == pytest.approx(
+        [11.0, 12.0, 15.0, 999.0]
+    )
+    assert df[df["poly_fid"] == 1]["cls"].unique().tolist() == ["urban"]
+    assert df["x"].iloc[0] == pytest.approx(500005.0)
+    assert df["y"].iloc[0] == pytest.approx(5199995.0)
+
+    # 2. All bands (img_bands=None) and mask_nodata=False
+    df_all = zs_poly.export_poly_pxls_to_df(
+        polys_gdf, tif_path, img_bands=None, mask_nodata=False, use_pbar=False
+    )
+    assert list(df_all.columns) == ["poly_fid", "band_1", "band_2", "band_3"]
+    assert len(df_all) == 8
+
+    # 3. Single band as int & reprojected input vector
+    df_reproj = zs_poly.export_poly_pxls_to_df(
+        polys_gdf.to_crs("EPSG:4326"),
+        tif_path,
+        img_bands=2,
+        reproj_vec=True,
+        use_pbar=False,
+    )
+    assert list(df_reproj.columns) == ["poly_fid", "band_2"]
+    assert len(df_reproj) == 7
+
+    # 4. Empty pixel selection (polygon covering only nodata pixel)
+    nodata_poly = gpd.GeoDataFrame(
+        {"cls": ["nodata"]},
+        geometry=[box(500010.0, 5199980.0, 500020.0, 5199990.0)],
+        crs="EPSG:32630",
+    )
+    df_empty = zs_poly.export_poly_pxls_to_df(
+        nodata_poly, tif_path, img_bands=[1, 2], use_pbar=False
+    )
+    assert isinstance(df_empty, pd.DataFrame)
+    assert len(df_empty) == 0
+    assert list(df_empty.columns) == ["poly_fid", "band_1", "band_2"]
+
+    # 5. Export to CSV from GPKG path input
+    poly_gpkg = str(tmp_path / "polys.gpkg")
+    polys_gdf.to_file(poly_gpkg, layer="zones")
+    csv_out = str(tmp_path / "pixels.csv")
+    ret_csv = zs_poly.export_poly_pxls_to_df(
+        poly_gpkg,
+        tif_path,
+        img_bands=[1, 3],
+        band_names=["b1", "b3"],
+        attr_cols=["cls"],
+        out_file=csv_out,
+        vec_lyr="zones",
+        use_pbar=False,
+    )
+    assert ret_csv is None
+    df_csv = pd.read_csv(csv_out)
+    assert len(df_csv) == 7
+    assert list(df_csv.columns) == ["poly_fid", "cls", "b1", "b3"]
+
+    # 6. Export to Parquet with compression options (when pyarrow installed)
+    if importlib.util.find_spec("pyarrow") is not None:
+        import pyarrow.parquet as pq
+
+        pq_zstd = str(tmp_path / "pixels_zstd.parquet")
+        assert (
+            zs_poly.export_poly_pxls_to_df(
+                polys_gdf,
+                tif_path,
+                img_bands=[1, 2],
+                out_file=pq_zstd,
+                out_compress="zstd",
+                use_pbar=False,
+            )
+            is None
+        )
+        meta_zstd = pq.ParquetFile(pq_zstd).metadata
+        assert meta_zstd.row_group(0).column(0).compression == "ZSTD"
+        assert len(pd.read_parquet(pq_zstd)) == 7
+
+        pq_ext_gz = str(tmp_path / "pixels.parquet.gzip")
+        zs_poly.export_poly_pxls_to_df(
+            polys_gdf,
+            tif_path,
+            img_bands=[1, 2],
+            out_file=pq_ext_gz,
+            use_pbar=False,
+        )
+        meta_gz = pq.ParquetFile(pq_ext_gz).metadata
+        assert meta_gz.row_group(0).column(0).compression == "GZIP"
+        assert len(pd.read_parquet(pq_ext_gz)) == 7
+
+        pq_uncomp = str(tmp_path / "pixels_uncomp.parquet")
+        zs_poly.export_poly_pxls_to_df(
+            polys_gdf,
+            tif_path,
+            img_bands=[1],
+            out_file=pq_uncomp,
+            out_compress=False,
+            use_pbar=False,
+        )
+        meta_uncomp = pq.ParquetFile(pq_uncomp).metadata
+        assert meta_uncomp.row_group(0).column(0).compression == "UNCOMPRESSED"
+
+    # 7. Validation errors
+    with pytest.raises(rsgispy.RSGISPyException):
+        zs_poly.export_poly_pxls_to_df(
+            polys_gdf, tif_path, img_bands=[1, 2], band_names=["only_one"]
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        zs_poly.export_poly_pxls_to_df(
+            polys_gdf, tif_path, img_bands=[1], attr_cols=["missing_col"]
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        zs_poly.export_poly_pxls_to_df(
+            polys_gdf,
+            tif_path,
+            out_file=str(tmp_path / "bad.parquet"),
+            out_compress="invalid_codec",
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        zs_poly.export_poly_pxls_to_df(
+            polys_gdf, tif_path, out_file=str(tmp_path / "bad.xml")
+        )
+    pts_only = gpd.GeoDataFrame(
+        {"id": [1]}, geometry=[Point(500005.0, 5199995.0)], crs="EPSG:32630"
+    )
+    with pytest.raises(rsgispy.RSGISPyException):
+        zs_poly.export_poly_pxls_to_df(pts_only, tif_path)
