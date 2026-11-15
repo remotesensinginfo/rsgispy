@@ -11,6 +11,7 @@ import os
 import pathlib
 import re
 import shutil
+import stat
 import string
 import subprocess
 import sys
@@ -565,6 +566,12 @@ def file_is_hidden(dir_path: str) -> bool:
     """
     Test whether a file or directory is hidden on the current OS.
 
+    On all platforms a path whose basename starts with ``.`` is treated as
+    hidden. On Windows (``os.name == "nt"``), paths with Windows
+    ``FILE_ATTRIBUTE_HIDDEN`` or ``FILE_ATTRIBUTE_SYSTEM`` file attributes are
+    also detected via Python's standard library (:func:`os.lstat` and
+    :mod:`stat`).
+
     :param dir_path: Input file or directory path.
     :return: True if hidden, False otherwise.
 
@@ -574,17 +581,14 @@ def file_is_hidden(dir_path: str) -> bool:
         hidden = rsgispy.tools.files.file_is_hidden("/data/.hidden_file")
     """
     abs_path = os.path.abspath(dir_path)
+    if os.path.basename(abs_path).startswith("."):
+        return True
     if os.name == "nt":
-        # pylint: disable=import-outside-toplevel,import-error
-        import win32api
-        import win32con
-
-        attribute = win32api.GetFileAttributes(abs_path)
+        attrs = getattr(os.lstat(abs_path), "st_file_attributes", 0)
         return bool(
-            attribute
-            & (win32con.FILE_ATTRIBUTE_HIDDEN | win32con.FILE_ATTRIBUTE_SYSTEM)
+            attrs & (stat.FILE_ATTRIBUTE_HIDDEN | stat.FILE_ATTRIBUTE_SYSTEM)
         )
-    return os.path.basename(abs_path).startswith(".")
+    return False
 
 
 def get_dir_list(dir_path: str, inc_hidden: bool = False) -> List[str]:

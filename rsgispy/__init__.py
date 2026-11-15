@@ -91,6 +91,12 @@ Similarity metric types:
     * ``METRIC_MUTUAL_INFO = 5``
     * ``METRIC_NORM_MUTUAL_INFO = 6``
     * ``METRIC_PHASE_CORR = 7``
+
+Environmental/modelling variable types:
+
+    * ``VAR_TYPE_UNDEFINED = 0``
+    * ``VAR_TYPE_CONTINUOUS = 1``
+    * ``VAR_TYPE_CATEGORICAL = 2``
 """
 
 from typing import Union
@@ -234,6 +240,13 @@ METRIC_MUTUAL_INFO = 5
 METRIC_NORM_MUTUAL_INFO = 6
 #: FFT phase cross-correlation similarity metric (``7``).
 METRIC_PHASE_CORR = 7
+
+#: Undefined environmental/modelling variable type (``0``).
+VAR_TYPE_UNDEFINED = 0
+#: Continuous numeric environmental/modelling variable type (``1``).
+VAR_TYPE_CONTINUOUS = 1
+#: Categorical environmental/modelling variable type (``2``).
+VAR_TYPE_CATEGORICAL = 2
 
 _RSGIS_TO_RASTERIO_INTERP = {
     INTERP_NEAREST_NEIGHBOUR: Resampling.nearest,

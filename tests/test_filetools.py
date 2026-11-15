@@ -5,7 +5,9 @@ Tests for rsgispy.tools.files, rsgispy.tools.hashing, and rsgispy.tools.archives
 import datetime
 import hashlib
 import os
+import stat
 import tarfile
+import types
 import zipfile
 
 import numpy as np
@@ -316,3 +318,33 @@ def test_work_dir_context(tmp_path):
         assert work_dir == str(custom_dir)
         assert os.path.isdir(work_dir)
     assert os.path.isdir(custom_dir)
+
+
+def test_file_is_hidden_windows_attributes(tmp_path, monkeypatch):
+    """Test file_is_hidden Windows attribute branch without requiring pywin32."""
+    hidden_attr_dir = tmp_path / "win_hidden"
+    system_attr_dir = tmp_path / "win_system"
+    normal_dir = tmp_path / "win_normal"
+    dot_dir = tmp_path / ".dot_hidden"
+    for d_path in (hidden_attr_dir, system_attr_dir, normal_dir, dot_dir):
+        d_path.mkdir()
+
+    attr_map = {
+        os.path.abspath(str(hidden_attr_dir)): stat.FILE_ATTRIBUTE_HIDDEN,
+        os.path.abspath(str(system_attr_dir)): stat.FILE_ATTRIBUTE_SYSTEM,
+        os.path.abspath(str(normal_dir)): 0,
+    }
+
+    monkeypatch.setattr(rfiles.os, "name", "nt")
+    monkeypatch.setattr(
+        rfiles.os,
+        "lstat",
+        lambda path: types.SimpleNamespace(
+            st_file_attributes=attr_map[os.path.abspath(path)]
+        ),
+    )
+
+    assert rfiles.file_is_hidden(str(dot_dir))
+    assert rfiles.file_is_hidden(str(hidden_attr_dir))
+    assert rfiles.file_is_hidden(str(system_attr_dir))
+    assert not rfiles.file_is_hidden(str(normal_dir))

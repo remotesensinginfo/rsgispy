@@ -109,6 +109,13 @@ Similarity Metric Constants
 * ``rsgispy.METRIC_NORM_MUTUAL_INFO = 6``
 * ``rsgispy.METRIC_PHASE_CORR = 7``
 
+Modelling Variable Type Constants
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* ``rsgispy.VAR_TYPE_UNDEFINED = 0``
+* ``rsgispy.VAR_TYPE_CONTINUOUS = 1``
+* ``rsgispy.VAR_TYPE_CATEGORICAL = 2``
+
 Version
 ~~~~~~~
 
