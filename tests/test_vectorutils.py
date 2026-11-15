@@ -610,3 +610,203 @@ def test_vectorutils_gdf_in_memory():
     # Input GeoDataFrame must remain unmodified
     assert len(pts_gdf) == 20
     assert list(pts_gdf.columns) == orig_cols
+
+
+def test_convert_gpx_to_vec(tmp_path):
+    """Test convert_gpx_to_vec for in-memory GeoDataFrames, vector outputs, and edge cases."""
+    gpx_content = """<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="rsgispy-test"
+     xmlns="http://www.topografix.com/GPX/1/1"
+     xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">
+  <trk>
+    <name>Morning Hike</name>
+    <cmt>Test comment</cmt>
+    <desc>Two-segment route</desc>
+    <src>GPS</src>
+    <type>hiking</type>
+    <number>7</number>
+    <trkseg>
+      <trkpt lat="52.4150" lon="-4.0820">
+        <ele>12.5</ele>
+        <time>2025-06-01T08:00:00Z</time>
+        <extensions>
+          <gpxtpx:TrackPointExtension>
+            <gpxtpx:hr>118</gpxtpx:hr>
+            <gpxtpx:cad>82</gpxtpx:cad>
+          </gpxtpx:TrackPointExtension>
+        </extensions>
+      </trkpt>
+      <trkpt lat="52.4160" lon="-4.0810">
+        <ele>18.0</ele>
+        <time>2025-06-01T08:01:00Z</time>
+        <extensions>
+          <gpxtpx:TrackPointExtension>
+            <gpxtpx:hr>125</gpxtpx:hr>
+            <gpxtpx:cad>84</gpxtpx:cad>
+          </gpxtpx:TrackPointExtension>
+        </extensions>
+      </trkpt>
+    </trkseg>
+    <trkseg>
+      <trkpt lat="52.4170" lon="-4.0800">
+        <ele>24.5</ele>
+        <time>2025-06-01T08:05:00Z</time>
+      </trkpt>
+      <trkpt lat="52.4180" lon="-4.0790">
+        <ele>30.0</ele>
+        <time>2025-06-01T08:06:00Z</time>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>
+"""
+    gpx_file = str(tmp_path / "route.gpx")
+    with open(gpx_file, "w", encoding="utf-8") as fobj:
+        fobj.write(gpx_content)
+
+    # 1. Both outputs returned in memory
+    pts_gdf, lines_gdf = vu_io.convert_gpx_to_vec(gpx_file)
+    assert isinstance(pts_gdf, gpd.GeoDataFrame)
+    assert isinstance(lines_gdf, gpd.GeoDataFrame)
+    assert pts_gdf.crs.to_epsg() == 4326
+    assert lines_gdf.crs.to_epsg() == 4326
+    assert len(pts_gdf) == 4
+    assert list(pts_gdf.geometry.geom_type) == ["Point"] * 4
+    assert not pts_gdf.geometry.has_z.any()
+    assert pts_gdf["track_name"].tolist() == ["Morning Hike"] * 4
+    assert pts_gdf["track_seg_id"].tolist() == [0, 0, 1, 1]
+    assert pts_gdf["track_seg_point_id"].tolist() == [0, 1, 0, 1]
+    assert pts_gdf["ele"].tolist() == pytest.approx([12.5, 18.0, 24.5, 30.0])
+    assert pts_gdf["hr"].iloc[:2].tolist() == pytest.approx([118.0, 125.0])
+    assert pts_gdf["cad"].iloc[:2].tolist() == pytest.approx([82.0, 84.0])
+
+    assert len(lines_gdf) == 1
+    assert lines_gdf.geometry.iloc[0].geom_type == "MultiLineString"
+    assert not lines_gdf.geometry.has_z.any()
+    assert lines_gdf["name"].iloc[0] == "Morning Hike"
+    assert lines_gdf["cmt"].iloc[0] == "Test comment"
+    assert lines_gdf["desc"].iloc[0] == "Two-segment route"
+    assert lines_gdf["src"].iloc[0] == "GPS"
+    assert lines_gdf["type"].iloc[0] == "hiking"
+    assert int(lines_gdf["number"].iloc[0]) == 7
+    assert int(lines_gdf["n_pts"].iloc[0]) == 4
+    assert lines_gdf["start_time"].iloc[0] == "2025-06-01T08:00:00Z"
+    assert lines_gdf["end_time"].iloc[0] == "2025-06-01T08:06:00Z"
+
+    # 2. split_segments=True and include_z=True
+    pts_z, seg_lines_z = vu_io.convert_gpx_to_vec(
+        gpx_file, split_segments=True, include_z=True
+    )
+    assert pts_z.geometry.has_z.all()
+    assert pts_z.geometry.iloc[0].z == pytest.approx(12.5)
+    assert len(seg_lines_z) == 2
+    assert list(seg_lines_z.geometry.geom_type) == ["LineString", "LineString"]
+    assert seg_lines_z.geometry.has_z.all()
+    assert seg_lines_z["track_seg_id"].tolist() == [0, 1]
+    assert seg_lines_z["n_pts"].tolist() == [2, 2]
+
+    # 3. Reprojection to UTM (EPSG:32630)
+    pts_utm, lines_utm = vu_io.convert_gpx_to_vec(gpx_file, out_epsg=32630)
+    assert pts_utm.crs.to_epsg() == 32630
+    assert lines_utm.crs.to_epsg() == 32630
+
+    # 4. Mixed output: points saved, lines returned
+    pts_only_gpkg = str(tmp_path / "pts_only.gpkg")
+    ret_lines = vu_io.convert_gpx_to_vec(
+        gpx_file, pts_vec_file=pts_only_gpkg, pts_vec_lyr="pts"
+    )
+    assert isinstance(ret_lines, gpd.GeoDataFrame)
+    assert len(ret_lines) == 1
+    assert vu_meta.get_vec_feat_count(pts_only_gpkg, "pts") == 4
+
+    # 5. Mixed output: lines saved, points returned
+    lines_only_gpkg = str(tmp_path / "lines_only.gpkg")
+    ret_pts = vu_io.convert_gpx_to_vec(
+        gpx_file, line_vec_file=lines_only_gpkg, line_vec_lyr="lines"
+    )
+    assert isinstance(ret_pts, gpd.GeoDataFrame)
+    assert len(ret_pts) == 4
+    assert vu_meta.get_vec_feat_count(lines_only_gpkg, "lines") == 1
+
+    # 6. Multi-layer single GPKG output with overwrite (del_exist_vec=True)
+    multi_gpkg = str(tmp_path / "track_bundle.gpkg")
+    ret_none = vu_io.convert_gpx_to_vec(
+        gpx_file,
+        pts_vec_file=multi_gpkg,
+        line_vec_file=multi_gpkg,
+    )
+    assert ret_none is None
+    assert set(vu_meta.get_vec_lyrs_lst(multi_gpkg)) == {"track_points", "tracks"}
+    assert vu_meta.get_vec_feat_count(multi_gpkg, "track_points") == 4
+    assert vu_meta.get_vec_feat_count(multi_gpkg, "tracks") == 1
+
+    # Re-write with del_exist_vec=True
+    assert (
+        vu_io.convert_gpx_to_vec(
+            gpx_file,
+            pts_vec_file=multi_gpkg,
+            line_vec_file=multi_gpkg,
+            del_exist_vec=True,
+        )
+        is None
+    )
+    assert set(vu_meta.get_vec_lyrs_lst(multi_gpkg)) == {"track_points", "tracks"}
+
+    # 7. Separate GeoParquet outputs (when pyarrow is installed)
+    import importlib.util
+
+    if importlib.util.find_spec("pyarrow") is not None:
+        pts_pq = str(tmp_path / "pts.parquet")
+        lines_pq = str(tmp_path / "lines.parquet")
+        assert (
+            vu_io.convert_gpx_to_vec(
+                gpx_file,
+                pts_vec_file=pts_pq,
+                line_vec_file=lines_pq,
+                out_format="Parquet",
+            )
+            is None
+        )
+        assert vu_meta.get_vec_feat_count(pts_pq) == 4
+        assert vu_meta.get_vec_feat_count(lines_pq) == 1
+
+    # 8. Empty GPX (valid GPX with zero track points)
+    empty_gpx = str(tmp_path / "empty.gpx")
+    with open(empty_gpx, "w", encoding="utf-8") as fobj:
+        fobj.write('<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1"></gpx>')
+    empty_pts, empty_lines = vu_io.convert_gpx_to_vec(empty_gpx)
+    assert len(empty_pts) == 0
+    assert len(empty_lines) == 0
+    assert empty_pts.crs.to_epsg() == 4326
+    assert empty_lines.crs.to_epsg() == 4326
+    assert {"track_fid", "track_seg_id", "track_seg_point_id", "ele", "time"}.issubset(
+        empty_pts.columns
+    )
+
+    # 9. Error handling
+    with pytest.raises(rsgispy.RSGISPyException):
+        vu_io.convert_gpx_to_vec(str(tmp_path / "missing.gpx"))
+
+    bad_xml = str(tmp_path / "bad.gpx")
+    with open(bad_xml, "w", encoding="utf-8") as fobj:
+        fobj.write("<kml><Document/></kml>")
+    with pytest.raises(rsgispy.RSGISPyException):
+        vu_io.convert_gpx_to_vec(bad_xml)
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        vu_io.convert_gpx_to_vec(
+            gpx_file,
+            pts_vec_file=multi_gpkg,
+            pts_vec_lyr="same",
+            line_vec_file=multi_gpkg,
+            line_vec_lyr="same",
+        )
+
+    same_pq = str(tmp_path / "same.parquet")
+    with pytest.raises(rsgispy.RSGISPyException):
+        vu_io.convert_gpx_to_vec(
+            gpx_file,
+            pts_vec_file=same_pq,
+            line_vec_file=same_pq,
+            out_format="Parquet",
+        )

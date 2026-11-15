@@ -5,11 +5,18 @@ Vector copying, translation, reprojection, merging, and splitting utilities for
 
 import math
 import os
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+import xml.etree.ElementTree as ET
 
 import geopandas
 import pandas
-from shapely.geometry import LinearRing, Polygon
+from shapely.geometry import (
+    LinearRing,
+    LineString,
+    MultiLineString,
+    Point,
+    Polygon,
+)
 
 import rsgispy
 from rsgispy.imageprocess import ensure_file_exists
@@ -57,6 +64,7 @@ __all__ = [
     "split_vec_lyr",
     "split_feats_to_mlyrs",
     "split_by_attribute",
+    "convert_gpx_to_vec",
 ]
 
 
@@ -1285,4 +1293,422 @@ def split_by_attribute(
 
     if in_memory:
         return out_splits
+    return None
+
+
+_GPX_FLOAT_TAGS = frozenset(
+    {
+        "ele",
+        "magvar",
+        "geoidheight",
+        "hdop",
+        "vdop",
+        "pdop",
+        "ageofdgpsdata",
+        "speed",
+        "course",
+        "atemp",
+        "wtemp",
+        "depth",
+    }
+)
+_GPX_INT_TAGS = frozenset({"sat", "dgpsid", "number", "hr", "cad", "power"})
+_GPX_CORE_PT_COLS = frozenset(
+    {
+        "track_fid",
+        "track_seg_id",
+        "track_seg_point_id",
+        "track_name",
+        "geometry",
+    }
+)
+
+
+def _xml_local_name(tag: str) -> str:
+    """Return XML element local name without namespace URI."""
+    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+
+def _coerce_gpx_scalar(key: str, raw_val: str) -> Any:
+    """Convert known numeric GPX tag text to int or float where valid."""
+    if key in _GPX_INT_TAGS:
+        try:
+            return int(raw_val)
+        except ValueError:
+            try:
+                return float(raw_val)
+            except ValueError:
+                return raw_val
+    if key in _GPX_FLOAT_TAGS:
+        try:
+            return float(raw_val)
+        except ValueError:
+            return raw_val
+    return raw_val
+
+
+def _extract_gpx_extensions(ext_elem: ET.Element, row: Dict[str, Any]) -> None:
+    """Populate leaf scalar values from a GPX ``<extensions>`` element."""
+    for child in ext_elem.iter():
+        if child is ext_elem or len(child) > 0:
+            continue
+        if child.text is None:
+            continue
+        text_val = child.text.strip()
+        if not text_val:
+            continue
+        col_name = _xml_local_name(child.tag)
+        if col_name not in _GPX_CORE_PT_COLS and col_name not in row:
+            row[col_name] = _coerce_gpx_scalar(col_name, text_val)
+
+
+def _parse_gpx_trkpt(
+    pt_elem: ET.Element,
+    track_fid: int,
+    seg_id: int,
+    pt_id: int,
+    track_name: Optional[str],
+    include_z: bool,
+) -> Tuple[Dict[str, Any], Tuple[float, ...], Optional[str]]:
+    """Parse one ``<trkpt>`` element into a point row, coordinate tuple, and time."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    try:
+        lat = float(pt_elem.attrib["lat"])
+        lon = float(pt_elem.attrib["lon"])
+    except (KeyError, TypeError, ValueError) as err:
+        raise rsgispy.RSGISPyException(
+            f"Invalid or missing lat/lon on GPX track point {pt_id} in "
+            f"track {track_fid}, segment {seg_id}."
+        ) from err
+
+    row: Dict[str, Any] = {
+        "track_fid": track_fid,
+        "track_seg_id": seg_id,
+        "track_seg_point_id": pt_id,
+        "track_name": track_name,
+        "ele": math.nan,
+        "time": None,
+    }
+    for child in pt_elem:
+        cname = _xml_local_name(child.tag)
+        if cname == "extensions":
+            _extract_gpx_extensions(child, row)
+        elif len(child) == 0 and child.text is not None:
+            text_val = child.text.strip()
+            if text_val != "":
+                row[cname] = _coerce_gpx_scalar(cname, text_val)
+
+    ele_val = row.get("ele", math.nan)
+    has_z = (
+        include_z
+        and isinstance(ele_val, (int, float))
+        and not math.isnan(float(ele_val))
+    )
+    coord: Tuple[float, ...] = (
+        (lon, lat, float(ele_val)) if has_z else (lon, lat)
+    )
+    row["geometry"] = Point(coord)
+    time_val = row.get("time")
+    return row, coord, (str(time_val) if time_val is not None else None)
+
+
+def _parse_gpx_track_meta(trk_elem: ET.Element) -> Dict[str, Any]:
+    """Extract standard track-level metadata attributes from a ``<trk>``."""
+    meta: Dict[str, Any] = {
+        "name": None,
+        "cmt": None,
+        "desc": None,
+        "src": None,
+        "type": None,
+        "number": None,
+    }
+    for child in trk_elem:
+        cname = _xml_local_name(child.tag)
+        if cname in meta and child.text is not None:
+            text_val = child.text.strip()
+            if text_val != "":
+                meta[cname] = _coerce_gpx_scalar(cname, text_val)
+    return meta
+
+
+def _parse_gpx_tracks(
+    gpx_path: str,
+    include_z: bool = False,
+    split_segments: bool = False,
+) -> Tuple[geopandas.GeoDataFrame, geopandas.GeoDataFrame]:
+    """Parse GPX tracks into point and line GeoDataFrames in ``EPSG:4326``."""
+    # pylint: disable=too-many-locals
+    try:
+        tree = ET.parse(gpx_path)
+    except (ET.ParseError, OSError) as err:
+        raise rsgispy.RSGISPyException(
+            f"Could not parse GPX file '{gpx_path}': {err}"
+        ) from err
+
+    root = tree.getroot()
+    if _xml_local_name(root.tag).lower() != "gpx":
+        raise rsgispy.RSGISPyException(
+            f"File '{gpx_path}' is not a valid GPX document "
+            f"(root element '{root.tag}')."
+        )
+
+    pt_rows: List[Dict[str, Any]] = []
+    line_rows: List[Dict[str, Any]] = []
+
+    trk_elems = [el for el in root if _xml_local_name(el.tag) == "trk"]
+    for track_fid, trk_elem in enumerate(trk_elems):
+        meta = _parse_gpx_track_meta(trk_elem)
+        seg_elems = [
+            el for el in trk_elem if _xml_local_name(el.tag) == "trkseg"
+        ]
+        trk_lines: List[LineString] = []
+        trk_n_pts = 0
+        trk_times: List[str] = []
+
+        for seg_id, seg_elem in enumerate(seg_elems):
+            seg_coords: List[Tuple[float, ...]] = []
+            seg_times: List[str] = []
+            pt_elems = [
+                el for el in seg_elem if _xml_local_name(el.tag) == "trkpt"
+            ]
+            for pt_id, pt_elem in enumerate(pt_elems):
+                pt_row, coord, time_str = _parse_gpx_trkpt(
+                    pt_elem,
+                    track_fid=track_fid,
+                    seg_id=seg_id,
+                    pt_id=pt_id,
+                    track_name=meta["name"],
+                    include_z=include_z,
+                )
+                pt_rows.append(pt_row)
+                seg_coords.append(coord)
+                if time_str is not None:
+                    seg_times.append(time_str)
+
+            trk_n_pts += len(seg_coords)
+            trk_times.extend(seg_times)
+            if len(seg_coords) >= 2:
+                seg_line = LineString(seg_coords)
+                trk_lines.append(seg_line)
+                if split_segments:
+                    line_rows.append(
+                        {
+                            "track_fid": track_fid,
+                            "track_seg_id": seg_id,
+                            **meta,
+                            "n_pts": len(seg_coords),
+                            "start_time": seg_times[0] if seg_times else None,
+                            "end_time": seg_times[-1] if seg_times else None,
+                            "geometry": seg_line,
+                        }
+                    )
+
+        if (not split_segments) and trk_lines:
+            trk_geom: Union[LineString, MultiLineString] = (
+                trk_lines[0]
+                if len(trk_lines) == 1
+                else MultiLineString(trk_lines)
+            )
+            line_rows.append(
+                {
+                    "track_fid": track_fid,
+                    **meta,
+                    "n_pts": trk_n_pts,
+                    "start_time": trk_times[0] if trk_times else None,
+                    "end_time": trk_times[-1] if trk_times else None,
+                    "geometry": trk_geom,
+                }
+            )
+
+    if pt_rows:
+        pts_gdf = geopandas.GeoDataFrame(
+            pt_rows, geometry="geometry", crs="EPSG:4326"
+        )
+    else:
+        pts_gdf = geopandas.GeoDataFrame(
+            {
+                "track_fid": pandas.Series(dtype="int64"),
+                "track_seg_id": pandas.Series(dtype="int64"),
+                "track_seg_point_id": pandas.Series(dtype="int64"),
+                "track_name": pandas.Series(dtype="object"),
+                "ele": pandas.Series(dtype="float64"),
+                "time": pandas.Series(dtype="object"),
+            },
+            geometry=geopandas.GeoSeries([], crs="EPSG:4326"),
+            crs="EPSG:4326",
+        )
+
+    if line_rows:
+        lines_gdf = geopandas.GeoDataFrame(
+            line_rows, geometry="geometry", crs="EPSG:4326"
+        )
+    else:
+        empty_line_cols: Dict[str, Any] = {
+            "track_fid": pandas.Series(dtype="int64"),
+        }
+        if split_segments:
+            empty_line_cols["track_seg_id"] = pandas.Series(dtype="int64")
+        empty_line_cols.update(
+            {
+                "name": pandas.Series(dtype="object"),
+                "cmt": pandas.Series(dtype="object"),
+                "desc": pandas.Series(dtype="object"),
+                "src": pandas.Series(dtype="object"),
+                "type": pandas.Series(dtype="object"),
+                "number": pandas.Series(dtype="object"),
+                "n_pts": pandas.Series(dtype="int64"),
+                "start_time": pandas.Series(dtype="object"),
+                "end_time": pandas.Series(dtype="object"),
+            }
+        )
+        lines_gdf = geopandas.GeoDataFrame(
+            empty_line_cols,
+            geometry=geopandas.GeoSeries([], crs="EPSG:4326"),
+            crs="EPSG:4326",
+        )
+
+    return pts_gdf, lines_gdf
+
+
+def convert_gpx_to_vec(
+    gpx_file: Union[str, os.PathLike],
+    pts_vec_file: Optional[Union[str, os.PathLike]] = None,
+    pts_vec_lyr: Optional[str] = None,
+    line_vec_file: Optional[Union[str, os.PathLike]] = None,
+    line_vec_lyr: Optional[str] = None,
+    out_format: str = "GPKG",
+    out_epsg: int = 4326,
+    split_segments: bool = False,
+    include_z: bool = False,
+    del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
+) -> Optional[
+    Union[
+        geopandas.GeoDataFrame,
+        Tuple[geopandas.GeoDataFrame, geopandas.GeoDataFrame],
+    ]
+]:
+    """
+    Convert a GPX file into track-point and track-line vector layers,
+    returning in-memory :class:`geopandas.GeoDataFrame` objects and/or saving
+    to vector files.
+
+    When both ``pts_vec_file`` and ``line_vec_file`` are ``None`` (the default),
+    a ``(pts_gdf, lines_gdf)`` tuple is returned. If only one output path is
+    provided, the remaining layer's ``GeoDataFrame`` is returned. For
+    multi-layer formats such as ``GPKG``, the same path may be passed to both
+    ``pts_vec_file`` and ``line_vec_file`` with distinct layer names (defaulting
+    to ``'track_points'`` and ``'tracks'``).
+
+    :param gpx_file: Path to the input GPX file.
+    :param pts_vec_file: Optional output vector file path for track points, or
+                         ``None`` (default) to return the points
+                         :class:`geopandas.GeoDataFrame`.
+    :param pts_vec_lyr: Output layer name for track points (defaults to
+                        ``'track_points'`` for GPKG).
+    :param line_vec_file: Optional output vector file path for track lines, or
+                          ``None`` (default) to return the lines
+                          :class:`geopandas.GeoDataFrame`.
+    :param line_vec_lyr: Output layer name for track lines (defaults to
+                         ``'tracks'`` for GPKG).
+    :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_epsg: Target EPSG integer code for both output layers
+                     (Default = ``4326``, WGS84).
+    :param split_segments: If ``True``, emit one ``LineString`` feature per
+                           ``<trkseg>`` instead of one ``LineString`` /
+                           ``MultiLineString`` per ``<trk>`` (Default = ``False``).
+    :param include_z: If ``True``, include elevation (``<ele>``) as a Z
+                      coordinate on geometries when present (Default = ``False``).
+    :param del_exist_vec: If ``True``, delete existing output file(s) before
+                          writing (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
+    :return: ``(pts_gdf, lines_gdf)`` when both ``pts_vec_file`` and
+             ``line_vec_file`` are ``None``; a single
+             :class:`geopandas.GeoDataFrame` when only one path is ``None``;
+             or ``None`` when both layers are written to disk.
+
+    .. code:: python
+
+        import rsgispy.vectorutils.io
+
+        pts_gdf, lines_gdf = rsgispy.vectorutils.io.convert_gpx_to_vec(
+            "route.gpx"
+        )
+        rsgispy.vectorutils.io.convert_gpx_to_vec(
+            "route.gpx",
+            pts_vec_file="route.gpkg",
+            pts_vec_lyr="track_points",
+            line_vec_file="route.gpkg",
+            line_vec_lyr="tracks",
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    gpx_path = os.fspath(gpx_file)
+    ensure_file_exists(gpx_path)
+
+    same_file = (
+        pts_vec_file is not None
+        and line_vec_file is not None
+        and os.path.abspath(os.fspath(pts_vec_file))
+        == os.path.abspath(os.fspath(line_vec_file))
+    )
+    resolved_pts_lyr = pts_vec_lyr or "track_points"
+    resolved_line_lyr = line_vec_lyr or "tracks"
+    if same_file:
+        fmt = check_format_name(out_format)
+        if is_geoparquet_format(fmt) or is_geoparquet_file(pts_vec_file):  # type: ignore[arg-type]
+            raise rsgispy.RSGISPyException(
+                "GeoParquet only supports a single layer per file; specify "
+                "separate paths for pts_vec_file and line_vec_file."
+            )
+        if resolved_pts_lyr == resolved_line_lyr:
+            raise rsgispy.RSGISPyException(
+                "pts_vec_lyr and line_vec_lyr must differ when writing both "
+                "layers to the same file."
+            )
+
+    prepare_optional_out_vec(pts_vec_file, del_exist_vec=del_exist_vec)
+    if not same_file:
+        prepare_optional_out_vec(line_vec_file, del_exist_vec=del_exist_vec)
+
+    pts_gdf, lines_gdf = _parse_gpx_tracks(
+        gpx_path,
+        include_z=include_z,
+        split_segments=split_segments,
+    )
+    if int(out_epsg) != 4326:
+        target_crs = parse_crs_input(int(out_epsg))
+        pts_gdf = pts_gdf.to_crs(target_crs)
+        lines_gdf = lines_gdf.to_crs(target_crs)
+
+    if pts_vec_file is not None:
+        write_vec_gdf(
+            pts_gdf,
+            out_vec_file=pts_vec_file,
+            out_vec_lyr=resolve_out_lyr_name(pts_vec_file, resolved_pts_lyr),
+            out_format=out_format,
+            overwrite=False,
+            out_compress=out_compress,
+        )
+
+    if line_vec_file is not None:
+        write_vec_gdf(
+            lines_gdf,
+            out_vec_file=line_vec_file,
+            out_vec_lyr=resolve_out_lyr_name(line_vec_file, resolved_line_lyr),
+            out_format=out_format,
+            overwrite=False,
+            out_compress=out_compress,
+        )
+
+    if pts_vec_file is None and line_vec_file is None:
+        return pts_gdf, lines_gdf
+    if pts_vec_file is None:
+        return pts_gdf
+    if line_vec_file is None:
+        return lines_gdf
     return None
