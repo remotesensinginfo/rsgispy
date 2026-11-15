@@ -144,6 +144,7 @@ Package Overview
 * :doc:`rsgispy_imagespectral` — Spectral classification (SAM, SCM), linear unmixing, endmembers, PPI, PCA, MNF, Tasseled Cap, histogram matching, whitening, and smoothing.
 * :doc:`rsgispy_imageutils` — Raster creation, rasterisation, metadata, masking, mosaicking, tiling, VRT, and warping.
 * :doc:`rsgispy_modelling` — Environmental and species distribution modelling with ``scikit-learn`` and :mod:`rsgispy.imageprocess`.
+* :doc:`rsgispy_segmentation` — Connected-component clumping (:func:`~rsgispy.segmentation.clump.clump`) and union of clumps (:func:`~rsgispy.segmentation.clump.union_of_clumps`).
 * :doc:`rsgispy_tools` — General geospatial, geometry, projection, plotting, mapping, and file utilities.
 * :doc:`rsgispy_vectorattrs` — Vector attribute table, column, and spatial join utilities.
 * :doc:`rsgispy_vectorgeoms` — Vector geometry creation, grids, polygonisation, manipulation, overlay, clipping, transects, and spatial predicates.
@@ -169,6 +170,7 @@ Package Overview
    rsgispy_imagespectral
    rsgispy_imageutils
    rsgispy_modelling
+   rsgispy_segmentation
    rsgispy_tools
    rsgispy_vectorattrs
    rsgispy_vectorgeoms
