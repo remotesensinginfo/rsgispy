@@ -261,3 +261,58 @@ def test_query_file_lut(tmp_path):
             targz_out=True,
             cp_cmds=True,
         )
+
+
+def test_imagelut_gdf_in_memory(tmp_path):
+    """Test imagelut returning and consuming in-memory GeoDataFrames."""
+    tile1 = tmp_path / "tile1.tif"
+    tile2 = tmp_path / "tile2.tif"
+    _write_test_tile(tile1, 500000.0, 5200000.0, val=10)
+    _write_test_tile(tile2, 500100.0, 5200000.0, val=20)
+
+    lut_gdf = rsgispy.imageutils.imagelut.create_img_extent_lut(
+        [str(tile1), str(tile2)],
+        vec_file=None,
+        use_pbar=False,
+    )
+    assert isinstance(lut_gdf, gpd.GeoDataFrame)
+    assert len(lut_gdf) == 2
+
+    all_imgs = rsgispy.imageutils.imagelut.get_all_lut_imgs(lut_gdf)
+    assert set(all_imgs) == {str(tile1), str(tile2)}
+
+    hits = rsgispy.imageutils.imagelut.query_img_lut(
+        (500010.0, 500050.0, 5199910.0, 5199950.0), lut_gdf
+    )
+    assert hits == [str(tile1)]
+
+    vrt_tmp = tmp_path / "vrt_gdf"
+    assert (
+        rsgispy.imageutils.imagelut.get_raster_lyr(
+            (500010.0, 500050.0, 5199910.0, 5199950.0),
+            lut_gdf,
+            None,
+            str(vrt_tmp),
+        )
+        == str(tile1)
+    )
+
+    roi_gdf = gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[
+            Polygon(
+                [
+                    (500020.0, 5199920.0),
+                    (500150.0, 5199920.0),
+                    (500150.0, 5199980.0),
+                    (500020.0, 5199980.0),
+                    (500020.0, 5199920.0),
+                ]
+            )
+        ],
+        crs="EPSG:32630",
+    )
+    matched = rsgispy.imageutils.imagelut.query_file_lut(
+        lut_gdf, None, roi_gdf, None
+    )
+    assert set(matched) == {str(tile1), str(tile2)}

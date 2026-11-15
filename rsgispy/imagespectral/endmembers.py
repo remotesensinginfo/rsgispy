@@ -30,7 +30,12 @@ import rsgispy
 from rsgispy.imageprocess import create_output_from_dataset, ensure_file_exists
 from rsgispy.imageutils.stats import pop_img_stats
 from rsgispy.tools.geometry import do_bboxes_intersect, reproj_bbox
-from rsgispy.vectorprocess import get_gdf_bbox, read_vec_gdf, resolve_vector_crs
+from rsgispy.vectorprocess import (
+    VectorInput,
+    get_gdf_bbox,
+    read_vec_gdf,
+    resolve_vector_crs,
+)
 
 EndmemberInput = Union[pandas.DataFrame, str, os.PathLike]
 
@@ -717,7 +722,7 @@ def _feature_window(
 
 def extract_avg_endmembers(
     input_img: str,
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str] = None,
     out_file: Optional[Union[str, os.PathLike]] = None,
     class_col: Optional[str] = None,
@@ -735,7 +740,8 @@ def extract_avg_endmembers(
     :func:`write_endmembers_df`.
 
     :param input_img: Path to the input multi-band raster image file.
-    :param vec_file: Path to the input vector polygon file.
+    :param vec_file: Path to the input vector polygon file or an in-memory
+                     :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Name of the vector layer (or ``None`` for default layer).
     :param out_file: Optional output file path in any format supported by
                      :func:`write_endmembers_df`.
@@ -767,12 +773,19 @@ def extract_avg_endmembers(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     ensure_file_exists(input_img, "Input image")
-    ensure_file_exists(vec_file, "Input vector")
 
     gdf = read_vec_gdf(vec_file, vec_lyr)
     if gdf.empty:
+        vec_desc = (
+            vec_lyr
+            or (
+                "<GeoDataFrame>"
+                if isinstance(vec_file, geopandas.GeoDataFrame)
+                else vec_file
+            )
+        )
         raise rsgispy.RSGISPyException(
-            f"Vector layer '{vec_lyr or vec_file}' contains no features."
+            f"Vector layer '{vec_desc}' contains no features."
         )
 
     if class_col is not None:

@@ -6,6 +6,7 @@ import math
 import os
 from typing import Dict, Optional, Tuple, Union
 
+import geopandas
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 import rasterio
@@ -13,6 +14,7 @@ from rasterio.enums import Resampling
 
 import rsgispy
 import rsgispy.imagecalc.calc_pt_win_smpls
+from rsgispy.vectorprocess import VectorInput
 
 __all__ = [
     "CalcProfileRoughMetrics",
@@ -621,9 +623,9 @@ class CalcSmithRoughnessMetric(rsgispy.imagecalc.calc_pt_win_smpls.RSGISCalcSumV
 
 def calc_simple_roughness_profile_metrics(
     input_img: str,
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     interp_method: Union[int, Resampling] = rsgispy.INTERP_CUBIC,
@@ -636,16 +638,20 @@ def calc_simple_roughness_profile_metrics(
     export_plot_path: Optional[str] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Calculate profile roughness metrics (RA, RR, RQ, MIF, RV, RP, RZ, RSK, RKU)
     along the X and Y axes of each point's sample window using
     :class:`CalcProfileRoughMetrics`.
 
     :param input_img: Path to input elevation image file.
-    :param vec_file: Path to input point vector file.
+    :param vec_file: Path to input point vector file or an in-memory
+                     :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None`` for default layer).
-    :param out_vec_file: Path to output vector file.
+    :param out_vec_file: Optional path to output vector file. If ``None``
+                         (default), returns the resulting
+                         :class:`geopandas.GeoDataFrame` in memory instead of
+                         writing to disk.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector file format (e.g., ``'GPKG'``, ``'GeoJSON'``).
     :param interp_method: Interpolation method used when reorientating windows.
@@ -663,6 +669,8 @@ def calc_simple_roughness_profile_metrics(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` with calculated metrics if
+             ``out_vec_file`` is ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -684,7 +692,7 @@ def calc_simple_roughness_profile_metrics(
         create_plots=export_plot_path is not None,
         out_plot_path=export_plot_path,
     )
-    rsgispy.imagecalc.calc_pt_win_smpls.calc_pt_smpl_img_vals(
+    return rsgispy.imagecalc.calc_pt_win_smpls.calc_pt_smpl_img_vals(
         input_img,
         vec_file,
         vec_lyr,
@@ -704,9 +712,9 @@ def calc_simple_roughness_profile_metrics(
 
 def calc_munro_roughness_profile_metrics(
     input_img: str,
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     interp_method: Union[int, Resampling] = rsgispy.INTERP_CUBIC,
@@ -719,15 +727,19 @@ def calc_munro_roughness_profile_metrics(
     export_plot_path: Optional[str] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Calculate Munro (1989) :math:`z_0` roughness metrics along the X and Y axes
     of each point's sample window using :class:`CalcMunroRoughnessMetric`.
 
     :param input_img: Path to input elevation image file.
-    :param vec_file: Path to input point vector file.
+    :param vec_file: Path to input point vector file or an in-memory
+                     :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None`` for default layer).
-    :param out_vec_file: Path to output vector file.
+    :param out_vec_file: Optional path to output vector file. If ``None``
+                         (default), returns the resulting
+                         :class:`geopandas.GeoDataFrame` in memory instead of
+                         writing to disk.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector file format (e.g., ``'GPKG'``, ``'GeoJSON'``).
     :param interp_method: Interpolation method used when reorientating windows.
@@ -745,6 +757,8 @@ def calc_munro_roughness_profile_metrics(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` with calculated metrics if
+             ``out_vec_file`` is ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -766,7 +780,7 @@ def calc_munro_roughness_profile_metrics(
         create_plots=export_plot_path is not None,
         out_plot_path=export_plot_path,
     )
-    rsgispy.imagecalc.calc_pt_win_smpls.calc_pt_smpl_img_vals(
+    return rsgispy.imagecalc.calc_pt_win_smpls.calc_pt_smpl_img_vals(
         input_img,
         vec_file,
         vec_lyr,
@@ -786,9 +800,9 @@ def calc_munro_roughness_profile_metrics(
 
 def calc_smith_roughness_metrics(
     input_img: str,
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     interp_method: Union[int, Resampling] = rsgispy.INTERP_CUBIC,
@@ -800,15 +814,19 @@ def calc_smith_roughness_metrics(
     export_plot_path: Optional[str] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Calculate Smith et al. (2016) directional :math:`z_0` roughness metrics
     across each point's sample window using :class:`CalcSmithRoughnessMetric`.
 
     :param input_img: Path to input elevation image file.
-    :param vec_file: Path to input point vector file.
+    :param vec_file: Path to input point vector file or an in-memory
+                     :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None`` for default layer).
-    :param out_vec_file: Path to output vector file.
+    :param out_vec_file: Optional path to output vector file. If ``None``
+                         (default), returns the resulting
+                         :class:`geopandas.GeoDataFrame` in memory instead of
+                         writing to disk.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector file format (e.g., ``'GPKG'``, ``'GeoJSON'``).
     :param interp_method: Interpolation method used when reorientating windows.
@@ -825,6 +843,8 @@ def calc_smith_roughness_metrics(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` with calculated metrics if
+             ``out_vec_file`` is ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -845,7 +865,7 @@ def calc_smith_roughness_metrics(
         create_plots=export_plot_path is not None,
         out_plot_path=export_plot_path,
     )
-    rsgispy.imagecalc.calc_pt_win_smpls.calc_pt_smpl_img_vals(
+    return rsgispy.imagecalc.calc_pt_win_smpls.calc_pt_smpl_img_vals(
         input_img,
         vec_file,
         vec_lyr,
@@ -865,9 +885,9 @@ def calc_smith_roughness_metrics(
 
 def calc_all_roughness_profile_metrics(
     input_img: str,
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     interp_method: Union[int, Resampling] = rsgispy.INTERP_CUBIC,
@@ -879,16 +899,20 @@ def calc_all_roughness_profile_metrics(
     detrend_poly_order: int = 1,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Calculate all roughness metrics (:class:`CalcProfileRoughMetrics`,
     :class:`CalcMunroRoughnessMetric`, and :class:`CalcSmithRoughnessMetric`)
     in a single pass over the point sample windows.
 
     :param input_img: Path to input elevation image file.
-    :param vec_file: Path to input point vector file.
+    :param vec_file: Path to input point vector file or an in-memory
+                     :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None`` for default layer).
-    :param out_vec_file: Path to output vector file.
+    :param out_vec_file: Optional path to output vector file. If ``None``
+                         (default), returns the resulting
+                         :class:`geopandas.GeoDataFrame` in memory instead of
+                         writing to disk.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector file format (e.g., ``'GPKG'``, ``'GeoJSON'``).
     :param interp_method: Interpolation method used when reorientating windows.
@@ -905,6 +929,8 @@ def calc_all_roughness_profile_metrics(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` with calculated metrics if
+             ``out_vec_file`` is ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -928,7 +954,7 @@ def calc_all_roughness_profile_metrics(
     )
     smith_profile_obj = CalcSmithRoughnessMetric(detrend=detrend)
 
-    rsgispy.imagecalc.calc_pt_win_smpls.calc_pt_smpl_img_vals(
+    return rsgispy.imagecalc.calc_pt_win_smpls.calc_pt_smpl_img_vals(
         input_img,
         vec_file,
         vec_lyr,

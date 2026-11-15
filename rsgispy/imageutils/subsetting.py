@@ -7,6 +7,7 @@ by bounding box, reference raster image, or vector layer using ``rasterio`` and
 import math
 from typing import Any, Mapping, Optional, Sequence, Union
 
+import geopandas
 import rasterio
 
 import rsgispy
@@ -17,7 +18,7 @@ from rsgispy.tools.geometry import (
     do_bboxes_intersect,
     reproj_bbox,
 )
-from rsgispy.vectorprocess import read_vec_gdf
+from rsgispy.vectorprocess import VectorInput, read_vec_gdf
 
 __all__ = [
     "subset_bbox",
@@ -182,7 +183,7 @@ def subset_to_img(
 
 def subset(
     input_img: str,
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     output_img: str,
     gdalformat: str,
@@ -190,10 +191,12 @@ def subset(
     use_pbar: bool = True,
 ) -> None:
     """
-    Subset ``input_img`` to the bounding box of a vector file/layer.
+    Subset ``input_img`` to the bounding box of a vector layer or an in-memory
+    :class:`geopandas.GeoDataFrame`.
 
     :param input_img: Path to the input image file to subset.
-    :param vec_file: Path to the vector file defining the subset region.
+    :param vec_file: Path to the vector file defining the subset region or an
+                     in-memory :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Optional layer name within ``vec_file`` (or ``None`` for default).
     :param output_img: Path to the output subset image file.
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
@@ -215,13 +218,17 @@ def subset(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     ensure_file_exists(input_img)
-    ensure_file_exists(vec_file, label="Vector")
 
     gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
 
     if gdf.empty:
+        vec_desc = (
+            "<GeoDataFrame>"
+            if isinstance(vec_file, geopandas.GeoDataFrame)
+            else vec_file
+        )
         raise rsgispy.RSGISPyException(
-            f"Vector layer '{vec_lyr}' in '{vec_file}' contains no features."
+            f"Vector layer '{vec_lyr}' in '{vec_desc}' contains no features."
         )
 
     with rasterio.open(input_img, "r") as in_ds:

@@ -812,6 +812,58 @@ def test_vectorgeoms_gdf_in_memory():
     )
     assert pt_boxes_gdf.area.tolist() == pytest.approx([200.0, 200.0, 200.0])
 
+    bbox_grid_gdf = vg_create.define_grid(
+        (500000.0, 500200.0, 5600000.0, 5600200.0), 100.0, 100.0, 32630
+    )
+    assert isinstance(bbox_grid_gdf, gpd.GeoDataFrame)
+    assert len(bbox_grid_gdf) == 4
+
+    wgs_grid_gdf = vg_create.create_wgs84_vec_grid(
+        None, None, "GPKG", 1.0, 1.0, (-5.0, -3.0, 51.0, 53.0), overlap=0.1
+    )
+    assert len(wgs_grid_gdf) == 4
+
+    written_pts_gdf = vg_create.write_pts_to_vec(
+        None, None, "GPKG", 32630, [500050.0, 500150.0], [5600050.0, 5600150.0],
+        atts={"lbl": ["a", "b"]}, att_types={"names": ["lbl"], "types": [str]},
+    )
+    assert len(written_pts_gdf) == 2
+
+    rad_pts_gdf = vg_create.create_random_pts_in_radius(
+        500000.0, 5600000.0, 100.0, 10, 32630, rnd_seed=42
+    )
+    assert len(rad_pts_gdf) == 10
+
+    bbox_pts_gdf = vg_create.create_random_pts_in_bbox(
+        (500000.0, 500100.0, 5600000.0, 5600100.0), 8, 32630, rnd_seed=42
+    )
+    assert len(bbox_pts_gdf) == 8
+
+    created_lines_gdf = vg_lines.create_lines_vec(
+        None, None, "GPKG", 32630,
+        [[(0.0, 0.0), (10.0, 10.0)], [(10.0, 0.0), (20.0, 10.0)]],
+    )
+    assert len(created_lines_gdf) == 2
+
+    if _can_import("alphashape"):
+        hull_pts = gpd.GeoDataFrame(
+            {"id": range(5)},
+            geometry=[
+                Point(0.0, 0.0),
+                Point(10.0, 0.0),
+                Point(10.0, 10.0),
+                Point(0.0, 10.0),
+                Point(5.0, 5.0),
+            ],
+            crs="EPSG:32630",
+        )
+        hull_gdf, used_alpha = vg_spatial.create_alpha_shape(
+            hull_pts, None, alpha_vals=[0.5, 1.0]
+        )
+        assert isinstance(hull_gdf, gpd.GeoDataFrame)
+        assert used_alpha == 0.5
+        assert hull_gdf.area.iloc[0] > 0.0
+
     if _can_import("h3"):
         roi_wgs = gpd.GeoDataFrame(
             {"id": [1]},
@@ -821,4 +873,45 @@ def test_vectorgeoms_gdf_in_memory():
         hex_gdf = vg_create.create_hex_grid_polys(roi_wgs, None, 6, use_pbar=False)
         assert isinstance(hex_gdf, gpd.GeoDataFrame)
         assert len(hex_gdf) > 0
+        hex_bbox_gdf = vg_create.create_hex_grid_bbox(
+            (-4.2, -3.9, 52.3, 52.5), 4326, 6
+        )
+        assert isinstance(hex_bbox_gdf, gpd.GeoDataFrame)
+        assert len(hex_bbox_gdf) > 0
 
+
+def test_vectorgeoms_raster_to_gdf_in_memory(tmp_path):
+    """Test raster-to-vector functions returning in-memory GeoDataFrames."""
+    cls_tif = str(tmp_path / "cls.tif")
+    arr = np.zeros((10, 10), dtype=np.uint8)
+    arr[2:5, 2:5] = 1
+    arr[6:9, 6:9] = 2
+    _write_test_raster(
+        cls_tif, arr, epsg=32630, tl_x=500000.0, tl_y=5600100.0, res=10.0, nodata=0
+    )
+
+    poly_gdf = vg_create.polygonise_raster_to_vec_lyr(
+        None, None, "GPKG", cls_tif, mask_img=cls_tif
+    )
+    assert isinstance(poly_gdf, gpd.GeoDataFrame)
+    assert set(poly_gdf["PXLVAL"]) == {1, 2}
+
+    pxl_pts_gdf = vg_create.vectorise_pxls_to_pts(cls_tif, 1, 1, use_pbar=False)
+    assert isinstance(pxl_pts_gdf, gpd.GeoDataFrame)
+    assert len(pxl_pts_gdf) == 9
+
+    fp_gdf = vg_create.extract_img_footprint(cls_tif, reproj_to=4326, use_pbar=False)
+    assert isinstance(fp_gdf, gpd.GeoDataFrame)
+    assert fp_gdf.crs.to_epsg() == 4326
+
+    img_gdfs = vg_create.create_vec_for_imgs(
+        [cls_tif], output_dir=None, geometry_type=rsgispy.GEOM_POLY, use_pbar=False
+    )
+    assert len(img_gdfs) == 1
+    assert isinstance(img_gdfs[0], gpd.GeoDataFrame)
+
+    trans_gdf = vg_lines.create_img_transects(
+        cls_tif, x_intervals=[0.25, 0.75], y_intervals=[0.5]
+    )
+    assert isinstance(trans_gdf, gpd.GeoDataFrame)
+    assert len(trans_gdf) == 3

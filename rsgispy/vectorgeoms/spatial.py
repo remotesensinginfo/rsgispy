@@ -96,23 +96,26 @@ def get_vec_lyr_as_pts(
 def create_alpha_shape(
     vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: Union[str, os.PathLike],
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     alpha_val: Optional[float] = None,
     alpha_vals: Optional[Sequence[float]] = None,
     max_iter: int = 10000,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Tuple[bool, Optional[float]]:
+) -> Tuple[Union[bool, Optional[geopandas.GeoDataFrame]], Optional[float]]:
     """
     Calculate a concave hull (alpha shape) polygon around all vertices of the
-    input vector layer using the ``alphashape`` package and write the result
-    via ``geopandas``.
+    input vector layer using the ``alphashape`` package.
 
     :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Optional output vector file path. If ``None``
+                         (default), returns the resulting
+                         :class:`geopandas.GeoDataFrame` in the first element
+                         of the return tuple (or ``None`` if no hull polygon
+                         could be constructed) instead of writing to disk.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param alpha_val: Alpha parameter controlling hull tightness. If ``None``
@@ -126,8 +129,10 @@ def create_alpha_shape(
     :param del_exist_vec: If ``True``, overwrite existing ``out_vec_file``
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
-    :return: Tuple ``(vec_output, alpha_val)`` where ``vec_output`` indicates
-             whether an output polygon was written.
+    :return: When ``out_vec_file`` is provided, tuple ``(vec_output, alpha_val)``
+             where ``vec_output`` is a boolean indicating whether a hull was
+             written. When ``out_vec_file`` is ``None``, tuple
+             ``(out_gdf_or_none, alpha_val)``.
 
     .. code:: python
 
@@ -179,7 +184,7 @@ def create_alpha_shape(
             alpha_val = alphashape.optimizealpha(norm_pts, max_iterations=max_iter)
         alpha_shape_geom = alphashape.alphashape(norm_pts, alpha=alpha_val)
 
-    vec_output = False
+    out_gdf: Optional[geopandas.GeoDataFrame] = None
     if (
         alpha_shape_geom is not None
         and not alpha_shape_geom.is_empty
@@ -193,17 +198,22 @@ def create_alpha_shape(
         out_gdf = geopandas.GeoDataFrame(
             {"geometry": [out_alpha_shape]}, crs=crs_info
         )
+
+    if out_path is None:
+        return out_gdf, alpha_val
+
+    if out_gdf is not None:
         out_lyr = resolve_out_lyr_name(out_path, out_vec_lyr)
         write_vec_gdf(
             out_gdf,
-            out_vec_file,
+            out_path,
             out_lyr,
             out_format=out_format,
             out_compress=out_compress,
         )
-        vec_output = True
+        return True, alpha_val
 
-    return vec_output, alpha_val
+    return False, alpha_val
 
 
 def get_geoms_as_bboxs(

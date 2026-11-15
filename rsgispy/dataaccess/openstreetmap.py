@@ -3,11 +3,12 @@ Tools for downloading OpenStreetMap (OSM) data.
 """
 
 from importlib.util import find_spec
+import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import rsgispy
 import rsgispy.tools.geometry
-from rsgispy.vectorprocess import write_vec_gdf
+from rsgispy.vectorprocess import finish_vec_output
 
 # pylint: disable=invalid-name
 OSMNX_AVAIL = True
@@ -133,32 +134,35 @@ def get_osm_gdf(
 # pylint: disable=too-many-arguments,too-many-positional-arguments
 def _write_osm_gdf(
     data_gdf: Any,
-    out_vec_file: str,
-    out_vec_lyr: str,
+    out_vec_file: Optional[Union[str, os.PathLike]],
+    out_vec_lyr: Optional[str],
     out_format: str,
     out_vec_epsg: int,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
-    """Reproject and write a non-empty OSM GeoDataFrame to disk."""
+) -> Optional[Any]:
+    """Reproject and write a non-empty OSM GeoDataFrame or return it in memory."""
     if out_vec_epsg != 4326:
         data_gdf = data_gdf.to_crs(epsg=out_vec_epsg)
 
+    if out_vec_file is None:
+        return data_gdf
+
     if len(data_gdf) > 0:
-        write_vec_gdf(
+        return finish_vec_output(
             data_gdf,
             out_vec_file=out_vec_file,
             out_vec_lyr=out_vec_lyr,
             out_format=out_format,
             out_compress=out_compress,
         )
-    else:
-        print("The geodataframe was empty - check the geometry type, tags and ROI.")
+    print("The geodataframe was empty - check the geometry type, tags and ROI.")
+    return None
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
 def get_osm_to_file(
-    out_vec_file: str,
-    out_vec_lyr: str,
+    out_vec_file: Optional[Union[str, os.PathLike]],
+    out_vec_lyr: Optional[str],
     bbox: Union[Tuple[float, float, float, float], List[float]],
     osm_tags: Dict[str, Union[bool, str]],
     rsgis_geom_type: int = rsgispy.GEOM_POLY,
@@ -167,12 +171,14 @@ def get_osm_to_file(
     out_vec_epsg: int = 4326,
     clip_to_roi: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[Any]:
     """
-    Download OpenStreetMap data and write it to a vector file.
+    Download OpenStreetMap data and write it to a vector file or return it as an
+    in-memory :class:`geopandas.GeoDataFrame`.
 
-    :param out_vec_file: Output vector file path.
-    :param out_vec_lyr: Output vector layer name (used for GPKG).
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
+    :param out_vec_lyr: Output vector layer name (used for GPKG), or ``None``.
     :param bbox: Bounding box ``(x_min, x_max, y_min, y_max)``.
     :param osm_tags: OSM tags to query (e.g., ``{"building": True}``).
     :param rsgis_geom_type: Target geometry type (``rsgispy.GEOM_*``).
@@ -185,6 +191,8 @@ def get_osm_to_file(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` if ``out_vec_file`` is ``None``,
+             otherwise ``None``.
 
     .. code:: python
 
@@ -206,7 +214,7 @@ def get_osm_to_file(
         bbox_epsg=bbox_epsg,
         clip_to_roi=clip_to_roi,
     )
-    _write_osm_gdf(
+    return _write_osm_gdf(
         data_gdf,
         out_vec_file,
         out_vec_lyr,
@@ -218,8 +226,8 @@ def get_osm_to_file(
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
 def get_osm_multi_to_file(
-    out_vec_file: str,
-    out_vec_lyr: str,
+    out_vec_file: Optional[Union[str, os.PathLike]],
+    out_vec_lyr: Optional[str],
     bbox: Union[Tuple[float, float, float, float], List[float]],
     osm_tags_lst: List[Dict[str, Union[bool, str]]],
     rsgis_geom_type: int = rsgispy.GEOM_POLY,
@@ -228,12 +236,14 @@ def get_osm_multi_to_file(
     out_vec_epsg: int = 4326,
     clip_to_roi: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[Any]:
     """
-    Download OpenStreetMap data for multiple tag queries and merge into one file.
+    Download OpenStreetMap data for multiple tag queries and merge into one file
+    or return as an in-memory :class:`geopandas.GeoDataFrame`.
 
-    :param out_vec_file: Output vector file path.
-    :param out_vec_lyr: Output vector layer name (used for GPKG).
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
+    :param out_vec_lyr: Output vector layer name (used for GPKG), or ``None``.
     :param bbox: Bounding box ``(x_min, x_max, y_min, y_max)``.
     :param osm_tags_lst: List of OSM tag dictionaries to query and merge.
     :param rsgis_geom_type: Target geometry type (``rsgispy.GEOM_*``).
@@ -246,6 +256,8 @@ def get_osm_multi_to_file(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` if ``out_vec_file`` is ``None``,
+             otherwise ``None``.
 
     .. code:: python
 
@@ -286,7 +298,7 @@ def get_osm_multi_to_file(
     if data_lst:
         data_gdf = pandas.concat(data_lst)
         data_gdf = data_gdf.set_crs(epsg=4326, allow_override=True)
-        _write_osm_gdf(
+        return _write_osm_gdf(
             data_gdf,
             out_vec_file,
             out_vec_lyr,
@@ -294,5 +306,9 @@ def get_osm_multi_to_file(
             out_vec_epsg,
             out_compress=out_compress,
         )
-    else:
-        print("The geodataframes were empty - check the geometry type, tags and ROI.")
+    print("The geodataframes were empty - check the geometry type, tags and ROI.")
+    if out_vec_file is None and GEOPANDAS_AVAIL:
+        import geopandas  # pylint: disable=import-outside-toplevel
+
+        return geopandas.GeoDataFrame(geometry=[], crs=f"EPSG:{out_vec_epsg}")
+    return None

@@ -28,6 +28,8 @@ from rsgispy.tools.geometry import (
 )
 import rsgispy.vectorgeoms.spatial
 from rsgispy.vectorprocess import (
+    VectorInput,
+    finish_vec_output,
     parse_crs_input,
     read_vec_gdf,
     resolve_out_lyr_name,
@@ -64,7 +66,7 @@ __all__ = [
 
 
 def _resolve_crs_for_bbox(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     epsg_override: Optional[int],
 ) -> Any:
@@ -96,7 +98,7 @@ def _reproj_bbox_to_gdf_crs(
 
 def does_vmsk_img_intersect(
     input_vmsk_img: str,
-    vec_roi_file: str,
+    vec_roi_file: VectorInput,
     vec_roi_lyr: Optional[str] = None,
     tmp_dir: str = ".",
     vec_epsg: Optional[int] = None,
@@ -110,7 +112,8 @@ def does_vmsk_img_intersect(
     rasterise intersecting ROI geometries in memory and test pixel overlap.
 
     :param input_vmsk_img: Path to binary valid-data mask raster (``1`` = valid).
-    :param vec_roi_file: Path to region-of-interest vector file.
+    :param vec_roi_file: Region-of-interest vector file path or
+                         :class:`geopandas.GeoDataFrame`.
     :param vec_roi_lyr: Layer name inside ``vec_roi_file`` (or ``None``).
     :param tmp_dir: Retained for API compatibility (unused in-memory check).
     :param vec_epsg: Optional EPSG code overriding the ROI vector layer CRS.
@@ -146,7 +149,9 @@ def does_vmsk_img_intersect(
         if not do_bboxes_intersect(img_bbox_cmp, vec_bbox):
             return False
 
-        roi_gdf = read_vec_gdf(vec_roi_file, vec_lyr=roi_lyr, epsg=vec_epsg)
+        roi_gdf = read_vec_gdf(
+            vec_roi_file, vec_lyr=roi_lyr, epsg=vec_epsg, copy=False
+        )
         roi_gdf = roi_gdf[
             roi_gdf.geometry.notna() & (~roi_gdf.geometry.is_empty)
         ]
@@ -194,11 +199,11 @@ def does_vmsk_img_intersect(
 
 
 def spatial_select(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    vec_roi_file: str,
+    vec_roi_file: VectorInput,
     vec_roi_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     predicate: str = "intersects",
@@ -206,16 +211,19 @@ def spatial_select(
     vec_roi_epsg: Optional[int] = None,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Select features from ``vec_file`` that spatially match features in
     ``vec_roi_file`` using ``geopandas.sjoin``.
 
-    :param vec_file: Input vector file path to select features from.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`
+                     to select features from.
     :param vec_lyr: Input vector layer name. If ``None``, reads the first layer.
-    :param vec_roi_file: Region-of-interest vector file path.
+    :param vec_roi_file: Region-of-interest vector file path or
+                         :class:`geopandas.GeoDataFrame`.
     :param vec_roi_lyr: Layer name inside ``vec_roi_file``.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param predicate: Spatial join predicate supported by GeoPandas
@@ -225,6 +233,8 @@ def spatial_select(
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: Selected :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -240,9 +250,11 @@ def spatial_select(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    in_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, epsg=vec_epsg)
+    in_gdf = read_vec_gdf(
+        vec_file, vec_lyr=vec_lyr, epsg=vec_epsg, copy=False
+    )
     roi_gdf = read_vec_gdf(
-        vec_roi_file, vec_lyr=vec_roi_lyr, epsg=vec_roi_epsg
+        vec_roi_file, vec_lyr=vec_roi_lyr, epsg=vec_roi_epsg, copy=False
     )
 
     if (
@@ -269,7 +281,7 @@ def spatial_select(
         )
 
     out_gdf = in_gdf.iloc[np.sort(sel_ids)].copy()
-    write_vec_gdf(
+    return finish_vec_output(
         out_gdf,
         out_vec_file=out_vec_file,
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
@@ -292,24 +304,26 @@ def _select_gdf_by_bbox(
 
 
 def spatial_select_bbox(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     bbox: Sequence[float],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     bbox_epsg: Optional[int] = None,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> bool:
+) -> Union[bool, geopandas.GeoDataFrame]:
     """
     Select features intersecting a bounding box ``(MinX, MaxX, MinY, MaxY)``
-    and write them to ``out_vec_file``.
+    and write them to ``out_vec_file`` (or return the subset GeoDataFrame when
+    ``out_vec_file`` is ``None``).
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name. If ``None``, reads the first layer.
     :param bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)``.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param bbox_epsg: Optional EPSG code of ``bbox`` if it differs from the
@@ -317,8 +331,9 @@ def spatial_select_bbox(
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
-    :return: ``True`` if at least one feature intersected ``bbox``, else
-             ``False``.
+    :return: Selected :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``; otherwise ``True`` if at least one feature intersected
+             ``bbox``, else ``False``.
 
     .. code:: python
 
@@ -333,10 +348,12 @@ def spatial_select_bbox(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
+    gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, copy=False)
     target_bbox = _reproj_bbox_to_gdf_crs(bbox, bbox_epsg, gdf.crs)
     sel_gdf = _select_gdf_by_bbox(gdf, target_bbox)
 
+    if out_vec_file is None:
+        return sel_gdf
     write_vec_gdf(
         sel_gdf,
         out_vec_file=out_vec_file,
@@ -349,34 +366,41 @@ def spatial_select_bbox(
 
 
 def subset_vec_lyr_to_feat_bboxs(
-    vec_file_bbox: str,
+    vec_file_bbox: VectorInput,
     vec_lyr_bbox: Optional[str],
-    vec_file_tosub: str,
+    vec_file_tosub: VectorInput,
     vec_lyr_tosub: Optional[str],
-    out_lyr_name: str,
-    out_file_base: str,
+    out_lyr_name: Optional[str] = None,
+    out_file_base: Optional[str] = None,
     out_file_end: str = "gpkg",
     out_format: str = "GPKG",
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> List[str]:
+) -> Union[List[str], List[geopandas.GeoDataFrame]]:
     """
     Subset a vector layer once for each feature bounding box in a reference
-    vector layer, writing numbered output files.
+    vector layer, writing numbered output files (or returning a list of
+    :class:`geopandas.GeoDataFrame` objects when ``out_file_base`` is
+    ``None``).
 
-    :param vec_file_bbox: Vector file defining feature bounding boxes.
+    :param vec_file_bbox: Vector file path or :class:`geopandas.GeoDataFrame`
+                          defining feature bounding boxes.
     :param vec_lyr_bbox: Layer name in ``vec_file_bbox``.
-    :param vec_file_tosub: Vector file to subset.
+    :param vec_file_tosub: Vector file path or :class:`geopandas.GeoDataFrame`
+                           to subset.
     :param vec_lyr_tosub: Layer name in ``vec_file_tosub``.
     :param out_lyr_name: Layer name written inside every output vector file.
     :param out_file_base: Output filename prefix; numeric indices ``0..n-1``
-                          are appended before ``.{out_file_end}``.
+                          are appended before ``.{out_file_end}``. If
+                          ``None``, return a list of GeoDataFrames in memory.
     :param out_file_end: Output file extension without dot (Default = ``'gpkg'``).
     :param out_format: Output vector driver name (Default = ``'GPKG'``).
     :param use_pbar: If ``True``, display a tqdm progress bar across bounding
                      boxes (Default = ``True``).
     :param out_compress: Optional GeoParquet compression setting.
-    :return: List of created output file paths.
+    :return: List of created output file paths, or list of subset
+             :class:`geopandas.GeoDataFrame` objects when ``out_file_base`` is
+             ``None``.
 
     .. code:: python
 
@@ -387,10 +411,18 @@ def subset_vec_lyr_to_feat_bboxs(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    bboxes = rsgispy.vectorgeoms.spatial.get_geoms_as_bboxs(vec_file_bbox, vec_lyr_bbox)
-    base_gdf = read_vec_gdf(vec_file_tosub, vec_lyr=vec_lyr_tosub)
+    bboxes = rsgispy.vectorgeoms.spatial.get_geoms_as_bboxs(
+        vec_file_bbox, vec_lyr_bbox
+    )
+    base_gdf = read_vec_gdf(vec_file_tosub, vec_lyr=vec_lyr_tosub, copy=False)
 
     pbar_cls = rsgispy.get_tqdm()
+    if out_file_base is None:
+        return [
+            _select_gdf_by_bbox(base_gdf, feat_bbox)
+            for feat_bbox in pbar_cls(bboxes, disable=not use_pbar)
+        ]
+
     out_files: List[str] = []
     for idx, feat_bbox in enumerate(pbar_cls(bboxes, disable=not use_pbar)):
         sel_gdf = _select_gdf_by_bbox(base_gdf, feat_bbox)
@@ -398,7 +430,7 @@ def subset_vec_lyr_to_feat_bboxs(
         write_vec_gdf(
             sel_gdf,
             out_vec_file=out_vec_file,
-            out_vec_lyr=out_lyr_name,
+            out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_lyr_name),
             out_format=out_format,
             overwrite=True,
             out_compress=out_compress,
@@ -408,20 +440,22 @@ def subset_vec_lyr_to_feat_bboxs(
 
 
 def get_att_lst_select_feats(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     att_names: Sequence[str],
-    vec_sel_file: str,
+    vec_sel_file: VectorInput,
     vec_sel_lyr: Optional[str],
 ) -> List[Dict[str, Any]]:
     """
     Extract attribute dictionaries for features in ``vec_file`` that intersect
     features in ``vec_sel_file``.
 
-    :param vec_file: Vector file supplying attributes.
+    :param vec_file: Vector file path or :class:`geopandas.GeoDataFrame`
+                     supplying attributes.
     :param vec_lyr: Layer name in ``vec_file``.
     :param att_names: Sequence of attribute column names to return.
-    :param vec_sel_file: Vector file defining the spatial selection region.
+    :param vec_sel_file: Vector file path or :class:`geopandas.GeoDataFrame`
+                         defining the spatial selection region.
     :param vec_sel_lyr: Layer name in ``vec_sel_file``.
     :return: List of ``{col_name: value}`` dictionaries.
 
@@ -433,9 +467,9 @@ def get_att_lst_select_feats(
             "plots.gpkg", "plots", ["plot_id", "species"], "roi.gpkg", "roi"
         )
     """
-    in_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
+    in_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, copy=False)
     validate_columns_exist(in_gdf, att_names)
-    sel_gdf = read_vec_gdf(vec_sel_file, vec_lyr=vec_sel_lyr)
+    sel_gdf = read_vec_gdf(vec_sel_file, vec_lyr=vec_sel_lyr, copy=False)
 
     if (
         in_gdf.crs is not None
@@ -459,7 +493,7 @@ def get_att_lst_select_feats(
 
 
 def get_att_lst_select_bbox_feats(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     att_names: Sequence[str],
     bbox: Sequence[float],
@@ -469,7 +503,8 @@ def get_att_lst_select_bbox_feats(
     Extract attribute dictionaries for features in ``vec_file`` that intersect
     ``bbox`` ``(MinX, MaxX, MinY, MaxY)``.
 
-    :param vec_file: Vector file supplying attributes.
+    :param vec_file: Vector file path or :class:`geopandas.GeoDataFrame`
+                     supplying attributes.
     :param vec_lyr: Layer name in ``vec_file``.
     :param att_names: Sequence of attribute column names to return.
     :param bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)``.
@@ -485,7 +520,7 @@ def get_att_lst_select_bbox_feats(
             "plots.gpkg", "plots", ["plot_id"], (0.0, 50.0, 0.0, 50.0)
         )
     """
-    in_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
+    in_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, copy=False)
     validate_columns_exist(in_gdf, att_names)
     target_bbox = _reproj_bbox_to_gdf_crs(bbox, bbox_epsg, in_gdf.crs)
     sel_gdf = _select_gdf_by_bbox(in_gdf, target_bbox)
@@ -498,27 +533,28 @@ def get_att_lst_select_bbox_feats(
 
 
 def subset_by_attribute(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     sub_col: str,
     sub_vals: Sequence[Any],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     match_type: str = "equals",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Subset features in a vector layer whose values in ``sub_col`` match any
     item in ``sub_vals``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
     :param sub_col: Attribute column name used to filter features.
     :param sub_vals: Values (or regex patterns when ``match_type`` is
                      ``'contains'`` or ``'start'``) to select.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param match_type: Match strategy: ``'equals'`` (default), ``'contains'``,
@@ -526,6 +562,8 @@ def subset_by_attribute(
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: Subset :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -547,7 +585,7 @@ def subset_by_attribute(
             "match_type must be either 'equals', 'contains' or 'start'."
         )
 
-    base_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
+    base_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, copy=False)
     validate_columns_exist(base_gdf, [sub_col])
 
     mask = pandas.Series(False, index=base_gdf.index)
@@ -568,7 +606,7 @@ def subset_by_attribute(
             "No output file created as no features were selected."
         )
 
-    write_vec_gdf(
+    return finish_vec_output(
         out_gdf,
         out_vec_file=out_vec_file,
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
@@ -579,30 +617,33 @@ def subset_by_attribute(
 
 
 def select_feats_str_search(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     select_col: str,
     select_val: str,
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Select features where string column ``select_col`` contains ``select_val``
     (case-sensitive substring/regex search).
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
     :param select_col: Attribute column name to search.
     :param select_val: Substring or regular expression to match.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: Selected :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -613,7 +654,7 @@ def select_feats_str_search(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    data_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
+    data_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, copy=False)
     validate_columns_exist(data_gdf, [select_col])
     col_vals = data_gdf[select_col].fillna("").astype(str)
     sel_gdf = data_gdf[col_vals.str.contains(select_val, na=False)].copy()
@@ -623,7 +664,7 @@ def select_feats_str_search(
             "No output file created as no features were selected."
         )
 
-    write_vec_gdf(
+    return finish_vec_output(
         sel_gdf,
         out_vec_file=out_vec_file,
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
@@ -634,29 +675,32 @@ def select_feats_str_search(
 
 
 def drop_rows_by_attribute(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     sub_col: str,
     sub_vals: Sequence[Any],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Drop features whose value in ``sub_col`` matches any value in ``sub_vals``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
     :param sub_col: Column name to inspect.
     :param sub_vals: Values to exclude.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: Filtered :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -668,7 +712,7 @@ def drop_rows_by_attribute(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    base_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
+    base_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, copy=False)
     validate_columns_exist(base_gdf, [sub_col])
 
     out_gdf = base_gdf[~base_gdf[sub_col].isin(list(sub_vals))].copy()
@@ -677,7 +721,7 @@ def drop_rows_by_attribute(
             "No output file created as no features remained."
         )
 
-    write_vec_gdf(
+    return finish_vec_output(
         out_gdf,
         out_vec_file=out_vec_file,
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
@@ -688,27 +732,30 @@ def drop_rows_by_attribute(
 
 
 def drop_rows_by_multi_attributes(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     drop_atts: Dict[str, Union[float, int, str]],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Drop features matching any column/value pair in ``drop_atts``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
     :param drop_atts: Mapping of ``{column_name: value_to_drop}``.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: Filtered :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -720,7 +767,7 @@ def drop_rows_by_multi_attributes(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    base_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
+    base_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, copy=False)
     validate_columns_exist(base_gdf, list(drop_atts.keys()))
 
     keep_mask = pandas.Series(True, index=base_gdf.index)
@@ -733,7 +780,7 @@ def drop_rows_by_multi_attributes(
             "No output file created as no features remained."
         )
 
-    write_vec_gdf(
+    return finish_vec_output(
         out_gdf,
         out_vec_file=out_vec_file,
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
@@ -744,24 +791,25 @@ def drop_rows_by_multi_attributes(
 
 
 def rm_attrib_duplicates(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     dup_col: Union[str, Sequence[str]],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     keep_rows: str = "First",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Remove rows with duplicate values in ``dup_col`` from a vector layer.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
     :param dup_col: Column name or sequence of column names defining
                     duplicates.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param keep_rows: Duplicate handling option: ``'First'`` (default),
@@ -769,6 +817,8 @@ def rm_attrib_duplicates(
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: Deduplicated :class:`geopandas.GeoDataFrame` when ``out_vec_file``
+             is ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -789,7 +839,7 @@ def rm_attrib_duplicates(
             "keep_rows option must be one of: 'First', 'Last', 'RemoveAll'."
         )
 
-    data_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
+    data_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, copy=False)
     cols_to_check = (
         [dup_col] if isinstance(dup_col, str) else list(dup_col)
     )
@@ -797,8 +847,8 @@ def rm_attrib_duplicates(
 
     dedup_gdf = data_gdf.drop_duplicates(
         subset=dup_col, keep=keep_map[keep_rows], ignore_index=False
-    )
-    write_vec_gdf(
+    ).copy()
+    return finish_vec_output(
         dedup_gdf,
         out_vec_file=out_vec_file,
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
@@ -809,11 +859,11 @@ def rm_attrib_duplicates(
 
 
 def match_closest_vec_pts(
-    vec_base_file: str,
+    vec_base_file: VectorInput,
     vec_base_lyr: Optional[str],
-    vec_match_file: str,
+    vec_match_file: VectorInput,
     vec_match_lyr: Optional[str],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GeoJSON",
     tolerance: Optional[float] = None,
@@ -825,17 +875,20 @@ def match_closest_vec_pts(
     use_pbar: bool = True,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> bool:
+) -> Union[bool, geopandas.GeoDataFrame]:
     """
     Find the closest point in ``vec_match_file`` for each point in
     ``vec_base_file``, optionally filtering matches exceeding ``tolerance`` and
     copying attributes from the matched layer.
 
-    :param vec_base_file: Input base point vector file path.
+    :param vec_base_file: Input base point vector file path or
+                          :class:`geopandas.GeoDataFrame`.
     :param vec_base_lyr: Input base point layer name.
-    :param vec_match_file: Input target point vector file path.
+    :param vec_match_file: Input target point vector file path or
+                           :class:`geopandas.GeoDataFrame`.
     :param vec_match_lyr: Input target point layer name.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GeoJSON'``).
     :param tolerance: Optional maximum distance threshold; matches with
@@ -856,8 +909,9 @@ def match_closest_vec_pts(
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
-    :return: ``True`` if at least one point matched and was written, else
-             ``False``.
+    :return: Matched :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``; otherwise ``True`` if at least one point matched and was
+             written, else ``False``.
 
     .. code:: python
 
@@ -870,8 +924,12 @@ def match_closest_vec_pts(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     base_gdf = read_vec_gdf(vec_base_file, vec_lyr=vec_base_lyr)
-    match_gdf = read_vec_gdf(vec_match_file, vec_lyr=vec_match_lyr)
+    match_gdf = read_vec_gdf(
+        vec_match_file, vec_lyr=vec_match_lyr, copy=False
+    )
     if len(base_gdf) == 0 or len(match_gdf) == 0:
+        if out_vec_file is None:
+            return base_gdf.iloc[0:0].copy()
         return False
 
     base_xs = base_gdf.geometry.x.to_numpy(dtype=float)
@@ -918,7 +976,12 @@ def match_closest_vec_pts(
         out_gdf = out_gdf[out_gdf[out_dist_col] < tolerance].copy()
 
     if len(out_gdf) == 0:
+        if out_vec_file is None:
+            return out_gdf
         return False
+
+    if out_vec_file is None:
+        return out_gdf
 
     write_vec_gdf(
         out_gdf,
@@ -932,27 +995,34 @@ def match_closest_vec_pts(
 
 
 def split_vec_lyr_random_subset(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_rmain_vec_file: str,
+    out_rmain_vec_file: Optional[Union[str, os.PathLike]],
     out_rmain_vec_lyr: Optional[str],
-    out_smpl_vec_file: str,
+    out_smpl_vec_file: Optional[Union[str, os.PathLike]],
     out_smpl_vec_lyr: Optional[str],
     n_smpl: int,
     out_format: str = "GPKG",
     rnd_seed: Optional[int] = None,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[
+    Union[
+        geopandas.GeoDataFrame,
+        Tuple[geopandas.GeoDataFrame, geopandas.GeoDataFrame],
+    ]
+]:
     """
     Split a vector layer into a random sample of ``n_smpl`` features and a
     complementary remainder layer.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
-    :param out_rmain_vec_file: Output file path for remaining features.
+    :param out_rmain_vec_file: Output file path for remaining features, or
+                               ``None`` to return the GeoDataFrame in memory.
     :param out_rmain_vec_lyr: Output layer name for remaining features.
-    :param out_smpl_vec_file: Output file path for sampled features.
+    :param out_smpl_vec_file: Output file path for sampled features, or
+                              ``None`` to return the GeoDataFrame in memory.
     :param out_smpl_vec_lyr: Output layer name for sampled features.
     :param n_smpl: Number of features to randomly sample.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
@@ -960,6 +1030,9 @@ def split_vec_lyr_random_subset(
     :param del_exist_vec: If ``True``, delete existing output files first
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: ``(remain_gdf, smpl_gdf)`` when both output paths are ``None``,
+             the single un-written :class:`geopandas.GeoDataFrame` if only one
+             path is ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -978,52 +1051,69 @@ def split_vec_lyr_random_subset(
             "n_smpl must be >= 1 and strictly less than the number of features."
         )
 
-    base_gdf = read_vec_gdf(vec_file, vec_lyr=lyr_name)
-    smpl_gdf = base_gdf.sample(n=n_smpl, random_state=rnd_seed)
-    remain_gdf = base_gdf.drop(smpl_gdf.index)
+    base_gdf = read_vec_gdf(vec_file, vec_lyr=lyr_name, copy=False)
+    smpl_gdf = base_gdf.sample(n=n_smpl, random_state=rnd_seed).copy()
+    remain_gdf = base_gdf.drop(smpl_gdf.index).copy()
 
-    write_vec_gdf(
-        remain_gdf,
-        out_vec_file=out_rmain_vec_file,
-        out_vec_lyr=resolve_out_lyr_name(out_rmain_vec_file, out_rmain_vec_lyr),
-        out_format=out_format,
-        overwrite=del_exist_vec,
-        out_compress=out_compress,
-    )
-    write_vec_gdf(
-        smpl_gdf,
-        out_vec_file=out_smpl_vec_file,
-        out_vec_lyr=resolve_out_lyr_name(out_smpl_vec_file, out_smpl_vec_lyr),
-        out_format=out_format,
-        overwrite=del_exist_vec,
-        out_compress=out_compress,
-    )
+    if out_rmain_vec_file is not None:
+        write_vec_gdf(
+            remain_gdf,
+            out_vec_file=out_rmain_vec_file,
+            out_vec_lyr=resolve_out_lyr_name(
+                out_rmain_vec_file, out_rmain_vec_lyr
+            ),
+            out_format=out_format,
+            overwrite=del_exist_vec,
+            out_compress=out_compress,
+        )
+    if out_smpl_vec_file is not None:
+        write_vec_gdf(
+            smpl_gdf,
+            out_vec_file=out_smpl_vec_file,
+            out_vec_lyr=resolve_out_lyr_name(
+                out_smpl_vec_file, out_smpl_vec_lyr
+            ),
+            out_format=out_format,
+            overwrite=del_exist_vec,
+            out_compress=out_compress,
+        )
+
+    if out_rmain_vec_file is None and out_smpl_vec_file is None:
+        return remain_gdf, smpl_gdf
+    if out_rmain_vec_file is None:
+        return remain_gdf
+    if out_smpl_vec_file is None:
+        return smpl_gdf
+    return None
 
 
 def vec_lyr_random_subset(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
-    n_smpl: int,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
+    n_smpl: int = 10,
     out_format: str = "GPKG",
     rnd_seed: Optional[int] = None,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
-    Write a random subset of ``n_smpl`` features from an input vector layer.
+    Create a random subset of ``n_smpl`` features from an input vector layer.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
-    :param n_smpl: Number of features to randomly select.
+    :param n_smpl: Number of features to randomly select (Default = ``10``).
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param rnd_seed: Optional random seed for reproducibility.
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: Sampled :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -1041,9 +1131,9 @@ def vec_lyr_random_subset(
             "n_smpl must be between 1 and the total feature count."
         )
 
-    base_gdf = read_vec_gdf(vec_file, vec_lyr=lyr_name)
-    smpl_gdf = base_gdf.sample(n=n_smpl, random_state=rnd_seed)
-    write_vec_gdf(
+    base_gdf = read_vec_gdf(vec_file, vec_lyr=lyr_name, copy=False)
+    smpl_gdf = base_gdf.sample(n=n_smpl, random_state=rnd_seed).copy()
+    return finish_vec_output(
         smpl_gdf,
         out_vec_file=out_vec_file,
         out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
@@ -1054,28 +1144,35 @@ def vec_lyr_random_subset(
 
 
 def create_train_test_smpls(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_train_vec_file: str,
-    out_train_vec_lyr: Optional[str],
-    out_test_vec_file: str,
-    out_test_vec_lyr: Optional[str],
+    out_train_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_train_vec_lyr: Optional[str] = None,
+    out_test_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_test_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     prop_test: float = 0.2,
     tmp_dir: Optional[str] = None,
     rnd_seed: Optional[int] = None,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[
+    Union[
+        geopandas.GeoDataFrame,
+        Tuple[geopandas.GeoDataFrame, geopandas.GeoDataFrame],
+    ]
+]:
     """
     Split a vector dataset into disjoint training and testing subsets, adding a
     1-based ``fid`` identifier column to preserve original feature provenance.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
-    :param out_train_vec_file: Output file path for training features.
+    :param out_train_vec_file: Output file path for training features, or
+                               ``None`` to return in memory.
     :param out_train_vec_lyr: Output layer name for training features.
-    :param out_test_vec_file: Output file path for testing features.
+    :param out_test_vec_file: Output file path for testing features, or
+                              ``None`` to return in memory.
     :param out_test_vec_lyr: Output layer name for testing features.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param prop_test: Fraction of features assigned to testing
@@ -1085,6 +1182,9 @@ def create_train_test_smpls(
     :param del_exist_vec: If ``True``, delete existing output files first
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: ``(train_gdf, test_gdf)`` when both output paths are ``None``,
+             the single un-written :class:`geopandas.GeoDataFrame` when one is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -1114,54 +1214,77 @@ def create_train_test_smpls(
             "Dataset too small for the requested prop_test split."
         )
 
-    test_gdf = base_gdf.sample(n=n_test, random_state=rnd_seed)
-    train_gdf = base_gdf.drop(test_gdf.index)
+    test_gdf = base_gdf.sample(n=n_test, random_state=rnd_seed).copy()
+    train_gdf = base_gdf.drop(test_gdf.index).copy()
 
-    write_vec_gdf(
-        train_gdf,
-        out_vec_file=out_train_vec_file,
-        out_vec_lyr=resolve_out_lyr_name(out_train_vec_file, out_train_vec_lyr),
-        out_format=out_format,
-        overwrite=del_exist_vec,
-        out_compress=out_compress,
-    )
-    write_vec_gdf(
-        test_gdf,
-        out_vec_file=out_test_vec_file,
-        out_vec_lyr=resolve_out_lyr_name(out_test_vec_file, out_test_vec_lyr),
-        out_format=out_format,
-        overwrite=del_exist_vec,
-        out_compress=out_compress,
-    )
+    if out_train_vec_file is not None:
+        write_vec_gdf(
+            train_gdf,
+            out_vec_file=out_train_vec_file,
+            out_vec_lyr=resolve_out_lyr_name(
+                out_train_vec_file, out_train_vec_lyr
+            ),
+            out_format=out_format,
+            overwrite=del_exist_vec,
+            out_compress=out_compress,
+        )
+    if out_test_vec_file is not None:
+        write_vec_gdf(
+            test_gdf,
+            out_vec_file=out_test_vec_file,
+            out_vec_lyr=resolve_out_lyr_name(
+                out_test_vec_file, out_test_vec_lyr
+            ),
+            out_format=out_format,
+            overwrite=del_exist_vec,
+            out_compress=out_compress,
+        )
+
+    if out_train_vec_file is None and out_test_vec_file is None:
+        return train_gdf, test_gdf
+    if out_train_vec_file is None:
+        return train_gdf
+    if out_test_vec_file is None:
+        return test_gdf
+    return None
 
 
 def create_train_test_valid_smpls(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_train_vec_file: str,
-    out_train_vec_lyr: Optional[str],
-    out_test_vec_file: str,
-    out_test_vec_lyr: Optional[str],
-    out_valid_vec_file: str,
-    out_valid_vec_lyr: Optional[str],
+    out_train_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_train_vec_lyr: Optional[str] = None,
+    out_test_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_test_vec_lyr: Optional[str] = None,
+    out_valid_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_valid_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     prop_test: float = 0.2,
     prop_valid: float = 0.2,
     rnd_seed: Optional[int] = None,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[
+    Tuple[
+        Optional[geopandas.GeoDataFrame],
+        Optional[geopandas.GeoDataFrame],
+        Optional[geopandas.GeoDataFrame],
+    ]
+]:
     """
     Split a vector dataset into mutually disjoint training, testing, and
     validation subsets.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
-    :param out_train_vec_file: Output file path for training features.
+    :param out_train_vec_file: Output file path for training features, or
+                               ``None`` to return in memory.
     :param out_train_vec_lyr: Output layer name for training features.
-    :param out_test_vec_file: Output file path for testing features.
+    :param out_test_vec_file: Output file path for testing features, or
+                              ``None`` to return in memory.
     :param out_test_vec_lyr: Output layer name for testing features.
-    :param out_valid_vec_file: Output file path for validation features.
+    :param out_valid_vec_file: Output file path for validation features, or
+                               ``None`` to return in memory.
     :param out_valid_vec_lyr: Output layer name for validation features.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param prop_test: Fraction of features assigned to testing
@@ -1172,6 +1295,9 @@ def create_train_test_valid_smpls(
     :param del_exist_vec: If ``True``, delete existing output files first
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
+    :return: ``(train_gdf, test_gdf, valid_gdf)`` when any output path is
+             ``None`` (with ``None`` in any slot that was written to disk), or
+             ``None`` when all three outputs are written to disk.
 
     .. code:: python
 
@@ -1196,7 +1322,7 @@ def create_train_test_valid_smpls(
         )
 
     lyr_name = resolve_vec_layer(vec_file, vec_lyr)
-    smpl_pts_gdf = read_vec_gdf(vec_file, vec_lyr=lyr_name)
+    smpl_pts_gdf = read_vec_gdf(vec_file, vec_lyr=lyr_name, copy=False)
     n_smpls = len(smpl_pts_gdf)
     n_test = int(n_smpls * prop_test)
     n_valid = int(n_smpls * prop_valid)
@@ -1211,45 +1337,62 @@ def create_train_test_valid_smpls(
     ).reset_index(drop=True)
 
     test_gdf = shuffled_gdf.iloc[:n_test].copy()
-    valid_gdf = shuffled_gdf.iloc[n_test : n_test + n_valid].copy()
-    train_gdf = shuffled_gdf.iloc[n_test + n_valid :].copy()
+    valid_gdf = shuffled_gdf.iloc[n_test:n_test + n_valid].copy()
+    train_gdf = shuffled_gdf.iloc[n_test + n_valid:].copy()
 
-    write_vec_gdf(
-        test_gdf,
-        out_vec_file=out_test_vec_file,
-        out_vec_lyr=resolve_out_lyr_name(out_test_vec_file, out_test_vec_lyr),
-        out_format=out_format,
-        overwrite=del_exist_vec,
-        out_compress=out_compress,
-    )
-    write_vec_gdf(
-        valid_gdf,
-        out_vec_file=out_valid_vec_file,
-        out_vec_lyr=resolve_out_lyr_name(
-            out_valid_vec_file, out_valid_vec_lyr
-        ),
-        out_format=out_format,
-        overwrite=del_exist_vec,
-        out_compress=out_compress,
-    )
-    write_vec_gdf(
-        train_gdf,
-        out_vec_file=out_train_vec_file,
-        out_vec_lyr=resolve_out_lyr_name(
-            out_train_vec_file, out_train_vec_lyr
-        ),
-        out_format=out_format,
-        overwrite=del_exist_vec,
-        out_compress=out_compress,
+    if out_test_vec_file is not None:
+        write_vec_gdf(
+            test_gdf,
+            out_vec_file=out_test_vec_file,
+            out_vec_lyr=resolve_out_lyr_name(
+                out_test_vec_file, out_test_vec_lyr
+            ),
+            out_format=out_format,
+            overwrite=del_exist_vec,
+            out_compress=out_compress,
+        )
+    if out_valid_vec_file is not None:
+        write_vec_gdf(
+            valid_gdf,
+            out_vec_file=out_valid_vec_file,
+            out_vec_lyr=resolve_out_lyr_name(
+                out_valid_vec_file, out_valid_vec_lyr
+            ),
+            out_format=out_format,
+            overwrite=del_exist_vec,
+            out_compress=out_compress,
+        )
+    if out_train_vec_file is not None:
+        write_vec_gdf(
+            train_gdf,
+            out_vec_file=out_train_vec_file,
+            out_vec_lyr=resolve_out_lyr_name(
+                out_train_vec_file, out_train_vec_lyr
+            ),
+            out_format=out_format,
+            overwrite=del_exist_vec,
+            out_compress=out_compress,
+        )
+
+    if (
+        out_train_vec_file is not None
+        and out_test_vec_file is not None
+        and out_valid_vec_file is not None
+    ):
+        return None
+    return (
+        train_gdf if out_train_vec_file is None else None,
+        test_gdf if out_test_vec_file is None else None,
+        valid_gdf if out_valid_vec_file is None else None,
     )
 
 
 def create_n_random_subsets(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_dir: str,
-    out_vec_base: str,
-    out_vec_ext: str,
+    out_vec_dir: Optional[Union[str, os.PathLike]] = None,
+    out_vec_base: Optional[str] = None,
+    out_vec_ext: Optional[str] = None,
     out_format: str = "GPKG",
     n_subs: int = 10,
     smpl_frac: float = 0.5,
@@ -1258,16 +1401,20 @@ def create_n_random_subsets(
     rnd_seed: Optional[int] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> List[str]:
+) -> Union[List[str], List[geopandas.GeoDataFrame]]:
     """
     Create ``n_subs`` random (optionally bootstrapped) subsets of features from
     a vector layer.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
-    :param out_vec_dir: Output directory path (created if absent).
-    :param out_vec_base: Base prefix for output filenames and layer names.
-    :param out_vec_ext: Output file extension without leading dot (e.g., ``'gpkg'``).
+    :param out_vec_dir: Output directory path (created if absent), or ``None``
+                        to return a list of :class:`geopandas.GeoDataFrame`
+                        objects in memory.
+    :param out_vec_base: Base prefix for output filenames and layer names
+                         (required when ``out_vec_dir`` is provided).
+    :param out_vec_ext: Output file extension without leading dot (e.g.,
+                        ``'gpkg'``; required when ``out_vec_dir`` is provided).
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param n_subs: Number of subsets to generate (Default = ``10``).
     :param smpl_frac: Fraction of features per subset when ``n_smpl`` is
@@ -1281,7 +1428,9 @@ def create_n_random_subsets(
     :param use_pbar: If ``True``, display a tqdm progress bar across subsets
                      (Default = ``True``).
     :param out_compress: Optional GeoParquet compression setting.
-    :return: List of created output vector file paths.
+    :return: List of created output vector file paths, or list of sampled
+             :class:`geopandas.GeoDataFrame` objects when ``out_vec_dir`` is
+             ``None``.
 
     .. code:: python
 
@@ -1295,34 +1444,48 @@ def create_n_random_subsets(
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if n_subs < 1:
         raise rsgispy.RSGISPyException("n_subs must be >= 1.")
-    os.makedirs(out_vec_dir, exist_ok=True)
-    base_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
+    if out_vec_dir is not None:
+        if out_vec_base is None or out_vec_ext is None:
+            raise rsgispy.RSGISPyException(
+                "out_vec_base and out_vec_ext must be provided when "
+                "out_vec_dir is specified."
+            )
+        os.makedirs(out_vec_dir, exist_ok=True)
+    base_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, copy=False)
 
     pbar_cls = rsgispy.get_tqdm()
     out_files: List[str] = []
+    out_gdfs: List[geopandas.GeoDataFrame] = []
     for idx in pbar_cls(range(n_subs), disable=not use_pbar):
         seed_i = None if rnd_seed is None else int(rnd_seed) + idx
         if n_smpl is not None:
             sub_gdf = base_gdf.sample(
                 n=n_smpl, frac=None, replace=replacement, random_state=seed_i
-            )
+            ).copy()
         else:
             sub_gdf = base_gdf.sample(
                 n=None,
                 frac=smpl_frac,
                 replace=replacement,
                 random_state=seed_i,
-            )
+            ).copy()
 
-        out_lyr = f"{out_vec_base}_{idx}"
-        out_file = os.path.join(out_vec_dir, f"{out_lyr}.{out_vec_ext}")
-        write_vec_gdf(
-            sub_gdf,
-            out_vec_file=out_file,
-            out_vec_lyr=out_lyr,
-            out_format=out_format,
-            overwrite=True,
-            out_compress=out_compress,
-        )
-        out_files.append(out_file)
+        if out_vec_dir is None:
+            out_gdfs.append(sub_gdf)
+        else:
+            out_lyr = f"{out_vec_base}_{idx}"
+            out_file = os.path.join(
+                os.fspath(out_vec_dir), f"{out_lyr}.{out_vec_ext}"
+            )
+            write_vec_gdf(
+                sub_gdf,
+                out_vec_file=out_file,
+                out_vec_lyr=out_lyr,
+                out_format=out_format,
+                overwrite=True,
+                out_compress=out_compress,
+            )
+            out_files.append(out_file)
+    if out_vec_dir is None:
+        return out_gdfs
     return out_files

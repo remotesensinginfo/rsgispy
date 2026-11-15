@@ -4,6 +4,7 @@ Geometric measurements, spatial counts, and attribute summary statistics for
 ``scipy``.
 """
 
+import os
 from typing import Any, Dict, List, Optional, Union
 
 import geopandas
@@ -20,10 +21,11 @@ except ImportError:
 
 import rsgispy
 from rsgispy.vectorprocess import (
+    VectorInput,
+    finish_vec_output,
     get_gdf_geom_type,
     read_vec_gdf,
     validate_columns_exist,
-    write_vec_gdf,
 )
 
 __all__ = [
@@ -39,21 +41,23 @@ __all__ = [
 
 
 def calc_vec_area(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     out_col: str,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Calculate the area of each polygon feature and store it in ``out_col``.
 
-    :param vec_file: Input vector file path (polygon geometry expected).
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`
+                     (polygon geometry expected).
     :param vec_lyr: Input vector layer name (or ``None``).
     :param out_col: Output area column name.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
@@ -61,6 +65,8 @@ def calc_vec_area(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Resulting :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -73,32 +79,34 @@ def calc_vec_area(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     data_gdf[out_col] = data_gdf.geometry.area
-    write_vec_gdf(
+    return finish_vec_output(
         data_gdf,
         out_vec_file,
-        out_vec_lyr,
+        out_vec_lyr=out_vec_lyr,
         out_format=out_format,
         out_compress=out_compress,
     )
 
 
 def calc_vec_length(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     out_col: str,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Calculate the length (or perimeter) of each line/polygon feature and store
     it in ``out_col``.
 
-    :param vec_file: Input vector file path (line or polygon geometry expected).
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`
+                     (line or polygon geometry expected).
     :param vec_lyr: Input vector layer name (or ``None``).
     :param out_col: Output length column name.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
@@ -106,6 +114,8 @@ def calc_vec_length(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Resulting :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -118,17 +128,17 @@ def calc_vec_length(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     data_gdf[out_col] = data_gdf.geometry.length
-    write_vec_gdf(
+    return finish_vec_output(
         data_gdf,
         out_vec_file,
-        out_vec_lyr,
+        out_vec_lyr=out_vec_lyr,
         out_format=out_format,
         out_compress=out_compress,
     )
 
 
 def get_poly_hole_area(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     use_pbar: bool = True,
 ) -> List[float]:
@@ -136,7 +146,8 @@ def get_poly_hole_area(
     Calculate the area of every interior hole across all polygons in a vector
     layer.
 
-    :param vec_file: Input polygon vector file path.
+    :param vec_file: Input polygon vector file path or
+                     :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param use_pbar: Show progress bar (Default = ``True``).
     :return: List of hole areas in CRS units squared.
@@ -149,7 +160,7 @@ def get_poly_hole_area(
             "polys_holes.gpkg", "polys"
         )
     """
-    in_gdf = read_vec_gdf(vec_file, vec_lyr)
+    in_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     pbar_cls = rsgispy.get_tqdm()
     hole_areas: List[float] = []
 
@@ -174,17 +185,17 @@ def get_poly_hole_area(
 
 
 def calc_vec_pt_dist_angle(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     x_centre: Optional[float] = None,
     y_centre: Optional[float] = None,
     angle_col: str = "angle",
     dist_col: str = "dist",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Calculate Euclidean distance and clockwise-from-north azimuth angle
     (0-360 degrees) for each point relative to ``(x_centre, y_centre)``.
@@ -192,9 +203,11 @@ def calc_vec_pt_dist_angle(
     If ``x_centre`` or ``y_centre`` is ``None``, the mean of the point
     coordinates is used.
 
-    :param vec_file: Input point vector file path.
+    :param vec_file: Input point vector file path or
+                     :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param x_centre: Optional reference X coordinate.
@@ -206,6 +219,8 @@ def calc_vec_pt_dist_angle(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Resulting :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -250,35 +265,38 @@ def calc_vec_pt_dist_angle(
     angles[angles_secs == 3] = -angles[angles_secs == 3] + 90.0
 
     data_gdf[angle_col] = angles
-    write_vec_gdf(
+    return finish_vec_output(
         data_gdf,
         out_vec_file,
-        out_vec_lyr,
+        out_vec_lyr=out_vec_lyr,
         out_format=out_format,
         out_compress=out_compress,
     )
 
 
 def calc_near_dist_to_feats(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
-    vec_dist_file: str,
+    vec_dist_file: VectorInput,
     vec_dist_lyr: Optional[str],
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_col: str = "dist",
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Compute nearest-feature distance from each feature in ``vec_file`` to
     features in ``vec_dist_file`` using :func:`geopandas.sjoin_nearest`.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param vec_dist_file: Target vector file path to measure distance to.
+    :param vec_dist_file: Target vector file path or
+                          :class:`geopandas.GeoDataFrame` to measure distance
+                          to.
     :param vec_dist_lyr: Target vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_col: Output distance column name (Default = ``'dist'``).
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
@@ -287,6 +305,8 @@ def calc_near_dist_to_feats(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Resulting :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -298,7 +318,7 @@ def calc_near_dist_to_feats(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
-    dist_gdf = read_vec_gdf(vec_dist_file, vec_dist_lyr)
+    dist_gdf = read_vec_gdf(vec_dist_file, vec_dist_lyr, copy=False)
 
     data_dist_gdf = geopandas.sjoin_nearest(
         data_gdf,
@@ -308,40 +328,43 @@ def calc_near_dist_to_feats(
         rsuffix="right",
         exclusive=True,
     )
-    write_vec_gdf(
+    return finish_vec_output(
         data_dist_gdf,
         out_vec_file,
-        out_vec_lyr,
+        out_vec_lyr=out_vec_lyr,
         out_format=out_format,
         out_compress=out_compress,
     )
 
 
 def count_pt_intersects(
-    vec_in_file: str,
+    vec_in_file: VectorInput,
     vec_in_lyr: Optional[str],
-    vec_pts_file: str,
+    vec_pts_file: VectorInput,
     vec_pts_lyr: Optional[str],
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_count_col: str = "n_points",
     tmp_col_name: str = "tmp_join_fid",
     vec_in_epsg: Optional[int] = None,
     vec_pts_epsg: Optional[int] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Count the number of points from ``vec_pts_file`` intersecting each polygon
     in ``vec_in_file``.
 
     Specifying EPSG codes overrides CRS definitions without reprojecting.
 
-    :param vec_in_file: Input polygon vector file path.
+    :param vec_in_file: Input polygon vector file path or
+                        :class:`geopandas.GeoDataFrame`.
     :param vec_in_lyr: Input polygon vector layer name (or ``None``).
-    :param vec_pts_file: Input point vector file path.
+    :param vec_pts_file: Input point vector file path or
+                         :class:`geopandas.GeoDataFrame`.
     :param vec_pts_lyr: Input point vector layer name (or ``None``).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_count_col: Output count column name (Default = ``'n_points'``).
@@ -353,6 +376,8 @@ def count_pt_intersects(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Resulting :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -364,7 +389,9 @@ def count_pt_intersects(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     in_gdf = read_vec_gdf(vec_in_file, vec_in_lyr, epsg=vec_in_epsg)
-    pts_gdf = read_vec_gdf(vec_pts_file, vec_pts_lyr, epsg=vec_pts_epsg)
+    pts_gdf = read_vec_gdf(
+        vec_pts_file, vec_pts_lyr, epsg=vec_pts_epsg, copy=False
+    )
 
     drop_cols = [c for c in ("index_left", "index_right") if c in in_gdf.columns]
     if drop_cols:
@@ -389,33 +416,35 @@ def count_pt_intersects(
     ]
     in_count_gdf = in_count_gdf.drop(columns=drop_after)
 
-    write_vec_gdf(
+    return finish_vec_output(
         in_count_gdf,
         out_vec_file,
-        out_vec_lyr,
+        out_vec_lyr=out_vec_lyr,
         out_format=out_format,
         out_compress=out_compress,
     )
 
 
 def calc_npts_in_radius(
-    vec_in_file: str,
+    vec_in_file: VectorInput,
     vec_in_lyr: Optional[str],
     radius: float,
-    out_vec_file: str,
-    out_vec_lyr: Optional[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_col_name: str = "n_pts_r",
     n_cores: int = 1,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Count how many other points lie within ``radius`` of each point feature.
 
-    :param vec_in_file: Input point vector file path.
+    :param vec_in_file: Input point vector file path or
+                        :class:`geopandas.GeoDataFrame`.
     :param vec_in_lyr: Input point vector layer name (or ``None``).
     :param radius: Search radius in layer CRS units.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_col_name: Output neighbour count column (Default = ``'n_pts_r'``).
@@ -426,6 +455,8 @@ def calc_npts_in_radius(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Resulting :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -453,17 +484,17 @@ def calc_npts_in_radius(
         return_length=True,
     )
     in_gdf[out_col_name] = n_pts - 1
-    write_vec_gdf(
+    return finish_vec_output(
         in_gdf,
         out_vec_file,
-        out_vec_lyr,
+        out_vec_lyr=out_vec_lyr,
         out_format=out_format,
         out_compress=out_compress,
     )
 
 
 def count_feats_per_att_val(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     col_name: str,
     out_df_dict: bool = False,
@@ -471,7 +502,7 @@ def count_feats_per_att_val(
     """
     Count the number of features for each unique value in ``col_name``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
     :param col_name: Column name whose unique values are counted.
     :param out_df_dict: If ``True``, return ``{'vals': [...], 'count': [...]}``
@@ -487,7 +518,7 @@ def count_feats_per_att_val(
             "classes.gpkg", "classes", "class_name"
         )
     """
-    gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
+    gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, copy=False)
     validate_columns_exist(gdf, [col_name])
     counts_series = gdf[col_name].value_counts(dropna=False, sort=False)
 

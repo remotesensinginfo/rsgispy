@@ -12,6 +12,7 @@ import pyproj
 import rsgispy
 from rsgispy.tools.geometry import reproj_bbox
 from rsgispy.vectorprocess import (
+    VectorInput,
     bbox_to_rsgis,
     check_format_name,
     delete_vec_file,
@@ -55,7 +56,7 @@ class VecLayersInfoObj:
     Store input file/layer and output layer metadata for
     :func:`rsgispy.vectorutils.io.merge_to_multi_lyr_vec`.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
     :param vec_out_lyr: Output vector layer name.
 
@@ -73,7 +74,7 @@ class VecLayersInfoObj:
     # pylint: disable=too-few-public-methods
     def __init__(
         self,
-        vec_file: Optional[str] = None,
+        vec_file: Optional[VectorInput] = None,
         vec_lyr: Optional[str] = None,
         vec_out_lyr: Optional[str] = None,
     ) -> None:
@@ -84,12 +85,12 @@ class VecLayersInfoObj:
 
 
 def get_wkt_proj_from_vec(
-    vec_file: str, vec_lyr: Optional[str] = None
+    vec_file: VectorInput, vec_lyr: Optional[str] = None
 ) -> str:
     """
     Return the WKT projection string of ``vec_file`` (empty string if unset).
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name. If ``None``, reads the first layer.
     :return: WKT projection string.
 
@@ -107,13 +108,13 @@ def get_wkt_proj_from_vec(
 
 
 def get_epsg_proj_from_vec(
-    vec_file: str, vec_lyr: Optional[str] = None
+    vec_file: VectorInput, vec_lyr: Optional[str] = None
 ) -> Optional[int]:
     """
     Return the EPSG integer code for the CRS of ``vec_file``, or ``None`` if
     unavailable.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name. If ``None``, reads the first layer.
     :return: Integer EPSG code or ``None``.
 
@@ -135,14 +136,14 @@ def get_epsg_proj_from_vec(
 
 
 def get_vec_lyr_bbox(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str] = None,
     compute_if_exp: bool = True,
 ) -> Tuple[float, float, float, float]:
     """
     Retrieve the bounding box of a vector layer in its native CRS.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name. If ``None``, reads the first layer.
     :param compute_if_exp: If ``True`` (default), compute the exact bounds from
                            geometries if header bounds are unavailable.
@@ -166,20 +167,20 @@ def get_vec_lyr_bbox(
     gdf = read_vec_gdf(vec_file, vec_lyr=info["layer_name"])
     if len(gdf) == 0:
         raise rsgispy.RSGISPyException(
-            f"Vector layer '{info['layer_name']}' in '{vec_file}' is empty."
+            f"Vector layer '{info['layer_name']}' is empty."
         )
     return bbox_to_rsgis(gdf.total_bounds)
 
 
 def get_vec_lyr_bbox_in_proj(
-    vec_file: str,
+    vec_file: VectorInput,
     out_epsg: int,
     vec_lyr: Optional[str] = None,
 ) -> Tuple[float, float, float, float]:
     """
     Retrieve the bounding box of a vector layer reprojected into ``out_epsg``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param out_epsg: Target EPSG integer code.
     :param vec_lyr: Input vector layer name. If ``None``, reads the first layer.
     :return: Reprojected bounding box ``(MinX, MaxX, MinY, MaxY)``.
@@ -195,7 +196,7 @@ def get_vec_lyr_bbox_in_proj(
     in_wkt = get_wkt_proj_from_vec(vec_file, vec_lyr=vec_lyr)
     if not in_wkt:
         raise rsgispy.RSGISPyException(
-            f"Vector file '{vec_file}' does not have a CRS defined."
+            "Input vector layer does not have a CRS defined."
         )
     vec_bbox = get_vec_lyr_bbox(vec_file, vec_lyr=vec_lyr)
     return reproj_bbox(
@@ -206,14 +207,14 @@ def get_vec_lyr_bbox_in_proj(
 
 
 def get_vec_feat_count(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str] = None,
     compute_count: bool = True,
 ) -> int:
     """
     Return the number of features in a vector layer.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name. If ``None``, reads the first layer.
     :param compute_count: If ``True`` (default), compute the exact count when
                           header metadata does not store it.
@@ -231,7 +232,7 @@ def get_vec_feat_count(
         return feat_count
     if not compute_count:
         return feat_count
-    if is_geoparquet_file(vec_file):
+    if is_geoparquet_file(vec_file):  # type: ignore[arg-type]
         return int(len(read_vec_gdf(vec_file, vec_lyr=info["layer_name"])))
     df = pyogrio.read_dataframe(
         vec_file,
@@ -264,13 +265,13 @@ def get_geom_type_name(geom_type: int) -> str:
 
 
 def get_vec_lyr_geom_type(
-    vec_file: str, vec_lyr: Optional[str] = None
+    vec_file: VectorInput, vec_lyr: Optional[str] = None
 ) -> int:
     """
     Return the ``rsgispy.GEOM_*`` constant describing the geometry type of a
     vector layer.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name. If ``None``, reads the first layer.
     :return: Integer geometry type constant from ``rsgispy.GEOM_*``.
 
@@ -285,11 +286,11 @@ def get_vec_lyr_geom_type(
     return get_gdf_geom_type(gdf)
 
 
-def get_vec_lyrs_lst(vec_file: str) -> List[str]:
+def get_vec_lyrs_lst(vec_file: VectorInput) -> List[str]:
     """
     Return the list of layer names stored in ``vec_file``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :return: List of layer name strings.
 
     .. code:: python
@@ -307,12 +308,12 @@ def get_vec_lyrs_lst(vec_file: str) -> List[str]:
 
 
 def get_vec_lyr_cols(
-    vec_file: str, vec_lyr: Optional[str] = None
+    vec_file: VectorInput, vec_lyr: Optional[str] = None
 ) -> List[str]:
     """
     Return the list of attribute column names in a vector layer.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name. If ``None``, reads the first layer.
     :return: List of attribute column names.
 

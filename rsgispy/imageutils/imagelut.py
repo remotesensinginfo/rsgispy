@@ -15,13 +15,15 @@ from shapely.geometry import box
 
 import rsgispy
 import rsgispy.imageutils.vrt
+from rsgispy.imageprocess import ensure_file_exists
 from rsgispy.vectorprocess import (
+    VectorInput,
+    finish_vec_output,
     is_geoparquet_file,
     parse_crs_input,
     read_vec_gdf,
     read_vec_info,
     resolve_vec_layer,
-    write_vec_gdf,
 )
 
 __all__ = [
@@ -35,7 +37,7 @@ __all__ = [
 
 def create_img_extent_lut(
     input_imgs: Sequence[str],
-    vec_file: str,
+    vec_file: Optional[Union[str, os.PathLike]] = None,
     vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     ignore_none_imgs: bool = False,
@@ -43,14 +45,16 @@ def create_img_extent_lut(
     overwrite_lut_file: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create a vector layer look-up table (LUT) storing the spatial extent,
     filename, and directory path for a sequence of raster images.
 
     :param input_imgs: Sequence of input image file paths. Unless ``out_proj_wgs84``
                        is True, all valid input images must share the same CRS.
-    :param vec_file: Output vector file path (e.g., ``'ImgExtents.gpkg'``).
+    :param vec_file: Optional output vector file path (e.g., ``'ImgExtents.gpkg'``).
+                     If ``None`` (default), returns the LUT as an in-memory
+                     :class:`geopandas.GeoDataFrame` instead of writing to disk.
     :param vec_lyr: Output vector layer name (used for multi-layer formats such
                     as GeoPackage). If ``None``, the format default layer is used.
     :param out_format: Output OGR/GeoPandas/Parquet driver name (Default = ``'GPKG'``).
@@ -68,6 +72,8 @@ def create_img_extent_lut(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` if ``vec_file`` is ``None``,
+             otherwise ``None``.
 
     .. code:: python
 
@@ -142,7 +148,7 @@ def create_img_extent_lut(
         geometry=geoms,
         crs=out_crs,
     )
-    write_vec_gdf(
+    return finish_vec_output(
         lut_gdf,
         out_vec_file=vec_file,
         out_vec_lyr=vec_lyr,
@@ -154,7 +160,7 @@ def create_img_extent_lut(
 
 def query_img_lut(
     scn_bbox: Tuple[float, float, float, float],
-    lut_db_file: str,
+    lut_db_file: VectorInput,
     lyr_name: Optional[str] = None,
 ) -> List[str]:
     """
@@ -163,7 +169,8 @@ def query_img_lut(
 
     :param scn_bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)`` defining the area
                      of interest in the LUT projection.
-    :param lut_db_file: Path to the LUT vector file (e.g., ``'lut.gpkg'``).
+    :param lut_db_file: Path to the LUT vector file (e.g., ``'lut.gpkg'``) or
+                        an in-memory :class:`geopandas.GeoDataFrame`.
     :param lyr_name: Optional layer name within ``lut_db_file``.
     :return: List of image file paths intersecting ``scn_bbox``.
 
@@ -177,10 +184,6 @@ def query_img_lut(
             "ImgExtents",
         )
     """
-    if not os.path.exists(lut_db_file):
-        raise rsgispy.RSGISPyException(
-            f"LUT vector file does not exist: '{lut_db_file}'."
-        )
     if len(scn_bbox) < 4:
         raise rsgispy.RSGISPyException(
             "scn_bbox must contain 4 coordinates: (MinX, MaxX, MinY, MaxY)."
@@ -191,6 +194,7 @@ def query_img_lut(
         lut_db_file,
         vec_lyr=lyr_name,
         bbox=(min_x, min_y, max_x, max_y),
+        copy=False,
     )
     if lut_gdf.empty:
         return []
@@ -202,13 +206,14 @@ def query_img_lut(
 
 
 def get_all_lut_imgs(
-    lut_db_file: str,
+    lut_db_file: VectorInput,
     lyr_name: Optional[str] = None,
 ) -> List[str]:
     """
     Return a list of all image file paths recorded in an image LUT.
 
-    :param lut_db_file: Path to the LUT vector file (e.g., ``'lut.gpkg'``).
+    :param lut_db_file: Path to the LUT vector file (e.g., ``'lut.gpkg'``) or
+                        an in-memory :class:`geopandas.GeoDataFrame`.
     :param lyr_name: Optional layer name within ``lut_db_file``.
     :return: List of all image file paths stored in the LUT.
 
@@ -220,21 +225,21 @@ def get_all_lut_imgs(
             "ImgExtents.gpkg", "ImgExtents"
         )
     """
-    if not os.path.exists(lut_db_file):
-        raise rsgispy.RSGISPyException(
-            f"LUT vector file does not exist: '{lut_db_file}'."
-        )
-
-    if is_geoparquet_file(lut_db_file):
-        if lyr_name is not None:
-            resolve_vec_layer(lut_db_file, lyr_name)
-        lut_df = pandas.read_parquet(lut_db_file, columns=["path", "filename"])
+    if isinstance(lut_db_file, gpd.GeoDataFrame):
+        lut_df = lut_db_file
     else:
-        lut_df = gpd.read_file(
-            lut_db_file,
-            layer=lyr_name,
-            ignore_geometry=True,
-        )
+        lut_path = os.fspath(lut_db_file)
+        ensure_file_exists(lut_path, label="LUT vector file")
+        if is_geoparquet_file(lut_path):
+            if lyr_name is not None:
+                resolve_vec_layer(lut_path, lyr_name)
+            lut_df = pandas.read_parquet(lut_path, columns=["path", "filename"])
+        else:
+            lut_df = gpd.read_file(
+                lut_path,
+                layer=lyr_name,
+                ignore_geometry=True,
+            )
     if lut_df.empty:
         return []
 
@@ -246,7 +251,7 @@ def get_all_lut_imgs(
 
 def get_raster_lyr(
     scn_bbox: Tuple[float, float, float, float],
-    lut_db_file: str,
+    lut_db_file: VectorInput,
     lyr_name: Optional[str],
     tmp_dir: str,
 ) -> Optional[str]:
@@ -259,7 +264,8 @@ def get_raster_lyr(
     returned. If no images intersect, ``None`` is returned.
 
     :param scn_bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)`` in the LUT CRS.
-    :param lut_db_file: Path to the LUT vector file (e.g., ``'lut.gpkg'``).
+    :param lut_db_file: Path to the LUT vector file (e.g., ``'lut.gpkg'``) or
+                        an in-memory :class:`geopandas.GeoDataFrame`.
     :param lyr_name: Layer name within ``lut_db_file`` (or ``None``).
     :param tmp_dir: Directory where temporary VRT files will be written when
                     multiple images intersect ``scn_bbox``.
@@ -296,9 +302,9 @@ def get_raster_lyr(
 
 
 def query_file_lut(
-    lut_db_file: str,
+    lut_db_file: VectorInput,
     lyr_name: Optional[str],
-    roi_file: str,
+    roi_file: VectorInput,
     roi_lyr: Optional[str] = None,
     out_dest: Optional[str] = None,
     targz_out: bool = False,
@@ -312,9 +318,11 @@ def query_file_lut(
     Set at most one of ``targz_out`` or ``cp_cmds`` to True. If both are False,
     the list of intersecting file paths is returned directly.
 
-    :param lut_db_file: Path to the LUT vector file.
+    :param lut_db_file: Path to the LUT vector file or an in-memory
+                        :class:`geopandas.GeoDataFrame`.
     :param lyr_name: Layer name within ``lut_db_file`` (or ``None`` for default layer).
-    :param roi_file: Path to the region-of-interest vector file.
+    :param roi_file: Path to the region-of-interest vector file or an in-memory
+                     :class:`geopandas.GeoDataFrame`.
     :param roi_lyr: Layer name within ``roi_file`` (or ``None`` for default layer).
     :param out_dest: Destination path for output archive or copy directory when
                      ``targz_out`` or ``cp_cmds`` is True.
@@ -341,16 +349,10 @@ def query_file_lut(
         raise rsgispy.RSGISPyException(
             "out_dest must be provided when targz_out or cp_cmds is True."
         )
-    if not os.path.exists(lut_db_file):
-        raise rsgispy.RSGISPyException(
-            f"LUT vector file does not exist: '{lut_db_file}'."
-        )
-    if not os.path.exists(roi_file):
-        raise rsgispy.RSGISPyException(
-            f"ROI vector file does not exist: '{roi_file}'."
-        )
+    if not isinstance(lut_db_file, gpd.GeoDataFrame):
+        ensure_file_exists(os.fspath(lut_db_file), label="LUT vector file")
 
-    roi_gdf = read_vec_gdf(roi_file, vec_lyr=roi_lyr)
+    roi_gdf = read_vec_gdf(roi_file, vec_lyr=roi_lyr, copy=False)
     if roi_gdf.empty:
         return []
 
@@ -369,6 +371,7 @@ def query_file_lut(
         lut_db_file,
         vec_lyr=lyr_name,
         bbox=(roi_bounds[0], roi_bounds[1], roi_bounds[2], roi_bounds[3]),
+        copy=False,
     )
     if lut_gdf.empty:
         return []

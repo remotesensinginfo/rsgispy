@@ -261,12 +261,13 @@ def prepare_out_vec_file(
             )
 
 
-def list_vec_layers(vec_file: str) -> List[str]:
+def list_vec_layers(vec_file: VectorInput) -> List[str]:
     """
     List all layer names in ``vec_file`` (for GeoParquet files, returns the
-    single-element list containing the filename stem).
+    single-element list containing the filename stem; for an in-memory
+    :class:`geopandas.GeoDataFrame`, returns ``['layer']``).
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :return: List of layer name strings.
 
     .. code:: python
@@ -275,32 +276,39 @@ def list_vec_layers(vec_file: str) -> List[str]:
 
         lyrs = rsgispy.vectorprocess.list_vec_layers("polys.parquet")
     """
-    ensure_file_exists(vec_file, label="Vector file")
-    if is_geoparquet_file(vec_file):
-        info = read_geoparquet_info(vec_file)
+    if isinstance(vec_file, geopandas.GeoDataFrame):
+        return ["layer"]
+
+    vec_path = os.fspath(vec_file)
+    ensure_file_exists(vec_path, label="Vector file")
+    if is_geoparquet_file(vec_path):
+        info = read_geoparquet_info(vec_path)
         return [str(info["layer_name"])]
 
     try:
-        layers = pyogrio.list_layers(vec_file)
+        layers = pyogrio.list_layers(vec_path)
     except Exception as err:
         raise rsgispy.RSGISPyException(
-            f"Could not open vector file '{vec_file}': {err}"
+            f"Could not open vector file '{vec_path}': {err}"
         ) from err
 
     if len(layers) == 0:
         raise rsgispy.RSGISPyException(
-            f"No vector layers found in file '{vec_file}'."
+            f"No vector layers found in file '{vec_path}'."
         )
 
     return [str(row[0]) for row in layers]
 
 
-def resolve_vec_layer(vec_file: str, vec_lyr: Optional[str] = None) -> str:
+def resolve_vec_layer(
+    vec_file: VectorInput, vec_lyr: Optional[str] = None
+) -> str:
     """
     Validate ``vec_file`` exists and resolve ``vec_lyr`` (returning the first
-    layer when ``vec_lyr`` is ``None``).
+    layer when ``vec_lyr`` is ``None``). For an in-memory
+    :class:`geopandas.GeoDataFrame`, returns ``vec_lyr or 'layer'``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Optional vector layer name.
     :return: Resolved layer name string.
 
@@ -310,6 +318,9 @@ def resolve_vec_layer(vec_file: str, vec_lyr: Optional[str] = None) -> str:
 
         lyr = rsgispy.vectorprocess.resolve_vec_layer("polys.gpkg")
     """
+    if isinstance(vec_file, geopandas.GeoDataFrame):
+        return vec_lyr or "layer"
+
     lyr_names = list_vec_layers(vec_file)
     if vec_lyr is None:
         return lyr_names[0]
@@ -554,6 +565,47 @@ def write_vec_gdf(  # pylint: disable=too-many-arguments,too-many-positional-arg
         raise rsgispy.RSGISPyException(
             f"Could not write vector file '{out_path}': {err}"
         ) from err
+
+
+def finish_vec_output(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    gdf: geopandas.GeoDataFrame,
+    out_vec_file: Optional[Union[str, os.PathLike]],
+    out_vec_lyr: Optional[str] = None,
+    out_format: Optional[str] = None,
+    overwrite: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
+) -> Optional[geopandas.GeoDataFrame]:
+    """
+    Finalise a newly created :class:`geopandas.GeoDataFrame`: if
+    ``out_vec_file`` is ``None``, return ``gdf`` in memory; otherwise write it
+    to ``out_vec_file`` and return ``None``.
+
+    :param gdf: GeoDataFrame to return or write.
+    :param out_vec_file: Output vector file path, or ``None`` to return ``gdf``.
+    :param out_vec_lyr: Optional destination layer name.
+    :param out_format: Optional vector driver name.
+    :param overwrite: If ``True``, delete an existing ``out_vec_file`` before
+                      writing (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting.
+    :return: ``gdf`` when ``out_vec_file`` is ``None``, otherwise ``None``.
+
+    .. code:: python
+
+        import rsgispy.vectorprocess
+
+        out = rsgispy.vectorprocess.finish_vec_output(gdf, None)
+    """
+    if out_vec_file is None:
+        return gdf
+    write_vec_gdf(
+        gdf,
+        out_vec_file,
+        out_vec_lyr=out_vec_lyr,
+        out_format=out_format,
+        overwrite=overwrite,
+        out_compress=out_compress,
+    )
+    return None
 
 
 def validate_columns_exist(

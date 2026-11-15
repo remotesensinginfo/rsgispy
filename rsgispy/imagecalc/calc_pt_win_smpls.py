@@ -8,6 +8,7 @@ import math
 import os
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
+import geopandas
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
@@ -19,7 +20,7 @@ from rasterio.windows import Window
 import rsgispy
 from rsgispy.imageprocess import bbox_from_dataset, ensure_file_exists
 import rsgispy.tools.geometry
-from rsgispy.vectorprocess import read_vec_gdf, write_vec_gdf
+from rsgispy.vectorprocess import VectorInput, finish_vec_output, read_vec_gdf
 
 __all__ = [
     "RSGISCalcSumVals",
@@ -184,10 +185,10 @@ def _extract_rotated_window(
 
 def calc_pt_smpl_img_vals(
     input_img: str,
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     calc_objs: Sequence[RSGISCalcSumVals],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     interp_method: Union[int, Resampling] = rsgispy.INTERP_CUBIC,
@@ -197,7 +198,7 @@ def calc_pt_smpl_img_vals(
     no_data_val: Optional[float] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Calculate summary values for an image window around each point in an input
     point vector layer using one or more :class:`RSGISCalcSumVals` calculators.
@@ -207,10 +208,14 @@ def calc_pt_smpl_img_vals(
     relative to north).
 
     :param input_img: Path to the input image file.
-    :param vec_file: Path to the input point vector file.
+    :param vec_file: Path to the input point vector file or an in-memory
+                     :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None`` for default layer).
     :param calc_objs: Sequence of :class:`RSGISCalcSumVals` instances.
-    :param out_vec_file: Path to the output vector file.
+    :param out_vec_file: Optional path to the output vector file. If ``None``
+                         (default), returns the resulting
+                         :class:`geopandas.GeoDataFrame` in memory instead of
+                         writing to disk.
     :param out_vec_lyr: Output vector layer name (used for multi-layer formats
                         such as GeoPackage).
     :param out_format: Output vector format/driver (e.g., ``'GPKG'``, ``'GeoJSON'``,
@@ -227,6 +232,8 @@ def calc_pt_smpl_img_vals(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` with calculated values if
+             ``out_vec_file`` is ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -244,7 +251,6 @@ def calc_pt_smpl_img_vals(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
-    ensure_file_exists(vec_file, label="Input vector")
 
     out_col_names: List[str] = []
     out_vals_dict: Dict[str, List[float]] = {}
@@ -312,7 +318,7 @@ def calc_pt_smpl_img_vals(
     for out_col in out_col_names:
         pts_gdf[out_col] = out_vals_dict[out_col]
 
-    write_vec_gdf(
+    return finish_vec_output(
         pts_gdf,
         out_vec_file=out_vec_file,
         out_vec_lyr=out_vec_lyr,

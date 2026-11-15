@@ -175,6 +175,20 @@ def test_create_flightline_vec(tmp_path, monkeypatch):
     assert len(lines_gdf) == 1
     assert lines_gdf.iloc[0]["ID"] == 1
 
+    mem_pts, mem_lines = rsgispy.droneutils.create_flightline_vec([img2, img1])
+    assert isinstance(mem_pts, geopandas.GeoDataFrame)
+    assert isinstance(mem_lines, geopandas.GeoDataFrame)
+    assert len(mem_pts) == 2 and len(mem_lines) == 1
+
+    only_pts_gpkg = str(tmp_path / "only_pts.gpkg")
+    only_lines = rsgispy.droneutils.create_flightline_vec(
+        [img2, img1],
+        pts_vec_file=only_pts_gpkg,
+        pts_vec_lyr="pts",
+    )
+    assert isinstance(only_lines, geopandas.GeoDataFrame)
+    assert len(only_lines) == 1
+
 
 def test_create_flightline_extern_gps_and_define_tags(tmp_path, monkeypatch):
     if not rsgispy.droneutils.HAVE_EXIFTOOL:
@@ -262,6 +276,13 @@ def test_create_flightline_extern_gps_and_define_tags(tmp_path, monkeypatch):
     pts_gdf = geopandas.read_file(pts_shp)
     assert len(pts_gdf) == 2
     assert list(pts_gdf["flight_yaw_degree"]) == [180.0, 181.0]
+
+    mem_ext_pts, mem_ext_lines = rsgispy.droneutils.create_flightline_extern_gps_vec(
+        gps_df, str(tmp_path)
+    )
+    assert isinstance(mem_ext_pts, geopandas.GeoDataFrame)
+    assert isinstance(mem_ext_lines, geopandas.GeoDataFrame)
+    assert len(mem_ext_pts) == 2 and len(mem_ext_lines) == 1
 
     rsgispy.droneutils.define_extern_gps_in_imgs(
         gps_df,

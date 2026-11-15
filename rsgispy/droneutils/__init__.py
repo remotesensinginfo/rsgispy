@@ -375,14 +375,14 @@ def _write_vector_layer(
 # pylint: disable=too-many-arguments,too-many-positional-arguments
 def _write_flightline_outputs(
     img_info: Dict[str, List[Any]],
-    pts_vec_file: str,
-    pts_vec_lyr: str,
-    line_vec_file: str,
-    line_vec_lyr: str,
+    pts_vec_file: Optional[Union[str, os.PathLike]],
+    pts_vec_lyr: Optional[str],
+    line_vec_file: Optional[Union[str, os.PathLike]],
+    line_vec_lyr: Optional[str],
     out_format: str,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
-    """Create and write both the photo point layer and flightline segment layer."""
+) -> Optional[Union[geopandas.GeoDataFrame, Tuple[geopandas.GeoDataFrame, geopandas.GeoDataFrame]]]:
+    """Create and write or return the photo point layer and flightline segment layer."""
     imgs_df = pandas.DataFrame(img_info)
     imgs_gdf = geopandas.GeoDataFrame(
         imgs_df,
@@ -390,55 +390,73 @@ def _write_flightline_outputs(
         crs="EPSG:4326",
     )
 
-    if len(imgs_gdf) == 0:
-        return
-
-    same_file = os.path.abspath(pts_vec_file) == os.path.abspath(
-        line_vec_file
-    )
-    is_pq = is_geoparquet_format(out_format) or is_geoparquet_file(
-        pts_vec_file
-    )
-    if is_pq and same_file and len(imgs_gdf) > 1:
-        raise rsgispy.RSGISPyException(
-            "GeoParquet only supports a single layer per file; specify "
-            "separate files for pts_vec_file and line_vec_file."
-        )
-
-    _write_vector_layer(
-        imgs_gdf,
-        pts_vec_file,
-        pts_vec_lyr,
-        out_format,
-        out_compress=out_compress,
-    )
-
     flightline_ids: List[int] = []
     flightline_geoms: List[shapely.geometry.LineString] = []
-    coords = list(zip(imgs_df.lon, imgs_df.lat))
-    for seg_id, (start_pt, end_pt) in enumerate(
-        zip(coords[:-1], coords[1:]), start=1
-    ):
-        flightline_ids.append(seg_id)
-        flightline_geoms.append(
-            shapely.geometry.LineString(
-                [shapely.geometry.Point(start_pt), shapely.geometry.Point(end_pt)]
+    if len(imgs_gdf) > 1:
+        coords = list(zip(imgs_df.lon, imgs_df.lat))
+        for seg_id, (start_pt, end_pt) in enumerate(
+            zip(coords[:-1], coords[1:]), start=1
+        ):
+            flightline_ids.append(seg_id)
+            flightline_geoms.append(
+                shapely.geometry.LineString(
+                    [shapely.geometry.Point(start_pt), shapely.geometry.Point(end_pt)]
+                )
             )
-        )
 
     if flightline_geoms:
-        flightline_gdf = geopandas.GeoDataFrame(
+        flightline_gdf: Optional[geopandas.GeoDataFrame] = geopandas.GeoDataFrame(
             data={"ID": flightline_ids, "geometry": flightline_geoms},
             geometry="geometry",
             crs="EPSG:4326",
         )
+    else:
+        flightline_gdf = geopandas.GeoDataFrame(
+            data={"ID": pandas.Series(dtype="int64")},
+            geometry=geopandas.GeoSeries([], crs="EPSG:4326"),
+            crs="EPSG:4326",
+        )
+
+    if pts_vec_file is not None and line_vec_file is not None:
+        if len(imgs_gdf) == 0:
+            return None
+        same_file = os.path.abspath(os.fspath(pts_vec_file)) == os.path.abspath(
+            os.fspath(line_vec_file)
+        )
+        is_pq = is_geoparquet_format(out_format) or is_geoparquet_file(
+            pts_vec_file
+        )
+        if is_pq and same_file and len(imgs_gdf) > 1:
+            raise rsgispy.RSGISPyException(
+                "GeoParquet only supports a single layer per file; specify "
+                "separate files for pts_vec_file and line_vec_file."
+            )
+
+    if pts_vec_file is not None and len(imgs_gdf) > 0:
         _write_vector_layer(
-            flightline_gdf,
-            line_vec_file,
-            line_vec_lyr,
+            imgs_gdf,
+            os.fspath(pts_vec_file),
+            pts_vec_lyr or "photo_pts",
             out_format,
             out_compress=out_compress,
         )
+
+    if line_vec_file is not None and len(flightline_geoms) > 0:
+        _write_vector_layer(
+            flightline_gdf,
+            os.fspath(line_vec_file),
+            line_vec_lyr or "flightlines",
+            out_format,
+            out_compress=out_compress,
+        )
+
+    if pts_vec_file is None and line_vec_file is None:
+        return imgs_gdf, flightline_gdf
+    if pts_vec_file is None:
+        return imgs_gdf
+    if line_vec_file is None:
+        return flightline_gdf
+    return None
 
 
 def _parse_exif_datetime(date_str: str) -> datetime.datetime:
@@ -448,13 +466,13 @@ def _parse_exif_datetime(date_str: str) -> datetime.datetime:
 # pylint: disable=too-many-arguments,too-many-positional-arguments
 def create_flightline_vec(
     input_imgs: List[str],
-    pts_vec_file: str,
-    pts_vec_lyr: str,
-    line_vec_file: str,
-    line_vec_lyr: str,
+    pts_vec_file: Optional[Union[str, os.PathLike]] = None,
+    pts_vec_lyr: Optional[str] = None,
+    line_vec_file: Optional[Union[str, os.PathLike]] = None,
+    line_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[Union[geopandas.GeoDataFrame, Tuple[geopandas.GeoDataFrame, geopandas.GeoDataFrame]]]:
     """
     Create point and flightline vector layers from drone images containing GPS EXIF.
 
@@ -462,9 +480,11 @@ def create_flightline_vec(
     the same file can be provided for ``pts_vec_file`` and ``line_vec_file``.
 
     :param input_imgs: List of input image paths.
-    :param pts_vec_file: Output vector file for the photo points.
+    :param pts_vec_file: Optional output vector file for the photo points.
+                         If ``None`` (default), returns points in memory.
     :param pts_vec_lyr: Output vector layer name for the photo points.
-    :param line_vec_file: Output vector file for the flightline.
+    :param line_vec_file: Optional output vector file for the flightline.
+                          If ``None`` (default), returns flightlines in memory.
     :param line_vec_lyr: Output vector layer name for the flightline.
     :param out_format: Output vector format driver (default: ``"GPKG"``).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
@@ -472,6 +492,9 @@ def create_flightline_vec(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: ``(pts_gdf, line_gdf)`` if both output file paths are ``None``;
+             a single :class:`geopandas.GeoDataFrame` if only one is ``None``;
+             otherwise ``None``.
 
     .. code:: python
 
@@ -552,7 +575,7 @@ def create_flightline_vec(
             )
         )
 
-    _write_flightline_outputs(
+    return _write_flightline_outputs(
         img_info,
         pts_vec_file,
         pts_vec_lyr,
@@ -567,13 +590,13 @@ def create_flightline_vec(
 def create_flightline_extern_gps_vec(
     gps_data_df: pandas.DataFrame,
     input_imgs_dir: str,
-    pts_vec_file: str,
-    pts_vec_lyr: str,
-    line_vec_file: str,
-    line_vec_lyr: str,
+    pts_vec_file: Optional[Union[str, os.PathLike]] = None,
+    pts_vec_lyr: Optional[str] = None,
+    line_vec_file: Optional[Union[str, os.PathLike]] = None,
+    line_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[Union[geopandas.GeoDataFrame, Tuple[geopandas.GeoDataFrame, geopandas.GeoDataFrame]]]:
     """
     Create point and flightline vector layers from external GPS data and drone images.
 
@@ -582,9 +605,11 @@ def create_flightline_extern_gps_vec(
 
     :param gps_data_df: DataFrame containing external GPS and attitude records.
     :param input_imgs_dir: Directory containing the input image files.
-    :param pts_vec_file: Output vector file for the photo points.
+    :param pts_vec_file: Optional output vector file for the photo points.
+                         If ``None`` (default), returns points in memory.
     :param pts_vec_lyr: Output vector layer name for the photo points.
-    :param line_vec_file: Output vector file for the flightline.
+    :param line_vec_file: Optional output vector file for the flightline.
+                          If ``None`` (default), returns flightlines in memory.
     :param line_vec_lyr: Output vector layer name for the flightline.
     :param out_format: Output vector format driver (default: ``"GPKG"``).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
@@ -592,6 +617,9 @@ def create_flightline_extern_gps_vec(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: ``(pts_gdf, line_gdf)`` if both output file paths are ``None``;
+             a single :class:`geopandas.GeoDataFrame` if only one is ``None``;
+             otherwise ``None``.
 
     .. code:: python
 
@@ -667,7 +695,7 @@ def create_flightline_extern_gps_vec(
             )
         )
 
-    _write_flightline_outputs(
+    return _write_flightline_outputs(
         img_info,
         pts_vec_file,
         pts_vec_lyr,

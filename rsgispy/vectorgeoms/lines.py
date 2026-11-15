@@ -1074,20 +1074,21 @@ def estimate_future_coastline(
 
 
 def create_lines_vec(
-    vec_file: str,
-    vec_lyr: str,
+    vec_file: Optional[Union[str, os.PathLike]],
+    vec_lyr: Optional[str],
     out_format: str,
     epsg_code: CRSLike,
     lines: Sequence[Sequence[Tuple[float, float]]],
     overwrite: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
-    Write a sequence of polylines (each given as ``[(x, y), ...]`` vertices)
-    with sequential ``line_id`` attributes to a vector layer.
+    Create a vector layer of polylines (each given as ``[(x, y), ...]``
+    vertices) with sequential ``line_id`` attributes.
 
-    :param vec_file: Output vector file path.
-    :param vec_lyr: Output vector layer name.
+    :param vec_file: Output vector file path, or ``None`` to return an
+                     in-memory :class:`geopandas.GeoDataFrame`.
+    :param vec_lyr: Output vector layer name (or ``None``).
     :param out_format: Output vector format driver.
     :param epsg_code: EPSG integer code or CRS defining output projection.
     :param lines: Sequence of vertex sequences defining each ``LineString``.
@@ -1099,6 +1100,8 @@ def create_lines_vec(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` if ``vec_file`` is ``None``,
+             otherwise ``None``.
 
     .. code:: python
 
@@ -1122,6 +1125,8 @@ def create_lines_vec(
         geometry=geoms,
         crs=parse_crs_input(epsg_code),
     )
+    if vec_file is None:
+        return gdf
     write_vec_gdf(
         gdf,
         out_vec_file=vec_file,
@@ -1130,24 +1135,27 @@ def create_lines_vec(
         overwrite=overwrite,
         out_compress=out_compress,
     )
+    return None
 
 
 def create_img_transects(
     input_img: str,
-    out_vec_file: str,
-    out_vec_lyr: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     x_intervals: Optional[Sequence[float]] = None,
     y_intervals: Optional[Sequence[float]] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Create axis-aligned transect lines across ``input_img`` at fractional
     positions ``0..1`` along X and/or Y.
 
     :param input_img: Input raster image path.
-    :param out_vec_file: Output vector file path.
-    :param out_vec_lyr: Output vector layer name.
+    :param out_vec_file: Optional output vector file path. If ``None``
+                         (default), returns an in-memory
+                         :class:`geopandas.GeoDataFrame`.
+    :param out_vec_lyr: Output vector layer name (or ``None``).
     :param x_intervals: Sequence of fractional positions ``[0..1]`` along X for
                         vertical (North-South) transects.
     :param y_intervals: Sequence of fractional positions ``[0..1]`` along Y for
@@ -1158,6 +1166,8 @@ def create_img_transects(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` if ``out_vec_file`` is ``None``,
+             otherwise ``None``.
 
     .. code:: python
 
@@ -1202,7 +1212,7 @@ def create_img_transects(
             y_pos = img_bbox[2] + (img_height * float(frac))
             out_lines.append([(img_bbox[0], y_pos), (img_bbox[1], y_pos)])
 
-    create_lines_vec(
+    return create_lines_vec(
         vec_file=out_vec_file,
         vec_lyr=out_vec_lyr,
         out_format=out_format,

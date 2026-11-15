@@ -33,7 +33,7 @@ class _FakeHTTPResponse:
 
     def iter_content(self, chunk_size=8192):
         for i in range(0, len(self._content), chunk_size):
-            yield self._content[i : i + chunk_size]
+            yield self._content[i:i + chunk_size]
 
     def __enter__(self):
         return self
@@ -298,6 +298,24 @@ def test_openstreetmap(tmp_path, monkeypatch):
     )
     loaded_multi = geopandas.read_file(out_multi, layer="features")
     assert len(loaded_multi) == 2
+
+    mem_osm = openstreetmap.get_osm_to_file(
+        None,
+        None,
+        bbox=(-4.1, -4.07, 52.4, 52.43),
+        osm_tags={"building": True},
+    )
+    assert isinstance(mem_osm, geopandas.GeoDataFrame)
+    assert len(mem_osm) == 1
+
+    mem_osm_multi = openstreetmap.get_osm_multi_to_file(
+        None,
+        None,
+        bbox=(-4.1, -4.07, 52.4, 52.43),
+        osm_tags_lst=[{"building": True}, {"amenity": "cafe"}],
+    )
+    assert isinstance(mem_osm_multi, geopandas.GeoDataFrame)
+    assert len(mem_osm_multi) == 2
 
 
 def test_planet_data_api_mappings_and_optional_import(monkeypatch):

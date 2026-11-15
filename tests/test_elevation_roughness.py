@@ -289,3 +289,64 @@ def test_smith_and_all_roughness_metrics(tmp_path):
     ):
         assert col in all_gdf.columns
         assert np.all(np.isfinite(all_gdf[col].to_numpy()))
+
+
+def test_roughness_and_pt_win_gdf_in_memory(tmp_path):
+    """Test GeoDataFrame inputs and out_vec_file=None for calc_pt_win_smpls & roughness."""
+    dem_path = tmp_path / "dem_corr.tif"
+    _write_dem(dem_path, _corrugated_dem())
+
+    pts_gdf = geopandas.GeoDataFrame(
+        {
+            "id": [1, 2],
+            "xbox": [6, 6],
+            "ybox": [6, 6],
+            "angle": [0.0, 30.0],
+        },
+        geometry=[
+            Point(500255.0, 5199745.0),
+            Point(500355.0, 5199645.0),
+        ],
+        crs="EPSG:32630",
+    )
+    orig_cols = list(pts_gdf.columns)
+
+    simple_gdf = rrough.calc_simple_roughness_profile_metrics(
+        str(dem_path), pts_gdf, None, angle_col="angle", detrend=True
+    )
+    assert isinstance(simple_gdf, geopandas.GeoDataFrame)
+    assert np.all(simple_gdf["avg_ra"] > 0.0)
+    assert list(pts_gdf.columns) == orig_cols
+
+    munro_gdf = rrough.calc_munro_roughness_profile_metrics(
+        str(dem_path), pts_gdf, None, detrend=True
+    )
+    assert isinstance(munro_gdf, geopandas.GeoDataFrame)
+    assert np.all(munro_gdf["avg_munro_z0"] > 0.0)
+
+    smith_gdf = rrough.calc_smith_roughness_metrics(
+        str(dem_path), pts_gdf, None, detrend=True
+    )
+    assert isinstance(smith_gdf, geopandas.GeoDataFrame)
+    assert np.all(smith_gdf["smith_hs"] > 0.0)
+
+    all_gdf = rrough.calc_all_roughness_profile_metrics(
+        str(dem_path), pts_gdf, None, angle_col="angle", detrend=True
+    )
+    assert isinstance(all_gdf, geopandas.GeoDataFrame)
+    assert "avg_ra" in all_gdf.columns
+    assert "avg_munro_z0" in all_gdf.columns
+    assert "smith_hs" in all_gdf.columns
+
+    # Direct calc_pt_smpl_img_vals chaining on an existing result GeoDataFrame
+    chained_gdf = rcptwin.calc_pt_smpl_img_vals(
+        str(dem_path),
+        simple_gdf,
+        None,
+        calc_objs=[rrough.CalcSmithRoughnessMetric(detrend=True)],
+        x_box_col="xbox",
+        y_box_col="ybox",
+    )
+    assert isinstance(chained_gdf, geopandas.GeoDataFrame)
+    assert "avg_ra" in chained_gdf.columns
+    assert "smith_hs" in chained_gdf.columns

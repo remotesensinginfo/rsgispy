@@ -8,6 +8,7 @@ from contextlib import ExitStack
 import math
 from typing import Dict, Optional, Tuple
 
+import geopandas
 import numpy as np
 import pyproj
 import rasterio
@@ -31,7 +32,7 @@ from rsgispy.imageprocess import (
 )
 from rsgispy.imageutils.metadata import get_img_res
 from rsgispy.tools.geometry import degrees_to_metres
-from rsgispy.vectorprocess import read_vec_gdf
+from rsgispy.vectorprocess import VectorInput, read_vec_gdf
 
 __all__ = [
     "calc_wgs84_pixel_area",
@@ -489,7 +490,7 @@ def _grid_linear(
 
 
 def grid_scattered_pts(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     vec_col: str,
     input_img: str,
@@ -509,7 +510,8 @@ def grid_scattered_pts(
     ``minimum``, ``maximum``, ``range``, ``count``, ``average_distance``, and
     ``average_distance_pts``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or an in-memory
+                     :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None`` for default layer).
     :param vec_col: Numeric attribute column name with values to grid.
     :param input_img: Reference raster image defining output extent, CRS, and
@@ -535,13 +537,17 @@ def grid_scattered_pts(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    ensure_file_exists(vec_file, label="Vector")
     ensure_file_exists(input_img)
 
     gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
+    vec_desc = (
+        "<GeoDataFrame>"
+        if isinstance(vec_file, geopandas.GeoDataFrame)
+        else vec_file
+    )
     if gdf.empty:
         raise rsgispy.RSGISPyException(
-            f"Vector layer '{vec_lyr}' in '{vec_file}' contains no features."
+            f"Vector layer '{vec_lyr}' in '{vec_desc}' contains no features."
         )
     if vec_col not in gdf.columns:
         raise rsgispy.RSGISPyException(

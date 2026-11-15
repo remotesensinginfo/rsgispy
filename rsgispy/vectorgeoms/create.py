@@ -40,6 +40,7 @@ from rsgispy.vectorprocess import (
     VectorInput,
     build_atts_dataframe,
     check_format_name,
+    finish_vec_output,
     get_file_vec_extension,
     is_geoparquet_file,
     is_geoparquet_format,
@@ -84,8 +85,8 @@ def _get_h3() -> Any:
 
 
 def polygonise_raster_to_vec_lyr(
-    out_vec_file: str,
-    out_vec_lyr: str,
+    out_vec_file: Optional[Union[str, os.PathLike]],
+    out_vec_lyr: Optional[str],
     out_format: str,
     input_img: str,
     img_band: int = 1,
@@ -96,13 +97,14 @@ def polygonise_raster_to_vec_lyr(
     pxl_val_fieldname: str = "PXLVAL",
     use_8_conn: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Polygonise connected pixel regions in ``input_img`` into a vector layer
     using ``rasterio.features.shapes``.
 
-    :param out_vec_file: Output vector file path.
-    :param out_vec_lyr: Output vector layer name.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
+    :param out_vec_lyr: Output vector layer name (or ``None``).
     :param out_format: Output vector format driver (e.g., ``'GPKG'``).
     :param input_img: Path to input raster file.
     :param img_band: 1-based band index in ``input_img`` to polygonise
@@ -123,6 +125,8 @@ def polygonise_raster_to_vec_lyr(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` if ``out_vec_file`` is ``None``,
+             otherwise ``None``.
 
     .. code:: python
 
@@ -134,7 +138,12 @@ def polygonise_raster_to_vec_lyr(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
-    if (not replace_file) and (not replace_lyr) and os.path.exists(out_vec_file):
+    if (
+        out_vec_file is not None
+        and (not replace_file)
+        and (not replace_lyr)
+        and os.path.exists(out_vec_file)
+    ):
         if is_geoparquet_format(out_format) or is_geoparquet_file(out_vec_file):
             raise rsgispy.RSGISPyException(
                 f"Output GeoParquet file '{out_vec_file}' already exists and "
@@ -182,7 +191,7 @@ def polygonise_raster_to_vec_lyr(
             crs=src_crs,
         )
 
-    write_vec_gdf(
+    return finish_vec_output(
         gdf,
         out_vec_file=out_vec_file,
         out_vec_lyr=out_vec_lyr,
@@ -196,14 +205,14 @@ def vectorise_pxls_to_pts(
     input_img: str,
     img_band: int,
     img_msk_val: Union[int, float],
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_epsg_code: Optional[int] = None,
     del_exist_vec: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Create a point vector layer at the centre of every pixel in ``input_img``
     whose value equals ``img_msk_val``.
@@ -211,7 +220,9 @@ def vectorise_pxls_to_pts(
     :param input_img: Input raster image path.
     :param img_band: 1-based band index to inspect.
     :param img_msk_val: Pixel value identifying pixels to vectorise as points.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Optional output vector file path. If ``None``
+                         (default), returns an in-memory
+                         :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_epsg_code: Optional EPSG code overriding the input image CRS.
@@ -224,6 +235,8 @@ def vectorise_pxls_to_pts(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` if ``out_vec_file`` is ``None``,
+             otherwise ``None``.
 
     .. code:: python
 
@@ -235,7 +248,7 @@ def vectorise_pxls_to_pts(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
-    prepare_out_vec_file(out_vec_file, del_exist_vec=del_exist_vec)
+    out_path = prepare_optional_out_vec(out_vec_file, del_exist_vec=del_exist_vec)
 
     with rasterio.open(input_img, "r") as src:
         validate_band_index(img_band, src.count, input_img)
@@ -270,19 +283,26 @@ def vectorise_pxls_to_pts(
         gdf = geopandas.GeoDataFrame(
             geometry=geopandas.points_from_xy(pts_x, pts_y), crs=out_crs
         )
+        if out_path is None:
+            return gdf
         write_vec_gdf(
             gdf,
-            out_vec_file=out_vec_file,
-            out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
+            out_vec_file=out_path,
+            out_vec_lyr=resolve_out_lyr_name(out_path, out_vec_lyr),
             out_format=out_format,
             overwrite=del_exist_vec,
             out_compress=out_compress,
         )
+    elif out_path is None:
+        return geopandas.GeoDataFrame(
+            geometry=geopandas.GeoSeries([], crs=out_crs), crs=out_crs
+        )
+    return None
 
 
 def extract_img_footprint(
     input_img: str,
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     no_data_val: Optional[float] = None,
@@ -290,13 +310,15 @@ def extract_img_footprint(
     reproj_to: Optional[CRSLike] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Extract the valid-data polygon footprint of ``input_img`` and annotate each
     polygon with a ``FileName`` column containing the raster basename.
 
     :param input_img: Input raster image path.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Optional output vector file path. If ``None``
+                         (default), returns an in-memory
+                         :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param no_data_val: Input no-data pixel value (read from image header if
@@ -312,6 +334,8 @@ def extract_img_footprint(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` if ``out_vec_file`` is ``None``,
+             otherwise ``None``.
 
     .. code:: python
 
@@ -323,7 +347,12 @@ def extract_img_footprint(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
-    if not rsgispy.tools.files.does_path_exists_or_creatable(out_vec_file):
+    if (
+        out_vec_file is not None
+        and not rsgispy.tools.files.does_path_exists_or_creatable(
+            os.fspath(out_vec_file)
+        )
+    ):
         raise rsgispy.RSGISPyException(
             f"Output file path is not creatable: {out_vec_file}"
         )
@@ -379,7 +408,7 @@ def extract_img_footprint(
     if reproj_to is not None and len(gdf) > 0:
         gdf = gdf.to_crs(parse_crs_input(reproj_to))
 
-    write_vec_gdf(
+    return finish_vec_output(
         gdf,
         out_vec_file=out_vec_file,
         out_vec_lyr=out_lyr,
@@ -391,8 +420,8 @@ def extract_img_footprint(
 
 def create_poly_vec_for_lst_bboxs(
     csv_file: str,
-    out_vec_file: str,
-    out_vec_lyr: str,
+    out_vec_file: Optional[Union[str, os.PathLike]],
+    out_vec_lyr: Optional[str],
     out_format: str,
     epsg_code: CRSLike,
     min_x_col: int = 0,
@@ -402,14 +431,15 @@ def create_poly_vec_for_lst_bboxs(
     ignore_rows: int = 0,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Create a polygon vector layer from bounding boxes stored one per row in a
     CSV file.
 
     :param csv_file: Input CSV file path.
-    :param out_vec_file: Output vector file path.
-    :param out_vec_lyr: Output vector layer name.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
+    :param out_vec_lyr: Output vector layer name (or ``None``).
     :param out_format: Output vector format driver.
     :param epsg_code: EPSG integer code or CRS defining coordinate projection.
     :param min_x_col: 0-based CSV column index for minimum X (Default = ``0``).
@@ -424,6 +454,8 @@ def create_poly_vec_for_lst_bboxs(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` if ``out_vec_file`` is ``None``,
+             otherwise ``None``.
 
     .. code:: python
 
@@ -435,7 +467,7 @@ def create_poly_vec_for_lst_bboxs(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     ensure_file_exists(csv_file, label="CSV file")
-    prepare_out_vec_file(out_vec_file, del_exist_vec=del_exist_vec)
+    out_path = prepare_optional_out_vec(out_vec_file, del_exist_vec=del_exist_vec)
 
     bboxes: List[Tuple[float, float, float, float]] = []
     with open(csv_file, "r", encoding="utf-8") as handle:
@@ -455,8 +487,8 @@ def create_poly_vec_for_lst_bboxs(
                 )
             )
 
-    create_poly_vec_bboxs(
-        vec_file=out_vec_file,
+    return create_poly_vec_bboxs(
+        vec_file=out_path,
         vec_lyr=out_vec_lyr,
         out_format=out_format,
         epsg_code=epsg_code,
@@ -467,8 +499,8 @@ def create_poly_vec_for_lst_bboxs(
 
 
 def create_poly_vec_bboxs(
-    vec_file: str,
-    vec_lyr: str,
+    vec_file: Optional[Union[str, os.PathLike]],
+    vec_lyr: Optional[str],
     out_format: str,
     epsg_code: CRSLike,
     bboxs: Sequence[Sequence[float]],
@@ -476,13 +508,14 @@ def create_poly_vec_bboxs(
     att_types: Optional[Dict[str, Sequence[Any]]] = None,
     overwrite: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Create a polygon vector layer from a sequence of ``(MinX, MaxX, MinY, MaxY)``
     bounding boxes with optional attributes.
 
-    :param vec_file: Output vector file path.
-    :param vec_lyr: Output vector layer name.
+    :param vec_file: Output vector file path, or ``None`` to return an
+                     in-memory :class:`geopandas.GeoDataFrame`.
+    :param vec_lyr: Output vector layer name (or ``None``).
     :param out_format: Output vector format driver.
     :param epsg_code: EPSG integer code or CRS defining coordinate projection.
     :param bboxs: Sequence of ``(MinX, MaxX, MinY, MaxY)`` bounding boxes.
@@ -496,6 +529,8 @@ def create_poly_vec_bboxs(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` if ``vec_file`` is ``None``,
+             otherwise ``None``.
 
     .. code:: python
 
@@ -520,7 +555,7 @@ def create_poly_vec_bboxs(
         box(float(b[0]), float(b[2]), float(b[1]), float(b[3])) for b in bboxs
     ]
     gdf = geopandas.GeoDataFrame(att_cols, geometry=geoms, crs=crs_obj)
-    write_vec_gdf(
+    return finish_vec_output(
         gdf,
         out_vec_file=vec_file,
         out_vec_lyr=vec_lyr,
@@ -535,27 +570,31 @@ def define_grid(
     x_size: float,
     y_size: float,
     in_epsg_code: int,
-    out_vec_file: str,
-    out_vec_lyr: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_epsg_code: Optional[int] = None,
     utm_grid: bool = False,
     utm_hemi: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[Union[geopandas.GeoDataFrame, Dict[str, geopandas.GeoDataFrame]]]:
     """
     Create a regular polygon grid covering ``bbox``, optionally reprojected to
     ``out_epsg_code`` or split across UTM zones when ``utm_grid=True``.
 
     When ``utm_grid=True`` spans multiple UTM zones, separate layers named
     ``{out_vec_lyr}_utm{zone}{n|s}`` are written into a multi-layer format such
-    as ``GPKG``.
+    as ``GPKG``, or returned as a dictionary ``{layer_name: GeoDataFrame}``
+    when ``out_vec_file`` is ``None``.
 
     :param bbox: Input bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :param x_size: Grid cell width in output CRS units.
     :param y_size: Grid cell height in output CRS units.
     :param in_epsg_code: EPSG integer code for ``bbox``.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Optional output vector file path. If ``None``
+                         (default), returns an in-memory
+                         :class:`geopandas.GeoDataFrame` (or a dictionary of
+                         ``GeoDataFrame`` objects for multi-UTM-zone grids).
     :param out_vec_lyr: Output vector layer name (or prefix for multi-UTM grids).
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_epsg_code: Optional output EPSG integer code.
@@ -569,6 +608,9 @@ def define_grid(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` (or ``dict`` mapping layer names to
+             ``GeoDataFrame`` objects for multi-UTM-zone grids) when
+             ``out_vec_file`` is ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -604,7 +646,7 @@ def define_grid(
             else in_bbox
         )
         grid_bboxes = get_bbox_grid(proj_bbox, x_size, y_size)
-        create_poly_vec_bboxs(
+        return create_poly_vec_bboxs(
             vec_file=out_vec_file,
             vec_lyr=out_vec_lyr,
             out_format=out_format,
@@ -613,7 +655,6 @@ def define_grid(
             overwrite=True,
             out_compress=out_compress,
         )
-        return
 
     wgs84_bbox = (
         reproj_bbox(in_bbox, int(in_epsg_code), 4326)
@@ -633,7 +674,7 @@ def define_grid(
         if utm_tl[2] == utm_tr[2] == utm_br[2] == utm_bl[2]:
             hemi = "S" if (utm_hemi and wb[3] < 0) else "N"
             utm_epsg = int(rsgispy.tools.utm.epsg_for_utm(utm_tl[2], hemi))
-            define_grid(
+            return define_grid(
                 bbox=in_bbox,
                 x_size=x_size,
                 y_size=y_size,
@@ -646,28 +687,31 @@ def define_grid(
                 utm_hemi=False,
                 out_compress=out_compress,
             )
-            return
 
     utm_zone_bboxs: List[Tuple[int, Tuple[float, float, float, float]]] = []
     for sub_wb in split_wgs84:
         utm_zone_bboxs.extend(rsgispy.tools.utm.split_wgs84_bbox_utm_zones(sub_wb))
 
     if (
-        is_geoparquet_format(out_format) or is_geoparquet_file(out_vec_file)
-    ) and (len(utm_zone_bboxs) > 1):
+        out_vec_file is not None
+        and (is_geoparquet_format(out_format) or is_geoparquet_file(out_vec_file))
+        and (len(utm_zone_bboxs) > 1)
+    ):
         raise rsgispy.RSGISPyException(
             "GeoParquet does not support multiple layers in a single file; "
             "multi-UTM-zone grids require a multi-layer format such as GPKG."
         )
 
+    lyr_prefix = out_vec_lyr or "grid"
+    out_gdfs: Dict[str, geopandas.GeoDataFrame] = {}
     first = True
     for zone_num, zone_bbox in utm_zone_bboxs:
         hemi = "S" if (utm_hemi and zone_bbox[3] < 0) else "N"
         utm_epsg = int(rsgispy.tools.utm.epsg_for_utm(zone_num, hemi))
         utm_bbox = reproj_bbox(zone_bbox, 4326, utm_epsg)
         grid_bboxes = get_bbox_grid(utm_bbox, x_size, y_size)
-        utm_lyr = f"{out_vec_lyr}_utm{zone_num}{hemi.lower()}"
-        create_poly_vec_bboxs(
+        utm_lyr = f"{lyr_prefix}_utm{zone_num}{hemi.lower()}"
+        res_gdf = create_poly_vec_bboxs(
             vec_file=out_vec_file,
             vec_lyr=utm_lyr,
             out_format=out_format,
@@ -676,12 +720,18 @@ def define_grid(
             overwrite=first,
             out_compress=out_compress,
         )
+        if out_vec_file is None and res_gdf is not None:
+            out_gdfs[utm_lyr] = res_gdf
         first = False
+
+    if out_vec_file is None:
+        return out_gdfs
+    return None
 
 
 def write_pts_to_vec(
-    out_vec_file: str,
-    out_vec_lyr: str,
+    out_vec_file: Optional[Union[str, os.PathLike]],
+    out_vec_lyr: Optional[str],
     out_format: str,
     epsg_code: CRSLike,
     pts_x: Sequence[float],
@@ -690,12 +740,13 @@ def write_pts_to_vec(
     att_types: Optional[Dict[str, Sequence[Any]]] = None,
     replace: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
-    Write X/Y point coordinates and optional attributes to a vector layer.
+    Create a point vector layer from X/Y coordinates and optional attributes.
 
-    :param out_vec_file: Output vector file path.
-    :param out_vec_lyr: Output vector layer name.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
+    :param out_vec_lyr: Output vector layer name (or ``None``).
     :param out_format: Output vector format driver.
     :param epsg_code: EPSG integer code or CRS defining coordinate projection.
     :param pts_x: Sequence of point X coordinates.
@@ -709,6 +760,8 @@ def write_pts_to_vec(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: :class:`geopandas.GeoDataFrame` if ``out_vec_file`` is ``None``,
+             otherwise ``None``.
 
     .. code:: python
 
@@ -740,7 +793,7 @@ def write_pts_to_vec(
         geometry=geopandas.points_from_xy(pts_x, pts_y),
         crs=crs_obj,
     )
-    write_vec_gdf(
+    return finish_vec_output(
         gdf,
         out_vec_file=out_vec_file,
         out_vec_lyr=out_vec_lyr,
@@ -841,8 +894,8 @@ def create_bboxs_for_pts(
 
 
 def create_wgs84_vec_grid(
-    out_vec_file: str,
-    out_vec_lyr: str,
+    out_vec_file: Optional[Union[str, os.PathLike]],
+    out_vec_lyr: Optional[str],
     out_format: str,
     grid_x: float,
     grid_y: float,
@@ -851,12 +904,13 @@ def create_wgs84_vec_grid(
     tile_names_col: str = "tile_names",
     tile_name_prefix: str = "",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Create a regular WGS84 (``EPSG:4326``) grid of polygon tiles named by
     their top-left degree coordinate.
 
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver.
     :param grid_x: Cell width in longitude degrees.
@@ -872,6 +926,8 @@ def create_wgs84_vec_grid(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Polygon grid :class:`geopandas.GeoDataFrame` when
+             ``out_vec_file`` is ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -927,7 +983,7 @@ def create_wgs84_vec_grid(
             by1 = min(90.0, c_max_y + ovl)
             bboxes.append((bx0, bx1, by0, by1))
 
-    create_poly_vec_bboxs(
+    return create_poly_vec_bboxs(
         vec_file=out_vec_file,
         vec_lyr=out_vec_lyr,
         out_format=out_format,
@@ -942,7 +998,7 @@ def create_wgs84_vec_grid(
 
 def create_vec_for_imgs(
     input_imgs: Sequence[str],
-    output_dir: str,
+    output_dir: Optional[str] = None,
     out_format: str = "GeoJSON",
     geometry_type: int = rsgispy.GEOM_PT,
     out_name_replace: Optional[Dict[str, str]] = None,
@@ -950,14 +1006,17 @@ def create_vec_for_imgs(
     del_exist_vec: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> List[str]:
+) -> Union[List[str], List[geopandas.GeoDataFrame]]:
     """
-    Create a single-feature geometry vector file (point at centre, diagonal
+    Create a single-feature geometry vector layer (point at centre, diagonal
     line from top-left to bottom-right, or bounding-box polygon) for each raster
     in ``input_imgs``.
 
     :param input_imgs: Sequence of input raster image file paths.
-    :param output_dir: Output directory path (created if absent).
+    :param output_dir: Output directory path (created if absent), or ``None``
+                       to return a list of in-memory
+                       :class:`geopandas.GeoDataFrame` objects instead of
+                       writing files.
     :param out_format: Output vector format driver (Default = ``'GeoJSON'``).
     :param geometry_type: One of ``rsgispy.GEOM_PT`` (default),
                           ``rsgispy.GEOM_LINE``, or ``rsgispy.GEOM_POLY``.
@@ -974,7 +1033,9 @@ def create_vec_for_imgs(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
-    :return: List of created output vector file paths.
+    :return: List of created output vector file paths when ``output_dir`` is
+             provided, or a list of :class:`geopandas.GeoDataFrame` objects
+             when ``output_dir`` is ``None``.
 
     .. code:: python
 
@@ -1000,19 +1061,14 @@ def create_vec_for_imgs(
         if out_file_ext is not None
         else get_file_vec_extension(fmt)
     )
-    os.makedirs(output_dir, exist_ok=True)
+    if output_dir is not None:
+        os.makedirs(output_dir, exist_ok=True)
 
     pbar_cls = rsgispy.get_tqdm()
     out_files: List[str] = []
+    out_gdfs: List[geopandas.GeoDataFrame] = []
     for img in pbar_cls(input_imgs, disable=not use_pbar):
         ensure_file_exists(img)
-        basename = rsgispy.tools.files.get_file_basename(img, check_valid=True)
-        if out_name_replace is not None:
-            for old_s, new_s in out_name_replace.items():
-                basename = basename.replace(old_s, new_s)
-
-        out_vec_file = os.path.join(output_dir, f"{basename}.{ext}")
-        prepare_out_vec_file(out_vec_file, del_exist_vec=del_exist_vec)
 
         with rasterio.open(img, "r") as src:
             img_crs = src.crs
@@ -1031,6 +1087,17 @@ def create_vec_for_imgs(
             geom = box(img_bbox[0], img_bbox[2], img_bbox[1], img_bbox[3])
 
         gdf = geopandas.GeoDataFrame(geometry=[geom], crs=img_crs)
+        if output_dir is None:
+            out_gdfs.append(gdf)
+            continue
+
+        basename = rsgispy.tools.files.get_file_basename(img, check_valid=True)
+        if out_name_replace is not None:
+            for old_s, new_s in out_name_replace.items():
+                basename = basename.replace(old_s, new_s)
+
+        out_vec_file = os.path.join(output_dir, f"{basename}.{ext}")
+        prepare_out_vec_file(out_vec_file, del_exist_vec=del_exist_vec)
         write_vec_gdf(
             gdf,
             out_vec_file=out_vec_file,
@@ -1041,6 +1108,8 @@ def create_vec_for_imgs(
         )
         out_files.append(out_vec_file)
 
+    if output_dir is None:
+        return out_gdfs
     return out_files
 
 
@@ -1062,11 +1131,11 @@ def create_hex_grid_bbox(
     bbox: Sequence[float],
     bbox_epsg: int,
     hex_scale: int,
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Create an H3 hexagon grid covering ``bbox`` and export it in ``bbox_epsg``.
 
@@ -1074,7 +1143,8 @@ def create_hex_grid_bbox(
     :param bbox_epsg: EPSG integer code for ``bbox`` and the output layer.
     :param hex_scale: H3 resolution level (integer ``0..15``; higher means
                       smaller hexagons).
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
@@ -1082,6 +1152,8 @@ def create_hex_grid_bbox(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Hexagon :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -1111,14 +1183,21 @@ def create_hex_grid_bbox(
 
     h3_gdf = _h3_ids_to_gdf(hex_ids, h3_mod)
     if h3_gdf is None:
-        return
+        if out_vec_file is None:
+            crs_obj = parse_crs_input(int(bbox_epsg))
+            return geopandas.GeoDataFrame(
+                {"hex_id": pandas.Series(dtype="object")},
+                geometry=geopandas.GeoSeries([], crs=crs_obj),
+                crs=crs_obj,
+            )
+        return None
     if int(bbox_epsg) != 4326:
         h3_gdf = h3_gdf.to_crs(epsg=int(bbox_epsg))
 
-    write_vec_gdf(
+    return finish_vec_output(
         h3_gdf,
         out_vec_file=out_vec_file,
-        out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
+        out_vec_lyr=out_vec_lyr,
         out_format=out_format,
         overwrite=True,
         out_compress=out_compress,
@@ -1236,18 +1315,14 @@ def create_hex_grid_polys(
     if reproj_poly and orig_crs is not None:
         hex_gdf = hex_gdf.to_crs(orig_crs)
 
-    if out_vec_file is None:
-        return hex_gdf
-
-    write_vec_gdf(
+    return finish_vec_output(
         hex_gdf,
         out_vec_file=out_vec_file,
-        out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
+        out_vec_lyr=out_vec_lyr,
         out_format=out_format,
         overwrite=True,
         out_compress=out_compress,
     )
-    return None
 
 
 def create_random_pts_in_radius(
@@ -1256,13 +1331,13 @@ def create_random_pts_in_radius(
     radius: float,
     n_pts: int,
     epsg_code: CRSLike,
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     rnd_seed: Optional[int] = None,
     n_pts_multi_bbox: float = 3.0,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Generate ``n_pts`` uniformly distributed random points inside a circle of
     ``radius`` around ``(centre_x, centre_y)``, recording ``x_coords``,
@@ -1273,7 +1348,8 @@ def create_random_pts_in_radius(
     :param radius: Circle radius in CRS units.
     :param n_pts: Number of points to generate.
     :param epsg_code: EPSG integer code or CRS defining output projection.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param rnd_seed: Optional random seed for reproducibility.
@@ -1284,6 +1360,8 @@ def create_random_pts_in_radius(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Points :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -1329,10 +1407,10 @@ def create_random_pts_in_radius(
         geometry=geopandas.points_from_xy(x_sel, y_sel),
         crs=parse_crs_input(epsg_code),
     )
-    write_vec_gdf(
+    return finish_vec_output(
         data_gdf,
         out_vec_file=out_vec_file,
-        out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
+        out_vec_lyr=out_vec_lyr,
         out_format=out_format,
         overwrite=True,
         out_compress=out_compress,
@@ -1343,12 +1421,12 @@ def create_random_pts_in_bbox(
     bbox: Sequence[float],
     n_pts: int,
     epsg_code: CRSLike,
-    out_vec_file: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     rnd_seed: Optional[int] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> None:
+) -> Optional[geopandas.GeoDataFrame]:
     """
     Generate ``n_pts`` uniformly distributed random points within
     ``bbox`` ``(MinX, MaxX, MinY, MaxY)``.
@@ -1356,7 +1434,8 @@ def create_random_pts_in_bbox(
     :param bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :param n_pts: Number of random points to generate.
     :param epsg_code: EPSG integer code or CRS defining output projection.
-    :param out_vec_file: Output vector file path.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format driver (Default = ``'GPKG'``).
     :param rnd_seed: Optional random seed for reproducibility.
@@ -1365,6 +1444,8 @@ def create_random_pts_in_bbox(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :return: Points :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
 
     .. code:: python
 
@@ -1388,10 +1469,10 @@ def create_random_pts_in_bbox(
         geometry=geopandas.points_from_xy(x=x_coords, y=y_coords),
         crs=parse_crs_input(epsg_code),
     )
-    write_vec_gdf(
+    return finish_vec_output(
         data_gdf,
         out_vec_file=out_vec_file,
-        out_vec_lyr=resolve_out_lyr_name(out_vec_file, out_vec_lyr),
+        out_vec_lyr=out_vec_lyr,
         out_format=out_format,
         overwrite=True,
         out_compress=out_compress,

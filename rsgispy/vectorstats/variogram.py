@@ -10,6 +10,7 @@ import numpy
 import rsgispy
 import rsgispy.tools.stats
 from rsgispy.vectorprocess import (
+    VectorInput,
     get_gdf_geom_type,
     read_vec_gdf,
     validate_columns_exist,
@@ -21,7 +22,7 @@ __all__ = [
 
 
 def calc_empirical_semivariogram(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     vals_col: str,
     pts_sel_col: Optional[str] = None,
@@ -39,8 +40,9 @@ def calc_empirical_semivariogram(
     The vector layer must use point geometries in a projected coordinate system
     with valid X and Y coordinates.
 
-    :param vec_file: Input vector file path.
-    :param vec_lyr: Input vector layer name (or ``None`` for single-layer files).
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
+    :param vec_lyr: Input vector layer name (or ``None`` for single-layer
+                    files/GeoDataFrames).
     :param vals_col: Column name containing the attribute values.
     :param pts_sel_col: Optional column name used to filter points prior to
                         semi-variance calculation.
@@ -69,7 +71,7 @@ def calc_empirical_semivariogram(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    data_gdf = read_vec_gdf(vec_file, vec_lyr)
+    data_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     if data_gdf.empty:
         raise rsgispy.RSGISPyException("Input vector layer contains no features.")
 

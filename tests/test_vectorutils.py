@@ -479,3 +479,134 @@ def test_vectorutils_selection(tmp_path):
         "VecLayersInfoObj",
     ):
         assert not hasattr(rsgispy.vectorutils, reexport_name)
+
+
+def test_vectorutils_gdf_in_memory():
+    """Test GeoDataFrame inputs and out_vec_file=None returns across vectorutils."""
+    pts_gdf = gpd.GeoDataFrame(
+        {
+            "id": list(range(20)),
+            "cls": ["A" if i % 2 == 0 else "B" for i in range(20)],
+            "note": [None if i == 0 else f"n_{i}" for i in range(20)],
+        },
+        geometry=[
+            Point(500005.0 + (i % 5) * 20.0, 5600005.0 + (i // 5) * 20.0)
+            for i in range(20)
+        ],
+        crs="EPSG:32630",
+    )
+    orig_cols = list(pts_gdf.columns)
+
+    # vectorutils.metadata
+    assert vu_meta.get_vec_feat_count(pts_gdf) == 20
+    assert vu_meta.get_epsg_proj_from_vec(pts_gdf) == 32630
+    assert "32630" in vu_meta.get_wkt_proj_from_vec(pts_gdf)
+    assert vu_meta.get_vec_lyrs_lst(pts_gdf) == ["layer"]
+    assert "cls" in vu_meta.get_vec_lyr_cols(pts_gdf)
+    assert vu_meta.get_vec_lyr_geom_type(pts_gdf) == rsgispy.GEOM_PT
+    bbox = vu_meta.get_vec_lyr_bbox(pts_gdf)
+    assert bbox[0] == pytest.approx(500005.0)
+    wgs_bbox = vu_meta.get_vec_lyr_bbox_in_proj(pts_gdf, 4326)
+    assert wgs_bbox[0] < 0.0 and wgs_bbox[2] > 50.0
+
+    # vectorutils.io
+    reproj_wgs = vu_io.reproj_vec_lyr(pts_gdf, None, epsg_code=4326)
+    assert isinstance(reproj_wgs, gpd.GeoDataFrame)
+    assert reproj_wgs.crs.to_epsg() == 4326
+
+    utm_back = vu_io.reproj_wgs84_vec_to_utm(reproj_wgs, None, out_vec_file=None)
+    assert isinstance(utm_back, gpd.GeoDataFrame)
+    assert utm_back.crs.to_epsg() == 32630
+
+    trans_gdf = vu_io.vector_translate(pts_gdf, None, dst_srs=4326)
+    assert trans_gdf.crs.to_epsg() == 4326
+
+    redef_gdf = vu_io.redefine_vec_lyr_proj(pts_gdf, None, 32630)
+    assert redef_gdf.crs.to_epsg() == 32630
+
+    merged_gdf = vu_io.merge_vec_files(
+        [pts_gdf.iloc[:5], pts_gdf.iloc[5:10]], use_pbar=False
+    )
+    assert len(merged_gdf) == 10
+
+    lyr_merged = vu_io.merge_vec_lyrs(
+        [{"file": pts_gdf.iloc[:3], "layer": None}, {"file": pts_gdf.iloc[3:6], "layer": None}],
+        use_pbar=False,
+    )
+    assert len(lyr_merged) == 6
+
+    chunks = vu_io.split_vec_lyr(pts_gdf, None, n_feats=6, use_pbar=False)
+    assert isinstance(chunks, list)
+    assert [len(c) for c in chunks] == [6, 6, 6, 2]
+
+    feat_dict = vu_io.split_feats_to_mlyrs(pts_gdf.iloc[:3], None, use_pbar=False)
+    assert len(feat_dict) == 3
+
+    cls_dict = vu_io.split_by_attribute(pts_gdf, None, "cls", use_pbar=False)
+    assert set(cls_dict.keys()) == {"A", "B"}
+    assert len(cls_dict["A"]) == 10
+
+    # vectorutils.selection + multi-step in-memory pipeline
+    roi_gdf = gpd.GeoDataFrame(
+        {"roi": [1]},
+        geometry=[box(500000.0, 5600000.0, 500050.0, 5600050.0)],
+        crs="EPSG:32630",
+    )
+    sel_gdf = vu_sel.spatial_select(pts_gdf, None, roi_gdf, None)
+    assert isinstance(sel_gdf, gpd.GeoDataFrame)
+    assert 0 < len(sel_gdf) < 20
+
+    sel_bbox_gdf = vu_sel.spatial_select_bbox(
+        pts_gdf, None, (500000.0, 500050.0, 5600000.0, 5600050.0)
+    )
+    assert isinstance(sel_bbox_gdf, gpd.GeoDataFrame)
+    assert len(sel_bbox_gdf) == len(sel_gdf)
+
+    sub_att = vu_sel.subset_by_attribute(pts_gdf, None, "cls", ["A"])
+    assert len(sub_att) == 10
+
+    sub_str = vu_sel.select_feats_str_search(pts_gdf, None, "cls", "B")
+    assert len(sub_str) == 10
+
+    dropped = vu_sel.drop_rows_by_attribute(pts_gdf, None, "cls", ["B"])
+    assert len(dropped) == 10
+
+    dropped_multi = vu_sel.drop_rows_by_multi_attributes(pts_gdf, None, {"cls": "B"})
+    assert len(dropped_multi) == 10
+
+    dedup = vu_sel.rm_attrib_duplicates(pts_gdf, None, "cls")
+    assert len(dedup) == 2
+
+    rem_gdf, smp_gdf = vu_sel.split_vec_lyr_random_subset(
+        pts_gdf, None, None, None, None, None, 5, rnd_seed=42
+    )
+    assert len(rem_gdf) == 15 and len(smp_gdf) == 5
+
+    rsub_gdf = vu_sel.vec_lyr_random_subset(pts_gdf, None, n_smpl=6, rnd_seed=42)
+    assert len(rsub_gdf) == 6
+
+    tr_gdf, te_gdf = vu_sel.create_train_test_smpls(
+        pts_gdf, None, prop_test=0.25, rnd_seed=42
+    )
+    assert len(tr_gdf) == 15 and len(te_gdf) == 5
+    assert set(tr_gdf["id"]).isdisjoint(set(te_gdf["id"]))
+
+    tr2_gdf, te2_gdf, va2_gdf = vu_sel.create_train_test_valid_smpls(
+        pts_gdf, None, prop_test=0.2, prop_valid=0.2, rnd_seed=42
+    )
+    assert len(tr2_gdf) == 12 and len(te2_gdf) == 4 and len(va2_gdf) == 4
+
+    boot_gdfs = vu_sel.create_n_random_subsets(
+        pts_gdf, None, n_subs=3, n_smpl=4, rnd_seed=42, use_pbar=False
+    )
+    assert len(boot_gdfs) == 3 and all(len(b) == 4 for b in boot_gdfs)
+
+    matched_gdf = vu_sel.match_closest_vec_pts(
+        pts_gdf.iloc[:2], None, pts_gdf, None, cp_match_atts=True, use_pbar=False
+    )
+    assert isinstance(matched_gdf, gpd.GeoDataFrame)
+    assert matched_gdf["dist_match"].tolist() == pytest.approx([0.0, 0.0])
+
+    # Input GeoDataFrame must remain unmodified
+    assert len(pts_gdf) == 20
+    assert list(pts_gdf.columns) == orig_cols

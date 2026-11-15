@@ -503,3 +503,53 @@ def test_vectorattrs_gdf_in_memory(tmp_path):
     )
     assert len(sjoin_gdf) == 2
 
+    # vectorstats.metrics & vectorstats.variogram in-memory
+    area_gdf = vs_metrics.calc_vec_area(polys_gdf, None, "area_m2")
+    assert isinstance(area_gdf, gpd.GeoDataFrame)
+    assert area_gdf["area_m2"].tolist() == [100.0, 200.0, 200.0]
+    assert list(polys_gdf.columns) == orig_cols
+
+    lines_gdf = gpd.GeoDataFrame(
+        {"lid": [1]},
+        geometry=[LineString([(0.0, 0.0), (0.0, 10.0), (10.0, 10.0)])],
+        crs="EPSG:32630",
+    )
+    len_gdf = vs_metrics.calc_vec_length(lines_gdf, None, "len_m")
+    assert len_gdf["len_m"].tolist() == [20.0]
+
+    dist_ang_gdf = vs_metrics.calc_vec_pt_dist_angle(
+        pts_gdf, None, x_centre=5.0, y_centre=5.0
+    )
+    assert dist_ang_gdf["dist"].iloc[0] == pytest.approx(0.0)
+    assert dist_ang_gdf["dist"].iloc[1] == pytest.approx(20.0)
+
+    near_gdf = vs_metrics.calc_near_dist_to_feats(
+        pts_gdf, None, pts_gdf, None
+    )
+    assert all(near_gdf["dist"] > 0.0)
+
+    cnt_gdf = vs_metrics.count_pt_intersects(polys_gdf, None, pts_gdf, None)
+    assert cnt_gdf["n_points"].tolist() == [1, 1, 0]
+
+    if vs_metrics.HAVE_SCIPY:
+        rad_gdf = vs_metrics.calc_npts_in_radius(pts_gdf, None, 25.0)
+        assert rad_gdf["n_pts_r"].tolist() == [1, 1]
+
+    vario_pts_gdf = gpd.GeoDataFrame(
+        {"z": [1.0, 2.0, 4.0, 8.0]},
+        geometry=[Point(0, 0), Point(10, 0), Point(20, 0), Point(30, 0)],
+        crs="EPSG:32630",
+    )
+    mock_skgstat = types.ModuleType("skgstat")
+    mock_vario = MagicMock()
+    mock_vario.get_empirical.return_value = (
+        np.array([10.0, 20.0]),
+        np.array([0.4, 1.1]),
+    )
+    mock_vario.lag_classes.return_value = [np.array([1.0]), np.array([2.0])]
+    mock_skgstat.Variogram = MagicMock(return_value=mock_vario)
+    with patch.dict(sys.modules, {"skgstat": mock_skgstat}):
+        vario_df = vs_vario.calc_empirical_semivariogram(
+            vario_pts_gdf, None, "z", n_lags=2
+        )
+    assert len(vario_df) == 2

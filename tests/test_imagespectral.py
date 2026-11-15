@@ -264,6 +264,15 @@ def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
     assert out_csv.exists()
     assert em.are_endmembers_equal(em_df, em.read_endmembers_df(out_csv))
 
+    em_df_gdf = em.extract_avg_endmembers(
+        str(img_path),
+        gdf,
+        None,
+        class_col="landcover",
+        pxl_in_poly_method=zs.METHOD_POLYCONTAINSPIXELCENTER,
+    )
+    assert em.are_endmembers_equal(em_df, em_df_gdf)
+
 
 def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
     """Verify exhaustive constrained unmixing, rescaling, prediction, error, and PPI."""

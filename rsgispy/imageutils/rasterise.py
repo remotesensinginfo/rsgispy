@@ -6,6 +6,7 @@ Rasterisation and distance-zone raster generation utilities for
 
 from contextlib import ExitStack
 import math
+import os
 from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -35,6 +36,7 @@ from rsgispy.imageutils.stats import pop_img_stats, pop_thmt_img_stats
 from rsgispy.tools.geometry import find_extent_on_whole_num_grid
 import rsgispy.vectorattrs.columns
 from rsgispy.vectorprocess import (
+    VectorInput,
     read_vec_gdf,
     resolve_vec_layer,
     validate_columns_exist,
@@ -119,7 +121,7 @@ def _create_blank_grid_image(
 
 
 def _prepare_rasterise_target(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: str,
     input_img: Optional[str],
     output_img: str,
@@ -225,7 +227,7 @@ def _prepare_rasterise_target(
 
 
 def rasterise_vec_lyr(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     input_img: Optional[str],
     output_img: str,
@@ -242,7 +244,8 @@ def rasterise_vec_lyr(
     """
     Rasterise a vector layer onto an output raster grid using ``rasterio``.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or an in-memory
+                     :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name. If ``None``, reads the first layer.
     :param input_img: Reference input raster defining pixel grid and resolution.
                       May be ``None`` if ``output_img`` already exists and
@@ -299,7 +302,7 @@ def rasterise_vec_lyr(
         use_pbar=use_pbar,
     )
 
-    gdf = read_vec_gdf(vec_file, vec_lyr=lyr_name)
+    gdf = read_vec_gdf(vec_file, vec_lyr=lyr_name, copy=False)
     gdf = gdf[gdf.geometry.notna() & (~gdf.geometry.is_empty)].copy()
 
     if len(gdf) > 0:
@@ -401,11 +404,11 @@ def rasterise_vec_lyr(
 
 
 def create_vec_range_lut_score_img(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     vec_col: str,
-    tmp_vec_file: str,
-    tmp_vec_lyr: str,
+    tmp_vec_file: Optional[Union[str, os.PathLike]],
+    tmp_vec_lyr: Optional[str],
     tmp_vec_col: str,
     input_img: str,
     output_img: str,
@@ -418,11 +421,14 @@ def create_vec_range_lut_score_img(
     Recode a numeric vector attribute using a half-open range look-up table
     ``{code: (low, high)}`` and rasterise the result onto ``input_img``'s grid.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or an in-memory
+                     :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
     :param vec_col: Numeric attribute column name to recode.
-    :param tmp_vec_file: Intermediate vector file path for recoded column.
-    :param tmp_vec_lyr: Intermediate vector layer name.
+    :param tmp_vec_file: Intermediate vector file path for the recoded column,
+                         or ``None`` to keep the intermediate layer in memory.
+    :param tmp_vec_lyr: Intermediate vector layer name (or ``None`` when
+                        ``tmp_vec_file`` is ``None``).
     :param tmp_vec_col: Intermediate numeric column name.
     :param input_img: Reference raster image defining output grid and CRS.
     :param output_img: Output raster image file path.
@@ -450,7 +456,7 @@ def create_vec_range_lut_score_img(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    rsgispy.vectorattrs.columns.add_numeric_col_range_lut(
+    scored_gdf = rsgispy.vectorattrs.columns.add_numeric_col_range_lut(
         vec_file=vec_file,
         vec_lyr=vec_lyr,
         vec_col=vec_col,
@@ -460,8 +466,11 @@ def create_vec_range_lut_score_img(
         val_lut=scrs_lut,
         out_format=out_format,
     )
+    ras_input: VectorInput = (
+        scored_gdf if tmp_vec_file is None else tmp_vec_file  # type: ignore[assignment]
+    )
     rasterise_vec_lyr(
-        vec_file=tmp_vec_file,
+        vec_file=ras_input,
         vec_lyr=tmp_vec_lyr,
         input_img=input_img,
         output_img=output_img,
@@ -477,11 +486,11 @@ def create_vec_range_lut_score_img(
 
 
 def create_vec_lst_lut_score_img(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     vec_col: str,
-    tmp_vec_file: str,
-    tmp_vec_lyr: str,
+    tmp_vec_file: Optional[Union[str, os.PathLike]],
+    tmp_vec_lyr: Optional[str],
     tmp_vec_col: str,
     input_img: str,
     output_img: str,
@@ -494,11 +503,14 @@ def create_vec_lst_lut_score_img(
     Recode a categorical vector attribute using a list of ``(value, code)``
     look-up pairs and rasterise the result onto ``input_img``'s grid.
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or an in-memory
+                     :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
     :param vec_col: Attribute column name to match against ``scrs_lut``.
-    :param tmp_vec_file: Intermediate vector file path for recoded column.
-    :param tmp_vec_lyr: Intermediate vector layer name.
+    :param tmp_vec_file: Intermediate vector file path for the recoded column,
+                         or ``None`` to keep the intermediate layer in memory.
+    :param tmp_vec_lyr: Intermediate vector layer name (or ``None`` when
+                        ``tmp_vec_file`` is ``None``).
     :param tmp_vec_col: Intermediate numeric column name.
     :param input_img: Reference raster image defining output grid and CRS.
     :param output_img: Output raster image file path.
@@ -525,7 +537,7 @@ def create_vec_lst_lut_score_img(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    rsgispy.vectorattrs.columns.add_numeric_col_from_lst_lut(
+    scored_gdf = rsgispy.vectorattrs.columns.add_numeric_col_from_lst_lut(
         vec_file=vec_file,
         vec_lyr=vec_lyr,
         ref_col=vec_col,
@@ -535,8 +547,11 @@ def create_vec_lst_lut_score_img(
         out_vec_lyr=tmp_vec_lyr,
         out_format=out_format,
     )
+    ras_input: VectorInput = (
+        scored_gdf if tmp_vec_file is None else tmp_vec_file  # type: ignore[assignment]
+    )
     rasterise_vec_lyr(
-        vec_file=tmp_vec_file,
+        vec_file=ras_input,
         vec_lyr=tmp_vec_lyr,
         input_img=input_img,
         output_img=output_img,
@@ -552,7 +567,7 @@ def create_vec_lst_lut_score_img(
 
 
 def create_dist_zones_to_vec_lyr(
-    vec_file: str,
+    vec_file: VectorInput,
     vec_lyr: Optional[str],
     input_img: str,
     tmp_vec_img: str,
@@ -573,7 +588,8 @@ def create_dist_zones_to_vec_lyr(
     ``low <= dist < high``. Use ``math.nan`` (or ``None``) for open lower or
     upper bounds (e.g., ``(1, (math.nan, 50.0))`` or ``(3, (200.0, math.nan))``).
 
-    :param vec_file: Input vector file path.
+    :param vec_file: Input vector file path or an in-memory
+                     :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
     :param input_img: Reference raster defining the grid and CRS.
     :param tmp_vec_img: Intermediate binary rasterised vector image path.
