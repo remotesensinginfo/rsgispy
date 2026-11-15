@@ -6,7 +6,8 @@ transforms, region filling, percentiles, and windowed point sampling using
 
 * :mod:`rsgispy.imagecalc.calc_pt_win_smpls` — windowed point sampling calculators
 * :mod:`rsgispy.imagecalc.calcindices` — multi-band spectral index calculations
-* :mod:`rsgispy.imagecalc.comparison` — difference, equality, correlation, MI, and EMD
+* :mod:`rsgispy.imagecalc.comparison` — difference, equality, correlation, MI,
+  EMD, and similarity metrics
 * :mod:`rsgispy.imagecalc.distance` — proximity distance transforms and buffering
 * :mod:`rsgispy.imagecalc.encoding` — integer recoding and one-hot category encoding
 * :mod:`rsgispy.imagecalc.fill` — KNN spatial region filling

@@ -572,3 +572,74 @@ def test_validate_odd_window_size_and_halo_runner(tmp_path):
     )
     with rasterio.open(out_cube) as dst_c:
         np.testing.assert_allclose(dst_c.read(), data + 1.0)
+
+
+def test_overlap_and_band_pair_helpers(tmp_path):
+    """Test resolve_band_pair, grids_compatible, compute_overlap_bbox, extract_overlap_arrays."""
+    a_p = tmp_path / "a.tif"
+    b_p = tmp_path / "b.tif"
+    c_p = tmp_path / "c_nonoverlap.tif"
+    d_p = tmp_path / "d_coarse.tif"
+
+    a_data = np.arange(1, 51, dtype=np.float32).reshape(2, 5, 5)
+    b_data = np.arange(101, 151, dtype=np.float32).reshape(2, 5, 5)
+    _create_test_raster(
+        a_p, a_data, origin=(0.0, 50.0), pixel_size=(10.0, 10.0), crs="EPSG:32630"
+    )
+    _create_test_raster(
+        b_p, b_data, origin=(20.0, 30.0), pixel_size=(10.0, 10.0), crs="EPSG:32630"
+    )
+    _create_test_raster(
+        c_p, a_data, origin=(500.0, 50.0), pixel_size=(10.0, 10.0), crs="EPSG:32630"
+    )
+    _create_test_raster(
+        d_p,
+        np.ones((1, 4, 4), dtype=np.float32),
+        origin=(0.0, 50.0),
+        pixel_size=(12.5, 12.5),
+        crs="EPSG:32630",
+    )
+
+    with ExitStack() as stack:
+        sa = stack.enter_context(rasterio.open(a_p))
+        sb = stack.enter_context(rasterio.open(b_p))
+        sc = stack.enter_context(rasterio.open(c_p))
+        sd = stack.enter_context(rasterio.open(d_p))
+
+        assert rsgispy.imageprocess.resolve_band_pair(
+            sa, sb, None, None, str(a_p), str(b_p)
+        ) == ([1, 2], [1, 2])
+        assert rsgispy.imageprocess.resolve_band_pair(
+            sa, sb, [2], [1], str(a_p), str(b_p)
+        ) == ([2], [1])
+        with pytest.raises(rsgispy.RSGISPyException):
+            rsgispy.imageprocess.resolve_band_pair(
+                sa, sb, [1, 2], [1], str(a_p), str(b_p)
+            )
+        with pytest.raises(rsgispy.RSGISPyException):
+            rsgispy.imageprocess.resolve_band_pair(
+                sa, sb, [5], [1], str(a_p), str(b_p)
+            )
+
+        assert rsgispy.imageprocess.grids_compatible(sa, sb) is True
+        assert rsgispy.imageprocess.grids_compatible(sa, sd) is False
+
+        bbox = rsgispy.imageprocess.compute_overlap_bbox(sa, sb, str(a_p), str(b_p))
+        assert bbox == pytest.approx((20.0, 0.0, 50.0, 30.0))
+        with pytest.raises(rsgispy.RSGISPyException):
+            rsgispy.imageprocess.compute_overlap_bbox(sa, sc, str(a_p), str(c_p))
+
+        ov_same = rsgispy.imageprocess.extract_overlap_arrays(
+            sa, sb, [1], [1], str(a_p), str(b_p)
+        )
+        assert ov_same["same_grid"] is True
+        assert (ov_same["height"], ov_same["width"]) == (3, 3)
+        np.testing.assert_allclose(ov_same["ref_arr"][0], a_data[0, 2:5, 2:5])
+        np.testing.assert_allclose(ov_same["flt_arr"][0], b_data[0, 0:3, 0:3])
+
+        ov_reproj = rsgispy.imageprocess.extract_overlap_arrays(
+            sa, sd, [1], [1], str(a_p), str(d_p)
+        )
+        assert ov_reproj["same_grid"] is False
+        assert ov_reproj["ref_arr"].shape == (1, 5, 5)
+        assert np.all(ov_reproj["flt_valid"])

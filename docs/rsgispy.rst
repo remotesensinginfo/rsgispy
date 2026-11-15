@@ -3,8 +3,8 @@ rsgispy Base Module
 
 The top-level :mod:`rsgispy` module defines package constants (data types,
 interpolation methods, image stretches, pan-sharpening resolution modes, vector
-geometry types, rounding modes, summary statistic types, and correlation methods),
-the base :class:`~rsgispy.RSGISPyException` class, and helper functions to convert
+geometry types, rounding modes, summary statistic types, correlation methods,
+and similarity metrics), the base :class:`~rsgispy.RSGISPyException` class, and helper functions to convert
 between RSGIS constants, ``rasterio``/GDAL strings, and ``numpy`` dtypes.
 
 Constants
@@ -97,6 +97,17 @@ Correlation Statistics Constants
 * ``rsgispy.STATS_CORR_SPEARMAN = 2``
 * ``rsgispy.STATS_CORR_KENDALL_TAU = 3``
 * ``rsgispy.STATS_CORR_POINT_BISERIAL = 4``
+
+Similarity Metric Constants
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* ``rsgispy.METRIC_EUCLIDEAN = 1``
+* ``rsgispy.METRIC_SQDIFF = 2``
+* ``rsgispy.METRIC_MANHATTAN = 3``
+* ``rsgispy.METRIC_CORRELATION = 4``
+* ``rsgispy.METRIC_MUTUAL_INFO = 5``
+* ``rsgispy.METRIC_NORM_MUTUAL_INFO = 6``
+* ``rsgispy.METRIC_PHASE_CORR = 7``
 
 Version
 ~~~~~~~

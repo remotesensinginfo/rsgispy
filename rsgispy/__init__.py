@@ -81,6 +81,16 @@ Correlation statistics methods:
     * ``STATS_CORR_SPEARMAN = 2``
     * ``STATS_CORR_KENDALL_TAU = 3``
     * ``STATS_CORR_POINT_BISERIAL = 4``
+
+Similarity metric types:
+
+    * ``METRIC_EUCLIDEAN = 1``
+    * ``METRIC_SQDIFF = 2``
+    * ``METRIC_MANHATTAN = 3``
+    * ``METRIC_CORRELATION = 4``
+    * ``METRIC_MUTUAL_INFO = 5``
+    * ``METRIC_NORM_MUTUAL_INFO = 6``
+    * ``METRIC_PHASE_CORR = 7``
 """
 
 from typing import Union
@@ -209,6 +219,21 @@ STATS_CORR_SPEARMAN = 2
 STATS_CORR_KENDALL_TAU = 3
 #: Point-biserial correlation coefficient (``4``).
 STATS_CORR_POINT_BISERIAL = 4
+
+#: Euclidean (RMSE) similarity/distance metric (``1``).
+METRIC_EUCLIDEAN = 1
+#: Mean squared difference similarity/distance metric (``2``).
+METRIC_SQDIFF = 2
+#: Manhattan (L1) similarity/distance metric (``3``).
+METRIC_MANHATTAN = 3
+#: Pearson linear correlation similarity metric (``4``).
+METRIC_CORRELATION = 4
+#: Mutual information similarity metric (``5``).
+METRIC_MUTUAL_INFO = 5
+#: Normalised mutual information similarity metric (``6``).
+METRIC_NORM_MUTUAL_INFO = 6
+#: FFT phase cross-correlation similarity metric (``7``).
+METRIC_PHASE_CORR = 7
 
 _RSGIS_TO_RASTERIO_INTERP = {
     INTERP_NEAREST_NEIGHBOUR: Resampling.nearest,

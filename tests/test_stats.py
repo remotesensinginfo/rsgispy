@@ -378,3 +378,58 @@ def test_percentile_helpers():
     )
     assert pct_scalar.shape == (1, 1, 2)
     assert pct_scalar[0, 0] == pytest.approx([2.0, 3.0])
+
+
+def test_similarity_metrics_and_phase_corr():
+    """Test resolve_metric_type, calc_similarity_metric, and phase_cross_correlation_2d."""
+    assert rstats.resolve_metric_type(rsgispy.METRIC_CORRELATION) == (
+        rsgispy.METRIC_CORRELATION,
+        "correlation",
+        True,
+    )
+    assert rstats.resolve_metric_type("manhattan") == (
+        rsgispy.METRIC_MANHATTAN,
+        "manhattan",
+        False,
+    )
+    assert rstats.resolve_metric_type("phase_correlation") == (
+        rsgispy.METRIC_PHASE_CORR,
+        "phase_correlation",
+        True,
+    )
+    for bad in (True, 999, "corelation", "manhatten", 1.5):
+        with pytest.raises(rsgispy.RSGISPyException):
+            rstats.resolve_metric_type(bad)  # type: ignore[arg-type]
+
+    a = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    b = np.array([3.0, 5.0, 7.0, 9.0, 11.0])
+    assert rstats.calc_similarity_metric(a, b, rsgispy.METRIC_CORRELATION) == pytest.approx(1.0)
+    assert rstats.calc_similarity_metric(a, a, rsgispy.METRIC_EUCLIDEAN) == pytest.approx(0.0)
+    assert rstats.calc_similarity_metric(a, a + 2.0, rsgispy.METRIC_SQDIFF) == pytest.approx(4.0)
+    assert rstats.calc_similarity_metric(a, a - 3.0, rsgispy.METRIC_MANHATTAN) == pytest.approx(3.0)
+    mi = rstats.calc_similarity_metric(a, b, rsgispy.METRIC_MUTUAL_INFO, hist_bins=5)
+    nmi = rstats.calc_similarity_metric(a, b, rsgispy.METRIC_NORM_MUTUAL_INFO, hist_bins=5)
+    assert mi > 0.0
+    assert 0.0 < nmi <= 1.0001
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        rstats.calc_similarity_metric(a, a[:3], rsgispy.METRIC_CORRELATION)
+    with pytest.raises(rsgispy.RSGISPyException):
+        rstats.calc_similarity_metric(a, b, rsgispy.METRIC_PHASE_CORR)
+
+    yy, xx = np.mgrid[0:64, 0:64].astype(np.float64)
+
+    def _sig(gx, gy):
+        return (
+            np.sin(gx / 2.2) * np.cos(gy / 2.5)
+            + 0.7 * np.cos((gx + 0.8 * gy) / 1.7)
+            + 0.5 * np.sin((gx - 1.3 * gy) / 1.4)
+        )
+
+    img1 = _sig(xx, yy)
+    img2 = _sig(xx - 2.0, yy + 1.0)
+    dy, dx, peak = rstats.phase_cross_correlation_2d(img1, img2, upsample_factor=4)
+    assert dx == pytest.approx(-2.0, abs=0.25)
+    assert dy == pytest.approx(1.0, abs=0.25)
+    assert peak > 0.1
+    assert rstats.calc_similarity_metric(img1, img1, rsgispy.METRIC_PHASE_CORR) > 0.5

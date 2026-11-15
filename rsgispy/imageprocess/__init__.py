@@ -22,14 +22,18 @@ from typing import (
 )
 
 import numpy as np
+import pyproj
 import rasterio
+from rasterio.enums import Resampling
 from rasterio.io import DatasetReader, DatasetWriter
 from rasterio.transform import Affine
+from rasterio.warp import reproject as rio_reproject
 from rasterio.windows import Window
 from rasterio.windows import from_bounds as window_from_bounds
 from rasterio.windows import transform as window_transform
 
 import rsgispy
+import rsgispy.tools.geometry
 
 DEFAULT_BLOCK_SIZE = 512  # Match COG
 ENV_VAR_BLOCK_SIZE = "RSGISPY_BLOCK_SIZE"
@@ -259,6 +263,277 @@ def bbox_from_dataset(src: DatasetReader) -> Tuple[float, float, float, float]:
         float(bounds.bottom),
         float(bounds.top),
     )
+
+
+def resolve_band_pair(
+    ref_src: DatasetReader,
+    flt_src: DatasetReader,
+    ref_bands: Optional[Sequence[int]],
+    flt_bands: Optional[Sequence[int]],
+    in_ref_img: str,
+    in_flt_img: str,
+) -> Tuple[List[int], List[int]]:
+    """
+    Validate and resolve paired 1-based band index lists for two raster
+    datasets.
+
+    :param ref_src: Opened reference :class:`rasterio.io.DatasetReader`.
+    :param flt_src: Opened comparison/floating :class:`rasterio.io.DatasetReader`.
+    :param ref_bands: 1-based band indices for ``ref_src`` (or ``None`` for
+                      all matching bands).
+    :param flt_bands: 1-based band indices for ``flt_src`` (or ``None`` for
+                      all matching bands).
+    :param in_ref_img: Reference image file path (used in error messages).
+    :param in_flt_img: Comparison image file path (used in error messages).
+    :return: Tuple ``(ref_band_list, flt_band_list)`` of validated 1-based
+             integer band indices.
+
+    .. code:: python
+
+        import rasterio
+        import rsgispy.imageprocess as ip
+
+        with rasterio.open("a.tif") as a_src, rasterio.open("b.tif") as b_src:
+            ba, bb = ip.resolve_band_pair(a_src, b_src, [1], [1], "a.tif", "b.tif")
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    if ref_bands is None:
+        r_list = list(range(1, ref_src.count + 1))
+    else:
+        r_list = [int(b) for b in ref_bands]
+    if flt_bands is None:
+        f_list = list(range(1, flt_src.count + 1))
+    else:
+        f_list = [int(b) for b in flt_bands]
+
+    if not r_list or not f_list:
+        raise rsgispy.RSGISPyException(
+            "At least one band must be selected for both reference and floating images."
+        )
+    if len(r_list) != len(f_list):
+        if ref_bands is None and flt_bands is None:
+            n_min = min(len(r_list), len(f_list))
+            r_list = r_list[:n_min]
+            f_list = f_list[:n_min]
+        else:
+            raise rsgispy.RSGISPyException(
+                f"Number of reference bands ({len(r_list)}) must match floating "
+                f"bands ({len(f_list)})."
+            )
+
+    for b in r_list:
+        validate_band_index(b, ref_src.count, in_ref_img)
+    for b in f_list:
+        validate_band_index(b, flt_src.count, in_flt_img)
+    return r_list, f_list
+
+
+def grids_compatible(
+    ref_src: DatasetReader,
+    flt_src: DatasetReader,
+) -> bool:
+    """
+    Return ``True`` if two datasets share the same CRS, non-rotated axes, and
+    matching pixel size.
+
+    :param ref_src: First opened :class:`rasterio.io.DatasetReader`.
+    :param flt_src: Second opened :class:`rasterio.io.DatasetReader`.
+    :return: ``True`` if grids have compatible CRS and pixel spacing.
+
+    .. code:: python
+
+        import rasterio
+        import rsgispy.imageprocess as ip
+
+        with rasterio.open("a.tif") as a_src, rasterio.open("b.tif") as b_src:
+            compat = ip.grids_compatible(a_src, b_src)
+    """
+    if ref_src.crs is not None and flt_src.crs is not None:
+        if pyproj.CRS.from_user_input(ref_src.crs) != pyproj.CRS.from_user_input(
+            flt_src.crs
+        ):
+            return False
+    elif (ref_src.crs is None) != (flt_src.crs is None):
+        return False
+
+    t_r = ref_src.transform
+    t_f = flt_src.transform
+    if abs(t_r.b) > 1e-9 or abs(t_r.d) > 1e-9 or abs(t_f.b) > 1e-9 or abs(t_f.d) > 1e-9:
+        return False
+    return bool(
+        np.isclose(t_r.a, t_f.a, rtol=1e-5, atol=1e-9)
+        and np.isclose(t_r.e, t_f.e, rtol=1e-5, atol=1e-9)
+    )
+
+
+def compute_overlap_bbox(
+    ref_src: DatasetReader,
+    flt_src: DatasetReader,
+    in_ref_img: str,
+    in_flt_img: str,
+) -> Tuple[float, float, float, float]:
+    """
+    Compute the intersecting bounding box ``(xmin, ymin, xmax, ymax)`` of two
+    datasets in ``ref_src`` CRS coordinates.
+
+    :param ref_src: Reference :class:`rasterio.io.DatasetReader`.
+    :param flt_src: Second :class:`rasterio.io.DatasetReader`.
+    :param in_ref_img: Reference image file path (used in error messages).
+    :param in_flt_img: Second image file path (used in error messages).
+    :return: Overlap bounding box ``(xmin, ymin, xmax, ymax)``.
+
+    .. code:: python
+
+        import rasterio
+        import rsgispy.imageprocess as ip
+
+        with rasterio.open("a.tif") as a_src, rasterio.open("b.tif") as b_src:
+            ov = ip.compute_overlap_bbox(a_src, b_src, "a.tif", "b.tif")
+    """
+    ref_bbox = bbox_from_dataset(ref_src)
+    flt_bbox = bbox_from_dataset(flt_src)
+
+    if ref_src.crs is not None and flt_src.crs is not None:
+        ref_crs = pyproj.CRS.from_user_input(ref_src.crs)
+        flt_crs = pyproj.CRS.from_user_input(flt_src.crs)
+        if ref_crs != flt_crs:
+            flt_bbox = rsgispy.tools.geometry.reproj_bbox(
+                flt_bbox, flt_crs, ref_crs
+            )
+
+    xmin = max(ref_bbox[0], flt_bbox[0])
+    xmax = min(ref_bbox[1], flt_bbox[1])
+    ymin = max(ref_bbox[2], flt_bbox[2])
+    ymax = min(ref_bbox[3], flt_bbox[3])
+    if xmin >= xmax or ymin >= ymax:
+        raise rsgispy.RSGISPyException(
+            f"Reference '{in_ref_img}' and floating '{in_flt_img}' do not overlap."
+        )
+    return (xmin, ymin, xmax, ymax)
+
+
+def extract_overlap_arrays(
+    ref_src: DatasetReader,
+    flt_src: DatasetReader,
+    ref_bands: Sequence[int],
+    flt_bands: Sequence[int],
+    in_ref_img: str,
+    in_flt_img: str,
+    ref_no_data: Optional[float] = None,
+    flt_no_data: Optional[float] = None,
+) -> Dict[str, Any]:
+    """
+    Read aligned overlapping ``float64`` image arrays ``(C, H, W)`` for
+    ``ref_src`` and ``flt_src`` along with valid-pixel masks and geotransform
+    metadata.
+
+    When ``ref_src`` and ``flt_src`` share a compatible CRS and pixel spacing,
+    both arrays are read directly from aligned pixel windows without resampling;
+    otherwise ``flt_src`` is reprojected on the fly onto the overlapping
+    reference grid.
+
+    :param ref_src: Opened reference :class:`rasterio.io.DatasetReader`.
+    :param flt_src: Opened second :class:`rasterio.io.DatasetReader`.
+    :param ref_bands: Sequence of 1-based band indices for ``ref_src``.
+    :param flt_bands: Sequence of 1-based band indices for ``flt_src``.
+    :param in_ref_img: Reference image file path (used in error messages).
+    :param in_flt_img: Second image file path (used in error messages).
+    :param ref_no_data: Optional nodata override for ``ref_src``.
+    :param flt_no_data: Optional nodata override for ``flt_src``.
+    :return: Dictionary containing ``ref_arr``, ``flt_arr``, ``ref_valid``,
+             ``flt_valid``, ``ov_transform``, ``flt_win_transform``,
+             ``same_grid``, ``height``, and ``width``.
+
+    .. code:: python
+
+        import rasterio
+        import rsgispy.imageprocess as ip
+
+        with rasterio.open("a.tif") as a_src, rasterio.open("b.tif") as b_src:
+            ov = ip.extract_overlap_arrays(
+                a_src, b_src, [1], [1], "a.tif", "b.tif"
+            )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    ov_bbox = compute_overlap_bbox(ref_src, flt_src, in_ref_img, in_flt_img)
+
+    ref_win = window_from_bounds(*ov_bbox, transform=ref_src.transform)
+    ref_win = ref_win.round_offsets().round_lengths()
+    full_ref_win = Window(0, 0, ref_src.width, ref_src.height)
+    try:
+        ref_win = ref_win.intersection(full_ref_win)
+    except rasterio.errors.WindowError as err:
+        raise rsgispy.RSGISPyException(
+            f"Overlapping region between '{in_ref_img}' and '{in_flt_img}' is empty."
+        ) from err
+    if ref_win.width <= 0 or ref_win.height <= 0:
+        raise rsgispy.RSGISPyException(
+            f"Overlapping region between '{in_ref_img}' and '{in_flt_img}' is empty."
+        )
+    ov_transform = window_transform(ref_win, ref_src.transform)
+    out_h = int(ref_win.height)
+    out_w = int(ref_win.width)
+    ref_arr = ref_src.read(list(ref_bands), window=ref_win).astype(np.float64)
+
+    if grids_compatible(ref_src, flt_src):
+        f_col_f, f_row_f = ~flt_src.transform @ (ov_transform.c, ov_transform.f)
+        f_col = int(round(f_col_f))
+        f_row = int(round(f_row_f))
+        r0 = max(0, -f_row)
+        c0 = max(0, -f_col)
+        r1 = min(out_h, flt_src.height - f_row)
+        c1 = min(out_w, flt_src.width - f_col)
+        if r1 <= r0 or c1 <= c0:
+            raise rsgispy.RSGISPyException(
+                f"Overlapping pixel grid between '{in_ref_img}' and '{in_flt_img}' is empty."
+            )
+        ref_arr = ref_arr[:, r0:r1, c0:c1]
+        flt_win = Window(f_col + c0, f_row + r0, c1 - c0, r1 - r0)
+        flt_arr = flt_src.read(list(flt_bands), window=flt_win).astype(np.float64)
+        ov_transform = ov_transform @ Affine.translation(c0, r0)
+        flt_win_transform = window_transform(flt_win, flt_src.transform)
+        same_grid = True
+    else:
+        flt_arr = np.full((len(flt_bands), out_h, out_w), np.nan, dtype=np.float64)
+        for idx, b_idx in enumerate(flt_bands):
+            s_nd = flt_no_data if flt_no_data is not None else flt_src.nodatavals[b_idx - 1]
+            rio_reproject(
+                source=rasterio.band(flt_src, b_idx),
+                destination=flt_arr[idx],
+                src_transform=flt_src.transform,
+                src_crs=flt_src.crs,
+                src_nodata=s_nd,
+                dst_transform=ov_transform,
+                dst_crs=ref_src.crs,
+                dst_nodata=np.nan,
+                resampling=Resampling.bilinear,
+            )
+        flt_win_transform = ov_transform
+        same_grid = False
+
+    ref_valid = np.isfinite(ref_arr)
+    for idx, b_idx in enumerate(ref_bands):
+        nd = ref_no_data if ref_no_data is not None else ref_src.nodatavals[b_idx - 1]
+        if nd is not None and not (isinstance(nd, float) and np.isnan(nd)):
+            ref_valid[idx] &= ref_arr[idx] != nd
+
+    flt_valid = np.isfinite(flt_arr)
+    for idx, b_idx in enumerate(flt_bands):
+        nd = flt_no_data if flt_no_data is not None else flt_src.nodatavals[b_idx - 1]
+        if nd is not None and not (isinstance(nd, float) and np.isnan(nd)):
+            flt_valid[idx] &= flt_arr[idx] != nd
+
+    return {
+        "ref_arr": ref_arr,
+        "flt_arr": flt_arr,
+        "ref_valid": np.all(ref_valid, axis=0),
+        "flt_valid": np.all(flt_valid, axis=0),
+        "ov_transform": ov_transform,
+        "flt_win_transform": flt_win_transform,
+        "same_grid": same_grid,
+        "height": int(ref_arr.shape[1]),
+        "width": int(ref_arr.shape[2]),
+    }
 
 
 class BandDefn:

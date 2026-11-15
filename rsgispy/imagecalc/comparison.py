@@ -5,9 +5,11 @@ correlation, mutual information, and Earth Mover's Distance utilities using
 """
 
 from contextlib import ExitStack
-from typing import Any, Mapping, Optional, Tuple
+import os
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
+import rasterio
 from rasterio.windows import Window
 
 import rsgispy
@@ -15,10 +17,17 @@ from rsgispy.imageprocess import (
     cast_result_block,
     compute_spatial_intersection,
     ensure_file_exists,
+    extract_overlap_arrays,
     iter_dataset_windows,
     open_multi_image_datasets,
     open_output_dataset,
+    resolve_band_pair,
     validate_band_index,
+)
+from rsgispy.tools.stats import (
+    calc_similarity_metric,
+    phase_cross_correlation_2d,
+    resolve_metric_type,
 )
 
 try:
@@ -44,6 +53,7 @@ __all__ = [
     "calc_img_correlation",
     "calc_img_earth_move_dist",
     "calc_img_mutual_info",
+    "calc_img_similarity_metrics",
 ]
 
 
@@ -574,3 +584,159 @@ def calc_img_mutual_info(
     c_xy = np.histogram2d(arr_a, arr_b, hist_bins)[0]
     mi_val = sklearn.metrics.mutual_info_score(None, None, contingency=c_xy)
     return float(mi_val)
+
+
+def calc_img_similarity_metrics(
+    in_a_img: str,
+    in_b_img: str,
+    metrics: Optional[Union[int, str, Sequence[Union[int, str]]]] = None,
+    img_a_bands: Optional[Union[int, Sequence[int]]] = None,
+    img_b_bands: Optional[Union[int, Sequence[int]]] = None,
+    img_a_no_data: Optional[float] = None,
+    img_b_no_data: Optional[float] = None,
+    hist_bins: int = 64,
+    sub_pxl_res: int = 4,
+) -> Dict[str, float]:
+    """
+    Calculate one or more similarity or distance metrics between two images
+    over their overlapping region without writing an output image.
+
+    Supports ``rsgispy.METRIC_CORRELATION`` (``'correlation'``),
+    ``rsgispy.METRIC_EUCLIDEAN`` (``'euclidean'``), ``rsgispy.METRIC_SQDIFF``
+    (``'sqdiff'``), ``rsgispy.METRIC_MANHATTAN`` (``'manhattan'``),
+    ``rsgispy.METRIC_MUTUAL_INFO`` (``'mutual_info'``),
+    ``rsgispy.METRIC_NORM_MUTUAL_INFO`` (``'norm_mutual_info'``), and
+    ``rsgispy.METRIC_PHASE_CORR`` (``'phase_correlation'``).
+
+    :param in_a_img: Path to input image A (reference).
+    :param in_b_img: Path to input image B (comparison).
+    :param metrics: Single metric or sequence of metrics (``rsgispy.METRIC_*``
+                    constants or name strings). When ``None``, calculates all
+                    spatial/statistical metrics excluding phase correlation.
+    :param img_a_bands: 1-based band index or sequence of band indices from
+                        ``in_a_img`` (or ``None`` for all matching bands).
+    :param img_b_bands: 1-based band index or sequence of band indices from
+                        ``in_b_img`` (or ``None`` for all matching bands).
+    :param img_a_no_data: Optional no-data override for ``in_a_img``.
+    :param img_b_no_data: Optional no-data override for ``in_b_img``.
+    :param hist_bins: Histogram bin count for mutual information metrics
+                      (Default = ``64``).
+    :param sub_pxl_res: Sub-pixel refinement factor when
+                        ``rsgispy.METRIC_PHASE_CORR`` is requested
+                        (Default = ``4``).
+    :return: Dictionary mapping each metric's canonical name to its calculated
+             value (averaged across selected bands).
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagecalc.comparison
+
+        scores = rsgispy.imagecalc.comparison.calc_img_similarity_metrics(
+            in_a_img="img_a.tif",
+            in_b_img="img_b.tif",
+            metrics=[
+                rsgispy.METRIC_CORRELATION,
+                rsgispy.METRIC_EUCLIDEAN,
+                rsgispy.METRIC_MUTUAL_INFO,
+            ],
+            img_a_bands=[1],
+            img_b_bands=[1],
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches
+    a_path = os.fspath(in_a_img)
+    b_path = os.fspath(in_b_img)
+    ensure_file_exists(a_path, label="Input image A")
+    ensure_file_exists(b_path, label="Input image B")
+
+    if metrics is None:
+        metric_items: List[Union[int, str]] = [
+            rsgispy.METRIC_CORRELATION,
+            rsgispy.METRIC_EUCLIDEAN,
+            rsgispy.METRIC_SQDIFF,
+            rsgispy.METRIC_MANHATTAN,
+            rsgispy.METRIC_MUTUAL_INFO,
+            rsgispy.METRIC_NORM_MUTUAL_INFO,
+        ]
+    elif isinstance(metrics, (int, str, np.integer)):
+        metric_items = [metrics]  # type: ignore[list-item]
+    else:
+        metric_items = list(metrics)
+
+    if not metric_items:
+        raise rsgispy.RSGISPyException(
+            "metrics must contain at least one similarity metric."
+        )
+
+    resolved_metrics: List[Tuple[int, str]] = []
+    seen_ids = set()
+    for item in metric_items:
+        m_id, m_name, _ = resolve_metric_type(item)
+        if m_id not in seen_ids:
+            resolved_metrics.append((m_id, m_name))
+            seen_ids.add(m_id)
+
+    a_bands_seq = (
+        [int(img_a_bands)]
+        if isinstance(img_a_bands, (int, np.integer))
+        else img_a_bands
+    )
+    b_bands_seq = (
+        [int(img_b_bands)]
+        if isinstance(img_b_bands, (int, np.integer))
+        else img_b_bands
+    )
+
+    with rasterio.open(a_path, "r") as a_src, rasterio.open(b_path, "r") as b_src:
+        a_bands, b_bands = resolve_band_pair(
+            a_src, b_src, a_bands_seq, b_bands_seq, a_path, b_path
+        )
+        ov = extract_overlap_arrays(
+            a_src,
+            b_src,
+            a_bands,
+            b_bands,
+            a_path,
+            b_path,
+            ref_no_data=img_a_no_data,
+            flt_no_data=img_b_no_data,
+        )
+
+    a_valid = ov["ref_valid"]
+    b_valid = ov["flt_valid"]
+    comb_valid = a_valid & b_valid
+    n_valid = int(np.count_nonzero(comb_valid))
+
+    results: Dict[str, float] = {}
+    for m_id, m_name in resolved_metrics:
+        if n_valid < 2:
+            results[m_name] = float("nan")
+            continue
+
+        band_scores: List[float] = []
+        for idx in range(len(a_bands)):
+            if m_id == rsgispy.METRIC_PHASE_CORR:
+                a_b = ov["ref_arr"][idx].copy()
+                b_b = ov["flt_arr"][idx].copy()
+                a_mean = float(np.mean(a_b[a_valid])) if np.any(a_valid) else 0.0
+                b_mean = float(np.mean(b_b[b_valid])) if np.any(b_valid) else 0.0
+                a_b[~a_valid] = a_mean
+                b_b[~b_valid] = b_mean
+                _, _, score = phase_cross_correlation_2d(
+                    a_b, b_b, upsample_factor=sub_pxl_res
+                )
+            else:
+                a_vals = ov["ref_arr"][idx][comb_valid]
+                b_vals = ov["flt_arr"][idx][comb_valid]
+                score = calc_similarity_metric(
+                    a_vals, b_vals, metric_id=m_id, hist_bins=hist_bins
+                )
+            if np.isfinite(score):
+                band_scores.append(float(score))
+
+        results[m_name] = (
+            float(np.mean(band_scores)) if band_scores else float("nan")
+        )
+    return results

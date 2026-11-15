@@ -13,6 +13,7 @@ import rsgispy
 from rsgispy.vectorprocess import infer_parquet_compression, is_geoparquet_file
 
 __all__ = [
+    "resolve_table_format",
     "resolve_table_output_spec",
     "write_dataframe_table",
 ]
@@ -35,6 +36,10 @@ _TABLE_EXT_TO_FORMAT: Dict[str, str] = {
     ".hdf5": "hdf",
 }
 
+_TABLE_EXTS: Tuple[str, ...] = tuple(
+    ext for ext in _TABLE_EXT_TO_FORMAT if ext not in (".txt", ".json")
+)
+
 _TABLE_FORMAT_ALIASES: Dict[str, str] = {
     "csv": "csv",
     "tsv": "tsv",
@@ -55,6 +60,51 @@ _TABLE_FORMAT_ALIASES: Dict[str, str] = {
 }
 
 _TEXT_COMP_EXTS = (".gz", ".gzip", ".bz2", ".xz", ".zst", ".zip")
+
+
+def resolve_table_format(
+    out_file: Union[str, os.PathLike],
+    out_format: Optional[str] = None,
+) -> str:
+    """
+    Resolve the normalised table format name from ``out_format`` or file suffix.
+
+    :param out_file: Table file path.
+    :param out_format: Optional explicit format name overriding extension
+                       detection.
+    :return: Canonical format name (e.g., ``'csv'``, ``'parquet'``, ``'excel'``).
+
+    .. code:: python
+
+        import rsgispy.tools.tables
+
+        fmt = rsgispy.tools.tables.resolve_table_format("data.parquet.zstd")
+    """
+    path_str = os.fspath(out_file)
+    lower_path = path_str.lower().strip()
+
+    if out_format is not None:
+        key = out_format.strip().lower().lstrip(".")
+        if key not in _TABLE_FORMAT_ALIASES:
+            raise rsgispy.RSGISPyException(
+                f"Unsupported table format '{out_format}'. Supported "
+                f"formats: {sorted(set(_TABLE_FORMAT_ALIASES.values()))}."
+            )
+        return _TABLE_FORMAT_ALIASES[key]
+
+    if is_geoparquet_file(path_str):
+        return "parquet"
+
+    ext = os.path.splitext(lower_path)[1]
+    if ext in _TEXT_COMP_EXTS:
+        base_ext = os.path.splitext(lower_path[: -len(ext)])[1]
+        ext = base_ext if base_ext in (".csv", ".tsv", ".txt") else ext
+    if ext not in _TABLE_EXT_TO_FORMAT:
+        raise rsgispy.RSGISPyException(
+            f"Cannot infer table format from extension '{ext}' in "
+            f"'{path_str}'. Specify format explicitly."
+        )
+    return _TABLE_EXT_TO_FORMAT[ext]
 
 
 def resolve_table_output_spec(
@@ -93,29 +143,7 @@ def resolve_table_output_spec(
         )
     """
     path_str = os.fspath(out_file)
-    lower_path = path_str.lower().strip()
-
-    if out_format is not None:
-        key = out_format.strip().lower().lstrip(".")
-        if key not in _TABLE_FORMAT_ALIASES:
-            raise rsgispy.RSGISPyException(
-                f"Unsupported output table format '{out_format}'. Supported "
-                f"formats: {sorted(set(_TABLE_FORMAT_ALIASES.values()))}."
-            )
-        fmt = _TABLE_FORMAT_ALIASES[key]
-    elif is_geoparquet_file(path_str):
-        fmt = "parquet"
-    else:
-        ext = os.path.splitext(lower_path)[1]
-        if ext in _TEXT_COMP_EXTS:
-            base_ext = os.path.splitext(lower_path[: -len(ext)])[1]
-            ext = base_ext if base_ext in (".csv", ".tsv", ".txt") else ext
-        if ext not in _TABLE_EXT_TO_FORMAT:
-            raise rsgispy.RSGISPyException(
-                f"Cannot infer output table format from extension '{ext}' in "
-                f"'{path_str}'. Specify 'out_format' explicitly."
-            )
-        fmt = _TABLE_EXT_TO_FORMAT[ext]
+    fmt = resolve_table_format(path_str, out_format=out_format)
 
     if fmt == "parquet":
         comp = infer_parquet_compression(path_str, out_compress=out_compress)

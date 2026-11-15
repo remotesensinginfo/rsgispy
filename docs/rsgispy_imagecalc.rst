@@ -70,7 +70,7 @@ Statistics, Percentiles & Comparison
 
 * :doc:`imagecalc/stats` — Basic band statistics, unique values, multi-image summaries, and mask probabilities.
 * :doc:`imagecalc/percentiles` — Band percentiles and pixel-wise cross-band/cross-image percentiles.
-* :doc:`imagecalc/comparison` — Image difference, equality tests, correlation, mutual info, and EMD.
+* :doc:`imagecalc/comparison` — Image difference, equality tests, correlation, mutual info, EMD, and similarity metrics.
 
 .. toctree::
    :maxdepth: 1

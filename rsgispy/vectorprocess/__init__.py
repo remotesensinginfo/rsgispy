@@ -27,6 +27,15 @@ _LEGACY_OGR_FLOAT_TYPES = {2}
 _LEGACY_OGR_STR_TYPES = {4}
 
 _GEOPARQUET_EXTS: Tuple[str, ...] = (".parquet", ".geoparquet", ".pq")
+_VECTOR_EXTS: Tuple[str, ...] = (
+    ".gpkg",
+    ".geojson",
+    ".json",
+    ".shp",
+    ".fgb",
+    ".gml",
+    ".kml",
+)
 _PARQUET_COMP_SUFFIX_MAP: Dict[str, str] = {
     "gzip": "gzip",
     "gz": "gzip",

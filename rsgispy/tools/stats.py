@@ -4,7 +4,7 @@ variogram calculation, percentile computation, and data normalisation utilities.
 """
 
 import math
-from typing import Any, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import warnings
 
 import numpy as np
@@ -18,7 +18,42 @@ __all__ = [
     "normalise_img_data",
     "validate_percentiles_0_100",
     "compute_nanpercentiles",
+    "resolve_metric_type",
+    "calc_similarity_metric",
+    "phase_cross_correlation_2d",
 ]
+
+_METRIC_INFO: Dict[int, Tuple[str, bool]] = {
+    rsgispy.METRIC_EUCLIDEAN: ("euclidean", False),
+    rsgispy.METRIC_SQDIFF: ("sqdiff", False),
+    rsgispy.METRIC_MANHATTAN: ("manhattan", False),
+    rsgispy.METRIC_CORRELATION: ("correlation", True),
+    rsgispy.METRIC_MUTUAL_INFO: ("mutual_info", True),
+    rsgispy.METRIC_NORM_MUTUAL_INFO: ("norm_mutual_info", True),
+    rsgispy.METRIC_PHASE_CORR: ("phase_correlation", True),
+}
+
+_METRIC_ALIASES: Dict[str, int] = {
+    "euclidean": rsgispy.METRIC_EUCLIDEAN,
+    "l2": rsgispy.METRIC_EUCLIDEAN,
+    "rmse": rsgispy.METRIC_EUCLIDEAN,
+    "sqdiff": rsgispy.METRIC_SQDIFF,
+    "mse": rsgispy.METRIC_SQDIFF,
+    "manhattan": rsgispy.METRIC_MANHATTAN,
+    "l1": rsgispy.METRIC_MANHATTAN,
+    "correlation": rsgispy.METRIC_CORRELATION,
+    "corr": rsgispy.METRIC_CORRELATION,
+    "pearson": rsgispy.METRIC_CORRELATION,
+    "ncc": rsgispy.METRIC_CORRELATION,
+    "mutual_info": rsgispy.METRIC_MUTUAL_INFO,
+    "mutual_information": rsgispy.METRIC_MUTUAL_INFO,
+    "mi": rsgispy.METRIC_MUTUAL_INFO,
+    "norm_mutual_info": rsgispy.METRIC_NORM_MUTUAL_INFO,
+    "nmi": rsgispy.METRIC_NORM_MUTUAL_INFO,
+    "phase_correlation": rsgispy.METRIC_PHASE_CORR,
+    "phase_corr": rsgispy.METRIC_PHASE_CORR,
+    "phase": rsgispy.METRIC_PHASE_CORR,
+}
 
 
 def mask_data_to_valid(
@@ -325,3 +360,244 @@ def compute_nanpercentiles(
     if no_data_val is not None:
         return np.nan_to_num(pct_arr, copy=False, nan=no_data_val)
     return pct_arr
+
+
+def resolve_metric_type(metric_type: Union[int, str]) -> Tuple[int, str, bool]:
+    """
+    Normalise ``metric_type`` (``rsgispy.METRIC_*`` integer or string alias)
+    into ``(metric_id, metric_name, maximise)``.
+
+    :param metric_type: Similarity metric constant ``rsgispy.METRIC_*`` or
+                        name string (e.g., ``'correlation'``, ``'euclidean'``,
+                        ``'sqdiff'``, ``'manhattan'``, ``'mutual_info'``,
+                        ``'norm_mutual_info'``, ``'phase_correlation'``).
+    :return: Tuple ``(metric_id, canonical_name, maximise)`` where ``maximise``
+             is ``True`` when larger values indicate better agreement.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.tools.stats
+
+        m_id, name, maximise = rsgispy.tools.stats.resolve_metric_type(
+            rsgispy.METRIC_CORRELATION
+        )
+    """
+    if isinstance(metric_type, bool):
+        raise rsgispy.RSGISPyException(
+            "metric_type must be a METRIC_* integer or string, not bool."
+        )
+    if isinstance(metric_type, (int, np.integer)):
+        m_id = int(metric_type)
+        if m_id not in _METRIC_INFO:
+            raise rsgispy.RSGISPyException(
+                f"Unsupported metric_type id: {metric_type!r}"
+            )
+        name, maximise = _METRIC_INFO[m_id]
+        return m_id, name, maximise
+
+    if isinstance(metric_type, str):
+        key = metric_type.strip().lower().replace("-", "_").replace(" ", "_")
+        if key not in _METRIC_ALIASES:
+            raise rsgispy.RSGISPyException(
+                f"Unsupported metric_type '{metric_type}'. Supported: "
+                f"{sorted(set(v[0] for v in _METRIC_INFO.values()))}."
+            )
+        m_id = _METRIC_ALIASES[key]
+        name, maximise = _METRIC_INFO[m_id]
+        return m_id, name, maximise
+
+    raise rsgispy.RSGISPyException(
+        f"Unsupported metric_type: {metric_type!r}"
+    )
+
+
+def _mutual_information(
+    a_vals: np.ndarray,
+    b_vals: np.ndarray,
+    hist_bins: int = 64,
+    normalised: bool = False,
+) -> float:
+    """Compute pure-NumPy Mutual Information or Normalised Mutual Information."""
+    if a_vals.size < 2:
+        return 0.0
+    if np.ptp(a_vals) == 0.0 or np.ptp(b_vals) == 0.0:
+        return 0.0
+    c_xy, _, _ = np.histogram2d(a_vals, b_vals, bins=hist_bins)
+    total = float(c_xy.sum())
+    if total <= 0.0:
+        return 0.0
+    p_xy = c_xy / total
+    p_x = p_xy.sum(axis=1)
+    p_y = p_xy.sum(axis=0)
+
+    nz_x = p_x > 0
+    nz_y = p_y > 0
+    nz_xy = p_xy > 0
+    h_x = -float(np.sum(p_x[nz_x] * np.log(p_x[nz_x])))
+    h_y = -float(np.sum(p_y[nz_y] * np.log(p_y[nz_y])))
+    h_xy = -float(np.sum(p_xy[nz_xy] * np.log(p_xy[nz_xy])))
+    mi = max(0.0, h_x + h_y - h_xy)
+    if not normalised:
+        return mi
+    denom = h_x + h_y
+    if denom <= 1e-12:
+        return 0.0
+    return float(2.0 * mi / denom)
+
+
+def calc_similarity_metric(
+    ref_vals: np.ndarray,
+    flt_vals: np.ndarray,
+    metric_id: Union[int, str] = rsgispy.METRIC_CORRELATION,
+    hist_bins: int = 64,
+) -> float:
+    """
+    Compute a pairwise similarity or distance metric between two matched arrays.
+
+    Supports ``rsgispy.METRIC_CORRELATION`` (Pearson correlation),
+    ``rsgispy.METRIC_EUCLIDEAN`` (RMSE), ``rsgispy.METRIC_SQDIFF`` (MSE),
+    ``rsgispy.METRIC_MANHATTAN`` (MAE), ``rsgispy.METRIC_MUTUAL_INFO``
+    (mutual information), ``rsgispy.METRIC_NORM_MUTUAL_INFO`` (normalised
+    mutual information), and ``rsgispy.METRIC_PHASE_CORR`` (2D arrays only).
+
+    :param ref_vals: Reference value array.
+    :param flt_vals: Comparison value array of identical shape to ``ref_vals``.
+    :param metric_id: Metric constant ``rsgispy.METRIC_*`` or metric name
+                      string (Default = :data:`rsgispy.METRIC_CORRELATION`).
+    :param hist_bins: Histogram bin count for mutual information metrics
+                      (Default = ``64``).
+    :return: Computed metric value as a float.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy
+        import rsgispy.tools.stats
+
+        a = np.array([1.0, 2.0, 3.0, 4.0])
+        b = np.array([2.0, 4.0, 6.0, 8.0])
+        corr = rsgispy.tools.stats.calc_similarity_metric(
+            a, b, metric_id=rsgispy.METRIC_CORRELATION
+        )
+    """
+    m_id, _, _ = resolve_metric_type(metric_id)
+    r_arr = np.asarray(ref_vals, dtype=np.float64)
+    f_arr = np.asarray(flt_vals, dtype=np.float64)
+
+    if r_arr.shape != f_arr.shape:
+        raise rsgispy.RSGISPyException(
+            f"Input arrays must have identical shape: {r_arr.shape} vs {f_arr.shape}."
+        )
+
+    if m_id == rsgispy.METRIC_PHASE_CORR:
+        if r_arr.ndim != 2:
+            raise rsgispy.RSGISPyException(
+                "METRIC_PHASE_CORR requires 2D spatial arrays."
+            )
+        _, _, peak = phase_cross_correlation_2d(r_arr, f_arr)
+        return peak
+
+    r_flat = r_arr.ravel() if r_arr.ndim > 1 else r_arr
+    f_flat = f_arr.ravel() if f_arr.ndim > 1 else f_arr
+
+    if r_flat.size < 2:
+        return float("nan")
+    if m_id == rsgispy.METRIC_CORRELATION:
+        r0 = r_flat - np.mean(r_flat)
+        f0 = f_flat - np.mean(f_flat)
+        denom = float(np.sqrt(np.sum(r0 * r0) * np.sum(f0 * f0)))
+        if denom <= 1e-12:
+            return 0.0
+        return float(np.sum(r0 * f0) / denom)
+    if m_id == rsgispy.METRIC_EUCLIDEAN:
+        return float(np.sqrt(np.mean((r_flat - f_flat) ** 2)))
+    if m_id == rsgispy.METRIC_SQDIFF:
+        return float(np.mean((r_flat - f_flat) ** 2))
+    if m_id == rsgispy.METRIC_MANHATTAN:
+        return float(np.mean(np.abs(r_flat - f_flat)))
+    if m_id == rsgispy.METRIC_MUTUAL_INFO:
+        return _mutual_information(
+            r_flat, f_flat, hist_bins=hist_bins, normalised=False
+        )
+    if m_id == rsgispy.METRIC_NORM_MUTUAL_INFO:
+        return _mutual_information(
+            r_flat, f_flat, hist_bins=hist_bins, normalised=True
+        )
+    raise rsgispy.RSGISPyException(f"Unsupported similarity metric id: {metric_id}")
+
+
+def phase_cross_correlation_2d(
+    ref_arr: np.ndarray,
+    flt_arr: np.ndarray,
+    upsample_factor: int = 4,
+    apply_window: bool = True,
+) -> Tuple[float, float, float]:
+    """
+    Estimate sub-pixel 2D translation between ``ref_arr`` and ``flt_arr`` via
+    FFT phase cross-correlation with upsampled DFT refinement.
+
+    Returns ``(dy, dx, peak_response)`` where a feature at ``(r, c)`` in
+    ``ref_arr`` appears at ``(r - dy, c - dx)`` in ``flt_arr``.
+
+    :param ref_arr: 2D reference array.
+    :param flt_arr: 2D floating array of identical shape.
+    :param upsample_factor: Sub-pixel DFT refinement factor (Default = ``4``).
+    :param apply_window: Apply a 2D Hanning taper before FFT (Default = ``True``).
+    :return: Tuple ``(dy, dx, peak_response)``.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.stats
+
+        a = np.random.default_rng(0).normal(size=(32, 32))
+        dy, dx, peak = rsgispy.tools.stats.phase_cross_correlation_2d(a, a)
+    """
+    # pylint: disable=too-many-locals
+    h, w = ref_arr.shape
+    if h < 4 or w < 4:
+        return 0.0, 0.0, 0.0
+
+    r0 = ref_arr.astype(np.float64, copy=True) - float(np.mean(ref_arr))
+    f0 = flt_arr.astype(np.float64, copy=True) - float(np.mean(flt_arr))
+    if apply_window:
+        win = np.hanning(h)[:, None] * np.hanning(w)[None, :]
+        r0 *= win
+        f0 *= win
+
+    f_r = np.fft.fft2(r0)
+    f_f = np.fft.fft2(f0)
+    cross_power = f_r * np.conj(f_f)
+    mag = np.abs(cross_power)
+    max_mag = float(np.max(mag))
+    if max_mag <= 1e-12:
+        return 0.0, 0.0, 0.0
+    reg = 0.01 * max_mag
+    norm_cross = cross_power / (mag + reg)
+    denom = max(float(np.sum(mag / (mag + reg))) / float(h * w), 1e-12)
+    cc = np.real(np.fft.ifft2(norm_cross)) / denom
+    iy, ix = np.unravel_index(np.argmax(cc), cc.shape)
+    dy = float(iy - h if iy > h // 2 else iy)
+    dx = float(ix - w if ix > w // 2 else ix)
+    peak = float(cc[iy, ix])
+
+    up = max(1, int(upsample_factor))
+    if up > 1:
+        n_pts = int(np.ceil(up * 1.5))
+        if n_pts % 2 == 0:
+            n_pts += 1
+        offs = (np.arange(n_pts) - (n_pts // 2)) / float(up)
+        cy = dy + offs
+        cx = dx + offs
+        fy = np.fft.fftfreq(h)
+        fx = np.fft.fftfreq(w)
+        ky = np.exp(2j * np.pi * cy[:, None] * fy[None, :])
+        kx = np.exp(2j * np.pi * fx[:, None] * cx[None, :])
+        cc_up = np.real(ky @ norm_cross @ kx) / (float(h * w) * denom)
+        uy, ux = np.unravel_index(np.argmax(cc_up), cc_up.shape)
+        dy = float(cy[uy])
+        dx = float(cx[ux])
+        peak = float(cc_up[uy, ux])
+
+    return dy, dx, peak

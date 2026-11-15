@@ -140,6 +140,7 @@ Package Overview
 * :doc:`rsgispy_imagefilter` — Spatial moving-window statistical, edge, Gaussian, Kuwahara, Lee SAR, and kernel filters.
 * :doc:`rsgispy_imagemorphology` — Morphological raster filtering (dilation, erosion, opening, closing).
 * :doc:`rsgispy_imageprocess` — Block-processing engine, spatial intersection, and dataset validation.
+* :doc:`rsgispy_imageregistration` — Image registration, tie-point co-registration, outlier filtering, whole-image shift estimation, and GCP warping.
 * :doc:`rsgispy_imagespectral` — Spectral classification (SAM, SCM), linear unmixing, endmembers, PPI, PCA, MNF, Tasseled Cap, histogram matching, whitening, and smoothing.
 * :doc:`rsgispy_imageutils` — Raster creation, rasterisation, metadata, masking, mosaicking, tiling, VRT, and warping.
 * :doc:`rsgispy_tools` — General geospatial, geometry, projection, plotting, mapping, and file utilities.
@@ -163,6 +164,7 @@ Package Overview
    rsgispy_imagefilter
    rsgispy_imagemorphology
    rsgispy_imageprocess
+   rsgispy_imageregistration
    rsgispy_imagespectral
    rsgispy_imageutils
    rsgispy_tools

@@ -30,6 +30,7 @@ import rsgispy
 from rsgispy.imageprocess import create_output_from_dataset, ensure_file_exists
 from rsgispy.imageutils.stats import pop_img_stats
 from rsgispy.tools.geometry import do_bboxes_intersect, reproj_bbox
+from rsgispy.tools.tables import resolve_table_format
 from rsgispy.vectorprocess import (
     VectorInput,
     get_gdf_bbox,
@@ -38,43 +39,6 @@ from rsgispy.vectorprocess import (
 )
 
 EndmemberInput = Union[pd.DataFrame, str, os.PathLike]
-
-_EXT_TO_FORMAT: Dict[str, str] = {
-    ".csv": "csv",
-    ".tsv": "tsv",
-    ".txt": "tsv",
-    ".parquet": "parquet",
-    ".pq": "parquet",
-    ".feather": "feather",
-    ".ftr": "feather",
-    ".xlsx": "excel",
-    ".xls": "excel",
-    ".xlsm": "excel",
-    ".json": "json",
-    ".pkl": "pickle",
-    ".pickle": "pickle",
-    ".h5": "hdf",
-    ".hdf5": "hdf",
-}
-
-_FORMAT_ALIASES: Dict[str, str] = {
-    "csv": "csv",
-    "tsv": "tsv",
-    "tab": "tsv",
-    "parquet": "parquet",
-    "pq": "parquet",
-    "feather": "feather",
-    "ftr": "feather",
-    "excel": "excel",
-    "xlsx": "excel",
-    "xls": "excel",
-    "json": "json",
-    "pickle": "pickle",
-    "pkl": "pickle",
-    "hdf": "hdf",
-    "hdf5": "hdf",
-    "h5": "hdf",
-}
 
 __all__: List[str] = [
     "EndmemberInput",
@@ -170,21 +134,7 @@ def _resolve_table_format(
     file_format: Optional[str] = None,
 ) -> str:
     """Resolve normalised table format from explicit ``file_format`` or suffix."""
-    if file_format is not None:
-        key = file_format.strip().lower().lstrip(".")
-        if key in _FORMAT_ALIASES:
-            return _FORMAT_ALIASES[key]
-        raise rsgispy.RSGISPyException(
-            f"Unsupported endmember file format '{file_format}'. Supported "
-            f"formats: {sorted(set(_FORMAT_ALIASES.values()))}."
-        )
-    ext = os.path.splitext(os.fspath(file_path))[1].lower()
-    if ext in _EXT_TO_FORMAT:
-        return _EXT_TO_FORMAT[ext]
-    raise rsgispy.RSGISPyException(
-        f"Cannot infer endmember file format from extension '{ext}' in "
-        f"'{os.fspath(file_path)}'. Specify 'file_format' explicitly."
-    )
+    return resolve_table_format(file_path, out_format=file_format)
 
 
 def _normalise_endmembers_df(df: pd.DataFrame) -> pd.DataFrame:

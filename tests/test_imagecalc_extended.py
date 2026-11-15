@@ -704,3 +704,82 @@ def test_optional_scipy_sklearn_guards(monkeypatch):
         assert "calc_fill_regions_knn" in fill_fresh.__all__
         with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
             fill_fresh.calc_fill_regions_knn("in.tif", 0, "fill.tif", 1, "out.tif")
+
+
+def test_calc_img_similarity_metrics(tmp_path):
+    """Test calc_img_similarity_metrics with default/custom metrics, bands, and partial overlap."""
+    img_a = tmp_path / "sim_a.tif"
+    img_b = tmp_path / "sim_b.tif"
+    img_b_shifted = tmp_path / "sim_b_partial.tif"
+
+    rng = np.random.default_rng(21)
+    band1 = (np.arange(1, 37, dtype=np.float32).reshape(6, 6) + rng.normal(0, 0.1, (6, 6))).astype(
+        np.float32
+    )
+    band2 = (band1 * 2.0 + 5.0).astype(np.float32)
+    arr_a = np.stack([band1, band2], axis=0)
+    arr_b = np.stack([band1 * 3.0 + 2.0, band2 + 4.0], axis=0)
+    arr_b[0, 0, 0] = -9999.0
+
+    _write_raster(img_a, arr_a, origin=(0.0, 60.0), pixel_size=(10.0, 10.0), nodata=-9999.0)
+    _write_raster(img_b, arr_b, origin=(0.0, 60.0), pixel_size=(10.0, 10.0), nodata=-9999.0)
+    _write_raster(
+        img_b_shifted,
+        arr_b[:, :4, :4],
+        origin=(20.0, 40.0),
+        pixel_size=(10.0, 10.0),
+        nodata=-9999.0,
+    )
+
+    # Default metric suite across both matching bands
+    default_scores = ic_cmp.calc_img_similarity_metrics(str(img_a), str(img_b))
+    assert set(default_scores.keys()) == {
+        "correlation",
+        "euclidean",
+        "sqdiff",
+        "manhattan",
+        "mutual_info",
+        "norm_mutual_info",
+    }
+    assert default_scores["correlation"] > 0.999
+
+    # Custom subset of metrics mixing constants and strings on a single band pair
+    custom_scores = ic_cmp.calc_img_similarity_metrics(
+        str(img_a),
+        str(img_b),
+        metrics=[
+            rsgispy.METRIC_CORRELATION,
+            "manhattan",
+            rsgispy.METRIC_SQDIFF,
+            rsgispy.METRIC_PHASE_CORR,
+        ],
+        img_a_bands=2,
+        img_b_bands=[2],
+        hist_bins=12,
+    )
+    assert list(custom_scores.keys()) == [
+        "correlation",
+        "manhattan",
+        "sqdiff",
+        "phase_correlation",
+    ]
+    assert custom_scores["correlation"] == pytest.approx(1.0, abs=1e-5)
+    assert custom_scores["manhattan"] == pytest.approx(4.0, abs=1e-4)
+    assert custom_scores["sqdiff"] == pytest.approx(16.0, abs=1e-3)
+    assert custom_scores["phase_correlation"] > 0.3
+
+    # Partial overlap check
+    part_scores = ic_cmp.calc_img_similarity_metrics(
+        str(img_a),
+        str(img_b_shifted),
+        metrics=rsgispy.METRIC_EUCLIDEAN,
+        img_a_bands=[2],
+        img_b_bands=[2],
+    )
+    assert part_scores["euclidean"] >= 0.0
+
+    # Invalid metrics list raises
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_cmp.calc_img_similarity_metrics(str(img_a), str(img_b), metrics=[])
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_cmp.calc_img_similarity_metrics(str(img_a), str(img_b), metrics=["corelation"])

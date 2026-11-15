@@ -68,7 +68,7 @@ Maths, Statistics, Thresholding & Accuracy
 ------------------------------------------
 
 * :doc:`tools/maths` — Numeric comparisons, rounding, bounds checks, and powersets.
-* :doc:`tools/stats` — Masking, semivariograms, standardisation, and nan-percentiles.
+* :doc:`tools/stats` — Masking, semivariograms, standardisation, nan-percentiles, and similarity metrics.
 * :doc:`tools/thresholding` — Otsu, Yen, ISODATA, cross-entropy, Li, and kurtosis/skew thresholds.
 * :doc:`tools/featureselection` — VIF, CQV, correlation, LassoLars, and Breusch-Pagan tests.
 * :doc:`tools/accuracy` — Binary accuracy, probability scores, and bias-variance decomposition.
