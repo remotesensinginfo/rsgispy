@@ -10,8 +10,8 @@ import math
 import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
-import geopandas
-import numpy
+import geopandas as gpd
+import numpy as np
 import rasterio
 import shapely.geometry
 
@@ -160,7 +160,7 @@ def create_orthg_lines(
     del_exist_vec: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create a set of lines orthogonal to the lines in an input vector layer.
 
@@ -247,11 +247,11 @@ def create_orthg_lines(
                     c_dist = (seg_len + step_c_dist) - (pt_step * n_step)
 
     if records:
-        out_gdf = geopandas.GeoDataFrame(
+        out_gdf = gpd.GeoDataFrame(
             records, geometry="geometry", crs=in_gdf.crs
         )
     else:
-        out_gdf = geopandas.GeoDataFrame(
+        out_gdf = gpd.GeoDataFrame(
             {
                 "uid": pandas_int_empty(),
                 "start_x": pandas_float_empty(),
@@ -259,7 +259,7 @@ def create_orthg_lines(
                 "end_x": pandas_float_empty(),
                 "end_y": pandas_float_empty(),
             },
-            geometry=geopandas.GeoSeries([], crs=in_gdf.crs),
+            geometry=gpd.GeoSeries([], crs=in_gdf.crs),
             crs=in_gdf.crs,
         )
     if out_path is None:
@@ -274,14 +274,14 @@ def create_orthg_lines(
     return None
 
 
-def pandas_int_empty() -> numpy.ndarray:
+def pandas_int_empty() -> np.ndarray:
     """Return an empty integer array for empty typed GeoDataFrames."""
-    return numpy.array([], dtype=int)
+    return np.array([], dtype=int)
 
 
-def pandas_float_empty() -> numpy.ndarray:
+def pandas_float_empty() -> np.ndarray:
     """Return an empty float array for empty typed GeoDataFrames."""
-    return numpy.array([], dtype=float)
+    return np.array([], dtype=float)
 
 
 def split_lines_to_reg_pts(
@@ -294,7 +294,7 @@ def split_lines_to_reg_pts(
     del_exist_vec: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Split a line vector layer into points placed at regular intervals
     (``pt_step``) along each line.
@@ -379,11 +379,11 @@ def split_lines_to_reg_pts(
         line_id += 1
 
     if records:
-        out_gdf = geopandas.GeoDataFrame(
+        out_gdf = gpd.GeoDataFrame(
             records, geometry="geometry", crs=in_gdf.crs
         )
     else:
-        out_gdf = geopandas.GeoDataFrame(
+        out_gdf = gpd.GeoDataFrame(
             {
                 "uid": pandas_int_empty(),
                 "line_id": pandas_int_empty(),
@@ -391,7 +391,7 @@ def split_lines_to_reg_pts(
                 "pt_y": pandas_float_empty(),
                 "dist": pandas_float_empty(),
             },
-            geometry=geopandas.GeoSeries([], crs=in_gdf.crs),
+            geometry=gpd.GeoSeries([], crs=in_gdf.crs),
             crs=in_gdf.crs,
         )
     if out_path is None:
@@ -421,7 +421,7 @@ def _calc_line_boundary_intersections(
     mode: str,
     use_pbar: bool,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Shared implementation for line-to-object-boundary intersection modes:
     ``'closest'``, ``'range'``, and ``'second'``.
@@ -529,7 +529,7 @@ def _calc_line_boundary_intersections(
                 )
 
     if records:
-        out_gdf = geopandas.GeoDataFrame(
+        out_gdf = gpd.GeoDataFrame(
             records, geometry="geometry", crs=objs_gdf.crs
         )
     else:
@@ -546,9 +546,9 @@ def _calc_line_boundary_intersections(
                 "end_y": pandas_float_empty(),
                 "len": pandas_float_empty(),
             }
-        out_gdf = geopandas.GeoDataFrame(
+        out_gdf = gpd.GeoDataFrame(
             empty_cols,
-            geometry=geopandas.GeoSeries([], crs=objs_gdf.crs),
+            geometry=gpd.GeoSeries([], crs=objs_gdf.crs),
             crs=objs_gdf.crs,
         )
 
@@ -578,7 +578,7 @@ def closest_line_intersection(
     del_exist_vec: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Intersect each line with the boundaries of objects in ``vec_objs_file``,
     creating a new line between each input line's start point
@@ -650,7 +650,7 @@ def line_intersection_range(
     del_exist_vec: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Intersect each line with the boundaries of objects in ``vec_objs_file``,
     creating a new line spanning from the closest to the furthest intersection
@@ -721,7 +721,7 @@ def scnd_line_intersection_range(
     del_exist_vec: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Intersect each line with the boundaries of objects in ``vec_objs_file``,
     cutting each line from its start point to its second closest intersection
@@ -786,7 +786,7 @@ def pts_to_line_geoms(
     out_format: str = "GPKG",
     sort_col: Optional[str] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Convert a vector layer of points to a single line geometry. If the input
     contains ``MultiPoint`` geometries, they are exploded before constructing
@@ -835,7 +835,7 @@ def pts_to_line_geoms(
             "At least two points are required to construct a line geometry."
         )
     line_geom = shapely.geometry.LineString(pts)
-    line_gdf = geopandas.GeoDataFrame(
+    line_gdf = gpd.GeoDataFrame(
         {"id": [1], "geometry": [line_geom]}, crs=data_gdf.crs
     )
     if out_vec_file is None:
@@ -861,7 +861,7 @@ def create_angle_lines_from_points(
     out_format: str = "GPKG",
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Generate radial line segments of length ``line_len`` at angular increments
     ``angle`` (in degrees) around each point feature in ``vec_file``.
@@ -893,7 +893,7 @@ def create_angle_lines_from_points(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    line_angles = numpy.arange(0, 360, angle)
+    line_angles = np.arange(0, 360, angle)
     pts_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     pbar_cls = rsgispy.get_tqdm()
 
@@ -915,7 +915,7 @@ def create_angle_lines_from_points(
             pt_ids.append(idx)
             geoms.append(shp_line)
 
-    out_gdf = geopandas.GeoDataFrame(
+    out_gdf = gpd.GeoDataFrame(
         {"pt_id": pt_ids, "geometry": geoms}, geometry="geometry", crs=pts_gdf.crs
     )
     if out_vec_file is None:
@@ -944,7 +944,7 @@ def estimate_future_coastline(
     trans_pt_order_land_first: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Estimate a future coastline position using baseline coastline geometry and
     DSAS-style transects with annual rate-of-change values.
@@ -1056,7 +1056,7 @@ def estimate_future_coastline(
         )
 
     new_coastline_geom = shapely.geometry.LineString(pt_geoms)
-    out_gdf = geopandas.GeoDataFrame(
+    out_gdf = gpd.GeoDataFrame(
         {"coastline_id": [1], "geometry": [new_coastline_geom]},
         geometry="geometry",
         crs=trans_data_gdf.crs,
@@ -1081,7 +1081,7 @@ def create_lines_vec(
     lines: Sequence[Sequence[Tuple[float, float]]],
     overwrite: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create a vector layer of polylines (each given as ``[(x, y), ...]``
     vertices) with sequential ``line_id`` attributes.
@@ -1120,7 +1120,7 @@ def create_lines_vec(
         shapely.geometry.LineString([(float(pt[0]), float(pt[1])) for pt in line])
         for line in lines
     ]
-    gdf = geopandas.GeoDataFrame(
+    gdf = gpd.GeoDataFrame(
         {"line_id": list(range(1, len(lines) + 1))},
         geometry=geoms,
         crs=parse_crs_input(epsg_code),
@@ -1146,7 +1146,7 @@ def create_img_transects(
     y_intervals: Optional[Sequence[float]] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create axis-aligned transect lines across ``input_img`` at fractional
     positions ``0..1`` along X and/or Y.

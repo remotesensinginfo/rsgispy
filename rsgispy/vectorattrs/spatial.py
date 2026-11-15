@@ -7,8 +7,8 @@ joins) using ``geopandas``.
 import os
 from typing import Optional, Union
 
-import geopandas
-import numpy
+import geopandas as gpd
+import numpy as np
 
 import rsgispy
 from rsgispy.vectorprocess import VectorInput, read_vec_gdf, write_vec_gdf
@@ -22,13 +22,13 @@ __all__ = [
 
 
 def _populate_bbox_columns(
-    gdf: geopandas.GeoDataFrame,
+    gdf: gpd.GeoDataFrame,
     x_min_col: str,
     x_max_col: str,
     y_min_col: str,
     y_max_col: str,
     fill_empty_zero: bool = False,
-) -> geopandas.GeoDataFrame:
+) -> gpd.GeoDataFrame:
     """Populate bounding-box columns from feature geometries."""
     bounds = gdf.geometry.bounds
     if fill_empty_zero:
@@ -51,7 +51,7 @@ def pop_bbox_cols(
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Populate geometry bounding-box columns on a vector file or an in-memory
     :class:`geopandas.GeoDataFrame`.
@@ -88,7 +88,7 @@ def pop_bbox_cols(
         rsgispy.vectorattrs.spatial.pop_bbox_cols("polys.gpkg", "polys")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    is_gdf_input = isinstance(vec_file, geopandas.GeoDataFrame)
+    is_gdf_input = isinstance(vec_file, gpd.GeoDataFrame)
     gdf = read_vec_gdf(vec_file, vec_lyr)
     _populate_bbox_columns(
         gdf, x_min_col, x_max_col, y_min_col, y_max_col, fill_empty_zero=True
@@ -125,7 +125,7 @@ def add_geom_bbox_cols(
     min_y_col: str = "MinY",
     max_y_col: str = "MaxY",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Add geometry bounding-box columns and write to a new vector file (or return
     an updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
@@ -187,7 +187,7 @@ def annotate_vec_selection(
     vec_in_epsg: Optional[int] = None,
     vec_sel_epsg: Optional[int] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Annotate features in ``vec_in_file`` with a boolean column indicating
     whether each feature intersects any feature in ``vec_sel_file``.
@@ -226,8 +226,8 @@ def annotate_vec_selection(
     in_gdf = read_vec_gdf(vec_in_file, vec_in_lyr, epsg=vec_in_epsg)
     sel_gdf = read_vec_gdf(vec_sel_file, vec_sel_lyr, epsg=vec_sel_epsg)
 
-    in_gdf[tmp_col_name] = numpy.arange(1, len(in_gdf) + 1, 1, dtype=int)
-    in_sel_gdf = geopandas.sjoin(
+    in_gdf[tmp_col_name] = np.arange(1, len(in_gdf) + 1, 1, dtype=int)
+    in_sel_gdf = gpd.sjoin(
         in_gdf, sel_gdf, how="inner", predicate="intersects"
     ).drop_duplicates(subset=[tmp_col_name])
 
@@ -258,7 +258,7 @@ def perform_spatial_join(
     vec_base_epsg: Optional[int] = None,
     vec_join_epsg: Optional[int] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Perform a spatial attribute join between two vector layers using
     :func:`geopandas.sjoin`.
@@ -308,7 +308,7 @@ def perform_spatial_join(
     base_gdf = read_vec_gdf(vec_base_file, vec_base_lyr, epsg=vec_base_epsg)
     join_gdf = read_vec_gdf(vec_join_file, vec_join_lyr, epsg=vec_join_epsg)
 
-    joined_gdf = geopandas.sjoin(
+    joined_gdf = gpd.sjoin(
         base_gdf, join_gdf, how=join_how, predicate=join_op
     )
     if out_vec_file is None:

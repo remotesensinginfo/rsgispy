@@ -7,7 +7,7 @@ Adapted from https://github.com/Turbo87/utm/blob/master/utm/conversion.py.
 
 from typing import List, Optional, Sequence, Tuple, Union
 
-import numpy
+import numpy as np
 
 try:
     import scipy.stats
@@ -58,7 +58,7 @@ E2 = E * E
 E3 = E2 * E
 E_P2 = E / (1.0 - E)
 
-SQRT_E = float(numpy.sqrt(1 - E))
+SQRT_E = float(np.sqrt(1 - E))
 _E = (1 - SQRT_E) / (1 + SQRT_E)
 _E2 = _E * _E
 _E3 = _E2 * _E
@@ -93,7 +93,7 @@ def min_max_eastings_for_lat(latitude: float, zone: int = 1) -> Tuple[float, flo
         import rsgispy.tools.utm
         min_e, max_e = rsgispy.tools.utm.min_max_eastings_for_lat(52.4, zone=30)
     """
-    if isinstance(latitude, numpy.ndarray):
+    if isinstance(latitude, np.ndarray):
         raise rsgispy.RSGISPyException("Don't input an array.")
 
     central_long = zone_number_to_central_longitude(zone)
@@ -176,8 +176,8 @@ def split_wgs84_bbox_utm_zones(
     utm_bl = from_latlon(wgs84_bbox[2], wgs84_bbox[0])
 
     utm_zones = [utm_coord[2] for utm_coord in (utm_tl, utm_tr, utm_br, utm_bl)]
-    min_zone = int(numpy.min(utm_zones))
-    max_zone = int(numpy.max(utm_zones))
+    min_zone = int(np.min(utm_zones))
+    max_zone = int(np.max(utm_zones))
 
     out_bboxes: List[List] = []
     for zone in range(min_zone, max_zone + 1):
@@ -231,13 +231,13 @@ def check_valid_zone(
 
 
 def to_latlon(
-    easting: Union[float, numpy.ndarray],
-    northing: Union[float, numpy.ndarray],
+    easting: Union[float, np.ndarray],
+    northing: Union[float, np.ndarray],
     zone_number: int,
     zone_letter: Optional[str] = None,
     northern: Optional[bool] = None,
     strict: bool = True,
-) -> Tuple[Union[float, numpy.ndarray], Union[float, numpy.ndarray]]:
+) -> Tuple[Union[float, np.ndarray], Union[float, np.ndarray]]:
     """
     Convert UTM coordinates to WGS84 latitude and longitude.
 
@@ -286,22 +286,22 @@ def to_latlon(
 
     p_rad = (
         mu_val
-        + P2 * numpy.sin(2 * mu_val)
-        + P3 * numpy.sin(4 * mu_val)
-        + P4 * numpy.sin(6 * mu_val)
-        + P5 * numpy.sin(8 * mu_val)
+        + P2 * np.sin(2 * mu_val)
+        + P3 * np.sin(4 * mu_val)
+        + P4 * np.sin(6 * mu_val)
+        + P5 * np.sin(8 * mu_val)
     )
 
-    p_sin = numpy.sin(p_rad)
+    p_sin = np.sin(p_rad)
     p_sin2 = p_sin * p_sin
-    p_cos = numpy.cos(p_rad)
+    p_cos = np.cos(p_rad)
 
     p_tan = p_sin / p_cos
     p_tan2 = p_tan * p_tan
     p_tan4 = p_tan2 * p_tan2
 
     ep_sin = 1 - E * p_sin2
-    ep_sin_sqrt = numpy.sqrt(ep_sin)
+    ep_sin_sqrt = np.sqrt(ep_sin)
 
     n_rad = R / ep_sin_sqrt
     r_rad = (1 - E) / ep_sin
@@ -334,17 +334,17 @@ def to_latlon(
     ) / p_cos
 
     return (
-        numpy.degrees(latitude),
-        numpy.degrees(longitude) + zone_number_to_central_longitude(zone_number),
+        np.degrees(latitude),
+        np.degrees(longitude) + zone_number_to_central_longitude(zone_number),
     )
 
 
 def from_latlon(
-    latitude: Union[float, numpy.ndarray],
-    longitude: Union[float, numpy.ndarray],
+    latitude: Union[float, np.ndarray],
+    longitude: Union[float, np.ndarray],
     force_zone_number: Optional[int] = None,
     force_zone_letter: Optional[str] = None,
-) -> Tuple[Union[float, numpy.ndarray], Union[float, numpy.ndarray], int, Optional[str]]:
+) -> Tuple[Union[float, np.ndarray], Union[float, np.ndarray], int, Optional[str]]:
     """
     Convert WGS84 latitude and longitude coordinates to UTM coordinates.
 
@@ -371,9 +371,9 @@ def from_latlon(
     if force_zone_number is not None:
         check_valid_zone(force_zone_number, force_zone_letter)
 
-    lat_rad = numpy.radians(latitude)
-    lat_sin = numpy.sin(lat_rad)
-    lat_cos = numpy.cos(lat_rad)
+    lat_rad = np.radians(latitude)
+    lat_sin = np.sin(lat_rad)
+    lat_cos = np.cos(lat_rad)
 
     lat_tan = lat_sin / lat_cos
     lat_tan2 = lat_tan * lat_tan
@@ -390,11 +390,11 @@ def from_latlon(
         else force_zone_letter
     )
 
-    lon_rad = numpy.radians(longitude)
+    lon_rad = np.radians(longitude)
     central_lon = zone_number_to_central_longitude(zone_number)
-    central_lon_rad = numpy.radians(central_lon)
+    central_lon_rad = np.radians(central_lon)
 
-    n_rad = R / numpy.sqrt(1 - E * lat_sin**2)
+    n_rad = R / np.sqrt(1 - E * lat_sin**2)
     c_val = E_P2 * lat_cos**2
 
     a_val = lat_cos * (lon_rad - central_lon_rad)
@@ -406,9 +406,9 @@ def from_latlon(
 
     m_arc = R * (
         M1 * lat_rad
-        - M2 * numpy.sin(2 * lat_rad)
-        + M3 * numpy.sin(4 * lat_rad)
-        - M4 * numpy.sin(6 * lat_rad)
+        - M2 * np.sin(2 * lat_rad)
+        + M3 * np.sin(4 * lat_rad)
+        - M4 * np.sin(6 * lat_rad)
     )
 
     easting = (
@@ -444,7 +444,7 @@ def from_latlon(
 
 
 def latitude_to_zone_letter(
-    latitude: Union[float, numpy.ndarray],
+    latitude: Union[float, np.ndarray],
 ) -> Optional[str]:
     """
     Find the UTM zone letter for ``latitude``.
@@ -457,7 +457,7 @@ def latitude_to_zone_letter(
         import rsgispy.tools.utm
         letter = rsgispy.tools.utm.latitude_to_zone_letter(52.41)
     """
-    if isinstance(latitude, numpy.ndarray):
+    if isinstance(latitude, np.ndarray):
         latitude = float(latitude.flat[0])
 
     if -80 <= latitude <= 84:
@@ -466,8 +466,8 @@ def latitude_to_zone_letter(
 
 
 def latlon_to_zone_number(
-    latitude: Union[float, numpy.ndarray],
-    longitude: Union[float, numpy.ndarray],
+    latitude: Union[float, np.ndarray],
+    longitude: Union[float, np.ndarray],
 ) -> int:
     """
     Find the UTM zone number for a given latitude and longitude.
@@ -481,9 +481,9 @@ def latlon_to_zone_number(
         import rsgispy.tools.utm
         zone = rsgispy.tools.utm.latlon_to_zone_number(52.41, -4.08)
     """
-    if isinstance(latitude, numpy.ndarray):
+    if isinstance(latitude, np.ndarray):
         latitude = float(latitude.flat[0])
-    if isinstance(longitude, numpy.ndarray):
+    if isinstance(longitude, np.ndarray):
         longitude = float(longitude.flat[0])
 
     if 56 <= latitude < 64 and 3 <= longitude < 12:
@@ -503,9 +503,9 @@ def latlon_to_zone_number(
 
 
 def latlon_arr_to_utm_zone_number(
-    latitude: numpy.ndarray,
-    longitude: numpy.ndarray,
-) -> numpy.ndarray:
+    latitude: np.ndarray,
+    longitude: np.ndarray,
+) -> np.ndarray:
     """
     Vectorised UTM zone number calculation for NumPy arrays of latitudes and longitudes.
 
@@ -523,7 +523,7 @@ def latlon_arr_to_utm_zone_number(
         zones = rsgispy.tools.utm.latlon_arr_to_utm_zone_number(lats, lons)
     """
     utm_zones = ((longitude + 180) / 6) + 1
-    utm_zones = numpy.rint(utm_zones).astype(int)
+    utm_zones = np.rint(utm_zones).astype(int)
 
     utm_zones[
         (56 <= latitude) & (latitude < 64) & (3 <= longitude) & (longitude < 12)
@@ -545,8 +545,8 @@ def latlon_arr_to_utm_zone_number(
 
 
 def latlon_to_mode_utm_zone_number(
-    latitude: numpy.ndarray,
-    longitude: numpy.ndarray,
+    latitude: np.ndarray,
+    longitude: np.ndarray,
 ) -> int:
     """
     Find the modal UTM zone number for arrays of latitude and longitude values.
@@ -567,9 +567,9 @@ def latlon_to_mode_utm_zone_number(
     utm_zones = latlon_arr_to_utm_zone_number(latitude, longitude)
     if HAVE_SCIPY:
         mode_res = scipy.stats.mode(utm_zones)
-        return int(numpy.asarray(mode_res.mode).flat[0])
-    vals, counts = numpy.unique(utm_zones, return_counts=True)
-    return int(vals[numpy.argmax(counts)])
+        return int(np.asarray(mode_res.mode).flat[0])
+    vals, counts = np.unique(utm_zones, return_counts=True)
+    return int(vals[np.argmax(counts)])
 
 
 def zone_number_to_central_longitude(zone_number: int) -> float:

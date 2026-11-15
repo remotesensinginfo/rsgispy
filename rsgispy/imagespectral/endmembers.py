@@ -17,9 +17,9 @@ import math
 import os
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
-import geopandas
+import geopandas as gpd
 import numpy as np
-import pandas
+import pandas as pd
 import pyproj
 import rasterio
 from rasterio.features import rasterize
@@ -37,7 +37,7 @@ from rsgispy.vectorprocess import (
     resolve_vector_crs,
 )
 
-EndmemberInput = Union[pandas.DataFrame, str, os.PathLike]
+EndmemberInput = Union[pd.DataFrame, str, os.PathLike]
 
 _EXT_TO_FORMAT: Dict[str, str] = {
     ".csv": "csv",
@@ -130,7 +130,7 @@ class ImageEndmemberInfo:
             self.endmember_names: Optional[List[str]] = [
                 str(n) for n in endmember_names
             ]
-        elif isinstance(endmembers, pandas.DataFrame):
+        elif isinstance(endmembers, pd.DataFrame):
             self.endmember_names = [str(c) for c in endmembers.columns]
         else:
             self.endmember_names = None
@@ -138,12 +138,12 @@ class ImageEndmemberInfo:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, ImageEndmemberInfo):
             return NotImplemented
-        if isinstance(self.endmembers, pandas.DataFrame) or isinstance(
-            other.endmembers, pandas.DataFrame
+        if isinstance(self.endmembers, pd.DataFrame) or isinstance(
+            other.endmembers, pd.DataFrame
         ):
             if not (
-                isinstance(self.endmembers, pandas.DataFrame)
-                and isinstance(other.endmembers, pandas.DataFrame)
+                isinstance(self.endmembers, pd.DataFrame)
+                and isinstance(other.endmembers, pd.DataFrame)
             ):
                 return False
             em_eq = self.endmembers.equals(other.endmembers)
@@ -187,9 +187,9 @@ def _resolve_table_format(
     )
 
 
-def _normalise_endmembers_df(df: pandas.DataFrame) -> pandas.DataFrame:
+def _normalise_endmembers_df(df: pd.DataFrame) -> pd.DataFrame:
     """Validate and normalise an endmembers DataFrame (rows=bands, cols=classes)."""
-    if not isinstance(df, pandas.DataFrame) or df.empty:
+    if not isinstance(df, pd.DataFrame) or df.empty:
         raise rsgispy.RSGISPyException(
             "Endmembers DataFrame must be a non-empty pandas.DataFrame."
         )
@@ -201,7 +201,7 @@ def _normalise_endmembers_df(df: pandas.DataFrame) -> pandas.DataFrame:
         )
     try:
         for col in out.columns:
-            out[col] = pandas.to_numeric(out[col], errors="raise").astype(
+            out[col] = pd.to_numeric(out[col], errors="raise").astype(
                 np.float64
             )
     except (ValueError, TypeError) as err:
@@ -209,11 +209,11 @@ def _normalise_endmembers_df(df: pandas.DataFrame) -> pandas.DataFrame:
             f"All endmember class columns must contain numeric values: {err}"
         ) from err
     if out.index.name is None:
-        out.index = pandas.Index(out.index, name="band")
+        out.index = pd.Index(out.index, name="band")
     return out
 
 
-def _promote_band_index_if_present(df: pandas.DataFrame) -> pandas.DataFrame:
+def _promote_band_index_if_present(df: pd.DataFrame) -> pd.DataFrame:
     """
     Detect an explicit band/unnamed index column loaded from CSV/TSV/Excel and
     restore it as the DataFrame index; keep all columns when none is present.
@@ -224,14 +224,14 @@ def _promote_band_index_if_present(df: pandas.DataFrame) -> pandas.DataFrame:
             "band",
             "__band__",
         ) or first_col.startswith("Unnamed:")
-        is_non_numeric = not pandas.api.types.is_numeric_dtype(df.iloc[:, 0])
+        is_non_numeric = not pd.api.types.is_numeric_dtype(df.iloc[:, 0])
         if is_idx_name or is_non_numeric:
             idx_vals = df.iloc[:, 0].astype(str)
             rest = df.iloc[:, 1:].copy()
-            rest.index = pandas.Index(idx_vals, name="band")
+            rest.index = pd.Index(idx_vals, name="band")
             return rest
     out = df.copy()
-    out.index = pandas.Index(
+    out.index = pd.Index(
         [f"band_{i + 1}" for i in range(len(out))], name="band"
     )
     return out
@@ -242,7 +242,7 @@ def read_endmembers_df(
     file_format: Optional[str] = None,
     gain: float = 1,
     sheet_name: Union[int, str] = 0,
-) -> pandas.DataFrame:
+) -> pd.DataFrame:
     """
     Read spectral endmembers from a tabular file into a :class:`pandas.DataFrame`
     with spectral bands as rows and endmember class names as columns.
@@ -274,33 +274,33 @@ def read_endmembers_df(
     fmt = _resolve_table_format(path_str, file_format)
 
     if fmt == "csv":
-        raw_df = pandas.read_csv(path_str)
+        raw_df = pd.read_csv(path_str)
         df = _promote_band_index_if_present(raw_df)
     elif fmt == "tsv":
-        raw_df = pandas.read_csv(path_str, sep="\t")
+        raw_df = pd.read_csv(path_str, sep="\t")
         df = _promote_band_index_if_present(raw_df)
     elif fmt == "parquet":
         try:
-            df = pandas.read_parquet(path_str)
+            df = pd.read_parquet(path_str)
         except ImportError as err:
             raise rsgispy.RSGISPyException(
                 "Reading Parquet endmember files requires 'pyarrow' or 'fastparquet'."
             ) from err
     elif fmt == "feather":
         try:
-            raw_df = pandas.read_feather(path_str)
+            raw_df = pd.read_feather(path_str)
         except ImportError as err:
             raise rsgispy.RSGISPyException(
                 "Reading Feather endmember files requires 'pyarrow'."
             ) from err
         if "__band__" in raw_df.columns:
-            idx = pandas.Index(raw_df["__band__"].astype(str), name="band")
+            idx = pd.Index(raw_df["__band__"].astype(str), name="band")
             df = raw_df.drop(columns=["__band__"]).set_index(idx)
         else:
             df = raw_df
     elif fmt == "excel":
         try:
-            raw_df = pandas.read_excel(path_str, sheet_name=sheet_name)
+            raw_df = pd.read_excel(path_str, sheet_name=sheet_name)
         except ImportError as err:
             raise rsgispy.RSGISPyException(
                 "Reading Excel endmember files requires 'openpyxl'."
@@ -312,20 +312,20 @@ def read_endmembers_df(
         if isinstance(payload, dict) and {"columns", "data"} <= set(
             payload.keys()
         ):
-            df = pandas.DataFrame(
+            df = pd.DataFrame(
                 payload["data"],
                 columns=payload["columns"],
-                index=pandas.Index(payload["index"], name="band")
+                index=pd.Index(payload["index"], name="band")
                 if "index" in payload
                 else None,
             )
         else:
-            df = pandas.read_json(path_str, orient="columns")
+            df = pd.read_json(path_str, orient="columns")
     elif fmt == "pickle":
-        df = pandas.read_pickle(path_str)
+        df = pd.read_pickle(path_str)
     else:  # hdf
         try:
-            df = pandas.read_hdf(path_str)
+            df = pd.read_hdf(path_str)
         except ImportError as err:
             raise rsgispy.RSGISPyException(
                 "Reading HDF5 endmember files requires 'tables' (PyTables)."
@@ -338,7 +338,7 @@ def read_endmembers_df(
 
 
 def write_endmembers_df(
-    endmembers_df: pandas.DataFrame,
+    endmembers_df: pd.DataFrame,
     out_file: Union[str, os.PathLike],
     file_format: Optional[str] = None,
     sheet_name: str = "endmembers",
@@ -437,7 +437,7 @@ def convert_mtxt_to_df(
     gain: float = 1,
     out_file: Optional[Union[str, os.PathLike]] = None,
     file_format: Optional[str] = None,
-) -> pandas.DataFrame:
+) -> pd.DataFrame:
     """
     Convert a legacy RSGISLib ``.mtxt`` endmembers matrix file into a
     :class:`pandas.DataFrame` with spectral bands as rows and endmember class
@@ -518,12 +518,12 @@ def convert_mtxt_to_df(
                 f"Length of band_names ({len(band_names)}) does not match "
                 f"band count ({n}) in '{path_str}'."
             )
-        row_idx = pandas.Index([str(b) for b in band_names], name="band")
+        row_idx = pd.Index([str(b) for b in band_names], name="band")
     else:
-        row_idx = pandas.Index([f"band_{i + 1}" for i in range(n)], name="band")
+        row_idx = pd.Index([f"band_{i + 1}" for i in range(n)], name="band")
 
     df = _normalise_endmembers_df(
-        pandas.DataFrame(end_mem_arr.T, index=row_idx, columns=col_names)
+        pd.DataFrame(end_mem_arr.T, index=row_idx, columns=col_names)
     )
     if out_file is not None:
         write_endmembers_df(df, out_file, file_format=file_format)
@@ -534,9 +534,9 @@ def coerce_endmembers_df(
     endmembers: EndmemberInput,
     gain: float = 1,
     file_format: Optional[str] = None,
-) -> pandas.DataFrame:
+) -> pd.DataFrame:
     """Resolve an in-memory DataFrame or file path into a validated DataFrame."""
-    if isinstance(endmembers, pandas.DataFrame):
+    if isinstance(endmembers, pd.DataFrame):
         df = _normalise_endmembers_df(endmembers)
         if gain > 1:
             df = df / float(gain)
@@ -729,7 +729,7 @@ def extract_avg_endmembers(
     endmember_names: Optional[Sequence[str]] = None,
     file_format: Optional[str] = None,
     pxl_in_poly_method: int = 1,
-) -> pandas.DataFrame:
+) -> pd.DataFrame:
     """
     Extract the mean spectral signature per class/polygon in ``vec_file`` and
     return a :class:`pandas.DataFrame` (bands as rows, class names as columns).
@@ -780,7 +780,7 @@ def extract_avg_endmembers(
             vec_lyr
             or (
                 "<GeoDataFrame>"
-                if isinstance(vec_file, geopandas.GeoDataFrame)
+                if isinstance(vec_file, gpd.GeoDataFrame)
                 else vec_file
             )
         )
@@ -812,7 +812,7 @@ def extract_avg_endmembers(
             if src.crs is not None
             else None
         )
-        geom_series: geopandas.GeoSeries = gdf.geometry
+        geom_series: gpd.GeoSeries = gdf.geometry
         if gdf.crs is not None and img_crs is not None:
             vec_crs = resolve_vector_crs(gdf)
             if vec_crs != img_crs:
@@ -917,7 +917,7 @@ def extract_avg_endmembers(
         for cls_lbl in class_order
     }
     em_df = _normalise_endmembers_df(
-        pandas.DataFrame(em_cols, index=pandas.Index(band_labels, name="band"))
+        pd.DataFrame(em_cols, index=pd.Index(band_labels, name="band"))
     )
     if out_file is not None:
         write_endmembers_df(em_df, out_file, file_format=file_format)

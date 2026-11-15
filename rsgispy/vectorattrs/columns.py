@@ -7,8 +7,8 @@ import datetime
 import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
-import geopandas
-import numpy
+import geopandas as gpd
+import numpy as np
 
 import rsgispy
 import rsgispy.tools.jsonio
@@ -48,7 +48,7 @@ def add_fid_col(
     out_format: str = "GPKG",
     out_col: str = "fid",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Add a 1-based unique integer feature ID column to a vector layer.
 
@@ -77,7 +77,7 @@ def add_fid_col(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     base_gdf = read_vec_gdf(vec_file, vec_lyr)
-    base_gdf[out_col] = numpy.arange(1, len(base_gdf) + 1, 1, dtype=int)
+    base_gdf[out_col] = np.arange(1, len(base_gdf) + 1, 1, dtype=int)
     if out_vec_file is None:
         return base_gdf
     write_vec_gdf(
@@ -100,7 +100,7 @@ def add_unq_numeric_col(
     out_format: str = "GPKG",
     lut_json_file: Optional[Union[str, os.PathLike]] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Add a sequential integer ID column (starting at ``1``) mapped from unique
     values in ``unq_col``, optionally writing the lookup table to JSON.
@@ -135,7 +135,7 @@ def add_unq_numeric_col(
     validate_columns_exist(base_gdf, [unq_col])
 
     unq_vals = base_gdf[unq_col].unique()
-    base_gdf[out_col] = numpy.zeros(len(base_gdf), dtype=int)
+    base_gdf[out_col] = np.zeros(len(base_gdf), dtype=int)
     lut: Dict[str, Dict[Any, Any]] = {"id": {}, "val": {}}
 
     for idx, raw_val in enumerate(unq_vals, start=1):
@@ -169,7 +169,7 @@ def add_numeric_col(
     out_format: str = "GPKG",
     out_col_int: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Add a constant numeric column to a vector layer.
 
@@ -202,7 +202,7 @@ def add_numeric_col(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     base_gdf = read_vec_gdf(vec_file, vec_lyr)
     dtype = int if out_col_int else float
-    base_gdf[out_col] = numpy.full(len(base_gdf), out_val, dtype=dtype)
+    base_gdf[out_col] = np.full(len(base_gdf), out_val, dtype=dtype)
     if out_vec_file is None:
         return base_gdf
     write_vec_gdf(
@@ -226,7 +226,7 @@ def add_numeric_col_lut(
     out_format: str = "GPKG",
     col_dtype: str = "int",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Add a numeric column derived from ``ref_col`` via a dictionary lookup table.
 
@@ -274,7 +274,7 @@ def add_numeric_col_lut(
     validate_columns_exist(base_gdf, [ref_col])
 
     np_dtype = int if dtype_key == "int" else float
-    base_gdf[out_col] = numpy.zeros(len(base_gdf), dtype=np_dtype)
+    base_gdf[out_col] = np.zeros(len(base_gdf), dtype=np_dtype)
     for lut_key, out_val in val_lut.items():
         sel_rows = base_gdf[ref_col] == lut_key
         base_gdf.loc[sel_rows, out_col] = out_val
@@ -301,7 +301,7 @@ def add_numeric_col_range_lut(
     val_lut: Dict[int, Tuple[float, float]],
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Add a numeric class column using half-open ``[lower, upper)`` value ranges.
 
@@ -343,7 +343,7 @@ def add_numeric_col_range_lut(
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     validate_columns_exist(data_gdf, [vec_col])
 
-    out_arr = numpy.zeros(len(data_gdf), dtype=int)
+    out_arr = np.zeros(len(data_gdf), dtype=int)
     vals_arr = data_gdf[vec_col].to_numpy()
     for out_code, (low_val, high_val) in val_lut.items():
         out_arr[(vals_arr >= low_val) & (vals_arr < high_val)] = out_code
@@ -371,7 +371,7 @@ def add_numeric_col_from_lst_lut(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Add an integer column derived from ``ref_col`` using a sequence of
     ``(match_value, output_int)`` pairs.
@@ -411,7 +411,7 @@ def add_numeric_col_from_lst_lut(
     base_gdf = read_vec_gdf(vec_file, vec_lyr)
     validate_columns_exist(base_gdf, [ref_col])
 
-    out_vals = numpy.zeros(len(base_gdf), dtype=int)
+    out_vals = np.zeros(len(base_gdf), dtype=int)
     ref_vals = base_gdf[ref_col].to_numpy()
     for match_val, out_int in vals_lut:
         out_vals[ref_vals == match_val] = out_int
@@ -438,7 +438,7 @@ def add_string_col(
     out_val: str = "str_val",
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Add a constant string column to a vector layer.
 
@@ -491,7 +491,7 @@ def add_string_col_lut(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Add a string column derived from ``ref_col`` via a dictionary lookup table.
 
@@ -556,7 +556,7 @@ def add_ran_vals_cols(
     out_col: str = "ran_vals",
     rnd_seed: Optional[int] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Add a column populated with random integers in ``[1, 10 * n_rows)``.
 
@@ -588,7 +588,7 @@ def add_ran_vals_cols(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
-    rng = numpy.random.default_rng(seed=rnd_seed)
+    rng = np.random.default_rng(seed=rnd_seed)
     n_rows = len(data_gdf)
     high = max(2, n_rows * 10)
     data_gdf[out_col] = rng.integers(low=1, high=high, size=n_rows)
@@ -646,7 +646,7 @@ def create_name_col(
     dec_pt_val: str = "",
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create a feature name column formatted from X and Y coordinate attributes.
 
@@ -766,7 +766,7 @@ def check_str_col(
     rm_punc: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Sanitise values in a string column using :func:`rsgispy.tools.strings.check_str`.
 
@@ -841,7 +841,7 @@ def create_date_col(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create a date/datetime column from integer year, month, and day columns.
 
@@ -903,7 +903,7 @@ def find_replace_str_vec_lyr(
     find_replace: Dict[str, str],
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Perform substring find-and-replace across specified string columns.
 
@@ -964,7 +964,7 @@ def create_angle_sets(
     out_format: str = "GPKG",
     out_angle_set_col: str = "angle_set",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Partition point/feature azimuth angles (0–360 degrees) into mirrored
     angular sectors (each sector includes its opposite 180-degree direction).
@@ -1005,19 +1005,19 @@ def create_angle_sets(
     if (start_angle < 0) or (start_angle > 360):
         raise rsgispy.RSGISPyException("start_angle must be between 0 and 360.")
 
-    def _wrap_start(arr: numpy.ndarray) -> numpy.ndarray:
+    def _wrap_start(arr: np.ndarray) -> np.ndarray:
         out = arr.copy()
         out[out > 360] -= 360
         out[out == 360] = 0
         return out
 
-    def _wrap_end(arr: numpy.ndarray) -> numpy.ndarray:
+    def _wrap_end(arr: np.ndarray) -> np.ndarray:
         out = arr.copy()
         out[out > 360] -= 360
         out[out == 0] = 360
         return out
 
-    base_starts = start_angle + numpy.arange(0, 180, angle_set_width)
+    base_starts = start_angle + np.arange(0, 180, angle_set_width)
     p1_starts = _wrap_start(base_starts)
     p1_ends = _wrap_end(p1_starts + angle_set_width)
     p2_starts = _wrap_start(p1_starts + 180)
@@ -1026,7 +1026,7 @@ def create_angle_sets(
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     validate_columns_exist(data_gdf, [angle_col])
     angles = data_gdf[angle_col].to_numpy()
-    angle_sets = numpy.zeros_like(angles, dtype=int)
+    angle_sets = np.zeros_like(angles, dtype=int)
 
     for idx, (s1, e1, s2, e2) in enumerate(
         zip(p1_starts, p1_ends, p2_starts, p2_ends), start=1
@@ -1085,7 +1085,7 @@ def create_orthogonal_angle_sets(
     out_format: str = "GPKG",
     out_angle_set_col: str = "angle_set",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create two orthogonal mirrored angle sets (labelled ``1`` and ``2``;
     outside angles receive ``0``).
@@ -1143,7 +1143,7 @@ def create_orthogonal_angle_sets(
     validate_columns_exist(data_gdf, [angle_col])
 
     angles = data_gdf[angle_col].to_numpy()
-    angle_sets = numpy.zeros_like(angles, dtype=int)
+    angle_sets = np.zeros_like(angles, dtype=int)
 
     for low_a, high_a in set1_ranges:
         angle_sets[(angles >= low_a) & (angles <= high_a)] = 1

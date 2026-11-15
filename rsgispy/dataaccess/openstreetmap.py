@@ -21,7 +21,7 @@ GEOPANDAS_AVAIL = find_spec("geopandas") is not None
 
 PANDAS_AVAIL = True
 try:
-    import pandas
+    import pandas as pd
 except ImportError:
     PANDAS_AVAIL = False
 # pylint: enable=invalid-name
@@ -296,7 +296,7 @@ def get_osm_multi_to_file(
             )
 
     if data_lst:
-        data_gdf = pandas.concat(data_lst)
+        data_gdf = pd.concat(data_lst)
         data_gdf = data_gdf.set_crs(epsg=4326, allow_override=True)
         return _write_osm_gdf(
             data_gdf,
@@ -308,7 +308,7 @@ def get_osm_multi_to_file(
         )
     print("The geodataframes were empty - check the geometry type, tags and ROI.")
     if out_vec_file is None and GEOPANDAS_AVAIL:
-        import geopandas  # pylint: disable=import-outside-toplevel
+        import geopandas as gpd  # pylint: disable=import-outside-toplevel
 
-        return geopandas.GeoDataFrame(geometry=[], crs=f"EPSG:{out_vec_epsg}")
+        return gpd.GeoDataFrame(geometry=[], crs=f"EPSG:{out_vec_epsg}")
     return None

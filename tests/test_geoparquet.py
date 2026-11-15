@@ -9,8 +9,8 @@ import importlib
 import os
 import types
 
-import geopandas
-import numpy
+import geopandas as gpd
+import numpy as np
 import pytest
 import rasterio
 from rasterio.transform import from_origin
@@ -62,7 +62,7 @@ def _parquet_codec(path: str) -> str:
 
 def _write_test_raster(
     path: str,
-    arr: numpy.ndarray,
+    arr: np.ndarray,
     epsg: int = 32630,
     tl_x: float = 500000.0,
     tl_y: float = 5600100.0,
@@ -71,7 +71,7 @@ def _write_test_raster(
 ) -> str:
     """Write a single-band GeoTIFF for GeoParquet integration tests."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    data = numpy.asarray(arr)
+    data = np.asarray(arr)
     height, width = data.shape
     with rasterio.open(
         path,
@@ -89,9 +89,9 @@ def _write_test_raster(
     return path
 
 
-def _sample_polys(epsg: int = 32630) -> geopandas.GeoDataFrame:
+def _sample_polys(epsg: int = 32630) -> gpd.GeoDataFrame:
     """Return a three-polygon sample GeoDataFrame."""
-    return geopandas.GeoDataFrame(
+    return gpd.GeoDataFrame(
         {"cls": ["A", "B", "A"], "val": [10.0, 25.0, 40.0]},
         geometry=[
             box(500000.0, 5600000.0, 500040.0, 5600040.0),
@@ -318,7 +318,7 @@ def test_vectorgeoms_geoparquet(tmp_path):
     pq_a = str(tmp_path / "a.parquet")
     pq_b = str(tmp_path / "b.parquet")
     vp.write_vec_gdf(
-        geopandas.GeoDataFrame(
+        gpd.GeoDataFrame(
             {"cls": ["A", "B"]},
             geometry=[box(0.0, 0.0, 10.0, 10.0), box(10.0, 0.0, 20.0, 10.0)],
             crs="EPSG:32630",
@@ -326,7 +326,7 @@ def test_vectorgeoms_geoparquet(tmp_path):
         pq_a,
     )
     vp.write_vec_gdf(
-        geopandas.GeoDataFrame(
+        gpd.GeoDataFrame(
             {"roi": ["R1"]},
             geometry=[box(5.0, 0.0, 15.0, 10.0)],
             crs="EPSG:32630",
@@ -339,19 +339,19 @@ def test_vectorgeoms_geoparquet(tmp_path):
         pq_a, None, pq_b, None, pq_clip, out_format="PARQUET", out_compress="zstd"
     )
     assert _parquet_codec(pq_clip) == "ZSTD"
-    assert geopandas.read_parquet(pq_clip).area.sum() == pytest.approx(100.0)
+    assert gpd.read_parquet(pq_clip).area.sum() == pytest.approx(100.0)
 
     pq_inter = str(tmp_path / "inter.parquet")
     vg_overlay.vec_lyr_intersection_gp(
         pq_a, None, pq_b, None, pq_inter, out_format="PARQUET", out_compress="gzip"
     )
     assert _parquet_codec(pq_inter) == "GZIP"
-    assert geopandas.read_parquet(pq_inter).area.sum() == pytest.approx(100.0)
+    assert gpd.read_parquet(pq_inter).area.sum() == pytest.approx(100.0)
 
     # Polygons + explode_vec_files guard
     pq_multi = str(tmp_path / "multi.parquet")
     vp.write_vec_gdf(
-        geopandas.GeoDataFrame(
+        gpd.GeoDataFrame(
             {"id": [1]},
             geometry=[MultiPolygon([box(0, 0, 2, 2), box(4, 4, 6, 6)])],
             crs="EPSG:32630",
@@ -369,13 +369,13 @@ def test_vectorgeoms_geoparquet(tmp_path):
     )
     exp_out = os.path.join(pq_exp_dir, "multi.parquet")
     assert _parquet_codec(exp_out) == "ZSTD"
-    assert len(geopandas.read_parquet(exp_out)) == 2
+    assert len(gpd.read_parquet(exp_out)) == 2
 
     gpkg_multi_lyr = str(tmp_path / "two_lyrs.gpkg")
-    geopandas.GeoDataFrame(
+    gpd.GeoDataFrame(
         {"id": [1]}, geometry=[Point(0, 0)], crs="EPSG:32630"
     ).to_file(gpkg_multi_lyr, layer="l1", driver="GPKG")
-    geopandas.GeoDataFrame(
+    gpd.GeoDataFrame(
         {"id": [2]}, geometry=[Point(1, 1)], crs="EPSG:32630"
     ).to_file(gpkg_multi_lyr, layer="l2", driver="GPKG")
     with pytest.raises(rsgispy.RSGISPyException):
@@ -388,7 +388,7 @@ def test_vectorgeoms_geoparquet(tmp_path):
         pq_a, None, 2.0, pq_buf, out_format="PARQUET", out_compress="snappy"
     )
     assert _parquet_codec(pq_buf) == "SNAPPY"
-    assert geopandas.read_parquet(pq_buf).area.iloc[0] > 100.0
+    assert gpd.read_parquet(pq_buf).area.iloc[0] > 100.0
 
     # Spatial: alpha shape
     pts_pq = str(tmp_path / "hull_pts.parquet")
@@ -442,11 +442,11 @@ def test_vectorgeoms_geoparquet(tmp_path):
         out_compress="gzip",
     )
     assert _parquet_codec(orthg_pq) == "GZIP"
-    assert len(geopandas.read_parquet(orthg_pq)) == 3
+    assert len(gpd.read_parquet(orthg_pq)) == 3
 
     # Create: polygonise + existing file guard + define_grid multi-zone guard
     cls_tif = str(tmp_path / "cls.tif")
-    arr = numpy.zeros((8, 8), dtype=numpy.uint8)
+    arr = np.zeros((8, 8), dtype=np.uint8)
     arr[1:4, 1:4] = 1
     _write_test_raster(cls_tif, arr, nodata=0)
 
@@ -455,7 +455,7 @@ def test_vectorgeoms_geoparquet(tmp_path):
         poly_pq, "cls", "PARQUET", cls_tif, mask_img=cls_tif, out_compress="zstd"
     )
     assert _parquet_codec(poly_pq) == "ZSTD"
-    assert len(geopandas.read_parquet(poly_pq)) == 1
+    assert len(gpd.read_parquet(poly_pq)) == 1
 
     with pytest.raises(rsgispy.RSGISPyException):
         vg_create.polygonise_raster_to_vec_lyr(
@@ -479,7 +479,7 @@ def test_vectorgeoms_geoparquet(tmp_path):
         out_compress="gzip",
     )
     assert _parquet_codec(grid_pq) == "GZIP"
-    assert len(geopandas.read_parquet(grid_pq)) == 4
+    assert len(gpd.read_parquet(grid_pq)) == 4
 
     with pytest.raises(rsgispy.RSGISPyException):
         vg_create.define_grid(
@@ -498,7 +498,7 @@ def test_vectorattrs_vectorstats_zonalstats_geoparquet(tmp_path):
     """Test vectorattrs, vectorstats, and zonalstats reading/writing compressed GeoParquet."""
     polys_pq = str(tmp_path / "polys.parquet")
     vp.write_vec_gdf(
-        geopandas.GeoDataFrame(
+        gpd.GeoDataFrame(
             {
                 "cls": ["Forest", "Water", "Forest"],
                 "val": [10.0, 20.0, 30.0],
@@ -593,7 +593,7 @@ def test_vectorattrs_vectorstats_zonalstats_geoparquet(tmp_path):
 
     # zonalstats.polygon & point in-place GeoParquet updates with out_compress
     ras_tif = str(tmp_path / "zonal.tif")
-    arr = numpy.arange(1, 65, dtype=numpy.float32).reshape(8, 8)
+    arr = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
     _write_test_raster(ras_tif, arr, tl_x=500000.0, tl_y=5600080.0, res=10.0)
 
     zs_poly.calc_zonal_band_stats_file(
@@ -642,7 +642,7 @@ def test_vectorattrs_vectorstats_zonalstats_geoparquet(tmp_path):
 
     pts_pq = str(tmp_path / "pts_zonal.parquet")
     vp.write_vec_gdf(
-        geopandas.GeoDataFrame(
+        gpd.GeoDataFrame(
             {"id": [1, 2]},
             geometry=[Point(500005.0, 5600075.0), Point(500025.0, 5600055.0)],
             crs="EPSG:32630",
@@ -669,10 +669,10 @@ def test_imageutils_imagecalc_elevation_geoparquet(tmp_path):
     t1 = str(tmp_path / "t1.tif")
     t2 = str(tmp_path / "t2.tif")
     _write_test_raster(
-        t1, numpy.full((8, 8), 10.0, dtype=numpy.float32), tl_x=500000.0, tl_y=5600080.0
+        t1, np.full((8, 8), 10.0, dtype=np.float32), tl_x=500000.0, tl_y=5600080.0
     )
     _write_test_raster(
-        t2, numpy.full((8, 8), 20.0, dtype=numpy.float32), tl_x=500080.0, tl_y=5600080.0
+        t2, np.full((8, 8), 20.0, dtype=np.float32), tl_x=500080.0, tl_y=5600080.0
     )
 
     lut_pq = str(tmp_path / "img_lut.parquet")
@@ -705,7 +705,7 @@ def test_imageutils_imagecalc_elevation_geoparquet(tmp_path):
     # Cross-CRS GeoParquet ROI query against GeoParquet LUT
     roi_wgs_pq = str(tmp_path / "roi_wgs.parquet")
     vp.write_vec_gdf(
-        geopandas.GeoDataFrame(
+        gpd.GeoDataFrame(
             {"id": [1]},
             geometry=[box(500010.0, 5600010.0, 500050.0, 5600050.0)],
             crs="EPSG:32630",
@@ -717,7 +717,7 @@ def test_imageutils_imagecalc_elevation_geoparquet(tmp_path):
     # subsetting.subset + rasterise.rasterise_vec_lyr + spatial.grid_scattered_pts
     roi_utm_pq = str(tmp_path / "roi_utm.parquet")
     vp.write_vec_gdf(
-        geopandas.GeoDataFrame(
+        gpd.GeoDataFrame(
             {"val": [5.0]},
             geometry=[box(500010.0, 5600020.0, 500050.0, 5600060.0)],
             crs="EPSG:32630",
@@ -740,11 +740,11 @@ def test_imageutils_imagecalc_elevation_geoparquet(tmp_path):
         use_pbar=False,
     )
     with rasterio.open(ras_tif) as src:
-        assert 7 in numpy.unique(src.read(1))
+        assert 7 in np.unique(src.read(1))
 
     pts_pq = str(tmp_path / "grid_pts.parquet")
     vp.write_vec_gdf(
-        geopandas.GeoDataFrame(
+        gpd.GeoDataFrame(
             {"val": [1.0, 2.0, 3.0, 4.0]},
             geometry=[
                 Point(500005.0, 5600075.0),
@@ -783,16 +783,16 @@ def test_imageutils_imagecalc_elevation_geoparquet(tmp_path):
         )
 
     # calc_pt_smpl_img_vals & elevation.roughness with GeoParquet & out_compress
-    yy, xx = numpy.mgrid[0:32, 0:32]
+    yy, xx = np.mgrid[0:32, 0:32]
     dem_arr = (
-        100.0 + 0.5 * xx + 2.0 * numpy.sin(2.0 * numpy.pi * xx / 6.0)
-    ).astype(numpy.float32)
+        100.0 + 0.5 * xx + 2.0 * np.sin(2.0 * np.pi * xx / 6.0)
+    ).astype(np.float32)
     dem_tif = str(tmp_path / "dem.tif")
     _write_test_raster(dem_tif, dem_arr, tl_x=500000.0, tl_y=5600320.0)
 
     dem_pts_pq = str(tmp_path / "dem_pts.parquet")
     vp.write_vec_gdf(
-        geopandas.GeoDataFrame(
+        gpd.GeoDataFrame(
             {"id": [1], "xbox": [6], "ybox": [6], "angle": [0.0]},
             geometry=[Point(500160.0, 5600160.0)],
             crs="EPSG:32630",
@@ -810,7 +810,7 @@ def test_imageutils_imagecalc_elevation_geoparquet(tmp_path):
         out_compress="zstd",
     )
     assert _parquet_codec(smpl_out_pq) == "ZSTD"
-    assert "avg_ra" in geopandas.read_parquet(smpl_out_pq).columns
+    assert "avg_ra" in gpd.read_parquet(smpl_out_pq).columns
 
     rough_pq = str(tmp_path / "rough_out.parquet")
     rrough.calc_simple_roughness_profile_metrics(
@@ -823,13 +823,13 @@ def test_imageutils_imagecalc_elevation_geoparquet(tmp_path):
         out_compress="gzip",
     )
     assert _parquet_codec(rough_pq) == "GZIP"
-    assert "avg_ra" in geopandas.read_parquet(rough_pq).columns
+    assert "avg_ra" in gpd.read_parquet(rough_pq).columns
 
 
 def test_dataaccess_droneutils_checkdatasets_geoparquet(tmp_path, monkeypatch):
     """Test openstreetmap, droneutils, and checkdatasets with GeoParquet & compression."""
     # OpenStreetMap GeoParquet export
-    sample_gdf = geopandas.GeoDataFrame(
+    sample_gdf = gpd.GeoDataFrame(
         {"addr:street": ["High St"], "geometry": [box(-4.09, 52.41, -4.08, 52.42)]},
         crs="EPSG:4326",
     )
@@ -852,7 +852,7 @@ def test_dataaccess_droneutils_checkdatasets_geoparquet(tmp_path, monkeypatch):
         out_compress="zstd",
     )
     assert _parquet_codec(osm_pq) == "ZSTD"
-    assert len(geopandas.read_parquet(osm_pq)) == 1
+    assert len(gpd.read_parquet(osm_pq)) == 1
 
     osm_multi_pq = str(tmp_path / "osm_multi.parquet")
     osm.get_osm_multi_to_file(
@@ -864,7 +864,7 @@ def test_dataaccess_droneutils_checkdatasets_geoparquet(tmp_path, monkeypatch):
         out_compress="gzip",
     )
     assert _parquet_codec(osm_multi_pq) == "GZIP"
-    assert len(geopandas.read_parquet(osm_multi_pq)) == 2
+    assert len(gpd.read_parquet(osm_multi_pq)) == 2
 
     # Droneutils flightline GeoParquet & single-layer guard
     if rsgispy.droneutils.HAVE_EXIFTOOL:
@@ -949,8 +949,8 @@ def test_dataaccess_droneutils_checkdatasets_geoparquet(tmp_path, monkeypatch):
         )
         assert _parquet_codec(pts_pq) == "ZSTD"
         assert _parquet_codec(lines_pq) == "ZSTD"
-        assert len(geopandas.read_parquet(pts_pq)) == 2
-        assert len(geopandas.read_parquet(lines_pq)) == 1
+        assert len(gpd.read_parquet(pts_pq)) == 2
+        assert len(gpd.read_parquet(lines_pq)) == 1
 
         with pytest.raises(rsgispy.RSGISPyException):
             rsgispy.droneutils.create_flightline_vec(

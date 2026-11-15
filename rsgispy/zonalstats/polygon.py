@@ -21,8 +21,8 @@ import math
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import geopandas
-import numpy
+import geopandas as gpd
+import numpy as np
 import rasterio
 from rasterio.features import rasterize
 from rasterio.windows import Window
@@ -80,19 +80,19 @@ def _read_polygon_pixels(
     geom: Any,
     img_nodata: Optional[float],
     thresholds: Optional[Tuple[float, float]] = None,
-) -> numpy.ndarray:
+) -> np.ndarray:
     """
     Rasterise ``geom`` over its intersecting raster window and return a 1D array
     of pixel values matching the polygon, nodata, and optional threshold filters.
     """
     if geom is None or geom.is_empty:
-        return numpy.empty(0, dtype=numpy.float64)
+        return np.empty(0, dtype=np.float64)
 
     window = _get_feature_window(
         geom.bounds, src.transform, src.width, src.height
     )
     if window.width <= 0 or window.height <= 0:
-        return numpy.empty(0, dtype=numpy.float64)
+        return np.empty(0, dtype=np.float64)
 
     src_array = src.read(img_band, window=window)
     sub_transform = rasterio.windows.transform(window, src.transform)
@@ -108,7 +108,7 @@ def _read_polygon_pixels(
     valid_mask = rv_array == 1
     if img_nodata is not None:
         if isinstance(img_nodata, float) and math.isnan(img_nodata):
-            valid_mask &= ~numpy.isnan(src_array)
+            valid_mask &= ~np.isnan(src_array)
         else:
             valid_mask &= src_array != img_nodata
 
@@ -119,7 +119,7 @@ def _read_polygon_pixels(
 
 
 def _compute_stats_dict(
-    vals: numpy.ndarray,
+    vals: np.ndarray,
     field_map: Dict[str, Optional[str]],
     percentile: Optional[float] = None,
 ) -> Dict[str, float]:
@@ -138,12 +138,12 @@ def _compute_stats_dict(
     if field_map.get("count") is not None:
         stats_out["count"] = float(vals.shape[0])
     if field_map.get("mode") is not None:
-        unique_vals, counts = numpy.unique(vals, return_counts=True)
-        stats_out["mode"] = float(unique_vals[int(numpy.argmax(counts))])
+        unique_vals, counts = np.unique(vals, return_counts=True)
+        stats_out["mode"] = float(unique_vals[int(np.argmax(counts))])
     if field_map.get("median") is not None:
-        stats_out["median"] = float(numpy.median(vals))
+        stats_out["median"] = float(np.median(vals))
     if field_map.get("percentile") is not None and percentile is not None:
-        stats_out["percentile"] = float(numpy.percentile(vals, float(percentile)))
+        stats_out["percentile"] = float(np.percentile(vals, float(percentile)))
     return stats_out
 
 
@@ -182,7 +182,7 @@ def _centroid_fallback_stats(
 
 
 def _calc_zonal_stats_core(
-    vec_gdf: geopandas.GeoDataFrame,
+    vec_gdf: gpd.GeoDataFrame,
     input_img: str,
     img_band: int,
     min_thres: float,
@@ -193,7 +193,7 @@ def _calc_zonal_stats_core(
     percentile: Optional[float] = None,
     allow_centroid_fallback: bool = False,
     use_pbar: bool = True,
-) -> geopandas.GeoDataFrame:
+) -> gpd.GeoDataFrame:
     """Shared implementation for polygon zonal statistics with optional centroid fallback."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if all(name is None for name in field_map.values()):
@@ -281,7 +281,7 @@ def calc_zonal_band_stats_file(
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Calculate zonal statistics for a raster band over polygons in ``vec_file``
     (a vector file path or an in-memory :class:`geopandas.GeoDataFrame`).
@@ -340,7 +340,7 @@ def calc_zonal_band_stats_file(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    is_gdf_input = isinstance(vec_file, geopandas.GeoDataFrame)
+    is_gdf_input = isinstance(vec_file, gpd.GeoDataFrame)
     vec_gdf = _read_vec_file(vec_file, vec_lyr)
     vec_gdf = calc_zonal_band_stats(
         vec_gdf,
@@ -397,7 +397,7 @@ def calc_zonal_band_stats(
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
     vec_lyr: Optional[str] = None,
-) -> geopandas.GeoDataFrame:
+) -> gpd.GeoDataFrame:
     """
     Calculate zonal statistics for a raster band over polygons in a
     :class:`geopandas.GeoDataFrame` or vector file path.
@@ -429,10 +429,10 @@ def calc_zonal_band_stats(
 
     .. code:: python
 
-        import geopandas
+        import geopandas as gpd
         import rsgispy.zonalstats.polygon
 
-        vec_gdf = geopandas.read_file("polygons.gpkg", layer="polygons")
+        vec_gdf = gpd.read_file("polygons.gpkg", layer="polygons")
         out_gdf = rsgispy.zonalstats.polygon.calc_zonal_band_stats(
             vec_gdf=vec_gdf,
             input_img="img.tif",
@@ -482,7 +482,7 @@ def calc_zonal_poly_pts_band_stats_file(
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Extract raster band values at each polygon's centroid for ``vec_file``
     (a vector file path or an in-memory :class:`geopandas.GeoDataFrame`).
@@ -525,7 +525,7 @@ def calc_zonal_poly_pts_band_stats_file(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    is_gdf_input = isinstance(vec_file, geopandas.GeoDataFrame)
+    is_gdf_input = isinstance(vec_file, gpd.GeoDataFrame)
     vec_gdf = _read_vec_file(vec_file, vec_lyr)
     vec_gdf = calc_zonal_poly_pts_band_stats(
         vec_gdf,
@@ -562,7 +562,7 @@ def calc_zonal_poly_pts_band_stats(
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
     vec_lyr: Optional[str] = None,
-) -> geopandas.GeoDataFrame:
+) -> gpd.GeoDataFrame:
     """
     Extract raster band values at each polygon's centroid for a
     :class:`geopandas.GeoDataFrame` or vector file path.
@@ -584,10 +584,10 @@ def calc_zonal_poly_pts_band_stats(
 
     .. code:: python
 
-        import geopandas
+        import geopandas as gpd
         import rsgispy.zonalstats.polygon
 
-        vec_gdf = geopandas.read_file("polygons.gpkg", layer="polygons")
+        vec_gdf = gpd.read_file("polygons.gpkg", layer="polygons")
         out_gdf = rsgispy.zonalstats.polygon.calc_zonal_poly_pts_band_stats(
             vec_gdf=vec_gdf,
             input_img="img.tif",
@@ -653,7 +653,7 @@ def calc_zonal_band_stats_test_poly_pts_file(
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Calculate zonal statistics for polygons in ``vec_file`` (a vector file
     path or an in-memory :class:`geopandas.GeoDataFrame`), falling back to the
@@ -713,7 +713,7 @@ def calc_zonal_band_stats_test_poly_pts_file(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    is_gdf_input = isinstance(vec_file, geopandas.GeoDataFrame)
+    is_gdf_input = isinstance(vec_file, gpd.GeoDataFrame)
     vec_gdf = _read_vec_file(vec_file, vec_lyr)
     vec_gdf = calc_zonal_band_stats_test_poly_pts(
         vec_gdf,
@@ -774,7 +774,7 @@ def calc_zonal_band_stats_test_poly_pts(
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
     vec_lyr: Optional[str] = None,
-) -> geopandas.GeoDataFrame:
+) -> gpd.GeoDataFrame:
     """
     Calculate zonal statistics for polygons in a :class:`geopandas.GeoDataFrame`
     or vector file path, falling back to the polygon centroid if no valid pixels
@@ -810,10 +810,10 @@ def calc_zonal_band_stats_test_poly_pts(
 
     .. code:: python
 
-        import geopandas
+        import geopandas as gpd
         import rsgispy.zonalstats.polygon
 
-        vec_gdf = geopandas.read_file("polygons.gpkg", layer="polygons")
+        vec_gdf = gpd.read_file("polygons.gpkg", layer="polygons")
         out_gdf = rsgispy.zonalstats.polygon.calc_zonal_band_stats_test_poly_pts(
             vec_gdf=vec_gdf,
             input_img="img.tif",
@@ -866,7 +866,7 @@ def calc_zonal_band_pxl_counts_file(
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Count pixels matching specific integer values in ``vals_lut`` within each
     polygon of ``vec_file`` (a vector file path or an in-memory
@@ -910,7 +910,7 @@ def calc_zonal_band_pxl_counts_file(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    is_gdf_input = isinstance(vec_file, geopandas.GeoDataFrame)
+    is_gdf_input = isinstance(vec_file, gpd.GeoDataFrame)
     vec_gdf = _read_vec_file(vec_file, vec_lyr)
     vec_gdf = calc_zonal_band_pxl_counts(
         vec_gdf,
@@ -949,7 +949,7 @@ def calc_zonal_band_pxl_counts(
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
     vec_lyr: Optional[str] = None,
-) -> geopandas.GeoDataFrame:
+) -> gpd.GeoDataFrame:
     """
     Count pixels matching specific integer values in ``vals_lut`` within each
     polygon of a :class:`geopandas.GeoDataFrame` or vector file path.
@@ -972,10 +972,10 @@ def calc_zonal_band_pxl_counts(
 
     .. code:: python
 
-        import geopandas
+        import geopandas as gpd
         import rsgispy.zonalstats.polygon
 
-        vec_gdf = geopandas.read_file("polygons.gpkg", layer="polygons")
+        vec_gdf = gpd.read_file("polygons.gpkg", layer="polygons")
         out_gdf = rsgispy.zonalstats.polygon.calc_zonal_band_pxl_counts(
             vec_gdf=vec_gdf,
             input_img="landcover.tif",
@@ -1014,7 +1014,7 @@ def calc_zonal_band_pxl_counts(
             totals.append(float(vals.shape[0]))
             for pxl_val, count_list in counts_by_val.items():
                 if vals.shape[0] > 0:
-                    count_list.append(float(numpy.sum(vals == pxl_val)))
+                    count_list.append(float(np.sum(vals == pxl_val)))
                 else:
                     count_list.append(0.0)
 

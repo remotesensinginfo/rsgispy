@@ -5,7 +5,7 @@ import os
 import sys
 import types
 
-import numpy
+import numpy as np
 import pytest
 import rasterio
 from PIL import Image
@@ -29,9 +29,9 @@ def test_maths_round_to_nearest_val():
     assert maths.round_to_nearest_val(10.1, 5, rsgispy.ROUND_UP) == 15.0
     assert maths.round_to_nearest_val(14.9, 5, rsgispy.ROUND_DOWN) == 10.0
 
-    arr = numpy.array([1.2, 4.8, 7.5])
+    arr = np.array([1.2, 4.8, 7.5])
     out = maths.round_to_nearest_val(arr, 2.0, rsgispy.ROUND_UP)
-    assert numpy.allclose(out, [2.0, 6.0, 8.0])
+    assert np.allclose(out, [2.0, 6.0, 8.0])
 
     with pytest.raises(rsgispy.RSGISPyException):
         maths.round_to_nearest_val(1.0, 1.0, 999)
@@ -47,8 +47,8 @@ def test_projection_utilities():
 
     dx_m, dy_m = projection.degrees_to_metres(52.4, 0.001, 0.001)
     dlon, dlat = projection.metres_to_degrees(52.4, dx_m, dy_m)
-    assert numpy.isclose(dlon, 0.001, rtol=1e-4)
-    assert numpy.isclose(dlat, 0.001, rtol=1e-4)
+    assert np.isclose(dlon, 0.001, rtol=1e-4)
+    assert np.isclose(dlat, 0.001, rtol=1e-4)
 
     coord_str = projection.get_deg_coord_as_str(52.415, -4.082, n_chars=4)
     assert isinstance(coord_str, str)
@@ -68,8 +68,8 @@ def test_utm_conversions_and_zones():
     assert zone == 30
     assert letter == "U"
     lat, lon = utm.to_latlon(easting, northing, zone, letter)
-    assert numpy.isclose(lat, 52.415, atol=1e-5)
-    assert numpy.isclose(lon, -4.082, atol=1e-5)
+    assert np.isclose(lat, 52.415, atol=1e-5)
+    assert np.isclose(lon, -4.082, atol=1e-5)
 
     assert utm.latlon_to_zone_number(52.415, -4.082) == 30
     assert utm.latitude_to_zone_letter(52.415) == "U"
@@ -79,10 +79,10 @@ def test_utm_conversions_and_zones():
     min_e, max_e = utm.min_max_eastings_for_lat(52.415, zone=30)
     assert min_e < max_e
 
-    lats = numpy.array([52.4, 52.5, 52.45])
-    lons = numpy.array([-4.0, -4.1, -3.9])
+    lats = np.array([52.4, 52.5, 52.45])
+    lons = np.array([-4.0, -4.1, -3.9])
     zones = utm.latlon_arr_to_utm_zone_number(lats, lons)
-    assert numpy.all(zones == 30)
+    assert np.all(zones == 30)
     assert utm.latlon_to_mode_utm_zone_number(lats, lons) == 30
 
     splits = utm.split_wgs84_bbox_utm_zones([-7.0, 1.0, 51.0, 53.0])
@@ -93,7 +93,7 @@ def test_utm_conversions_and_zones():
 def test_tilecache_roundtrips(tmp_path):
     res0 = tilecache.resolution(0)
     res1 = tilecache.resolution(1)
-    assert numpy.isclose(res0 / 2.0, res1)
+    assert np.isclose(res0 / 2.0, res1)
 
     assert tilecache.truncate_lng_lat(190.0, 95.0) == (180.0, 90.0)
 
@@ -104,8 +104,8 @@ def test_tilecache_roundtrips(tmp_path):
     assert bbox[2] <= 52.41 <= bbox[3]
 
     tl_lon, tl_lat = tilecache.get_tile_tl_lonlat(tx, ty, tz, tms=False)
-    assert numpy.isclose(tl_lon, bbox[0])
-    assert numpy.isclose(tl_lat, bbox[3])
+    assert np.isclose(tl_lon, bbox[0])
+    assert np.isclose(tl_lat, bbox[3])
 
     fx, fy, fz = tilecache.flip_xyz_tms_tiles(tx, ty, tz)
     bx, by, bz = tilecache.flip_xyz_tms_tiles(fx, fy, fz)
@@ -113,8 +113,8 @@ def test_tilecache_roundtrips(tmp_path):
 
     mx, my = tilecache.get_web_mercator_xy(-4.08, 52.41)
     rlon, rlat = tilecache.get_xy_mercator_lonlat(mx, my)
-    assert numpy.isclose(rlon, -4.08, atol=1e-5)
-    assert numpy.isclose(rlat, 52.41, atol=1e-5)
+    assert np.isclose(rlon, -4.08, atol=1e-5)
+    assert np.isclose(rlat, 52.41, atol=1e-5)
 
     bounds = tilecache.xy_mercator_bounds(tx, ty, tz, tms=False)
     assert bounds[0] < bounds[1] and bounds[2] < bounds[3]

@@ -8,7 +8,7 @@ from contextlib import ExitStack
 import math
 from typing import Dict, Optional, Tuple
 
-import geopandas
+import geopandas as gpd
 import numpy as np
 import pyproj
 import rasterio
@@ -542,7 +542,7 @@ def grid_scattered_pts(
     gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
     vec_desc = (
         "<GeoDataFrame>"
-        if isinstance(vec_file, geopandas.GeoDataFrame)
+        if isinstance(vec_file, gpd.GeoDataFrame)
         else vec_file
     )
     if gdf.empty:

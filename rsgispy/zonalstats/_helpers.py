@@ -6,7 +6,7 @@ from contextlib import contextmanager
 import math
 from typing import Iterator, Optional, Tuple
 
-import geopandas
+import geopandas as gpd
 import pyproj
 import rasterio
 from rasterio.windows import Window
@@ -64,12 +64,12 @@ def check_bbox_overlap(
 
 @contextmanager
 def open_validated_zonal_inputs(
-    vec_gdf: geopandas.GeoDataFrame,
+    vec_gdf: gpd.GeoDataFrame,
     input_img: str,
     img_band: int,
     vec_def_epsg: Optional[int] = None,
     reproj_vec: bool = False,
-) -> Iterator[Tuple[rasterio.DatasetReader, Optional[float], geopandas.GeoSeries]]:
+) -> Iterator[Tuple[rasterio.DatasetReader, Optional[float], gpd.GeoSeries]]:
     """
     Validate vector/raster inputs, check CRS and spatial overlap, optionally
     reproject the geometry series to match ``input_img``, and yield

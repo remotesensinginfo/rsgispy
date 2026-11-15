@@ -12,8 +12,8 @@ import os
 import shutil
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
-import geopandas
-import pandas
+import geopandas as gpd
+import pandas as pd
 import shapely.geometry
 from PIL import Image
 from PIL.ExifTags import TAGS
@@ -356,7 +356,7 @@ def _append_common_exif_fields(
 
 
 def _write_vector_layer(
-    gdf: geopandas.GeoDataFrame,
+    gdf: gpd.GeoDataFrame,
     out_file: str,
     out_lyr: str,
     out_format: str,
@@ -381,12 +381,12 @@ def _write_flightline_outputs(
     line_vec_lyr: Optional[str],
     out_format: str,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[Union[geopandas.GeoDataFrame, Tuple[geopandas.GeoDataFrame, geopandas.GeoDataFrame]]]:
+) -> Optional[Union[gpd.GeoDataFrame, Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]]]:
     """Create and write or return the photo point layer and flightline segment layer."""
-    imgs_df = pandas.DataFrame(img_info)
-    imgs_gdf = geopandas.GeoDataFrame(
+    imgs_df = pd.DataFrame(img_info)
+    imgs_gdf = gpd.GeoDataFrame(
         imgs_df,
-        geometry=geopandas.points_from_xy(imgs_df.lon, imgs_df.lat),
+        geometry=gpd.points_from_xy(imgs_df.lon, imgs_df.lat),
         crs="EPSG:4326",
     )
 
@@ -405,15 +405,15 @@ def _write_flightline_outputs(
             )
 
     if flightline_geoms:
-        flightline_gdf: Optional[geopandas.GeoDataFrame] = geopandas.GeoDataFrame(
+        flightline_gdf: Optional[gpd.GeoDataFrame] = gpd.GeoDataFrame(
             data={"ID": flightline_ids, "geometry": flightline_geoms},
             geometry="geometry",
             crs="EPSG:4326",
         )
     else:
-        flightline_gdf = geopandas.GeoDataFrame(
-            data={"ID": pandas.Series(dtype="int64")},
-            geometry=geopandas.GeoSeries([], crs="EPSG:4326"),
+        flightline_gdf = gpd.GeoDataFrame(
+            data={"ID": pd.Series(dtype="int64")},
+            geometry=gpd.GeoSeries([], crs="EPSG:4326"),
             crs="EPSG:4326",
         )
 
@@ -472,7 +472,7 @@ def create_flightline_vec(
     line_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[Union[geopandas.GeoDataFrame, Tuple[geopandas.GeoDataFrame, geopandas.GeoDataFrame]]]:
+) -> Optional[Union[gpd.GeoDataFrame, Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]]]:
     """
     Create point and flightline vector layers from drone images containing GPS EXIF.
 
@@ -588,7 +588,7 @@ def create_flightline_vec(
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
 def create_flightline_extern_gps_vec(
-    gps_data_df: pandas.DataFrame,
+    gps_data_df: pd.DataFrame,
     input_imgs_dir: str,
     pts_vec_file: Optional[Union[str, os.PathLike]] = None,
     pts_vec_lyr: Optional[str] = None,
@@ -596,7 +596,7 @@ def create_flightline_extern_gps_vec(
     line_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[Union[geopandas.GeoDataFrame, Tuple[geopandas.GeoDataFrame, geopandas.GeoDataFrame]]]:
+) -> Optional[Union[gpd.GeoDataFrame, Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]]]:
     """
     Create point and flightline vector layers from external GPS data and drone images.
 
@@ -623,10 +623,10 @@ def create_flightline_extern_gps_vec(
 
     .. code:: python
 
-        import pandas
+        import pandas as pd
         import rsgispy.droneutils
 
-        gps_df = pandas.read_csv("gps_log.csv")
+        gps_df = pd.read_csv("gps_log.csv")
         rsgispy.droneutils.create_flightline_extern_gps_vec(
             gps_data_df=gps_df,
             input_imgs_dir="./drone_photos",
@@ -708,7 +708,7 @@ def create_flightline_extern_gps_vec(
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
 def define_extern_gps_in_imgs(
-    gps_data_df: pandas.DataFrame,
+    gps_data_df: pd.DataFrame,
     input_imgs_dir: str,
     flying_height: float,
     gimbal_roll: float,
@@ -735,10 +735,10 @@ def define_extern_gps_in_imgs(
 
     .. code:: python
 
-        import pandas
+        import pandas as pd
         import rsgispy.droneutils
 
-        gps_df = pandas.read_csv("gps_log.csv")
+        gps_df = pd.read_csv("gps_log.csv")
         rsgispy.droneutils.define_extern_gps_in_imgs(
             gps_data_df=gps_df,
             input_imgs_dir="./drone_photos",

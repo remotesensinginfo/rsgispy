@@ -7,8 +7,8 @@ Geometric measurements, spatial counts, and attribute summary statistics for
 import os
 from typing import Any, Dict, List, Optional, Union
 
-import geopandas
-import numpy
+import geopandas as gpd
+import numpy as np
 import shapely.geometry
 
 try:
@@ -48,7 +48,7 @@ def calc_vec_area(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Calculate the area of each polygon feature and store it in ``out_col``.
 
@@ -96,7 +96,7 @@ def calc_vec_length(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Calculate the length (or perimeter) of each line/polygon feature and store
     it in ``out_col``.
@@ -195,7 +195,7 @@ def calc_vec_pt_dist_angle(
     angle_col: str = "angle",
     dist_col: str = "dist",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Calculate Euclidean distance and clockwise-from-north azimuth angle
     (0-360 degrees) for each point relative to ``(x_centre, y_centre)``.
@@ -248,14 +248,14 @@ def calc_vec_pt_dist_angle(
     if y_centre is None:
         y_centre = float(y_coords.mean())
 
-    data_gdf[dist_col] = numpy.sqrt(
+    data_gdf[dist_col] = np.sqrt(
         (x_coords - x_centre) ** 2 + (y_coords - y_centre) ** 2
     )
 
-    angles = numpy.rad2deg(
-        numpy.arctan2(y_coords - y_centre, x_coords - x_centre)
+    angles = np.rad2deg(
+        np.arctan2(y_coords - y_centre, x_coords - x_centre)
     )
-    angles_secs = numpy.zeros_like(angles)
+    angles_secs = np.zeros_like(angles)
     angles_secs[(angles >= 0) & (angles <= 90)] = 1
     angles_secs[angles > 90] = 2
     angles_secs[angles < 0] = 3
@@ -284,7 +284,7 @@ def calc_near_dist_to_feats(
     out_col: str = "dist",
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Compute nearest-feature distance from each feature in ``vec_file`` to
     features in ``vec_dist_file`` using :func:`geopandas.sjoin_nearest`.
@@ -320,7 +320,7 @@ def calc_near_dist_to_feats(
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     dist_gdf = read_vec_gdf(vec_dist_file, vec_dist_lyr, copy=False)
 
-    data_dist_gdf = geopandas.sjoin_nearest(
+    data_dist_gdf = gpd.sjoin_nearest(
         data_gdf,
         dist_gdf,
         distance_col=out_col,
@@ -350,7 +350,7 @@ def count_pt_intersects(
     vec_in_epsg: Optional[int] = None,
     vec_pts_epsg: Optional[int] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Count the number of points from ``vec_pts_file`` intersecting each polygon
     in ``vec_in_file``.
@@ -397,7 +397,7 @@ def count_pt_intersects(
     if drop_cols:
         in_gdf = in_gdf.drop(columns=drop_cols)
 
-    in_gdf[tmp_col_name] = numpy.arange(1, len(in_gdf) + 1, 1, dtype=int)
+    in_gdf[tmp_col_name] = np.arange(1, len(in_gdf) + 1, 1, dtype=int)
     counts = (
         in_gdf.sjoin(pts_gdf)
         .groupby(tmp_col_name)
@@ -435,7 +435,7 @@ def calc_npts_in_radius(
     out_col_name: str = "n_pts_r",
     n_cores: int = 1,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Count how many other points lie within ``radius`` of each point feature.
 

@@ -5,7 +5,7 @@ Geostatistical variogram utilities for :mod:`rsgispy.vectorstats` using
 
 from typing import Optional, Union
 
-import numpy
+import numpy as np
 
 import rsgispy
 import rsgispy.tools.stats
@@ -98,7 +98,7 @@ def calc_empirical_semivariogram(
         y_coords = y_coords[mask]
         vals = vals[mask]
 
-    pts_coords = numpy.stack([x_coords, y_coords]).T
+    pts_coords = np.stack([x_coords, y_coords]).T
 
     return rsgispy.tools.stats.calc_semivariogram(
         pts_coords=pts_coords,

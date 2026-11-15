@@ -7,7 +7,7 @@ import math
 from typing import Any, List, Optional, Sequence, Union
 import warnings
 
-import numpy
+import numpy as np
 
 import rsgispy
 
@@ -22,10 +22,10 @@ __all__ = [
 
 
 def mask_data_to_valid(
-    data: numpy.ndarray,
+    data: np.ndarray,
     lower_limit: Optional[float] = None,
     upper_limit: Optional[float] = None,
-) -> numpy.ndarray:
+) -> np.ndarray:
     """
     Filter rows from an ``(n, m)`` array keeping only finite values within
     ``(lower_limit, upper_limit)``.
@@ -42,17 +42,17 @@ def mask_data_to_valid(
         arr = np.array([[1.0, 2.0], [np.nan, 3.0], [0.0, 5.0]])
         valid = rsgispy.tools.stats.mask_data_to_valid(arr, lower_limit=0.0)
     """
-    filtered = data[numpy.all(numpy.isfinite(data), axis=1)]
+    filtered = data[np.all(np.isfinite(data), axis=1)]
     if lower_limit is not None:
-        filtered = filtered[numpy.all(filtered > lower_limit, axis=1)]
+        filtered = filtered[np.all(filtered > lower_limit, axis=1)]
     if upper_limit is not None:
-        filtered = filtered[numpy.all(filtered < upper_limit, axis=1)]
+        filtered = filtered[np.all(filtered < upper_limit, axis=1)]
     return filtered
 
 
 def calc_semivariogram(
-    pts_coords: numpy.ndarray,
-    data_vals: numpy.ndarray,
+    pts_coords: np.ndarray,
+    data_vals: np.ndarray,
     out_data_file: Optional[str] = None,
     out_plot_file: Optional[str] = None,
     max_lag: Union[float, str] = "median",
@@ -82,7 +82,7 @@ def calc_semivariogram(
     # pylint: disable=import-outside-toplevel,too-many-arguments
     # pylint: disable=too-many-positional-arguments,too-many-locals
     import matplotlib.pyplot as plt
-    import pandas
+    import pandas as pd
     import skgstat  # pylint: disable=import-error
 
     if pts_coords.shape[1] != 2:
@@ -105,9 +105,9 @@ def calc_semivariogram(
     )
 
     variogram_data = vario_obj.get_empirical()
-    n_count = numpy.fromiter((g.size for g in vario_obj.lag_classes()), dtype=int)
+    n_count = np.fromiter((g.size for g in vario_obj.lag_classes()), dtype=int)
 
-    vario_out_df = pandas.DataFrame(
+    vario_out_df = pd.DataFrame(
         {
             "distance": variogram_data[0],
             "semivariance": variogram_data[1],
@@ -140,7 +140,7 @@ def calc_semivariogram(
             linestyles="dashed",
         )
 
-        bar_width = (numpy.max(vario_out_df["distance"]) * 0.7) / len(
+        bar_width = (np.max(vario_out_df["distance"]) * 0.7) / len(
             vario_out_df["count"]
         )
         ax2.bar(
@@ -168,7 +168,7 @@ def calc_semivariogram(
     return vario_out_df
 
 
-def standarise_img_data(img_data: numpy.ndarray) -> numpy.ndarray:
+def standarise_img_data(img_data: np.ndarray) -> np.ndarray:
     """
     Standardise image data per band: ``(data - mean) / std``.
 
@@ -186,7 +186,7 @@ def standarise_img_data(img_data: numpy.ndarray) -> numpy.ndarray:
     if len(img_data.shape) == 3:
         img_bands, img_height, img_width = img_data.shape
         n_img_pxls = img_height * img_width
-        img_data_reshp = numpy.reshape(img_data, (img_bands, n_img_pxls))
+        img_data_reshp = np.reshape(img_data, (img_bands, n_img_pxls))
     elif len(img_data.shape) == 2:
         img_bands, n_img_pxls = img_data.shape
         img_data_reshp = img_data
@@ -195,20 +195,20 @@ def standarise_img_data(img_data: numpy.ndarray) -> numpy.ndarray:
             "Input array must have either 2 or 3 dimensions."
         )
 
-    img_band_mean = numpy.mean(img_data_reshp, axis=1, keepdims=True)
+    img_band_mean = np.mean(img_data_reshp, axis=1, keepdims=True)
     img_band_cen = img_data_reshp - img_band_mean
     img_band_var = (
-        numpy.sum(numpy.power(img_band_cen, 2), axis=1, keepdims=True) / n_img_pxls
+        np.sum(np.power(img_band_cen, 2), axis=1, keepdims=True) / n_img_pxls
     )
-    img_band_std = numpy.sqrt(img_band_var)
+    img_band_std = np.sqrt(img_band_var)
     std_img_data = img_band_cen / img_band_std
     if len(img_data.shape) == 3:
-        std_img_data = numpy.reshape(std_img_data, (img_bands, img_height, img_width))
+        std_img_data = np.reshape(std_img_data, (img_bands, img_height, img_width))
 
     return std_img_data
 
 
-def normalise_img_data(img_data: numpy.ndarray) -> numpy.ndarray:
+def normalise_img_data(img_data: np.ndarray) -> np.ndarray:
     """
     Normalise image data per band: ``(data - min) / (max - min)``.
 
@@ -225,7 +225,7 @@ def normalise_img_data(img_data: numpy.ndarray) -> numpy.ndarray:
     """
     if len(img_data.shape) == 3:
         img_bands, img_height, img_width = img_data.shape
-        img_data_reshp = numpy.reshape(img_data, (img_bands, img_height * img_width))
+        img_data_reshp = np.reshape(img_data, (img_bands, img_height * img_width))
     elif len(img_data.shape) == 2:
         img_bands, _ = img_data.shape
         img_data_reshp = img_data
@@ -234,12 +234,12 @@ def normalise_img_data(img_data: numpy.ndarray) -> numpy.ndarray:
             "Input array must have either 2 or 3 dimensions."
         )
 
-    max_value = numpy.max(img_data_reshp, axis=1, keepdims=True)
-    min_value = numpy.min(img_data_reshp, axis=1, keepdims=True)
+    max_value = np.max(img_data_reshp, axis=1, keepdims=True)
+    min_value = np.min(img_data_reshp, axis=1, keepdims=True)
     diff_value = max_value - min_value
     nm_img = (img_data_reshp - min_value) / diff_value
     if len(img_data.shape) == 3:
-        nm_img = numpy.reshape(nm_img, (img_bands, img_height, img_width))
+        nm_img = np.reshape(nm_img, (img_bands, img_height, img_width))
 
     return nm_img
 
@@ -262,9 +262,9 @@ def validate_percentiles_0_100(
         raise rsgispy.RSGISPyException(
             "percentiles must be a number or a non-empty sequence of numbers."
         )
-    if isinstance(percentiles, (int, float, numpy.number)):
+    if isinstance(percentiles, (int, float, np.number)):
         vals: List[float] = [float(percentiles)]
-    elif isinstance(percentiles, numpy.ndarray) and percentiles.ndim == 0:
+    elif isinstance(percentiles, np.ndarray) and percentiles.ndim == 0:
         vals = [float(percentiles.item())]
     else:
         vals = list(percentiles)
@@ -281,10 +281,10 @@ def validate_percentiles_0_100(
 
 
 def compute_nanpercentiles(
-    stack_arr: numpy.ndarray,
+    stack_arr: np.ndarray,
     percentiles: Union[float, Sequence[float]],
     no_data_val: Optional[float] = None,
-) -> numpy.ndarray:
+) -> np.ndarray:
     """
     Compute per-pixel percentiles along axis 0 while ignoring ``no_data_val``.
 
@@ -305,23 +305,23 @@ def compute_nanpercentiles(
         stack = np.random.rand(5, 10, 10)
         pct = rsgispy.tools.stats.compute_nanpercentiles(stack, [25, 50, 75])
     """
-    if not numpy.issubdtype(stack_arr.dtype, numpy.floating):
-        stack_arr = stack_arr.astype(numpy.float64)
+    if not np.issubdtype(stack_arr.dtype, np.floating):
+        stack_arr = stack_arr.astype(np.float64)
 
     if no_data_val is not None:
         if not (
-            isinstance(no_data_val, (float, numpy.floating))
+            isinstance(no_data_val, (float, np.floating))
             and math.isnan(float(no_data_val))
         ):
-            stack_arr[stack_arr == no_data_val] = numpy.nan
+            stack_arr[stack_arr == no_data_val] = np.nan
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
-        pct_arr = numpy.nanpercentile(stack_arr, percentiles, axis=0)
+        pct_arr = np.nanpercentile(stack_arr, percentiles, axis=0)
 
     if pct_arr.ndim == 2:
-        pct_arr = numpy.expand_dims(pct_arr, axis=0)
+        pct_arr = np.expand_dims(pct_arr, axis=0)
 
     if no_data_val is not None:
-        return numpy.nan_to_num(pct_arr, copy=False, nan=no_data_val)
+        return np.nan_to_num(pct_arr, copy=False, nan=no_data_val)
     return pct_arr

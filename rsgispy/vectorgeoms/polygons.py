@@ -9,8 +9,8 @@ filtering, dissolving, thinning, and coordinate shifting) using ``geopandas``,
 import os
 from typing import Optional, Sequence, Union
 
-import geopandas
-import numpy
+import geopandas as gpd
+import numpy as np
 import shapely.geometry
 
 import rsgispy
@@ -54,7 +54,7 @@ def convert_polys_to_lines_gp(
     del_exist_vec: bool = False,
     exterior_lines: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Convert a polygon vector layer to a line vector layer using ``geopandas``.
 
@@ -132,7 +132,7 @@ def calc_poly_centroids(
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create a point vector layer containing the centroid of each polygon feature.
 
@@ -181,7 +181,7 @@ def explode_vec_lyr(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Explode multi-part geometries (e.g., ``MultiPolygon``,
     ``MultiLineString``, ``MultiPoint``) into single-part features using
@@ -296,7 +296,7 @@ def simplify_geometries(
     out_vec_lyr: Optional[str] = None,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Simplify vector geometries using the Douglas-Peucker algorithm with
     topology preservation.
@@ -370,7 +370,7 @@ def delete_polygon_holes(
     del_exist_vec: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Delete interior holes from input polygons whose area is below or equal to
     ``area_thres`` (or all holes if ``area_thres`` is ``None``).
@@ -455,7 +455,7 @@ def buffer_vec_layer_gp(
     cap_style: int = 1,
     join_style: int = 1,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Buffer the geometries in a vector layer using ``geopandas``.
 
@@ -536,7 +536,7 @@ def split_vec_by_grid(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Split an input vector layer along a regular grid of spacing
     ``(x_grid_size, y_grid_size)`` covering its bounding extent.
@@ -577,7 +577,7 @@ def split_vec_by_grid(
         shapely.geometry.box(b[0], b[2], b[1], b[3]) for b in tile_bboxes
     ]
 
-    grid_gdf = geopandas.GeoDataFrame(
+    grid_gdf = gpd.GeoDataFrame(
         {"geometry": polygons}, crs=in_vec_gdf.crs
     )
     vec_split_gdf = in_vec_gdf.overlay(grid_gdf, how="intersection")
@@ -602,7 +602,7 @@ def rm_polys_area(
     out_format: str = "GPKG",
     less_than: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Filter polygons by keeping features whose area is either strictly less than
     or strictly greater than ``area_thres``.
@@ -664,7 +664,7 @@ def create_bbox_vec_lyr(
     whole_num_base_grid: float = 10.0,
     whole_num_round: Optional[int] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create a single-polygon vector layer representing the bounding box of
     ``vec_file``, optionally snapped to a whole-number grid.
@@ -708,7 +708,7 @@ def create_bbox_vec_lyr(
             round_vals=whole_num_round,
         )
 
-    bbox_gdf = geopandas.GeoDataFrame(
+    bbox_gdf = gpd.GeoDataFrame(
         {"geometry": [shapely.geometry.box(x_min, y_min, x_max, y_max)]},
         crs=in_vec_gdf.crs,
     )
@@ -732,7 +732,7 @@ def vec_lyr_dissolve(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Dissolve vector features by grouping on categorical attribute ``vec_col``.
 
@@ -784,7 +784,7 @@ def thin_vector_geoms(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Thin vector geometries (typically points) using a polygon grid so that at
     most one feature intersecting each grid cell is retained.
@@ -818,9 +818,9 @@ def thin_vector_geoms(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     pts_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     grid_gdf = read_vec_gdf(grid_vec_file, grid_vec_lyr)
-    grid_gdf["unq_id"] = numpy.arange(1, len(grid_gdf) + 1, 1, dtype=int)
+    grid_gdf["unq_id"] = np.arange(1, len(grid_gdf) + 1, 1, dtype=int)
 
-    pts_join_gdf = geopandas.sjoin(
+    pts_join_gdf = gpd.sjoin(
         pts_gdf, grid_gdf, how="inner", predicate="intersects"
     )
     pts_join_gdf.drop_duplicates(
@@ -848,7 +848,7 @@ def shiftxy_vec_lyr(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Translate (shift) all geometries in a vector layer by ``(x_shift, y_shift)``
     in the layer's coordinate reference system units.

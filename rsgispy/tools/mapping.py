@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import uuid
 import xml.etree.ElementTree as ET
 
-import geopandas
+import geopandas as gpd
 import matplotlib
 import matplotlib.axes
 import matplotlib.colors
@@ -50,7 +50,7 @@ __all__ = [
 
 
 def _get_vec_epsg(
-    gp_vec: Union[geopandas.GeoDataFrame, geopandas.GeoSeries],
+    gp_vec: Union[gpd.GeoDataFrame, gpd.GeoSeries],
 ) -> Optional[int]:
     """Return EPSG integer code for a GeoDataFrame/GeoSeries, or ``None``."""
     if gp_vec.crs is None:
@@ -59,9 +59,9 @@ def _get_vec_epsg(
 
 
 def _subset_vec_bbox(
-    gp_vec: Union[geopandas.GeoDataFrame, geopandas.GeoSeries],
+    gp_vec: Union[gpd.GeoDataFrame, gpd.GeoSeries],
     bbox: Tuple[float, float, float, float],
-) -> Union[geopandas.GeoDataFrame, geopandas.GeoSeries]:
+) -> Union[gpd.GeoDataFrame, gpd.GeoSeries]:
     """Spatially subset a GeoDataFrame/GeoSeries using a buffered bounding box."""
     min_x_sub = math.floor(bbox[0] - 4)
     max_x_sub = math.ceil(bbox[1] + 4)
@@ -247,7 +247,7 @@ def get_overview_info(
 
 def add_overview_maps(
     ax: matplotlib.axes.Axes,
-    overview_lyr: geopandas.GeoDataFrame,
+    overview_lyr: gpd.GeoDataFrame,
     overview_bbox: Tuple[float, float, float, float],
     overview_pt: Optional[Tuple[float, float]] = None,
     over_size_x: float = 0.1,
@@ -281,12 +281,12 @@ def add_overview_maps(
 
     .. code:: python
 
-        import geopandas
+        import geopandas as gpd
         import matplotlib.pyplot as plt
         import rsgispy.tools.mapping
 
         fig, ax = plt.subplots()
-        world_gdf = geopandas.read_file("world.gpkg")
+        world_gdf = gpd.read_file("world.gpkg")
         ax_inset = rsgispy.tools.mapping.add_overview_maps(
             ax=ax,
             overview_lyr=world_gdf,
@@ -698,9 +698,9 @@ def _resolve_layer_param(
 def create_vec_lyr_map(
     ax: matplotlib.axes.Axes,
     gp_vecs: Union[
-        geopandas.GeoDataFrame,
-        geopandas.GeoSeries,
-        List[Union[geopandas.GeoDataFrame, geopandas.GeoSeries]],
+        gpd.GeoDataFrame,
+        gpd.GeoSeries,
+        List[Union[gpd.GeoDataFrame, gpd.GeoSeries]],
     ],
     bbox: Tuple[float, float, float, float],
     title_str: Optional[str] = None,
@@ -737,12 +737,12 @@ def create_vec_lyr_map(
 
     .. code:: python
 
-        import geopandas
+        import geopandas as gpd
         import matplotlib.pyplot as plt
         import rsgispy.tools.mapping
 
         fig, ax = plt.subplots()
-        gdf = geopandas.read_file("polys.gpkg")
+        gdf = gpd.read_file("polys.gpkg")
         rsgispy.tools.mapping.create_vec_lyr_map(
             ax=ax,
             gp_vecs=gdf,
@@ -1038,7 +1038,7 @@ def create_thematic_raster_map(
 
 def create_choropleth_vec_lyr_map(
     ax: matplotlib.axes.Axes,
-    gp_vec: geopandas.GeoDataFrame,
+    gp_vec: gpd.GeoDataFrame,
     vec_col: str,
     bbox: Tuple[float, float, float, float],
     title_str: Optional[str] = None,
@@ -1078,12 +1078,12 @@ def create_choropleth_vec_lyr_map(
 
     .. code:: python
 
-        import geopandas
+        import geopandas as gpd
         import matplotlib.pyplot as plt
         import rsgispy.tools.mapping
 
         fig, ax = plt.subplots()
-        gdf = geopandas.read_file("regions.gpkg")
+        gdf = gpd.read_file("regions.gpkg")
         rsgispy.tools.mapping.create_choropleth_vec_lyr_map(
             ax=ax,
             gp_vec=gdf,
@@ -1232,7 +1232,7 @@ def create_raster_cmap_img_map(
 
 def create_vec_pt_density_map(
     ax: matplotlib.axes.Axes,
-    gp_vec: geopandas.GeoDataFrame,
+    gp_vec: gpd.GeoDataFrame,
     bbox: Tuple[float, float, float, float],
     title_str: Optional[str] = None,
     cmap_name: str = "viridis",
@@ -1272,14 +1272,14 @@ def create_vec_pt_density_map(
 
     .. code:: python
 
-        import geopandas
+        import geopandas as gpd
         import matplotlib.pyplot as plt
         import mpl_scatter_density  # noqa: F401
         import rsgispy.tools.mapping
 
         fig = plt.figure()
         ax = fig.add_subplot(1, 1, 1, projection="scatter_density")
-        pts_gdf = geopandas.read_file("points.gpkg")
+        pts_gdf = gpd.read_file("points.gpkg")
         cmap, norm = rsgispy.tools.mapping.create_vec_pt_density_map(
             ax=ax,
             gp_vec=pts_gdf,

@@ -7,7 +7,7 @@ by bounding box, reference raster image, or vector layer using ``rasterio`` and
 import math
 from typing import Any, Mapping, Optional, Sequence, Union
 
-import geopandas
+import geopandas as gpd
 import rasterio
 
 import rsgispy
@@ -224,7 +224,7 @@ def subset(
     if gdf.empty:
         vec_desc = (
             "<GeoDataFrame>"
-            if isinstance(vec_file, geopandas.GeoDataFrame)
+            if isinstance(vec_file, gpd.GeoDataFrame)
             else vec_file
         )
         raise rsgispy.RSGISPyException(

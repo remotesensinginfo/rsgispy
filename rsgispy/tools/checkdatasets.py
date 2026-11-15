@@ -12,7 +12,7 @@ import multiprocessing
 import os
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-import numpy
+import numpy as np
 import pyproj
 import rasterio
 from rasterio.windows import Window
@@ -166,7 +166,7 @@ def _check_raster_bands_and_pixels(
     if read_img:
         if src.width < 1 or src.height < 1 or n_img_bands < 1:
             return False, "Image has zero width, height, or band count."
-        rng = numpy.random.default_rng()
+        rng = np.random.default_rng()
         band = 1 if n_img_bands == 1 else int(rng.integers(1, n_img_bands + 1))
         x_pxls = rng.integers(0, src.width, size=smpl_n_pxls)
         y_pxls = rng.integers(0, src.height, size=smpl_n_pxls)

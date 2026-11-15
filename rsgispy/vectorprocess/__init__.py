@@ -7,8 +7,8 @@ import math
 import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
-import geopandas
-import numpy
+import geopandas as gpd
+import numpy as np
 import pyogrio
 import pyproj
 import shapely.geometry
@@ -20,7 +20,7 @@ import rsgispy.tools.files
 from rsgispy.vectorprocess._geoparquet import read_geoparquet_info
 
 CRSLike = Union[pyproj.CRS, int, str]
-VectorInput = Union[geopandas.GeoDataFrame, str, os.PathLike]
+VectorInput = Union[gpd.GeoDataFrame, str, os.PathLike]
 
 _LEGACY_OGR_INT_TYPES = {0, 12}
 _LEGACY_OGR_FLOAT_TYPES = {2}
@@ -276,7 +276,7 @@ def list_vec_layers(vec_file: VectorInput) -> List[str]:
 
         lyrs = rsgispy.vectorprocess.list_vec_layers("polys.parquet")
     """
-    if isinstance(vec_file, geopandas.GeoDataFrame):
+    if isinstance(vec_file, gpd.GeoDataFrame):
         return ["layer"]
 
     vec_path = os.fspath(vec_file)
@@ -318,7 +318,7 @@ def resolve_vec_layer(
 
         lyr = rsgispy.vectorprocess.resolve_vec_layer("polys.gpkg")
     """
-    if isinstance(vec_file, geopandas.GeoDataFrame):
+    if isinstance(vec_file, gpd.GeoDataFrame):
         return vec_lyr or "layer"
 
     lyr_names = list_vec_layers(vec_file)
@@ -396,7 +396,7 @@ def read_vec_info(
 
         info = rsgispy.vectorprocess.read_vec_info("polys.gpkg", "polys")
     """
-    if isinstance(vec_file, geopandas.GeoDataFrame):
+    if isinstance(vec_file, gpd.GeoDataFrame):
         return {
             "crs": vec_file.crs,
             "features": len(vec_file),
@@ -423,7 +423,7 @@ def read_vec_gdf(
     epsg: Optional[int] = None,
     bbox: Optional[Tuple[float, float, float, float]] = None,
     copy: bool = True,
-) -> geopandas.GeoDataFrame:
+) -> gpd.GeoDataFrame:
     """
     Load a vector input into a :class:`geopandas.GeoDataFrame`, accepting an
     in-memory :class:`geopandas.GeoDataFrame` or a file path (OGR formats and
@@ -445,7 +445,7 @@ def read_vec_gdf(
 
         gdf = rsgispy.vectorprocess.read_vec_gdf("polys.gpkg", "polys")
     """
-    if isinstance(vec_file, geopandas.GeoDataFrame):
+    if isinstance(vec_file, gpd.GeoDataFrame):
         gdf = vec_file.copy() if copy else vec_file
         if bbox is not None:
             bbox_geom = shapely.geometry.box(*bbox)
@@ -462,13 +462,13 @@ def read_vec_gdf(
         try:
             if bbox is not None:
                 try:
-                    gdf = geopandas.read_parquet(vec_path, bbox=bbox)
+                    gdf = gpd.read_parquet(vec_path, bbox=bbox)
                 except ValueError:
-                    gdf = geopandas.read_parquet(vec_path)
+                    gdf = gpd.read_parquet(vec_path)
                     bbox_geom = shapely.geometry.box(*bbox)
                     gdf = gdf[gdf.intersects(bbox_geom)].copy()
             else:
-                gdf = geopandas.read_parquet(vec_path)
+                gdf = gpd.read_parquet(vec_path)
         except Exception as err:
             raise rsgispy.RSGISPyException(
                 f"Could not open GeoParquet file '{vec_path}': {err}"
@@ -480,7 +480,7 @@ def read_vec_gdf(
         if bbox is not None:
             read_kw["bbox"] = bbox
         try:
-            gdf = geopandas.read_file(vec_path, **read_kw)
+            gdf = gpd.read_file(vec_path, **read_kw)
         except Exception as err:
             raise rsgispy.RSGISPyException(
                 f"Could not open '{vec_path}' (layer='{vec_lyr}'): {err}"
@@ -492,7 +492,7 @@ def read_vec_gdf(
 
 
 def write_vec_gdf(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    gdf: geopandas.GeoDataFrame,
+    gdf: gpd.GeoDataFrame,
     out_vec_file: Union[str, os.PathLike],
     out_vec_lyr: Optional[str] = None,
     out_format: Optional[str] = None,
@@ -568,13 +568,13 @@ def write_vec_gdf(  # pylint: disable=too-many-arguments,too-many-positional-arg
 
 
 def finish_vec_output(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    gdf: geopandas.GeoDataFrame,
+    gdf: gpd.GeoDataFrame,
     out_vec_file: Optional[Union[str, os.PathLike]],
     out_vec_lyr: Optional[str] = None,
     out_format: Optional[str] = None,
     overwrite: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Finalise a newly created :class:`geopandas.GeoDataFrame`: if
     ``out_vec_file`` is ``None``, return ``gdf`` in memory; otherwise write it
@@ -609,7 +609,7 @@ def finish_vec_output(  # pylint: disable=too-many-arguments,too-many-positional
 
 
 def validate_columns_exist(
-    gdf: geopandas.GeoDataFrame,
+    gdf: gpd.GeoDataFrame,
     columns: Sequence[str],
 ) -> None:
     """
@@ -657,7 +657,7 @@ def bbox_to_rsgis(
 
 
 def get_gdf_bbox(
-    vec_gdf: geopandas.GeoDataFrame,
+    vec_gdf: gpd.GeoDataFrame,
 ) -> Tuple[float, float, float, float]:
     """
     Return ``(MinX, MaxX, MinY, MaxY)`` bounding box for a non-empty
@@ -707,7 +707,7 @@ def parse_crs_input(crs_val: CRSLike) -> pyproj.CRS:
 
 
 def resolve_vector_crs(
-    vec_gdf: geopandas.GeoDataFrame,
+    vec_gdf: gpd.GeoDataFrame,
     vec_def_epsg: Optional[int] = None,
 ) -> pyproj.CRS:
     """
@@ -733,7 +733,7 @@ def resolve_vector_crs(
     return pyproj.CRS.from_user_input(vec_gdf.crs)
 
 
-def get_gdf_geom_type(gdf: geopandas.GeoDataFrame) -> int:
+def get_gdf_geom_type(gdf: gpd.GeoDataFrame) -> int:
     """
     Map :class:`geopandas.GeoDataFrame` geometry types to an ``rsgispy.GEOM_*``
     constant.
@@ -795,14 +795,14 @@ def cast_col_data(
     if att_col_datatype is None:
         return list(att_col_data)
 
-    if att_col_datatype in (int, numpy.integer) or (
+    if att_col_datatype in (int, np.integer) or (
         isinstance(att_col_datatype, int)
         and not isinstance(att_col_datatype, bool)
         and att_col_datatype in _LEGACY_OGR_INT_TYPES
     ):
         return [None if v is None else int(v) for v in att_col_data]
 
-    if att_col_datatype in (float, numpy.floating) or (
+    if att_col_datatype in (float, np.floating) or (
         isinstance(att_col_datatype, int)
         and not isinstance(att_col_datatype, bool)
         and att_col_datatype in _LEGACY_OGR_FLOAT_TYPES
@@ -830,14 +830,14 @@ def cast_col_data(
         if key in ("bool", "boolean"):
             return [bool(v) for v in att_col_data]
 
-    if isinstance(att_col_datatype, numpy.dtype):
-        if numpy.issubdtype(att_col_datatype, numpy.integer):
+    if isinstance(att_col_datatype, np.dtype):
+        if np.issubdtype(att_col_datatype, np.integer):
             return [None if v is None else int(v) for v in att_col_data]
-        if numpy.issubdtype(att_col_datatype, numpy.floating):
+        if np.issubdtype(att_col_datatype, np.floating):
             return [None if v is None else float(v) for v in att_col_data]
-        if numpy.issubdtype(att_col_datatype, numpy.bool_):
+        if np.issubdtype(att_col_datatype, np.bool_):
             return [bool(v) for v in att_col_data]
-        if numpy.issubdtype(att_col_datatype, numpy.str_):
+        if np.issubdtype(att_col_datatype, np.str_):
             return ["" if v is None else str(v) for v in att_col_data]
 
     return list(att_col_data)

@@ -10,7 +10,7 @@ import math
 import os
 from typing import Any, List, Optional, Sequence, Tuple, Union
 
-import numpy
+import numpy as np
 from PIL import Image
 import pyproj
 import rasterio
@@ -269,11 +269,11 @@ def get_wmts_as_img(
                     with Image.open(io.BytesIO(tile_bytes)) as pil_tile:
                         if pil_tile.mode in ("P", "LA"):
                             pil_tile = pil_tile.convert("RGBA")
-                        tile_arr = numpy.asarray(pil_tile)
+                        tile_arr = np.asarray(pil_tile)
                     if tile_arr.ndim == 2:
-                        tile_arr = tile_arr[numpy.newaxis, :, :]
+                        tile_arr = tile_arr[np.newaxis, :, :]
                     else:
-                        tile_arr = numpy.moveaxis(tile_arr, -1, 0)
+                        tile_arr = np.moveaxis(tile_arr, -1, 0)
 
                     if dst is None:
                         n_bands = int(tile_arr.shape[0])

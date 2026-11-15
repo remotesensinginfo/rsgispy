@@ -6,7 +6,7 @@ using ``rasterio`` and ``geopandas``.
 import os
 from typing import List, Optional, Union
 
-import geopandas
+import geopandas as gpd
 
 import rsgispy
 from rsgispy.vectorprocess import VectorInput
@@ -39,7 +39,7 @@ def ext_point_band_values_file(
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Extract raster band pixel values at point locations in ``vec_file``
     (a vector file path or an in-memory :class:`geopandas.GeoDataFrame`).
@@ -93,7 +93,7 @@ def ext_point_band_values_file(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    is_gdf_input = isinstance(vec_file, geopandas.GeoDataFrame)
+    is_gdf_input = isinstance(vec_file, gpd.GeoDataFrame)
     vec_gdf = _read_vec_file(vec_file, vec_lyr)
     vec_gdf = ext_point_band_values(
         vec_gdf,
@@ -138,7 +138,7 @@ def ext_point_band_values(
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
     vec_lyr: Optional[str] = None,
-) -> geopandas.GeoDataFrame:
+) -> gpd.GeoDataFrame:
     """
     Extract raster band pixel values at point locations in a
     :class:`geopandas.GeoDataFrame` or vector file path.
@@ -167,10 +167,10 @@ def ext_point_band_values(
 
     .. code:: python
 
-        import geopandas
+        import geopandas as gpd
         import rsgispy.zonalstats.point
 
-        vec_gdf = geopandas.read_file("points.gpkg", layer="points")
+        vec_gdf = gpd.read_file("points.gpkg", layer="points")
         out_gdf = rsgispy.zonalstats.point.ext_point_band_values(
             vec_gdf=vec_gdf,
             input_img="img.tif",

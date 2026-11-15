@@ -6,7 +6,7 @@ geodesic/ellipsoid distance utilities using ``pyproj`` and ``numpy``.
 import math
 from typing import Optional, Sequence, Tuple, Union
 
-import numpy
+import numpy as np
 import pyproj
 
 import rsgispy
@@ -86,10 +86,10 @@ def get_crs_obj(epsg_code: int) -> pyproj.CRS:
 
 
 def metres_to_degrees(
-    latitude: Union[float, numpy.ndarray],
-    x_size: Union[float, numpy.ndarray],
-    y_size: Union[float, numpy.ndarray],
-) -> Tuple[Union[float, numpy.ndarray], Union[float, numpy.ndarray]]:
+    latitude: Union[float, np.ndarray],
+    x_size: Union[float, np.ndarray],
+    y_size: Union[float, np.ndarray],
+) -> Tuple[Union[float, np.ndarray], Union[float, np.ndarray]]:
     """
     Convert pixel sizes or distances in metres (WGS84 ellipsoid) to degrees.
 
@@ -108,14 +108,14 @@ def metres_to_degrees(
     """
     semi_major = 6378137.0
     semi_minor = 6356752.314245
-    rad_lat = numpy.deg2rad(latitude)
-    r_sq = (semi_major * numpy.cos(rad_lat)) ** 2 + (
-        semi_minor * numpy.sin(rad_lat)
+    rad_lat = np.deg2rad(latitude)
+    r_sq = (semi_major * np.cos(rad_lat)) ** 2 + (
+        semi_minor * np.sin(rad_lat)
     ) ** 2
     m_lat = ((semi_major * semi_minor) ** 2) / (r_sq**1.5)
-    n_lon = (semi_major**2) / numpy.sqrt(r_sq)
+    n_lon = (semi_major**2) / np.sqrt(r_sq)
     deg_to_rad = math.pi / 180.0
-    lon_size = x_size / (deg_to_rad * numpy.cos(rad_lat) * n_lon)
+    lon_size = x_size / (deg_to_rad * np.cos(rad_lat) * n_lon)
     lat_size = y_size / (deg_to_rad * m_lat)
     return lon_size, lat_size
 

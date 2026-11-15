@@ -5,8 +5,8 @@ import os
 import sys
 import types
 
-import geopandas
-import pandas
+import geopandas as gpd
+import pandas as pd
 from PIL import Image
 import pytest
 
@@ -168,16 +168,16 @@ def test_create_flightline_vec(tmp_path, monkeypatch):
         out_format="GPKG",
     )
 
-    pts_gdf = geopandas.read_file(out_gpkg, layer="pts")
-    lines_gdf = geopandas.read_file(out_gpkg, layer="lines")
+    pts_gdf = gpd.read_file(out_gpkg, layer="pts")
+    lines_gdf = gpd.read_file(out_gpkg, layer="lines")
     assert len(pts_gdf) == 2
     assert list(pts_gdf["image_filename"]) == ["img1.jpg", "img2.jpg"]
     assert len(lines_gdf) == 1
     assert lines_gdf.iloc[0]["ID"] == 1
 
     mem_pts, mem_lines = rsgispy.droneutils.create_flightline_vec([img2, img1])
-    assert isinstance(mem_pts, geopandas.GeoDataFrame)
-    assert isinstance(mem_lines, geopandas.GeoDataFrame)
+    assert isinstance(mem_pts, gpd.GeoDataFrame)
+    assert isinstance(mem_lines, gpd.GeoDataFrame)
     assert len(mem_pts) == 2 and len(mem_lines) == 1
 
     only_pts_gpkg = str(tmp_path / "only_pts.gpkg")
@@ -186,7 +186,7 @@ def test_create_flightline_vec(tmp_path, monkeypatch):
         pts_vec_file=only_pts_gpkg,
         pts_vec_lyr="pts",
     )
-    assert isinstance(only_lines, geopandas.GeoDataFrame)
+    assert isinstance(only_lines, gpd.GeoDataFrame)
     assert len(only_lines) == 1
 
 
@@ -199,7 +199,7 @@ def test_create_flightline_extern_gps_and_define_tags(tmp_path, monkeypatch):
     _create_test_jpeg(img1)
     _create_test_jpeg(img2)
 
-    gps_df = pandas.DataFrame(
+    gps_df = pd.DataFrame(
         [
             {
                 "image": "p1.jpg",
@@ -273,15 +273,15 @@ def test_create_flightline_extern_gps_and_define_tags(tmp_path, monkeypatch):
 
     assert os.path.exists(pts_shp)
     assert os.path.exists(line_shp)
-    pts_gdf = geopandas.read_file(pts_shp)
+    pts_gdf = gpd.read_file(pts_shp)
     assert len(pts_gdf) == 2
     assert list(pts_gdf["flight_yaw_degree"]) == [180.0, 181.0]
 
     mem_ext_pts, mem_ext_lines = rsgispy.droneutils.create_flightline_extern_gps_vec(
         gps_df, str(tmp_path)
     )
-    assert isinstance(mem_ext_pts, geopandas.GeoDataFrame)
-    assert isinstance(mem_ext_lines, geopandas.GeoDataFrame)
+    assert isinstance(mem_ext_pts, gpd.GeoDataFrame)
+    assert isinstance(mem_ext_lines, gpd.GeoDataFrame)
     assert len(mem_ext_pts) == 2 and len(mem_ext_lines) == 1
 
     rsgispy.droneutils.define_extern_gps_in_imgs(
@@ -325,11 +325,11 @@ def test_optional_exiftool_missing_droneutils():
             drone_mod.create_flightline_vec([], "p.gpkg", "p", "l.gpkg", "l")
         with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
             drone_mod.create_flightline_extern_gps_vec(
-                pandas.DataFrame(), ".", "p.gpkg", "p", "l.gpkg", "l"
+                pd.DataFrame(), ".", "p.gpkg", "p", "l.gpkg", "l"
             )
         with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
             drone_mod.define_extern_gps_in_imgs(
-                pandas.DataFrame(), ".", 50.0, 0.0, -90.0, 0.0
+                pd.DataFrame(), ".", 50.0, 0.0, -90.0, 0.0
             )
 
         for sym_name in ("ImageTimeCluster", "split_photos_by_time"):

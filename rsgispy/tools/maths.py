@@ -6,7 +6,7 @@ and combinatorial operations.
 import collections.abc
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Union
 
-import numpy
+import numpy as np
 
 import rsgispy
 
@@ -25,10 +25,10 @@ __all__ = [
 
 
 def round_to_nearest_val(
-    input_val: Union[numpy.ndarray, int, float, List[int], List[float]],
+    input_val: Union[np.ndarray, int, float, List[int], List[float]],
     round_val: Union[int, float] = 1,
     round_direction: int = rsgispy.ROUND_NEAREST,
-) -> Union[numpy.ndarray, float]:
+) -> Union[np.ndarray, float]:
     """
     Round elements of a number or NumPy array to the nearest multiple of
     ``round_val``, with options for rounding up, down, or to the nearest value.
@@ -51,15 +51,15 @@ def round_to_nearest_val(
         raise rsgispy.RSGISPyException("round_val must be non-zero.")
 
     if isinstance(input_val, list):
-        input_val = numpy.array(input_val, dtype=float)
+        input_val = np.array(input_val, dtype=float)
 
     round_val_flt = float(round_val)
     if round_direction == rsgispy.ROUND_NEAREST:
-        return numpy.round(input_val / round_val_flt) * round_val
+        return np.round(input_val / round_val_flt) * round_val
     if round_direction == rsgispy.ROUND_UP:
-        return numpy.ceil(input_val / round_val_flt) * round_val
+        return np.ceil(input_val / round_val_flt) * round_val
     if round_direction == rsgispy.ROUND_DOWN:
-        return numpy.floor(input_val / round_val_flt) * round_val
+        return np.floor(input_val / round_val_flt) * round_val
     raise rsgispy.RSGISPyException(
         f"Invalid round_direction: '{round_direction}'. Please use "
         "rsgispy.ROUND_NEAREST, rsgispy.ROUND_UP, or rsgispy.ROUND_DOWN."
@@ -91,8 +91,8 @@ def is_number(str_val: Union[str, float, int]) -> bool:
 
 
 def similar_numeric_vals(
-    val_a: Union[numpy.ndarray, Sequence[Union[float, int]], float, int],
-    val_b: Union[numpy.ndarray, Sequence[Union[float, int]], float, int],
+    val_a: Union[np.ndarray, Sequence[Union[float, int]], float, int],
+    val_b: Union[np.ndarray, Sequence[Union[float, int]], float, int],
     eql_thres: Union[float, int] = 0.1,
     abs_diff: bool = True,
 ) -> bool:
@@ -114,20 +114,20 @@ def similar_numeric_vals(
         is_close = rsgispy.tools.maths.similar_numeric_vals(1.05, 1.0, eql_thres=0.1)
     """
     if isinstance(val_a, collections.abc.Sequence):
-        val_a = numpy.array(val_a)
+        val_a = np.array(val_a)
     if isinstance(val_b, collections.abc.Sequence):
-        val_b = numpy.array(val_b)
+        val_b = np.array(val_b)
 
-    diff = numpy.abs(val_a - val_b) if abs_diff else (val_a - val_b)
+    diff = np.abs(val_a - val_b) if abs_diff else (val_a - val_b)
     similar = diff < eql_thres
 
-    if isinstance(similar, numpy.ndarray):
+    if isinstance(similar, np.ndarray):
         return bool(similar.all())
     return bool(similar)
 
 
 def in_bounds(
-    x: Union[numpy.ndarray, Sequence[float], float],
+    x: Union[np.ndarray, Sequence[float], float],
     lower: float,
     upper: float,
     upper_strict: bool = False,
@@ -148,11 +148,11 @@ def in_bounds(
         valid = rsgispy.tools.maths.in_bounds([0.2, 0.5, 0.9], 0.0, 1.0)
     """
     if upper_strict:
-        return bool(lower <= numpy.min(x) and numpy.max(x) < upper)
-    return bool(lower <= numpy.min(x) and numpy.max(x) <= upper)
+        return bool(lower <= np.min(x) and np.max(x) < upper)
+    return bool(lower <= np.min(x) and np.max(x) <= upper)
 
 
-def mixed_signs(x: Union[numpy.ndarray, Sequence[float]]) -> bool:
+def mixed_signs(x: Union[np.ndarray, Sequence[float]]) -> bool:
     """
     Check whether an array or sequence contains both negative and non-negative values.
 
@@ -164,12 +164,12 @@ def mixed_signs(x: Union[numpy.ndarray, Sequence[float]]) -> bool:
         import rsgispy.tools.maths
         has_mixed = rsgispy.tools.maths.mixed_signs([-1.5, 0.0, 2.3])
     """
-    min_val = numpy.min(x)
-    max_val = numpy.max(x)
+    min_val = np.min(x)
+    max_val = np.max(x)
     return bool(min_val < 0 <= max_val)
 
 
-def negative(x: Union[numpy.ndarray, Sequence[float]]) -> bool:
+def negative(x: Union[np.ndarray, Sequence[float]]) -> bool:
     """
     Check whether all values in ``x`` are strictly negative.
 
@@ -181,7 +181,7 @@ def negative(x: Union[numpy.ndarray, Sequence[float]]) -> bool:
         import rsgispy.tools.maths
         all_neg = rsgispy.tools.maths.negative([-3.0, -1.2, -0.5])
     """
-    return bool(numpy.max(x) < 0)
+    return bool(np.max(x) < 0)
 
 
 def is_odd(number: float) -> bool:

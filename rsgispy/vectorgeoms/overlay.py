@@ -7,8 +7,8 @@ region-of-interest clipping functions using ``geopandas``.
 import os
 from typing import Optional, Union
 
-import geopandas
-import pandas
+import geopandas as gpd
+import pandas as pd
 
 import rsgispy
 import rsgispy.tools.strings
@@ -45,7 +45,7 @@ def _overlay_vec_lyrs(
     del_exist_vec: bool,
     how: str,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """Shared implementation for ``geopandas.overlay`` vector layer operations."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     out_path = prepare_optional_out_vec(out_vec_file, del_exist_vec=del_exist_vec)
@@ -53,7 +53,7 @@ def _overlay_vec_lyrs(
 
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     over_data_gdf = read_vec_gdf(vec_over_file, vec_over_lyr)
-    res_gdf = geopandas.overlay(data_gdf, over_data_gdf, how=how)
+    res_gdf = gpd.overlay(data_gdf, over_data_gdf, how=how)
 
     if out_path is None:
         return res_gdf
@@ -78,7 +78,7 @@ def vec_lyr_intersection_gp(
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Perform a geometric intersection between ``vec_file`` and ``vec_over_file``
     using ``geopandas``.
@@ -130,7 +130,7 @@ def vec_lyr_difference_gp(
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Perform a geometric difference between ``vec_file`` and ``vec_over_file``
     using ``geopandas``.
@@ -183,7 +183,7 @@ def vec_lyr_sym_difference_gp(
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Perform a symmetric difference between ``vec_file`` and ``vec_over_file``
     using ``geopandas``.
@@ -235,7 +235,7 @@ def vec_lyr_identity_gp(
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Perform a geometric identity overlay between ``vec_file`` and
     ``vec_over_file`` using ``geopandas``.
@@ -287,7 +287,7 @@ def vec_lyr_union_gp(
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Perform a geometric union between ``vec_file`` and ``vec_over_file``
     using ``geopandas``.
@@ -338,7 +338,7 @@ def clip_vec_lyr(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Clip a vector layer to the region of interest defined by ``vec_roi_file``
     using ``geopandas.clip``.
@@ -367,7 +367,7 @@ def clip_vec_lyr(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     base_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     roi_gdf = read_vec_gdf(vec_roi_file, vec_roi_lyr, copy=False)
-    clipped_gdf = geopandas.clip(base_gdf, roi_gdf, keep_geom_type=True)
+    clipped_gdf = gpd.clip(base_gdf, roi_gdf, keep_geom_type=True)
     if out_vec_file is None:
         return clipped_gdf
     write_vec_gdf(
@@ -394,7 +394,7 @@ def clip_and_merge_with_roi(
     roi_rgn_val: int = 0,
     data_rgn_val: int = 1,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Clip the polygon vector layer (``vec_file``) using the ROI polygon layer
     (``vec_roi_file``) and merge the clipped features with the remaining
@@ -441,9 +441,9 @@ def clip_and_merge_with_roi(
         clipped_data_gdf = clipped_data_gdf.dissolve(ref_col_name, as_index=False)
         clipped_data_gdf[ref_col_name] = data_rgn_val
 
-    roi_diff_gdf = geopandas.overlay(roi_gdf, clipped_data_gdf, how="difference")
-    out_data_gdf = geopandas.GeoDataFrame(
-        pandas.concat([clipped_data_gdf, roi_diff_gdf], ignore_index=True),
+    roi_diff_gdf = gpd.overlay(roi_gdf, clipped_data_gdf, how="difference")
+    out_data_gdf = gpd.GeoDataFrame(
+        pd.concat([clipped_data_gdf, roi_diff_gdf], ignore_index=True),
         crs=roi_gdf.crs,
     )
 

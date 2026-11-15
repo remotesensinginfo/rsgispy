@@ -10,7 +10,7 @@ installed.
 from typing import Any, List, Optional, Union
 import warnings
 
-import numpy
+import numpy as np
 
 import rsgispy
 
@@ -69,7 +69,7 @@ def calc_pandas_vif(
     rsgispy.check_optional_dep(
         HAVE_SKLEARN, "calc_pandas_vif", "scikit-learn", "stats"
     )
-    import pandas
+    import pandas as pd
 
     if cols is None:
         cols = list(df.columns)
@@ -92,13 +92,13 @@ def calc_pandas_vif(
         linear_model.fit(x_vals, y_vals)
         y_pred = linear_model.predict(x_vals)
 
-        ss_tot = float(numpy.sum((y_vals - numpy.mean(y_vals)) ** 2))
-        ss_res = float(numpy.sum((y_vals - y_pred) ** 2))
+        ss_tot = float(np.sum((y_vals - np.mean(y_vals)) ** 2))
+        ss_res = float(np.sum((y_vals - y_pred) ** 2))
         r2 = 1.0 - (ss_res / ss_tot)
 
         vif_scores[col] = 0.0 if r2 == 1.0 else 1.0 / (1.0 - r2)
 
-    return pandas.Series(vif_scores, name="VIF")
+    return pd.Series(vif_scores, name="VIF")
 
 
 def cqv_threshold(
@@ -136,13 +136,13 @@ def cqv_threshold(
     x_vals = df[cols].values
 
     print(f"Calculating CQV for {len(cols)} predictor variables...")
-    q1 = numpy.percentile(x_vals, 25, axis=0)
-    q3 = numpy.percentile(x_vals, 75, axis=0)
+    q1 = np.percentile(x_vals, 25, axis=0)
+    q3 = np.percentile(x_vals, 75, axis=0)
     cqv = (q3 - q1) / (q3 + q1)
 
-    print(f"Median CQV: {numpy.median(cqv)}")
+    print(f"Median CQV: {np.median(cqv)}")
 
-    good_idx = numpy.where((cqv >= lowthreshold) & (cqv <= highthreshold))[0]
+    good_idx = np.where((cqv >= lowthreshold) & (cqv <= highthreshold))[0]
     good_cols = [cols[i] for i in good_idx]
 
     print(f"Selected {len(good_cols)} useful predictors...")
@@ -200,17 +200,17 @@ def corr_feature_selection(
         ]
         corr_data.append(corr_vals)
 
-    pearson_corr = numpy.tanh(numpy.mean(numpy.arctanh(corr_data), axis=0))
+    pearson_corr = np.tanh(np.mean(np.arctanh(corr_data), axis=0))
 
-    def _pearson_affinity(arr: numpy.ndarray) -> numpy.ndarray:
-        return 1.0 - numpy.array(
+    def _pearson_affinity(arr: np.ndarray) -> np.ndarray:
+        return 1.0 - np.array(
             [
                 [abs(scipy.stats.pearsonr(col_a, col_b)[0]) for col_a in arr]
                 for col_b in arr
             ]
         )
 
-    def _cluster_features(feat_arr: numpy.ndarray, n_clst: int) -> numpy.ndarray:
+    def _cluster_features(feat_arr: np.ndarray, n_clst: int) -> np.ndarray:
         if feat_arr.ndim != 2:
             raise rsgispy.RSGISPyException("Error: the input array must be 2D.")
         clf = sklearn.cluster.FeatureAgglomeration(
@@ -222,7 +222,7 @@ def corr_feature_selection(
         return clf.labels_ + 1
 
     x_vals = df[ind_vars].values
-    n_clusters = numpy.arange(n_min_clusters, n_max_clusters, dtype="int64")
+    n_clusters = np.arange(n_min_clusters, n_max_clusters, dtype="int64")
     tqdm_cls = rsgispy.get_tqdm()
     cluster_score = []
     for n_clst in tqdm_cls(n_clusters, disable=not use_pbar):
@@ -231,7 +231,7 @@ def corr_feature_selection(
             sklearn.metrics.silhouette_score(x_vals.T, x_lbls, metric="correlation")
         )
 
-    best_idx = int(numpy.argmax(cluster_score))
+    best_idx = int(np.argmax(cluster_score))
     opt_n_clusters = int(n_clusters[best_idx])
     opt_n_clusters_scr = cluster_score[best_idx]
     print(f"Found optimal number of clusters: {opt_n_clusters}")
@@ -239,9 +239,9 @@ def corr_feature_selection(
 
     cluster_lbls = _cluster_features(x_vals, opt_n_clusters)
     best_predictors: List[str] = []
-    for lbl in numpy.unique(cluster_lbls):
-        lbl_idx = numpy.where(cluster_lbls == lbl)[0]
-        best_corr = int(numpy.argmax(pearson_corr[lbl_idx]))
+    for lbl in np.unique(cluster_lbls):
+        lbl_idx = np.where(cluster_lbls == lbl)[0]
+        best_corr = int(np.argmax(pearson_corr[lbl_idx]))
         best_predictors.append(ind_vars[lbl_idx[best_corr]])
 
     return best_predictors
@@ -308,13 +308,13 @@ def lassolars_feature_selection(
         estimator.fit(x_vals, y_vals)
 
     selector = sklearn.feature_selection.SelectFromModel(estimator, prefit=True)
-    ind_vars_arr = numpy.array(ind_vars)
+    ind_vars_arr = np.array(ind_vars)
     return [str(col) for col in ind_vars_arr[selector.get_support()]]
 
 
 def breusch_pagan_test(
-    x: numpy.ndarray,
-    y: numpy.ndarray,
+    x: np.ndarray,
+    y: np.ndarray,
 ) -> List[Union[float, str]]:
     """
     Perform a Breusch-Pagan test for heteroskedasticity in a linear model.
@@ -350,8 +350,8 @@ def breusch_pagan_test(
     linear_model.fit(x, err)
     pred_err = linear_model.predict(x)
 
-    ss_tot = float(numpy.sum((err - numpy.mean(err, axis=0)) ** 2))
-    ss_res = float(numpy.sum((err - pred_err) ** 2))
+    ss_tot = float(np.sum((err - np.mean(err, axis=0)) ** 2))
+    ss_res = float(np.sum((err - pred_err) ** 2))
     r2 = 1.0 - (ss_res / ss_tot)
 
     lm_stat = float(n_samples * r2)

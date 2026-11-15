@@ -8,8 +8,8 @@ import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import xml.etree.ElementTree as ET
 
-import geopandas
-import pandas
+import geopandas as gpd
+import pandas as pd
 from shapely.geometry import (
     LinearRing,
     LineString,
@@ -68,14 +68,14 @@ __all__ = [
 ]
 
 
-def _concat_gdfs(gdfs: Sequence[geopandas.GeoDataFrame]) -> geopandas.GeoDataFrame:
+def _concat_gdfs(gdfs: Sequence[gpd.GeoDataFrame]) -> gpd.GeoDataFrame:
     """Concatenate non-empty GeoDataFrames while preserving CRS."""
     if len(gdfs) == 1:
         return gdfs[0].copy()
     crs = gdfs[0].crs
-    merged = pandas.concat(list(gdfs), ignore_index=True)
-    if not isinstance(merged, geopandas.GeoDataFrame):
-        merged = geopandas.GeoDataFrame(merged, geometry="geometry", crs=crs)
+    merged = pd.concat(list(gdfs), ignore_index=True)
+    if not isinstance(merged, gpd.GeoDataFrame):
+        merged = gpd.GeoDataFrame(merged, geometry="geometry", crs=crs)
     elif merged.crs is None and crs is not None:
         merged = merged.set_crs(crs, allow_override=True)
     return merged
@@ -89,7 +89,7 @@ def create_copy_vec_lyr(
     out_format: str = "GPKG",
     replace: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create a copy of an input vector layer.
 
@@ -142,7 +142,7 @@ def vector_translate(
     dst_srs: Optional[CRSLike] = None,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Translate a vector layer between formats and optionally assign or reproject
     its coordinate reference system.
@@ -256,7 +256,7 @@ def reproj_vec_lyr(
     in_wkt_str: Optional[str] = None,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Reproject a vector layer to a target EPSG code or WKT CRS string using
     ``geopandas``.
@@ -332,7 +332,7 @@ def reproj_wgs84_vec_to_utm(
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Union[int, geopandas.GeoDataFrame]:
+) -> Union[int, gpd.GeoDataFrame]:
     """
     Reproject a WGS84 (``EPSG:4326``) vector layer to the UTM zone containing its
     mean feature vertex coordinate.
@@ -405,7 +405,7 @@ def redefine_vec_lyr_proj(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Redefine the CRS metadata of a vector layer in place of reprojecting
     coordinates.
@@ -449,7 +449,7 @@ def merge_vec_files(
     remove_cols: Optional[Sequence[str]] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Merge all layers from a sequence of vector files or
     :class:`geopandas.GeoDataFrame` objects into a single output vector layer
@@ -483,13 +483,13 @@ def merge_vec_files(
         )
 
     pbar_cls = rsgispy.get_tqdm()
-    gp_lyrs: List[geopandas.GeoDataFrame] = []
+    gp_lyrs: List[gpd.GeoDataFrame] = []
     rm_set = set(remove_cols) if remove_cols is not None else set()
 
     for vec_file in pbar_cls(vec_files, disable=not use_pbar):
         lyrs: Sequence[Optional[str]] = (
             [None]
-            if isinstance(vec_file, geopandas.GeoDataFrame)
+            if isinstance(vec_file, gpd.GeoDataFrame)
             else get_vec_lyrs_lst(vec_file)
         )
         for lyr in lyrs:
@@ -525,7 +525,7 @@ def merge_vec_lyrs(
     remove_cols: Optional[Sequence[str]] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Merge specified ``{'file': ..., 'layer': ...}`` entries (where ``'file'``
     may be a path or :class:`geopandas.GeoDataFrame`) into a single output
@@ -561,7 +561,7 @@ def merge_vec_lyrs(
         )
 
     pbar_cls = rsgispy.get_tqdm()
-    gp_lyrs: List[geopandas.GeoDataFrame] = []
+    gp_lyrs: List[gpd.GeoDataFrame] = []
     rm_set = set(remove_cols) if remove_cols is not None else set()
 
     for vec_info in pbar_cls(vecs_dict, disable=not use_pbar):
@@ -571,7 +571,7 @@ def merge_vec_lyrs(
             )
         src_file = vec_info["file"]
         if (
-            not isinstance(src_file, geopandas.GeoDataFrame)
+            not isinstance(src_file, gpd.GeoDataFrame)
             and "layer" not in vec_info
         ):
             raise rsgispy.RSGISPyException(
@@ -609,7 +609,7 @@ def merge_vec_file_lyrs(
     remove_cols: Optional[Sequence[str]] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Merge all layers inside a single multi-layer vector file into a single
     output layer.
@@ -656,7 +656,7 @@ def merge_to_multi_lyr_vec(
     rename_dup_lyrs: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[Dict[str, geopandas.GeoDataFrame]]:
+) -> Optional[Dict[str, gpd.GeoDataFrame]]:
     """
     Combine multiple input vector files, :class:`geopandas.GeoDataFrame`
     objects, or :class:`VecLayersInfoObj` descriptors as separate layers in a
@@ -722,7 +722,7 @@ def merge_to_multi_lyr_vec(
                     vec_out_lyr=item.vec_out_lyr or src_lyr,
                 )
             )
-        elif isinstance(item, geopandas.GeoDataFrame):
+        elif isinstance(item, gpd.GeoDataFrame):
             entries.append(
                 VecLayersInfoObj(
                     vec_file=item,
@@ -751,7 +751,7 @@ def merge_to_multi_lyr_vec(
                 "use merge_vec_files or GPKG format."
             )
 
-    out_layers: Dict[str, geopandas.GeoDataFrame] = {}
+    out_layers: Dict[str, gpd.GeoDataFrame] = {}
     pbar_cls = rsgispy.get_tqdm()
     for entry in pbar_cls(entries, disable=not use_pbar):
         assert entry.vec_file is not None
@@ -812,10 +812,10 @@ def _unwrap_polygon_coords(
 
 
 def check_polys_wgs84_bounds_geometry(
-    data_gdf: geopandas.GeoDataFrame,
+    data_gdf: gpd.GeoDataFrame,
     width_thres: float = 350.0,
     use_pbar: bool = True,
-) -> geopandas.GeoDataFrame:
+) -> gpd.GeoDataFrame:
     """
     Unwrap WGS84 polygons whose longitude span exceeds ``width_thres`` degrees
     (indicating crossing of the 180/-180 antimeridian).
@@ -828,10 +828,10 @@ def check_polys_wgs84_bounds_geometry(
 
     .. code:: python
 
-        import geopandas
+        import geopandas as gpd
         import rsgispy.vectorutils.io
 
-        gdf = geopandas.read_file("world_polys.gpkg")
+        gdf = gpd.read_file("world_polys.gpkg")
         fixed = rsgispy.vectorutils.io.check_polys_wgs84_bounds_geometry(gdf)
     """
     out_gdf = data_gdf.copy(deep=True)
@@ -878,7 +878,7 @@ def merge_utm_vecs_wgs84(
     width_thres: float = 350.0,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Merge input vector files or :class:`geopandas.GeoDataFrame` objects
     projected in UTM zones into a single WGS84 (``EPSG:4326``) vector layer,
@@ -919,22 +919,22 @@ def merge_utm_vecs_wgs84(
         raise rsgispy.RSGISPyException(
             "Both n_hemi_utm_file and s_hemi_utm_file must be provided."
         )
-    if not isinstance(n_hemi_utm_file, geopandas.GeoDataFrame):
+    if not isinstance(n_hemi_utm_file, gpd.GeoDataFrame):
         ensure_file_exists(
             os.fspath(n_hemi_utm_file), label="Northern UTM zones file"
         )
-    if not isinstance(s_hemi_utm_file, geopandas.GeoDataFrame):
+    if not isinstance(s_hemi_utm_file, gpd.GeoDataFrame):
         ensure_file_exists(
             os.fspath(s_hemi_utm_file), label="Southern UTM zones file"
         )
 
     pbar_cls = rsgispy.get_tqdm()
-    out_gdfs: List[geopandas.GeoDataFrame] = []
+    out_gdfs: List[gpd.GeoDataFrame] = []
 
     for vec_file in pbar_cls(in_vec_files, disable=not use_pbar):
         lyrs: Sequence[Optional[str]] = (
             [None]
-            if isinstance(vec_file, geopandas.GeoDataFrame)
+            if isinstance(vec_file, gpd.GeoDataFrame)
             else get_vec_lyrs_lst(vec_file)
         )
         for lyr in lyrs:
@@ -946,7 +946,7 @@ def merge_utm_vecs_wgs84(
                 continue
 
             vec_epsg = get_epsg_proj_from_vec(
-                data_gdf if isinstance(vec_file, geopandas.GeoDataFrame) else vec_file,
+                data_gdf if isinstance(vec_file, gpd.GeoDataFrame) else vec_file,
                 vec_lyr=lyr,
             )
             if vec_epsg is None:
@@ -968,17 +968,17 @@ def merge_utm_vecs_wgs84(
                 utm_gdf = read_vec_gdf(
                     utm_zones_file, vec_lyr=zone_str, copy=False
                 )
-                data_inter = geopandas.overlay(
+                data_inter = gpd.overlay(
                     data_gdf, utm_gdf, how="intersection"
                 )
-                data_diff = geopandas.overlay(
+                data_diff = gpd.overlay(
                     data_gdf, utm_gdf, how="difference"
                 )
                 parts = [df for df in (data_inter, data_diff) if len(df) > 0]
                 if parts:
                     data_gdf = _concat_gdfs(parts).to_crs("EPSG:4326")
                 else:
-                    data_gdf = geopandas.GeoDataFrame(
+                    data_gdf = gpd.GeoDataFrame(
                         columns=data_gdf.columns, crs="EPSG:4326"
                     )
             else:
@@ -1003,7 +1003,7 @@ def merge_utm_vecs_wgs84(
             out_compress=out_compress,
         )
     if out_vec_file is None:
-        return geopandas.GeoDataFrame(geometry=[], crs="EPSG:4326")
+        return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
     return None
 
 
@@ -1017,7 +1017,7 @@ def split_vec_lyr(
     out_vec_ext: Optional[str] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Union[List[str], List[geopandas.GeoDataFrame]]:
+) -> Union[List[str], List[gpd.GeoDataFrame]]:
     """
     Split an input vector layer into sequential chunks each containing at most
     ``n_feats`` features, writing output files or returning a list of
@@ -1064,7 +1064,7 @@ def split_vec_lyr(
 
     pbar_cls = rsgispy.get_tqdm()
     out_files: List[str] = []
-    out_gdfs: List[geopandas.GeoDataFrame] = []
+    out_gdfs: List[gpd.GeoDataFrame] = []
     for chunk_idx in pbar_cls(range(n_chunks), disable=not use_pbar):
         start = chunk_idx * n_feats
         end = min((chunk_idx + 1) * n_feats, total_feats)
@@ -1096,7 +1096,7 @@ def split_feats_to_mlyrs(
     out_format: str = "GPKG",
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[Dict[str, geopandas.GeoDataFrame]]:
+) -> Optional[Dict[str, gpd.GeoDataFrame]]:
     """
     Split every feature in an input vector layer into its own named layer
     (``veclyr_0``, ``veclyr_1``, ...) inside ``out_vec_file`` (or return a
@@ -1134,7 +1134,7 @@ def split_feats_to_mlyrs(
                 "use split_vec_lyr instead."
             )
     pbar_cls = rsgispy.get_tqdm()
-    out_layers: Dict[str, geopandas.GeoDataFrame] = {}
+    out_layers: Dict[str, gpd.GeoDataFrame] = {}
     for i in pbar_cls(range(len(gdf)), disable=not use_pbar):
         lyr_name = f"veclyr_{i}"
         row_gdf = gdf.iloc[[i]].copy()
@@ -1166,7 +1166,7 @@ def split_by_attribute(
     chk_lyr_names: bool = True,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[Dict[str, geopandas.GeoDataFrame]]:
+) -> Optional[Dict[str, gpd.GeoDataFrame]]:
     """
     Split a vector layer by unique values in ``split_col_name`` into either
     multiple layers in a single GeoPackage, separate output files, or an
@@ -1238,7 +1238,7 @@ def split_by_attribute(
     unq_vals = base_gdf[split_col_name].unique()
 
     pbar_cls = rsgispy.get_tqdm()
-    out_splits: Dict[str, geopandas.GeoDataFrame] = {}
+    out_splits: Dict[str, gpd.GeoDataFrame] = {}
     for val in pbar_cls(unq_vals, disable=not use_pbar):
         sub_gdf = base_gdf.loc[base_gdf[split_col_name] == val]
         sub_gdf = sub_gdf[
@@ -1435,7 +1435,7 @@ def _parse_gpx_tracks(
     gpx_path: str,
     include_z: bool = False,
     split_segments: bool = False,
-) -> Tuple[geopandas.GeoDataFrame, geopandas.GeoDataFrame]:
+) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
     """Parse GPX tracks into point and line GeoDataFrames in ``EPSG:4326``."""
     # pylint: disable=too-many-locals
     try:
@@ -1521,49 +1521,49 @@ def _parse_gpx_tracks(
             )
 
     if pt_rows:
-        pts_gdf = geopandas.GeoDataFrame(
+        pts_gdf = gpd.GeoDataFrame(
             pt_rows, geometry="geometry", crs="EPSG:4326"
         )
     else:
-        pts_gdf = geopandas.GeoDataFrame(
+        pts_gdf = gpd.GeoDataFrame(
             {
-                "track_fid": pandas.Series(dtype="int64"),
-                "track_seg_id": pandas.Series(dtype="int64"),
-                "track_seg_point_id": pandas.Series(dtype="int64"),
-                "track_name": pandas.Series(dtype="object"),
-                "ele": pandas.Series(dtype="float64"),
-                "time": pandas.Series(dtype="object"),
+                "track_fid": pd.Series(dtype="int64"),
+                "track_seg_id": pd.Series(dtype="int64"),
+                "track_seg_point_id": pd.Series(dtype="int64"),
+                "track_name": pd.Series(dtype="object"),
+                "ele": pd.Series(dtype="float64"),
+                "time": pd.Series(dtype="object"),
             },
-            geometry=geopandas.GeoSeries([], crs="EPSG:4326"),
+            geometry=gpd.GeoSeries([], crs="EPSG:4326"),
             crs="EPSG:4326",
         )
 
     if line_rows:
-        lines_gdf = geopandas.GeoDataFrame(
+        lines_gdf = gpd.GeoDataFrame(
             line_rows, geometry="geometry", crs="EPSG:4326"
         )
     else:
         empty_line_cols: Dict[str, Any] = {
-            "track_fid": pandas.Series(dtype="int64"),
+            "track_fid": pd.Series(dtype="int64"),
         }
         if split_segments:
-            empty_line_cols["track_seg_id"] = pandas.Series(dtype="int64")
+            empty_line_cols["track_seg_id"] = pd.Series(dtype="int64")
         empty_line_cols.update(
             {
-                "name": pandas.Series(dtype="object"),
-                "cmt": pandas.Series(dtype="object"),
-                "desc": pandas.Series(dtype="object"),
-                "src": pandas.Series(dtype="object"),
-                "type": pandas.Series(dtype="object"),
-                "number": pandas.Series(dtype="object"),
-                "n_pts": pandas.Series(dtype="int64"),
-                "start_time": pandas.Series(dtype="object"),
-                "end_time": pandas.Series(dtype="object"),
+                "name": pd.Series(dtype="object"),
+                "cmt": pd.Series(dtype="object"),
+                "desc": pd.Series(dtype="object"),
+                "src": pd.Series(dtype="object"),
+                "type": pd.Series(dtype="object"),
+                "number": pd.Series(dtype="object"),
+                "n_pts": pd.Series(dtype="int64"),
+                "start_time": pd.Series(dtype="object"),
+                "end_time": pd.Series(dtype="object"),
             }
         )
-        lines_gdf = geopandas.GeoDataFrame(
+        lines_gdf = gpd.GeoDataFrame(
             empty_line_cols,
-            geometry=geopandas.GeoSeries([], crs="EPSG:4326"),
+            geometry=gpd.GeoSeries([], crs="EPSG:4326"),
             crs="EPSG:4326",
         )
 
@@ -1584,8 +1584,8 @@ def convert_gpx_to_vec(
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[
     Union[
-        geopandas.GeoDataFrame,
-        Tuple[geopandas.GeoDataFrame, geopandas.GeoDataFrame],
+        gpd.GeoDataFrame,
+        Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame],
     ]
 ]:
     """

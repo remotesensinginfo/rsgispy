@@ -5,7 +5,7 @@ thematic colour tables, overview pyramids, and integration with band_maths.
 
 import json
 
-import geopandas
+import geopandas as gpd
 import numpy as np
 import pytest
 import rasterio
@@ -1496,7 +1496,7 @@ def test_subset_functions(tmp_path):
         np.testing.assert_allclose(src.read(1), arr[2:4, 3:5])
 
     # 3. subset by vector layer
-    gdf = geopandas.GeoDataFrame(
+    gdf = gpd.GeoDataFrame(
         {"id": [1]},
         geometry=[box(500010.0, 5199950.0, 500060.0, 5199990.0)],
         crs="EPSG:32630",

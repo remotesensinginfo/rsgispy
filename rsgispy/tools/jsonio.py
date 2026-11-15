@@ -9,7 +9,7 @@ import gzip
 import json
 from typing import Any, Dict, List, Union
 
-import numpy
+import numpy as np
 
 __all__ = [
     "RSGISNumpyArrayEncoder",
@@ -27,19 +27,19 @@ class RSGISNumpyArrayEncoder(json.JSONEncoder):
     def default(self, o: Any) -> Any:
         encoded: Any = None
         handled = True
-        if isinstance(o, numpy.integer):
+        if isinstance(o, np.integer):
             encoded = int(o)
-        elif isinstance(o, numpy.floating):
+        elif isinstance(o, np.floating):
             encoded = float(o)
-        elif isinstance(o, numpy.complexfloating):
+        elif isinstance(o, np.complexfloating):
             encoded = float(o.real) if o.imag == 0 else str(o)
-        elif isinstance(o, numpy.ndarray):
+        elif isinstance(o, np.ndarray):
             encoded = o.tolist()
-        elif isinstance(o, numpy.bool_):
+        elif isinstance(o, np.bool_):
             encoded = bool(o)
-        elif isinstance(o, numpy.bytes_):
+        elif isinstance(o, np.bytes_):
             encoded = str(o)
-        elif isinstance(o, numpy.void):
+        elif isinstance(o, np.void):
             encoded = None
         elif isinstance(o, (datetime.datetime, datetime.date)):
             encoded = o.isoformat()

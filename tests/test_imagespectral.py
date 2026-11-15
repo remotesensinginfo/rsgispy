@@ -10,9 +10,9 @@ import json
 import math
 import os
 
-import geopandas
+import geopandas as gpd
 import numpy as np
-import pandas
+import pandas as pd
 import pytest
 import rasterio
 from rasterio.transform import from_origin
@@ -120,9 +120,9 @@ def test_exports_and_default_gdalformat():
 
 def test_df_roundtrip_formats_plot_and_equality(tmp_path):
     """Verify DataFrame write/read across user-chosen formats, plot, and equality."""
-    em_df = pandas.DataFrame(
+    em_df = pd.DataFrame(
         {"Soil": [0.2, 0.4, 0.8], "Veg": [0.6, 0.2, 0.1]},
-        index=pandas.Index(["blue", "green", "nir"], name="band"),
+        index=pd.Index(["blue", "green", "nir"], name="band"),
     )
 
     formats = [
@@ -236,7 +236,7 @@ def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
         descriptions=["Blue", "Green", "NIR"],
     )
 
-    gdf = geopandas.GeoDataFrame(
+    gdf = gpd.GeoDataFrame(
         {"landcover": ["Soil", "Soil", "Veg"]},
         geometry=[
             box(0.0, 20.0, 20.0, 40.0),
@@ -256,7 +256,7 @@ def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
         pxl_in_poly_method=zs.METHOD_POLYCONTAINSPIXELCENTER,
     )
 
-    assert isinstance(em_df, pandas.DataFrame)
+    assert isinstance(em_df, pd.DataFrame)
     assert list(em_df.columns) == ["Soil", "Veg"]
     assert list(em_df.index) == ["Blue", "Green", "NIR"]
     np.testing.assert_allclose(em_df["Soil"].to_numpy(), [0.3, 0.5, 0.6], atol=1e-6)
@@ -286,9 +286,9 @@ def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
 
     em1 = np.array([0.2, 0.4, 0.8], dtype=np.float64)
     em2 = np.array([0.6, 0.2, 0.1], dtype=np.float64)
-    em_df = pandas.DataFrame(
+    em_df = pd.DataFrame(
         {"Soil": em1, "Veg": em2},
-        index=pandas.Index(["Blue", "Green", "NIR"], name="band"),
+        index=pd.Index(["Blue", "Green", "NIR"], name="band"),
     )
     em.write_endmembers_df(em_df, str(em_path))
 
@@ -391,8 +391,8 @@ def test_summarise_multi_endmember_linear_unmixing(tmp_path):
     em_soil = np.array([0.5, 0.4, 0.2], dtype=np.float64)
     em_water = np.array([0.2, 0.1, 0.05], dtype=np.float64)
 
-    em_a_df = pandas.DataFrame({"Veg": em_veg, "Soil": em_soil})
-    em_b_df = pandas.DataFrame({"Veg": em_veg, "Water": em_water})
+    em_a_df = pd.DataFrame({"Veg": em_veg, "Soil": em_soil})
+    em_b_df = pd.DataFrame({"Veg": em_veg, "Water": em_water})
     em.write_endmembers_df(em_a_df, str(em_a_path))
 
     refl = np.zeros((3, 2, 2), dtype=np.float32)
@@ -445,7 +445,7 @@ def test_pysptools_unmixers(tmp_path):
 
     em1 = np.array([0.2, 0.4, 0.8], dtype=np.float64)
     em2 = np.array([0.6, 0.2, 0.1], dtype=np.float64)
-    em_df = pandas.DataFrame({"Soil": em1, "Veg": em2})
+    em_df = pd.DataFrame({"Soil": em1, "Veg": em2})
     em.write_endmembers_df(em_df, str(em_path))
 
     arr = np.zeros((3, 2, 2), dtype=np.float32)
@@ -510,7 +510,7 @@ def test_pymcr_unmixers(tmp_path):
 
     em1 = np.array([0.2, 0.4, 0.8], dtype=np.float64)
     em2 = np.array([0.6, 0.2, 0.1], dtype=np.float64)
-    em_df = pandas.DataFrame({"Soil": em1, "Veg": em2})
+    em_df = pd.DataFrame({"Soil": em1, "Veg": em2})
     em.write_endmembers_df(em_df, str(em_path))
 
     arr = np.zeros((3, 2, 2), dtype=np.float32)
@@ -560,7 +560,7 @@ def test_recommended_numpy_ucls_unmixer(tmp_path):
     em1 = np.array([0.2, 0.4, 0.8], dtype=np.float64)
     em2 = np.array([0.6, 0.2, 0.1], dtype=np.float64)
     em3 = np.array([0.3, 0.7, 0.2], dtype=np.float64)
-    em_df = pandas.DataFrame({"Soil": em1, "Veg": em2, "Water": em3})
+    em_df = pd.DataFrame({"Soil": em1, "Veg": em2, "Water": em3})
     em.write_endmembers_df(em_df, str(em_path))
 
     arr = np.zeros((3, 2, 2), dtype=np.float32)
@@ -619,7 +619,7 @@ def test_recommended_scipy_nnls_fcls_unmixers(tmp_path):
     em1 = np.array([0.1, 0.2, 0.7, 0.3], dtype=np.float64)
     em2 = np.array([0.6, 0.3, 0.1, 0.2], dtype=np.float64)
     em3 = np.array([0.2, 0.6, 0.3, 0.7], dtype=np.float64)
-    em_df = pandas.DataFrame({"Soil": em1, "Veg": em2, "Shadow": em3})
+    em_df = pd.DataFrame({"Soil": em1, "Veg": em2, "Shadow": em3})
     em.write_endmembers_df(em_df, str(em_path))
 
     arr = np.zeros((4, 2, 2), dtype=np.float32)
@@ -733,7 +733,7 @@ def test_batched_nnls_fcls_equivalence_and_edge_cases():
 
 def test_optional_dependency_friendly_errors(monkeypatch, tmp_path):
     """Verify optional unmixers raise RSGISPyException with pip install hints when missing."""
-    em_df = pandas.DataFrame({"Soil": [0.2, 0.4], "Veg": [0.6, 0.2]})
+    em_df = pd.DataFrame({"Soil": [0.2, 0.4], "Veg": [0.6, 0.2]})
     dummy_in = str(tmp_path / "in.tif")
     dummy_out = str(tmp_path / "out.tif")
 
@@ -765,7 +765,7 @@ def test_spectral_angle_mapper(tmp_path):
     """Test spectral_angle_mapper accuracy, scale invariance, thresholding, and nodata."""
     em_veg = np.array([1.0, 4.0, 2.0], dtype=np.float64)
     em_soil = np.array([3.0, 1.0, 1.0], dtype=np.float64)
-    em_df = pandas.DataFrame({"Veg": em_veg, "Soil": em_soil})
+    em_df = pd.DataFrame({"Veg": em_veg, "Soil": em_soil})
     em_csv = tmp_path / "sam_em.csv"
     em.write_endmembers_df(em_df, str(em_csv))
 
@@ -829,13 +829,13 @@ def test_spectral_angle_mapper(tmp_path):
     with pytest.raises(rsgispy.RSGISPyException):
         sc.spectral_angle_mapper(
             str(img_path),
-            pandas.DataFrame({"A": [1.0, 2.0]}),
+            pd.DataFrame({"A": [1.0, 2.0]}),
             str(tmp_path / "bad_bands.tif"),
         )
     with pytest.raises(rsgispy.RSGISPyException):
         sc.spectral_angle_mapper(
             str(img_path),
-            pandas.DataFrame({"Zero": [0.0, 0.0, 0.0]}),
+            pd.DataFrame({"Zero": [0.0, 0.0, 0.0]}),
             str(tmp_path / "bad_zero.tif"),
         )
 
@@ -844,7 +844,7 @@ def test_spectral_correlation_mapper(tmp_path):
     """Test spectral_correlation_mapper affine invariance, thresholds, and nodata."""
     em_veg = np.array([1.0, 4.0, 2.0, 3.0], dtype=np.float64)
     em_soil = np.array([4.0, 2.0, 1.0, 0.0], dtype=np.float64)
-    em_df = pandas.DataFrame({"Veg": em_veg, "Soil": em_soil})
+    em_df = pd.DataFrame({"Veg": em_veg, "Soil": em_soil})
 
     img_path = tmp_path / "scm_in.tif"
     msk_path = tmp_path / "scm_msk.tif"
@@ -905,7 +905,7 @@ def test_spectral_correlation_mapper(tmp_path):
     with pytest.raises(rsgispy.RSGISPyException):
         sc.spectral_correlation_mapper(
             str(img_path),
-            pandas.DataFrame({"Const": [2.0, 2.0, 2.0, 2.0]}),
+            pd.DataFrame({"Const": [2.0, 2.0, 2.0, 2.0]}),
             str(tmp_path / "bad_const.tif"),
         )
     with pytest.raises(rsgispy.RSGISPyException):
@@ -921,7 +921,7 @@ def test_spectral_correlation_mapper(tmp_path):
     with pytest.raises(rsgispy.RSGISPyException):
         sc.spectral_correlation_mapper(
             str(single_img),
-            pandas.DataFrame({"A": [1.0]}),
+            pd.DataFrame({"A": [1.0]}),
             str(tmp_path / "bad_1band.tif"),
         )
 
@@ -1189,7 +1189,7 @@ def test_spectral_tasseled_cap_and_histogram_matching(tmp_path, monkeypatch):
         assert arr[0, 1, 1] == pytest.approx(expected_bright, abs=1e-5)
         assert arr[0, 0, 0] == pytest.approx(-9999.0)
 
-    custom_df = pandas.DataFrame({"AxisA": [1.0, 0.0], "AxisB": [0.0, 2.0]})
+    custom_df = pd.DataFrame({"AxisA": [1.0, 0.0], "AxisB": [0.0, 2.0]})
     custom_out = str(tmp_path / "custom_tct.tif")
     st.calc_tasseled_cap(
         tct_in,

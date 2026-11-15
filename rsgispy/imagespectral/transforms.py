@@ -13,7 +13,7 @@ import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
-import pandas
+import pandas as pd
 import rasterio
 from rasterio.windows import Window
 
@@ -779,7 +779,7 @@ def calc_tasseled_cap(
     sensor: Optional[str] = "landsat8_oli",
     bands: Optional[Sequence[int]] = None,
     coeffs: Optional[
-        Union[pandas.DataFrame, Sequence[Sequence[float]], np.ndarray]
+        Union[pd.DataFrame, Sequence[Sequence[float]], np.ndarray]
     ] = None,
     component_names: Optional[Sequence[str]] = None,
     gain: float = 1.0,
@@ -866,7 +866,7 @@ def calc_tasseled_cap(
         raise rsgispy.RSGISPyException("gain must not be zero.")
 
     if coeffs is not None:
-        if isinstance(coeffs, pandas.DataFrame):
+        if isinstance(coeffs, pd.DataFrame):
             if coeffs.empty:
                 raise rsgispy.RSGISPyException(
                     "coeffs DataFrame must not be empty."

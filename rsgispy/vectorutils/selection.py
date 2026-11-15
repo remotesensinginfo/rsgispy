@@ -7,9 +7,9 @@ subsetting utilities for :mod:`rsgispy.vectorutils` using ``geopandas``,
 import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
-import geopandas
+import geopandas as gpd
 import numpy as np
-import pandas
+import pandas as pd
 import rasterio
 import rasterio.features
 import rasterio.windows
@@ -211,7 +211,7 @@ def spatial_select(
     vec_roi_epsg: Optional[int] = None,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Select features from ``vec_file`` that spatially match features in
     ``vec_roi_file`` using ``geopandas.sjoin``.
@@ -268,7 +268,7 @@ def spatial_select(
     work_gdf = in_gdf[["geometry"]].copy()
     work_gdf[tmp_id_col] = np.arange(len(work_gdf), dtype=np.int64)
 
-    joined = geopandas.sjoin(
+    joined = gpd.sjoin(
         work_gdf,
         roi_gdf[["geometry"]],
         how="inner",
@@ -292,9 +292,9 @@ def spatial_select(
 
 
 def _select_gdf_by_bbox(
-    gdf: geopandas.GeoDataFrame,
+    gdf: gpd.GeoDataFrame,
     bbox: Tuple[float, float, float, float],
-) -> geopandas.GeoDataFrame:
+) -> gpd.GeoDataFrame:
     """Return subset of ``gdf`` whose geometries intersect ``bbox``."""
     bbox_poly = box(bbox[0], bbox[2], bbox[1], bbox[3])
     cand_idxs = gdf.sindex.query(bbox_poly, predicate="intersects")
@@ -313,7 +313,7 @@ def spatial_select_bbox(
     bbox_epsg: Optional[int] = None,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Union[bool, geopandas.GeoDataFrame]:
+) -> Union[bool, gpd.GeoDataFrame]:
     """
     Select features intersecting a bounding box ``(MinX, MaxX, MinY, MaxY)``
     and write them to ``out_vec_file`` (or return the subset GeoDataFrame when
@@ -376,7 +376,7 @@ def subset_vec_lyr_to_feat_bboxs(
     out_format: str = "GPKG",
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Union[List[str], List[geopandas.GeoDataFrame]]:
+) -> Union[List[str], List[gpd.GeoDataFrame]]:
     """
     Subset a vector layer once for each feature bounding box in a reference
     vector layer, writing numbered output files (or returning a list of
@@ -479,7 +479,7 @@ def get_att_lst_select_feats(
         sel_gdf = sel_gdf.to_crs(in_gdf.crs)
 
     cols_to_read = list(att_names)
-    joined = geopandas.sjoin(
+    joined = gpd.sjoin(
         in_gdf[cols_to_read + ["geometry"]],
         sel_gdf[["geometry"]],
         how="inner",
@@ -543,7 +543,7 @@ def subset_by_attribute(
     match_type: str = "equals",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Subset features in a vector layer whose values in ``sub_col`` match any
     item in ``sub_vals``.
@@ -588,7 +588,7 @@ def subset_by_attribute(
     base_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, copy=False)
     validate_columns_exist(base_gdf, [sub_col])
 
-    mask = pandas.Series(False, index=base_gdf.index)
+    mask = pd.Series(False, index=base_gdf.index)
     col_series = base_gdf[sub_col]
     for val in sub_vals:
         if match_key == "equals":
@@ -626,7 +626,7 @@ def select_feats_str_search(
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Select features where string column ``select_col`` contains ``select_val``
     (case-sensitive substring/regex search).
@@ -684,7 +684,7 @@ def drop_rows_by_attribute(
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Drop features whose value in ``sub_col`` matches any value in ``sub_vals``.
 
@@ -740,7 +740,7 @@ def drop_rows_by_multi_attributes(
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Drop features matching any column/value pair in ``drop_atts``.
 
@@ -770,7 +770,7 @@ def drop_rows_by_multi_attributes(
     base_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, copy=False)
     validate_columns_exist(base_gdf, list(drop_atts.keys()))
 
-    keep_mask = pandas.Series(True, index=base_gdf.index)
+    keep_mask = pd.Series(True, index=base_gdf.index)
     for col, drop_val in drop_atts.items():
         keep_mask = keep_mask & (base_gdf[col] != drop_val)
 
@@ -800,7 +800,7 @@ def rm_attrib_duplicates(
     keep_rows: str = "First",
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Remove rows with duplicate values in ``dup_col`` from a vector layer.
 
@@ -875,7 +875,7 @@ def match_closest_vec_pts(
     use_pbar: bool = True,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Union[bool, geopandas.GeoDataFrame]:
+) -> Union[bool, gpd.GeoDataFrame]:
     """
     Find the closest point in ``vec_match_file`` for each point in
     ``vec_base_file``, optionally filtering matches exceeding ``tolerance`` and
@@ -1008,8 +1008,8 @@ def split_vec_lyr_random_subset(
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[
     Union[
-        geopandas.GeoDataFrame,
-        Tuple[geopandas.GeoDataFrame, geopandas.GeoDataFrame],
+        gpd.GeoDataFrame,
+        Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame],
     ]
 ]:
     """
@@ -1097,7 +1097,7 @@ def vec_lyr_random_subset(
     rnd_seed: Optional[int] = None,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create a random subset of ``n_smpl`` features from an input vector layer.
 
@@ -1158,8 +1158,8 @@ def create_train_test_smpls(
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[
     Union[
-        geopandas.GeoDataFrame,
-        Tuple[geopandas.GeoDataFrame, geopandas.GeoDataFrame],
+        gpd.GeoDataFrame,
+        Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame],
     ]
 ]:
     """
@@ -1266,9 +1266,9 @@ def create_train_test_valid_smpls(
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[
     Tuple[
-        Optional[geopandas.GeoDataFrame],
-        Optional[geopandas.GeoDataFrame],
-        Optional[geopandas.GeoDataFrame],
+        Optional[gpd.GeoDataFrame],
+        Optional[gpd.GeoDataFrame],
+        Optional[gpd.GeoDataFrame],
     ]
 ]:
     """
@@ -1401,7 +1401,7 @@ def create_n_random_subsets(
     rnd_seed: Optional[int] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Union[List[str], List[geopandas.GeoDataFrame]]:
+) -> Union[List[str], List[gpd.GeoDataFrame]]:
     """
     Create ``n_subs`` random (optionally bootstrapped) subsets of features from
     a vector layer.
@@ -1455,7 +1455,7 @@ def create_n_random_subsets(
 
     pbar_cls = rsgispy.get_tqdm()
     out_files: List[str] = []
-    out_gdfs: List[geopandas.GeoDataFrame] = []
+    out_gdfs: List[gpd.GeoDataFrame] = []
     for idx in pbar_cls(range(n_subs), disable=not use_pbar):
         seed_i = None if rnd_seed is None else int(rnd_seed) + idx
         if n_smpl is not None:

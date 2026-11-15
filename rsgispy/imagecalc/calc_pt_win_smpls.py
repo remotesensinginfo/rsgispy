@@ -8,7 +8,7 @@ import math
 import os
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
-import geopandas
+import geopandas as gpd
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
@@ -198,7 +198,7 @@ def calc_pt_smpl_img_vals(
     no_data_val: Optional[float] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Calculate summary values for an image window around each point in an input
     point vector layer using one or more :class:`RSGISCalcSumVals` calculators.

@@ -5,8 +5,8 @@ import json
 import sys
 from unittest.mock import patch
 
-import geopandas
-import numpy
+import geopandas as gpd
+import numpy as np
 import pytest
 import rasterio
 from rasterio.transform import from_origin
@@ -25,7 +25,7 @@ except ImportError:
 # pylint: disable=too-many-arguments,too-many-positional-arguments
 def _write_test_tif(path, width=16, height=16, count=2, epsg=32630, origin=(500000.0, 5800000.0)):
     crs = f"EPSG:{epsg}" if epsg is not None else None
-    data = numpy.arange(count * height * width, dtype="uint8").reshape(
+    data = np.arange(count * height * width, dtype="uint8").reshape(
         count, height, width
     )
     with rasterio.open(
@@ -97,7 +97,7 @@ def test_check_gdal_image_file_valid_and_invalid(tmp_path):
 def test_check_gdal_vector_file(tmp_path):
     """Test valid, mismatched EPSG, and corrupted vector checks."""
     gpkg = tmp_path / "vec.gpkg"
-    gdf = geopandas.GeoDataFrame(
+    gdf = gpd.GeoDataFrame(
         {"id": [1, 2], "geometry": [shapely.geometry.Point(0, 0), shapely.geometry.Point(1, 1)]},
         crs="EPSG:4326",
     )
@@ -129,7 +129,7 @@ def test_check_hdf5_file(tmp_path):
     h5_path = tmp_path / "valid.h5"
     with h5py.File(h5_path, "w") as hf:
         grp = hf.create_group("grp")
-        grp.create_dataset("arr", data=numpy.zeros((4, 4), dtype="float32"))
+        grp.create_dataset("arr", data=np.zeros((4, 4), dtype="float32"))
 
     ok, err = checkdatasets.check_hdf5_file(str(h5_path))
     assert ok is True
@@ -164,7 +164,7 @@ def test_multiprocessing_runners_and_rm_err(tmp_path):
     assert not bad_tif.exists()
 
     good_gpkg = tmp_path / "good.gpkg"
-    geopandas.GeoDataFrame(
+    gpd.GeoDataFrame(
         {"id": [1], "geometry": [shapely.geometry.Point(0, 0)]},
         crs="EPSG:4326",
     ).to_file(good_gpkg, layer="p", driver="GPKG")
@@ -178,7 +178,7 @@ def test_multiprocessing_runners_and_rm_err(tmp_path):
     if checkdatasets.HAVE_H5PY:
         good_h5 = tmp_path / "good.h5"
         with h5py.File(good_h5, "w") as hf:
-            hf.create_dataset("d", data=numpy.ones(3))
+            hf.create_dataset("d", data=np.ones(3))
         assert checkdatasets.run_check_hdf5_file(str(good_h5), timeout=10)
         assert checkdatasets.run_check_hdf5_files([str(good_h5)], timeout=10)
 

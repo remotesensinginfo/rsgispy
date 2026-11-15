@@ -5,7 +5,7 @@ automatic thresholding utilities.
 
 from typing import Any, Optional, Tuple
 
-import numpy
+import numpy as np
 
 import rsgispy
 
@@ -30,7 +30,7 @@ __all__ = [
 ]
 
 
-def get_nbins_histogram(data: numpy.ndarray) -> Tuple[int, float]:
+def get_nbins_histogram(data: np.ndarray) -> Tuple[int, float]:
     """
     Calculate the Freedman-Diaconis number of histogram bins and bin width.
 
@@ -45,18 +45,18 @@ def get_nbins_histogram(data: numpy.ndarray) -> Tuple[int, float]:
         n_bins, bin_width = rsgispy.tools.thresholding.get_nbins_histogram(data)
     """
     n_pts = data.shape[0]
-    lower_q = numpy.percentile(data, 25)
-    upper_q = numpy.percentile(data, 75)
+    lower_q = np.percentile(data, 25)
+    upper_q = np.percentile(data, 75)
     iqr = upper_q - lower_q
     bin_width = 2.0 * iqr * n_pts ** (-1.0 / 3.0)
-    n_bins = int((numpy.max(data) - numpy.min(data)) / bin_width) + 2
+    n_bins = int((np.max(data) - np.min(data)) / bin_width) + 2
     return n_bins, float(bin_width)
 
 
 def get_bin_centres(
-    bin_edges: numpy.ndarray,
+    bin_edges: np.ndarray,
     geometric: bool = False,
-) -> numpy.ndarray:
+) -> np.ndarray:
     """
     Calculate histogram bin centres from bin edges.
 
@@ -73,11 +73,11 @@ def get_bin_centres(
         centres = rsgispy.tools.thresholding.get_bin_centres(edges)
     """
     if geometric:
-        return numpy.sqrt(bin_edges[1:] * bin_edges[:-1])
+        return np.sqrt(bin_edges[1:] * bin_edges[:-1])
     return (bin_edges[1:] + bin_edges[:-1]) / 2.0
 
 
-def calc_otsu_threshold(data: numpy.ndarray) -> float:
+def calc_otsu_threshold(data: np.ndarray) -> float:
     """
     Calculate Otsu's threshold for a 1D numeric NumPy array.
 
@@ -92,22 +92,22 @@ def calc_otsu_threshold(data: numpy.ndarray) -> float:
         thres = rsgispy.tools.thresholding.calc_otsu_threshold(data)
     """
     n_bins, _ = get_nbins_histogram(data)
-    hist, bin_edges = numpy.histogram(data, bins=n_bins)
+    hist, bin_edges = np.histogram(data, bins=n_bins)
     bin_centres = get_bin_centres(bin_edges)
 
-    hist_prob = hist.astype(numpy.float32)
-    hist_prob = hist_prob / numpy.sum(hist_prob)
+    hist_prob = hist.astype(np.float32)
+    hist_prob = hist_prob / np.sum(hist_prob)
 
-    weight1 = numpy.cumsum(hist_prob)
-    weight2 = numpy.cumsum(hist_prob[::-1])[::-1]
-    mean1 = numpy.cumsum(hist_prob * bin_centres) / weight1
-    mean2 = (numpy.cumsum((hist_prob * bin_centres)[::-1]) / weight2[::-1])[::-1]
+    weight1 = np.cumsum(hist_prob)
+    weight2 = np.cumsum(hist_prob[::-1])[::-1]
+    mean1 = np.cumsum(hist_prob * bin_centres) / weight1
+    mean2 = (np.cumsum((hist_prob * bin_centres)[::-1]) / weight2[::-1])[::-1]
 
     variance12 = weight1[:-1] * weight2[1:] * (mean1[:-1] - mean2[1:]) ** 2
-    return float(bin_centres[int(numpy.argmax(variance12))])
+    return float(bin_centres[int(np.argmax(variance12))])
 
 
-def calc_yen_threshold(data: numpy.ndarray) -> float:
+def calc_yen_threshold(data: np.ndarray) -> float:
     """
     Calculate Yen's multilevel threshold for a 1D numeric NumPy array.
 
@@ -122,21 +122,21 @@ def calc_yen_threshold(data: numpy.ndarray) -> float:
         thres = rsgispy.tools.thresholding.calc_yen_threshold(data)
     """
     n_bins, _ = get_nbins_histogram(data)
-    hist, bin_edges = numpy.histogram(data, bins=n_bins)
+    hist, bin_edges = np.histogram(data, bins=n_bins)
     bin_centres = get_bin_centres(bin_edges)
 
-    pmf = hist.astype(numpy.float32) / numpy.sum(hist)
-    p1 = numpy.cumsum(pmf)
-    p1_sq = numpy.cumsum(pmf**2)
-    p2_sq = numpy.cumsum(pmf[::-1] ** 2)[::-1]
+    pmf = hist.astype(np.float32) / np.sum(hist)
+    p1 = np.cumsum(pmf)
+    p1_sq = np.cumsum(pmf**2)
+    p2_sq = np.cumsum(pmf[::-1] ** 2)[::-1]
 
-    crit = numpy.log(
+    crit = np.log(
         ((p1_sq[:-1] * p2_sq[1:]) ** -1) * (p1[:-1] * (1.0 - p1[:-1])) ** 2
     )
     return float(bin_centres[int(crit.argmax())])
 
 
-def calc_isodata_threshold(data: numpy.ndarray) -> float:
+def calc_isodata_threshold(data: np.ndarray) -> float:
     """
     Calculate the ISODATA (Ridler-Calvard) inter-means threshold for a 1D
     numeric NumPy array.
@@ -152,14 +152,14 @@ def calc_isodata_threshold(data: numpy.ndarray) -> float:
         thres = rsgispy.tools.thresholding.calc_isodata_threshold(data)
     """
     n_bins, _ = get_nbins_histogram(data)
-    hist, bin_edges = numpy.histogram(data, bins=n_bins)
+    hist, bin_edges = np.histogram(data, bins=n_bins)
     bin_centres = get_bin_centres(bin_edges)
 
-    hist_prob = hist.astype(numpy.float32)
-    hist_prob = hist_prob / numpy.sum(hist_prob)
+    hist_prob = hist.astype(np.float32)
+    hist_prob = hist_prob / np.sum(hist_prob)
 
-    csuml = numpy.cumsum(hist_prob)
-    csum_intensity = numpy.cumsum(hist_prob * bin_centres)
+    csuml = np.cumsum(hist_prob)
+    csum_intensity = np.cumsum(hist_prob * bin_centres)
     lower = csum_intensity[:-1] / csuml[:-1]
     higher = (csum_intensity[-1] - csum_intensity[:-1]) / (csuml[-1] - csuml)[:-1]
 
@@ -169,7 +169,7 @@ def calc_isodata_threshold(data: numpy.ndarray) -> float:
     return float(thresholds[0])
 
 
-def calc_hist_cross_entropy(data: numpy.ndarray, threshold: float) -> float:
+def calc_hist_cross_entropy(data: np.ndarray, threshold: float) -> float:
     """
     Compute cross-entropy between histogram distributions above and below
     ``threshold``.
@@ -186,27 +186,27 @@ def calc_hist_cross_entropy(data: numpy.ndarray, threshold: float) -> float:
         ce = rsgispy.tools.thresholding.calc_hist_cross_entropy(data, threshold=4.0)
     """
     n_bins, _ = get_nbins_histogram(data)
-    histogram, bin_edges = numpy.histogram(data, bins=n_bins, density=True)
+    histogram, bin_edges = np.histogram(data, bins=n_bins, density=True)
     bin_centres = get_bin_centres(bin_edges)
 
-    if numpy.min(bin_centres) < 1:
-        offset = abs(numpy.min(bin_centres)) + 1.0
+    if np.min(bin_centres) < 1:
+        offset = abs(np.min(bin_centres)) + 1.0
         bin_centres = bin_centres + offset
         threshold = threshold + offset
 
-    split_idx = int(numpy.flatnonzero(bin_centres > threshold)[0])
-    m0a = numpy.sum(histogram[:split_idx])
-    m0b = numpy.sum(histogram[split_idx:])
-    m1a = numpy.sum(histogram[:split_idx] * bin_centres[:split_idx])
-    m1b = numpy.sum(histogram[split_idx:] * bin_centres[split_idx:])
+    split_idx = int(np.flatnonzero(bin_centres > threshold)[0])
+    m0a = np.sum(histogram[:split_idx])
+    m0b = np.sum(histogram[split_idx:])
+    m1a = np.sum(histogram[:split_idx] * bin_centres[:split_idx])
+    m1b = np.sum(histogram[split_idx:] * bin_centres[split_idx:])
     mua = m1a / m0a
     mub = m1b / m0b
 
-    return float(-m1a * numpy.log(mua) - m1b * numpy.log(mub))
+    return float(-m1a * np.log(mua) - m1b * np.log(mub))
 
 
 def calc_li_threshold(
-    data: numpy.ndarray,
+    data: np.ndarray,
     tolerance: Optional[float] = None,
     initial_guess: Optional[float] = None,
 ) -> float:
@@ -226,20 +226,20 @@ def calc_li_threshold(
         data = np.concatenate([np.random.normal(2, 0.5, 200), np.random.normal(6, 0.5, 200)])
         thres = rsgispy.tools.thresholding.calc_li_threshold(data)
     """
-    finite_data = data[numpy.isfinite(data)]
+    finite_data = data[np.isfinite(data)]
 
     offset = 0.0
-    if numpy.min(finite_data) < 1:
-        offset = float(abs(numpy.min(finite_data)) + 1.0)
+    if np.min(finite_data) < 1:
+        offset = float(abs(np.min(finite_data)) + 1.0)
         finite_data = finite_data + offset
         if initial_guess is not None:
             initial_guess = initial_guess + offset
 
     if tolerance is None:
-        tolerance = float(numpy.min(numpy.diff(numpy.unique(finite_data))) / 2.0)
+        tolerance = float(np.min(np.diff(np.unique(finite_data))) / 2.0)
 
     t_next = (
-        float(numpy.mean(finite_data))
+        float(np.mean(finite_data))
         if initial_guess is None
         else float(initial_guess)
     )
@@ -248,17 +248,17 @@ def calc_li_threshold(
     while abs(t_next - t_curr) > tolerance:
         t_curr = t_next
         foreground = finite_data > t_curr
-        mean_fore = numpy.mean(finite_data[foreground])
-        mean_back = numpy.mean(finite_data[~foreground])
+        mean_fore = np.mean(finite_data[foreground])
+        mean_back = np.mean(finite_data[~foreground])
         t_next = float(
-            (mean_back - mean_fore) / (numpy.log(mean_back) - numpy.log(mean_fore))
+            (mean_back - mean_fore) / (np.log(mean_back) - np.log(mean_fore))
         )
 
     return float(t_next - offset)
 
 
 def calc_kurt_skew_threshold(
-    data: numpy.ndarray,
+    data: np.ndarray,
     max_val: float,
     min_val: float,
     init_thres: float,
@@ -303,13 +303,13 @@ def calc_kurt_skew_threshold(
         )
 
     if low_thres:
-        max_val = min(max_val, float(numpy.percentile(data, contamination)))
+        max_val = min(max_val, float(np.percentile(data, contamination)))
         if min_val >= max_val:
-            min_val = float(numpy.min(data))
+            min_val = float(np.min(data))
     else:
-        min_val = max(min_val, float(numpy.percentile(data, 100 - contamination)))
+        min_val = max(min_val, float(np.percentile(data, 100 - contamination)))
         if max_val <= min_val:
-            max_val = float(numpy.max(data))
+            max_val = float(np.max(data))
 
     if min_val == max_val:
         print(f"Min: {min_val}")
@@ -326,7 +326,7 @@ def calc_kurt_skew_threshold(
     if not min_val <= init_thres <= max_val:
         init_thres = min_val + ((max_val - min_val) / 2.0)
 
-    def _opt_fun(x_arr: numpy.ndarray, *args: Any) -> float:
+    def _opt_fun(x_arr: np.ndarray, *args: Any) -> float:
         vals = args[0]
         data_sub = vals[vals > x_arr] if low_thres else vals[vals < x_arr]
         kurtosis = float(scipy.stats.kurtosis(data_sub))

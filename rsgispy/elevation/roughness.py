@@ -6,7 +6,7 @@ import math
 import os
 from typing import Dict, Optional, Tuple, Union
 
-import geopandas
+import geopandas as gpd
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 import rasterio
@@ -638,7 +638,7 @@ def calc_simple_roughness_profile_metrics(
     export_plot_path: Optional[str] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Calculate profile roughness metrics (RA, RR, RQ, MIF, RV, RP, RZ, RSK, RKU)
     along the X and Y axes of each point's sample window using
@@ -727,7 +727,7 @@ def calc_munro_roughness_profile_metrics(
     export_plot_path: Optional[str] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Calculate Munro (1989) :math:`z_0` roughness metrics along the X and Y axes
     of each point's sample window using :class:`CalcMunroRoughnessMetric`.
@@ -814,7 +814,7 @@ def calc_smith_roughness_metrics(
     export_plot_path: Optional[str] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Calculate Smith et al. (2016) directional :math:`z_0` roughness metrics
     across each point's sample window using :class:`CalcSmithRoughnessMetric`.
@@ -899,7 +899,7 @@ def calc_all_roughness_profile_metrics(
     detrend_poly_order: int = 1,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Calculate all roughness metrics (:class:`CalcProfileRoughMetrics`,
     :class:`CalcMunroRoughnessMetric`, and :class:`CalcSmithRoughnessMetric`)

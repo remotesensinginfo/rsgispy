@@ -7,7 +7,7 @@ spatial predicate checks using ``geopandas``, ``shapely``, and ``rtree``.
 import os
 from typing import List, Optional, Sequence, Tuple, Union
 
-import geopandas
+import geopandas as gpd
 import shapely.geometry
 import shapely.ops
 from shapely.geometry.base import BaseGeometry
@@ -104,7 +104,7 @@ def create_alpha_shape(
     max_iter: int = 10000,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Tuple[Union[bool, Optional[geopandas.GeoDataFrame]], Optional[float]]:
+) -> Tuple[Union[bool, Optional[gpd.GeoDataFrame]], Optional[float]]:
     """
     Calculate a concave hull (alpha shape) polygon around all vertices of the
     input vector layer using the ``alphashape`` package.
@@ -184,7 +184,7 @@ def create_alpha_shape(
             alpha_val = alphashape.optimizealpha(norm_pts, max_iterations=max_iter)
         alpha_shape_geom = alphashape.alphashape(norm_pts, alpha=alpha_val)
 
-    out_gdf: Optional[geopandas.GeoDataFrame] = None
+    out_gdf: Optional[gpd.GeoDataFrame] = None
     if (
         alpha_shape_geom is not None
         and not alpha_shape_geom.is_empty
@@ -195,7 +195,7 @@ def create_alpha_shape(
             alpha_shape_geom,
         )
         crs_info = read_vec_info(vec_file, vec_lyr).get("crs")
-        out_gdf = geopandas.GeoDataFrame(
+        out_gdf = gpd.GeoDataFrame(
             {"geometry": [out_alpha_shape]}, crs=crs_info
         )
 

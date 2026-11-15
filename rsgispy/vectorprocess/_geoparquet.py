@@ -5,7 +5,7 @@ Internal GeoParquet metadata parsing helpers for :mod:`rsgispy.vectorprocess`.
 import json
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-import numpy
+import numpy as np
 import pyproj
 
 try:
@@ -155,8 +155,8 @@ def read_geoparquet_info(
     return {
         "layer_name": lyr_name,
         "crs": _extract_geoparquet_crs(col_meta),
-        "fields": numpy.array(fields, dtype=object),
-        "dtypes": numpy.array(dtypes, dtype=object),
+        "fields": np.array(fields, dtype=object),
+        "dtypes": np.array(dtypes, dtype=object),
         "geometry_name": geom_name,
         "geometry_type": geom_type,
         "features": int(pq_meta.num_rows),

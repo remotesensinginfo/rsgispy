@@ -8,7 +8,7 @@ from typing import List, Optional, Sequence, Tuple, Union
 import uuid
 
 import geopandas as gpd
-import pandas
+import pandas as pd
 import rasterio
 from rasterio.warp import transform_bounds
 from shapely.geometry import box
@@ -233,7 +233,7 @@ def get_all_lut_imgs(
         if is_geoparquet_file(lut_path):
             if lyr_name is not None:
                 resolve_vec_layer(lut_path, lyr_name)
-            lut_df = pandas.read_parquet(lut_path, columns=["path", "filename"])
+            lut_df = pd.read_parquet(lut_path, columns=["path", "filename"])
         else:
             lut_df = gpd.read_file(
                 lut_path,

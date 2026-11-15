@@ -5,7 +5,7 @@ checks, arrays, sampling, bands, gdal_translate, and spatial.
 
 import math
 
-import geopandas
+import geopandas as gpd
 import numpy as np
 import pytest
 import rasterio
@@ -402,7 +402,7 @@ def test_grid_scattered_pts(tmp_path):
     _write_test_tif(utm_img, np.zeros((4, 4), dtype=np.float32))
 
     vec_path = tmp_path / "pts.gpkg"
-    gdf = geopandas.GeoDataFrame(
+    gdf = gpd.GeoDataFrame(
         {"val": [10.0, 20.0, 30.0, 40.0]},
         geometry=[
             Point(500005.0, 5199995.0),
@@ -939,7 +939,7 @@ def test_gdal_warp_cutline_crop_blend_gcps_and_cli(tmp_path):
     _write_test_tif(in_p, arr, tl_x=500000.0, tl_y=5200000.0, res=10.0)
 
     vec_p = tmp_path / "cut.gpkg"
-    gdf = geopandas.GeoDataFrame(
+    gdf = gpd.GeoDataFrame(
         {"keep": [1, 0]},
         geometry=[
             box(500020.0, 5199930.0, 500070.0, 5199980.0),
@@ -1236,7 +1236,7 @@ def test_imageutils_rasterise(tmp_path):
     )
 
     vec_file = str(tmp_path / "polys.gpkg")
-    geopandas.GeoDataFrame(
+    gpd.GeoDataFrame(
         {"val": [15.0, 75.0], "cls": ["Low", "High"]},
         geometry=[
             box(500010.0, 5600150.0, 500050.0, 5600190.0),
@@ -1336,7 +1336,7 @@ def test_imageutils_gdf_in_memory(tmp_path):
         res=10.0,
     )
 
-    pts_gdf = geopandas.GeoDataFrame(
+    pts_gdf = gpd.GeoDataFrame(
         {"val": [10.0, 20.0, 30.0, 40.0]},
         geometry=[
             Point(500005.0, 5600195.0),
@@ -1359,7 +1359,7 @@ def test_imageutils_gdf_in_memory(tmp_path):
     with rasterio.open(grid_out) as g_src:
         assert g_src.read(1)[0, 0] == pytest.approx(10.0)
 
-    polys_gdf = geopandas.GeoDataFrame(
+    polys_gdf = gpd.GeoDataFrame(
         {"val": [15.0, 75.0], "cls": ["Low", "High"]},
         geometry=[
             box(500010.0, 5600150.0, 500050.0, 5600190.0),

@@ -3,7 +3,7 @@
 import datetime
 import types
 
-import geopandas
+import geopandas as gpd
 import pytest
 import shapely.geometry
 
@@ -253,7 +253,7 @@ def test_openstreetmap(tmp_path, monkeypatch):
 
     poly = shapely.geometry.box(-4.09, 52.41, -4.08, 52.42)
     pt = shapely.geometry.Point(-4.085, 52.415)
-    sample_gdf = geopandas.GeoDataFrame(
+    sample_gdf = gpd.GeoDataFrame(
         {
             "addr:street": ["High St", "Side Rd"],
             "other": [1, 2],
@@ -286,7 +286,7 @@ def test_openstreetmap(tmp_path, monkeypatch):
         bbox=(-4.1, -4.07, 52.4, 52.43),
         osm_tags={"building": True},
     )
-    loaded = geopandas.read_file(out_gpkg, layer="buildings")
+    loaded = gpd.read_file(out_gpkg, layer="buildings")
     assert len(loaded) == 1
 
     out_multi = str(tmp_path / "osm_multi.gpkg")
@@ -296,7 +296,7 @@ def test_openstreetmap(tmp_path, monkeypatch):
         bbox=(-4.1, -4.07, 52.4, 52.43),
         osm_tags_lst=[{"building": True}, {"amenity": "cafe"}],
     )
-    loaded_multi = geopandas.read_file(out_multi, layer="features")
+    loaded_multi = gpd.read_file(out_multi, layer="features")
     assert len(loaded_multi) == 2
 
     mem_osm = openstreetmap.get_osm_to_file(
@@ -305,7 +305,7 @@ def test_openstreetmap(tmp_path, monkeypatch):
         bbox=(-4.1, -4.07, 52.4, 52.43),
         osm_tags={"building": True},
     )
-    assert isinstance(mem_osm, geopandas.GeoDataFrame)
+    assert isinstance(mem_osm, gpd.GeoDataFrame)
     assert len(mem_osm) == 1
 
     mem_osm_multi = openstreetmap.get_osm_multi_to_file(
@@ -314,7 +314,7 @@ def test_openstreetmap(tmp_path, monkeypatch):
         bbox=(-4.1, -4.07, 52.4, 52.43),
         osm_tags_lst=[{"building": True}, {"amenity": "cafe"}],
     )
-    assert isinstance(mem_osm_multi, geopandas.GeoDataFrame)
+    assert isinstance(mem_osm_multi, gpd.GeoDataFrame)
     assert len(mem_osm_multi) == 2
 
 

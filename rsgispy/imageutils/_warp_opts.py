@@ -10,7 +10,7 @@ import os
 import shlex
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
-import geopandas
+import geopandas as gpd
 import numpy as np
 import rasterio
 import rasterio.crs
@@ -589,14 +589,14 @@ def load_cutline_geometries(
         if cfg.cutline_srs is not None
         else None
     )
-    gdf: Optional[geopandas.GeoDataFrame] = None
+    gdf: Optional[gpd.GeoDataFrame] = None
     geoms: List[Any] = []
     geom_crs = cl_override
 
-    if isinstance(cfg.cutline, geopandas.GeoDataFrame):
+    if isinstance(cfg.cutline, gpd.GeoDataFrame):
         gdf = cfg.cutline
-    elif isinstance(cfg.cutline, geopandas.GeoSeries):
-        gdf = geopandas.GeoDataFrame(geometry=cfg.cutline)
+    elif isinstance(cfg.cutline, gpd.GeoSeries):
+        gdf = gpd.GeoDataFrame(geometry=cfg.cutline)
     elif hasattr(cfg.cutline, "geom_type"):
         geoms = [cfg.cutline]
     elif isinstance(cfg.cutline, (str, os.PathLike)):
@@ -617,7 +617,7 @@ def load_cutline_geometries(
                     read_kw["where"] = cfg.cutline_where
                 if cfg.cutline_sql is not None:
                     read_kw["sql"] = cfg.cutline_sql
-                gdf = geopandas.read_file(cl_str, **read_kw)
+                gdf = gpd.read_file(cl_str, **read_kw)
         else:
             stripped = cl_str.strip()
             if stripped.startswith("{"):
@@ -639,7 +639,7 @@ def load_cutline_geometries(
         geoms = [g for g in gdf.geometry if g is not None and not g.is_empty]
     else:
         src_g_crs = geom_crs if geom_crs is not None else default_srs
-        gs = geopandas.GeoSeries(geoms, crs=src_g_crs)
+        gs = gpd.GeoSeries(geoms, crs=src_g_crs)
         if dst_crs is not None and gs.crs is not None and gs.crs != dst_crs:
             gs = gs.to_crs(dst_crs)
         geoms = [g for g in gs.geometry if g is not None and not g.is_empty]

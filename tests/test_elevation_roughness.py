@@ -4,7 +4,7 @@ Tests for rsgispy.elevation.roughness and rsgispy.imagecalc.calc_pt_win_smpls.
 
 import glob
 
-import geopandas
+import geopandas as gpd
 import matplotlib
 import numpy as np
 import pytest
@@ -38,7 +38,7 @@ def _write_dem(path, arr, res=10.0, nodata=-9999.0, crs="EPSG:32630"):
 
 
 def _write_points(path, layer_name="pts", crs="EPSG:32630", driver="GeoJSON"):
-    gdf = geopandas.GeoDataFrame(
+    gdf = gpd.GeoDataFrame(
         {
             "id": [1, 2],
             "xbox": [6, 6],
@@ -99,14 +99,14 @@ def test_calc_pt_smpl_img_vals_debug_export(tmp_path):
         y_box_col="ybox",
     )
 
-    out_gdf = geopandas.read_file(out_vec)
+    out_gdf = gpd.read_file(out_vec)
     assert "debug" in out_gdf.columns
     assert len(out_gdf) == 2
     assert len(glob.glob(str(export_dir / "*_win.tif"))) == 2
 
     # Negative angle must raise RSGISPyException
     bad_pts = tmp_path / "bad_pts.geojson"
-    bad_gdf = geopandas.GeoDataFrame(
+    bad_gdf = gpd.GeoDataFrame(
         {"xbox": [4], "ybox": [4], "angle": [-15.0]},
         geometry=[Point(500255.0, 5199745.0)],
         crs="EPSG:32630",
@@ -151,7 +151,7 @@ def test_simple_and_munro_roughness_metrics(tmp_path):
         detrend_poly_order=1,
         export_plot_path=str(simple_plots),
     )
-    simple_gdf = geopandas.read_file(simple_out)
+    simple_gdf = gpd.read_file(simple_out)
     expected_simple_cols = rrough.CalcProfileRoughMetrics().getOutValNames()
     for col in expected_simple_cols:
         assert col in simple_gdf.columns
@@ -169,7 +169,7 @@ def test_simple_and_munro_roughness_metrics(tmp_path):
         out_format="GeoJSON",
         detrend=True,
     )
-    plane_simple_gdf = geopandas.read_file(plane_simple_out)
+    plane_simple_gdf = gpd.read_file(plane_simple_out)
     assert np.allclose(plane_simple_gdf["avg_ra"], 0.0, atol=1e-4)
     assert np.allclose(plane_simple_gdf["avg_rr"], 0.0, atol=1e-4)
 
@@ -185,7 +185,7 @@ def test_simple_and_munro_roughness_metrics(tmp_path):
         detrend=True,
         export_plot_path=str(munro_plots),
     )
-    munro_gdf = geopandas.read_file(munro_out)
+    munro_gdf = gpd.read_file(munro_out)
     for col in rrough.CalcMunroRoughnessMetric().getOutValNames():
         assert col in munro_gdf.columns
         assert np.all(np.isfinite(munro_gdf[col].to_numpy()))
@@ -202,7 +202,7 @@ def test_simple_and_munro_roughness_metrics(tmp_path):
         out_format="GeoJSON",
         detrend=True,
     )
-    plane_munro_gdf = geopandas.read_file(plane_munro_out)
+    plane_munro_gdf = gpd.read_file(plane_munro_out)
     assert np.allclose(plane_munro_gdf["avg_munro_z0"], 0.0, atol=1e-6)
 
 
@@ -231,7 +231,7 @@ def test_smith_and_all_roughness_metrics(tmp_path):
         detrend=True,
         export_plot_path=str(smith_plots),
     )
-    smith_gdf = geopandas.read_file(smith_out)
+    smith_gdf = gpd.read_file(smith_out)
     for col in rrough.CalcSmithRoughnessMetric().getOutValNames():
         assert col in smith_gdf.columns
         assert np.all(np.isfinite(smith_gdf[col].to_numpy()))
@@ -249,7 +249,7 @@ def test_smith_and_all_roughness_metrics(tmp_path):
         out_format="GeoJSON",
         detrend=True,
     )
-    plane_smith_gdf = geopandas.read_file(plane_smith_out)
+    plane_smith_gdf = gpd.read_file(plane_smith_out)
     assert np.allclose(plane_smith_gdf["smith_hs"], 0.0, atol=1e-4)
     assert np.allclose(plane_smith_gdf["avg_smith_z0"], 0.0, atol=1e-4)
 
@@ -280,7 +280,7 @@ def test_smith_and_all_roughness_metrics(tmp_path):
         detrend=True,
         detrend_poly_order=1,
     )
-    all_gdf = geopandas.read_file(all_gpkg, layer="roughness_pts")
+    all_gdf = gpd.read_file(all_gpkg, layer="roughness_pts")
     assert len(all_gdf) == 2
     for col in (
         rrough.CalcProfileRoughMetrics().getOutValNames()
@@ -296,7 +296,7 @@ def test_roughness_and_pt_win_gdf_in_memory(tmp_path):
     dem_path = tmp_path / "dem_corr.tif"
     _write_dem(dem_path, _corrugated_dem())
 
-    pts_gdf = geopandas.GeoDataFrame(
+    pts_gdf = gpd.GeoDataFrame(
         {
             "id": [1, 2],
             "xbox": [6, 6],
@@ -314,26 +314,26 @@ def test_roughness_and_pt_win_gdf_in_memory(tmp_path):
     simple_gdf = rrough.calc_simple_roughness_profile_metrics(
         str(dem_path), pts_gdf, None, angle_col="angle", detrend=True
     )
-    assert isinstance(simple_gdf, geopandas.GeoDataFrame)
+    assert isinstance(simple_gdf, gpd.GeoDataFrame)
     assert np.all(simple_gdf["avg_ra"] > 0.0)
     assert list(pts_gdf.columns) == orig_cols
 
     munro_gdf = rrough.calc_munro_roughness_profile_metrics(
         str(dem_path), pts_gdf, None, detrend=True
     )
-    assert isinstance(munro_gdf, geopandas.GeoDataFrame)
+    assert isinstance(munro_gdf, gpd.GeoDataFrame)
     assert np.all(munro_gdf["avg_munro_z0"] > 0.0)
 
     smith_gdf = rrough.calc_smith_roughness_metrics(
         str(dem_path), pts_gdf, None, detrend=True
     )
-    assert isinstance(smith_gdf, geopandas.GeoDataFrame)
+    assert isinstance(smith_gdf, gpd.GeoDataFrame)
     assert np.all(smith_gdf["smith_hs"] > 0.0)
 
     all_gdf = rrough.calc_all_roughness_profile_metrics(
         str(dem_path), pts_gdf, None, angle_col="angle", detrend=True
     )
-    assert isinstance(all_gdf, geopandas.GeoDataFrame)
+    assert isinstance(all_gdf, gpd.GeoDataFrame)
     assert "avg_ra" in all_gdf.columns
     assert "avg_munro_z0" in all_gdf.columns
     assert "smith_hs" in all_gdf.columns
@@ -347,6 +347,6 @@ def test_roughness_and_pt_win_gdf_in_memory(tmp_path):
         x_box_col="xbox",
         y_box_col="ybox",
     )
-    assert isinstance(chained_gdf, geopandas.GeoDataFrame)
+    assert isinstance(chained_gdf, gpd.GeoDataFrame)
     assert "avg_ra" in chained_gdf.columns
     assert "smith_hs" in chained_gdf.columns

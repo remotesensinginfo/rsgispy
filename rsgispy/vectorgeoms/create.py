@@ -8,9 +8,9 @@ import os
 import tempfile
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
-import geopandas
+import geopandas as gpd
 import numpy as np
-import pandas
+import pandas as pd
 import rasterio
 import rasterio.features
 import rasterio.transform
@@ -97,7 +97,7 @@ def polygonise_raster_to_vec_lyr(
     pxl_val_fieldname: str = "PXLVAL",
     use_8_conn: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Polygonise connected pixel regions in ``input_img`` into a vector layer
     using ``rasterio.features.shapes``.
@@ -180,14 +180,14 @@ def polygonise_raster_to_vec_lyr(
         vals.append(int(pxl_val) if is_int else float(pxl_val))
 
     if geoms:
-        gdf = geopandas.GeoDataFrame(
+        gdf = gpd.GeoDataFrame(
             {pxl_val_fieldname: vals}, geometry=geoms, crs=src_crs
         )
     else:
         col_dtype = np.int64 if is_int else np.float64
-        gdf = geopandas.GeoDataFrame(
-            {pxl_val_fieldname: pandas.Series(dtype=col_dtype)},
-            geometry=geopandas.GeoSeries([], crs=src_crs),
+        gdf = gpd.GeoDataFrame(
+            {pxl_val_fieldname: pd.Series(dtype=col_dtype)},
+            geometry=gpd.GeoSeries([], crs=src_crs),
             crs=src_crs,
         )
 
@@ -212,7 +212,7 @@ def vectorise_pxls_to_pts(
     del_exist_vec: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create a point vector layer at the centre of every pixel in ``input_img``
     whose value equals ``img_msk_val``.
@@ -280,8 +280,8 @@ def vectorise_pxls_to_pts(
             pts_y.extend(np.asarray(ys, dtype=float).tolist())
 
     if pts_x:
-        gdf = geopandas.GeoDataFrame(
-            geometry=geopandas.points_from_xy(pts_x, pts_y), crs=out_crs
+        gdf = gpd.GeoDataFrame(
+            geometry=gpd.points_from_xy(pts_x, pts_y), crs=out_crs
         )
         if out_path is None:
             return gdf
@@ -294,8 +294,8 @@ def vectorise_pxls_to_pts(
             out_compress=out_compress,
         )
     elif out_path is None:
-        return geopandas.GeoDataFrame(
-            geometry=geopandas.GeoSeries([], crs=out_crs), crs=out_crs
+        return gpd.GeoDataFrame(
+            geometry=gpd.GeoSeries([], crs=out_crs), crs=out_crs
         )
     return None
 
@@ -310,7 +310,7 @@ def extract_img_footprint(
     reproj_to: Optional[CRSLike] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Extract the valid-data polygon footprint of ``input_img`` and annotate each
     polygon with a ``FileName`` column containing the raster basename.
@@ -400,7 +400,7 @@ def extract_img_footprint(
         if tmp_dir is not None and os.path.exists(valid_out_img):
             os.remove(valid_out_img)
 
-    gdf = geopandas.GeoDataFrame(
+    gdf = gpd.GeoDataFrame(
         {"FileName": [os.path.basename(input_img)] * len(geoms)},
         geometry=geoms,
         crs=src_crs,
@@ -431,7 +431,7 @@ def create_poly_vec_for_lst_bboxs(
     ignore_rows: int = 0,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create a polygon vector layer from bounding boxes stored one per row in a
     CSV file.
@@ -508,7 +508,7 @@ def create_poly_vec_bboxs(
     att_types: Optional[Dict[str, Sequence[Any]]] = None,
     overwrite: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create a polygon vector layer from a sequence of ``(MinX, MaxX, MinY, MaxY)``
     bounding boxes with optional attributes.
@@ -554,7 +554,7 @@ def create_poly_vec_bboxs(
     geoms = [
         box(float(b[0]), float(b[2]), float(b[1]), float(b[3])) for b in bboxs
     ]
-    gdf = geopandas.GeoDataFrame(att_cols, geometry=geoms, crs=crs_obj)
+    gdf = gpd.GeoDataFrame(att_cols, geometry=geoms, crs=crs_obj)
     return finish_vec_output(
         gdf,
         out_vec_file=vec_file,
@@ -577,7 +577,7 @@ def define_grid(
     utm_grid: bool = False,
     utm_hemi: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[Union[geopandas.GeoDataFrame, Dict[str, geopandas.GeoDataFrame]]]:
+) -> Optional[Union[gpd.GeoDataFrame, Dict[str, gpd.GeoDataFrame]]]:
     """
     Create a regular polygon grid covering ``bbox``, optionally reprojected to
     ``out_epsg_code`` or split across UTM zones when ``utm_grid=True``.
@@ -703,7 +703,7 @@ def define_grid(
         )
 
     lyr_prefix = out_vec_lyr or "grid"
-    out_gdfs: Dict[str, geopandas.GeoDataFrame] = {}
+    out_gdfs: Dict[str, gpd.GeoDataFrame] = {}
     first = True
     for zone_num, zone_bbox in utm_zone_bboxs:
         hemi = "S" if (utm_hemi and zone_bbox[3] < 0) else "N"
@@ -740,7 +740,7 @@ def write_pts_to_vec(
     att_types: Optional[Dict[str, Sequence[Any]]] = None,
     replace: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create a point vector layer from X/Y coordinates and optional attributes.
 
@@ -788,9 +788,9 @@ def write_pts_to_vec(
     att_cols = build_atts_dataframe(
         len(pts_x), atts=atts, att_types=att_types, length_label="pts_x"
     )
-    gdf = geopandas.GeoDataFrame(
+    gdf = gpd.GeoDataFrame(
         att_cols,
-        geometry=geopandas.points_from_xy(pts_x, pts_y),
+        geometry=gpd.points_from_xy(pts_x, pts_y),
         crs=crs_obj,
     )
     return finish_vec_output(
@@ -815,7 +815,7 @@ def create_bboxs_for_pts(
     epsg_code: Optional[int] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create rectangular polygon bounding boxes centred on each point in an input
     point vector layer.
@@ -879,7 +879,7 @@ def create_bboxs_for_pts(
             box(float(b[0]), float(b[2]), float(b[1]), float(b[3]))
             for b in out_bboxs
         ]
-        return geopandas.GeoDataFrame(att_cols, geometry=geoms, crs=gdf.crs)
+        return gpd.GeoDataFrame(att_cols, geometry=geoms, crs=gdf.crs)
 
     create_poly_vec_bboxs(
         vec_file=out_vec_file,
@@ -904,7 +904,7 @@ def create_wgs84_vec_grid(
     tile_names_col: str = "tile_names",
     tile_name_prefix: str = "",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create a regular WGS84 (``EPSG:4326``) grid of polygon tiles named by
     their top-left degree coordinate.
@@ -1006,7 +1006,7 @@ def create_vec_for_imgs(
     del_exist_vec: bool = False,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Union[List[str], List[geopandas.GeoDataFrame]]:
+) -> Union[List[str], List[gpd.GeoDataFrame]]:
     """
     Create a single-feature geometry vector layer (point at centre, diagonal
     line from top-left to bottom-right, or bounding-box polygon) for each raster
@@ -1066,7 +1066,7 @@ def create_vec_for_imgs(
 
     pbar_cls = rsgispy.get_tqdm()
     out_files: List[str] = []
-    out_gdfs: List[geopandas.GeoDataFrame] = []
+    out_gdfs: List[gpd.GeoDataFrame] = []
     for img in pbar_cls(input_imgs, disable=not use_pbar):
         ensure_file_exists(img)
 
@@ -1086,7 +1086,7 @@ def create_vec_for_imgs(
         else:
             geom = box(img_bbox[0], img_bbox[2], img_bbox[1], img_bbox[3])
 
-        gdf = geopandas.GeoDataFrame(geometry=[geom], crs=img_crs)
+        gdf = gpd.GeoDataFrame(geometry=[geom], crs=img_crs)
         if output_dir is None:
             out_gdfs.append(gdf)
             continue
@@ -1113,7 +1113,7 @@ def create_vec_for_imgs(
     return out_files
 
 
-def _h3_ids_to_gdf(hex_ids: Sequence[Any], h3_mod: Any) -> Optional[geopandas.GeoDataFrame]:
+def _h3_ids_to_gdf(hex_ids: Sequence[Any], h3_mod: Any) -> Optional[gpd.GeoDataFrame]:
     """Convert H3 cell identifiers to a WGS84 Polygon GeoDataFrame."""
     ids = list(hex_ids)
     if not ids:
@@ -1122,7 +1122,7 @@ def _h3_ids_to_gdf(hex_ids: Sequence[Any], h3_mod: Any) -> Optional[geopandas.Ge
         Polygon([(lon, lat) for lat, lon in h3_mod.cell_to_boundary(hid)])
         for hid in ids
     ]
-    return geopandas.GeoDataFrame(
+    return gpd.GeoDataFrame(
         {"hex_id": ids}, geometry=polys, crs="EPSG:4326"
     )
 
@@ -1135,7 +1135,7 @@ def create_hex_grid_bbox(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create an H3 hexagon grid covering ``bbox`` and export it in ``bbox_epsg``.
 
@@ -1185,9 +1185,9 @@ def create_hex_grid_bbox(
     if h3_gdf is None:
         if out_vec_file is None:
             crs_obj = parse_crs_input(int(bbox_epsg))
-            return geopandas.GeoDataFrame(
-                {"hex_id": pandas.Series(dtype="object")},
-                geometry=geopandas.GeoSeries([], crs=crs_obj),
+            return gpd.GeoDataFrame(
+                {"hex_id": pd.Series(dtype="object")},
+                geometry=gpd.GeoSeries([], crs=crs_obj),
                 crs=crs_obj,
             )
         return None
@@ -1207,7 +1207,7 @@ def create_hex_grid_bbox(
 def create_hex_grid_poly(
     poly_series: Any,
     hex_scale: int,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create an H3 hexagon GeoDataFrame covering a single WGS84
     (``EPSG:4326``) polygon row or geometry.
@@ -1220,10 +1220,10 @@ def create_hex_grid_poly(
 
     .. code:: python
 
-        import geopandas
+        import geopandas as gpd
         import rsgispy.vectorgeoms.create
 
-        gdf = geopandas.read_file("roi_wgs84.gpkg")
+        gdf = gpd.read_file("roi_wgs84.gpkg")
         hex_gdf = rsgispy.vectorgeoms.create.create_hex_grid_poly(gdf.iloc[0], 7)
     """
     h3_mod = _get_h3()
@@ -1252,7 +1252,7 @@ def create_hex_grid_polys(
     out_format: str = "GPKG",
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Create an H3 hexagon grid covering all polygons in ``vec_in_file`` and
     export the result in the input layer's coordinate reference system.
@@ -1292,7 +1292,7 @@ def create_hex_grid_polys(
         polys_gdf = polys_gdf.to_crs(epsg=4326)
 
     pbar_cls = rsgispy.get_tqdm()
-    hex_parts: List[geopandas.GeoDataFrame] = []
+    hex_parts: List[gpd.GeoDataFrame] = []
     for idx in pbar_cls(range(len(polys_gdf)), disable=not use_pbar):
         hex_tmp = create_hex_grid_poly(polys_gdf.iloc[idx], hex_scale)
         if hex_tmp is not None and len(hex_tmp) > 0:
@@ -1300,15 +1300,15 @@ def create_hex_grid_polys(
 
     if not hex_parts:
         if out_vec_file is None:
-            return geopandas.GeoDataFrame(
-                {"hex_id": pandas.Series(dtype="object")},
-                geometry=geopandas.GeoSeries([], crs=orig_crs),
+            return gpd.GeoDataFrame(
+                {"hex_id": pd.Series(dtype="object")},
+                geometry=gpd.GeoSeries([], crs=orig_crs),
                 crs=orig_crs,
             )
         return None
 
-    hex_gdf = geopandas.GeoDataFrame(
-        pandas.concat(hex_parts, ignore_index=True),
+    hex_gdf = gpd.GeoDataFrame(
+        pd.concat(hex_parts, ignore_index=True),
         geometry="geometry",
         crs="EPSG:4326",
     )
@@ -1337,7 +1337,7 @@ def create_random_pts_in_radius(
     rnd_seed: Optional[int] = None,
     n_pts_multi_bbox: float = 3.0,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Generate ``n_pts`` uniformly distributed random points inside a circle of
     ``radius`` around ``(centre_x, centre_y)``, recording ``x_coords``,
@@ -1397,14 +1397,14 @@ def create_random_pts_in_radius(
     dy = y_sel - centre_y
     angles = (90.0 - np.rad2deg(np.arctan2(dy, dx))) % 360.0
 
-    data_gdf = geopandas.GeoDataFrame(
+    data_gdf = gpd.GeoDataFrame(
         {
             "x_coords": x_sel,
             "y_coords": y_sel,
             "dist": np.hypot(dx, dy),
             "angle": angles,
         },
-        geometry=geopandas.points_from_xy(x_sel, y_sel),
+        geometry=gpd.points_from_xy(x_sel, y_sel),
         crs=parse_crs_input(epsg_code),
     )
     return finish_vec_output(
@@ -1426,7 +1426,7 @@ def create_random_pts_in_bbox(
     out_format: str = "GPKG",
     rnd_seed: Optional[int] = None,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Generate ``n_pts`` uniformly distributed random points within
     ``bbox`` ``(MinX, MaxX, MinY, MaxY)``.
@@ -1465,8 +1465,8 @@ def create_random_pts_in_bbox(
     x_coords = rng.uniform(float(bbox[0]), float(bbox[1]), n_pts)
     y_coords = rng.uniform(float(bbox[2]), float(bbox[3]), n_pts)
 
-    data_gdf = geopandas.GeoDataFrame(
-        geometry=geopandas.points_from_xy(x=x_coords, y=y_coords),
+    data_gdf = gpd.GeoDataFrame(
+        geometry=gpd.points_from_xy(x=x_coords, y=y_coords),
         crs=parse_crs_input(epsg_code),
     )
     return finish_vec_output(

@@ -7,8 +7,8 @@ dropping, and tabular export functions for vector attribute tables using
 import os
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-import geopandas
-import numpy
+import geopandas as gpd
+import numpy as np
 
 import rsgispy
 import rsgispy.tools.stats
@@ -39,11 +39,11 @@ __all__ = [
 
 
 def write_vec_column_to_layer(
-    out_vec_lyr_obj: geopandas.GeoDataFrame,
+    out_vec_lyr_obj: gpd.GeoDataFrame,
     att_column: str,
     att_col_datatype: Any,
     att_col_data: Sequence[Any],
-) -> geopandas.GeoDataFrame:
+) -> gpd.GeoDataFrame:
     """
     Write or overwrite an attribute column on an in-memory
     :class:`geopandas.GeoDataFrame`.
@@ -58,17 +58,17 @@ def write_vec_column_to_layer(
 
     .. code:: python
 
-        import geopandas
+        import geopandas as gpd
         import rsgispy.vectorattrs.io
 
-        gdf = geopandas.read_file("polys.gpkg", layer="polys")
+        gdf = gpd.read_file("polys.gpkg", layer="polys")
         rsgispy.vectorattrs.io.write_vec_column_to_layer(
             gdf, "score", float, [0.5] * len(gdf)
         )
     """
     if out_vec_lyr_obj is None:
         raise rsgispy.RSGISPyException("The layer passed in is None.")
-    if not isinstance(out_vec_lyr_obj, geopandas.GeoDataFrame):
+    if not isinstance(out_vec_lyr_obj, gpd.GeoDataFrame):
         raise rsgispy.RSGISPyException(
             "out_vec_lyr_obj must be a geopandas.GeoDataFrame."
         )
@@ -99,7 +99,7 @@ def write_vec_column(
     out_format: Optional[str] = None,
     out_compress: Optional[Union[str, bool]] = None,
     dest_vec_file: Optional[Union[str, os.PathLike]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Write or update an attribute column in an existing vector file or
     :class:`geopandas.GeoDataFrame` using ``geopandas``.
@@ -137,7 +137,7 @@ def write_vec_column(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    is_gdf_input = isinstance(out_vec_file, geopandas.GeoDataFrame)
+    is_gdf_input = isinstance(out_vec_file, gpd.GeoDataFrame)
     gdf = read_vec_gdf(out_vec_file, out_vec_lyr)
     write_vec_column_to_layer(gdf, att_column, att_col_datatype, att_col_data)
     if dest_vec_file is not None:
@@ -233,7 +233,7 @@ def drop_vec_cols(
     out_format: str = "GPKG",
     chk_cols_present: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Remove specified columns from a vector layer and write a new vector file
     or return an updated :class:`geopandas.GeoDataFrame`.
@@ -296,7 +296,7 @@ def rename_vec_cols(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Rename columns in a vector layer and write a new vector file or return
     an updated :class:`geopandas.GeoDataFrame`.
@@ -348,7 +348,7 @@ def sort_vec_lyr(
     ascending: Union[bool, List[bool]],
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
-) -> Optional[geopandas.GeoDataFrame]:
+) -> Optional[gpd.GeoDataFrame]:
     """
     Sort features in a vector layer by one or more attribute columns.
 
@@ -409,7 +409,7 @@ def get_unq_col_values(
     vec_file: VectorInput,
     vec_lyr: Optional[str],
     col_name: str,
-) -> numpy.ndarray:
+) -> np.ndarray:
     """
     Return the unique values within an attribute column.
 
@@ -428,7 +428,7 @@ def get_unq_col_values(
     """
     gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     validate_columns_exist(gdf, [col_name])
-    return numpy.asarray(gdf[col_name].unique())
+    return np.asarray(gdf[col_name].unique())
 
 
 def get_vec_cols_as_array(
@@ -437,7 +437,7 @@ def get_vec_cols_as_array(
     cols: Sequence[str],
     lower_limit: Optional[float] = None,
     upper_limit: Optional[float] = None,
-) -> numpy.ndarray:
+) -> np.ndarray:
     """
     Read numeric attribute columns from a vector layer into a 2D ``float``
     NumPy array, optionally filtering out rows outside ``(lower_limit,
