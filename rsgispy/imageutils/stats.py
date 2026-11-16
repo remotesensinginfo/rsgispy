@@ -4,20 +4,38 @@ pyramids and populating thematic and continuous image statistics and histograms
 using ``rasterio``.
 """
 
+import math
+import multiprocessing
 import os
-from typing import Any, Dict, List, Optional, Tuple
+import tempfile
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import rasterio
 from rasterio.enums import ColorInterp, Resampling
+from rasterio.transform import Affine
 
 import rsgispy
 from rsgispy.imagecalc.stats import calc_basic_img_band_stats
-from rsgispy.imageprocess import _INT_DTYPES, iter_single_image_band_blocks
+from rsgispy.imageprocess import (
+    _INT_DTYPES,
+    ensure_file_exists,
+    iter_single_image_band_blocks,
+)
+from rsgispy.imageutils._overviews import (
+    finalise_external_ovr,
+    finalise_internal_ovr,
+    normalise_ovr_resampling,
+    render_ovr_tile_worker,
+    stitch_scale_tiles,
+    uniform_nodata,
+    validate_positive_int,
+)
 from rsgispy.imageutils.colourtable import set_img_thematic
 
 __all__ = [
     "build_img_pyramids",
+    "build_img_pyramids_multi_core",
     "pop_thmt_img_stats",
     "pop_img_stats",
 ]
@@ -59,6 +77,295 @@ def build_img_pyramids(
                 dst.build_overviews(pyd_lvls, resampling_method)
         else:
             dst.build_overviews(pyd_lvls, resampling_method)
+
+
+def build_img_pyramids_multi_core(
+    input_img: Union[str, os.PathLike],
+    resampling_method: Union[int, str, Resampling] = Resampling.average,
+    levels: Optional[Sequence[int]] = None,
+    tile_size: int = 1024,
+    n_cores: int = 1,
+    external: bool = True,
+    output_img: Optional[Union[str, os.PathLike]] = None,
+    tmp_dir: Optional[Union[str, os.PathLike]] = None,
+    compress: str = "LZW",
+    ovr_block_size: int = 128,
+    cascade: bool = True,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Build image overview pyramids using multiple CPU cores by tiling each
+    overview scale into temporary GeoTIFF tiles and combining them at the end.
+
+    Designed for very large raster datasets: at each overview scale, the output
+    overview grid is partitioned into ``tile_size x tile_size`` tiles rendered
+    in parallel across ``n_cores`` processes into temporary files, combined per
+    scale, and finally assembled into either an external GDAL ``.ovr`` sidecar
+    file (``external=True``, default — avoids rewriting the huge base raster)
+    or internal GeoTIFF overviews (``external=False``).
+
+    :param input_img: Path to the input image file.
+    :param resampling_method: Overview resampling algorithm as a
+                              ``rasterio.enums.Resampling`` enum,
+                              ``rsgispy.INTERP_*`` integer, or string name
+                              (Default = ``Resampling.average``).
+    :param levels: Optional sequence of integer decimation factors ``>= 2``
+                   (e.g., ``[2, 4, 8, 16]``). When ``None`` (default), uses
+                   ``[4, 8, 16, 32, 64, 128, 256, 512]`` filtered to
+                   ``(min(width, height) // lvl) > 33``.
+    :param tile_size: Overview tile width and height in pixels at each scale
+                      (Default = ``1024``).
+    :param n_cores: Number of worker processes (Default = ``1``).
+    :param external: If ``True`` (default), write an external GDAL ``.ovr``
+                     overview file (``<input_img>.ovr``) without modifying
+                     ``input_img``. If ``False``, embed internal GeoTIFF
+                     overviews into ``output_img`` (or replace ``input_img``
+                     atomically when ``output_img=None``).
+    :param output_img: Optional output path. When ``external=True``, overrides
+                       the default ``<input_img>.ovr`` path; when
+                       ``external=False``, writes a new GeoTIFF with internal
+                       overviews instead of replacing ``input_img``.
+    :param tmp_dir: Optional scratch directory for temporary scale/tile files
+                    (e.g., fast local SSD). Automatically cleaned up on exit.
+    :param compress: Compression algorithm for overview TIFFs (Default = ``'LZW'``).
+    :param ovr_block_size: Internal TIFF tile block size (power of 2 between
+                           ``64`` and ``4096``, Default = ``128``).
+    :param cascade: If ``True`` (default), generate scale ``lvl`` from the
+                    largest previously built divisor scale (``lvl % prev == 0``)
+                    for faster hierarchical downsampling; if ``False``, sample
+                    every scale directly from ``input_img``.
+    :param use_pbar: Display a tqdm progress bar per overview scale
+                     (Default = ``True``).
+
+    .. code:: python
+
+        from rasterio.enums import Resampling
+        import rsgispy.imageutils.stats as rstats
+
+        rstats.build_img_pyramids_multi_core(
+            "large_mosaic.tif",
+            resampling_method=Resampling.average,
+            tile_size=1024,
+            n_cores=8,
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+    input_path = os.fspath(input_img)
+    ensure_file_exists(input_path, label="Input image")
+
+    resamp_name = normalise_ovr_resampling(resampling_method)
+    t_size = validate_positive_int(tile_size, "tile_size", min_val=1)
+    eff_cores = validate_positive_int(n_cores, "n_cores", min_val=1)
+    ovr_blk = validate_positive_int(ovr_block_size, "ovr_block_size", min_val=64)
+    if ovr_blk > 4096 or (ovr_blk & (ovr_blk - 1)) != 0:
+        raise rsgispy.RSGISPyException(
+            "ovr_block_size must be a power of 2 between 64 and 4096, "
+            f"got {ovr_blk}."
+        )
+    comp_val = str(compress).strip().upper() if compress else "NONE"
+
+    with rasterio.open(input_path, "r") as src:
+        base_w = int(src.width)
+        base_h = int(src.height)
+        n_bands = int(src.count)
+        dtypes = list(src.dtypes)
+        nodatavals = list(src.nodatavals)
+        crs = src.crs
+        base_transform = src.transform
+        has_geo = (crs is not None) or (base_transform != Affine.identity())
+        crs_wkt = crs.to_wkt() if crs is not None else None
+        colorinterp = list(src.colorinterp)
+        colormaps: Dict[int, Dict[int, Tuple[int, int, int, int]]] = {}
+        for b_idx in range(1, n_bands + 1):
+            if colorinterp[b_idx - 1] == ColorInterp.palette:
+                try:
+                    colormaps[b_idx] = src.colormap(b_idx)
+                except ValueError:
+                    pass
+        base_tags = src.tags()
+        band_tags = [src.tags(b_idx) for b_idx in range(1, n_bands + 1)]
+        descriptions = list(src.descriptions)
+
+    if levels is None:
+        min_size = min(base_w, base_h)
+        resolved_levels = [
+            lvl
+            for lvl in (4, 8, 16, 32, 64, 128, 256, 512)
+            if (min_size // lvl) > 33
+        ]
+        if not resolved_levels:
+            return
+    else:
+        if isinstance(levels, (str, bytes)) or not levels:
+            raise rsgispy.RSGISPyException(
+                "levels must be a non-empty sequence of integers >= 2."
+            )
+        resolved_levels = sorted(
+            {validate_positive_int(lvl, "levels entry", min_val=2) for lvl in levels}
+        )
+
+    uniform_nd = uniform_nodata(nodatavals)
+    scratch_root: Optional[str] = None
+    if tmp_dir is not None:
+        scratch_root = os.fspath(tmp_dir)
+        os.makedirs(scratch_root, exist_ok=True)
+
+    tqdm_cls = rsgispy.get_tqdm()
+    with tempfile.TemporaryDirectory(
+        prefix="rsgispy_ovr_", dir=scratch_root
+    ) as work_dir:
+        scale_files: List[Tuple[int, int, int, str, Optional[Affine]]] = []
+        for lvl in resolved_levels:
+            ovr_w = max(1, math.ceil(base_w / lvl))
+            ovr_h = max(1, math.ceil(base_h / lvl))
+
+            src_path = input_path
+            src_w = base_w
+            src_h = base_h
+            is_base_src = True
+            if cascade:
+                for prev_lvl, prev_w, prev_h, prev_path, _ in reversed(scale_files):
+                    if lvl % prev_lvl == 0:
+                        src_path = prev_path
+                        src_w = prev_w
+                        src_h = prev_h
+                        is_base_src = False
+                        break
+
+            lvl_xfm: Optional[Affine] = None
+            if has_geo:
+                lvl_xfm = base_transform @ Affine.scale(
+                    base_w / float(ovr_w), base_h / float(ovr_h)
+                )
+
+            scale_x = src_w / float(ovr_w)
+            scale_y = src_h / float(ovr_h)
+            tasks: List[Dict[str, Any]] = []
+            for row_off in range(0, ovr_h, t_size):
+                cur_h = min(t_size, ovr_h - row_off)
+                for col_off in range(0, ovr_w, t_size):
+                    cur_w = min(t_size, ovr_w - col_off)
+                    tile_path = os.path.join(
+                        work_dir, f"lvl_{lvl}_r{row_off}_c{col_off}.tif"
+                    )
+                    tile_xfm_tuple: Optional[
+                        Tuple[float, float, float, float, float, float]
+                    ] = None
+                    if lvl_xfm is not None:
+                        t_xfm = lvl_xfm @ Affine.translation(col_off, row_off)
+                        tile_xfm_tuple = (
+                            float(t_xfm.a),
+                            float(t_xfm.b),
+                            float(t_xfm.c),
+                            float(t_xfm.d),
+                            float(t_xfm.e),
+                            float(t_xfm.f),
+                        )
+                    tasks.append(
+                        {
+                            "src_path": src_path,
+                            "src_rect": (
+                                col_off * scale_x,
+                                row_off * scale_y,
+                                cur_w * scale_x,
+                                cur_h * scale_y,
+                            ),
+                            "tile_path": tile_path,
+                            "col_off": col_off,
+                            "row_off": row_off,
+                            "tile_w": cur_w,
+                            "tile_h": cur_h,
+                            "dtypes": dtypes,
+                            "nodatavals": nodatavals,
+                            "nodata_val": uniform_nd,
+                            "resamp_name": resamp_name,
+                            "is_base_src": is_base_src,
+                            "crs_wkt": crs_wkt,
+                            "xfm_vals": tile_xfm_tuple,
+                            "compress": comp_val,
+                        }
+                    )
+
+            if eff_cores > 1 and len(tasks) > 1:
+                with multiprocessing.Pool(processes=eff_cores) as pool:
+                    tile_results = list(
+                        tqdm_cls(
+                            pool.imap(render_ovr_tile_worker, tasks),
+                            total=len(tasks),
+                            desc=f"Overview 1:{lvl}",
+                            unit="tile",
+                            disable=not use_pbar,
+                        )
+                    )
+            else:
+                tile_results = [
+                    render_ovr_tile_worker(task)
+                    for task in tqdm_cls(
+                        tasks,
+                        desc=f"Overview 1:{lvl}",
+                        unit="tile",
+                        disable=not use_pbar,
+                    )
+                ]
+
+            lvl_path = os.path.join(work_dir, f"lvl_{lvl}.tif")
+            stitch_scale_tiles(
+                lvl_path=lvl_path,
+                tile_results=tile_results,
+                ovr_w=ovr_w,
+                ovr_h=ovr_h,
+                n_bands=n_bands,
+                dtype_str=dtypes[0],
+                nodata_val=uniform_nd,
+                crs_wkt=crs_wkt,
+                lvl_transform=lvl_xfm,
+                compress=comp_val,
+                ovr_block_size=ovr_blk,
+            )
+            scale_files.append((lvl, ovr_w, ovr_h, lvl_path, lvl_xfm))
+
+        if external:
+            out_ovr_path = (
+                os.fspath(output_img)
+                if output_img is not None
+                else f"{input_path}.ovr"
+            )
+            finalise_external_ovr(
+                out_ovr_path=out_ovr_path,
+                work_dir=work_dir,
+                scale_files=scale_files,
+                dtypes=dtypes,
+                nodatavals=nodatavals,
+                crs_wkt=crs_wkt,
+                comp_val=comp_val,
+                ovr_blk=ovr_blk,
+            )
+        else:
+            dest_path = (
+                os.fspath(output_img) if output_img is not None else input_path
+            )
+            finalise_internal_ovr(
+                dest_path=dest_path,
+                input_path=input_path,
+                work_dir=work_dir,
+                base_w=base_w,
+                base_h=base_h,
+                scale_files=scale_files,
+                dtypes=dtypes,
+                nodatavals=nodatavals,
+                crs_wkt=crs_wkt,
+                base_transform=base_transform,
+                has_geo=has_geo,
+                colorinterp=colorinterp,
+                colormaps=colormaps,
+                base_tags=base_tags,
+                band_tags=band_tags,
+                descriptions=descriptions,
+                comp_val=comp_val,
+                ovr_blk=ovr_blk,
+                remove_stale_ovr=(output_img is None),
+            )
 
 
 def _calc_int_band_hists(
@@ -171,6 +478,9 @@ def pop_thmt_img_stats(
     calc_pyramids: bool = True,
     ignore_zero: bool = True,
     use_pbar: bool = True,
+    use_multi_core_pyramids: bool = False,
+    n_cores: int = 1,
+    tile_size: int = 1024,
 ) -> None:
     """
     Populate an integer thematic input image (e.g., ``uint8``, ``uint16``, ``int16``
@@ -182,13 +492,21 @@ def pop_thmt_img_stats(
     :param calc_pyramids: Whether to build overview pyramids (Default = True).
     :param ignore_zero: Whether to treat pixel value 0 as no-data (Default = True).
     :param use_pbar: Whether to display a tqdm progress bar (Default = True).
+    :param use_multi_core_pyramids: If ``True``, use
+                                    :func:`build_img_pyramids_multi_core` instead
+                                    of :func:`build_img_pyramids` when
+                                    ``calc_pyramids=True`` (Default = ``False``).
+    :param n_cores: Number of worker processes when
+                    ``use_multi_core_pyramids=True`` (Default = ``1``).
+    :param tile_size: Overview tile width and height in pixels at each scale
+                      when ``use_multi_core_pyramids=True`` (Default = ``1024``).
 
     .. code:: python
 
         import rsgispy.imageutils.stats
         rsgispy.imageutils.stats.pop_thmt_img_stats("land_cover_cls_img.tif")
     """
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not os.path.exists(input_img):
         raise rsgispy.RSGISPyException(
             f"Input image file does not exist: '{input_img}'."
@@ -260,7 +578,16 @@ def pop_thmt_img_stats(
             dst.colorinterp = [ColorInterp.palette] * dst.count
 
     if calc_pyramids:
-        build_img_pyramids(input_img, resampling_method=Resampling.nearest)
+        if use_multi_core_pyramids:
+            build_img_pyramids_multi_core(
+                input_img,
+                resampling_method=Resampling.nearest,
+                tile_size=tile_size,
+                n_cores=n_cores,
+                use_pbar=use_pbar,
+            )
+        else:
+            build_img_pyramids(input_img, resampling_method=Resampling.nearest)
 
 
 def _calc_linear_band_hists(
@@ -320,6 +647,9 @@ def pop_img_stats(
     ignore_cog: bool = False,
     use_approx: bool = False,
     use_pbar: bool = True,
+    use_multi_core_pyramids: bool = False,
+    n_cores: int = 1,
+    tile_size: int = 1024,
 ) -> None:
     """
     Calculate and populate band statistics, histogram metadata, and overview
@@ -333,6 +663,14 @@ def pop_img_stats(
     :param use_approx: Whether to record statistics as approximate in metadata
                        (Default = False).
     :param use_pbar: Whether to display a tqdm progress bar (Default = True).
+    :param use_multi_core_pyramids: If ``True``, use
+                                    :func:`build_img_pyramids_multi_core` instead
+                                    of :func:`build_img_pyramids` when
+                                    ``calc_pyramids=True`` (Default = ``False``).
+    :param n_cores: Number of worker processes when
+                    ``use_multi_core_pyramids=True`` (Default = ``1``).
+    :param tile_size: Overview tile width and height in pixels at each scale
+                      when ``use_multi_core_pyramids=True`` (Default = ``1024``).
 
     .. code:: python
 
@@ -412,8 +750,17 @@ def pop_img_stats(
             dst.update_tags(bidx, **tags)
 
     if calc_pyramids:
-        build_img_pyramids(
-            input_img,
-            resampling_method=Resampling.average,
-            ignore_cog=ignore_cog,
-        )
+        if use_multi_core_pyramids:
+            build_img_pyramids_multi_core(
+                input_img,
+                resampling_method=Resampling.average,
+                tile_size=tile_size,
+                n_cores=n_cores,
+                use_pbar=use_pbar,
+            )
+        else:
+            build_img_pyramids(
+                input_img,
+                resampling_method=Resampling.average,
+                ignore_cog=ignore_cog,
+            )

@@ -29,7 +29,13 @@ def _resampling_to_vrt_name(
     Convert an interpolation method to a GDAL VRT ``resampling`` attribute string.
     """
     if isinstance(interp_method, str):
-        return interp_method.strip().lower().replace("_", "")
+        norm = interp_method.strip().lower().replace("_", "")
+        aliases = {
+            "median": "med",
+            "nearestneighbour": "nearest",
+            "nearestneighbor": "nearest",
+        }
+        return aliases.get(norm, norm)
     resamp = rsgispy.get_rasterio_interp_type(interp_method)
     if resamp == Resampling.nearest:
         return "nearest"

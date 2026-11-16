@@ -44,6 +44,9 @@ Populating Image Statistics and Pyramids
    # Populate thematic statistics, colour table, and overview pyramids on a uint8 raster
    rsgispy.imageutils.stats.pop_thmt_img_stats("land_cover_cls_img.tif", ignore_zero=True)
 
+   # Generate tiled overview pyramids for a large raster across multiple cores
+   rsgispy.imageutils.stats.build_img_pyramids_multi_core("large_img.tif", tile_size=1024, n_cores=4)
+
 Configuration, Metadata & Validation
 ------------------------------------
 
