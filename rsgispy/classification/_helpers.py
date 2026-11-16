@@ -21,11 +21,25 @@ import warnings
 
 import numpy as np
 import pandas as pd
+import rasterio
+from rasterio.enums import Resampling
+from rasterio.io import DatasetReader
+from rasterio.warp import reproject as rio_reproject
+from rasterio.windows import Window
+from rasterio.windows import transform as window_transform
 
 import rsgispy
 import rsgispy.imagecalc.stats
-from rsgispy.imageprocess import ensure_file_exists
+from rsgispy.imageprocess import (
+    _INT_DTYPES,
+    IntersectionGrid,
+    ensure_file_exists,
+    grids_compatible,
+)
+from rsgispy.imageutils.colourtable import define_colour_table, set_img_thematic
 import rsgispy.imageutils.metadata
+from rsgispy.imageutils.metadata import set_img_no_data_value
+from rsgispy.imageutils.stats import build_img_pyramids, pop_thmt_img_stats
 from rsgispy.tools._sklearn import (
     check_sklearn_available as _check_sklearn_available,
     sklearn,
@@ -994,3 +1008,195 @@ def calc_split_metrics(
         f"{prefix}_f1_macro": f1_mac,
         f"{prefix}_cohen_kappa": kappa,
     }
+
+
+def resolve_apply_band_specs(
+    cfg: Optional["ClassificationConfig"],
+    img_band_info: Optional[Sequence["ImageBandInfo"]],
+) -> List[Tuple[str, int, str]]:
+    """
+    Resolve ordered ``(img_path, band_1based, col_name)`` specs for image
+    classification and clustering.
+    """
+    # pylint: disable=import-outside-toplevel
+    from rsgispy.classification.classdata import resolve_img_band_info
+
+    info_seq = (
+        img_band_info
+        if img_band_info is not None
+        else (cfg.img_band_info if cfg is not None else None)
+    )
+    if not info_seq:
+        raise rsgispy.RSGISPyException(
+            "img_band_info must be provided either inside ClassificationConfig "
+            "or via the img_band_info parameter."
+        )
+    resolved = resolve_img_band_info(info_seq)
+    band_specs: List[Tuple[str, int, str]] = []
+    for img_path, bands, col_names in resolved:
+        for b_idx, col_name in zip(bands, col_names):
+            band_specs.append((img_path, int(b_idx), col_name))
+    return band_specs
+
+
+def resolve_out_nodata(
+    out_no_data_val: Optional[int],
+    target_ids: Sequence[int],
+) -> int:
+    """Resolve an unsigned nodata sentinel value avoiding class ID collisions."""
+    if out_no_data_val is not None:
+        if isinstance(out_no_data_val, bool) or not isinstance(
+            out_no_data_val, (int, np.integer)
+        ):
+            raise rsgispy.RSGISPyException(
+                f"out_no_data_val must be an integer, got {out_no_data_val!r}."
+            )
+        nd_val = int(out_no_data_val)
+        if nd_val < 0:
+            raise rsgispy.RSGISPyException(
+                "out_no_data_val must be an unsigned (non-negative) integer, "
+                f"got {nd_val}."
+            )
+        return nd_val
+
+    used = {int(v) for v in target_ids}
+    if 0 not in used:
+        return 0
+    if 255 not in used and max(used, default=0) < 255:
+        return 255
+    return max(used) + 1 if used else 0
+
+
+def read_feature_block(
+    band_specs: Sequence[Tuple[str, int, str]],
+    datasets: Mapping[str, DatasetReader],
+    ref_ds: DatasetReader,
+    grid: IntersectionGrid,
+    out_win: Window,
+    all_compatible: bool,
+    ref_path: str,
+    explicit_no_data: Optional[float] = None,
+) -> List[Tuple[np.ndarray, Optional[float]]]:
+    """Read aligned or on-the-fly reprojected feature band arrays for a block."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals
+    col_off = int(out_win.col_off)
+    row_off = int(out_win.row_off)
+    win_w = int(out_win.width)
+    win_h = int(out_win.height)
+    out_arrays: List[Tuple[np.ndarray, Optional[float]]] = []
+
+    exp_nd: Optional[float] = (
+        float(explicit_no_data) if explicit_no_data is not None else None
+    )
+    win_xfm = None
+    for img_path, band_idx, _ in band_specs:
+        src_ds = datasets[img_path]
+        if exp_nd is not None:
+            nd_val: Optional[float] = exp_nd
+        else:
+            raw_nd = src_ds.nodatavals[band_idx - 1]
+            nd_val = None
+            if raw_nd is not None and not (
+                isinstance(raw_nd, float) and np.isnan(raw_nd)
+            ):
+                nd_val = float(raw_nd)
+
+        if all_compatible:
+            base_col, base_row = grid.offsets[img_path]
+            in_win = Window(
+                base_col + col_off, base_row + row_off, win_w, win_h
+            )
+            arr = src_ds.read(band_idx, window=in_win, out_dtype=np.float64)
+        elif grids_compatible(ref_ds, src_ds):
+            base_col, base_row = grid.offsets.get(
+                img_path,
+                (
+                    int(
+                        round(
+                            (
+                                ~src_ds.transform
+                                @ (grid.transform.c, grid.transform.f)
+                            )[0]
+                        )
+                    ),
+                    int(
+                        round(
+                            (
+                                ~src_ds.transform
+                                @ (grid.transform.c, grid.transform.f)
+                            )[1]
+                        )
+                    ),
+                ),
+            )
+            in_win = Window(
+                base_col + col_off, base_row + row_off, win_w, win_h
+            )
+            arr = src_ds.read(band_idx, window=in_win, out_dtype=np.float64)
+        else:
+            if win_xfm is None:
+                base_ref_col, base_ref_row = grid.offsets[ref_path]
+                ref_win = Window(
+                    base_ref_col + col_off,
+                    base_ref_row + row_off,
+                    win_w,
+                    win_h,
+                )
+                win_xfm = window_transform(ref_win, ref_ds.transform)
+            arr = np.full((win_h, win_w), np.nan, dtype=np.float64)
+            reproj_nd = (
+                None
+                if (nd_val is not None and np.isnan(nd_val))
+                else nd_val
+            )
+            rio_reproject(
+                source=rasterio.band(src_ds, band_idx),
+                destination=arr,
+                src_transform=src_ds.transform,
+                src_crs=src_ds.crs,
+                src_nodata=reproj_nd,
+                dst_transform=win_xfm,
+                dst_crs=grid.crs,
+                dst_nodata=np.nan,
+                resampling=Resampling.nearest,
+            )
+            # Reprojected invalid pixels are already NaN; don't re-test src nd.
+            nd_val = None
+
+        out_arrays.append((arr, nd_val))
+    return out_arrays
+
+
+def finalise_thematic_output_img(
+    out_cls_path: str,
+    eff_nodata: int,
+    out_rio_dtype: str,
+    out_np_dtype: np.dtype,
+    calc_img_stats: bool = True,
+    add_clr_tab: bool = False,
+    clr_lut: Optional[Dict[int, List[int]]] = None,
+    use_pbar: bool = True,
+) -> None:
+    """Set thematic metadata, nodata, stats/pyramids, and optional colour table."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    set_img_thematic(out_cls_path)
+    set_img_no_data_value(out_cls_path, eff_nodata, img_band=1)
+    if calc_img_stats:
+        if out_rio_dtype in _INT_DTYPES:
+            pop_thmt_img_stats(
+                out_cls_path,
+                add_clr_tab=bool(add_clr_tab and clr_lut is None),
+                calc_pyramids=True,
+                ignore_zero=(eff_nodata == 0),
+                use_pbar=use_pbar,
+            )
+        else:
+            build_img_pyramids(out_cls_path)
+        set_img_no_data_value(out_cls_path, eff_nodata, img_band=1)
+
+    if clr_lut is not None and out_np_dtype in (
+        np.dtype(np.uint8),
+        np.dtype(np.uint16),
+    ):
+        define_colour_table(out_cls_path, clr_lut, img_band=1)

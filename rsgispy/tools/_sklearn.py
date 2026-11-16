@@ -12,6 +12,7 @@ import rsgispy
 
 try:
     import sklearn.base  # pylint: disable=import-error
+    import sklearn.cluster  # pylint: disable=import-error
     import sklearn.ensemble  # pylint: disable=import-error
     import sklearn.exceptions  # pylint: disable=import-error
     import sklearn.feature_selection  # pylint: disable=import-error

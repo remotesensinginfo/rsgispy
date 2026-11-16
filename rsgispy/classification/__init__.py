@@ -30,6 +30,11 @@ Submodules:
   :func:`~rsgispy.classification.classsklearn.apply_sklearn_classifier`,
   :func:`~rsgispy.classification.classsklearn.save_sklearn_classifier`,
   :func:`~rsgispy.classification.classsklearn.load_sklearn_classifier`).
+* :mod:`rsgispy.classification.clustersklearn` — Scikit-learn unsupervised
+  pixel classification (clustering) across either the full image dataset in
+  memory or a sampled pixel subset applied block-by-block across the image
+  (:func:`~rsgispy.classification.clustersklearn.img_pixel_cluster`,
+  :func:`~rsgispy.classification.clustersklearn.img_pixel_sample_cluster`).
 * :mod:`rsgispy.classification.classfeatures` — Exploratory feature plots and
   multicollinearity diagnostics
   (:func:`~rsgispy.classification.classfeatures.comparison_box_plots`,
