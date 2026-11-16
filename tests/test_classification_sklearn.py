@@ -8,6 +8,7 @@ import importlib.util
 import inspect
 import json
 from pathlib import Path
+import warnings
 
 import geopandas as gpd
 import numpy as np
@@ -16,9 +17,22 @@ import pytest
 import rasterio
 from rasterio.transform import from_origin
 from shapely.geometry import Point, box
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import (
+    AdaBoostClassifier,
+    ExtraTreesClassifier,
+    GradientBoostingClassifier,
+    HistGradientBoostingClassifier,
+    RandomForestClassifier,
+)
+from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GridSearchCV
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.neural_network import MLPClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
 
 import rsgispy
 import rsgispy.classification as rcls
@@ -191,6 +205,7 @@ def test_classsklearn_module_layout():
     assert not hasattr(rcls, "apply_sklearn_classifier")
     assert not hasattr(rcsk, "apply_sklearn_classifier_rat")
     for fn_name in (
+        "get_sklearn_classifier_param_space",
         "perform_sklearn_classifier_param_search",
         "train_sklearn_classifier",
         "apply_sklearn_classifier",
@@ -528,4 +543,218 @@ def test_apply_sklearn_validation_errors(tmp_path):
             1,
             out_class_img=tmp_path / "svc.tif",
             out_score_img=tmp_path / "svc_prob.tif",
+        )
+
+
+def test_get_sklearn_classifier_param_space():
+    """Verify built-in parameter spaces across classifiers, aliases, and Pipelines."""
+    classifiers_and_aliases = [
+        (RandomForestClassifier(), "rf"),
+        (ExtraTreesClassifier(), "et"),
+        (GradientBoostingClassifier(), "gbc"),
+        (HistGradientBoostingClassifier(), "hgbc"),
+        (SVC(), "svm"),
+        (MLPClassifier(), "mlp"),
+        (KNeighborsClassifier(), "knn"),
+        (LogisticRegression(), "logreg"),
+        (DecisionTreeClassifier(), "dt"),
+        (AdaBoostClassifier(), "ada"),
+    ]
+
+    for est, alias in classifiers_and_aliases:
+        cls_type = type(est)
+        for method in ("optuna", "grid", "random"):
+            for extended in (False, True):
+                sp_inst = rcsk.get_sklearn_classifier_param_space(
+                    est, search_method=method, extended=extended
+                )
+                sp_cls = rcsk.get_sklearn_classifier_param_space(
+                    cls_type, search_method=method, extended=extended
+                )
+                sp_alias = rcsk.get_sklearn_classifier_param_space(
+                    alias, search_method=method, extended=extended
+                )
+                if callable(sp_inst):
+                    assert callable(sp_cls)
+                    assert callable(sp_alias)
+                else:
+                    assert isinstance(sp_inst, dict) and len(sp_inst) >= 2
+                    assert sp_inst == sp_cls == sp_alias
+
+        # Grid / Random discrete lists must be valid non-empty parameter names on estimator.
+        valid_est_params = set(est.get_params().keys())
+        for extended in (False, True):
+            cv_sp = rcsk.get_sklearn_classifier_param_space(
+                est, search_method="grid", extended=extended
+            )
+            assert isinstance(cv_sp, dict)
+            assert set(cv_sp.keys()).issubset(valid_est_params)
+            assert all(isinstance(vals, list) and len(vals) >= 2 for vals in cv_sp.values())
+
+    # Pipeline prefixing (both dict space and callable extended Optuna space).
+    rf_pipe = Pipeline([("scaler", StandardScaler()), ("clf", RandomForestClassifier())])
+    rf_pipe_sp = rcsk.get_sklearn_classifier_param_space(rf_pipe, search_method="grid")
+    assert all(k.startswith("clf__") for k in rf_pipe_sp)
+
+    nested_pipe = Pipeline(
+        [
+            ("outer", Pipeline([("scaler", StandardScaler()), ("svc", SVC())])),
+        ]
+    )
+    nested_cv_sp = rcsk.get_sklearn_classifier_param_space(
+        nested_pipe, search_method="random", extended=True
+    )
+    assert all(k.startswith("outer__svc__") for k in nested_cv_sp)
+
+    optuna = pytest.importorskip("optuna")
+    mlp_pipe = Pipeline([("scaler", StandardScaler()), ("mlp", MLPClassifier())])
+    mlp_sampler = rcsk.get_sklearn_classifier_param_space(
+        mlp_pipe, search_method="optuna", extended=True
+    )
+    assert callable(mlp_sampler)
+    study = optuna.create_study(direction="maximize")
+    trial = study.ask()
+    sampled = mlp_sampler(trial)
+    assert all(k.startswith("mlp__") for k in sampled)
+    assert isinstance(sampled["mlp__hidden_layer_sizes"], tuple)
+    assert set(sampled.keys()).issubset(set(mlp_pipe.get_params().keys()))
+
+    # Unsupported classifier and invalid search method raise RSGISPyException.
+    with pytest.raises(rsgispy.RSGISPyException, match="Supported classifiers"):
+        rcsk.get_sklearn_classifier_param_space(GaussianNB())
+    with pytest.raises(rsgispy.RSGISPyException):
+        rcsk.get_sklearn_classifier_param_space(RandomForestClassifier(), search_method="bad")
+
+
+def test_param_search_builtin_spaces(tmp_path):
+    """Test perform_sklearn_classifier_param_search auto-selected built-in spaces."""
+    fix = _create_cls_fixture(tmp_path)
+
+    # 1. Grid & Random search with param_space=None on LogisticRegression and DecisionTree.
+    dt_clf, dt_res = rcsk.perform_sklearn_classifier_param_search(
+        cls_cfg=fix["cfg"],
+        sk_classifier=DecisionTreeClassifier(),
+        train_data=fix["train_df"],
+        valid_data=fix["valid_df"],
+        search_method="random",
+        n_iter=5,
+        rnd_seed=42,
+        return_results=True,
+    )
+    assert isinstance(dt_clf, DecisionTreeClassifier)
+    assert dt_res["param_space_mode"] == "default"
+    assert dt_res["best_score"] >= 0.85
+
+    lr_pipe = Pipeline(
+        [("scaler", StandardScaler()), ("lr", LogisticRegression(max_iter=500))]
+    )
+    lr_clf, lr_res = rcsk.perform_sklearn_classifier_param_search(
+        cls_cfg=fix["cfg"],
+        sk_classifier=lr_pipe,
+        train_data=fix["train_df"],
+        valid_data=fix["valid_df"],
+        search_method="grid",
+        rnd_seed=42,
+        return_results=True,
+    )
+    assert isinstance(lr_clf, Pipeline)
+    assert lr_res["param_space_mode"] == "default"
+    assert all(k.startswith("lr__") for k in lr_res["best_params"])
+    assert lr_res["best_score"] >= 0.9
+
+    # 2. Optuna with param_space=None, "extended", and extended_param_space=True.
+    if importlib.util.find_spec("optuna") is not None:
+        rf_json = tmp_path / "rf_auto_params.json"
+        rf_clf, rf_res = rcsk.perform_sklearn_classifier_param_search(
+            cls_cfg=fix["cfg"],
+            sk_classifier=RandomForestClassifier(),
+            train_data=fix["train_df"],
+            valid_data=fix["valid_df"],
+            search_method="optuna",
+            n_trials=5,
+            rnd_seed=42,
+            out_params_json=rf_json,
+            return_results=True,
+        )
+        assert isinstance(rf_clf, RandomForestClassifier)
+        assert rf_res["param_space_mode"] == "default"
+        saved_meta = json.loads(rf_json.read_text(encoding="utf-8"))
+        assert saved_meta["param_space_mode"] == "default"
+
+        svc_pipe = Pipeline(
+            [("scaler", StandardScaler()), ("svc", SVC(probability=True))]
+        )
+        svc_clf, svc_res = rcsk.perform_sklearn_classifier_param_search(
+            cls_cfg=fix["cfg"],
+            sk_classifier=svc_pipe,
+            train_data=fix["train_df"],
+            valid_data=fix["valid_df"],
+            param_space="extended",
+            search_method="optuna",
+            n_trials=6,
+            rnd_seed=19,
+            return_results=True,
+        )
+        assert isinstance(svc_clf, Pipeline)
+        assert svc_res["param_space_mode"] == "extended"
+        assert all(k.startswith("svc__") for k in svc_res["best_params"])
+        assert "svc__kernel" in svc_res["best_params"]
+
+        mlp_pipe = Pipeline(
+            [("scaler", StandardScaler()), ("mlp", MLPClassifier(max_iter=300))]
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            mlp_clf, mlp_res = rcsk.perform_sklearn_classifier_param_search(
+                cls_cfg=fix["cfg"],
+                sk_classifier=mlp_pipe,
+                train_data=fix["train_df"],
+                valid_data=fix["valid_df"],
+                search_method="optuna",
+                n_trials=4,
+                rnd_seed=7,
+                extended_param_space=True,
+                return_results=True,
+            )
+        optuna_user_warns = [
+            w
+            for w in caught
+            if issubclass(w.category, UserWarning) and "optuna" in (w.filename or "").lower()
+        ]
+        assert not optuna_user_warns
+        assert isinstance(mlp_clf, Pipeline)
+        assert mlp_res["param_space_mode"] == "extended"
+        assert isinstance(mlp_clf.named_steps["mlp"].hidden_layer_sizes, tuple)
+
+    # 3. Validation errors for unsupported estimator or conflicting space arguments.
+    with pytest.raises(rsgispy.RSGISPyException):
+        rcsk.perform_sklearn_classifier_param_search(
+            fix["cfg"],
+            GaussianNB(),
+            fix["train_df"],
+            param_space=None,
+            search_method="grid",
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rcsk.perform_sklearn_classifier_param_search(
+            fix["cfg"],
+            RandomForestClassifier(),
+            fix["train_df"],
+            param_space="default",
+            extended_param_space=True,
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rcsk.perform_sklearn_classifier_param_search(
+            fix["cfg"],
+            RandomForestClassifier(),
+            fix["train_df"],
+            param_space={"n_estimators": [10]},
+            extended_param_space=True,
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rcsk.perform_sklearn_classifier_param_search(
+            fix["cfg"],
+            RandomForestClassifier(),
+            fix["train_df"],
+            param_space="unknown_preset",
         )

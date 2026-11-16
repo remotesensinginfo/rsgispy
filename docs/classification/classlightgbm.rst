@@ -1,6 +1,93 @@
 rsgispy.classification.classlightgbm
 ====================================
 
+Landsat Classification Example
+------------------------------
+
+The following example classifies a 6-band Landsat surface reflectance scene into
+``Mangroves`` (``out_id=10``), ``Water`` (``out_id=20``), and ``Other``
+(``out_id=30``) classes. Training pixels are extracted from per-class vector
+files, hyperparameters are tuned via Bayesian optimisation (Optuna TPE), and the
+final LightGBM model is trained, evaluated, and applied to the Landsat scene.
+
+.. code-block:: python
+
+    import rsgispy.classification.classdata as cd
+    import rsgispy.classification.classlightgbm as clgb
+
+    # 1. Define Landsat bands and classes with vector training samples
+    img_band_info = [
+        cd.ImageBandInfo(
+            file_name="landsat_sr.tif",
+            name="lsat",
+            bands=[1, 2, 3, 4, 5, 6],
+            band_names=["blue", "green", "red", "nir", "swir1", "swir2"],
+        )
+    ]
+    class_info = {
+        "Mangroves": cd.ClassInfoObj(
+            out_id=10, vec_file="mangroves_samples.gpkg", red=0, green=150, blue=60
+        ),
+        "Water": cd.ClassInfoObj(
+            out_id=20, vec_file="water_samples.gpkg", red=0, green=90, blue=220
+        ),
+        "Other": cd.ClassInfoObj(
+            out_id=30, vec_file="other_samples.gpkg", red=180, green=140, blue=80
+        ),
+    }
+    cls_cfg = cd.ClassificationConfig(
+        img_band_info=img_band_info,
+        class_info=class_info,
+    )
+
+    # 2. Extract and split samples into train / test / validation sets
+    train_df, test_df, valid_df = cd.extract_and_split_class_samples(
+        cls_cfg,
+        test_prop=0.2,
+        valid_prop=0.2,
+        out_train_file="train_samples.parquet",
+        out_test_file="test_samples.parquet",
+        out_valid_file="valid_samples.parquet",
+        rnd_seed=42,
+    )
+
+    # 3. Optimise LightGBM parameters using Bayesian updating (Optuna)
+    _, opt_res = clgb.optimise_lightgbm_multiclass_classifier(
+        cls_cfg=cls_cfg,
+        train_data=train_df,
+        valid_data=valid_df,
+        early_stopping_rounds=20,
+        scoring="f1_macro",
+        n_trials=30,
+        refit=False,
+        out_params_json="lgb_best_params.json",
+        return_results=True,
+        rnd_seed=42,
+    )
+
+    # 4. Train and evaluate the optimised classifier
+    model, metrics = clgb.train_lightgbm_multiclass_classifier(
+        cls_cfg=cls_cfg,
+        train_data=train_df,
+        test_data=test_df,
+        valid_data=valid_df,
+        model_params=opt_res["best_params"],
+        early_stopping_rounds=20,
+        out_model_file="landsat_lgb_model.joblib",
+        out_metrics_file="landsat_lgb_metrics.json",
+        rnd_seed=42,
+    )
+
+    # 5. Apply the model to classify the Landsat scene (outputs IDs 10, 20, 30)
+    clgb.apply_lightgbm_multiclass_classifier(
+        cls_cfg=cls_cfg,
+        lgb_classifier=model,
+        in_msk_img="landsat_valid_mask.tif",
+        img_msk_val=1,
+        out_class_img="landsat_lgb_cls.tif",
+        out_score_img="landsat_lgb_probs.tif",
+    )
+
 Optuna Hyperparameter Search Spaces
 -----------------------------------
 

@@ -23,9 +23,11 @@ Submodules:
   :func:`~rsgispy.classification.classdata.recode_cls_img_to_out_ids`).
 * :mod:`rsgispy.classification.classsklearn` — Scikit-learn classifier
   hyperparameter optimisation (Grid Search, Random Search, and Optuna Bayesian
-  optimisation), model training and persistence, and block-wise image
-  classification outputting class IDs and probability scores
-  (:func:`~rsgispy.classification.classsklearn.perform_sklearn_classifier_param_search`,
+  optimisation with built-in standard search spaces for common classifiers),
+  model training and persistence, and block-wise image classification outputting
+  class IDs and probability scores
+  (:func:`~rsgispy.classification.classsklearn.get_sklearn_classifier_param_space`,
+  :func:`~rsgispy.classification.classsklearn.perform_sklearn_classifier_param_search`,
   :func:`~rsgispy.classification.classsklearn.train_sklearn_classifier`,
   :func:`~rsgispy.classification.classsklearn.apply_sklearn_classifier`,
   :func:`~rsgispy.classification.classsklearn.save_sklearn_classifier`,

@@ -35,6 +35,9 @@ from rsgispy.classification._helpers import (
     resolve_cv_splitter as _resolve_cv_splitter,
     resolve_feature_cols as _resolve_feature_cols,
 )
+from rsgispy.classification._sklearn_spaces import (
+    build_sklearn_param_space as _build_sklearn_param_space,
+)
 from rsgispy.classification.classdata import ImageBandInfo
 from rsgispy.imageprocess import ensure_file_exists
 from rsgispy.tools._sklearn import (
@@ -64,6 +67,7 @@ except ImportError:
     HAVE_OPTUNA = False
 
 __all__ = [
+    "get_sklearn_classifier_param_space",
     "save_sklearn_classifier",
     "load_sklearn_classifier",
     "perform_sklearn_classifier_param_search",
@@ -146,6 +150,104 @@ def _normalise_search_method(search_method: str) -> str:
         f"Unsupported search_method '{search_method}'. Expected 'grid', "
         "'random', or 'optuna'."
     )
+
+
+def get_sklearn_classifier_param_space(
+    sk_classifier: Any,
+    search_method: str = "optuna",
+    extended: bool = False,
+) -> Union[Dict[str, Any], Callable[[Any], Dict[str, Any]]]:
+    """
+    Return a standard built-in hyperparameter search space for a commonly used
+    ``scikit-learn`` classifier (or a ``Pipeline`` ending with one).
+
+    Supports ``RandomForestClassifier``, ``ExtraTreesClassifier``,
+    ``GradientBoostingClassifier``, ``HistGradientBoostingClassifier``,
+    ``SVC``, ``MLPClassifier``, ``KNeighborsClassifier``,
+    ``LogisticRegression``, ``DecisionTreeClassifier``, and
+    ``AdaBoostClassifier`` (passed as an instance, class, ``Pipeline``, or
+    name/alias string such as ``'rf'``, ``'svc'``, or ``'mlp'``).
+
+    When ``search_method='optuna'`` (default), returns Optuna parameter
+    specifications (or a conditional callable ``fn(trial) -> dict`` when
+    ``extended=True`` for ``SVC`` or ``MLPClassifier``). When
+    ``search_method='grid'`` or ``'random'``, returns discrete candidate value
+    lists suitable for ``GridSearchCV`` and ``RandomizedSearchCV``.
+
+    :param sk_classifier: Classifier instance, class, ``Pipeline``, or name /
+                          alias string.
+    :param search_method: Target search strategy: ``'optuna'`` (default),
+                          ``'grid'``, or ``'random'``.
+    :param extended: If ``True``, return a broader search space with additional
+                     regularisation and structural parameters; if ``False``
+                     (default), return the standard key parameter space.
+    :return: Search space dictionary or Optuna ``fn(trial) -> dict`` callable.
+
+    .. code:: python
+
+        from sklearn.ensemble import RandomForestClassifier
+        import rsgispy.classification.classsklearn as csk
+
+        optuna_space = csk.get_sklearn_classifier_param_space(
+            RandomForestClassifier(), search_method="optuna"
+        )
+        grid_space = csk.get_sklearn_classifier_param_space(
+            "svc", search_method="grid", extended=True
+        )
+    """
+    method = _normalise_search_method(search_method)
+    return _build_sklearn_param_space(
+        sk_classifier=sk_classifier,
+        method=method,
+        extended=bool(extended),
+    )
+
+
+def _resolve_sklearn_param_space(
+    sk_classifier: Any,
+    method: str,
+    param_space: Optional[Any],
+    extended_param_space: bool,
+) -> Tuple[Any, str]:
+    """Resolve effective parameter search space and preset mode label."""
+    if isinstance(param_space, str):
+        preset = param_space.strip().lower()
+        if preset in ("default", "key", "standard"):
+            if extended_param_space:
+                raise rsgispy.RSGISPyException(
+                    "Cannot combine param_space='default' with "
+                    "extended_param_space=True."
+                )
+            return (
+                _build_sklearn_param_space(sk_classifier, method, extended=False),
+                "default",
+            )
+        if preset in ("extended", "full", "large"):
+            return (
+                _build_sklearn_param_space(sk_classifier, method, extended=True),
+                "extended",
+            )
+        raise rsgispy.RSGISPyException(
+            f"Unsupported param_space preset '{param_space}'. Expected "
+            "'default' or 'extended', or pass a dict, list, or callable."
+        )
+
+    if param_space is not None:
+        if extended_param_space:
+            raise rsgispy.RSGISPyException(
+                "Provide either a custom param_space or "
+                "extended_param_space=True, not both."
+            )
+        return param_space, "custom"
+
+    if method != "optuna" and is_sklearn_search_cv(sk_classifier):
+        return None, "preconfigured"
+
+    use_ext = bool(extended_param_space)
+    eff_space = _build_sklearn_param_space(
+        sk_classifier, method, extended=use_ext
+    )
+    return eff_space, ("extended" if use_ext else "default")
 
 
 def _build_predefined_split_data(
@@ -338,7 +440,9 @@ def _run_optuna_search(
         optuna.logging.set_verbosity(prev_verbosity)
 
     if callable(param_space):
-        best_trial_params = dict(study.best_trial.params)
+        best_trial_params = dict(
+            param_space(optuna.trial.FixedTrial(study.best_trial.params))
+        )
     else:
         best_trial_params = dict(study.best_trial.params)
         for p_name, spec in param_space.items():
@@ -363,6 +467,7 @@ def perform_sklearn_classifier_param_search(
     train_data: SamplesInput,
     param_space: Optional[
         Union[
+            str,
             Mapping[str, Any],
             Sequence[Mapping[str, Any]],
             Callable[[Any], Mapping[str, Any]],
@@ -387,10 +492,21 @@ def perform_sklearn_classifier_param_search(
     out_params_json: Optional[Union[str, os.PathLike]] = None,
     return_results: bool = False,
     verbose: int = 0,
+    extended_param_space: bool = False,
 ) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
     """
     Optimise hyperparameters for a ``scikit-learn`` (or compatible) classifier
     using Grid Search, Random Search, or Bayesian optimisation with Optuna.
+
+    When ``param_space=None`` (or ``'default'`` / ``'extended'``) and
+    ``extended_param_space`` controls preset breadth, built-in standard search
+    spaces are automatically selected for common ``scikit-learn`` classifiers
+    (including ``RandomForestClassifier``, ``ExtraTreesClassifier``,
+    ``GradientBoostingClassifier``, ``HistGradientBoostingClassifier``,
+    ``SVC``, ``MLPClassifier``, ``KNeighborsClassifier``,
+    ``LogisticRegression``, ``DecisionTreeClassifier``, and
+    ``AdaBoostClassifier``, as well as ``Pipeline`` objects ending in any of
+    those). See :func:`get_sklearn_classifier_param_space`.
 
     When ``valid_data`` is provided, candidate parameter configurations are fit
     on ``train_data`` and evaluated on ``valid_data`` (with the final optimal
@@ -398,7 +514,7 @@ def perform_sklearn_classifier_param_search(
     ``valid_data`` is ``None``, stratified ``cv``-fold cross-validation is
     performed on ``train_data``.
 
-    For ``search_method='optuna'``, ``param_space`` may be either:
+    For ``search_method='optuna'``, a custom ``param_space`` may be either:
 
     * A callable ``fn(trial) -> dict`` using ``optuna.Trial`` suggestions; or
     * A dictionary mapping parameter names to lists (categorical), 2-tuples
@@ -407,13 +523,14 @@ def perform_sklearn_classifier_param_search(
 
     :param cls_cfg: :class:`~rsgispy.classification.classdata.ClassificationConfig`,
                     JSON config path, or mapping of ``{class_name: ClassInfoObj}``.
-    :param sk_classifier: Base ``scikit-learn`` classifier estimator (or a
-                          pre-configured ``GridSearchCV`` / ``RandomizedSearchCV``).
+    :param sk_classifier: Base ``scikit-learn`` classifier estimator, ``Pipeline``,
+                          or pre-configured ``GridSearchCV`` / ``RandomizedSearchCV``.
     :param train_data: Training sample :class:`pandas.DataFrame` or file path
                        (Parquet, CSV, etc.).
-    :param param_space: Parameter search space (dict, list of dicts, or Optuna
-                        callable). Optional only when ``sk_classifier`` is
-                        already a ``BaseSearchCV`` object.
+    :param param_space: Parameter search space (dict, list of dicts, Optuna
+                        callable, preset string ``'default'`` / ``'extended'``,
+                        or ``None`` to use the built-in standard space for
+                        supported classifiers).
     :param search_method: Optimisation strategy: ``'grid'`` (default),
                           ``'random'``, or ``'optuna'``.
     :param valid_data: Optional validation :class:`pandas.DataFrame` or file path
@@ -449,6 +566,9 @@ def perform_sklearn_classifier_param_search(
     :param return_results: If ``True``, return ``(best_estimator, results_dict)``;
                            if ``False`` (default), return ``best_estimator``.
     :param verbose: Verbosity level (Default = ``0``).
+    :param extended_param_space: If ``True`` (and ``param_space`` is ``None``),
+                                 use the broader extended built-in parameter
+                                 space for ``sk_classifier`` (Default = ``False``).
     :return: Optimised classifier estimator, or ``(best_estimator, results_dict)``
              when ``return_results=True``.
 
@@ -457,11 +577,11 @@ def perform_sklearn_classifier_param_search(
         from sklearn.ensemble import RandomForestClassifier
         import rsgispy.classification.classsklearn as csk
 
+        # Automatically uses built-in RandomForestClassifier Optuna space
         best_clf = csk.perform_sklearn_classifier_param_search(
             cls_cfg="cls_config.json",
             sk_classifier=RandomForestClassifier(),
             train_data="train.parquet",
-            param_space={"n_estimators": (20, 150), "max_depth": (2, 12)},
             search_method="optuna",
             n_trials=25,
             rnd_seed=42,
@@ -471,6 +591,12 @@ def perform_sklearn_classifier_param_search(
     # pylint: disable=too-many-locals
     check_sklearn_available("perform_sklearn_classifier_param_search")
     method = _normalise_search_method(search_method)
+    eff_param_space, space_mode = _resolve_sklearn_param_space(
+        sk_classifier=sk_classifier,
+        method=method,
+        param_space=param_space,
+        extended_param_space=extended_param_space,
+    )
     cfg, class_info, eff_out_col, eff_int_col, cls_name_col = _coerce_cls_config(
         cls_cfg, out_id_col=out_id_col, internal_id_col=internal_id_col
     )
@@ -503,7 +629,7 @@ def perform_sklearn_classifier_param_search(
         best_est, best_params, best_score, results_df, search_obj = (
             _run_optuna_search(
                 sk_classifier=sk_classifier,
-                param_space=param_space,  # type: ignore[arg-type]
+                param_space=eff_param_space,
                 train_x=train_x,
                 train_y=train_y,
                 valid_x=valid_x,
@@ -524,7 +650,7 @@ def perform_sklearn_classifier_param_search(
             _run_sklearn_search_cv(
                 method=method,
                 sk_classifier=sk_classifier,
-                param_space=param_space,
+                param_space=eff_param_space,
                 train_x=train_x,
                 train_y=train_y,
                 valid_x=valid_x,
@@ -550,6 +676,7 @@ def perform_sklearn_classifier_param_search(
         write_dict_to_json(
             {
                 "search_method": method,
+                "param_space_mode": space_mode,
                 "scoring": scoring_name,
                 "best_score": float(best_score),
                 "best_params": best_params,
@@ -560,6 +687,7 @@ def perform_sklearn_classifier_param_search(
     if return_results:
         return best_est, {
             "search_method": method,
+            "param_space_mode": space_mode,
             "best_params": best_params,
             "best_score": float(best_score),
             "results_df": results_df,
