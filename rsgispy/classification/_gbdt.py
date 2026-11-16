@@ -17,6 +17,7 @@ from typing import (
     Tuple,
     Union,
 )
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -63,6 +64,8 @@ class GBDTBackendSpec:
     package_name: str
     extra: str
     is_available: Callable[[], bool]
+    gpu_available: Callable[[Optional[int]], bool]
+    apply_gpu_params: Callable[[Dict[str, Any], Optional[int]], Dict[str, Any]]
     seed_param: str
     jobs_param: str
     default_binary_params: Callable[[int], Dict[str, Any]]
@@ -85,7 +88,55 @@ class GBDTBackendSpec:
     ]
     load_model: Callable[[Union[str, os.PathLike]], Any]
     save_model: Callable[[Any, Union[str, os.PathLike]], None]
+    prepare_predict_estimator: Optional[
+        Callable[
+            [Any, bool, Optional[int]],
+            Tuple[Any, Dict[str, Any], Optional[Callable[[], None]]],
+        ]
+    ] = None
     require_consecutive_zero_labels: bool = False
+
+
+def validate_gpu_device_id(gpu_device_id: Optional[int]) -> Optional[int]:
+    """Validate and coerce an optional non-negative GPU device index."""
+    if gpu_device_id is None:
+        return None
+    if isinstance(gpu_device_id, bool) or not isinstance(
+        gpu_device_id, (int, np.integer)
+    ):
+        raise rsgispy.RSGISPyException(
+            f"gpu_device_id must be a non-negative integer or None, "
+            f"got {gpu_device_id!r}."
+        )
+    dev_idx = int(gpu_device_id)
+    if dev_idx < 0:
+        raise rsgispy.RSGISPyException(
+            f"gpu_device_id must be non-negative, got {gpu_device_id}."
+        )
+    return dev_idx
+
+
+def resolve_gbdt_gpu(
+    backend: GBDTBackendSpec,
+    use_gpu: bool,
+    gpu_device_id: Optional[int],
+) -> Tuple[bool, Optional[int]]:
+    """
+    Validate GPU device selection and resolve whether GPU execution is active,
+    falling back to CPU with a ``UserWarning`` when unavailable.
+    """
+    dev_idx = validate_gpu_device_id(gpu_device_id)
+    if not use_gpu:
+        return False, None
+    if backend.gpu_available(dev_idx):
+        return True, dev_idx
+    warnings.warn(
+        f"GPU requested for {backend.name} (use_gpu=True), but no compatible "
+        f"GPU device or GPU-enabled build was detected. Falling back to CPU.",
+        UserWarning,
+        stacklevel=3,
+    )
+    return False, None
 
 
 def _validate_target_labels(
@@ -118,6 +169,8 @@ def _merge_gbdt_params(
     early_stopping_rounds: Optional[int],
     has_valid: bool,
     verbose: int,
+    gpu_active: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Build clean estimator parameter dictionary with task defaults."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -156,6 +209,9 @@ def _merge_gbdt_params(
         merged.pop("early_stopping_rounds", None)
     elif early_stopping_rounds is not None and backend.name == "XGBoost":
         merged["early_stopping_rounds"] = int(early_stopping_rounds)
+
+    if gpu_active:
+        merged = backend.apply_gpu_params(merged, gpu_device_id)
 
     return merged
 
@@ -273,6 +329,8 @@ def optimise_gbdt_classifier(
     out_model_file: Optional[Union[str, os.PathLike]] = None,
     return_results: bool = False,
     verbose: int = 0,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
     """
     Optimise hyperparameters for a GBDT binary or multi-class classifier using
@@ -287,6 +345,7 @@ def optimise_gbdt_classifier(
         HAVE_OPTUNA, func_name, "optuna", backend.extra
     )
     check_sklearn_available(func_name)
+    gpu_active, eff_gpu_id = resolve_gbdt_gpu(backend, use_gpu, gpu_device_id)
 
     if int(n_trials) < 1:
         raise rsgispy.RSGISPyException("n_trials must be at least 1.")
@@ -343,7 +402,7 @@ def optimise_gbdt_classifier(
         combined = dict(trial_params)
         if fixed_params:
             combined.update(fixed_params)
-        est_jobs = n_jobs if valid_x is not None else 1
+        est_jobs = n_jobs if (valid_x is not None or gpu_active) else 1
         params = _merge_gbdt_params(
             backend=backend,
             n_classes=n_classes,
@@ -355,6 +414,8 @@ def optimise_gbdt_classifier(
             early_stopping_rounds=early_stopping_rounds,
             has_valid=valid_x is not None,
             verbose=verbose,
+            gpu_active=gpu_active,
+            gpu_device_id=eff_gpu_id,
         )
         if valid_x is not None and valid_y is not None:
             fitted = _build_and_fit_gbdt(
@@ -370,13 +431,14 @@ def optimise_gbdt_classifier(
             return float(scorer(fitted, valid_x, valid_y))
 
         est = backend.build_estimator(params, classifier)
+        cv_jobs = 1 if gpu_active else n_jobs
         scores = sklearn.model_selection.cross_val_score(
             est,
             train_x,
             train_y,
             cv=cv_obj,
             scoring=scoring,
-            n_jobs=n_jobs,
+            n_jobs=cv_jobs,
         )
         return float(np.mean(scores))
 
@@ -415,6 +477,8 @@ def optimise_gbdt_classifier(
         early_stopping_rounds=early_stopping_rounds,
         has_valid=valid_x is not None,
         verbose=verbose,
+        gpu_active=gpu_active,
+        gpu_device_id=eff_gpu_id,
     )
 
     if refit:
@@ -449,6 +513,8 @@ def optimise_gbdt_classifier(
                 "task": "binary" if binary else "multiclass",
                 "search_method": "optuna",
                 "param_space_mode": space_mode,
+                "use_gpu_requested": bool(use_gpu),
+                "gpu_used": bool(gpu_active),
                 "scoring": scoring_name,
                 "best_score": best_score,
                 "best_params": best_params_json,
@@ -467,6 +533,8 @@ def optimise_gbdt_classifier(
         return best_est, {
             "search_method": "optuna",
             "param_space_mode": space_mode,
+            "use_gpu_requested": bool(use_gpu),
+            "gpu_used": bool(gpu_active),
             "best_params": best_params_json,
             "best_score": best_score,
             "results_df": results_df,
@@ -496,6 +564,8 @@ def train_gbdt_classifier(
     out_metrics_file: Optional[Union[str, os.PathLike]] = None,
     return_model: bool = True,
     verbose: int = 0,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> Union[Dict[str, float], Tuple[Any, Dict[str, float]]]:
     """
     Train a GBDT binary or multi-class classifier on extracted sample tables
@@ -507,6 +577,7 @@ def train_gbdt_classifier(
         backend.is_available(), func_name, backend.package_name, backend.extra
     )
     check_sklearn_available(func_name)
+    gpu_active, eff_gpu_id = resolve_gbdt_gpu(backend, use_gpu, gpu_device_id)
 
     if early_stopping_rounds is not None and int(early_stopping_rounds) < 1:
         raise rsgispy.RSGISPyException(
@@ -541,6 +612,8 @@ def train_gbdt_classifier(
         early_stopping_rounds=early_stopping_rounds,
         has_valid=valid_x is not None,
         verbose=verbose,
+        gpu_active=gpu_active,
+        gpu_device_id=eff_gpu_id,
     )
     fitted_est = _build_and_fit_gbdt(
         backend=backend,
@@ -560,36 +633,50 @@ def train_gbdt_classifier(
         _, pos_entry = resolve_binary_classes(class_info, use_internal_id)
         pos_train_id = pos_entry[2]
 
-    metrics = calc_cls_split_metrics(
-        fitted_est,
-        train_x,
-        train_y,
-        "train",
-        binary=binary,
-        pos_train_id=pos_train_id,
-    )
-    if test_xy is not None:
-        metrics.update(
-            calc_cls_split_metrics(
-                fitted_est,
-                test_xy[0],
-                test_xy[1],
-                "test",
-                binary=binary,
-                pos_train_id=pos_train_id,
-            )
+    eval_est = fitted_est
+    predict_kwargs: Dict[str, Any] = {}
+    cleanup_fn: Optional[Callable[[], None]] = None
+    if backend.prepare_predict_estimator is not None:
+        eval_est, predict_kwargs, cleanup_fn = backend.prepare_predict_estimator(
+            fitted_est, gpu_active, eff_gpu_id
         )
-    if valid_xy is not None:
-        metrics.update(
-            calc_cls_split_metrics(
-                fitted_est,
-                valid_xy[0],
-                valid_xy[1],
-                "valid",
-                binary=binary,
-                pos_train_id=pos_train_id,
-            )
+    try:
+        metrics = calc_cls_split_metrics(
+            eval_est,
+            train_x,
+            train_y,
+            "train",
+            binary=binary,
+            pos_train_id=pos_train_id,
+            predict_kwargs=predict_kwargs,
         )
+        if test_xy is not None:
+            metrics.update(
+                calc_cls_split_metrics(
+                    eval_est,
+                    test_xy[0],
+                    test_xy[1],
+                    "test",
+                    binary=binary,
+                    pos_train_id=pos_train_id,
+                    predict_kwargs=predict_kwargs,
+                )
+            )
+        if valid_xy is not None:
+            metrics.update(
+                calc_cls_split_metrics(
+                    eval_est,
+                    valid_xy[0],
+                    valid_xy[1],
+                    "valid",
+                    binary=binary,
+                    pos_train_id=pos_train_id,
+                    predict_kwargs=predict_kwargs,
+                )
+            )
+    finally:
+        if cleanup_fn is not None:
+            cleanup_fn()
 
     if out_model_file is not None:
         backend.save_model(fitted_est, out_model_file)
@@ -629,6 +716,8 @@ def apply_gbdt_classifier(
     pos_class: Optional[Union[str, int]] = None,
     pred_threshold: Optional[float] = None,
     score_all_classes: bool = False,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> None:
     """
     Apply a trained GBDT binary or multi-class classifier block-by-block to
@@ -640,33 +729,46 @@ def apply_gbdt_classifier(
         backend.is_available(), func_name, backend.package_name, backend.extra
     )
     check_sklearn_available(func_name)
+    gpu_active, eff_gpu_id = resolve_gbdt_gpu(backend, use_gpu, gpu_device_id)
     estimator = (
         backend.load_model(classifier)
         if isinstance(classifier, (str, os.PathLike))
         else classifier
     )
-    apply_classifier_raster(
-        cls_cfg=cls_cfg,
-        estimator=estimator,
-        in_msk_img=in_msk_img,
-        img_msk_val=img_msk_val,
-        out_class_img=out_class_img,
-        out_score_img=out_score_img,
-        img_band_info=img_band_info,
-        gdalformat=gdalformat,
-        datatype=datatype,
-        out_no_data_val=out_no_data_val,
-        class_clr_names=class_clr_names,
-        use_internal_id=use_internal_id,
-        recode_to_out_ids=recode_to_out_ids,
-        score_max_only=score_max_only,
-        score_no_data_val=score_no_data_val,
-        calc_img_stats=calc_img_stats,
-        block_size=block_size,
-        creation_opts=creation_opts,
-        use_pbar=use_pbar,
-        binary=binary,
-        pos_class=pos_class,
-        pred_threshold=pred_threshold,
-        score_all_classes=score_all_classes,
-    )
+    eval_est = estimator
+    predict_kwargs: Dict[str, Any] = {}
+    cleanup_fn: Optional[Callable[[], None]] = None
+    if backend.prepare_predict_estimator is not None:
+        eval_est, predict_kwargs, cleanup_fn = backend.prepare_predict_estimator(
+            estimator, gpu_active, eff_gpu_id
+        )
+    try:
+        apply_classifier_raster(
+            cls_cfg=cls_cfg,
+            estimator=eval_est,
+            in_msk_img=in_msk_img,
+            img_msk_val=img_msk_val,
+            out_class_img=out_class_img,
+            out_score_img=out_score_img,
+            img_band_info=img_band_info,
+            gdalformat=gdalformat,
+            datatype=datatype,
+            out_no_data_val=out_no_data_val,
+            class_clr_names=class_clr_names,
+            use_internal_id=use_internal_id,
+            recode_to_out_ids=recode_to_out_ids,
+            score_max_only=score_max_only,
+            score_no_data_val=score_no_data_val,
+            calc_img_stats=calc_img_stats,
+            block_size=block_size,
+            creation_opts=creation_opts,
+            use_pbar=use_pbar,
+            binary=binary,
+            pos_class=pos_class,
+            pred_threshold=pred_threshold,
+            score_all_classes=score_all_classes,
+            predict_kwargs=predict_kwargs,
+        )
+    finally:
+        if cleanup_fn is not None:
+            cleanup_fn()

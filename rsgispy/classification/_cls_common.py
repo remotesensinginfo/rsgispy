@@ -306,6 +306,7 @@ def calc_cls_split_metrics(
     prefix: str,
     binary: bool = False,
     pos_train_id: int = 1,
+    predict_kwargs: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, float]:
     """
     Compute standard classification metrics and, when ``binary=True``,
@@ -313,11 +314,16 @@ def calc_cls_split_metrics(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    metrics = calc_split_metrics(fitted_est, x_df, y_true, prefix)
+    p_kwargs = dict(predict_kwargs) if predict_kwargs else {}
+    metrics = calc_split_metrics(
+        fitted_est, x_df, y_true, prefix, predict_kwargs=p_kwargs
+    )
     if not binary:
         return metrics
 
-    preds = np.asarray(fitted_est.predict(x_df)).ravel()
+    preds = np.asarray(
+        fitted_est.predict(x_df, **p_kwargs) if p_kwargs else fitted_est.predict(x_df)
+    ).ravel()
     y_bin = (y_true == pos_train_id).astype(np.int64)
     p_bin = (preds == pos_train_id).astype(np.int64)
     with warnings.catch_warnings():
@@ -335,7 +341,10 @@ def calc_cls_split_metrics(
 
     if hasattr(fitted_est, "predict_proba"):
         raw_probs = np.asarray(
-            fitted_est.predict_proba(x_df), dtype=np.float64
+            fitted_est.predict_proba(x_df, **p_kwargs)
+            if p_kwargs
+            else fitted_est.predict_proba(x_df),
+            dtype=np.float64,
         )
         est_classes = list(getattr(fitted_est, "classes_", []))
         if raw_probs.ndim == 2 and raw_probs.shape[1] >= 2:
@@ -421,6 +430,7 @@ def apply_classifier_raster(
     pos_class: Optional[Union[str, int]] = None,
     pred_threshold: Optional[float] = None,
     score_all_classes: bool = False,
+    predict_kwargs: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """
     Shared block-wise image classification engine for binary and multi-class
@@ -432,6 +442,7 @@ def apply_classifier_raster(
         raise rsgispy.RSGISPyException(
             "At least one of out_class_img or out_score_img must be specified."
         )
+    p_kwargs = dict(predict_kwargs) if predict_kwargs else {}
     check_sklearn_estimator_fitted(estimator, label="classifier")
 
     if pred_threshold is not None:
@@ -595,7 +606,10 @@ def apply_classifier_raster(
             )
             if valid_idx.size > 0 and x_valid is not None and need_probs:
                 raw_probs = np.asarray(
-                    estimator.predict_proba(x_valid), dtype=np.float32
+                    estimator.predict_proba(x_valid, **p_kwargs)
+                    if p_kwargs
+                    else estimator.predict_proba(x_valid),
+                    dtype=np.float32,
                 )
                 aligned_probs = align_proba_columns(
                     raw_probs, est_classes, ordered_train_ids
@@ -615,7 +629,10 @@ def apply_classifier_raster(
                         ).astype(np.int64)
                     else:
                         preds = np.asarray(
-                            estimator.predict(x_valid), dtype=np.int64
+                            estimator.predict(x_valid, **p_kwargs)
+                            if p_kwargs
+                            else estimator.predict(x_valid),
+                            dtype=np.int64,
                         ).ravel()
                     if should_recode:
                         preds = recode_internal_to_out_ids(

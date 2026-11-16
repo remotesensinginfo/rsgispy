@@ -147,6 +147,19 @@ Extended Search Space (``extended_param_space=True``)
      - ``16`` to ``128``
      - Sampled when ``grow_policy == 'Lossguide'``.
 
+GPU Acceleration
+----------------
+
+All optimise, train, and apply functions accept ``use_gpu=True`` and an optional
+``gpu_device_id`` index. GPU support is checked via
+:func:`~rsgispy.classification.classcatboost.is_catboost_gpu_available`. When a
+GPU is available, ``task_type='GPU'`` (and ``devices=str(gpu_device_id)`` when
+specified) is enabled automatically, CPU-only ``rsm`` is omitted, and
+``bootstrap_type='MVS'`` is mapped to ``'Bernoulli'``. Inference passes
+``task_type='GPU'`` directly to ``predict()`` / ``predict_proba()``. If no
+compatible GPU is detected, a ``UserWarning`` is emitted and execution falls
+back to CPU.
+
 API Reference
 -------------
 

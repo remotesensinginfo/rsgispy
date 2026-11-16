@@ -6,6 +6,7 @@ and block-wise raster classification.
 
 import inspect
 import os
+import shutil
 from typing import (
     Any,
     Callable,
@@ -26,6 +27,7 @@ from rsgispy.classification._gbdt import (
     apply_gbdt_classifier,
     optimise_gbdt_classifier,
     train_gbdt_classifier,
+    validate_gpu_device_id,
 )
 from rsgispy.classification._helpers import ClsConfigInput, SamplesInput
 from rsgispy.classification.classdata import ImageBandInfo
@@ -49,6 +51,7 @@ except ImportError:
     HAVE_JOBLIB = False
 
 __all__ = [
+    "is_lightgbm_gpu_available",
     "save_lightgbm_classifier",
     "load_lightgbm_classifier",
     "get_lightgbm_optuna_param_space",
@@ -59,6 +62,66 @@ __all__ = [
     "apply_lightgbm_binary_classifier",
     "apply_lightgbm_multiclass_classifier",
 ]
+
+
+def _detect_lightgbm_gpu_device(
+    gpu_device_id: Optional[int] = None,
+) -> Optional[str]:
+    """
+    Detect an operational LightGBM GPU backend (``'cuda'`` or ``'gpu'``).
+
+    ``'cuda'`` is only probed when NVIDIA driver indicators are present so
+    CPU-only builds do not emit C++ fatal stderr messages.
+    """
+    dev_idx = validate_gpu_device_id(gpu_device_id)
+    if not HAVE_LIGHTGBM:
+        return None
+    has_nvidia = (
+        shutil.which("nvidia-smi") is not None
+        or os.path.exists("/dev/nvidia0")
+        or bool(os.environ.get("CUDA_VISIBLE_DEVICES", "").strip())
+    )
+    candidates = ("cuda", "gpu") if has_nvidia else ("gpu",)
+    probe_x = np.array(
+        [[0.0, 1.0], [1.0, 0.0], [0.2, 0.8], [0.8, 0.2]],
+        dtype=np.float32,
+    )
+    probe_y = np.array([0, 1, 0, 1], dtype=np.int32)
+    for dev_name in candidates:
+        kwargs: Dict[str, Any] = {
+            "n_estimators": 1,
+            "min_child_samples": 1,
+            "min_data_in_bin": 1,
+            "device": dev_name,
+            "verbose": -1,
+        }
+        if dev_idx is not None:
+            kwargs["gpu_device_id"] = dev_idx
+        try:
+            lgb.LGBMClassifier(**kwargs).fit(probe_x, probe_y)
+            return dev_name
+        except Exception:  # pylint: disable=broad-exception-caught
+            continue
+    return None
+
+
+def is_lightgbm_gpu_available(gpu_device_id: Optional[int] = None) -> bool:
+    """
+    Check whether CUDA or OpenCL GPU execution is supported and available for
+    ``lightgbm``.
+
+    :param gpu_device_id: Optional non-negative GPU device index
+                          (Default = ``None``, using default device).
+    :return: ``True`` if LightGBM GPU training is available, ``False`` otherwise.
+
+    .. code:: python
+
+        import rsgispy.classification.classlightgbm as clgb
+
+        if clgb.is_lightgbm_gpu_available():
+            print("LightGBM GPU ready")
+    """
+    return _detect_lightgbm_gpu_device(gpu_device_id) is not None
 
 
 def get_lightgbm_optuna_param_space(extended: bool = False) -> Dict[str, Any]:
@@ -273,11 +336,29 @@ def load_lightgbm_classifier(
     return joblib.load(in_path)
 
 
+def _apply_lgb_gpu_params(
+    params: Dict[str, Any],
+    gpu_device_id: Optional[int],
+) -> Dict[str, Any]:
+    """Configure LightGBM parameters for CUDA or OpenCL GPU training."""
+    out = dict(params)
+    out.pop("device_type", None)
+    device = _detect_lightgbm_gpu_device(gpu_device_id) or "gpu"
+    out["device"] = device
+    if gpu_device_id is not None:
+        out["gpu_device_id"] = int(gpu_device_id)
+    if device == "gpu" and "max_bin" in out and out["max_bin"] is not None:
+        out["max_bin"] = min(int(out["max_bin"]), 255)
+    return out
+
+
 _LGB_BACKEND = GBDTBackendSpec(
     name="LightGBM",
     package_name="lightgbm",
     extra="lightgbm",
     is_available=lambda: HAVE_LIGHTGBM,
+    gpu_available=is_lightgbm_gpu_available,
+    apply_gpu_params=_apply_lgb_gpu_params,
     seed_param="random_state",
     jobs_param="n_jobs",
     default_binary_params=_default_lgb_binary_params,
@@ -322,6 +403,8 @@ def optimise_lightgbm_binary_classifier(
     out_model_file: Optional[Union[str, os.PathLike]] = None,
     return_results: bool = False,
     verbose: int = 0,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
     """
     Optimise hyperparameters for a binary ``lightgbm.LGBMClassifier``
@@ -369,6 +452,11 @@ def optimise_lightgbm_binary_classifier(
     :param out_model_file: Optional path to save refitted model.
     :param return_results: When ``True``, return ``(best_model, results_dict)``.
     :param verbose: Verbosity level (Default = ``0``).
+    :param use_gpu: If ``True``, use CUDA or OpenCL GPU acceleration
+                    (automatically clamping ``max_bin <= 255`` for OpenCL)
+                    when available, falling back to CPU with a warning
+                    otherwise (Default = ``False``).
+    :param gpu_device_id: Optional non-negative GPU device index.
     :return: Optimised ``LGBMClassifier``, or ``(best_model, results_dict)``
              when ``return_results=True``.
 
@@ -416,6 +504,8 @@ def optimise_lightgbm_binary_classifier(
         out_model_file=out_model_file,
         return_results=return_results,
         verbose=verbose,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )
 
 
@@ -447,6 +537,8 @@ def optimise_lightgbm_multiclass_classifier(
     out_model_file: Optional[Union[str, os.PathLike]] = None,
     return_results: bool = False,
     verbose: int = 0,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
     """
     Optimise hyperparameters for a multi-class ``lightgbm.LGBMClassifier``
@@ -487,6 +579,11 @@ def optimise_lightgbm_multiclass_classifier(
     :param out_model_file: Optional path to save refitted model.
     :param return_results: When ``True``, return ``(best_model, results_dict)``.
     :param verbose: Verbosity level (Default = ``0``).
+    :param use_gpu: If ``True``, use CUDA or OpenCL GPU acceleration
+                    (automatically clamping ``max_bin <= 255`` for OpenCL)
+                    when available, falling back to CPU with a warning
+                    otherwise (Default = ``False``).
+    :param gpu_device_id: Optional non-negative GPU device index.
     :return: Optimised ``LGBMClassifier``, or ``(best_model, results_dict)``
              when ``return_results=True``.
 
@@ -533,6 +630,8 @@ def optimise_lightgbm_multiclass_classifier(
         out_model_file=out_model_file,
         return_results=return_results,
         verbose=verbose,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )
 
 
@@ -554,6 +653,8 @@ def train_lightgbm_binary_classifier(
     out_metrics_file: Optional[Union[str, os.PathLike]] = None,
     return_model: bool = True,
     verbose: int = 0,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> Union[Dict[str, float], Tuple[Any, Dict[str, float]]]:
     """
     Train a binary ``lightgbm.LGBMClassifier`` on extracted sample tables and
@@ -578,6 +679,10 @@ def train_lightgbm_binary_classifier(
     :param out_metrics_file: Optional JSON path to save split metrics.
     :param return_model: When ``True`` (default), return ``(fitted_model, metrics)``.
     :param verbose: Verbosity level (Default = ``0``).
+    :param use_gpu: If ``True``, use CUDA or OpenCL GPU acceleration when
+                    available, falling back to CPU with a warning otherwise
+                    (Default = ``False``).
+    :param gpu_device_id: Optional non-negative GPU device index.
     :return: ``(fitted_model, metrics)`` or ``metrics``.
 
     .. code:: python
@@ -614,6 +719,8 @@ def train_lightgbm_binary_classifier(
         out_metrics_file=out_metrics_file,
         return_model=return_model,
         verbose=verbose,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )
 
 
@@ -635,6 +742,8 @@ def train_lightgbm_multiclass_classifier(
     out_metrics_file: Optional[Union[str, os.PathLike]] = None,
     return_model: bool = True,
     verbose: int = 0,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> Union[Dict[str, float], Tuple[Any, Dict[str, float]]]:
     """
     Train a multi-class ``lightgbm.LGBMClassifier`` (``objective='multiclass'``)
@@ -658,6 +767,10 @@ def train_lightgbm_multiclass_classifier(
     :param out_metrics_file: Optional JSON path to save split metrics.
     :param return_model: When ``True`` (default), return ``(fitted_model, metrics)``.
     :param verbose: Verbosity level (Default = ``0``).
+    :param use_gpu: If ``True``, use CUDA or OpenCL GPU acceleration when
+                    available, falling back to CPU with a warning otherwise
+                    (Default = ``False``).
+    :param gpu_device_id: Optional non-negative GPU device index.
     :return: ``(fitted_model, metrics)`` or ``metrics``.
 
     .. code:: python
@@ -694,6 +807,8 @@ def train_lightgbm_multiclass_classifier(
         out_metrics_file=out_metrics_file,
         return_model=return_model,
         verbose=verbose,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )
 
 
@@ -719,6 +834,8 @@ def apply_lightgbm_binary_classifier(
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> None:
     """
     Apply a trained binary ``lightgbm.LGBMClassifier`` block-by-block to pixels
@@ -752,6 +869,10 @@ def apply_lightgbm_binary_classifier(
     :param block_size: Optional processing block size in pixels.
     :param creation_opts: Optional GDAL creation options.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param use_gpu: If ``True``, validate GPU availability (emitting a warning
+                    and falling back to CPU when unavailable; note that
+                    LightGBM inference executes on CPU) (Default = ``False``).
+    :param gpu_device_id: Optional non-negative GPU device index.
 
     .. code:: python
 
@@ -794,6 +915,8 @@ def apply_lightgbm_binary_classifier(
         pos_class=pos_class,
         pred_threshold=pred_threshold,
         score_all_classes=score_all_classes,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )
 
 
@@ -817,6 +940,8 @@ def apply_lightgbm_multiclass_classifier(
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> None:
     """
     Apply a trained multi-class ``lightgbm.LGBMClassifier`` block-by-block to
@@ -844,6 +969,10 @@ def apply_lightgbm_multiclass_classifier(
     :param block_size: Optional processing block size in pixels.
     :param creation_opts: Optional GDAL creation options.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param use_gpu: If ``True``, validate GPU availability (emitting a warning
+                    and falling back to CPU when unavailable; note that
+                    LightGBM inference executes on CPU) (Default = ``False``).
+    :param gpu_device_id: Optional non-negative GPU device index.
 
     .. code:: python
 
@@ -883,4 +1012,6 @@ def apply_lightgbm_multiclass_classifier(
         block_size=block_size,
         creation_opts=creation_opts,
         use_pbar=use_pbar,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )

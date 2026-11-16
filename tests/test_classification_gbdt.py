@@ -686,3 +686,315 @@ def test_gbdt_validation_and_missing_dep_errors(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(rccb, "HAVE_CATBOOST", False)
     with pytest.raises(rsgispy.RSGISPyException, match="catboost"):
         rccb.train_catboost_binary_classifier(bin_fix["cfg"], bin_fix["train_df"])
+
+
+def test_gbdt_gpu_availability_and_validation(monkeypatch):
+    """Verify GPU availability probes, mocked deps, and gpu_device_id validation."""
+    for fn, mod, attr in [
+        (rcxgb.is_xgboost_gpu_available, rcxgb, "HAVE_XGBOOST"),
+        (rclgb.is_lightgbm_gpu_available, rclgb, "HAVE_LIGHTGBM"),
+        (rccb.is_catboost_gpu_available, rccb, "HAVE_CATBOOST"),
+    ]:
+        res = fn()
+        assert isinstance(res, bool)
+        with pytest.raises(rsgispy.RSGISPyException, match="gpu_device_id"):
+            fn(gpu_device_id=-1)
+        with pytest.raises(rsgispy.RSGISPyException, match="gpu_device_id"):
+            fn(gpu_device_id=True)
+        with monkeypatch.context() as mp:
+            mp.setattr(mod, attr, False)
+            assert fn() is False
+
+    # CatBoost device-index count checks
+    if importlib.util.find_spec("catboost") is not None:
+        with monkeypatch.context() as mp:
+            mp.setattr(rccb, "HAVE_CATBOOST", True)
+            mp.setattr(rccb, "_cb_get_gpu_device_count", lambda: 2)
+            assert rccb.is_catboost_gpu_available() is True
+            assert rccb.is_catboost_gpu_available(0) is True
+            assert rccb.is_catboost_gpu_available(1) is True
+            assert rccb.is_catboost_gpu_available(2) is False
+
+
+@pytest.mark.parametrize("spec", _backend_specs())
+def test_gbdt_gpu_fallback_and_validation(tmp_path: Path, monkeypatch, spec: dict):
+    """Verify use_gpu=True falls back cleanly to CPU when no GPU is detected."""
+    pytest.importorskip(spec["pkg"])
+    fix = _create_binary_fixture(tmp_path)
+
+    # Invalid gpu_device_id raises before training
+    with pytest.raises(rsgispy.RSGISPyException, match="gpu_device_id"):
+        spec["train_bin"](
+            cls_cfg=fix["cfg"],
+            train_data=fix["train_df"],
+            model_params=spec["fast_params"],
+            use_gpu=False,
+            gpu_device_id=-1,
+        )
+    with pytest.raises(rsgispy.RSGISPyException, match="gpu_device_id"):
+        spec["train_bin"](
+            cls_cfg=fix["cfg"],
+            train_data=fix["train_df"],
+            model_params=spec["fast_params"],
+            use_gpu=True,
+            gpu_device_id=True,
+        )
+
+    # Ensure no GPU is reported so fallback path is exercised deterministically
+    from dataclasses import replace  # noqa: PLC0415
+
+    backend_attr = {
+        "xgboost": "_XGB_BACKEND",
+        "lightgbm": "_LGB_BACKEND",
+        "catboost": "_CB_BACKEND",
+    }[spec["pkg"]]
+    backend_obj = getattr(spec["mod"], backend_attr)
+    monkeypatch.setattr(
+        spec["mod"],
+        backend_attr,
+        replace(backend_obj, gpu_available=lambda _dev_id: False),
+    )
+
+    # Train with use_gpu=True -> UserWarning + successful CPU fallback
+    with pytest.warns(UserWarning, match="Falling back to CPU"):
+        model, metrics = spec["train_bin"](
+            cls_cfg=fix["cfg"],
+            train_data=fix["train_df"],
+            test_data=fix["test_df"],
+            model_params=spec["fast_params"],
+            rnd_seed=42,
+            use_gpu=True,
+        )
+    assert metrics["test_accuracy"] >= 0.9
+
+    # Apply with use_gpu=True -> UserWarning + successful CPU fallback
+    out_cls = tmp_path / f"fb_{spec['pkg']}_cls.tif"
+    with pytest.warns(UserWarning, match="Falling back to CPU"):
+        spec["apply_bin"](
+            cls_cfg=fix["cfg"],
+            in_msk_img=fix["msk_img"],
+            img_msk_val=1,
+            out_class_img=out_cls,
+            use_pbar=False,
+            use_gpu=True,
+            **{spec["cls_kw"]: model},
+        )
+    assert out_cls.exists()
+
+    # Optimise with use_gpu=True -> UserWarning + JSON/result metadata recorded
+    if _HAS_OPTUNA:
+        opt_json = tmp_path / f"fb_{spec['pkg']}_params.json"
+        with pytest.warns(UserWarning, match="Falling back to CPU"):
+            _, res = spec["opt_bin"](
+                cls_cfg=fix["cfg"],
+                train_data=fix["train_df"],
+                valid_data=fix["valid_df"],
+                param_space=lambda _trial: dict(spec["fast_params"]),
+                n_trials=2,
+                rnd_seed=42,
+                out_params_json=opt_json,
+                return_results=True,
+                use_gpu=True,
+            )
+        assert res["use_gpu_requested"] is True
+        assert res["gpu_used"] is False
+        saved_meta = json.loads(opt_json.read_text(encoding="utf-8"))
+        assert saved_meta["use_gpu_requested"] is True
+        assert saved_meta["gpu_used"] is False
+
+
+def test_gbdt_gpu_parameter_mapping_and_inference(tmp_path: Path, monkeypatch):
+    """Verify backend-specific GPU param mapping, prediction prep, and CV n_jobs=1."""
+    # pylint: disable=protected-access
+    # 1. XGBoost parameter mapping and inference device switching
+    xgb_gpu_params = rcxgb._apply_xgb_gpu_params(
+        {"n_estimators": 10, "gpu_id": 0, "tree_method": "approx"},
+        gpu_device_id=1,
+    )
+    assert xgb_gpu_params["tree_method"] == "hist"
+    assert xgb_gpu_params["device"] == "cuda:1"
+    assert "gpu_id" not in xgb_gpu_params
+
+    class _DummyXGBEst:
+        def __init__(self, device="cpu"):
+            self._device = device
+
+        def get_params(self):
+            return {"device": self._device}
+
+        def set_params(self, **kwargs):
+            if "device" in kwargs:
+                self._device = kwargs["device"]
+            return self
+
+    dummy_cpu_xgb = _DummyXGBEst(device="cpu")
+    eval_est, pred_kw, cleanup = rcxgb._prepare_xgb_predict_estimator(
+        dummy_cpu_xgb, gpu_active=True, gpu_device_id=0
+    )
+    assert eval_est is dummy_cpu_xgb
+    assert pred_kw == {}
+    assert dummy_cpu_xgb.get_params()["device"] == "cuda:0"
+    assert cleanup is not None
+    cleanup()
+    assert dummy_cpu_xgb.get_params()["device"] == "cpu"
+
+    dummy_cuda_xgb = _DummyXGBEst(device="cuda:0")
+    _, _, cleanup_cpu = rcxgb._prepare_xgb_predict_estimator(
+        dummy_cuda_xgb, gpu_active=False, gpu_device_id=None
+    )
+    assert dummy_cuda_xgb.get_params()["device"] == "cpu"
+    assert cleanup_cpu is not None
+    cleanup_cpu()
+    assert dummy_cuda_xgb.get_params()["device"] == "cuda:0"
+
+    # 2. LightGBM parameter mapping (OpenCL gpu clamps max_bin <= 255; cuda keeps 511)
+    monkeypatch.setattr(rclgb, "_detect_lightgbm_gpu_device", lambda _dev=None: "gpu")
+    lgb_opencl = rclgb._apply_lgb_gpu_params(
+        {"device_type": "cpu", "max_bin": 511}, gpu_device_id=0
+    )
+    assert "device_type" not in lgb_opencl
+    assert lgb_opencl["device"] == "gpu"
+    assert lgb_opencl["gpu_device_id"] == 0
+    assert lgb_opencl["max_bin"] == 255
+
+    monkeypatch.setattr(rclgb, "_detect_lightgbm_gpu_device", lambda _dev=None: "cuda")
+    lgb_cuda = rclgb._apply_lgb_gpu_params(
+        {"device_type": "cpu", "max_bin": 511}, gpu_device_id=2
+    )
+    assert lgb_cuda["device"] == "cuda"
+    assert lgb_cuda["gpu_device_id"] == 2
+    assert lgb_cuda["max_bin"] == 511
+
+    # 3. CatBoost parameter mapping & predict_kwargs forwarding
+    cb_gpu = rccb._apply_cb_gpu_params(
+        {
+            "iterations": 20,
+            "rsm": 0.8,
+            "bootstrap_type": "MVS",
+            "subsample": 0.7,
+        },
+        gpu_device_id=1,
+    )
+    assert cb_gpu["task_type"] == "GPU"
+    assert cb_gpu["devices"] == "1"
+    assert "rsm" not in cb_gpu
+    assert cb_gpu["bootstrap_type"] == "Bernoulli"
+    assert cb_gpu["subsample"] == pytest.approx(0.7)
+
+    _, cb_kw_on, cb_clean_on = rccb._prepare_cb_predict_estimator(
+        object(), gpu_active=True, _gpu_device_id=0
+    )
+    assert cb_kw_on == {"task_type": "GPU"}
+    assert cb_clean_on is None
+
+    _, cb_kw_off, _ = rccb._prepare_cb_predict_estimator(
+        object(), gpu_active=False, _gpu_device_id=None
+    )
+    assert cb_kw_off == {}
+
+    # 4. Verify mocked GPU Optuna CV uses n_jobs=1 on cross_val_score and records gpu_used=True
+    if _HAS_OPTUNA and importlib.util.find_spec("xgboost") is not None:
+        import rsgispy.classification._gbdt as _gbdt  # noqa: PLC0415
+
+        fix = _create_binary_fixture(tmp_path)
+        cv_n_jobs_seen = []
+
+        class _StubXGB:
+            def __init__(self, **params):
+                self.params = dict(params)
+                self._device = params.get("device", "cpu")
+
+            def get_params(self, deep=False):  # noqa: ARG002
+                return dict(self.params, device=self._device)
+
+            def set_params(self, **kwargs):
+                self.params.update(kwargs)
+                if "device" in kwargs:
+                    self._device = kwargs["device"]
+                return self
+
+            def fit(self, x_arr, y_arr):  # noqa: ARG002
+                return self
+
+            def predict(self, x_arr):
+                return np.zeros(len(x_arr), dtype=np.int32)
+
+            def predict_proba(self, x_arr):
+                probs = np.full((len(x_arr), 2), 0.5, dtype=np.float32)
+                return probs
+
+        def _fake_cv_score(est, x_arr, y_arr, cv=None, scoring=None, n_jobs=None):
+            # noqa: ARG001
+            cv_n_jobs_seen.append((n_jobs, est.get_params().get("device")))
+            return np.array([0.95, 0.95])
+
+        mock_backend = GBDTBackendSpec = type(rcxgb._XGB_BACKEND)(
+            name=rcxgb._XGB_BACKEND.name,
+            package_name=rcxgb._XGB_BACKEND.package_name,
+            extra=rcxgb._XGB_BACKEND.extra,
+            is_available=lambda: True,
+            gpu_available=lambda _dev: True,
+            apply_gpu_params=rcxgb._apply_xgb_gpu_params,
+            seed_param=rcxgb._XGB_BACKEND.seed_param,
+            jobs_param=rcxgb._XGB_BACKEND.jobs_param,
+            default_binary_params=rcxgb._XGB_BACKEND.default_binary_params,
+            default_multiclass_params=rcxgb._XGB_BACKEND.default_multiclass_params,
+            default_binary_space=rcxgb._XGB_BACKEND.default_binary_space,
+            default_multiclass_space=rcxgb._XGB_BACKEND.default_multiclass_space,
+            extended_binary_space=rcxgb._XGB_BACKEND.extended_binary_space,
+            extended_multiclass_space=rcxgb._XGB_BACKEND.extended_multiclass_space,
+            build_estimator=lambda p, _base: _StubXGB(**p),
+            fit_estimator=lambda est, x_df, y_arr, *_rest: est.fit(x_df, y_arr),
+            load_model=rcxgb._XGB_BACKEND.load_model,
+            save_model=rcxgb._XGB_BACKEND.save_model,
+            prepare_predict_estimator=rcxgb._prepare_xgb_predict_estimator,
+            require_consecutive_zero_labels=True,
+        )
+        assert GBDTBackendSpec is not None
+        monkeypatch.setattr(rcxgb, "_XGB_BACKEND", mock_backend)
+        monkeypatch.setattr(
+            _gbdt.sklearn.model_selection, "cross_val_score", _fake_cv_score
+        )
+        _, opt_res = rcxgb.optimise_xgboost_binary_classifier(
+            cls_cfg=fix["cfg"],
+            train_data=fix["train_df"],
+            valid_data=None,
+            param_space=lambda _t: {"n_estimators": 5},
+            cv=2,
+            n_trials=2,
+            n_jobs=4,
+            rnd_seed=42,
+            use_gpu=True,
+            gpu_device_id=0,
+            return_results=True,
+        )
+        assert opt_res["use_gpu_requested"] is True
+        assert opt_res["gpu_used"] is True
+        assert cv_n_jobs_seen == [(1, "cuda:0"), (1, "cuda:0")]
+
+    # 5. Verify CatBoost predict_kwargs forwarding in _cls_common and apply_gbdt_classifier
+    import rsgispy.classification._cls_common as _cls_common  # noqa: PLC0415
+
+    recorded_predict_kwargs = []
+
+    class _StubCBEst:
+        def predict(self, x_arr, **kwargs):
+            recorded_predict_kwargs.append(("predict", dict(kwargs)))
+            return np.zeros(len(x_arr), dtype=np.int32)
+
+        def predict_proba(self, x_arr, **kwargs):
+            recorded_predict_kwargs.append(("predict_proba", dict(kwargs)))
+            return np.tile(np.array([[0.2, 0.8]], dtype=np.float32), (len(x_arr), 1))
+
+    fix_cb = _create_binary_fixture(tmp_path)
+    _cls_common.calc_cls_split_metrics(
+        _StubCBEst(),
+        fix_cb["test_df"][["B1", "B2"]],
+        fix_cb["test_df"]["internal_cls_id"].to_numpy(),
+        "test",
+        binary=True,
+        pos_train_id=1,
+        predict_kwargs={"task_type": "GPU"},
+    )
+    assert ("predict", {"task_type": "GPU"}) in recorded_predict_kwargs
+    assert ("predict_proba", {"task_type": "GPU"}) in recorded_predict_kwargs

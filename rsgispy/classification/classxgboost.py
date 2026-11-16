@@ -25,6 +25,7 @@ from rsgispy.classification._gbdt import (
     apply_gbdt_classifier,
     optimise_gbdt_classifier,
     train_gbdt_classifier,
+    validate_gpu_device_id,
 )
 from rsgispy.classification._helpers import ClsConfigInput, SamplesInput
 from rsgispy.classification.classdata import ImageBandInfo
@@ -48,6 +49,7 @@ except ImportError:
     HAVE_JOBLIB = False
 
 __all__ = [
+    "is_xgboost_gpu_available",
     "save_xgboost_classifier",
     "load_xgboost_classifier",
     "get_xgboost_optuna_param_space",
@@ -58,6 +60,54 @@ __all__ = [
     "apply_xgboost_binary_classifier",
     "apply_xgboost_multiclass_classifier",
 ]
+
+
+def is_xgboost_gpu_available(gpu_device_id: Optional[int] = None) -> bool:
+    """
+    Check whether CUDA GPU execution is supported and available for
+    ``xgboost``.
+
+    Verifies that ``xgboost`` is installed, built with CUDA support
+    (``build_info()['USE_CUDA']``), and able to fit a minimal histogram tree
+    on the target CUDA device.
+
+    :param gpu_device_id: Optional non-negative CUDA GPU device index
+                          (Default = ``None``, using default CUDA device).
+    :return: ``True`` if an XGBoost CUDA GPU is available, ``False`` otherwise.
+
+    .. code:: python
+
+        import rsgispy.classification.classxgboost as cxgb
+
+        if cxgb.is_xgboost_gpu_available():
+            print("XGBoost CUDA GPU ready")
+    """
+    dev_idx = validate_gpu_device_id(gpu_device_id)
+    if not HAVE_XGBOOST:
+        return False
+    try:
+        build_info = xgb.build_info()
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
+    if not bool(build_info.get("USE_CUDA", False)):
+        return False
+    device = "cuda" if dev_idx is None else f"cuda:{dev_idx}"
+    probe_x = np.array(
+        [[0.0, 1.0], [1.0, 0.0], [0.2, 0.8], [0.8, 0.2]],
+        dtype=np.float32,
+    )
+    probe_y = np.array([0, 1, 0, 1], dtype=np.int32)
+    try:
+        xgb.XGBClassifier(
+            n_estimators=1,
+            max_depth=1,
+            tree_method="hist",
+            device=device,
+            verbosity=0,
+        ).fit(probe_x, probe_y)
+        return True
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
 
 
 def get_xgboost_optuna_param_space(
@@ -279,11 +329,58 @@ def load_xgboost_classifier(
     return clf
 
 
+def _apply_xgb_gpu_params(
+    params: Dict[str, Any],
+    gpu_device_id: Optional[int],
+) -> Dict[str, Any]:
+    """Configure XGBoost parameters for CUDA GPU histogram training."""
+    out = dict(params)
+    out.pop("gpu_id", None)
+    out["tree_method"] = "hist"
+    out["device"] = (
+        "cuda" if gpu_device_id is None else f"cuda:{int(gpu_device_id)}"
+    )
+    return out
+
+
+def _prepare_xgb_predict_estimator(
+    estimator: Any,
+    gpu_active: bool,
+    gpu_device_id: Optional[int],
+) -> Tuple[Any, Dict[str, Any], Optional[Callable[[], None]]]:
+    """Temporarily configure XGBoost inference device and restore afterwards."""
+    if not hasattr(estimator, "get_params") or not hasattr(
+        estimator, "set_params"
+    ):
+        return estimator, {}, None
+    orig_device = estimator.get_params().get("device", None)
+    target_device: Optional[str] = None
+    if gpu_active:
+        target_device = (
+            "cuda" if gpu_device_id is None else f"cuda:{int(gpu_device_id)}"
+        )
+    elif isinstance(orig_device, str) and orig_device.strip().lower().startswith(
+        ("cuda", "gpu")
+    ):
+        target_device = "cpu"
+
+    if target_device is not None and orig_device != target_device:
+        estimator.set_params(device=target_device)
+
+        def _restore() -> None:
+            estimator.set_params(device=orig_device)
+
+        return estimator, {}, _restore
+    return estimator, {}, None
+
+
 _XGB_BACKEND = GBDTBackendSpec(
     name="XGBoost",
     package_name="xgboost",
     extra="xgboost",
     is_available=lambda: HAVE_XGBOOST,
+    gpu_available=is_xgboost_gpu_available,
+    apply_gpu_params=_apply_xgb_gpu_params,
     seed_param="random_state",
     jobs_param="n_jobs",
     default_binary_params=_default_xgb_binary_params,
@@ -304,6 +401,7 @@ _XGB_BACKEND = GBDTBackendSpec(
     fit_estimator=_fit_xgb_estimator,
     load_model=load_xgboost_classifier,
     save_model=save_xgboost_classifier,
+    prepare_predict_estimator=_prepare_xgb_predict_estimator,
     require_consecutive_zero_labels=True,
 )
 
@@ -336,6 +434,8 @@ def optimise_xgboost_binary_classifier(
     out_model_file: Optional[Union[str, os.PathLike]] = None,
     return_results: bool = False,
     verbose: int = 0,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
     """
     Optimise hyperparameters for a binary ``xgboost.XGBClassifier``
@@ -387,6 +487,11 @@ def optimise_xgboost_binary_classifier(
     :param out_model_file: Optional output path to save the refitted model.
     :param return_results: When ``True``, return ``(best_model, results_dict)``.
     :param verbose: Verbosity level (Default = ``0``).
+    :param use_gpu: If ``True``, use CUDA GPU acceleration (``tree_method='hist'``,
+                    ``device='cuda'``) when available, falling back to CPU with
+                    a warning otherwise (Default = ``False``).
+    :param gpu_device_id: Optional non-negative CUDA GPU device index
+                          (e.g., ``0`` -> ``device='cuda:0'``).
     :return: Optimised ``XGBClassifier``, or ``(best_model, results_dict)``
              when ``return_results=True``.
 
@@ -434,6 +539,8 @@ def optimise_xgboost_binary_classifier(
         out_model_file=out_model_file,
         return_results=return_results,
         verbose=verbose,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )
 
 
@@ -465,6 +572,8 @@ def optimise_xgboost_multiclass_classifier(
     out_model_file: Optional[Union[str, os.PathLike]] = None,
     return_results: bool = False,
     verbose: int = 0,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
     """
     Optimise hyperparameters for a multi-class ``xgboost.XGBClassifier``
@@ -510,6 +619,10 @@ def optimise_xgboost_multiclass_classifier(
     :param out_model_file: Optional path to save refitted model.
     :param return_results: When ``True``, return ``(best_model, results_dict)``.
     :param verbose: Verbosity level (Default = ``0``).
+    :param use_gpu: If ``True``, use CUDA GPU acceleration when available,
+                    falling back to CPU with a warning otherwise
+                    (Default = ``False``).
+    :param gpu_device_id: Optional non-negative CUDA GPU device index.
     :return: Optimised ``XGBClassifier``, or ``(best_model, results_dict)``
              when ``return_results=True``.
 
@@ -556,6 +669,8 @@ def optimise_xgboost_multiclass_classifier(
         out_model_file=out_model_file,
         return_results=return_results,
         verbose=verbose,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )
 
 
@@ -577,6 +692,8 @@ def train_xgboost_binary_classifier(
     out_metrics_file: Optional[Union[str, os.PathLike]] = None,
     return_model: bool = True,
     verbose: int = 0,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> Union[Dict[str, float], Tuple[Any, Dict[str, float]]]:
     """
     Train a binary ``xgboost.XGBClassifier`` on extracted sample tables and
@@ -605,6 +722,10 @@ def train_xgboost_binary_classifier(
                          when ``False``, update ``xgb_classifier`` in place if
                          supplied and return ``metrics``.
     :param verbose: Verbosity level (Default = ``0``).
+    :param use_gpu: If ``True``, use CUDA GPU acceleration when available,
+                    falling back to CPU with a warning otherwise
+                    (Default = ``False``).
+    :param gpu_device_id: Optional non-negative CUDA GPU device index.
     :return: ``(fitted_model, metrics)`` or ``metrics``.
 
     .. code:: python
@@ -642,6 +763,8 @@ def train_xgboost_binary_classifier(
         out_metrics_file=out_metrics_file,
         return_model=return_model,
         verbose=verbose,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )
 
 
@@ -663,6 +786,8 @@ def train_xgboost_multiclass_classifier(
     out_metrics_file: Optional[Union[str, os.PathLike]] = None,
     return_model: bool = True,
     verbose: int = 0,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> Union[Dict[str, float], Tuple[Any, Dict[str, float]]]:
     """
     Train a multi-class ``xgboost.XGBClassifier`` (``objective='multi:softprob'``)
@@ -687,6 +812,10 @@ def train_xgboost_multiclass_classifier(
     :param out_metrics_file: Optional JSON path to save split metrics.
     :param return_model: When ``True`` (default), return ``(fitted_model, metrics)``.
     :param verbose: Verbosity level (Default = ``0``).
+    :param use_gpu: If ``True``, use CUDA GPU acceleration when available,
+                    falling back to CPU with a warning otherwise
+                    (Default = ``False``).
+    :param gpu_device_id: Optional non-negative CUDA GPU device index.
     :return: ``(fitted_model, metrics)`` or ``metrics``.
 
     .. code:: python
@@ -723,6 +852,8 @@ def train_xgboost_multiclass_classifier(
         out_metrics_file=out_metrics_file,
         return_model=return_model,
         verbose=verbose,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )
 
 
@@ -748,6 +879,8 @@ def apply_xgboost_binary_classifier(
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> None:
     """
     Apply a trained binary ``xgboost.XGBClassifier`` block-by-block to pixels
@@ -784,6 +917,10 @@ def apply_xgboost_binary_classifier(
     :param block_size: Optional processing block size in pixels.
     :param creation_opts: Optional GDAL creation options.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param use_gpu: If ``True``, run CUDA GPU prediction when available,
+                    falling back to CPU with a warning otherwise
+                    (Default = ``False``).
+    :param gpu_device_id: Optional non-negative CUDA GPU device index.
 
     .. code:: python
 
@@ -827,6 +964,8 @@ def apply_xgboost_binary_classifier(
         pos_class=pos_class,
         pred_threshold=pred_threshold,
         score_all_classes=score_all_classes,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )
 
 
@@ -850,6 +989,8 @@ def apply_xgboost_multiclass_classifier(
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> None:
     """
     Apply a trained multi-class ``xgboost.XGBClassifier`` block-by-block to
@@ -877,6 +1018,10 @@ def apply_xgboost_multiclass_classifier(
     :param block_size: Optional processing block size in pixels.
     :param creation_opts: Optional GDAL creation options.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param use_gpu: If ``True``, run CUDA GPU prediction when available,
+                    falling back to CPU with a warning otherwise
+                    (Default = ``False``).
+    :param gpu_device_id: Optional non-negative CUDA GPU device index.
 
     .. code:: python
 
@@ -916,4 +1061,6 @@ def apply_xgboost_multiclass_classifier(
         block_size=block_size,
         creation_opts=creation_opts,
         use_pbar=use_pbar,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )

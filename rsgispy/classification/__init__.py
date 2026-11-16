@@ -32,8 +32,10 @@ Submodules:
   :func:`~rsgispy.classification.classsklearn.load_sklearn_classifier`).
 * :mod:`rsgispy.classification.classxgboost` — XGBoost binary and multi-class
   classification with Optuna Bayesian hyperparameter optimisation, early
-  stopping, model persistence, and block-wise image classification
-  (:func:`~rsgispy.classification.classxgboost.get_xgboost_optuna_param_space`,
+  stopping, optional CUDA GPU acceleration with CPU fallback, model persistence,
+  and block-wise image classification
+  (:func:`~rsgispy.classification.classxgboost.is_xgboost_gpu_available`,
+  :func:`~rsgispy.classification.classxgboost.get_xgboost_optuna_param_space`,
   :func:`~rsgispy.classification.classxgboost.optimise_xgboost_binary_classifier`,
   :func:`~rsgispy.classification.classxgboost.optimise_xgboost_multiclass_classifier`,
   :func:`~rsgispy.classification.classxgboost.train_xgboost_binary_classifier`,
@@ -44,8 +46,10 @@ Submodules:
   :func:`~rsgispy.classification.classxgboost.load_xgboost_classifier`).
 * :mod:`rsgispy.classification.classlightgbm` — LightGBM binary and multi-class
   classification with Optuna Bayesian hyperparameter optimisation, early
-  stopping, model persistence, and block-wise image classification
-  (:func:`~rsgispy.classification.classlightgbm.get_lightgbm_optuna_param_space`,
+  stopping, optional CUDA/OpenCL GPU acceleration with CPU fallback, model
+  persistence, and block-wise image classification
+  (:func:`~rsgispy.classification.classlightgbm.is_lightgbm_gpu_available`,
+  :func:`~rsgispy.classification.classlightgbm.get_lightgbm_optuna_param_space`,
   :func:`~rsgispy.classification.classlightgbm.optimise_lightgbm_binary_classifier`,
   :func:`~rsgispy.classification.classlightgbm.optimise_lightgbm_multiclass_classifier`,
   :func:`~rsgispy.classification.classlightgbm.train_lightgbm_binary_classifier`,
@@ -56,8 +60,10 @@ Submodules:
   :func:`~rsgispy.classification.classlightgbm.load_lightgbm_classifier`).
 * :mod:`rsgispy.classification.classcatboost` — CatBoost binary and multi-class
   classification with Optuna Bayesian hyperparameter optimisation, early
-  stopping, model persistence, and block-wise image classification
-  (:func:`~rsgispy.classification.classcatboost.get_catboost_optuna_param_space`,
+  stopping, optional CUDA GPU acceleration with CPU fallback, model persistence,
+  and block-wise image classification
+  (:func:`~rsgispy.classification.classcatboost.is_catboost_gpu_available`,
+  :func:`~rsgispy.classification.classcatboost.get_catboost_optuna_param_space`,
   :func:`~rsgispy.classification.classcatboost.optimise_catboost_binary_classifier`,
   :func:`~rsgispy.classification.classcatboost.optimise_catboost_multiclass_classifier`,
   :func:`~rsgispy.classification.classcatboost.train_catboost_binary_classifier`,

@@ -25,6 +25,7 @@ from rsgispy.classification._gbdt import (
     apply_gbdt_classifier,
     optimise_gbdt_classifier,
     train_gbdt_classifier,
+    validate_gpu_device_id,
 )
 from rsgispy.classification._helpers import ClsConfigInput, SamplesInput
 from rsgispy.classification.classdata import ImageBandInfo
@@ -33,10 +34,14 @@ from rsgispy.tools.files import ensure_parent_dir
 
 try:
     import catboost as cb  # pylint: disable=import-error
+    from catboost.utils import (  # pylint: disable=import-error
+        get_gpu_device_count as _cb_get_gpu_device_count,
+    )
 
     HAVE_CATBOOST = True
 except ImportError:
     cb = None  # type: ignore[assignment]
+    _cb_get_gpu_device_count = None  # type: ignore[assignment]
     HAVE_CATBOOST = False
 
 try:
@@ -48,6 +53,7 @@ except ImportError:
     HAVE_JOBLIB = False
 
 __all__ = [
+    "is_catboost_gpu_available",
     "save_catboost_classifier",
     "load_catboost_classifier",
     "get_catboost_optuna_param_space",
@@ -58,6 +64,35 @@ __all__ = [
     "apply_catboost_binary_classifier",
     "apply_catboost_multiclass_classifier",
 ]
+
+
+def is_catboost_gpu_available(gpu_device_id: Optional[int] = None) -> bool:
+    """
+    Check whether CUDA GPU execution is supported and available for
+    ``catboost``.
+
+    :param gpu_device_id: Optional non-negative GPU device index to verify
+                          availability (Default = ``None``, checking that at
+                          least one GPU is detected).
+    :return: ``True`` if CatBoost detects a usable GPU, ``False`` otherwise.
+
+    .. code:: python
+
+        import rsgispy.classification.classcatboost as ccb
+
+        if ccb.is_catboost_gpu_available():
+            print("CatBoost GPU ready")
+    """
+    dev_idx = validate_gpu_device_id(gpu_device_id)
+    if not HAVE_CATBOOST or _cb_get_gpu_device_count is None:
+        return False
+    try:
+        n_gpus = int(_cb_get_gpu_device_count())
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
+    if dev_idx is not None:
+        return n_gpus > dev_idx
+    return n_gpus > 0
 
 
 def _sample_extended_cb_optuna_params(trial: Any) -> Dict[str, Any]:
@@ -298,11 +333,39 @@ def load_catboost_classifier(
     return clf
 
 
+def _apply_cb_gpu_params(
+    params: Dict[str, Any],
+    gpu_device_id: Optional[int],
+) -> Dict[str, Any]:
+    """Configure CatBoost parameters for GPU training and strip CPU-only options."""
+    out = dict(params)
+    out["task_type"] = "GPU"
+    if gpu_device_id is not None:
+        out["devices"] = str(int(gpu_device_id))
+    out.pop("rsm", None)
+    if out.get("bootstrap_type") == "MVS":
+        out["bootstrap_type"] = "Bernoulli"
+    return out
+
+
+def _prepare_cb_predict_estimator(
+    estimator: Any,
+    gpu_active: bool,
+    _gpu_device_id: Optional[int],
+) -> Tuple[Any, Dict[str, Any], Optional[Callable[[], None]]]:
+    """Pass ``task_type='GPU'`` via predict kwargs without mutating fitted models."""
+    if gpu_active:
+        return estimator, {"task_type": "GPU"}, None
+    return estimator, {}, None
+
+
 _CB_BACKEND = GBDTBackendSpec(
     name="CatBoost",
     package_name="catboost",
     extra="catboost",
     is_available=lambda: HAVE_CATBOOST,
+    gpu_available=is_catboost_gpu_available,
+    apply_gpu_params=_apply_cb_gpu_params,
     seed_param="random_seed",
     jobs_param="thread_count",
     default_binary_params=_default_cb_binary_params,
@@ -315,6 +378,7 @@ _CB_BACKEND = GBDTBackendSpec(
     fit_estimator=_fit_cb_estimator,
     load_model=load_catboost_classifier,
     save_model=save_catboost_classifier,
+    prepare_predict_estimator=_prepare_cb_predict_estimator,
     require_consecutive_zero_labels=False,
 )
 
@@ -347,6 +411,8 @@ def optimise_catboost_binary_classifier(
     out_model_file: Optional[Union[str, os.PathLike]] = None,
     return_results: bool = False,
     verbose: int = 0,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
     """
     Optimise hyperparameters for a binary ``catboost.CatBoostClassifier``
@@ -394,6 +460,13 @@ def optimise_catboost_binary_classifier(
     :param out_model_file: Optional path to save refitted model.
     :param return_results: When ``True``, return ``(best_model, results_dict)``.
     :param verbose: Verbosity level (Default = ``0``).
+    :param use_gpu: If ``True``, use CUDA GPU acceleration (``task_type='GPU'``,
+                    automatically omitting CPU-only ``rsm`` and mapping
+                    ``bootstrap_type='MVS'`` to ``'Bernoulli'``) when
+                    available, falling back to CPU with a warning otherwise
+                    (Default = ``False``).
+    :param gpu_device_id: Optional non-negative CUDA GPU device index
+                          (mapped to ``devices=str(gpu_device_id)``).
     :return: Optimised ``CatBoostClassifier``, or ``(best_model, results_dict)``
              when ``return_results=True``.
 
@@ -441,6 +514,8 @@ def optimise_catboost_binary_classifier(
         out_model_file=out_model_file,
         return_results=return_results,
         verbose=verbose,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )
 
 
@@ -472,6 +547,8 @@ def optimise_catboost_multiclass_classifier(
     out_model_file: Optional[Union[str, os.PathLike]] = None,
     return_results: bool = False,
     verbose: int = 0,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
     """
     Optimise hyperparameters for a multi-class ``catboost.CatBoostClassifier``
@@ -511,6 +588,12 @@ def optimise_catboost_multiclass_classifier(
     :param out_model_file: Optional path to save refitted model.
     :param return_results: When ``True``, return ``(best_model, results_dict)``.
     :param verbose: Verbosity level (Default = ``0``).
+    :param use_gpu: If ``True``, use CUDA GPU acceleration (``task_type='GPU'``,
+                    automatically omitting CPU-only ``rsm`` and mapping
+                    ``bootstrap_type='MVS'`` to ``'Bernoulli'``) when
+                    available, falling back to CPU with a warning otherwise
+                    (Default = ``False``).
+    :param gpu_device_id: Optional non-negative CUDA GPU device index.
     :return: Optimised ``CatBoostClassifier``, or ``(best_model, results_dict)``
              when ``return_results=True``.
 
@@ -557,6 +640,8 @@ def optimise_catboost_multiclass_classifier(
         out_model_file=out_model_file,
         return_results=return_results,
         verbose=verbose,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )
 
 
@@ -578,6 +663,8 @@ def train_catboost_binary_classifier(
     out_metrics_file: Optional[Union[str, os.PathLike]] = None,
     return_model: bool = True,
     verbose: int = 0,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> Union[Dict[str, float], Tuple[Any, Dict[str, float]]]:
     """
     Train a binary ``catboost.CatBoostClassifier`` on extracted sample tables
@@ -602,6 +689,10 @@ def train_catboost_binary_classifier(
     :param out_metrics_file: Optional JSON path to save split metrics.
     :param return_model: When ``True`` (default), return ``(fitted_model, metrics)``.
     :param verbose: Verbosity level (Default = ``0``).
+    :param use_gpu: If ``True``, use CUDA GPU acceleration when available,
+                    falling back to CPU with a warning otherwise
+                    (Default = ``False``).
+    :param gpu_device_id: Optional non-negative CUDA GPU device index.
     :return: ``(fitted_model, metrics)`` or ``metrics``.
 
     .. code:: python
@@ -638,6 +729,8 @@ def train_catboost_binary_classifier(
         out_metrics_file=out_metrics_file,
         return_model=return_model,
         verbose=verbose,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )
 
 
@@ -659,6 +752,8 @@ def train_catboost_multiclass_classifier(
     out_metrics_file: Optional[Union[str, os.PathLike]] = None,
     return_model: bool = True,
     verbose: int = 0,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> Union[Dict[str, float], Tuple[Any, Dict[str, float]]]:
     """
     Train a multi-class ``catboost.CatBoostClassifier``
@@ -683,6 +778,10 @@ def train_catboost_multiclass_classifier(
     :param out_metrics_file: Optional JSON path to save split metrics.
     :param return_model: When ``True`` (default), return ``(fitted_model, metrics)``.
     :param verbose: Verbosity level (Default = ``0``).
+    :param use_gpu: If ``True``, use CUDA GPU acceleration when available,
+                    falling back to CPU with a warning otherwise
+                    (Default = ``False``).
+    :param gpu_device_id: Optional non-negative CUDA GPU device index.
     :return: ``(fitted_model, metrics)`` or ``metrics``.
 
     .. code:: python
@@ -719,6 +818,8 @@ def train_catboost_multiclass_classifier(
         out_metrics_file=out_metrics_file,
         return_model=return_model,
         verbose=verbose,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )
 
 
@@ -744,6 +845,8 @@ def apply_catboost_binary_classifier(
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> None:
     """
     Apply a trained binary ``catboost.CatBoostClassifier`` block-by-block to
@@ -777,6 +880,10 @@ def apply_catboost_binary_classifier(
     :param block_size: Optional processing block size in pixels.
     :param creation_opts: Optional GDAL creation options.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param use_gpu: If ``True``, run CUDA GPU prediction (``task_type='GPU'``)
+                    when available, falling back to CPU with a warning otherwise
+                    (Default = ``False``).
+    :param gpu_device_id: Optional non-negative CUDA GPU device index.
 
     .. code:: python
 
@@ -819,6 +926,8 @@ def apply_catboost_binary_classifier(
         pos_class=pos_class,
         pred_threshold=pred_threshold,
         score_all_classes=score_all_classes,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )
 
 
@@ -842,6 +951,8 @@ def apply_catboost_multiclass_classifier(
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
 ) -> None:
     """
     Apply a trained multi-class ``catboost.CatBoostClassifier`` block-by-block to
@@ -869,6 +980,10 @@ def apply_catboost_multiclass_classifier(
     :param block_size: Optional processing block size in pixels.
     :param creation_opts: Optional GDAL creation options.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param use_gpu: If ``True``, run CUDA GPU prediction (``task_type='GPU'``)
+                    when available, falling back to CPU with a warning otherwise
+                    (Default = ``False``).
+    :param gpu_device_id: Optional non-negative CUDA GPU device index.
 
     .. code:: python
 
@@ -908,4 +1023,6 @@ def apply_catboost_multiclass_classifier(
         block_size=block_size,
         creation_opts=creation_opts,
         use_pbar=use_pbar,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )

@@ -149,6 +149,17 @@ Extended Search Space (``extended_param_space=True``)
      - ``[None, 'balanced']``
      - Inverse-frequency class weighting for imbalanced datasets.
 
+GPU Acceleration
+----------------
+
+All optimise, train, and apply functions accept ``use_gpu=True`` and an optional
+``gpu_device_id`` index. GPU support is checked via
+:func:`~rsgispy.classification.classlightgbm.is_lightgbm_gpu_available` (probing
+CUDA when NVIDIA drivers are present, or OpenCL ``device='gpu'`` otherwise).
+When OpenCL ``device='gpu'`` is active, ``max_bin`` is automatically clamped to
+at most ``255`` for compatibility. If no compatible GPU is detected, a
+``UserWarning`` is emitted and execution falls back to CPU.
+
 API Reference
 -------------
 

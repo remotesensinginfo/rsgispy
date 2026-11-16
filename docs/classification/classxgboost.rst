@@ -137,6 +137,16 @@ Extended Search Space (``extended_param_space=True``)
      - ``0.5`` to ``10.0``
      - Positive-class gradient weight scaling (**binary tasks only**).
 
+GPU Acceleration
+----------------
+
+All optimise, train, and apply functions accept ``use_gpu=True`` and an optional
+``gpu_device_id`` index. GPU support is checked via
+:func:`~rsgispy.classification.classxgboost.is_xgboost_gpu_available`. When a
+CUDA-capable GPU is available, ``tree_method='hist'`` and ``device='cuda'``
+(or ``'cuda:<gpu_device_id>'``) are configured automatically; when no compatible
+GPU is detected, a ``UserWarning`` is emitted and execution falls back to CPU.
+
 API Reference
 -------------
 
