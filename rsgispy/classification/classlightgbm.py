@@ -4,7 +4,6 @@ LightGBM binary and multi-class classification workflows built on
 and block-wise raster classification.
 """
 
-import inspect
 import os
 import shutil
 from typing import (
@@ -19,20 +18,22 @@ from typing import (
 )
 
 import numpy as np
-import pandas as pd
 
-import rsgispy
 from rsgispy.classification._gbdt import (
     GBDTBackendSpec,
     apply_gbdt_classifier,
     optimise_gbdt_classifier,
     train_gbdt_classifier,
-    validate_gpu_device_id,
 )
 from rsgispy.classification._helpers import ClsConfigInput, SamplesInput
 from rsgispy.classification.classdata import ImageBandInfo
-from rsgispy.imageprocess import ensure_file_exists
-from rsgispy.tools.files import ensure_parent_dir
+from rsgispy.tools._gbdt_common import (
+    fit_lgb_estimator as _fit_lgb_estimator,
+    get_lightgbm_optuna_param_space as _tools_get_lightgbm_optuna_param_space,
+    load_joblib_model,
+    save_joblib_model,
+    validate_gpu_device_id,
+)
 
 try:
     import lightgbm as lgb  # pylint: disable=import-error
@@ -41,14 +42,6 @@ try:
 except ImportError:
     lgb = None  # type: ignore[assignment]
     HAVE_LIGHTGBM = False
-
-try:
-    import joblib  # pylint: disable=import-error
-
-    HAVE_JOBLIB = True
-except ImportError:
-    joblib = None  # type: ignore[assignment]
-    HAVE_JOBLIB = False
 
 __all__ = [
     "is_lightgbm_gpu_available",
@@ -147,80 +140,9 @@ def get_lightgbm_optuna_param_space(extended: bool = False) -> Dict[str, Any]:
         key_space = clgb.get_lightgbm_optuna_param_space()
         full_space = clgb.get_lightgbm_optuna_param_space(extended=True)
     """
-    if not extended:
-        return {
-            "n_estimators": {"type": "int", "low": 50, "high": 500, "step": 25},
-            "learning_rate": {
-                "type": "float",
-                "low": 0.01,
-                "high": 0.3,
-                "log": True,
-            },
-            "num_leaves": {"type": "int", "low": 15, "high": 127},
-            "max_depth": {"type": "int", "low": 3, "high": 12},
-            "min_child_samples": {"type": "int", "low": 5, "high": 50},
-            "min_split_gain": {
-                "type": "float",
-                "low": 1e-4,
-                "high": 1.0,
-                "log": True,
-            },
-            "subsample": {"type": "float", "low": 0.5, "high": 1.0},
-            "subsample_freq": 1,
-            "colsample_bytree": {"type": "float", "low": 0.5, "high": 1.0},
-            "reg_alpha": {
-                "type": "float",
-                "low": 1e-4,
-                "high": 10.0,
-                "log": True,
-            },
-            "reg_lambda": {
-                "type": "float",
-                "low": 1e-4,
-                "high": 10.0,
-                "log": True,
-            },
-        }
-
-    return {
-        "n_estimators": {"type": "int", "low": 50, "high": 1000, "step": 25},
-        "learning_rate": {
-            "type": "float",
-            "low": 0.005,
-            "high": 0.3,
-            "log": True,
-        },
-        "num_leaves": {"type": "int", "low": 8, "high": 255},
-        "max_depth": {"type": "int", "low": 3, "high": 15},
-        "min_child_samples": {"type": "int", "low": 3, "high": 100},
-        "min_child_weight": {
-            "type": "float",
-            "low": 1e-4,
-            "high": 10.0,
-            "log": True,
-        },
-        "min_split_gain": {
-            "type": "float",
-            "low": 1e-4,
-            "high": 5.0,
-            "log": True,
-        },
-        "subsample": {"type": "float", "low": 0.5, "high": 1.0},
-        "subsample_freq": {"type": "int", "low": 1, "high": 7},
-        "colsample_bytree": {"type": "float", "low": 0.4, "high": 1.0},
-        "reg_alpha": {"type": "float", "low": 1e-5, "high": 20.0, "log": True},
-        "reg_lambda": {"type": "float", "low": 1e-5, "high": 20.0, "log": True},
-        "max_bin": {"type": "int", "low": 63, "high": 511, "step": 64},
-        "subsample_for_bin": {
-            "type": "int",
-            "low": 20000,
-            "high": 300000,
-            "step": 20000,
-        },
-        "path_smooth": {"type": "float", "low": 0.0, "high": 10.0},
-        "extra_trees": {"type": "categorical", "choices": [False, True]},
-        "class_weight": {"type": "categorical", "choices": [None, "balanced"]},
-    }
+    return _tools_get_lightgbm_optuna_param_space(
+        extended=extended, task="classification"
+    )
 
 
 def _default_lgb_binary_params(verbose: int) -> Dict[str, Any]:
@@ -251,39 +173,6 @@ def _build_lgb_estimator(
     return cls(**params)
 
 
-def _fit_lgb_estimator(
-    est: Any,
-    train_x: pd.DataFrame,
-    train_y: np.ndarray,
-    valid_x: Optional[pd.DataFrame],
-    valid_y: Optional[np.ndarray],
-    early_stopping_rounds: Optional[int],
-) -> Any:
-    """Fit ``LGBMClassifier`` with optional validation early stopping."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    if valid_x is not None and valid_y is not None and early_stopping_rounds is not None:
-        callbacks = [lgb.early_stopping(int(early_stopping_rounds), verbose=False)]
-        fit_sig = inspect.signature(est.fit).parameters
-        if "eval_X" in fit_sig and "eval_y" in fit_sig:
-            est.fit(
-                train_x,
-                train_y,
-                eval_X=valid_x,
-                eval_y=valid_y,
-                callbacks=callbacks,
-            )
-        else:
-            est.fit(
-                train_x,
-                train_y,
-                eval_set=[(valid_x, valid_y)],
-                callbacks=callbacks,
-            )
-    else:
-        est.fit(train_x, train_y)
-    return est
-
-
 def save_lightgbm_classifier(
     lgb_classifier: Any,
     out_file: Union[str, os.PathLike],
@@ -300,14 +189,14 @@ def save_lightgbm_classifier(
 
         clgb.save_lightgbm_classifier(clf, "lgb_model.joblib")
     """
-    rsgispy.check_optional_dep(
-        HAVE_LIGHTGBM, "save_lightgbm_classifier", "lightgbm", "lightgbm"
+    save_joblib_model(
+        model=lgb_classifier,
+        out_file=out_file,
+        have_pkg=HAVE_LIGHTGBM,
+        pkg_name="lightgbm",
+        extra="lightgbm",
+        func_name="save_lightgbm_classifier",
     )
-    rsgispy.check_optional_dep(
-        HAVE_JOBLIB, "save_lightgbm_classifier", "joblib", "classification"
-    )
-    out_path = ensure_parent_dir(out_file)
-    joblib.dump(lgb_classifier, out_path)
 
 
 def load_lightgbm_classifier(
@@ -325,15 +214,14 @@ def load_lightgbm_classifier(
 
         clf = clgb.load_lightgbm_classifier("lgb_model.joblib")
     """
-    rsgispy.check_optional_dep(
-        HAVE_LIGHTGBM, "load_lightgbm_classifier", "lightgbm", "lightgbm"
+    return load_joblib_model(
+        in_file=in_file,
+        have_pkg=HAVE_LIGHTGBM,
+        pkg_name="lightgbm",
+        extra="lightgbm",
+        func_name="load_lightgbm_classifier",
+        label="LightGBM model",
     )
-    rsgispy.check_optional_dep(
-        HAVE_JOBLIB, "load_lightgbm_classifier", "joblib", "classification"
-    )
-    in_path = os.fspath(in_file)
-    ensure_file_exists(in_path, label="LightGBM model")
-    return joblib.load(in_path)
 
 
 def _apply_lgb_gpu_params(

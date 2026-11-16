@@ -22,7 +22,6 @@ import pandas as pd
 import rsgispy
 from rsgispy.classification._cls_common import (
     apply_classifier_raster as _apply_classifier_raster,
-    suggest_optuna_params as _suggest_optuna_params,
 )
 from rsgispy.classification._helpers import (
     ClsConfigInput,
@@ -32,7 +31,6 @@ from rsgispy.classification._helpers import (
     coerce_cls_config as _coerce_cls_config,
     extract_xy as _extract_xy,
     load_samples_df as _load_samples_df,
-    resolve_cv_splitter as _resolve_cv_splitter,
     resolve_feature_cols as _resolve_feature_cols,
 )
 from rsgispy.classification._sklearn_spaces import (
@@ -40,15 +38,18 @@ from rsgispy.classification._sklearn_spaces import (
 )
 from rsgispy.classification.classdata import ImageBandInfo
 from rsgispy.imageprocess import ensure_file_exists
+from rsgispy.tools._ml_tune import (
+    normalise_search_method as _normalise_search_method,
+    resolve_sklearn_param_space as _tools_resolve_sklearn_param_space,
+    run_optuna_search as _tools_run_optuna_search,
+    run_sklearn_search_cv as _tools_run_sklearn_search_cv,
+    save_search_outputs as _save_search_outputs,
+)
 from rsgispy.tools._sklearn import (
-    clone_sklearn_estimator,
     fit_clean_sklearn_estimator,
-    is_sklearn_search_cv,
-    sklearn,
 )
 from rsgispy.tools.files import ensure_parent_dir
-from rsgispy.tools.jsonio import to_json_compatible, write_dict_to_json
-from rsgispy.tools.tables import write_dataframe_table
+from rsgispy.tools.jsonio import write_dict_to_json
 
 try:
     import joblib  # pylint: disable=import-error
@@ -58,14 +59,6 @@ except ImportError:
     joblib = None  # type: ignore[assignment]
     HAVE_JOBLIB = False
 
-try:
-    import optuna  # pylint: disable=import-error
-
-    HAVE_OPTUNA = True
-except ImportError:
-    optuna = None  # type: ignore[assignment]
-    HAVE_OPTUNA = False
-
 __all__ = [
     "get_sklearn_classifier_param_space",
     "save_sklearn_classifier",
@@ -74,17 +67,6 @@ __all__ = [
     "train_sklearn_classifier",
     "apply_sklearn_classifier",
 ]
-
-_GRID_ALIASES = {"grid", "gridsearch", "grid_search", "gridsearchcv"}
-_RANDOM_ALIASES = {
-    "random",
-    "randomsearch",
-    "random_search",
-    "randomized",
-    "randomizedsearch",
-    "randomizedsearchcv",
-}
-_OPTUNA_ALIASES = {"optuna", "bayesian", "bayes", "tpe"}
 
 
 def save_sklearn_classifier(
@@ -137,21 +119,6 @@ def load_sklearn_classifier(
     return joblib.load(in_path)
 
 
-def _normalise_search_method(search_method: str) -> str:
-    """Normalise hyperparameter search method aliases."""
-    key = search_method.strip().lower()
-    if key in _GRID_ALIASES:
-        return "grid"
-    if key in _RANDOM_ALIASES:
-        return "random"
-    if key in _OPTUNA_ALIASES:
-        return "optuna"
-    raise rsgispy.RSGISPyException(
-        f"Unsupported search_method '{search_method}'. Expected 'grid', "
-        "'random', or 'optuna'."
-    )
-
-
 def get_sklearn_classifier_param_space(
     sk_classifier: Any,
     search_method: str = "optuna",
@@ -201,264 +168,6 @@ def get_sklearn_classifier_param_space(
         method=method,
         extended=bool(extended),
     )
-
-
-def _resolve_sklearn_param_space(
-    sk_classifier: Any,
-    method: str,
-    param_space: Optional[Any],
-    extended_param_space: bool,
-) -> Tuple[Any, str]:
-    """Resolve effective parameter search space and preset mode label."""
-    if isinstance(param_space, str):
-        preset = param_space.strip().lower()
-        if preset in ("default", "key", "standard"):
-            if extended_param_space:
-                raise rsgispy.RSGISPyException(
-                    "Cannot combine param_space='default' with "
-                    "extended_param_space=True."
-                )
-            return (
-                _build_sklearn_param_space(sk_classifier, method, extended=False),
-                "default",
-            )
-        if preset in ("extended", "full", "large"):
-            return (
-                _build_sklearn_param_space(sk_classifier, method, extended=True),
-                "extended",
-            )
-        raise rsgispy.RSGISPyException(
-            f"Unsupported param_space preset '{param_space}'. Expected "
-            "'default' or 'extended', or pass a dict, list, or callable."
-        )
-
-    if param_space is not None:
-        if extended_param_space:
-            raise rsgispy.RSGISPyException(
-                "Provide either a custom param_space or "
-                "extended_param_space=True, not both."
-            )
-        return param_space, "custom"
-
-    if method != "optuna" and is_sklearn_search_cv(sk_classifier):
-        return None, "preconfigured"
-
-    use_ext = bool(extended_param_space)
-    eff_space = _build_sklearn_param_space(
-        sk_classifier, method, extended=use_ext
-    )
-    return eff_space, ("extended" if use_ext else "default")
-
-
-def _build_predefined_split_data(
-    train_x: pd.DataFrame,
-    train_y: np.ndarray,
-    valid_x: pd.DataFrame,
-    valid_y: np.ndarray,
-) -> Tuple[pd.DataFrame, np.ndarray, Any]:
-    """Combine train/valid sets with a 0-leakage ``PredefinedSplit``."""
-    comb_x = pd.concat([train_x, valid_x], ignore_index=True)
-    comb_y = np.concatenate([train_y, valid_y])
-    test_fold = np.concatenate(
-        [
-            np.full(len(train_y), -1, dtype=int),
-            np.zeros(len(valid_y), dtype=int),
-        ]
-    )
-    split = sklearn.model_selection.PredefinedSplit(test_fold=test_fold)
-    return comb_x, comb_y, split
-
-
-def _run_sklearn_search_cv(
-    method: str,
-    sk_classifier: Any,
-    param_space: Any,
-    train_x: pd.DataFrame,
-    train_y: np.ndarray,
-    valid_x: Optional[pd.DataFrame],
-    valid_y: Optional[np.ndarray],
-    scoring: Union[str, Callable[..., float]],
-    cv: Union[int, Any],
-    n_iter: int,
-    n_jobs: Optional[int],
-    rnd_seed: Optional[int],
-    refit: bool,
-    verbose: int,
-) -> Tuple[Any, Dict[str, Any], float, pd.DataFrame, Any]:
-    """Execute GridSearchCV, RandomizedSearchCV, or a passed BaseSearchCV."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals
-    if valid_x is not None and valid_y is not None:
-        fit_x, fit_y, cv_obj = _build_predefined_split_data(
-            train_x, train_y, valid_x, valid_y
-        )
-        # Never refit PredefinedSplit on combined train+valid; refit on train_x.
-        cv_refit = False
-    else:
-        fit_x, fit_y = train_x, train_y
-        cv_obj = _resolve_cv_splitter(cv, train_y, rnd_seed)
-        cv_refit = refit
-
-    if is_sklearn_search_cv(sk_classifier):
-        search_obj = clone_sklearn_estimator(sk_classifier)
-        if valid_x is not None:
-            search_obj.set_params(cv=cv_obj, refit=False)
-    else:
-        if param_space is None or (
-            isinstance(param_space, Mapping) and not param_space
-        ):
-            raise rsgispy.RSGISPyException(
-                "param_space must be provided for grid or random search."
-            )
-        base_est = clone_sklearn_estimator(sk_classifier, random_state=rnd_seed)
-        if method == "grid":
-            search_obj = sklearn.model_selection.GridSearchCV(
-                estimator=base_est,
-                param_grid=param_space,
-                scoring=scoring,
-                cv=cv_obj,
-                n_jobs=n_jobs,
-                refit=cv_refit,
-                verbose=verbose,
-            )
-        else:
-            search_obj = sklearn.model_selection.RandomizedSearchCV(
-                estimator=base_est,
-                param_distributions=param_space,
-                n_iter=int(n_iter),
-                scoring=scoring,
-                cv=cv_obj,
-                n_jobs=n_jobs,
-                random_state=rnd_seed,
-                refit=cv_refit,
-                verbose=verbose,
-            )
-
-    search_obj.fit(fit_x, fit_y)
-    best_params = to_json_compatible(dict(search_obj.best_params_))
-    best_score = float(search_obj.best_score_)
-    results_df = pd.DataFrame(search_obj.cv_results_)
-
-    if valid_x is not None or not cv_refit:
-        base_for_best = (
-            search_obj.estimator
-            if hasattr(search_obj, "estimator")
-            else sk_classifier
-        )
-        best_est = clone_sklearn_estimator(
-            base_for_best, random_state=rnd_seed
-        )
-        best_est.set_params(**search_obj.best_params_)
-        if refit:
-            best_est.fit(train_x, train_y)
-    else:
-        best_est = search_obj.best_estimator_
-
-    return best_est, best_params, best_score, results_df, search_obj
-
-
-def _run_optuna_search(
-    sk_classifier: Any,
-    param_space: Union[Mapping[str, Any], Callable[[Any], Mapping[str, Any]]],
-    train_x: pd.DataFrame,
-    train_y: np.ndarray,
-    valid_x: Optional[pd.DataFrame],
-    valid_y: Optional[np.ndarray],
-    scoring: Union[str, Callable[..., float]],
-    cv: Union[int, Any],
-    n_trials: int,
-    timeout: Optional[float],
-    direction: str,
-    n_jobs: Optional[int],
-    rnd_seed: Optional[int],
-    refit: bool,
-    verbose: int,
-) -> Tuple[Any, Dict[str, Any], float, pd.DataFrame, Any]:
-    """Execute Bayesian hyperparameter optimisation with Optuna."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals
-    rsgispy.check_optional_dep(
-        HAVE_OPTUNA,
-        "perform_sklearn_classifier_param_search(..., search_method='optuna')",
-        "optuna",
-        "classification",
-    )
-    if param_space is None:
-        raise rsgispy.RSGISPyException(
-            "param_space must be provided when search_method='optuna'."
-        )
-    if int(n_trials) < 1:
-        raise rsgispy.RSGISPyException("n_trials must be at least 1.")
-
-    dir_norm = direction.strip().lower()
-    if dir_norm not in ("maximize", "minimize"):
-        raise rsgispy.RSGISPyException(
-            f"direction must be 'maximize' or 'minimize', got {direction!r}."
-        )
-
-    scorer = (
-        sklearn.metrics.get_scorer(scoring)
-        if isinstance(scoring, str)
-        else scoring
-    )
-    cv_obj = (
-        None
-        if valid_x is not None
-        else _resolve_cv_splitter(cv, train_y, rnd_seed)
-    )
-
-    def _objective(trial: Any) -> float:
-        params = _suggest_optuna_params(trial, param_space)
-        est = clone_sklearn_estimator(sk_classifier, random_state=rnd_seed)
-        est.set_params(**params)
-        if valid_x is not None and valid_y is not None:
-            est.fit(train_x, train_y)
-            return float(scorer(est, valid_x, valid_y))
-        scores = sklearn.model_selection.cross_val_score(
-            est,
-            train_x,
-            train_y,
-            cv=cv_obj,
-            scoring=scoring,
-            n_jobs=n_jobs,
-        )
-        return float(np.mean(scores))
-
-    sampler = optuna.samplers.TPESampler(seed=rnd_seed)
-    prev_verbosity = optuna.logging.get_verbosity()
-    if verbose <= 0:
-        optuna.logging.set_verbosity(optuna.logging.WARNING)
-    try:
-        study = optuna.create_study(direction=dir_norm, sampler=sampler)
-        study.optimize(
-            _objective,
-            n_trials=int(n_trials),
-            timeout=timeout,
-            show_progress_bar=False,
-        )
-    finally:
-        optuna.logging.set_verbosity(prev_verbosity)
-
-    if callable(param_space):
-        best_trial_params = dict(
-            param_space(optuna.trial.FixedTrial(study.best_trial.params))
-        )
-    else:
-        best_trial_params = dict(study.best_trial.params)
-        for p_name, spec in param_space.items():
-            if not isinstance(spec, (Mapping, tuple, list)):
-                best_trial_params[p_name] = spec
-
-    best_params = to_json_compatible(best_trial_params)
-    best_score = float(study.best_value)
-    results_df = study.trials_dataframe()
-
-    best_est = clone_sklearn_estimator(sk_classifier, random_state=rnd_seed)
-    best_est.set_params(**best_trial_params)
-    if refit:
-        best_est.fit(train_x, train_y)
-
-    return best_est, best_params, best_score, results_df, study
 
 
 def perform_sklearn_classifier_param_search(
@@ -591,11 +300,12 @@ def perform_sklearn_classifier_param_search(
     # pylint: disable=too-many-locals
     check_sklearn_available("perform_sklearn_classifier_param_search")
     method = _normalise_search_method(search_method)
-    eff_param_space, space_mode = _resolve_sklearn_param_space(
-        sk_classifier=sk_classifier,
+    eff_param_space, space_mode = _tools_resolve_sklearn_param_space(
+        sk_estimator=sk_classifier,
         method=method,
         param_space=param_space,
         extended_param_space=extended_param_space,
+        task="classification",
     )
     cfg, class_info, eff_out_col, eff_int_col, cls_name_col = _coerce_cls_config(
         cls_cfg, out_id_col=out_id_col, internal_id_col=internal_id_col
@@ -627,8 +337,8 @@ def perform_sklearn_classifier_param_search(
 
     if method == "optuna":
         best_est, best_params, best_score, results_df, search_obj = (
-            _run_optuna_search(
-                sk_classifier=sk_classifier,
+            _tools_run_optuna_search(
+                sk_estimator=sk_classifier,
                 param_space=eff_param_space,
                 train_x=train_x,
                 train_y=train_y,
@@ -643,13 +353,16 @@ def perform_sklearn_classifier_param_search(
                 rnd_seed=rnd_seed,
                 refit=refit,
                 verbose=verbose,
+                stratified=True,
+                func_name="perform_sklearn_classifier_param_search",
+                extra="classification",
             )
         )
     else:
         best_est, best_params, best_score, results_df, search_obj = (
-            _run_sklearn_search_cv(
+            _tools_run_sklearn_search_cv(
                 method=method,
-                sk_classifier=sk_classifier,
+                sk_estimator=sk_classifier,
                 param_space=eff_param_space,
                 train_x=train_x,
                 train_y=train_y,
@@ -662,27 +375,21 @@ def perform_sklearn_classifier_param_search(
                 rnd_seed=rnd_seed,
                 refit=refit,
                 verbose=verbose,
+                stratified=True,
+                extra="classification",
             )
         )
 
-    if out_results_file is not None:
-        write_dataframe_table(results_df, out_results_file)
-
-    if out_params_json is not None:
-        out_json_path = ensure_parent_dir(out_params_json)
-        scoring_name = (
-            scoring if isinstance(scoring, str) else getattr(scoring, "__name__", "custom")
-        )
-        write_dict_to_json(
-            {
-                "search_method": method,
-                "param_space_mode": space_mode,
-                "scoring": scoring_name,
-                "best_score": float(best_score),
-                "best_params": best_params,
-            },
-            out_json_path,
-        )
+    _save_search_outputs(
+        results_df=results_df,
+        best_params=best_params,
+        best_score=best_score,
+        scoring=scoring,
+        search_method=method,
+        space_mode=space_mode,
+        out_results_file=out_results_file,
+        out_params_json=out_params_json,
+    )
 
     if return_results:
         return best_est, {

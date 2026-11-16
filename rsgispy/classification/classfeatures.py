@@ -33,6 +33,7 @@ from rsgispy.classification._helpers import (
 )
 from rsgispy.classification.classdata import ClassInfoObj
 from rsgispy.tools._ml_explain import (
+    extract_native_feature_importances,
     finalise_plot,
     plot_class_feature_distributions,
     plot_correlation_heatmap,
@@ -41,6 +42,7 @@ from rsgispy.tools._ml_explain import (
     run_boruta_shap_selection,
     run_salib_sobol_sensitivity,
     run_shap_explainer,
+    run_variable_response_curves,
 )
 from rsgispy.tools._sklearn import (
     check_sklearn_estimator_fitted,
@@ -1134,7 +1136,7 @@ def select_features_from_model(
     support = np.asarray(selector.get_support(), dtype=bool)
     selected = [col for col, keep in zip(feat_cols, support) if keep]
 
-    importances = _extract_native_importances(est, len(feat_cols))
+    importances = extract_native_feature_importances(est, len(feat_cols))
     scores_df = pd.DataFrame(
         {
             "feature": feat_cols,
@@ -1374,25 +1376,6 @@ def select_features_boruta_shap(
 # ---------------------------------------------------------------------------
 
 
-def _extract_native_importances(
-    fitted_est: Any,
-    n_features: int,
-) -> Optional[np.ndarray]:
-    """Extract 1D feature importances from ``feature_importances_`` or ``coef_``."""
-    target_est = getattr(fitted_est, "best_estimator_", fitted_est)
-    if hasattr(target_est, "feature_importances_"):
-        imp = np.asarray(target_est.feature_importances_, dtype=np.float64).ravel()
-        if imp.size == n_features:
-            return imp
-    if hasattr(target_est, "coef_"):
-        coef = np.asarray(target_est.coef_, dtype=np.float64)
-        if coef.ndim == 1 and coef.size == n_features:
-            return np.abs(coef)
-        if coef.ndim == 2 and coef.shape[1] == n_features:
-            return np.mean(np.abs(coef), axis=0)
-    return None
-
-
 # pylint: disable=too-many-arguments,too-many-positional-arguments
 def calc_feature_importance(
     cls_cfg: Optional[ClsConfigInput],
@@ -1478,7 +1461,9 @@ def calc_feature_importance(
     err_vals: Optional[np.ndarray] = None
 
     if eff_method in {"model", "both"}:
-        native_imp = _extract_native_importances(sk_classifier, len(feat_cols))
+        native_imp = extract_native_feature_importances(
+            sk_classifier, len(feat_cols)
+        )
         if native_imp is None:
             if eff_method == "model":
                 raise rsgispy.RSGISPyException(
@@ -1786,71 +1771,29 @@ def calc_feature_response_curves(
     else:
         plot_indices = list(range(max(1, len(est_classes))))
 
-    plots_dir_str: Optional[str] = None
-    if response_plots_dir is not None:
-        plots_dir_str = os.fspath(response_plots_dir)
-        os.makedirs(plots_dir_str, exist_ok=True)
+    n_outputs = max(1, len(est_classes), (max(plot_indices) + 1 if plot_indices else 1))
+    resolved_labels = [
+        est_labels[idx] if idx < len(est_labels) else f"cls_{idx}"
+        for idx in range(n_outputs)
+    ]
 
-    feat_bounds = {
-        col: (float(x_df[col].min()), float(x_df[col].max()))
-        for col in feat_cols
-    }
-    feat_base = {
-        col: float(x_df[col].mean() if stat_key == "mean" else x_df[col].median())
-        for col in feat_cols
-    }
-
-    response_vals: Dict[str, np.ndarray] = {}
-    pbar = rsgispy.get_tqdm()
-    for feat in pbar(feat_cols, disable=not use_pbar):
-        grid_vals = np.linspace(
-            feat_bounds[feat][0], feat_bounds[feat][1], num=int(n_samples), dtype=float
-        )
-        grid_data = {
-            tmp: (
-                grid_vals
-                if tmp == feat
-                else np.full(int(n_samples), feat_base[tmp], dtype=float)
-            )
-            for tmp in feat_cols
-        }
-        grid_df = pd.DataFrame(data=grid_data)
-        probs = _predict_class_probs(sk_classifier, grid_df, est_classes)
-
-        response_vals[f"{feat}_vals"] = grid_vals
-        for c_idx in plot_indices:
-            cls_lbl = (
-                est_labels[c_idx]
-                if c_idx < len(est_labels)
-                else f"cls_{c_idx}"
-            )
-            response_vals[f"{feat}_{cls_lbl}_prob"] = probs[:, c_idx]
-
-        if plots_dir_str is not None:
-            out_plot = os.path.join(plots_dir_str, f"{feat}_response_curve.png")
-            fig, ax = plt.subplots(figsize=(8, 5))
-            try:
-                for c_idx in plot_indices:
-                    cls_lbl = (
-                        est_labels[c_idx]
-                        if c_idx < len(est_labels)
-                        else f"cls_{c_idx}"
-                    )
-                    ax.plot(grid_vals, probs[:, c_idx], label=str(cls_lbl))
-                ax.set_ylim([0.0, 1.0])
-                ax.set_title(f"{feat} Response Curve")
-                ax.set_xlabel(feat)
-                ax.set_ylabel("Class Probability")
-                if len(plot_indices) > 1 or est_labels:
-                    ax.legend()
-                fig.tight_layout()
-            finally:
-                finalise_plot(fig, out_file=out_plot)
-
-    resp_df = pd.DataFrame(data=response_vals)
-    if out_file is not None:
-        resp_df.to_csv(ensure_parent_dir(out_file), index=False)
-    return resp_df
+    return run_variable_response_curves(
+        x_df=x_df,
+        feature_cols=feat_cols,
+        predict_fn=lambda df: _predict_class_probs(sk_classifier, df, est_classes),
+        output_labels=resolved_labels,
+        out_indices=plot_indices,
+        col_name_fn=lambda feat, lbl, _i: f"{feat}_{lbl}_prob",
+        n_samples=n_samples,
+        summary_stat=summary_stat,
+        method="marginal",
+        out_file=out_file,
+        response_plots_dir=response_plots_dir,
+        ylabel="Class Probability",
+        ylim=(0.0, 1.0),
+        multi_panel=False,
+        use_pbar=use_pbar,
+    )
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments

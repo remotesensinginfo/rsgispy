@@ -16,21 +16,24 @@ from typing import (
     Union,
 )
 
-import numpy as np
-import pandas as pd
-
-import rsgispy
 from rsgispy.classification._gbdt import (
     GBDTBackendSpec,
     apply_gbdt_classifier,
     optimise_gbdt_classifier,
     train_gbdt_classifier,
-    validate_gpu_device_id,
 )
 from rsgispy.classification._helpers import ClsConfigInput, SamplesInput
 from rsgispy.classification.classdata import ImageBandInfo
-from rsgispy.imageprocess import ensure_file_exists
-from rsgispy.tools.files import ensure_parent_dir
+from rsgispy.tools._gbdt_common import (
+    apply_cb_gpu_params as _apply_cb_gpu_params,
+    fit_cb_estimator as _fit_cb_estimator,
+    get_catboost_optuna_param_space as _tools_get_catboost_optuna_param_space,
+    load_xgb_or_cb_model,
+    prepare_cb_predict_estimator as _prepare_cb_predict_estimator,
+    sample_extended_cb_optuna_params as _tools_sample_extended_cb_optuna_params,
+    save_xgb_or_cb_model,
+    validate_gpu_device_id,
+)
 
 try:
     import catboost as cb  # pylint: disable=import-error
@@ -43,14 +46,6 @@ except ImportError:
     cb = None  # type: ignore[assignment]
     _cb_get_gpu_device_count = None  # type: ignore[assignment]
     HAVE_CATBOOST = False
-
-try:
-    import joblib  # pylint: disable=import-error
-
-    HAVE_JOBLIB = True
-except ImportError:
-    joblib = None  # type: ignore[assignment]
-    HAVE_JOBLIB = False
 
 __all__ = [
     "is_catboost_gpu_available",
@@ -97,56 +92,9 @@ def is_catboost_gpu_available(gpu_device_id: Optional[int] = None) -> bool:
 
 def _sample_extended_cb_optuna_params(trial: Any) -> Dict[str, Any]:
     """Sample extended CatBoost parameters respecting conditional constraints."""
-    params: Dict[str, Any] = {
-        "iterations": trial.suggest_int("iterations", 50, 1000, step=25),
-        "learning_rate": trial.suggest_float(
-            "learning_rate", 0.005, 0.3, log=True
-        ),
-        "depth": trial.suggest_int("depth", 3, 10),
-        "l2_leaf_reg": trial.suggest_float("l2_leaf_reg", 1e-2, 20.0, log=True),
-        "random_strength": trial.suggest_float(
-            "random_strength", 1e-3, 10.0, log=True
-        ),
-        "rsm": trial.suggest_float("rsm", 0.4, 1.0),
-        "border_count": trial.suggest_int("border_count", 32, 255),
-        "min_data_in_leaf": trial.suggest_int("min_data_in_leaf", 1, 50),
-        "leaf_estimation_iterations": trial.suggest_int(
-            "leaf_estimation_iterations", 1, 10
-        ),
-        "leaf_estimation_method": trial.suggest_categorical(
-            "leaf_estimation_method", ["Newton", "Gradient"]
-        ),
-        "model_size_reg": trial.suggest_float("model_size_reg", 0.0, 2.0),
-        "auto_class_weights": trial.suggest_categorical(
-            "auto_class_weights", ["None", "Balanced", "SqrtBalanced"]
-        ),
-        "score_function": trial.suggest_categorical(
-            "score_function", ["Cosine", "L2"]
-        ),
-    }
-    bootstrap_type = trial.suggest_categorical(
-        "bootstrap_type", ["Bayesian", "Bernoulli", "MVS"]
+    return _tools_sample_extended_cb_optuna_params(
+        trial, include_class_weights=True
     )
-    params["bootstrap_type"] = bootstrap_type
-    if bootstrap_type == "Bayesian":
-        params["bagging_temperature"] = trial.suggest_float(
-            "bagging_temperature", 0.0, 2.0
-        )
-    else:
-        params["subsample"] = trial.suggest_float("subsample", 0.5, 1.0)
-
-    grow_policy = trial.suggest_categorical(
-        "grow_policy", ["SymmetricTree", "Depthwise", "Lossguide"]
-    )
-    params["grow_policy"] = grow_policy
-    if grow_policy == "SymmetricTree":
-        params["boosting_type"] = trial.suggest_categorical(
-            "boosting_type", ["Ordered", "Plain"]
-        )
-    elif grow_policy == "Lossguide":
-        params["max_leaves"] = trial.suggest_int("max_leaves", 16, 128)
-
-    return params
 
 
 def get_catboost_optuna_param_space(
@@ -180,29 +128,9 @@ def get_catboost_optuna_param_space(
         key_space = ccb.get_catboost_optuna_param_space()
         full_space = ccb.get_catboost_optuna_param_space(extended=True)
     """
-    if extended:
-        return _sample_extended_cb_optuna_params
-
-    return {
-        "iterations": {"type": "int", "low": 50, "high": 500, "step": 25},
-        "learning_rate": {
-            "type": "float",
-            "low": 0.01,
-            "high": 0.3,
-            "log": True,
-        },
-        "depth": {"type": "int", "low": 3, "high": 8},
-        "l2_leaf_reg": {"type": "float", "low": 1.0, "high": 10.0, "log": True},
-        "random_strength": {
-            "type": "float",
-            "low": 1e-3,
-            "high": 10.0,
-            "log": True,
-        },
-        "bagging_temperature": {"type": "float", "low": 0.0, "high": 1.0},
-        "rsm": {"type": "float", "low": 0.5, "high": 1.0},
-        "border_count": {"type": "int", "low": 32, "high": 255},
-    }
+    return _tools_get_catboost_optuna_param_space(
+        extended=extended, task="classification"
+    )
 
 
 def _default_cb_binary_params(verbose: int) -> Dict[str, Any]:
@@ -241,29 +169,6 @@ def _build_cb_estimator(
     return cls(**params)
 
 
-def _fit_cb_estimator(
-    est: Any,
-    train_x: pd.DataFrame,
-    train_y: np.ndarray,
-    valid_x: Optional[pd.DataFrame],
-    valid_y: Optional[np.ndarray],
-    early_stopping_rounds: Optional[int],
-) -> Any:
-    """Fit ``CatBoostClassifier`` with optional validation early stopping."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    if valid_x is not None and valid_y is not None and early_stopping_rounds is not None:
-        est.fit(
-            train_x,
-            train_y,
-            eval_set=(valid_x, valid_y),
-            early_stopping_rounds=int(early_stopping_rounds),
-            verbose=False,
-        )
-    else:
-        est.fit(train_x, train_y)
-    return est
-
-
 def save_catboost_classifier(
     cb_classifier: Any,
     out_file: Union[str, os.PathLike],
@@ -285,18 +190,14 @@ def save_catboost_classifier(
 
         ccb.save_catboost_classifier(clf, "cb_model.cbm")
     """
-    rsgispy.check_optional_dep(
-        HAVE_CATBOOST, "save_catboost_classifier", "catboost", "catboost"
+    save_xgb_or_cb_model(
+        model=cb_classifier,
+        out_file=out_file,
+        have_pkg=HAVE_CATBOOST,
+        pkg_name="catboost",
+        extra="catboost",
+        func_name="save_catboost_classifier",
     )
-    out_path = ensure_parent_dir(out_file)
-    ext = os.path.splitext(out_path)[1].lower()
-    if ext in (".joblib", ".pkl"):
-        rsgispy.check_optional_dep(
-            HAVE_JOBLIB, "save_catboost_classifier", "joblib", "classification"
-        )
-        joblib.dump(cb_classifier, out_path)
-    else:
-        cb_classifier.save_model(out_path)
 
 
 def load_catboost_classifier(
@@ -317,46 +218,15 @@ def load_catboost_classifier(
 
         clf = ccb.load_catboost_classifier("cb_model.cbm")
     """
-    rsgispy.check_optional_dep(
-        HAVE_CATBOOST, "load_catboost_classifier", "catboost", "catboost"
+    return load_xgb_or_cb_model(
+        in_file=in_file,
+        model_factory=lambda: cb.CatBoostClassifier(),
+        have_pkg=HAVE_CATBOOST,
+        pkg_name="catboost",
+        extra="catboost",
+        func_name="load_catboost_classifier",
+        label="CatBoost model",
     )
-    in_path = os.fspath(in_file)
-    ensure_file_exists(in_path, label="CatBoost model")
-    ext = os.path.splitext(in_path)[1].lower()
-    if ext in (".joblib", ".pkl"):
-        rsgispy.check_optional_dep(
-            HAVE_JOBLIB, "load_catboost_classifier", "joblib", "classification"
-        )
-        return joblib.load(in_path)
-    clf = cb.CatBoostClassifier()
-    clf.load_model(in_path)
-    return clf
-
-
-def _apply_cb_gpu_params(
-    params: Dict[str, Any],
-    gpu_device_id: Optional[int],
-) -> Dict[str, Any]:
-    """Configure CatBoost parameters for GPU training and strip CPU-only options."""
-    out = dict(params)
-    out["task_type"] = "GPU"
-    if gpu_device_id is not None:
-        out["devices"] = str(int(gpu_device_id))
-    out.pop("rsm", None)
-    if out.get("bootstrap_type") == "MVS":
-        out["bootstrap_type"] = "Bernoulli"
-    return out
-
-
-def _prepare_cb_predict_estimator(
-    estimator: Any,
-    gpu_active: bool,
-    _gpu_device_id: Optional[int],
-) -> Tuple[Any, Dict[str, Any], Optional[Callable[[], None]]]:
-    """Pass ``task_type='GPU'`` via predict kwargs without mutating fitted models."""
-    if gpu_active:
-        return estimator, {"task_type": "GPU"}, None
-    return estimator, {}, None
 
 
 _CB_BACKEND = GBDTBackendSpec(

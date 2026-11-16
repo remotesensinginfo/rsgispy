@@ -8,7 +8,6 @@ from contextlib import ExitStack
 import os
 from typing import (
     Any,
-    Callable,
     Dict,
     List,
     Mapping,
@@ -21,8 +20,6 @@ import warnings
 
 import numpy as np
 import pandas as pd
-import rasterio
-from rasterio.io import DatasetReader
 from rasterio.windows import Window
 
 import rsgispy
@@ -47,97 +44,20 @@ from rsgispy.classification.classdata import (
     recode_internal_to_out_ids,
 )
 from rsgispy.imageprocess import (
-    IntersectionGrid,
-    compute_spatial_intersection,
     ensure_file_exists,
     extract_roi_feature_matrix,
-    grids_compatible,
     iter_dataset_windows,
     open_output_dataset,
 )
 from rsgispy.imageutils._helpers import normalise_creation_options
 from rsgispy.imageutils.colourtable import set_img_not_thematic
 from rsgispy.imageutils.stats import pop_img_stats
+from rsgispy.tools._ml_data import (
+    open_apply_datasets as _open_apply_datasets,
+    resolve_estimator_feature_cols as _resolve_estimator_feature_cols,
+)
 from rsgispy.tools._sklearn import check_sklearn_estimator_fitted, sklearn
 from rsgispy.tools.files import ensure_parent_dir
-
-
-def suggest_optuna_params(
-    trial: Any,
-    param_space: Union[Mapping[str, Any], Callable[[Any], Mapping[str, Any]]],
-) -> Dict[str, Any]:
-    """
-    Sample hyperparameters for an Optuna trial from either a user-supplied
-    ``trial -> dict`` callable or a declarative dictionary specification.
-    """
-    if callable(param_space):
-        suggested = param_space(trial)
-        if not isinstance(suggested, Mapping):
-            raise rsgispy.RSGISPyException(
-                "Callable param_space for Optuna must return a dict mapping "
-                "parameter names to values."
-            )
-        return dict(suggested)
-
-    if not isinstance(param_space, Mapping) or not param_space:
-        raise rsgispy.RSGISPyException(
-            "param_space must be a non-empty dictionary or callable for Optuna."
-        )
-
-    params: Dict[str, Any] = {}
-    for p_name, spec in param_space.items():
-        if isinstance(spec, Mapping):
-            p_type = str(spec.get("type", "")).strip().lower()
-            if p_type == "int":
-                params[p_name] = trial.suggest_int(
-                    p_name,
-                    int(spec["low"]),
-                    int(spec["high"]),
-                    step=int(spec.get("step", 1)),
-                    log=bool(spec.get("log", False)),
-                )
-            elif p_type == "float":
-                params[p_name] = trial.suggest_float(
-                    p_name,
-                    float(spec["low"]),
-                    float(spec["high"]),
-                    step=spec.get("step"),
-                    log=bool(spec.get("log", False)),
-                )
-            elif p_type == "categorical":
-                params[p_name] = trial.suggest_categorical(
-                    p_name, list(spec["choices"])
-                )
-            else:
-                raise rsgispy.RSGISPyException(
-                    f"Unsupported Optuna param spec type '{p_type}' for "
-                    f"'{p_name}'. Expected 'int', 'float', or 'categorical'."
-                )
-        elif isinstance(spec, tuple):
-            if (
-                len(spec) == 2
-                and isinstance(spec[0], (int, float, np.integer, np.floating))
-                and isinstance(spec[1], (int, float, np.integer, np.floating))
-                and not isinstance(spec[0], bool)
-                and not isinstance(spec[1], bool)
-            ):
-                if isinstance(spec[0], (int, np.integer)) and isinstance(
-                    spec[1], (int, np.integer)
-                ):
-                    params[p_name] = trial.suggest_int(
-                        p_name, int(spec[0]), int(spec[1])
-                    )
-                else:
-                    params[p_name] = trial.suggest_float(
-                        p_name, float(spec[0]), float(spec[1])
-                    )
-            else:
-                params[p_name] = trial.suggest_categorical(p_name, list(spec))
-        elif isinstance(spec, list):
-            params[p_name] = trial.suggest_categorical(p_name, list(spec))
-        else:
-            params[p_name] = spec
-    return params
 
 
 def resolve_ordered_classes(
@@ -364,46 +284,6 @@ def calc_cls_split_metrics(
                 sklearn.metrics.log_loss(y_bin, np.clip(pos_probs, 1e-7, 1.0 - 1e-7))
             )
     return metrics
-
-
-def _resolve_estimator_feature_cols(
-    estimator: Any,
-    band_specs: Sequence[Tuple[str, int, str]],
-) -> Tuple[bool, List[str]]:
-    """Determine whether estimator expects named DataFrame columns."""
-    col_names = [spec[2] for spec in band_specs]
-    feat_names = getattr(estimator, "feature_names_in_", None)
-    if feat_names is None:
-        feat_names = getattr(estimator, "feature_names_", None)
-    if feat_names is not None and len(feat_names) == len(col_names):
-        return True, [str(c) for c in feat_names]
-    return False, col_names
-
-
-def _open_apply_datasets(
-    stack: ExitStack,
-    msk_path: str,
-    band_specs: Sequence[Tuple[str, int, str]],
-) -> Tuple[DatasetReader, Dict[str, DatasetReader], IntersectionGrid, bool]:
-    """Open mask and feature datasets and compute spatial intersection."""
-    msk_ds = stack.enter_context(rasterio.open(msk_path, "r"))
-    datasets: Dict[str, DatasetReader] = {msk_path: msk_ds}
-    for img_path, band_idx, _ in band_specs:
-        if img_path not in datasets:
-            datasets[img_path] = stack.enter_context(
-                rasterio.open(img_path, "r")
-            )
-        if band_idx < 1 or band_idx > datasets[img_path].count:
-            raise rsgispy.RSGISPyException(
-                f"Band {band_idx} is out of range for image '{img_path}'."
-            )
-
-    all_compatible = all(grids_compatible(msk_ds, ds) for ds in datasets.values())
-    if all_compatible:
-        grid = compute_spatial_intersection(datasets)
-    else:
-        grid = IntersectionGrid.from_dataset(msk_ds, offsets={msk_path: (0, 0)})
-    return msk_ds, datasets, grid, all_compatible
 
 
 def apply_classifier_raster(

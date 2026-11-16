@@ -1,9 +1,11 @@
 """
-Shared internal plotting, SHAP explanation, and SALib Sobol sensitivity helpers
-reused across :mod:`rsgispy.classification` and :mod:`rsgispy.modelling`.
+Shared internal plotting, response-curve, SHAP explanation, BorutaShap, and
+SALib Sobol sensitivity helpers reused across :mod:`rsgispy.classification`,
+:mod:`rsgispy.regression`, and :mod:`rsgispy.modelling`.
 """
 
 import inspect
+import math
 import os
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 import warnings
@@ -58,6 +60,7 @@ __all__ = [
     "HAVE_SCIPY",
     "HAVE_SEABORN",
     "HAVE_SHAP",
+    "extract_native_feature_importances",
     "finalise_plot",
     "plot_class_feature_distributions",
     "plot_correlation_heatmap",
@@ -66,6 +69,7 @@ __all__ = [
     "run_boruta_shap_selection",
     "run_salib_sobol_sensitivity",
     "run_shap_explainer",
+    "run_variable_response_curves",
 ]
 
 
@@ -280,12 +284,57 @@ def plot_feature_importance_bars(
         finalise_plot(fig, out_file=out_plot)
 
 
+def extract_native_feature_importances(
+    fitted_est: Any,
+    n_features: int,
+) -> Optional[np.ndarray]:
+    """
+    Extract 1D feature importances from ``feature_importances_`` or ``coef_``,
+    unwrapping ``best_estimator_``, ``Pipeline``, ``TransformedTargetRegressor``,
+    and averaging across ``MultiOutputRegressor`` sub-estimators when present.
+    """
+    target_est = getattr(fitted_est, "best_estimator_", fitted_est)
+    while True:
+        if (
+            hasattr(target_est, "steps")
+            and isinstance(target_est.steps, (list, tuple))
+            and target_est.steps
+        ):
+            target_est = target_est.steps[-1][1]
+        elif hasattr(target_est, "regressor_"):
+            target_est = target_est.regressor_
+        else:
+            break
+
+    if hasattr(target_est, "feature_importances_"):
+        imp = np.asarray(target_est.feature_importances_, dtype=np.float64).ravel()
+        if imp.size == n_features:
+            return imp
+    if hasattr(target_est, "coef_"):
+        coef = np.asarray(target_est.coef_, dtype=np.float64)
+        if coef.ndim == 1 and coef.size == n_features:
+            return np.abs(coef)
+        if coef.ndim == 2 and coef.shape[1] == n_features:
+            return np.mean(np.abs(coef), axis=0)
+    if hasattr(target_est, "estimators_") and isinstance(
+        target_est.estimators_, (list, tuple)
+    ):
+        sub_imps = [
+            extract_native_feature_importances(sub_est, n_features)
+            for sub_est in target_est.estimators_
+        ]
+        valid = [arr for arr in sub_imps if arr is not None]
+        if valid:
+            return np.mean(np.vstack(valid), axis=0)
+    return None
+
+
 def _compute_shap_mean_abs_df(
     raw_shap: Any,
     feature_names: Sequence[str],
     class_labels: Optional[Sequence[str]] = None,
 ) -> pd.DataFrame:
-    """Summarise mean absolute SHAP contributions per feature (and class)."""
+    """Summarise mean absolute SHAP contributions per feature (and target/class)."""
     vals = np.asarray(getattr(raw_shap, "values", raw_shap), dtype=float)
     feat_list = list(feature_names)
     if vals.ndim == 2:
@@ -294,18 +343,18 @@ def _compute_shap_mean_abs_df(
             {"feature": feat_list, "mean_abs_shap": mean_abs}
         )
     elif vals.ndim == 3:
-        mean_per_cls = np.mean(np.abs(vals), axis=0)  # (n_features, n_classes)
-        n_classes = mean_per_cls.shape[1]
-        if class_labels is not None and len(class_labels) == n_classes:
-            cls_cols = [f"mean_abs_shap_{lbl}" for lbl in class_labels]
+        mean_per_out = np.mean(np.abs(vals), axis=0)  # (n_features, n_outputs)
+        n_outputs = mean_per_out.shape[1]
+        if class_labels is not None and len(class_labels) == n_outputs:
+            out_cols = [f"mean_abs_shap_{lbl}" for lbl in class_labels]
         else:
-            cls_cols = [f"mean_abs_shap_cls_{i}" for i in range(n_classes)]
+            out_cols = [f"mean_abs_shap_cls_{i}" for i in range(n_outputs)]
         data: Dict[str, Any] = {
             "feature": feat_list,
-            "mean_abs_shap": np.mean(mean_per_cls, axis=1),
+            "mean_abs_shap": np.mean(mean_per_out, axis=1),
         }
-        for c_idx, col_name in enumerate(cls_cols):
-            data[col_name] = mean_per_cls[:, c_idx]
+        for c_idx, col_name in enumerate(out_cols):
+            data[col_name] = mean_per_out[:, c_idx]
         out_df = pd.DataFrame(data)
     else:
         raise rsgispy.RSGISPyException(
@@ -331,14 +380,57 @@ def _subsample_shap_df(
     return train_x
 
 
+class _MultiOutputTreeShapWrapper:
+    """Explain each sub-estimator of MultiOutputRegressor using TreeExplainer."""
+
+    def __init__(
+        self,
+        estimators: Sequence[Any],
+        feature_names: Sequence[str],
+    ) -> None:
+        self._explainers = [
+            shap.TreeExplainer(sub_est, feature_names=list(feature_names))
+            for sub_est in estimators
+        ]
+
+    def __call__(self, eval_x: pd.DataFrame) -> Any:
+        exps = [exp(eval_x) for exp in self._explainers]
+        vals = np.stack([np.asarray(e.values, dtype=float) for e in exps], axis=2)
+        base_vals = np.column_stack(
+            [np.asarray(e.base_values, dtype=float).ravel() for e in exps]
+        )
+        return shap.Explanation(
+            values=vals,
+            base_values=base_vals,
+            data=eval_x.to_numpy() if isinstance(eval_x, pd.DataFrame) else eval_x,
+            feature_names=list(eval_x.columns)
+            if isinstance(eval_x, pd.DataFrame)
+            else None,
+        )
+
+
+def _is_tree_like_estimator(est_obj: Any) -> bool:
+    """Return True if estimator or sub-estimators resemble tree models."""
+    if (
+        hasattr(est_obj, "estimators_")
+        or hasattr(est_obj, "tree_")
+        or hasattr(est_obj, "get_booster")
+        or hasattr(est_obj, "booster_")
+    ):
+        return True
+    return False
+
+
 def _build_shap_explainer(
     est_cls_obj: Any,
     eval_x: pd.DataFrame,
     feature_names: Sequence[str],
     use_tree_explainer: Optional[bool] = False,
     use_linear_explainer: bool = False,
+    task: str = "classification",
 ) -> Any:
     """Create a SHAP explainer (Tree, Linear, Kernel, or auto-detected)."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     if use_tree_explainer is True and use_linear_explainer:
         raise rsgispy.RSGISPyException(
             "You can only use one explainer: use_tree_explainer and "
@@ -346,7 +438,15 @@ def _build_shap_explainer(
         )
 
     var_list = list(feature_names)
+    is_multi_out_wrap = (
+        type(est_cls_obj).__name__
+        in ("MultiOutputRegressor", "MultiOutputClassifier")
+        and hasattr(est_cls_obj, "estimators_")
+    )
+
     if use_tree_explainer is True:
+        if is_multi_out_wrap:
+            return _MultiOutputTreeShapWrapper(est_cls_obj.estimators_, var_list)
         return shap.TreeExplainer(est_cls_obj, feature_names=var_list)
     if use_linear_explainer:
         return shap.LinearExplainer(
@@ -355,13 +455,16 @@ def _build_shap_explainer(
             feature_perturbation="correlation_dependent",
         )
     if use_tree_explainer is None:
-        is_tree = (
-            hasattr(est_cls_obj, "estimators_")
-            or hasattr(est_cls_obj, "tree_")
-            or hasattr(est_cls_obj, "get_booster")
-            or hasattr(est_cls_obj, "booster_")
-        )
-        if is_tree:
+        if is_multi_out_wrap and est_cls_obj.estimators_ and _is_tree_like_estimator(
+            est_cls_obj.estimators_[0]
+        ):
+            try:
+                return _MultiOutputTreeShapWrapper(
+                    est_cls_obj.estimators_, var_list
+                )
+            except Exception:  # pylint: disable=broad-exception-caught
+                pass
+        if _is_tree_like_estimator(est_cls_obj):
             try:
                 return shap.TreeExplainer(est_cls_obj, feature_names=var_list)
             except Exception:  # pylint: disable=broad-exception-caught
@@ -375,7 +478,10 @@ def _build_shap_explainer(
                 )
             except Exception:  # pylint: disable=broad-exception-caught
                 pass
-    return shap.KernelExplainer(est_cls_obj.predict_proba, eval_x)
+    pred_callable = (
+        est_cls_obj.predict if task == "regression" else est_cls_obj.predict_proba
+    )
+    return shap.KernelExplainer(pred_callable, eval_x)
 
 
 def run_shap_explainer(
@@ -389,15 +495,17 @@ def run_shap_explainer(
     shap_scatter_plots_dir: Optional[Union[str, os.PathLike]] = None,
     shap_depend_plots_dir: Optional[Union[str, os.PathLike]] = None,
     subsample_n_smpls: Optional[int] = None,
-    use_tree_explainer: bool = False,
+    use_tree_explainer: Optional[bool] = False,
     use_linear_explainer: bool = False,
     target_class_idx: Optional[int] = -1,
     class_labels: Optional[Sequence[str]] = None,
     rnd_seed: Optional[int] = None,
+    task: str = "classification",
 ) -> pd.DataFrame:
     """
     Compute SHAP feature explanations for a fitted ``scikit-learn`` classifier
-    and generate summary, heatmap, scatter, and partial dependence plots.
+    or regressor and generate summary, heatmap, scatter, and partial dependence
+    plots.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches
@@ -419,6 +527,7 @@ def run_shap_explainer(
         feature_names=var_list,
         use_tree_explainer=use_tree_explainer,
         use_linear_explainer=use_linear_explainer,
+        task=task,
     )
 
     raw_shap_values = explainer(train_x_smpl)
@@ -471,6 +580,9 @@ def run_shap_explainer(
         depend_dir = os.fspath(shap_depend_plots_dir)
         os.makedirs(depend_dir, exist_ok=True)
         sample_ind = min(100, max(0, len(train_x_smpl) - 1))
+        base_pred_fn = (
+            est_cls_obj.predict if task == "regression" else est_cls_obj.predict_proba
+        )
         if shap_vals_arr is not None and shap_vals_arr.ndim == 3:
             eff_idx = -1 if target_class_idx is None else int(target_class_idx)
             norm_idx = (
@@ -478,11 +590,12 @@ def run_shap_explainer(
             )
 
             def _dep_pred(x_arr: Any, _idx: int = norm_idx) -> np.ndarray:
-                return np.asarray(est_cls_obj.predict_proba(x_arr))[:, _idx]
+                preds = np.asarray(base_pred_fn(x_arr))
+                return preds[:, _idx] if preds.ndim == 2 else preds.ravel()
 
             model_fn: Callable[[Any], np.ndarray] = _dep_pred
         else:
-            model_fn = est_cls_obj.predict_proba
+            model_fn = base_pred_fn
 
         for name in var_list:
             out_plot_file = os.path.join(depend_dir, f"shap_depends_{name}.png")
@@ -675,6 +788,7 @@ def run_boruta_shap_selection(
     rnd_seed: Optional[int] = None,
     out_plot_file: Optional[Union[str, os.PathLike]] = None,
     use_pbar: bool = True,
+    task: str = "classification",
 ) -> Tuple[List[str], pd.DataFrame]:
     """
     Execute the Boruta-SHAP all-relevant feature selection algorithm.
@@ -710,11 +824,12 @@ def run_boruta_shap_selection(
             "use_linear_explainer cannot both be True."
         )
 
-    base_clf = (
-        sk_classifier
-        if sk_classifier is not None
-        else sklearn.ensemble.RandomForestClassifier(n_estimators=100)
-    )
+    if sk_classifier is not None:
+        base_clf = sk_classifier
+    elif task == "regression":
+        base_clf = sklearn.ensemble.RandomForestRegressor(n_estimators=100)
+    else:
+        base_clf = sklearn.ensemble.RandomForestClassifier(n_estimators=100)
     rng = (
         np.random.default_rng(abs(int(rnd_seed)))
         if rnd_seed is not None
@@ -761,6 +876,7 @@ def run_boruta_shap_selection(
             feature_names=list(comb_x.columns),
             use_tree_explainer=use_tree_explainer,
             use_linear_explainer=use_linear_explainer,
+            task=task,
         )
         raw_shap = explainer(eval_x)
         col_imps = _shap_col_importances(raw_shap, target_class_idx)
@@ -846,3 +962,398 @@ def run_boruta_shap_selection(
         )
 
     return selected, scores_df
+
+
+def _eval_feature_response(
+    feat: str,
+    grid_vals: np.ndarray,
+    feat_cols: Sequence[str],
+    feat_base: Mapping[str, float],
+    predict_fn: Callable[[pd.DataFrame], np.ndarray],
+    method: str,
+    bg_df: Optional[pd.DataFrame],
+) -> np.ndarray:
+    """Evaluate marginal or partial dependence response across ``grid_vals``."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    n_steps = len(grid_vals)
+    if method == "marginal" or bg_df is None or len(bg_df) == 0:
+        grid_data = {
+            tmp: (
+                grid_vals
+                if tmp == feat
+                else np.full(n_steps, feat_base[tmp], dtype=float)
+            )
+            for tmp in feat_cols
+        }
+        preds = np.asarray(predict_fn(pd.DataFrame(grid_data)), dtype=np.float64)
+        return preds[:, None] if preds.ndim == 1 else preds
+
+    n_bg = len(bg_df)
+    rep_df = bg_df.loc[np.repeat(bg_df.index.to_numpy(), n_steps)].copy()
+    rep_df[feat] = np.tile(grid_vals, n_bg)
+    preds = np.asarray(predict_fn(rep_df), dtype=np.float64)
+    if preds.ndim == 1:
+        preds = preds[:, None]
+    reshaped = preds.reshape(n_bg, n_steps, preds.shape[1])
+    return np.mean(reshaped, axis=0)
+
+
+def _plot_single_feature_response(
+    feat: str,
+    x_plot_vals: np.ndarray,
+    preds_2d: np.ndarray,
+    out_indices: Sequence[int],
+    output_labels: Sequence[str],
+    out_plot_path: str,
+    ylabel: str,
+    ylim: Optional[Tuple[float, float]],
+    multi_panel: bool,
+    x_df: pd.DataFrame,
+    observed_y_df: Optional[pd.DataFrame],
+    plot_samples: bool,
+) -> None:
+    """Save per-feature response curve PNG (overlayed or stacked subplots)."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals
+    n_panels = len(out_indices)
+    if multi_panel and n_panels > 1:
+        fig, axes = plt.subplots(
+            n_panels,
+            1,
+            figsize=(8, max(3.5, 3.0 * n_panels)),
+            sharex=True,
+            squeeze=False,
+        )
+        axes_list = [axes[i, 0] for i in range(n_panels)]
+    else:
+        fig, ax_single = plt.subplots(figsize=(8, 5))
+        axes_list = [ax_single]
+
+    try:
+        if multi_panel and n_panels > 1:
+            for p_i, out_idx in enumerate(out_indices):
+                ax = axes_list[p_i]
+                lbl = (
+                    str(output_labels[out_idx])
+                    if out_idx < len(output_labels)
+                    else f"target_{out_idx}"
+                )
+                if (
+                    plot_samples
+                    and observed_y_df is not None
+                    and lbl in observed_y_df.columns
+                ):
+                    ax.scatter(
+                        x_df[feat].to_numpy(),
+                        observed_y_df[lbl].to_numpy(),
+                        color="#90CAF9",
+                        alpha=0.35,
+                        s=14,
+                        edgecolors="none",
+                        label="Observed",
+                    )
+                ax.plot(
+                    x_plot_vals,
+                    preds_2d[:, out_idx],
+                    color="#1E88E5",
+                    linewidth=2.0,
+                    label="Predicted Response",
+                )
+                ax.set_ylabel(lbl)
+                ax.grid(alpha=0.25)
+                if p_i == 0:
+                    ax.set_title(f"{feat} Response Functions")
+                if plot_samples:
+                    ax.legend(loc="best", fontsize=8)
+            axes_list[-1].set_xlabel(feat)
+        else:
+            ax = axes_list[0]
+            single_lbl = (
+                str(output_labels[out_indices[0]])
+                if out_indices and out_indices[0] < len(output_labels)
+                else ylabel
+            )
+            if (
+                plot_samples
+                and observed_y_df is not None
+                and len(out_indices) == 1
+                and single_lbl in observed_y_df.columns
+            ):
+                ax.scatter(
+                    x_df[feat].to_numpy(),
+                    observed_y_df[single_lbl].to_numpy(),
+                    color="#90CAF9",
+                    alpha=0.35,
+                    s=14,
+                    edgecolors="none",
+                    label="Observed",
+                )
+            for out_idx in out_indices:
+                lbl = (
+                    str(output_labels[out_idx])
+                    if out_idx < len(output_labels)
+                    else f"out_{out_idx}"
+                )
+                ax.plot(
+                    x_plot_vals,
+                    preds_2d[:, out_idx],
+                    linewidth=2.0,
+                    label=lbl,
+                )
+            if ylim is not None:
+                ax.set_ylim(list(ylim))
+            ax.set_title(f"{feat} Response Curve")
+            ax.set_xlabel(feat)
+            ax.set_ylabel(
+                single_lbl
+                if (multi_panel and len(out_indices) == 1)
+                else ylabel
+            )
+            if len(out_indices) > 1 or (output_labels and plot_samples) or (
+                not multi_panel and output_labels
+            ):
+                ax.legend(loc="best")
+        fig.tight_layout()
+    finally:
+        finalise_plot(fig, out_file=out_plot_path)
+
+
+def run_variable_response_curves(
+    x_df: pd.DataFrame,
+    feature_cols: Sequence[str],
+    predict_fn: Callable[[pd.DataFrame], np.ndarray],
+    output_labels: Sequence[str],
+    out_indices: Optional[Sequence[int]] = None,
+    col_name_fn: Optional[Callable[[str, str, int], str]] = None,
+    n_samples: int = 100,
+    summary_stat: str = "mean",
+    baseline_df: Optional[pd.DataFrame] = None,
+    method: str = "marginal",
+    pdp_background_samples: int = 200,
+    rnd_seed: Optional[int] = None,
+    x_transform_map: Optional[Mapping[str, Callable[[np.ndarray], np.ndarray]]] = None,
+    out_file: Optional[Union[str, os.PathLike]] = None,
+    response_plots_dir: Optional[Union[str, os.PathLike]] = None,
+    out_grid_plot: Optional[Union[str, os.PathLike]] = None,
+    ylabel: str = "Predicted Value",
+    ylim: Optional[Tuple[float, float]] = None,
+    multi_panel: bool = False,
+    observed_y_df: Optional[pd.DataFrame] = None,
+    plot_samples: bool = False,
+    use_pbar: bool = True,
+) -> pd.DataFrame:
+    """
+    Evaluate and plot response function curves relating model predictions (one
+    or multiple targets / class probabilities) to each input feature.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches
+    if n_samples < 2:
+        raise rsgispy.RSGISPyException("n_samples must be at least 2.")
+
+    stat_key = summary_stat.strip().lower()
+    if stat_key not in {"mean", "median"}:
+        raise rsgispy.RSGISPyException(
+            f"Unsupported summary_stat '{summary_stat}'. Expected 'mean' or 'median'."
+        )
+    method_key = method.strip().lower()
+    if method_key not in {"marginal", "pdp", "partial_dependence"}:
+        raise rsgispy.RSGISPyException(
+            f"Unsupported method '{method}'. Expected 'marginal' or 'pdp'."
+        )
+    eff_method = "marginal" if method_key == "marginal" else "pdp"
+
+    feat_list = list(feature_cols)
+    ref_df = baseline_df if baseline_df is not None and len(baseline_df) > 0 else x_df
+    feat_bounds = {
+        col: (float(x_df[col].min()), float(x_df[col].max()))
+        for col in feat_list
+    }
+    feat_base = {
+        col: float(ref_df[col].mean() if stat_key == "mean" else ref_df[col].median())
+        for col in feat_list
+    }
+
+    bg_df: Optional[pd.DataFrame] = None
+    if eff_method == "pdp":
+        if len(ref_df) > int(pdp_background_samples):
+            bg_df = ref_df[feat_list].sample(
+                n=int(pdp_background_samples), random_state=rnd_seed
+            )
+        else:
+            bg_df = ref_df[feat_list]
+
+    plots_dir_str: Optional[str] = None
+    if response_plots_dir is not None:
+        plots_dir_str = os.fspath(response_plots_dir)
+        os.makedirs(plots_dir_str, exist_ok=True)
+
+    eff_indices = (
+        list(out_indices)
+        if out_indices is not None
+        else list(range(max(1, len(output_labels))))
+    )
+
+    response_vals: Dict[str, np.ndarray] = {}
+    cached_curves: List[Tuple[str, np.ndarray, np.ndarray]] = []
+    pbar = rsgispy.get_tqdm()
+    for feat in pbar(feat_list, disable=not use_pbar):
+        grid_vals = np.linspace(
+            feat_bounds[feat][0],
+            feat_bounds[feat][1],
+            num=int(n_samples),
+            dtype=float,
+        )
+        preds_2d = _eval_feature_response(
+            feat=feat,
+            grid_vals=grid_vals,
+            feat_cols=feat_list,
+            feat_base=feat_base,
+            predict_fn=predict_fn,
+            method=eff_method,
+            bg_df=bg_df,
+        )
+        x_plot_vals = (
+            x_transform_map[feat](grid_vals)
+            if (x_transform_map is not None and feat in x_transform_map)
+            else grid_vals
+        )
+
+        response_vals[f"{feat}_vals"] = x_plot_vals
+        for out_idx in eff_indices:
+            lbl = (
+                str(output_labels[out_idx])
+                if out_idx < len(output_labels)
+                else f"out_{out_idx}"
+            )
+            col_key = (
+                col_name_fn(feat, lbl, out_idx)
+                if col_name_fn is not None
+                else f"{feat}_{lbl}_resp"
+            )
+            response_vals[col_key] = preds_2d[:, out_idx]
+
+        cached_curves.append((feat, x_plot_vals, preds_2d))
+
+        if plots_dir_str is not None:
+            out_plot = os.path.join(plots_dir_str, f"{feat}_response_curve.png")
+            _plot_single_feature_response(
+                feat=feat,
+                x_plot_vals=x_plot_vals,
+                preds_2d=preds_2d,
+                out_indices=eff_indices,
+                output_labels=output_labels,
+                out_plot_path=out_plot,
+                ylabel=ylabel,
+                ylim=ylim,
+                multi_panel=multi_panel,
+                x_df=x_df,
+                observed_y_df=observed_y_df,
+                plot_samples=plot_samples,
+            )
+
+    if out_grid_plot is not None and cached_curves:
+        n_feats = len(cached_curves)
+        if multi_panel and len(eff_indices) > 1:
+            n_rows = len(eff_indices)
+            n_cols = n_feats
+            fig, axes = plt.subplots(
+                n_rows,
+                n_cols,
+                figsize=(max(4.0, 3.6 * n_cols), max(3.2, 2.8 * n_rows)),
+                squeeze=False,
+            )
+            try:
+                for c_i, (feat, x_plot_vals, preds_2d) in enumerate(cached_curves):
+                    for r_i, out_idx in enumerate(eff_indices):
+                        ax = axes[r_i, c_i]
+                        lbl = (
+                            str(output_labels[out_idx])
+                            if out_idx < len(output_labels)
+                            else f"target_{out_idx}"
+                        )
+                        if (
+                            plot_samples
+                            and observed_y_df is not None
+                            and lbl in observed_y_df.columns
+                        ):
+                            ax.scatter(
+                                x_df[feat].to_numpy(),
+                                observed_y_df[lbl].to_numpy(),
+                                color="#90CAF9",
+                                alpha=0.3,
+                                s=10,
+                                edgecolors="none",
+                            )
+                        ax.plot(x_plot_vals, preds_2d[:, out_idx], color="#1E88E5")
+                        ax.grid(alpha=0.25)
+                        if r_i == n_rows - 1:
+                            ax.set_xlabel(feat)
+                        if c_i == 0:
+                            ax.set_ylabel(lbl)
+                fig.suptitle("Response Function Matrix", y=1.01)
+                fig.tight_layout()
+            finally:
+                finalise_plot(fig, out_file=out_grid_plot)
+        else:
+            n_cols = min(3, n_feats)
+            n_rows = int(math.ceil(n_feats / float(n_cols)))
+            fig, axes = plt.subplots(
+                n_rows,
+                n_cols,
+                figsize=(4.2 * n_cols, 3.4 * n_rows),
+                squeeze=False,
+            )
+            try:
+                for idx, (feat, x_plot_vals, preds_2d) in enumerate(cached_curves):
+                    r_i, c_i = divmod(idx, n_cols)
+                    ax = axes[r_i, c_i]
+                    single_lbl = (
+                        str(output_labels[eff_indices[0]])
+                        if eff_indices and eff_indices[0] < len(output_labels)
+                        else ylabel
+                    )
+                    if (
+                        plot_samples
+                        and observed_y_df is not None
+                        and len(eff_indices) == 1
+                        and single_lbl in observed_y_df.columns
+                    ):
+                        ax.scatter(
+                            x_df[feat].to_numpy(),
+                            observed_y_df[single_lbl].to_numpy(),
+                            color="#90CAF9",
+                            alpha=0.3,
+                            s=10,
+                            edgecolors="none",
+                        )
+                    for out_idx in eff_indices:
+                        lbl = (
+                            str(output_labels[out_idx])
+                            if out_idx < len(output_labels)
+                            else f"out_{out_idx}"
+                        )
+                        ax.plot(x_plot_vals, preds_2d[:, out_idx], label=lbl)
+                    ax.set_xlabel(feat)
+                    ax.set_ylabel(
+                        single_lbl
+                        if (multi_panel and len(eff_indices) == 1)
+                        else ylabel
+                    )
+                    ax.set_title(feat)
+                    ax.grid(alpha=0.25)
+                    if ylim is not None:
+                        ax.set_ylim(list(ylim))
+                    if len(eff_indices) > 1:
+                        ax.legend(fontsize=8)
+                for idx in range(n_feats, n_rows * n_cols):
+                    r_i, c_i = divmod(idx, n_cols)
+                    axes[r_i, c_i].set_visible(False)
+                fig.tight_layout()
+            finally:
+                finalise_plot(fig, out_file=out_grid_plot)
+
+    resp_df = pd.DataFrame(data=response_vals)
+    if out_file is not None:
+        resp_df.to_csv(ensure_parent_dir(out_file), index=False)
+    return resp_df

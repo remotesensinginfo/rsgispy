@@ -17,7 +17,6 @@ from typing import (
     Tuple,
     Union,
 )
-import warnings
 
 import numpy as np
 import pandas as pd
@@ -28,7 +27,6 @@ from rsgispy.classification._cls_common import (
     calc_cls_split_metrics,
     prepare_cls_splits,
     resolve_binary_classes,
-    suggest_optuna_params,
 )
 from rsgispy.classification._helpers import (
     ClsConfigInput,
@@ -37,19 +35,20 @@ from rsgispy.classification._helpers import (
     resolve_cv_splitter,
 )
 from rsgispy.classification.classdata import ImageBandInfo
+from rsgispy.tools._gbdt_common import (
+    merge_gbdt_params as _tools_merge_gbdt_params,
+    resolve_gbdt_gpu as _tools_resolve_gbdt_gpu,
+    resolve_gbdt_optuna_space as _tools_resolve_gbdt_optuna_space,
+)
+from rsgispy.tools._ml_tune import (
+    HAVE_OPTUNA,
+    run_optuna_study,
+    save_search_outputs,
+    suggest_optuna_params,
+)
 from rsgispy.tools._sklearn import sklearn, sync_sklearn_estimator_state
 from rsgispy.tools.files import ensure_parent_dir
 from rsgispy.tools.jsonio import to_json_compatible, write_dict_to_json
-from rsgispy.tools.tables import write_dataframe_table
-
-try:
-    import optuna  # pylint: disable=import-error
-
-    HAVE_OPTUNA = True
-except ImportError:
-    optuna = None  # type: ignore[assignment]
-    HAVE_OPTUNA = False
-
 
 _OptunaSpaceType = Union[Dict[str, Any], Callable[[Any], Mapping[str, Any]]]
 
@@ -97,25 +96,6 @@ class GBDTBackendSpec:
     require_consecutive_zero_labels: bool = False
 
 
-def validate_gpu_device_id(gpu_device_id: Optional[int]) -> Optional[int]:
-    """Validate and coerce an optional non-negative GPU device index."""
-    if gpu_device_id is None:
-        return None
-    if isinstance(gpu_device_id, bool) or not isinstance(
-        gpu_device_id, (int, np.integer)
-    ):
-        raise rsgispy.RSGISPyException(
-            f"gpu_device_id must be a non-negative integer or None, "
-            f"got {gpu_device_id!r}."
-        )
-    dev_idx = int(gpu_device_id)
-    if dev_idx < 0:
-        raise rsgispy.RSGISPyException(
-            f"gpu_device_id must be non-negative, got {gpu_device_id}."
-        )
-    return dev_idx
-
-
 def resolve_gbdt_gpu(
     backend: GBDTBackendSpec,
     use_gpu: bool,
@@ -125,18 +105,12 @@ def resolve_gbdt_gpu(
     Validate GPU device selection and resolve whether GPU execution is active,
     falling back to CPU with a ``UserWarning`` when unavailable.
     """
-    dev_idx = validate_gpu_device_id(gpu_device_id)
-    if not use_gpu:
-        return False, None
-    if backend.gpu_available(dev_idx):
-        return True, dev_idx
-    warnings.warn(
-        f"GPU requested for {backend.name} (use_gpu=True), but no compatible "
-        f"GPU device or GPU-enabled build was detected. Falling back to CPU.",
-        UserWarning,
-        stacklevel=3,
+    return _tools_resolve_gbdt_gpu(
+        backend_name=backend.name,
+        gpu_check_fn=backend.gpu_available,
+        use_gpu=use_gpu,
+        gpu_device_id=gpu_device_id,
     )
-    return False, None
 
 
 def _validate_target_labels(
@@ -179,41 +153,21 @@ def _merge_gbdt_params(
         if binary
         else backend.default_multiclass_params(n_classes, verbose)
     )
-    merged: Dict[str, Any] = dict(task_defaults)
-
-    if base_classifier is not None and hasattr(base_classifier, "get_params"):
-        base_params = {
-            k: v
-            for k, v in base_classifier.get_params(deep=False).items()
-            if v is not None
-        }
-        merged.update(base_params)
-        for k, v in task_defaults.items():
-            if k not in base_params or base_params[k] is None:
-                merged[k] = v
-
-    if explicit_params:
-        merged.update(dict(explicit_params))
-
-    if rnd_seed is not None:
-        if backend.seed_param == "random_seed":
-            merged.pop("random_state", None)
-        merged[backend.seed_param] = int(rnd_seed)
-
-    if n_jobs is not None:
-        if backend.jobs_param == "thread_count":
-            merged.pop("n_jobs", None)
-        merged[backend.jobs_param] = int(n_jobs)
-
-    if not has_valid:
-        merged.pop("early_stopping_rounds", None)
-    elif early_stopping_rounds is not None and backend.name == "XGBoost":
-        merged["early_stopping_rounds"] = int(early_stopping_rounds)
-
-    if gpu_active:
-        merged = backend.apply_gpu_params(merged, gpu_device_id)
-
-    return merged
+    return _tools_merge_gbdt_params(
+        backend_name=backend.name,
+        task_defaults=task_defaults,
+        seed_param=backend.seed_param,
+        jobs_param=backend.jobs_param,
+        apply_gpu_params=backend.apply_gpu_params,
+        base_estimator=base_classifier,
+        explicit_params=explicit_params,
+        rnd_seed=rnd_seed,
+        n_jobs=n_jobs,
+        early_stopping_rounds=early_stopping_rounds,
+        has_valid=has_valid,
+        gpu_active=gpu_active,
+        gpu_device_id=gpu_device_id,
+    )
 
 
 def _build_and_fit_gbdt(
@@ -243,59 +197,23 @@ def _resolve_eff_optuna_space(
     fixed_params: Optional[Mapping[str, Any]],
 ) -> Tuple[_OptunaSpaceType, str]:
     """Resolve effective Optuna trial search space and mode name."""
-    use_extended = bool(extended_param_space)
-    custom_space: Optional[Any] = None
-
-    if isinstance(param_space, str):
-        preset = param_space.strip().lower()
-        if preset in ("default", "key", "standard"):
-            if extended_param_space:
-                raise rsgispy.RSGISPyException(
-                    "Cannot combine param_space='default' with "
-                    "extended_param_space=True."
-                )
-            use_extended = False
-        elif preset in ("extended", "full", "large"):
-            use_extended = True
-        else:
-            raise rsgispy.RSGISPyException(
-                f"Unsupported param_space preset '{param_space}'. Expected "
-                "'default' or 'extended', or pass a dict or callable."
-            )
-    elif param_space is not None:
-        if extended_param_space:
-            raise rsgispy.RSGISPyException(
-                "Provide either a custom param_space or "
-                "extended_param_space=True, not both."
-            )
-        custom_space = param_space
-
-    if custom_space is not None:
-        eff_space: _OptunaSpaceType = custom_space
-        space_mode = "custom"
-    elif use_extended:
-        eff_space = (
-            backend.extended_binary_space()
-            if binary
-            else backend.extended_multiclass_space()
-        )
-        space_mode = "extended"
-    else:
-        eff_space = (
-            backend.default_binary_space()
-            if binary
-            else backend.default_multiclass_space()
-        )
-        space_mode = "default"
-
-    if not callable(eff_space) and fixed_params:
-        trial_space: _OptunaSpaceType = {
-            k: v for k, v in eff_space.items() if k not in fixed_params
-        }
-    else:
-        trial_space = eff_space
-
-    return trial_space, space_mode
+    def_fn = (
+        backend.default_binary_space
+        if binary
+        else backend.default_multiclass_space
+    )
+    ext_fn = (
+        backend.extended_binary_space
+        if binary
+        else backend.extended_multiclass_space
+    )
+    return _tools_resolve_gbdt_optuna_space(
+        default_space_fn=def_fn,
+        extended_space_fn=ext_fn,
+        param_space=param_space,
+        extended_param_space=extended_param_space,
+        fixed_params=fixed_params,
+    )
 
 
 def optimise_gbdt_classifier(
@@ -442,20 +360,16 @@ def optimise_gbdt_classifier(
         )
         return float(np.mean(scores))
 
-    sampler = optuna.samplers.TPESampler(seed=rnd_seed)
-    prev_verbosity = optuna.logging.get_verbosity()
-    if verbose <= 0:
-        optuna.logging.set_verbosity(optuna.logging.WARNING)
-    try:
-        study = optuna.create_study(direction=dir_norm, sampler=sampler)
-        study.optimize(
-            _objective,
-            n_trials=int(n_trials),
-            timeout=timeout,
-            show_progress_bar=False,
-        )
-    finally:
-        optuna.logging.set_verbosity(prev_verbosity)
+    study, _ = run_optuna_study(
+        objective=_objective,
+        n_trials=n_trials,
+        timeout=timeout,
+        direction=direction,
+        rnd_seed=rnd_seed,
+        verbose=verbose,
+        func_name=func_name,
+        extra=backend.extra,
+    )
 
     best_trial_params = dict(study.best_trial.params)
     if not callable(trial_space):
@@ -499,28 +413,22 @@ def optimise_gbdt_classifier(
     best_score = float(study.best_value)
     results_df = study.trials_dataframe()
 
-    if out_results_file is not None:
-        write_dataframe_table(results_df, out_results_file)
-
-    if out_params_json is not None:
-        out_json_path = ensure_parent_dir(out_params_json)
-        scoring_name = (
-            scoring if isinstance(scoring, str) else getattr(scoring, "__name__", "custom")
-        )
-        write_dict_to_json(
-            {
-                "library": backend.name.lower(),
-                "task": "binary" if binary else "multiclass",
-                "search_method": "optuna",
-                "param_space_mode": space_mode,
-                "use_gpu_requested": bool(use_gpu),
-                "gpu_used": bool(gpu_active),
-                "scoring": scoring_name,
-                "best_score": best_score,
-                "best_params": best_params_json,
-            },
-            out_json_path,
-        )
+    save_search_outputs(
+        results_df=results_df,
+        best_params=best_params_json,
+        best_score=best_score,
+        scoring=scoring,
+        search_method="optuna",
+        space_mode=space_mode,
+        out_results_file=out_results_file,
+        out_params_json=out_params_json,
+        extra_meta={
+            "library": backend.name.lower(),
+            "task": "binary" if binary else "multiclass",
+            "use_gpu_requested": bool(use_gpu),
+            "gpu_used": bool(gpu_active),
+        },
+    )
 
     if out_model_file is not None:
         if not refit:

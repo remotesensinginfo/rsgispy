@@ -9,7 +9,6 @@ import os
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -26,7 +25,6 @@ from rsgispy.modelling._helper import (
     calc_single_class_predictions,
     check_sklearn_available,
     extract_features_and_target,
-    finalise_plot,
     fit_clean_estimator,
     get_positive_class_probs,
     normalise_array_with_info,
@@ -44,6 +42,7 @@ from rsgispy.tools._ml_explain import (
     plot_jackknife_bars,
     run_salib_sobol_sensitivity,
     run_shap_explainer,
+    run_variable_response_curves,
 )
 from rsgispy.tools.featureselection import calc_pandas_vif
 import rsgispy.tools.files
@@ -1414,8 +1413,6 @@ def sklearn_mdl_variable_response_curves(
         raise rsgispy.RSGISPyException(
             "env_vars must be provided when normalised_data=True."
         )
-    if response_plots_dir is not None:
-        os.makedirs(response_plots_dir, exist_ok=True)
 
     train_gdf = read_model_vector(train_vec_file, vec_lyr=train_vec_lyr)
     var_list = list(analysis_vars)
@@ -1424,58 +1421,47 @@ def sklearn_mdl_variable_response_curves(
     if train_pres_gdf.empty:
         train_pres_gdf = train_gdf
 
-    var_bounds: Dict[str, Tuple[float, float]] = {}
-    var_avg: Dict[str, float] = {}
     for var in var_list:
         min_val = float(train_gdf[var].min())
         max_val = float(train_gdf[var].max())
-        var_bounds[var] = (min_val, max_val)
-        var_avg[var] = float(train_pres_gdf[var].mean())
-        print(f"{var} Range:\t({min_val} - {max_val}): Mean = {var_avg[var]}")
-
-    response_vals: Dict[str, np.ndarray] = {}
-    for var in var_list:
+        mean_val = float(train_pres_gdf[var].mean())
+        print(f"{var} Range:\t({min_val} - {max_val}): Mean = {mean_val}")
         print(f"Calculating Response Curve for '{var}'")
-        var_vals = np.linspace(
-            var_bounds[var][0], var_bounds[var][1], num=n_samples, dtype=float
-        )
-        data_dict: Dict[str, np.ndarray] = {}
-        for tmp_var in var_list:
-            if tmp_var == var:
-                data_dict[tmp_var] = var_vals
-            else:
-                data_dict[tmp_var] = np.full(n_samples, var_avg[tmp_var], dtype=float)
 
-        env_param_val_df = pd.DataFrame(data=data_dict)
-        env_resp_probs = get_positive_class_probs(
-            est_cls_obj, env_param_val_df, pos_label=1
-        )
+    x_transform_map: Optional[Dict[str, Any]] = None
+    if normalised_data and env_vars is not None:
+        x_transform_map = {}
+        for var in var_list:
+            if var in env_vars:
+                info = env_vars[var]
+                if info.norm_mean is not None and info.norm_std is not None:
+                    norm_std = float(info.norm_std)
+                    norm_mean = float(info.norm_mean)
+                    x_transform_map[var] = (
+                        lambda vals, s=norm_std, m=norm_mean: (vals * s) + m
+                    )
 
-        if normalised_data and env_vars is not None and var in env_vars:
-            info = env_vars[var]
-            if info.norm_mean is not None and info.norm_std is not None:
-                var_vals = (var_vals * float(info.norm_std)) + float(info.norm_mean)
-
-        response_vals[f"{var}_vals"] = var_vals
-        response_vals[f"{var}_resp"] = env_resp_probs
-
-        if response_plots_dir is not None:
-            out_plot_file = os.path.join(
-                response_plots_dir, f"{var}_response_curve.png"
-            )
-            fig, ax = plt.subplots(figsize=(8, 5))
-            ax.plot(var_vals, env_resp_probs)
-            ax.set_ylim([0, 1])
-            ax.set_title(f"{var} Response Curve")
-            ax.set_xlabel(f"{var}")
-            ax.set_ylabel("Class Probability")
-            finalise_plot(fig, out_file=out_plot_file)
-
-    response_vals_df = pd.DataFrame(data=response_vals)
-    if output_file is not None:
-        out_csv = rsgispy.tools.files.ensure_parent_dir(output_file)
-        response_vals_df.to_csv(out_csv, index=False)
-    return response_vals_df
+    return run_variable_response_curves(
+        x_df=train_gdf[var_list],
+        feature_cols=var_list,
+        predict_fn=lambda df: get_positive_class_probs(
+            est_cls_obj, df, pos_label=1
+        ),
+        output_labels=["resp"],
+        out_indices=[0],
+        col_name_fn=lambda feat, _lbl, _i: f"{feat}_resp",
+        n_samples=int(n_samples),
+        summary_stat="mean",
+        baseline_df=train_pres_gdf[var_list],
+        method="marginal",
+        x_transform_map=x_transform_map,
+        out_file=output_file,
+        response_plots_dir=response_plots_dir,
+        ylabel="Class Probability",
+        ylim=(0.0, 1.0),
+        multi_panel=False,
+        use_pbar=False,
+    )
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals

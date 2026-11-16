@@ -19,32 +19,32 @@ from typing import (
     Union,
 )
 
-import geopandas as gpd
 import numpy as np
 import pandas as pd
-import pyproj
 import rasterio
 
 import rsgispy
 from rsgispy.classification._helpers import resolve_rng, select_out_int_dtype
 from rsgispy.imagecalc.encoding import recode_int_raster
-from rsgispy.imageprocess import ensure_file_exists, validate_band_index
+from rsgispy.imageprocess import ensure_file_exists
 from rsgispy.imageutils.colourtable import (
     define_colour_table,
     set_img_thematic,
 )
 from rsgispy.imageutils.masking import ImageBandInfo
 from rsgispy.imageutils.metadata import set_img_no_data_value
+from rsgispy.tools._ml_data import (
+    allocate_split_counts,
+    extract_vector_samples_from_gdf,
+    normalise_img_band_info_list as _normalise_img_band_info_list,
+    read_ml_samples,
+    resolve_img_band_info as _shared_resolve_img_band_info,
+    resolve_split_proportions,
+    write_ml_samples,
+)
 from rsgispy.tools.files import ensure_parent_dir
 from rsgispy.tools.jsonio import read_json_to_dict, write_dict_to_json
-from rsgispy.tools.tables import (
-    read_dataframe_table,
-    resolve_table_format,
-    write_dataframe_table,
-)
-from rsgispy.vectorprocess import infer_parquet_compression, read_vec_gdf
-from rsgispy.zonalstats.point import ext_point_band_values_file
-from rsgispy.zonalstats.polygon import export_poly_pxls_to_df
+from rsgispy.vectorprocess import read_vec_gdf
 
 __all__ = [
     "ImageBandInfo",
@@ -284,38 +284,6 @@ def normalise_class_info(
     return dict(entries)
 
 
-def _normalise_img_band_info_list(
-    img_band_info: Sequence[Union[ImageBandInfo, Mapping[str, Any]]],
-) -> List[ImageBandInfo]:
-    """Validate and copy a sequence of :class:`ImageBandInfo` objects."""
-    if not img_band_info or isinstance(img_band_info, (str, bytes)):
-        raise rsgispy.RSGISPyException(
-            "img_band_info must be a non-empty sequence of ImageBandInfo objects."
-        )
-
-    out_list: List[ImageBandInfo] = []
-    for item in img_band_info:
-        if isinstance(item, ImageBandInfo):
-            obj = ImageBandInfo(
-                file_name=item.file_name,
-                name=item.name,
-                bands=item.bands,
-                band_names=item.band_names,
-            )
-        elif isinstance(item, Mapping):
-            obj = ImageBandInfo.from_dict(item)
-        else:
-            raise rsgispy.RSGISPyException(
-                "Each item in img_band_info must be an ImageBandInfo instance."
-            )
-        if not obj.file_name:
-            raise rsgispy.RSGISPyException(
-                "Each ImageBandInfo object must specify a valid 'file_name'."
-            )
-        out_list.append(obj)
-    return out_list
-
-
 def resolve_img_band_info(
     img_band_info: Sequence[ImageBandInfo],
 ) -> List[Tuple[str, List[int], List[str]]]:
@@ -334,57 +302,7 @@ def resolve_img_band_info(
             cd.ImageBandInfo("s2.tif", name="s2", bands=[1, 2]),
         ])
     """
-    norm_list = _normalise_img_band_info_list(img_band_info)
-    resolved: List[Tuple[str, List[int], List[str]]] = []
-    seen_names: set = set()
-    seen_lower_names: set = set()
-
-    for img_idx, info in enumerate(norm_list):
-        assert info.file_name is not None
-        ensure_file_exists(info.file_name)
-        with rasterio.open(info.file_name, "r") as src:
-            n_bands = int(src.count)
-
-        if info.bands is None:
-            bands = list(range(1, n_bands + 1))
-        else:
-            bands = [int(b) for b in info.bands]
-            if not bands:
-                raise rsgispy.RSGISPyException(
-                    f"ImageBandInfo for '{info.file_name}' specified an empty "
-                    "band list."
-                )
-            for b_idx in bands:
-                validate_band_index(b_idx, n_bands, info.file_name)
-
-        if info.band_names is not None:
-            if len(info.band_names) != len(bands):
-                raise rsgispy.RSGISPyException(
-                    f"ImageBandInfo for '{info.file_name}' has "
-                    f"{len(info.band_names)} band_names for {len(bands)} bands."
-                )
-            col_names = list(info.band_names)
-        else:
-            if info.name and info.name.strip():
-                prefix = info.name.strip()
-            else:
-                stem = os.path.splitext(os.path.basename(info.file_name))[0]
-                prefix = stem if stem else f"img{img_idx + 1}"
-            col_names = [f"{prefix}_b{b_idx}" for b_idx in bands]
-
-        for col in col_names:
-            if col in seen_names or col.lower() in seen_lower_names:
-                raise rsgispy.RSGISPyException(
-                    f"Duplicate feature column name '{col}' across "
-                    "img_band_info. Specify unique ImageBandInfo names or "
-                    "band_names."
-                )
-            seen_names.add(col)
-            seen_lower_names.add(col.lower())
-
-        resolved.append((info.file_name, bands, col_names))
-
-    return resolved
+    return _shared_resolve_img_band_info(img_band_info)
 
 
 class ClassificationConfig:
@@ -713,25 +631,11 @@ def write_cls_samples(
         cd.write_cls_samples(df, "train.parquet")
         cd.write_cls_samples(df, "train.csv")
     """
-    path_str = os.fspath(out_file)
-    fmt = resolve_table_format(path_str, out_format=out_format)
-    eff_compress: Optional[Union[str, bool]]
-    if fmt == "parquet":
-        if out_compress is None:
-            inferred = infer_parquet_compression(path_str, out_compress=None)
-            eff_compress = inferred if inferred is not None else "snappy"
-        else:
-            eff_compress = out_compress
-    elif out_compress == "snappy":
-        eff_compress = None
-    else:
-        eff_compress = out_compress
-
-    write_dataframe_table(
-        samples_df,
-        path_str,
-        out_format=fmt,
-        out_compress=eff_compress,
+    write_ml_samples(
+        samples_df=samples_df,
+        out_file=out_file,
+        out_format=out_format,
+        out_compress=out_compress,
     )
 
 
@@ -754,230 +658,7 @@ def read_cls_samples(
 
         train_df = cd.read_cls_samples("train.parquet")
     """
-    return read_dataframe_table(os.fspath(in_file), in_format=in_format)
-
-
-def _extract_points_for_class(
-    pts_gdf: gpd.GeoDataFrame,
-    resolved_imgs: List[Tuple[str, List[int], List[str]]],
-    min_thres: Optional[float],
-    max_thres: Optional[float],
-    out_no_data_val: Optional[float],
-    mask_nodata: bool,
-    include_coords: bool,
-    reproj_vec: bool,
-    vec_def_epsg: Optional[int],
-    use_pbar: bool,
-) -> pd.DataFrame:
-    """Extract band values at point samples using ext_point_band_values_file."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    work_gdf = pts_gdf.copy()
-    eff_min = -math.inf if min_thres is None else float(min_thres)
-    eff_max = math.inf if max_thres is None else float(max_thres)
-    eff_nd = math.nan if out_no_data_val is None else float(out_no_data_val)
-
-    tmp_col_map: Dict[str, str] = {}
-    ordered_cols: List[str] = []
-    col_counter = 0
-
-    for img_path, bands, col_names in resolved_imgs:
-        tmp_fields: List[str] = []
-        for col in col_names:
-            tmp_name = f"__rsgis_f_{col_counter}__"
-            col_counter += 1
-            tmp_fields.append(tmp_name)
-            tmp_col_map[tmp_name] = col
-            ordered_cols.append(col)
-
-        updated = ext_point_band_values_file(
-            vec_file=work_gdf,
-            vec_lyr=None,
-            input_img=img_path,
-            img_band=bands,
-            min_thres=eff_min,
-            max_thres=eff_max,
-            out_no_data_val=eff_nd,
-            out_field=tmp_fields,
-            reproj_vec=reproj_vec,
-            vec_def_epsg=vec_def_epsg,
-            use_pbar=use_pbar,
-            out_vec_file=None,
-        )
-        assert updated is not None
-        work_gdf = updated
-
-    data: Dict[str, Any] = {}
-    if include_coords:
-        first_img_path = resolved_imgs[0][0]
-        coord_geom = work_gdf.geometry
-        with rasterio.open(first_img_path, "r") as src:
-            if src.crs is not None and reproj_vec:
-                img_crs = pyproj.CRS.from_user_input(src.crs)
-                if work_gdf.crs is not None:
-                    vec_crs = pyproj.CRS.from_user_input(work_gdf.crs)
-                elif vec_def_epsg is not None:
-                    vec_crs = pyproj.CRS.from_epsg(int(vec_def_epsg))
-                else:
-                    vec_crs = None
-                if vec_crs is not None and vec_crs != img_crs:
-                    coord_geom = coord_geom.set_crs(
-                        vec_crs, allow_override=True
-                    ).to_crs(img_crs)
-        data["x"] = coord_geom.x.to_numpy(dtype=np.float64)
-        data["y"] = coord_geom.y.to_numpy(dtype=np.float64)
-
-    for tmp_name, target_col in tmp_col_map.items():
-        data[target_col] = work_gdf[tmp_name].to_numpy()
-
-    out_df = pd.DataFrame(data)
-    if mask_nodata and len(out_df) > 0:
-        valid = np.ones(len(out_df), dtype=bool)
-        for col in ordered_cols:
-            vals = out_df[col].to_numpy(dtype=np.float64)
-            valid &= np.isfinite(vals)
-            if not math.isnan(eff_nd):
-                valid &= vals != eff_nd
-        out_df = out_df.loc[valid].reset_index(drop=True)
-    return out_df
-
-
-def _grids_pixel_aligned(img_a: str, img_b: str) -> bool:
-    """Return True if two rasters share CRS, resolution, and pixel grid alignment."""
-    with rasterio.open(img_a, "r") as ds_a, rasterio.open(img_b, "r") as ds_b:
-        if ds_a.crs != ds_b.crs:
-            return False
-        ta, tb = ds_a.transform, ds_b.transform
-        if not (
-            math.isclose(ta.a, tb.a, rel_tol=1e-6, abs_tol=1e-9)
-            and math.isclose(ta.e, tb.e, rel_tol=1e-6, abs_tol=1e-9)
-            and math.isclose(ta.b, tb.b, abs_tol=1e-9)
-            and math.isclose(ta.d, tb.d, abs_tol=1e-9)
-        ):
-            return False
-        if abs(ta.a) == 0.0 or abs(ta.e) == 0.0:
-            return False
-        dx_px = (tb.c - ta.c) / ta.a
-        dy_px = (tb.f - ta.f) / ta.e
-        return math.isclose(
-            dx_px, round(dx_px), abs_tol=1e-4
-        ) and math.isclose(dy_px, round(dy_px), abs_tol=1e-4)
-
-
-def _extract_polygons_for_class(
-    poly_gdf: gpd.GeoDataFrame,
-    resolved_imgs: List[Tuple[str, List[int], List[str]]],
-    min_thres: Optional[float],
-    max_thres: Optional[float],
-    out_no_data_val: Optional[float],
-    mask_nodata: bool,
-    all_touched: bool,
-    include_coords: bool,
-    reproj_vec: bool,
-    vec_def_epsg: Optional[int],
-    use_pbar: bool,
-) -> pd.DataFrame:
-    """Extract polygon pixel samples using export_poly_pxls_to_df."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,too-many-branches
-    multi_img = len(resolved_imgs) > 1
-    first_img_path, first_bands, first_cols = resolved_imgs[0]
-
-    base_df = export_poly_pxls_to_df(
-        vec_gdf=poly_gdf,
-        input_img=first_img_path,
-        img_bands=first_bands,
-        out_file=None,
-        band_names=first_cols,
-        mask_nodata=mask_nodata,
-        all_touched=all_touched,
-        include_coords=include_coords or multi_img,
-        reproj_vec=reproj_vec,
-        vec_def_epsg=vec_def_epsg,
-        use_pbar=use_pbar,
-    )
-    assert base_df is not None
-
-    all_feature_cols = list(first_cols)
-    if multi_img and len(base_df) > 0:
-        with rasterio.open(first_img_path, "r") as src0:
-            base_crs = src0.crs
-
-        for img_path, bands, col_names in resolved_imgs[1:]:
-            all_feature_cols.extend(col_names)
-            if _grids_pixel_aligned(first_img_path, img_path):
-                other_df = export_poly_pxls_to_df(
-                    vec_gdf=poly_gdf,
-                    input_img=img_path,
-                    img_bands=bands,
-                    out_file=None,
-                    band_names=col_names,
-                    mask_nodata=mask_nodata,
-                    all_touched=all_touched,
-                    include_coords=True,
-                    reproj_vec=reproj_vec,
-                    vec_def_epsg=vec_def_epsg,
-                    use_pbar=use_pbar,
-                )
-                assert other_df is not None
-                base_df["__xk__"] = np.round(base_df["x"].to_numpy(), 6)
-                base_df["__yk__"] = np.round(base_df["y"].to_numpy(), 6)
-                other_df["__xk__"] = np.round(other_df["x"].to_numpy(), 6)
-                other_df["__yk__"] = np.round(other_df["y"].to_numpy(), 6)
-                join_cols = ["poly_fid", "__xk__", "__yk__", *col_names]
-                base_df = base_df.merge(
-                    other_df[join_cols],
-                    on=["poly_fid", "__xk__", "__yk__"],
-                    how="inner",
-                )
-                base_df = base_df.drop(columns=["__xk__", "__yk__"])
-            else:
-                pts_gdf = gpd.GeoDataFrame(
-                    geometry=gpd.points_from_xy(
-                        base_df["x"].to_numpy(), base_df["y"].to_numpy()
-                    ),
-                    crs=base_crs,
-                )
-                sampled_df = _extract_points_for_class(
-                    pts_gdf=pts_gdf,
-                    resolved_imgs=[(img_path, bands, col_names)],
-                    min_thres=min_thres,
-                    max_thres=max_thres,
-                    out_no_data_val=out_no_data_val,
-                    mask_nodata=False,
-                    include_coords=False,
-                    reproj_vec=True,
-                    vec_def_epsg=None,
-                    use_pbar=use_pbar,
-                )
-                for col in col_names:
-                    base_df[col] = sampled_df[col].to_numpy()
-    elif multi_img:
-        for _, _, col_names in resolved_imgs[1:]:
-            all_feature_cols.extend(col_names)
-            for col in col_names:
-                base_df[col] = pd.Series(dtype="float64")
-
-    if len(base_df) > 0 and (
-        mask_nodata or min_thres is not None or max_thres is not None
-    ):
-        eff_min = -math.inf if min_thres is None else float(min_thres)
-        eff_max = math.inf if max_thres is None else float(max_thres)
-        eff_nd = math.nan if out_no_data_val is None else float(out_no_data_val)
-        valid = np.ones(len(base_df), dtype=bool)
-        for col in all_feature_cols:
-            vals = base_df[col].to_numpy(dtype=np.float64)
-            if mask_nodata:
-                valid &= np.isfinite(vals)
-                if not math.isnan(eff_nd):
-                    valid &= vals != eff_nd
-            valid &= (vals >= eff_min) & (vals <= eff_max)
-        base_df = base_df.loc[valid].reset_index(drop=True)
-
-    keep_cols: List[str] = []
-    if include_coords:
-        keep_cols.extend(["x", "y"])
-    keep_cols.extend(all_feature_cols)
-    return base_df[keep_cols].reset_index(drop=True)
+    return read_ml_samples(in_file, in_format=in_format)
 
 
 def extract_class_training_samples(
@@ -1077,45 +758,20 @@ def extract_class_training_samples(
         vec_gdf = read_vec_gdf(
             cls_obj.vec_file, vec_lyr=cls_obj.vec_lyr, copy=True
         )
-        geom_types = set(vec_gdf.geom_type.dropna().unique())
-        if len(vec_gdf) == 0 or not geom_types:
-            raise rsgispy.RSGISPyException(
-                f"Training vector layer for class '{cls_name}' contains no "
-                "valid geometries."
-            )
-
-        if geom_types.issubset({"Point"}):
-            cls_df = _extract_points_for_class(
-                pts_gdf=vec_gdf,
-                resolved_imgs=resolved_imgs,
-                min_thres=min_thres,
-                max_thres=max_thres,
-                out_no_data_val=out_no_data_val,
-                mask_nodata=mask_nodata,
-                include_coords=include_coords,
-                reproj_vec=reproj_vec,
-                vec_def_epsg=vec_def_epsg,
-                use_pbar=use_pbar,
-            )
-        elif geom_types.issubset({"Polygon", "MultiPolygon"}):
-            cls_df = _extract_polygons_for_class(
-                poly_gdf=vec_gdf,
-                resolved_imgs=resolved_imgs,
-                min_thres=min_thres,
-                max_thres=max_thres,
-                out_no_data_val=out_no_data_val,
-                mask_nodata=mask_nodata,
-                all_touched=all_touched,
-                include_coords=include_coords,
-                reproj_vec=reproj_vec,
-                vec_def_epsg=vec_def_epsg,
-                use_pbar=use_pbar,
-            )
-        else:
-            raise rsgispy.RSGISPyException(
-                f"Unsupported geometry type(s) for class '{cls_name}': "
-                f"{sorted(geom_types)}. Expected Point or Polygon/MultiPolygon."
-            )
+        cls_df = extract_vector_samples_from_gdf(
+            vec_gdf=vec_gdf,
+            resolved_imgs=resolved_imgs,
+            min_thres=min_thres,
+            max_thres=max_thres,
+            out_no_data_val=out_no_data_val,
+            mask_nodata=mask_nodata,
+            all_touched=all_touched,
+            include_coords=include_coords,
+            reproj_vec=reproj_vec,
+            vec_def_epsg=vec_def_epsg,
+            use_pbar=use_pbar,
+            label=f"class '{cls_name}'",
+        )
 
         n_rows = len(cls_df)
         if n_rows > 0:
@@ -1154,35 +810,6 @@ def extract_class_training_samples(
     return out_df
 
 
-def _resolve_split_proportions(
-    train_prop: Optional[float],
-    test_prop: float,
-    valid_prop: float,
-) -> Tuple[float, float, float]:
-    """Validate and resolve ``(train_prop, test_prop, valid_prop)``."""
-    test_p = float(test_prop)
-    valid_p = float(valid_prop)
-    if test_p < 0.0 or valid_p < 0.0:
-        raise rsgispy.RSGISPyException(
-            "test_prop and valid_prop must be non-negative."
-        )
-    if train_prop is None:
-        train_p = 1.0 - test_p - valid_p
-    else:
-        train_p = float(train_prop)
-    if train_p < 0.0:
-        raise rsgispy.RSGISPyException(
-            f"Resolved train_prop ({train_p}) must be non-negative."
-        )
-    total = train_p + test_p + valid_p
-    if total <= 0.0 or total > 1.0 + 1e-9:
-        raise rsgispy.RSGISPyException(
-            "Split proportions train_prop + test_prop + valid_prop must be "
-            f"in (0, 1], got {total}."
-        )
-    return train_p, test_p, valid_p
-
-
 def _resolve_count_for_class(
     spec: Optional[Union[int, Mapping[Any, int]]],
     cls_key: Any,
@@ -1207,69 +834,6 @@ def _resolve_count_for_class(
     if int_val < 0:
         raise rsgispy.RSGISPyException(f"{label} must be >= 0, got {int_val}.")
     return int_val
-
-
-def _allocate_class_split_counts(
-    n_total: int,
-    train_p: float,
-    test_p: float,
-    valid_p: float,
-    c_train: Optional[int],
-    c_test: Optional[int],
-    c_valid: Optional[int],
-) -> Tuple[int, int, int]:
-    """Compute non-overlapping ``(n_train, n_test, n_valid)`` counts for one class."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    if any(c is not None for c in (c_train, c_test, c_valid)):
-        n_tr = (
-            c_train
-            if c_train is not None
-            else int(round(n_total * train_p))
-        )
-        n_te = (
-            c_test
-            if c_test is not None
-            else int(round(n_total * test_p))
-        )
-        n_va = (
-            c_valid
-            if c_valid is not None
-            else int(round(n_total * valid_p))
-        )
-        if n_tr + n_te + n_va > n_total:
-            raise rsgispy.RSGISPyException(
-                f"Requested split counts ({n_tr}, {n_te}, {n_va}) exceed "
-                f"available class samples ({n_total})."
-            )
-        return n_tr, n_te, n_va
-
-    if n_total == 0:
-        return 0, 0, 0
-    if n_total == 1:
-        return (1, 0, 0) if train_p > 0.0 else (0, 1, 0)
-
-    n_te = int(round(n_total * test_p)) if test_p > 0.0 else 0
-    n_va = int(round(n_total * valid_p)) if valid_p > 0.0 else 0
-
-    if n_te + n_va > n_total:
-        excess = (n_te + n_va) - n_total
-        reduce_va = min(n_va, excess)
-        n_va -= reduce_va
-        n_te = max(0, n_te - (excess - reduce_va))
-
-    if train_p + test_p + valid_p >= 1.0 - 1e-6:
-        n_tr = n_total - n_te - n_va
-        if train_p > 0.0 and n_tr == 0:
-            if n_va > 1 or (n_va == 1 and valid_p <= test_p):
-                n_va -= 1
-                n_tr += 1
-            elif n_te > 0:
-                n_te -= 1
-                n_tr += 1
-    else:
-        n_tr = min(int(round(n_total * train_p)), n_total - n_te - n_va)
-
-    return n_tr, n_te, n_va
 
 
 def split_class_samples(
@@ -1352,7 +916,7 @@ def split_class_samples(
             f"samples_df columns {list(samples_df.columns)}."
         )
 
-    train_p, test_p, valid_p = _resolve_split_proportions(
+    train_p, test_p, valid_p = resolve_split_proportions(
         train_prop, test_prop, valid_prop
     )
     rng = resolve_rng(rnd_seed)
@@ -1379,8 +943,15 @@ def split_class_samples(
         c_te = _resolve_count_for_class(n_test, cls_key, cls_name, "n_test")
         c_va = _resolve_count_for_class(n_valid, cls_key, cls_name, "n_valid")
 
-        n_tr_c, n_te_c, n_va_c = _allocate_class_split_counts(
-            len(cls_pos), train_p, test_p, valid_p, c_tr, c_te, c_va
+        n_tr_c, n_te_c, n_va_c = allocate_split_counts(
+            len(cls_pos),
+            train_p,
+            test_p,
+            valid_p,
+            c_tr,
+            c_te,
+            c_va,
+            group_label="class samples",
         )
         test_end = n_tr_c + n_te_c
         valid_end = test_end + n_va_c

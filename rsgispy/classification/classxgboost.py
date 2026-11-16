@@ -17,20 +17,24 @@ from typing import (
 )
 
 import numpy as np
-import pandas as pd
 
-import rsgispy
 from rsgispy.classification._gbdt import (
     GBDTBackendSpec,
     apply_gbdt_classifier,
     optimise_gbdt_classifier,
     train_gbdt_classifier,
-    validate_gpu_device_id,
 )
 from rsgispy.classification._helpers import ClsConfigInput, SamplesInput
 from rsgispy.classification.classdata import ImageBandInfo
-from rsgispy.imageprocess import ensure_file_exists
-from rsgispy.tools.files import ensure_parent_dir
+from rsgispy.tools._gbdt_common import (
+    apply_xgb_gpu_params as _apply_xgb_gpu_params,
+    fit_xgb_estimator as _fit_xgb_estimator,
+    get_xgboost_optuna_param_space as _tools_get_xgboost_optuna_param_space,
+    load_xgb_or_cb_model,
+    prepare_xgb_predict_estimator as _prepare_xgb_predict_estimator,
+    save_xgb_or_cb_model,
+    validate_gpu_device_id,
+)
 
 try:
     import xgboost as xgb  # pylint: disable=import-error
@@ -39,14 +43,6 @@ try:
 except ImportError:
     xgb = None  # type: ignore[assignment]
     HAVE_XGBOOST = False
-
-try:
-    import joblib  # pylint: disable=import-error
-
-    HAVE_JOBLIB = True
-except ImportError:
-    joblib = None  # type: ignore[assignment]
-    HAVE_JOBLIB = False
 
 __all__ = [
     "is_xgboost_gpu_available",
@@ -137,72 +133,9 @@ def get_xgboost_optuna_param_space(
         key_space = cxgb.get_xgboost_optuna_param_space()
         full_space = cxgb.get_xgboost_optuna_param_space(extended=True)
     """
-    if not extended:
-        return {
-            "n_estimators": {"type": "int", "low": 50, "high": 500, "step": 25},
-            "learning_rate": {
-                "type": "float",
-                "low": 0.01,
-                "high": 0.3,
-                "log": True,
-            },
-            "max_depth": {"type": "int", "low": 3, "high": 10},
-            "min_child_weight": {"type": "int", "low": 1, "high": 10},
-            "gamma": {"type": "float", "low": 1e-4, "high": 5.0, "log": True},
-            "subsample": {"type": "float", "low": 0.5, "high": 1.0},
-            "colsample_bytree": {"type": "float", "low": 0.5, "high": 1.0},
-            "reg_alpha": {
-                "type": "float",
-                "low": 1e-4,
-                "high": 10.0,
-                "log": True,
-            },
-            "reg_lambda": {
-                "type": "float",
-                "low": 1e-4,
-                "high": 10.0,
-                "log": True,
-            },
-        }
-
-    space: Dict[str, Any] = {
-        "n_estimators": {"type": "int", "low": 50, "high": 1000, "step": 25},
-        "learning_rate": {
-            "type": "float",
-            "low": 0.005,
-            "high": 0.3,
-            "log": True,
-        },
-        "max_depth": {"type": "int", "low": 3, "high": 12},
-        "min_child_weight": {
-            "type": "float",
-            "low": 0.5,
-            "high": 20.0,
-            "log": True,
-        },
-        "gamma": {"type": "float", "low": 1e-4, "high": 10.0, "log": True},
-        "subsample": {"type": "float", "low": 0.5, "high": 1.0},
-        "colsample_bytree": {"type": "float", "low": 0.4, "high": 1.0},
-        "colsample_bylevel": {"type": "float", "low": 0.4, "high": 1.0},
-        "colsample_bynode": {"type": "float", "low": 0.4, "high": 1.0},
-        "reg_alpha": {"type": "float", "low": 1e-5, "high": 20.0, "log": True},
-        "reg_lambda": {"type": "float", "low": 1e-5, "high": 20.0, "log": True},
-        "max_delta_step": {"type": "int", "low": 0, "high": 10},
-        "max_bin": {"type": "int", "low": 64, "high": 512, "step": 64},
-        "grow_policy": {
-            "type": "categorical",
-            "choices": ["depthwise", "lossguide"],
-        },
-        "max_leaves": {"type": "int", "low": 0, "high": 128},
-    }
-    if binary:
-        space["scale_pos_weight"] = {
-            "type": "float",
-            "low": 0.5,
-            "high": 10.0,
-            "log": True,
-        }
-    return space
+    return _tools_get_xgboost_optuna_param_space(
+        extended=extended, binary=binary, task="classification"
+    )
 
 
 def _default_xgb_binary_params(verbose: int) -> Dict[str, Any]:
@@ -235,31 +168,6 @@ def _build_xgb_estimator(
     return cls(**params)
 
 
-def _fit_xgb_estimator(
-    est: Any,
-    train_x: pd.DataFrame,
-    train_y: np.ndarray,
-    valid_x: Optional[pd.DataFrame],
-    valid_y: Optional[np.ndarray],
-    early_stopping_rounds: Optional[int],
-) -> Any:
-    """Fit ``XGBClassifier`` with optional validation early stopping."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    if valid_x is not None and valid_y is not None and (
-        early_stopping_rounds is not None
-        or getattr(est, "early_stopping_rounds", None) is not None
-    ):
-        est.fit(
-            train_x,
-            train_y,
-            eval_set=[(valid_x, valid_y)],
-            verbose=False,
-        )
-    else:
-        est.fit(train_x, train_y)
-    return est
-
-
 def save_xgboost_classifier(
     xgb_classifier: Any,
     out_file: Union[str, os.PathLike],
@@ -281,18 +189,14 @@ def save_xgboost_classifier(
 
         cxgb.save_xgboost_classifier(clf, "xgb_model.json")
     """
-    rsgispy.check_optional_dep(
-        HAVE_XGBOOST, "save_xgboost_classifier", "xgboost", "xgboost"
+    save_xgb_or_cb_model(
+        model=xgb_classifier,
+        out_file=out_file,
+        have_pkg=HAVE_XGBOOST,
+        pkg_name="xgboost",
+        extra="xgboost",
+        func_name="save_xgboost_classifier",
     )
-    out_path = ensure_parent_dir(out_file)
-    ext = os.path.splitext(out_path)[1].lower()
-    if ext in (".joblib", ".pkl"):
-        rsgispy.check_optional_dep(
-            HAVE_JOBLIB, "save_xgboost_classifier", "joblib", "classification"
-        )
-        joblib.dump(xgb_classifier, out_path)
-    else:
-        xgb_classifier.save_model(out_path)
 
 
 def load_xgboost_classifier(
@@ -313,65 +217,15 @@ def load_xgboost_classifier(
 
         clf = cxgb.load_xgboost_classifier("xgb_model.json")
     """
-    rsgispy.check_optional_dep(
-        HAVE_XGBOOST, "load_xgboost_classifier", "xgboost", "xgboost"
+    return load_xgb_or_cb_model(
+        in_file=in_file,
+        model_factory=lambda: xgb.XGBClassifier(),
+        have_pkg=HAVE_XGBOOST,
+        pkg_name="xgboost",
+        extra="xgboost",
+        func_name="load_xgboost_classifier",
+        label="XGBoost model",
     )
-    in_path = os.fspath(in_file)
-    ensure_file_exists(in_path, label="XGBoost model")
-    ext = os.path.splitext(in_path)[1].lower()
-    if ext in (".joblib", ".pkl"):
-        rsgispy.check_optional_dep(
-            HAVE_JOBLIB, "load_xgboost_classifier", "joblib", "classification"
-        )
-        return joblib.load(in_path)
-    clf = xgb.XGBClassifier()
-    clf.load_model(in_path)
-    return clf
-
-
-def _apply_xgb_gpu_params(
-    params: Dict[str, Any],
-    gpu_device_id: Optional[int],
-) -> Dict[str, Any]:
-    """Configure XGBoost parameters for CUDA GPU histogram training."""
-    out = dict(params)
-    out.pop("gpu_id", None)
-    out["tree_method"] = "hist"
-    out["device"] = (
-        "cuda" if gpu_device_id is None else f"cuda:{int(gpu_device_id)}"
-    )
-    return out
-
-
-def _prepare_xgb_predict_estimator(
-    estimator: Any,
-    gpu_active: bool,
-    gpu_device_id: Optional[int],
-) -> Tuple[Any, Dict[str, Any], Optional[Callable[[], None]]]:
-    """Temporarily configure XGBoost inference device and restore afterwards."""
-    if not hasattr(estimator, "get_params") or not hasattr(
-        estimator, "set_params"
-    ):
-        return estimator, {}, None
-    orig_device = estimator.get_params().get("device", None)
-    target_device: Optional[str] = None
-    if gpu_active:
-        target_device = (
-            "cuda" if gpu_device_id is None else f"cuda:{int(gpu_device_id)}"
-        )
-    elif isinstance(orig_device, str) and orig_device.strip().lower().startswith(
-        ("cuda", "gpu")
-    ):
-        target_device = "cpu"
-
-    if target_device is not None and orig_device != target_device:
-        estimator.set_params(device=target_device)
-
-        def _restore() -> None:
-            estimator.set_params(device=orig_device)
-
-        return estimator, {}, _restore
-    return estimator, {}, None
 
 
 _XGB_BACKEND = GBDTBackendSpec(
