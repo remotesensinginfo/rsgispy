@@ -13,7 +13,6 @@ import matplotlib.colors
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib_scalebar.scalebar import ScaleBar  # noqa: E402
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 import rasterio  # noqa: E402
@@ -169,7 +168,8 @@ def test_create_vec_lyr_map_and_choropleth():
         use_grid=True,
     )
     assert ax.get_title() == "Vectors"
-    assert any(isinstance(a, ScaleBar) for a in ax.artists)
+    assert any(isinstance(a, mapping.MapScaleBar) for a in ax.artists)
+    assert not any(isinstance(a, mapping.MapNorthArrow) for a in ax.artists)
     plt.close(fig)
 
     # Error on mismatched layer list length
@@ -432,4 +432,160 @@ def test_optional_contextily_density_and_wmts(tmp_path):
         )
     assert ax.get_title() == "WMTS"
     assert not any(os.path.exists(f"tmp_{x}") for x in ())
+    plt.close(fig)
+
+
+def test_scale_bar_styles_units_and_rendering(tmp_path):
+    """Test add_scale_bar styles, m/km unit enforcement, EPSG:4326, and rendering."""
+    # 1) Small UTM extent -> auto selects metres ('m')
+    fig, ax = plt.subplots()
+    mapping.define_axis_extent(ax, (500000.0, 500400.0, 5200000.0, 5200400.0))
+    sb_small = mapping.add_scale_bar(ax, epsg_code=32630)
+    assert isinstance(sb_small, mapping.MapScaleBar)
+    assert sb_small.units == mapping.SCALEBAR_UNIT_METRES
+    assert sb_small.style == mapping.SCALEBAR_STYLE_SOLID
+    assert sb_small.label_text.endswith(" m")
+    out_small = tmp_path / "sb_solid.png"
+    fig.savefig(out_small, dpi=72, bbox_inches="tight")
+    assert out_small.exists() and out_small.stat().st_size > 0
+    plt.close(fig)
+
+    # 2) Large UTM extent -> auto selects kilometres ('km')
+    fig, ax = plt.subplots()
+    mapping.define_axis_extent(ax, (500000.0, 520000.0, 5200000.0, 5220000.0))
+    sb_large = mapping.add_scale_bar(
+        ax,
+        epsg_code=32630,
+        style=mapping.SCALEBAR_STYLE_ALTERNATING,
+        loc="bottom left",
+    )
+    assert sb_large.units == mapping.SCALEBAR_UNIT_KILOMETRES
+    assert sb_large.style == mapping.SCALEBAR_STYLE_ALTERNATING
+    assert sb_large.loc_str == "lower left"
+    assert sb_large.label_text.endswith(" km")
+    out_alt = tmp_path / "sb_alt.png"
+    fig.savefig(out_alt, dpi=72, bbox_inches="tight")
+    assert out_alt.exists() and out_alt.stat().st_size > 0
+    plt.close(fig)
+
+    # 3) Ticks style and explicit 'm' unit override on large extent
+    fig, ax = plt.subplots()
+    mapping.define_axis_extent(ax, (500000.0, 504000.0, 5200000.0, 5204000.0))
+    sb_ticks = mapping.add_scale_bar(
+        ax,
+        epsg_code=32630,
+        style=mapping.SCALEBAR_STYLE_TICKS,
+        units=mapping.SCALEBAR_UNIT_METRES,
+        loc="lower right",
+    )
+    assert sb_ticks.units == "m"
+    assert sb_ticks.style == mapping.SCALEBAR_STYLE_TICKS
+    assert sb_ticks.bar_length_metres == pytest.approx(sb_ticks.bar_length_value)
+    out_ticks = tmp_path / "sb_ticks.png"
+    fig.savefig(out_ticks, dpi=72, bbox_inches="tight")
+    assert out_ticks.exists() and out_ticks.stat().st_size > 0
+    plt.close(fig)
+
+    # 4) EPSG:4326 geographic extent (~20 km wide at 52N) -> kilometres, positive bar width
+    fig, ax = plt.subplots()
+    mapping.define_axis_extent(ax, (-4.3, -4.0, 52.3, 52.5))
+    sb_wgs = mapping.add_scale_bar(ax, epsg_code=4326, units=mapping.SCALEBAR_UNIT_KILOMETRES)
+    assert sb_wgs.units == "km"
+    assert 1.0 <= sb_wgs.bar_length_value <= 10.0
+    fig.canvas.draw()
+    plt.close(fig)
+
+    # 5) Sub-metre map still uses 'm' (never cm/mm)
+    fig, ax = plt.subplots()
+    mapping.define_axis_extent(ax, (0.0, 1.0, 0.0, 1.0))
+    sb_tiny = mapping.add_scale_bar(ax, epsg_code=32630)
+    assert sb_tiny.units == "m"
+    plt.close(fig)
+
+    # 6) Invalid units, styles, and locations raise RSGISPyException
+    fig, ax = plt.subplots()
+    mapping.define_axis_extent(ax, (0.0, 100.0, 0.0, 100.0))
+    for bad_unit in ("cm", "mm", "ft", "mi", "deg"):
+        with pytest.raises(rsgispy.RSGISPyException):
+            mapping.add_scale_bar(ax, units=bad_unit)
+    with pytest.raises(rsgispy.RSGISPyException):
+        mapping.add_scale_bar(ax, style="dashed")
+    with pytest.raises(rsgispy.RSGISPyException):
+        mapping.add_scale_bar(ax, loc="nowhere")
+    with pytest.raises(rsgispy.RSGISPyException):
+        mapping.add_scale_bar(ax, length_fraction=1.5)
+    plt.close(fig)
+
+
+def test_north_arrow_styles_and_map_integration(tmp_path):
+    """Test add_north_arrow styles, rotation, errors, and create_*_map integration."""
+    styles = (
+        mapping.NORTH_ARROW_STYLE_TRIANGLE,
+        mapping.NORTH_ARROW_STYLE_ARROW,
+        mapping.NORTH_ARROW_STYLE_COMPASS,
+        mapping.NORTH_ARROW_STYLE_SIMPLE,
+    )
+    for style in styles:
+        fig, ax = plt.subplots()
+        mapping.define_axis_extent(ax, (500000.0, 510000.0, 5200000.0, 5210000.0))
+        na = mapping.add_north_arrow(
+            ax,
+            style=style,
+            loc="upper left",
+            rotation=15.0 if style == mapping.NORTH_ARROW_STYLE_ARROW else 0.0,
+        )
+        assert isinstance(na, mapping.MapNorthArrow)
+        assert na.style == style
+        out_png = tmp_path / f"na_{style}.png"
+        fig.savefig(out_png, dpi=72, bbox_inches="tight")
+        assert out_png.exists() and out_png.stat().st_size > 0
+        plt.close(fig)
+
+    fig, ax = plt.subplots()
+    with pytest.raises(rsgispy.RSGISPyException):
+        mapping.add_north_arrow(ax, style="unknown_style")
+    with pytest.raises(rsgispy.RSGISPyException):
+        mapping.add_north_arrow(ax, size=0.0)
+    plt.close(fig)
+
+    # Verify integration on create_raster_img_map & create_vec_lyr_map
+    arr = np.arange(1, 101, dtype=np.float32).reshape(1, 10, 10)
+    tif = tmp_path / "map_int.tif"
+    _write_continuous_raster(str(tif), arr, res=100.0, nodata=0.0)
+
+    # Default: scale bar enabled, north arrow NOT added
+    fig, ax = plt.subplots()
+    mapping.create_raster_img_map(
+        ax,
+        str(tif),
+        img_bands=[1],
+        img_stch=rsgispy.IMG_STRETCH_LINEAR,
+    )
+    assert any(isinstance(a, mapping.MapScaleBar) for a in ax.artists)
+    assert not any(isinstance(a, mapping.MapNorthArrow) for a in ax.artists)
+    plt.close(fig)
+
+    # Enabled with custom styles and units
+    fig, ax = plt.subplots()
+    mapping.create_raster_img_map(
+        ax,
+        str(tif),
+        img_bands=[1],
+        img_stch=rsgispy.IMG_STRETCH_LINEAR,
+        scale_bar_style=mapping.SCALEBAR_STYLE_TICKS,
+        scale_bar_units=mapping.SCALEBAR_UNIT_KILOMETRES,
+        show_north_arrow=True,
+        north_arrow_style=mapping.NORTH_ARROW_STYLE_COMPASS,
+        north_arrow_loc="lower left",
+    )
+    sbs = [a for a in ax.artists if isinstance(a, mapping.MapScaleBar)]
+    nas = [a for a in ax.artists if isinstance(a, mapping.MapNorthArrow)]
+    assert len(sbs) == 1
+    assert sbs[0].style == mapping.SCALEBAR_STYLE_TICKS
+    assert sbs[0].units == mapping.SCALEBAR_UNIT_KILOMETRES
+    assert len(nas) == 1
+    assert nas[0].style == mapping.NORTH_ARROW_STYLE_COMPASS
+    out_full = tmp_path / "full_map.png"
+    fig.savefig(out_full, dpi=72, bbox_inches="tight")
+    assert out_full.exists() and out_full.stat().st_size > 0
     plt.close(fig)

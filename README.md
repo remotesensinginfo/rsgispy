@@ -74,7 +74,7 @@ If you use `rsgispy` or build on concepts from RSGISLib in academic work, please
 
 ### Minimal installation
 
-Install `rsgispy` with only its core dependencies (`geopandas`, `matplotlib`, `matplotlib-scalebar`, `numpy`, `pandas`, `pymu-eval`, `pyproj`, `rasterio`, `shapely`, and `tqdm`):
+Install `rsgispy` with only its core dependencies (`geopandas`, `matplotlib`, `numpy`, `pandas`, `pymu-eval`, `pyproj`, `rasterio`, `shapely`, and `tqdm`):
 
 ```bash
 pip install .
