@@ -989,7 +989,7 @@ def calc_split_metrics(
     prefix: str,
 ) -> Dict[str, float]:
     """Compute accuracy, balanced accuracy, macro F1, and kappa for a split."""
-    preds = np.asarray(fitted_est.predict(x_df))
+    preds = np.asarray(fitted_est.predict(x_df)).ravel()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         acc = float(sklearn.metrics.accuracy_score(y_true, preds))

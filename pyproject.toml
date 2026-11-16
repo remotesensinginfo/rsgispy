@@ -56,6 +56,24 @@ classification = [
     "scikit-learn>=1.2",
     "scipy>=1.7",
 ]
+xgboost = [
+    "optuna>=3.0",
+    "scikit-learn>=1.2",
+    "xgboost>=1.7",
+]
+lightgbm = [
+    "lightgbm>=4.0",
+    "optuna>=3.0",
+    "scikit-learn>=1.2",
+]
+catboost = [
+    "catboost>=1.2",
+    "optuna>=3.0",
+    "scikit-learn>=1.2",
+]
+gbdt = [
+    "rsgispy[xgboost,lightgbm,catboost]",
+]
 stats = [
     "scikit-gstat>=1.0",
     "scikit-learn>=1.2",

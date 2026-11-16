@@ -30,6 +30,42 @@ Submodules:
   :func:`~rsgispy.classification.classsklearn.apply_sklearn_classifier`,
   :func:`~rsgispy.classification.classsklearn.save_sklearn_classifier`,
   :func:`~rsgispy.classification.classsklearn.load_sklearn_classifier`).
+* :mod:`rsgispy.classification.classxgboost` — XGBoost binary and multi-class
+  classification with Optuna Bayesian hyperparameter optimisation, early
+  stopping, model persistence, and block-wise image classification
+  (:func:`~rsgispy.classification.classxgboost.get_xgboost_optuna_param_space`,
+  :func:`~rsgispy.classification.classxgboost.optimise_xgboost_binary_classifier`,
+  :func:`~rsgispy.classification.classxgboost.optimise_xgboost_multiclass_classifier`,
+  :func:`~rsgispy.classification.classxgboost.train_xgboost_binary_classifier`,
+  :func:`~rsgispy.classification.classxgboost.train_xgboost_multiclass_classifier`,
+  :func:`~rsgispy.classification.classxgboost.apply_xgboost_binary_classifier`,
+  :func:`~rsgispy.classification.classxgboost.apply_xgboost_multiclass_classifier`,
+  :func:`~rsgispy.classification.classxgboost.save_xgboost_classifier`,
+  :func:`~rsgispy.classification.classxgboost.load_xgboost_classifier`).
+* :mod:`rsgispy.classification.classlightgbm` — LightGBM binary and multi-class
+  classification with Optuna Bayesian hyperparameter optimisation, early
+  stopping, model persistence, and block-wise image classification
+  (:func:`~rsgispy.classification.classlightgbm.get_lightgbm_optuna_param_space`,
+  :func:`~rsgispy.classification.classlightgbm.optimise_lightgbm_binary_classifier`,
+  :func:`~rsgispy.classification.classlightgbm.optimise_lightgbm_multiclass_classifier`,
+  :func:`~rsgispy.classification.classlightgbm.train_lightgbm_binary_classifier`,
+  :func:`~rsgispy.classification.classlightgbm.train_lightgbm_multiclass_classifier`,
+  :func:`~rsgispy.classification.classlightgbm.apply_lightgbm_binary_classifier`,
+  :func:`~rsgispy.classification.classlightgbm.apply_lightgbm_multiclass_classifier`,
+  :func:`~rsgispy.classification.classlightgbm.save_lightgbm_classifier`,
+  :func:`~rsgispy.classification.classlightgbm.load_lightgbm_classifier`).
+* :mod:`rsgispy.classification.classcatboost` — CatBoost binary and multi-class
+  classification with Optuna Bayesian hyperparameter optimisation, early
+  stopping, model persistence, and block-wise image classification
+  (:func:`~rsgispy.classification.classcatboost.get_catboost_optuna_param_space`,
+  :func:`~rsgispy.classification.classcatboost.optimise_catboost_binary_classifier`,
+  :func:`~rsgispy.classification.classcatboost.optimise_catboost_multiclass_classifier`,
+  :func:`~rsgispy.classification.classcatboost.train_catboost_binary_classifier`,
+  :func:`~rsgispy.classification.classcatboost.train_catboost_multiclass_classifier`,
+  :func:`~rsgispy.classification.classcatboost.apply_catboost_binary_classifier`,
+  :func:`~rsgispy.classification.classcatboost.apply_catboost_multiclass_classifier`,
+  :func:`~rsgispy.classification.classcatboost.save_catboost_classifier`,
+  :func:`~rsgispy.classification.classcatboost.load_catboost_classifier`).
 * :mod:`rsgispy.classification.clustersklearn` — Scikit-learn unsupervised
   pixel classification (clustering) across either the full image dataset in
   memory or a sampled pixel subset applied block-by-block across the image
