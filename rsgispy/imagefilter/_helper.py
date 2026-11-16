@@ -11,6 +11,7 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 import rsgispy
 from rsgispy.imageprocess import (
+    build_valid_mask,
     ensure_file_exists,
     run_window_halo_blocks,
     validate_odd_window_size,
@@ -89,14 +90,6 @@ def _resolve_out_nodata(
     if np.issubdtype(out_np_dtype, np.floating):
         return -9999.0
     return 0.0
-
-
-def _valid_mask_2d(arr: np.ndarray, eff_nd: Optional[float]) -> np.ndarray:
-    """Boolean validity mask for a float64 2D array."""
-    vld = np.isfinite(arr)
-    if eff_nd is not None and math.isfinite(float(eff_nd)):
-        vld &= arr != float(eff_nd)
-    return vld
 
 
 def stat_mean(
@@ -656,7 +649,7 @@ def _run_halo_filter(
         win_w = halo.shape[1] - 2 * pad_x
         y_end = pad_y + win_h
         x_end = pad_x + win_w
-        valid_halo = _valid_mask_2d(halo, eff_in_nd)
+        valid_halo = build_valid_mask(halo, eff_in_nd)
         centre = halo[pad_y:y_end, pad_x:x_end]
         centre_valid = valid_halo[pad_y:y_end, pad_x:x_end]
         wins = sliding_window_view(halo, (kh, kw))

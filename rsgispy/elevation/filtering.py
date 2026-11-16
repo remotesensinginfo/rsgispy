@@ -14,9 +14,9 @@ import rasterio
 from rasterio.transform import Affine
 
 import rsgispy
-from rsgispy.elevation._helpers import valid_mask as _valid_mask
 from rsgispy.imageprocess import (
     IntersectionGrid,
+    build_valid_mask as _valid_mask,
     create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,

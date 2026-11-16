@@ -19,6 +19,7 @@ def _create_test_raster(
     pixel_size=(1.0, 1.0),
     crs="EPSG:4326",
     dtype="float32",
+    nodata=None,
 ):
     """Helper to write a multi-band test GeoTIFF."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -34,6 +35,7 @@ def _create_test_raster(
         dtype=dtype,
         crs=crs,
         transform=transform,
+        nodata=nodata,
     ) as dst:
         dst.write(bands_data.astype(dtype))
 
@@ -643,3 +645,34 @@ def test_overlap_and_band_pair_helpers(tmp_path):
         assert ov_reproj["same_grid"] is False
         assert ov_reproj["ref_arr"].shape == (1, 5, 5)
         assert np.all(ov_reproj["flt_valid"])
+
+
+def test_build_valid_mask_and_read_raster_band(tmp_path):
+    """Test build_valid_mask and read_raster_band across integer and float rasters."""
+    int_arr = np.array([[0, 1, 2], [2, 0, 3]], dtype=np.uint8)
+    mask_int = rsgispy.imageprocess.build_valid_mask(int_arr, no_data_val=0)
+    assert mask_int.tolist() == [[False, True, True], [True, False, True]]
+
+    flt_arr = np.array([[np.nan, -9999.0, 1.5], [2.0, np.inf, 0.0]], dtype=np.float32)
+    mask_flt = rsgispy.imageprocess.build_valid_mask(flt_arr, no_data_val=-9999.0)
+    assert mask_flt.tolist() == [[False, False, True], [True, False, True]]
+
+    raster_path = tmp_path / "band_read.tif"
+    _create_test_raster(
+        raster_path,
+        np.stack([int_arr.astype(np.float32), flt_arr], axis=0),
+        pixel_size=(10.0, 10.0),
+        nodata=-9999.0,
+    )
+    band_data, crs, transform, valid = rsgispy.imageprocess.read_raster_band(
+        raster_path, img_band=2
+    )
+    assert band_data.shape == (2, 3)
+    assert crs is not None
+    assert transform.a == pytest.approx(10.0)
+    assert valid.tolist() == [[False, False, True], [True, False, True]]
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageprocess.read_raster_band(raster_path, img_band=3)
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageprocess.read_raster_band(tmp_path / "missing.tif", img_band=1)

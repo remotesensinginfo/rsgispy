@@ -4,7 +4,6 @@ helpers for :mod:`rsgispy.elevation`.
 """
 
 from contextlib import ExitStack
-import math
 from typing import Any, Callable, Optional, Tuple
 
 import numpy as np
@@ -12,6 +11,7 @@ import rasterio
 
 import rsgispy
 from rsgispy.imageprocess import (
+    build_valid_mask,
     create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
@@ -41,17 +41,6 @@ def validate_slope_unit(unit: str) -> str:
     return unit_norm
 
 
-def valid_mask(arr: np.ndarray, no_data_val: Optional[float]) -> np.ndarray:
-    """Return boolean mask of finite values excluding ``no_data_val``."""
-    mask = np.isfinite(arr)
-    if no_data_val is not None and not (
-        isinstance(no_data_val, (float, np.floating))
-        and math.isnan(float(no_data_val))
-    ):
-        mask &= arr != no_data_val
-    return mask
-
-
 def prepare_3x3_horn_diffs(
     dem_halo: np.ndarray,
     no_data_val: Optional[float],
@@ -61,7 +50,7 @@ def prepare_3x3_horn_diffs(
     means when ``n_vals > 1``) and return ``(dx_w_minus_e, dy_s_minus_n, n_vals)``.
     """
     win = np.lib.stride_tricks.sliding_window_view(dem_halo, (3, 3))
-    valid = valid_mask(win, no_data_val)
+    valid = build_valid_mask(win, no_data_val)
     n_vals = valid.sum(axis=(2, 3))
 
     has_nodata = n_vals < 9

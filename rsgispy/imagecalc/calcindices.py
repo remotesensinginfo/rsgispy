@@ -24,6 +24,7 @@ import rasterio
 
 import rsgispy
 from rsgispy.imageprocess import (
+    build_valid_mask,
     compute_spatial_intersection,
     create_output_from_dataset,
     ensure_file_exists,
@@ -1388,16 +1389,6 @@ def _resolve_out_nodata(
     return f_val
 
 
-def _is_nodata_mask(arr: np.ndarray, nodata_val: Optional[float]) -> np.ndarray:
-    """Return boolean mask of pixels matching ``nodata_val`` or non-finite."""
-    mask = ~np.isfinite(arr)
-    if nodata_val is not None:
-        f_nd = float(nodata_val)
-        if not math.isnan(f_nd):
-            mask = mask | (arr == f_nd)
-    return mask
-
-
 def _resolve_index_params(
     index_params: Optional[Mapping[str, Mapping[str, float]]],
 ) -> Dict[str, Dict[str, float]]:
@@ -1438,7 +1429,7 @@ def _read_scaled_bands(
 
     for pos, b_name in enumerate(band_list):
         raw_arr = raw_block[pos]
-        invalid = _is_nodata_mask(raw_arr, in_nodata_map[b_name])
+        invalid = ~build_valid_mask(raw_arr, in_nodata_map[b_name])
         phys = (raw_arr - in_offset_map[b_name]) / in_gain_map[b_name]
         invalid_masks[b_name] = invalid
         scaled_bands[b_name] = phys

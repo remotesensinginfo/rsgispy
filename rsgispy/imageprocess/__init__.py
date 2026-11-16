@@ -215,6 +215,90 @@ def validate_band_index(img_band: int, n_bands: int, img_path: str) -> None:
         )
 
 
+def build_valid_mask(
+    arr: np.ndarray,
+    no_data_val: Optional[float] = None,
+) -> np.ndarray:
+    """
+    Build a boolean validity mask for ``arr``, excluding non-finite floating
+    values and ``no_data_val``.
+
+    :param arr: Input NumPy array.
+    :param no_data_val: Optional no-data value to exclude (supports ``NaN``).
+    :return: Boolean NumPy array of the same shape as ``arr`` where ``True``
+             marks valid pixels.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.imageprocess
+
+        mask = rsgispy.imageprocess.build_valid_mask(
+            np.array([0.0, 1.0, np.nan]), no_data_val=0.0
+        )
+    """
+    if np.issubdtype(arr.dtype, np.floating):
+        valid_mask = np.isfinite(arr)
+    else:
+        valid_mask = np.ones(arr.shape, dtype=bool)
+    if no_data_val is not None:
+        if isinstance(no_data_val, (float, np.floating)) and math.isnan(
+            float(no_data_val)
+        ):
+            if np.issubdtype(arr.dtype, np.floating):
+                valid_mask &= ~np.isnan(arr)
+        else:
+            valid_mask &= arr != no_data_val
+    return valid_mask
+
+
+def read_raster_band(
+    input_img: Union[str, os.PathLike],
+    img_band: int = 1,
+    no_data_val: Optional[float] = None,
+) -> Tuple[np.ndarray, Any, Affine, np.ndarray]:
+    """
+    Read a single raster band along with its CRS, affine transform, and valid
+    pixel mask.
+
+    :param input_img: Path to the input raster file.
+    :param img_band: 1-based band index to read (Default = ``1``).
+    :param no_data_val: Pixel value treated as no-data (reads band header
+                        no-data value when ``None``).
+    :return: Tuple ``(band_data, crs, transform, valid_mask)``.
+
+    .. code:: python
+
+        import rsgispy.imageprocess
+
+        data, crs, transform, valid = rsgispy.imageprocess.read_raster_band(
+            "img.tif", img_band=1
+        )
+    """
+    in_path = os.fspath(input_img)
+    ensure_file_exists(in_path, label="Input image")
+
+    try:
+        with rasterio.open(in_path, "r") as src:
+            validate_band_index(img_band, src.count, in_path)
+            eff_nodata = (
+                src.nodatavals[img_band - 1]
+                if no_data_val is None
+                else no_data_val
+            )
+            band_data = src.read(img_band)
+            img_crs = src.crs
+            img_transform = src.transform
+    except rsgispy.RSGISPyException:
+        raise
+    except Exception as err:
+        raise rsgispy.RSGISPyException(
+            f"Could not open input image '{in_path}': {err}"
+        ) from err
+
+    return band_data, img_crs, img_transform, build_valid_mask(band_data, eff_nodata)
+
+
 def validate_odd_window_size(
     size: int, min_size: int = 3, name: str = "filter_size"
 ) -> int:

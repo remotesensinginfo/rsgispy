@@ -14,6 +14,7 @@ from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imageprocess import (
+    build_valid_mask,
     cast_result_block,
     compute_spatial_intersection,
     ensure_file_exists,
@@ -362,9 +363,7 @@ def _mask_nodata_nan(
 ) -> np.ndarray:
     """Convert non-finite and (when enabled) ``no_data_val`` elements to ``np.nan``."""
     out = arr.astype(np.float64, copy=True)
-    invalid = ~np.isfinite(out)
-    if use_no_data and no_data_val is not None and not math.isnan(float(no_data_val)):
-        invalid |= out == float(no_data_val)
+    invalid = ~build_valid_mask(out, no_data_val if use_no_data else None)
     if np.any(invalid):
         out[invalid] = np.nan
     return out

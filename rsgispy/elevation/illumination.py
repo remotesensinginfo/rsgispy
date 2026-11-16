@@ -17,11 +17,11 @@ from rsgispy.elevation._helpers import (
     prepare_3x3_horn_diffs as _prepare_3x3_horn_diffs,
     process_pxl_res_dem_3x3 as _process_pxl_res_dem_3x3,
     process_single_dem_3x3 as _process_single_dem_3x3,
-    valid_mask as _valid_mask,
     validate_sun_angles as _validate_sun_angles,
 )
 from rsgispy.imageprocess import (
     IntersectionGrid,
+    build_valid_mask as _valid_mask,
     ensure_file_exists,
     open_output_dataset,
 )
