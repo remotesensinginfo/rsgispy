@@ -52,23 +52,26 @@ def test_write_dataframe_table(tmp_path):
 
     csv_path = tmp_path / "sub" / "table.csv"
     tools_tables.write_dataframe_table(df, csv_path)
-    assert pd.read_csv(csv_path).equals(df)
+    assert tools_tables.read_dataframe_table(csv_path).equals(df)
 
     csv_gz_path = tmp_path / "table.csv.gz"
     tools_tables.write_dataframe_table(df, csv_gz_path)
-    assert pd.read_csv(csv_gz_path).equals(df)
+    assert tools_tables.read_dataframe_table(csv_gz_path).equals(df)
 
     tsv_path = tmp_path / "table.tsv"
     tools_tables.write_dataframe_table(df, tsv_path)
-    assert pd.read_csv(tsv_path, sep="\t").equals(df)
+    assert tools_tables.read_dataframe_table(tsv_path).equals(df)
 
     json_path = tmp_path / "table.json"
     tools_tables.write_dataframe_table(df, json_path)
-    assert len(pd.read_json(json_path)) == 2
+    assert len(tools_tables.read_dataframe_table(json_path)) == 2
 
     pkl_path = tmp_path / "table.pkl"
     tools_tables.write_dataframe_table(df, pkl_path)
-    assert pd.read_pickle(pkl_path).equals(df)
+    assert tools_tables.read_dataframe_table(pkl_path).equals(df)
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        tools_tables.read_dataframe_table(tmp_path / "missing.csv")
 
     if importlib.util.find_spec("pyarrow") is not None:
         import pyarrow.parquet as pq
@@ -76,4 +79,4 @@ def test_write_dataframe_table(tmp_path):
         pq_path = tmp_path / "table.parquet"
         tools_tables.write_dataframe_table(df, pq_path, out_compress="zstd")
         assert pq.ParquetFile(pq_path).metadata.row_group(0).column(0).compression == "ZSTD"
-        assert pd.read_parquet(pq_path).equals(df)
+        assert tools_tables.read_dataframe_table(pq_path).equals(df)

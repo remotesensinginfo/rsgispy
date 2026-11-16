@@ -16,6 +16,7 @@ __all__ = [
     "resolve_table_format",
     "resolve_table_output_spec",
     "write_dataframe_table",
+    "read_dataframe_table",
 ]
 
 _TABLE_EXT_TO_FORMAT: Dict[str, str] = {
@@ -242,3 +243,51 @@ def write_dataframe_table(
             raise rsgispy.RSGISPyException(
                 "Writing HDF5 files requires 'tables' (PyTables)."
             ) from err
+
+
+def read_dataframe_table(
+    in_file: Union[str, os.PathLike],
+    in_format: Optional[str] = None,
+) -> pd.DataFrame:
+    """
+    Read a :class:`pandas.DataFrame` from ``in_file`` in Parquet (including
+    compressed files such as Snappy, Gzip, Zstd) or another common tabular
+    format.
+
+    :param in_file: Input table file path.
+    :param in_format: Optional input table format overriding extension
+                      detection (e.g., ``'parquet'``, ``'csv'``, ``'tsv'``,
+                      ``'feather'``, ``'excel'``, ``'json'``, ``'pickle'``,
+                      ``'hdf'``).
+    :return: Loaded :class:`pandas.DataFrame`.
+
+    .. code:: python
+
+        import rsgispy.tools.tables
+
+        df = rsgispy.tools.tables.read_dataframe_table("table.parquet")
+    """
+    path_str = os.fspath(in_file)
+    if not os.path.exists(path_str):
+        raise rsgispy.RSGISPyException(
+            f"Input table file does not exist: '{path_str}'."
+        )
+
+    fmt = resolve_table_format(path_str, out_format=in_format)
+    readers = {
+        "parquet": (pd.read_parquet, "pyarrow' or 'fastparquet"),
+        "csv": (pd.read_csv, None),
+        "tsv": (lambda p: pd.read_csv(p, sep="\t"), None),
+        "feather": (pd.read_feather, "pyarrow"),
+        "excel": (pd.read_excel, "openpyxl"),
+        "json": (pd.read_json, None),
+        "pickle": (pd.read_pickle, None),
+        "hdf": (lambda p: pd.read_hdf(p, key="data"), "tables' (PyTables)"),
+    }
+    reader_fn, dep_msg = readers[fmt]
+    try:
+        return reader_fn(path_str)
+    except ImportError as err:
+        raise rsgispy.RSGISPyException(
+            f"Reading {fmt} files requires '{dep_msg}'."
+        ) from err

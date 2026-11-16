@@ -6,7 +6,7 @@ generation functions using ``rasterio``.
 from contextlib import ExitStack
 import math
 import os
-from typing import Any, List, Mapping, Optional, Sequence, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 import numpy as np
 from rasterio.windows import Window
@@ -36,22 +36,70 @@ __all__ = [
 
 class ImageBandInfo:
     """
-    Class storing an image file path, logical name, and optional list of bands.
+    Class storing an image file path, logical name, optional list of bands,
+    and optional output band names.
 
     :param file_name: Path to the raster image file.
     :param name: Logical name describing the image.
     :param bands: Optional list of 1-based band indices to consider.
+    :param band_names: Optional sequence of output band/feature names matching
+                       ``bands`` (or all bands in ``file_name`` when
+                       ``bands`` is ``None``).
     """
 
     def __init__(
         self,
-        file_name: Optional[str] = None,
+        file_name: Optional[Union[str, os.PathLike]] = None,
         name: Optional[str] = None,
         bands: Optional[Sequence[int]] = None,
+        band_names: Optional[Sequence[str]] = None,
     ):
-        self.file_name = file_name
+        self.file_name: Optional[str] = (
+            os.fspath(file_name) if file_name is not None else None
+        )
         self.name = name
-        self.bands = list(bands) if bands is not None else None
+        self.bands: Optional[List[int]] = (
+            [int(b) for b in bands] if bands is not None else None
+        )
+        if band_names is not None:
+            names_list = [str(bn) for bn in band_names]
+            if any(not bn.strip() for bn in names_list):
+                raise rsgispy.RSGISPyException(
+                    "band_names must contain non-empty strings."
+                )
+            if self.bands is not None and len(names_list) != len(self.bands):
+                raise rsgispy.RSGISPyException(
+                    f"Number of band_names ({len(names_list)}) must match "
+                    f"number of bands ({len(self.bands)})."
+                )
+            self.band_names: Optional[List[str]] = names_list
+        else:
+            self.band_names = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return a JSON-serialisable dictionary representation."""
+        out: Dict[str, Any] = {
+            "file_name": self.file_name,
+            "name": self.name,
+            "bands": list(self.bands) if self.bands is not None else None,
+        }
+        if self.band_names is not None:
+            out["band_names"] = list(self.band_names)
+        return out
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ImageBandInfo":
+        """Construct an :class:`ImageBandInfo` from a dictionary."""
+        if not isinstance(data, Mapping):
+            raise rsgispy.RSGISPyException(
+                "ImageBandInfo data must be a dictionary."
+            )
+        return cls(
+            file_name=data.get("file_name"),
+            name=data.get("name"),
+            bands=data.get("bands"),
+            band_names=data.get("band_names"),
+        )
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, ImageBandInfo):
@@ -60,12 +108,19 @@ class ImageBandInfo:
             self.file_name == other.file_name
             and self.name == other.name
             and self.bands == other.bands
+            and self.band_names == other.band_names
         )
 
     def __repr__(self) -> str:
+        if self.band_names is None:
+            return (
+                f"ImageBandInfo(file_name={self.file_name!r}, "
+                f"name={self.name!r}, bands={self.bands!r})"
+            )
         return (
             f"ImageBandInfo(file_name={self.file_name!r}, "
-            f"name={self.name!r}, bands={self.bands!r})"
+            f"name={self.name!r}, bands={self.bands!r}, "
+            f"band_names={self.band_names!r})"
         )
 
 
