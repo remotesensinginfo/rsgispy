@@ -14,6 +14,7 @@ import rsgispy.tools.colours as rcolours
 import rsgispy.tools.credentials as rcreds
 import rsgispy.tools.dates as rdates
 import rsgispy.tools.dicts as rdicts
+import rsgispy.tools.files as rfiles
 import rsgispy.tools.jsonio as rjsonio
 import rsgispy.tools.maths as rmaths
 import rsgispy.tools.strings as rstrings
@@ -53,6 +54,28 @@ def test_json_encoder_and_json_io(tmp_path):
     gz_file = tmp_path / "data.json.gz"
     rjsonio.write_dict_to_json_gz(payload, str(gz_file))
     assert rjsonio.read_gz_json_to_dict(str(gz_file))["arr"] == [[1, 2], [3, 4]]
+
+    compat = rjsonio.to_json_compatible(
+        {
+            1: np.int64(9),
+            "flt64": np.float64(2.75),
+            "tup": (np.bool_(False), np.array([1, 2])),
+            "custom": _CustomJsonObj(),
+        }
+    )
+    assert compat == {
+        "1": 9,
+        "flt64": 2.75,
+        "tup": [False, [1, 2]],
+        "custom": {"custom": 42},
+    }
+    assert isinstance(compat["flt64"], float) and type(compat["flt64"]) is float
+    assert isinstance(compat["1"], int) and type(compat["1"]) is int
+
+    nested_out = tmp_path / "nested" / "sub" / "out.txt"
+    resolved = rfiles.ensure_parent_dir(nested_out)
+    assert resolved == str(nested_out)
+    assert nested_out.parent.is_dir()
 
 
 def test_numeric_string_and_text_helpers(tmp_path, monkeypatch):

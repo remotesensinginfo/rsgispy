@@ -26,7 +26,7 @@ import pyproj
 import rasterio
 
 import rsgispy
-from rsgispy.classification._helpers import resolve_rng
+from rsgispy.classification._helpers import resolve_rng, select_out_int_dtype
 from rsgispy.imagecalc.encoding import recode_int_raster
 from rsgispy.imageprocess import ensure_file_exists, validate_band_index
 from rsgispy.imageutils.colourtable import (
@@ -35,6 +35,7 @@ from rsgispy.imageutils.colourtable import (
 )
 from rsgispy.imageutils.masking import ImageBandInfo
 from rsgispy.imageutils.metadata import set_img_no_data_value
+from rsgispy.tools.files import ensure_parent_dir
 from rsgispy.tools.jsonio import read_json_to_dict, write_dict_to_json
 from rsgispy.tools.tables import (
     read_dataframe_table,
@@ -652,10 +653,7 @@ def write_cls_config(
         internal_id_col=internal_id_col,
         class_name_col=class_name_col,
     )
-    out_path = os.fspath(out_json_file)
-    out_dir = os.path.dirname(os.path.abspath(out_path))
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
+    out_path = ensure_parent_dir(out_json_file)
     write_dict_to_json(cfg.to_dict(), out_path)
     return cfg
 
@@ -1568,23 +1566,6 @@ def get_cls_id_luts(
     return internal_to_out, out_to_internal
 
 
-def _select_out_int_dtype(values: Sequence[int]) -> Tuple[int, np.dtype]:
-    """Select the smallest rsgispy integer datatype covering ``values``."""
-    min_val = min(values)
-    max_val = max(values)
-    if min_val >= 0:
-        if max_val <= 255:
-            return rsgispy.TYPE_8UINT, np.dtype(np.uint8)
-        if max_val <= 65535:
-            return rsgispy.TYPE_16UINT, np.dtype(np.uint16)
-        if max_val <= 4294967295:
-            return rsgispy.TYPE_32UINT, np.dtype(np.uint32)
-        return rsgispy.TYPE_64UINT, np.dtype(np.uint64)
-    if min_val >= -32768 and max_val <= 32767:
-        return rsgispy.TYPE_16INT, np.dtype(np.int16)
-    return rsgispy.TYPE_32INT, np.dtype(np.int32)
-
-
 def recode_internal_to_out_ids(
     preds: Union[np.ndarray, pd.Series, Sequence[int]],
     class_info: Union[ClassificationConfig, Mapping[str, ClassInfoObj]],
@@ -1625,7 +1606,7 @@ def recode_internal_to_out_ids(
         target_vals.append(int(nodata_val))
 
     if out_dtype is None:
-        _, resolved_dtype = _select_out_int_dtype(target_vals)
+        _, resolved_dtype = select_out_int_dtype(target_vals)
     else:
         resolved_dtype = np.dtype(out_dtype)
 
@@ -1736,7 +1717,7 @@ def recode_cls_img_to_out_ids(
             val_candidates.append(int(src_nd_num))
 
     if datatype is None:
-        out_rsgis_dtype, out_np_dtype = _select_out_int_dtype(val_candidates)
+        out_rsgis_dtype, out_np_dtype = select_out_int_dtype(val_candidates)
     else:
         out_rsgis_dtype = datatype
         out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))

@@ -6,26 +6,45 @@ import csv
 import math
 import os
 import secrets
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
 import warnings
 
 import numpy as np
+import pandas as pd
 
 import rsgispy
 import rsgispy.imagecalc.stats
 from rsgispy.imageprocess import ensure_file_exists
 import rsgispy.imageutils.metadata
+from rsgispy.tools._sklearn import (
+    check_sklearn_available as _check_sklearn_available,
+    sklearn,
+)
+from rsgispy.tools.files import ensure_parent_dir
 import rsgispy.tools.strings
 from rsgispy.vectorattrs.io import read_vec_columns
 from rsgispy.vectorprocess import VectorInput
 
-try:
-    import sklearn.metrics  # pylint: disable=import-error
+if TYPE_CHECKING:
+    from rsgispy.classification.classdata import ClassificationConfig, ClassInfoObj, ImageBandInfo
 
-    HAVE_SKLEARN = True
-except ImportError:
-    sklearn = None  # type: ignore[assignment]  # pylint: disable=invalid-name
-    HAVE_SKLEARN = False
+ClsConfigInput = Union[
+    "ClassificationConfig",
+    str,
+    os.PathLike,
+    Mapping[str, "ClassInfoObj"],
+]
+SamplesInput = Union[pd.DataFrame, str, os.PathLike]
 
 _CONF_INT_CONSTS: Tuple[float, ...] = (1.64, 1.96, 2.33, 2.58)
 _BOOTSTRAP_PERCENTILES: Tuple[float, ...] = (
@@ -516,13 +535,6 @@ def aggregate_bootstrap_runs(
     return out_stats
 
 
-def _ensure_parent_dir(file_path: str) -> None:
-    """Create parent directory for ``file_path`` if needed."""
-    parent_dir = os.path.dirname(os.path.abspath(file_path))
-    if parent_dir:
-        os.makedirs(parent_dir, exist_ok=True)
-
-
 def _write_csv_common_header(
     writer: Any,
     acc_metrics: Dict[str, Any],
@@ -602,8 +614,7 @@ def write_acc_stats_img_csv(
 ) -> None:
     """Write image area-weighted accuracy metrics and matrices to CSV."""
     # pylint: disable=too-many-locals
-    out_path = os.fspath(out_csv_file)
-    _ensure_parent_dir(out_path)
+    out_path = ensure_parent_dir(out_csv_file)
     tot_area = float(sum(cls_area_dict[name] for name in unq_cls_names))
     q_metrics = acc_metrics["quantity_metrics"]
 
@@ -685,8 +696,7 @@ def write_acc_stats_ptonly_csv(
     unq_cls_names: List[str],
 ) -> None:
     """Write point-only accuracy metrics and confusion matrix to CSV."""
-    out_path = os.fspath(out_csv_file)
-    _ensure_parent_dir(out_path)
+    out_path = ensure_parent_dir(out_csv_file)
 
     with open(out_path, mode="w", newline="", encoding="utf-8") as csv_fp:
         writer = csv.writer(
@@ -713,3 +723,274 @@ def write_acc_stats_ptonly_csv(
         writer.writerow(["Producers", *acc_metrics["producer_accuracy"]])
         writer.writerow(["Omission", *acc_metrics["omission"]])
         writer.writerow([""])
+
+
+def select_out_int_dtype(values: Sequence[int]) -> Tuple[int, np.dtype]:
+    """Select the smallest rsgispy integer datatype covering ``values``."""
+    min_val = min(values)
+    max_val = max(values)
+    if min_val >= 0:
+        if max_val <= 255:
+            return rsgispy.TYPE_8UINT, np.dtype(np.uint8)
+        if max_val <= 65535:
+            return rsgispy.TYPE_16UINT, np.dtype(np.uint16)
+        if max_val <= 4294967295:
+            return rsgispy.TYPE_32UINT, np.dtype(np.uint32)
+        return rsgispy.TYPE_64UINT, np.dtype(np.uint64)
+    if min_val >= -32768 and max_val <= 32767:
+        return rsgispy.TYPE_16INT, np.dtype(np.int16)
+    return rsgispy.TYPE_32INT, np.dtype(np.int32)
+
+
+def check_sklearn_available(feature_name: str) -> None:
+    """Verify ``scikit-learn`` is installed before running classification routines."""
+    _check_sklearn_available(feature_name, extra="classification")
+
+
+def coerce_cls_config(
+    cls_cfg: Optional[ClsConfigInput],
+    out_id_col: Optional[str] = None,
+    internal_id_col: Optional[str] = None,
+    class_name_col: Optional[str] = None,
+    allow_none: bool = False,
+) -> Tuple[
+    Optional["ClassificationConfig"],
+    Dict[str, "ClassInfoObj"],
+    str,
+    str,
+    str,
+]:
+    """Resolve configuration or class mapping into normalised components."""
+    # pylint: disable=import-outside-toplevel
+    from rsgispy.classification.classdata import (
+        ClassificationConfig,
+        normalise_class_info,
+        read_cls_config,
+    )
+
+    eff_out = "out_cls_id" if out_id_col is None else out_id_col
+    eff_int = "internal_cls_id" if internal_id_col is None else internal_id_col
+    eff_name = "class_name" if class_name_col is None else class_name_col
+
+    if cls_cfg is None:
+        if not allow_none:
+            raise rsgispy.RSGISPyException(
+                "cls_cfg must be a ClassificationConfig, a JSON config file "
+                "path, or a mapping of {class_name: ClassInfoObj}."
+            )
+        return None, {}, eff_out, eff_int, eff_name
+
+    if isinstance(cls_cfg, (str, os.PathLike)):
+        cfg = read_cls_config(cls_cfg)
+    elif isinstance(cls_cfg, ClassificationConfig):
+        cfg = cls_cfg
+    elif isinstance(cls_cfg, Mapping):
+        norm_classes = normalise_class_info(cls_cfg)
+        return None, norm_classes, eff_out, eff_int, eff_name
+    else:
+        raise rsgispy.RSGISPyException(
+            "cls_cfg must be a ClassificationConfig, a JSON config file path, "
+            "or a mapping of {class_name: ClassInfoObj}."
+        )
+
+    return (
+        cfg,
+        cfg.class_info,
+        cfg.out_id_col if out_id_col is None else out_id_col,
+        cfg.internal_id_col if internal_id_col is None else internal_id_col,
+        cfg.class_name_col if class_name_col is None else class_name_col,
+    )
+
+
+def load_samples_df(samples: SamplesInput, label: str) -> pd.DataFrame:
+    """Load sample DataFrame from an in-memory DataFrame or table file path."""
+    # pylint: disable=import-outside-toplevel
+    from rsgispy.classification.classdata import read_cls_samples
+
+    if isinstance(samples, pd.DataFrame):
+        return samples
+    if isinstance(samples, (str, os.PathLike)):
+        return read_cls_samples(samples)
+    raise rsgispy.RSGISPyException(
+        f"{label} must be a pandas DataFrame or sample table file path."
+    )
+
+
+def _infer_band_names_from_img_info(
+    img_band_info: Sequence["ImageBandInfo"],
+) -> Optional[List[str]]:
+    """
+    Resolve feature column names from ``ImageBandInfo`` objects, avoiding
+    opening raster files when band indices and names are already explicit.
+    """
+    # pylint: disable=import-outside-toplevel
+    from rsgispy.classification.classdata import resolve_img_band_info
+
+    all_have_files = all(
+        info.file_name is not None and os.path.exists(info.file_name)
+        for info in img_band_info
+    )
+    if all_have_files:
+        resolved = resolve_img_band_info(img_band_info)
+        return [col for _, _, cols in resolved for col in cols]
+
+    names: List[str] = []
+    for idx, info in enumerate(img_band_info):
+        if info.band_names is not None:
+            names.extend(info.band_names)
+        elif info.bands is not None:
+            if info.name and info.name.strip():
+                prefix = info.name.strip()
+            elif info.file_name:
+                prefix = os.path.splitext(os.path.basename(info.file_name))[0]
+            else:
+                prefix = f"img{idx + 1}"
+            names.extend(f"{prefix}_b{int(b)}" for b in info.bands)
+        else:
+            return None
+    return names
+
+
+def resolve_feature_cols(
+    cfg: Optional["ClassificationConfig"],
+    df: pd.DataFrame,
+    feature_cols: Optional[Sequence[str]],
+    excluded_cols: Sequence[str],
+) -> List[str]:
+    """Determine and validate ordered feature column names for sample tables."""
+    if feature_cols is not None:
+        cols = [str(col) for col in feature_cols]
+    elif cfg is not None:
+        inferred = _infer_band_names_from_img_info(cfg.img_band_info)
+        if inferred is not None and all(col in df.columns for col in inferred):
+            cols = inferred
+        else:
+            excluded = set(excluded_cols) | {"x", "y"}
+            cols = [
+                str(col)
+                for col in df.columns
+                if col not in excluded
+                and pd.api.types.is_numeric_dtype(df[col])
+            ]
+    else:
+        excluded = set(excluded_cols) | {"x", "y"}
+        cols = [
+            str(col)
+            for col in df.columns
+            if col not in excluded
+            and pd.api.types.is_numeric_dtype(df[col])
+        ]
+
+    if not cols:
+        raise rsgispy.RSGISPyException(
+            "Could not resolve any feature columns from training data."
+        )
+    missing = [col for col in cols if col not in df.columns]
+    if missing:
+        raise rsgispy.RSGISPyException(
+            f"Feature column(s) {missing} missing from sample DataFrame."
+        )
+    return cols
+
+
+def extract_xy(
+    df: pd.DataFrame,
+    feature_cols: Sequence[str],
+    target_col: str,
+    label: str,
+    valid_ids: Optional[Sequence[int]] = None,
+) -> Tuple[pd.DataFrame, np.ndarray]:
+    """Extract validated ``(X_df, y_arr)`` arrays from a sample DataFrame."""
+    if len(df) == 0:
+        raise rsgispy.RSGISPyException(f"{label} sample table is empty.")
+    missing_feats = [col for col in feature_cols if col not in df.columns]
+    if missing_feats:
+        raise rsgispy.RSGISPyException(
+            f"{label} is missing feature column(s): {missing_feats}."
+        )
+    if target_col not in df.columns:
+        raise rsgispy.RSGISPyException(
+            f"{label} is missing target class column '{target_col}'."
+        )
+
+    x_df = df[list(feature_cols)].copy()
+    x_vals = x_df.to_numpy(dtype=np.float64)
+    if not np.all(np.isfinite(x_vals)):
+        raise rsgispy.RSGISPyException(
+            f"{label} contains NaN or infinite values in feature columns."
+        )
+
+    y_series = df[target_col]
+    if y_series.isna().any():
+        raise rsgispy.RSGISPyException(
+            f"{label} contains missing values in target column '{target_col}'."
+        )
+    y_arr = y_series.to_numpy(dtype=np.int64)
+    if np.any(y_arr < 0):
+        raise rsgispy.RSGISPyException(
+            f"{label} target column '{target_col}' must contain unsigned "
+            "(non-negative) integer class IDs."
+        )
+    if valid_ids is not None:
+        unknown = set(np.unique(y_arr).tolist()) - set(valid_ids)
+        if unknown:
+            raise rsgispy.RSGISPyException(
+                f"{label} contains class ID(s) {sorted(unknown)} not defined "
+                "in cls_cfg."
+            )
+    return x_df, y_arr
+
+
+def resolve_cv_splitter(
+    cv: Union[int, Any],
+    train_y: np.ndarray,
+    rnd_seed: Optional[int],
+) -> Any:
+    """Resolve an integer or sklearn CV splitter cleanly."""
+    if isinstance(cv, (int, np.integer)) and not isinstance(cv, bool):
+        n_splits = int(cv)
+        if n_splits < 2:
+            raise rsgispy.RSGISPyException(
+                f"cv must be at least 2 folds, got {n_splits}."
+            )
+        _, counts = np.unique(train_y, return_counts=True)
+        min_count = int(counts.min()) if counts.size > 0 else 0
+        if min_count < n_splits:
+            raise rsgispy.RSGISPyException(
+                f"cv={n_splits} exceeds minimum class sample count "
+                f"({min_count}) in train_data."
+            )
+        return sklearn.model_selection.StratifiedKFold(
+            n_splits=n_splits,
+            shuffle=True,
+            random_state=rnd_seed,
+        )
+    return cv
+
+
+def calc_split_metrics(
+    fitted_est: Any,
+    x_df: pd.DataFrame,
+    y_true: np.ndarray,
+    prefix: str,
+) -> Dict[str, float]:
+    """Compute accuracy, balanced accuracy, macro F1, and kappa for a split."""
+    preds = np.asarray(fitted_est.predict(x_df))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        acc = float(sklearn.metrics.accuracy_score(y_true, preds))
+        bal_acc = float(sklearn.metrics.balanced_accuracy_score(y_true, preds))
+        f1_mac = float(
+            sklearn.metrics.f1_score(
+                y_true, preds, average="macro", zero_division=0
+            )
+        )
+        kappa = float(sklearn.metrics.cohen_kappa_score(y_true, preds))
+    if np.isnan(kappa):
+        kappa = 1.0 if np.array_equal(y_true, preds) else 0.0
+    return {
+        f"{prefix}_accuracy": acc,
+        f"{prefix}_bal_accuracy": bal_acc,
+        f"{prefix}_f1_macro": f1_mac,
+        f"{prefix}_cohen_kappa": kappa,
+    }

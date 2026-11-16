@@ -7,7 +7,6 @@ distribution modelling workflows built on ``scikit-learn``, ``geopandas``,
 
 import os
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
-import warnings
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
@@ -36,47 +35,23 @@ from rsgispy.modelling._helper import (
     read_model_vector,
     resolve_analysis_vars,
     run_env_block_pipeline,
+    sklearn,
     write_model_vector,
 )
+from rsgispy.tools._ml_explain import (
+    plot_class_feature_distributions,
+    plot_correlation_heatmap,
+    plot_jackknife_bars,
+    run_salib_sobol_sensitivity,
+    run_shap_explainer,
+)
 from rsgispy.tools.featureselection import calc_pandas_vif
+import rsgispy.tools.files
 from rsgispy.vectorgeoms.create import create_random_pts_in_bbox
 from rsgispy.vectorprocess import VectorInput, validate_columns_exist
 from rsgispy.vectorstats.metrics import calc_near_dist_to_feats
 from rsgispy.vectorutils.selection import vec_lyr_random_subset
 from rsgispy.zonalstats.point import ext_point_band_values
-
-try:
-    import seaborn as sns  # pylint: disable=import-error
-
-    HAVE_SEABORN = True
-except ImportError:
-    sns = None  # type: ignore[assignment]
-    HAVE_SEABORN = False
-
-try:
-    import shap  # pylint: disable=import-error
-
-    HAVE_SHAP = True
-except ImportError:
-    shap = None  # type: ignore[assignment]
-    HAVE_SHAP = False
-
-try:
-    import SALib.analyze.sobol  # pylint: disable=import-error
-    import SALib.sample.sobol  # pylint: disable=import-error
-
-    HAVE_SALIB = True
-except ImportError:
-    SALib = None  # type: ignore[assignment]  # pylint: disable=invalid-name
-    HAVE_SALIB = False
-
-try:
-    import sklearn.metrics  # pylint: disable=import-error
-
-    HAVE_SKLEARN_METRICS = True
-except ImportError:
-    sklearn = None  # type: ignore[assignment]  # pylint: disable=invalid-name
-    HAVE_SKLEARN_METRICS = False
 
 __all__ = [
     "EnvVarInfo",
@@ -766,40 +741,16 @@ def comparison_box_plots(
 
         sdm.comparison_box_plots(env_vars, "combined.gpkg", "combined", out_dir="plots")
     """
-    os.makedirs(out_dir, exist_ok=True)
     data_gdf = read_model_vector(vec_file, vec_lyr=vec_lyr)
-    validate_columns_exist(data_gdf, [cls_col])
-
-    pbar = rsgispy.get_tqdm()
-    for var_key in pbar(env_vars):
-        info = env_vars[var_key]
-        col_name = info.name if info.name is not None else str(var_key)
-        validate_columns_exist(data_gdf, [col_name])
-
-        out_path = os.path.join(out_dir, f"{col_name}_comp_plot.png")
-        fig, ax = plt.subplots(figsize=(6, 4))
-        try:
-            if HAVE_SEABORN:
-                if box_plots:
-                    sns.boxplot(data=data_gdf, x=cls_col, y=col_name, ax=ax)
-                else:
-                    sns.violinplot(data=data_gdf, x=cls_col, y=col_name, ax=ax)
-            else:
-                groups = sorted(data_gdf[cls_col].dropna().unique().tolist())
-                series_list = [
-                    data_gdf.loc[data_gdf[cls_col] == g, col_name].dropna().to_numpy()
-                    for g in groups
-                ]
-                if box_plots:
-                    ax.boxplot(series_list, tick_labels=[str(g) for g in groups])
-                else:
-                    ax.violinplot(series_list)
-                    ax.set_xticks(range(1, len(groups) + 1))
-                    ax.set_xticklabels([str(g) for g in groups])
-                ax.set_xlabel(cls_col)
-                ax.set_ylabel(col_name)
-        finally:
-            finalise_plot(fig, out_file=out_path)
+    analysis_vars = resolve_analysis_vars(env_vars)
+    validate_columns_exist(data_gdf, [*analysis_vars, cls_col])
+    plot_class_feature_distributions(
+        data_df=data_gdf,
+        feature_cols=analysis_vars,
+        cls_col=cls_col,
+        out_dir=out_dir,
+        box_plots=box_plots,
+    )
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -837,39 +788,17 @@ def correlation_matrix(
 
     corr_df = data_gdf[analysis_vars].corr()
     if out_corr_file is not None:
-        corr_dir = os.path.dirname(os.path.abspath(os.fspath(out_corr_file)))
-        if corr_dir:
-            os.makedirs(corr_dir, exist_ok=True)
-        corr_df.to_csv(out_corr_file, index=True)
+        corr_path = rsgispy.tools.files.ensure_parent_dir(out_corr_file)
+        corr_df.to_csv(corr_path, index=True)
 
     if out_plt_file is not None:
-        mask = np.triu(np.ones_like(corr_df, dtype=bool))
-        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-        try:
-            if HAVE_SEABORN:
-                cmap = sns.diverging_palette(230, 20, as_cmap=True)
-                sns.heatmap(
-                    corr_df,
-                    mask=mask,
-                    cmap=cmap,
-                    vmax=0.3,
-                    center=0,
-                    square=True,
-                    linewidths=0.5,
-                    cbar_kws={"shrink": 0.5},
-                    ax=ax,
-                )
-            else:
-                masked_vals = np.ma.array(corr_df.to_numpy(dtype=float), mask=mask)
-                im = ax.imshow(masked_vals, cmap="coolwarm", vmin=-1.0, vmax=1.0)
-                fig.colorbar(im, ax=ax, shrink=0.5)
-                ticks = range(len(analysis_vars))
-                ax.set_xticks(ticks)
-                ax.set_xticklabels(analysis_vars, rotation=45, ha="right")
-                ax.set_yticks(ticks)
-                ax.set_yticklabels(analysis_vars)
-        finally:
-            finalise_plot(fig, out_file=out_plt_file)
+        plot_correlation_heatmap(
+            corr_df=corr_df,
+            var_names=analysis_vars,
+            out_plt_file=out_plt_file,
+            fig_width=fig_width,
+            fig_height=fig_height,
+        )
 
     return corr_df
 
@@ -902,10 +831,8 @@ def calc_vif_multicollinearity(
 
     vif_scores = calc_pandas_vif(data_gdf[var_names])
     if out_vif_file is not None:
-        vif_dir = os.path.dirname(os.path.abspath(os.fspath(out_vif_file)))
-        if vif_dir:
-            os.makedirs(vif_dir, exist_ok=True)
-        vif_scores.to_csv(out_vif_file, index=True)
+        vif_path = rsgispy.tools.files.ensure_parent_dir(out_vif_file)
+        vif_scores.to_csv(vif_path, index=True)
     return vif_scores
 
 
@@ -1367,81 +1294,25 @@ def shap_sklearn_mdl_explainer(
             shap_summary_plot="shap_summary.png", use_tree_explainer=True,
         )
     """
-    rsgispy.check_optional_dep(
-        HAVE_SHAP, "shap_sklearn_mdl_explainer", "shap", "modelling"
-    )
-    if use_tree_explainer and use_linear_explainer:
-        raise rsgispy.RSGISPyException(
-            "You can only use one explainer: use_tree_explainer and "
-            "use_linear_explainer cannot both be True."
-        )
-
-    show_plots = rsgispy.is_notebook()
-    if show_plots:
-        shap.initjs()
-
     train_gdf = read_model_vector(train_vec_file, vec_lyr=train_vec_lyr)
     train_x, _ = extract_features_and_target(
         train_gdf, analysis_vars, cls_col=None
     )
-
-    if subsample_n_smpls is not None and subsample_n_smpls > 10:
-        train_x_smpl = shap.sample(train_x, min(subsample_n_smpls, len(train_x)))
-    else:
-        train_x_smpl = train_x
-
-    if use_tree_explainer:
-        explainer = shap.TreeExplainer(
-            est_cls_obj, feature_names=list(analysis_vars)
-        )
-    elif use_linear_explainer:
-        explainer = shap.LinearExplainer(
-            est_cls_obj, train_x_smpl, feature_perturbation="correlation_dependent"
-        )
-    else:
-        explainer = shap.KernelExplainer(est_cls_obj.predict_proba, train_x_smpl)
-
-    shap_values = explainer(train_x_smpl)
-    if use_tree_explainer and getattr(shap_values, "values", None) is not None:
-        if shap_values.values.ndim == 3:
-            shap_values = shap_values[:, :, -1]
-
-    # pylint: disable=unreachable
-    if shap_summary_plot is not None:
-        shap.summary_plot(shap_values, train_x_smpl, show=False)
-        finalise_plot(plt.gcf(), out_file=shap_summary_plot)
-
-    if shap_heatmap_plot is not None:
-        shap.plots.heatmap(shap_values, show=False)
-        finalise_plot(plt.gcf(), out_file=shap_heatmap_plot)
-
-    if shap_scatter_plots_dir is not None:
-        os.makedirs(shap_scatter_plots_dir, exist_ok=True)
-        for name in analysis_vars:
-            out_plot_file = os.path.join(
-                shap_scatter_plots_dir, f"shap_scatter_{name}.png"
-            )
-            shap.plots.scatter(shap_values[:, name], show=False)
-            finalise_plot(plt.gcf(), out_file=out_plot_file)
-
-    if shap_depend_plots_dir is not None:
-        os.makedirs(shap_depend_plots_dir, exist_ok=True)
-        sample_ind = min(100, max(0, len(train_x_smpl) - 1))
-        for name in analysis_vars:
-            out_plot_file = os.path.join(
-                shap_depend_plots_dir, f"shap_depends_{name}.png"
-            )
-            fig, _ = shap.partial_dependence_plot(
-                name,
-                est_cls_obj.predict_proba,
-                train_x_smpl,
-                model_expected_value=True,
-                feature_expected_value=True,
-                show=False,
-                ice=False,
-                shap_values=shap_values[sample_ind:sample_ind + 1, :],
-            )
-            finalise_plot(fig, out_file=out_plot_file)
+    run_shap_explainer(
+        est_cls_obj=est_cls_obj,
+        train_x=train_x,
+        analysis_vars=analysis_vars,
+        feature_name="shap_sklearn_mdl_explainer",
+        extra="modelling",
+        shap_summary_plot=shap_summary_plot,
+        shap_heatmap_plot=shap_heatmap_plot,
+        shap_scatter_plots_dir=shap_scatter_plots_dir,
+        shap_depend_plots_dir=shap_depend_plots_dir,
+        subsample_n_smpls=subsample_n_smpls,
+        use_tree_explainer=use_tree_explainer,
+        use_linear_explainer=use_linear_explainer,
+        target_class_idx=-1,
+    )
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -1481,55 +1352,23 @@ def salib_sklearn_mdl_sensitivity(
             clf, train_gdf, None, ["v1", "v2"], n_samples=256
         )
     """
-    rsgispy.check_optional_dep(
-        HAVE_SALIB, "salib_sklearn_mdl_sensitivity", "SALib", "modelling"
-    )
     train_gdf = read_model_vector(train_vec_file, vec_lyr=train_vec_lyr)
     var_list = list(analysis_vars)
     validate_columns_exist(train_gdf, var_list)
-
-    var_bounds: List[List[float]] = []
-    for var in var_list:
-        min_val = float(train_gdf[var].min())
-        max_val = float(train_gdf[var].max())
-        if max_val <= min_val:
-            max_val = min_val + 1e-6
-        var_bounds.append([min_val, max_val])
-        print(f"{var} Range:\t({min_val} - {max_val})")
-
-    problem = {
-        "num_vars": len(var_list),
-        "names": var_list,
-        "bounds": var_bounds,
-    }
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        param_values = SALib.sample.sobol.sample(problem, N=n_samples)
-    env_param_val_df = pd.DataFrame(data=param_values, columns=var_list)
-
-    pred_y = get_positive_class_probs(est_cls_obj, env_param_val_df, pos_label=1)
-    si = SALib.analyze.sobol.analyze(
-        problem, pred_y, calc_second_order=True, print_to_console=False
+    return run_salib_sobol_sensitivity(
+        train_df=train_gdf,
+        analysis_vars=var_list,
+        predict_1d_fn=lambda df: get_positive_class_probs(
+            est_cls_obj, df, pos_label=1
+        ),
+        feature_name="salib_sklearn_mdl_sensitivity",
+        extra="modelling",
+        n_samples=n_samples,
+        sobol_plot_file=sobol_plot_file,
+        sobol_overall_file=sobol_overall_file,
+        sobol_first_file=sobol_first_file,
+        sobol_second_file=sobol_second_file,
     )
-    total_si, first_si, second_si = si.to_df()
-
-    if sobol_overall_file is not None:
-        total_si.to_csv(sobol_overall_file, index=False)
-    if sobol_first_file is not None:
-        first_si.to_csv(sobol_first_file, index=False)
-    if sobol_second_file is not None:
-        second_si.to_csv(sobol_second_file, index=False)
-
-    if sobol_plot_file is not None:
-        plt_width = ((len(var_list) * 0.4) * 3) + 2
-        si.plot()
-        fig = plt.gcf()
-        fig.set_size_inches(plt_width, 10)
-        fig.tight_layout()
-        finalise_plot(fig, out_file=sobol_plot_file)
-
-    return total_si, first_si, second_si
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -1634,10 +1473,8 @@ def sklearn_mdl_variable_response_curves(
 
     response_vals_df = pd.DataFrame(data=response_vals)
     if output_file is not None:
-        out_dir = os.path.dirname(os.path.abspath(os.fspath(output_file)))
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
-        response_vals_df.to_csv(output_file, index=False)
+        out_csv = rsgispy.tools.files.ensure_parent_dir(output_file)
+        response_vals_df.to_csv(out_csv, index=False)
     return response_vals_df
 
 
@@ -1736,49 +1573,12 @@ def sklearn_jackknife_var_importance(
 
     var_import_vals_df = pd.DataFrame(data=out_data, index=var_list)
     if out_var_importance_file is not None:
-        out_dir = os.path.dirname(
-            os.path.abspath(os.fspath(out_var_importance_file))
-        )
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
-        var_import_vals_df.to_csv(out_var_importance_file, index=True)
-
-    n_vars = len(var_list)
-    var_idx = list(range(n_vars))
-    plt_height = (0.5 * n_vars) + 1.5
-    var_idx_all = var_idx + [n_vars]
-    all_var_names = var_list + ["All"]
-
-    def _plot_bars(
-        leave_vals: List[float],
-        only_vals: List[float],
-        all_val: float,
-        title: str,
-        xlabel: str,
-        out_plot: str,
-    ) -> None:
-        # pylint: disable=too-many-arguments,too-many-positional-arguments
-        fig, ax = plt.subplots(figsize=(8, plt_height))
-        try:
-            ax.barh(var_idx, leave_vals, height=0.8, color="#1E88E5", label="Without Var")
-            ax.barh(var_idx, only_vals, height=0.8, color="#FFC107", label="Only Var")
-            ax.barh([n_vars], [all_val], height=0.8, color="#D81B60", label="All Vars")
-            ax.set_yticks(var_idx_all, labels=all_var_names)
-            ax.set_title(title)
-            ax.set_xlabel(xlabel)
-            ax.legend(
-                loc="upper center",
-                bbox_to_anchor=(0.5, -0.11),
-                fancybox=True,
-                shadow=False,
-                ncol=3,
-            )
-            fig.tight_layout()
-        finally:
-            finalise_plot(fig, out_file=out_plot)
+        imp_path = rsgispy.tools.files.ensure_parent_dir(out_var_importance_file)
+        var_import_vals_df.to_csv(imp_path, index=True)
 
     if out_importance_auc_plot is not None:
-        _plot_bars(
+        plot_jackknife_bars(
+            var_list,
             out_data["roc_test_acc_leave_var_out"],
             out_data["roc_test_acc_only_var"],
             all_roc_auc,
@@ -1788,7 +1588,8 @@ def sklearn_jackknife_var_importance(
         )
 
     if out_importance_test_plot is not None:
-        _plot_bars(
+        plot_jackknife_bars(
+            var_list,
             out_data["test_acc_leave_var_out"],
             out_data["test_acc_only_var"],
             all_test_acc_val,

@@ -13,6 +13,7 @@ import numpy as np
 
 __all__ = [
     "RSGISNumpyArrayEncoder",
+    "to_json_compatible",
     "write_dict_to_json",
     "dict_to_json_str",
     "write_dict_to_json_gz",
@@ -53,6 +54,42 @@ class RSGISNumpyArrayEncoder(json.JSONEncoder):
         if handled:
             return encoded
         return super().default(o)
+
+
+_NUMPY_JSON_ENCODER = RSGISNumpyArrayEncoder()
+
+
+def to_json_compatible(data: Any) -> Any:
+    """
+    Recursively convert NumPy scalars/arrays, datetime objects, and ``to_json``
+    objects into native JSON-serialisable Python types using
+    :class:`RSGISNumpyArrayEncoder`.
+
+    :param data: Arbitrary Python/NumPy object or nested container.
+    :return: JSON-compatible Python representation.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.jsonio
+
+        clean = rsgispy.tools.jsonio.to_json_compatible(
+            {"n": np.int64(10), "vals": np.array([1.5, 2.5])}
+        )
+    """
+    if isinstance(data, dict):
+        return {str(k): to_json_compatible(v) for k, v in data.items()}
+    if isinstance(data, (list, tuple)):
+        return [to_json_compatible(v) for v in data]
+    if data is None or type(data) in (bool, int, float, str):
+        return data
+    try:
+        encoded = _NUMPY_JSON_ENCODER.default(data)
+    except TypeError:
+        return data
+    if isinstance(encoded, (dict, list, tuple)):
+        return to_json_compatible(encoded)
+    return encoded
 
 
 def write_dict_to_json(

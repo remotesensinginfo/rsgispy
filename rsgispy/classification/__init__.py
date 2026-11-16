@@ -21,6 +21,34 @@ Submodules:
   and internal-to-output unsigned class ID recoding
   (:func:`~rsgispy.classification.classdata.recode_internal_to_out_ids`,
   :func:`~rsgispy.classification.classdata.recode_cls_img_to_out_ids`).
+* :mod:`rsgispy.classification.classsklearn` — Scikit-learn classifier
+  hyperparameter optimisation (Grid Search, Random Search, and Optuna Bayesian
+  optimisation), model training and persistence, and block-wise image
+  classification outputting class IDs and probability scores
+  (:func:`~rsgispy.classification.classsklearn.perform_sklearn_classifier_param_search`,
+  :func:`~rsgispy.classification.classsklearn.train_sklearn_classifier`,
+  :func:`~rsgispy.classification.classsklearn.apply_sklearn_classifier`,
+  :func:`~rsgispy.classification.classsklearn.save_sklearn_classifier`,
+  :func:`~rsgispy.classification.classsklearn.load_sklearn_classifier`).
+* :mod:`rsgispy.classification.classfeatures` — Exploratory feature plots and
+  multicollinearity diagnostics
+  (:func:`~rsgispy.classification.classfeatures.comparison_box_plots`,
+  :func:`~rsgispy.classification.classfeatures.correlation_matrix`,
+  :func:`~rsgispy.classification.classfeatures.calc_vif_multicollinearity`),
+  feature selection
+  (:func:`~rsgispy.classification.classfeatures.select_features_cqv`,
+  :func:`~rsgispy.classification.classfeatures.select_features_corr`,
+  :func:`~rsgispy.classification.classfeatures.select_features_vif`,
+  :func:`~rsgispy.classification.classfeatures.select_features_univariate`,
+  :func:`~rsgispy.classification.classfeatures.select_features_rfe`,
+  :func:`~rsgispy.classification.classfeatures.select_features_from_model`,
+  :func:`~rsgispy.classification.classfeatures.select_features_boruta_shap`),
+  and feature importance, response curve, SHAP, and Sobol sensitivity analysis
+  (:func:`~rsgispy.classification.classfeatures.calc_feature_importance`,
+  :func:`~rsgispy.classification.classfeatures.calc_jackknife_feature_importance`,
+  :func:`~rsgispy.classification.classfeatures.calc_feature_response_curves`,
+  :func:`~rsgispy.classification.classfeatures.calc_shap_feature_contributions`,
+  :func:`~rsgispy.classification.classfeatures.calc_salib_feature_sensitivity`).
 * :mod:`rsgispy.classification.classrefpts` — Random and stratified random
   reference point generation and accuracy point population
   (:func:`~rsgispy.classification.classrefpts.create_random_ref_smpls_darts`,

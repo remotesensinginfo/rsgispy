@@ -55,6 +55,7 @@ __all__ = [
     "natural_sort_file_names",
     "sort_file_by_datetime",
     "work_dir_context",
+    "ensure_parent_dir",
 ]
 
 _WIN_ERROR_INVALID_NAME = 123
@@ -926,3 +927,23 @@ def work_dir_context(tmp_dir: Optional[str] = None) -> Iterator[str]:
     else:
         os.makedirs(tmp_dir, exist_ok=True)
         yield tmp_dir
+
+
+def ensure_parent_dir(file_path: Union[str, os.PathLike]) -> str:
+    """
+    Create the parent directory for ``file_path`` if it does not already exist
+    and return the normalised ``str`` file path.
+
+    :param file_path: Target file path.
+    :return: Normalised string path for ``file_path``.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+        out_p = rsgispy.tools.files.ensure_parent_dir("outputs/sub/model.joblib")
+    """
+    out_path = os.fspath(file_path)
+    parent_dir = os.path.dirname(os.path.abspath(out_path))
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+    return out_path

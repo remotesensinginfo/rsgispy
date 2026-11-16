@@ -8,10 +8,10 @@ from typing import Any, Dict, List, Optional, Union
 
 import rsgispy
 from rsgispy.classification._helpers import (
-    HAVE_SKLEARN,
     aggregate_bootstrap_runs,
     calc_class_area_accuracy_metrics,
     calc_class_pt_accuracy_metrics,
+    check_sklearn_available,
     compute_cls_areas_from_img,
     load_ref_cls_samples,
     resolve_bootstrap_sample_size,
@@ -80,9 +80,7 @@ def calc_acc_stats_img(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    rsgispy.check_optional_dep(
-        HAVE_SKLEARN, "calc_acc_stats_img", "scikit-learn", "stats"
-    )
+    check_sklearn_available("calc_acc_stats_img")
     ref_int_vals, cls_int_vals, unq_cls_names = load_ref_cls_samples(
         vec_file, vec_lyr, ref_col, cls_col
     )
@@ -146,9 +144,7 @@ def calc_acc_stats_ptonly(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    rsgispy.check_optional_dep(
-        HAVE_SKLEARN, "calc_acc_stats_ptonly", "scikit-learn", "stats"
-    )
+    check_sklearn_available("calc_acc_stats_ptonly")
     ref_int_vals, cls_int_vals, unq_cls_names = load_ref_cls_samples(
         vec_file, vec_lyr, ref_col, cls_col
     )
@@ -226,12 +222,7 @@ def calc_acc_stats_img_bootstrap_conf(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    rsgispy.check_optional_dep(
-        HAVE_SKLEARN,
-        "calc_acc_stats_img_bootstrap_conf",
-        "scikit-learn",
-        "stats",
-    )
+    check_sklearn_available("calc_acc_stats_img_bootstrap_conf")
     ref_int_vals, cls_int_vals, unq_cls_names = load_ref_cls_samples(
         vec_file, vec_lyr, ref_col, cls_col
     )
@@ -322,12 +313,7 @@ def calc_acc_stats_ptonly_bootstrap_conf(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    rsgispy.check_optional_dep(
-        HAVE_SKLEARN,
-        "calc_acc_stats_ptonly_bootstrap_conf",
-        "scikit-learn",
-        "stats",
-    )
+    check_sklearn_available("calc_acc_stats_ptonly_bootstrap_conf")
     ref_int_vals, cls_int_vals, unq_cls_names = load_ref_cls_samples(
         vec_file, vec_lyr, ref_col, cls_col
     )

@@ -32,26 +32,28 @@ from rsgispy.imageprocess import (
     BandDefn,
     cast_result_block,
     compute_spatial_intersection,
+    extract_roi_feature_matrix,
     iter_image_blocks,
     open_input_datasets,
     open_output_dataset,
 )
 from rsgispy.imageutils.stats import pop_img_stats, pop_thmt_img_stats
+from rsgispy.tools._ml_explain import finalise_plot
+from rsgispy.tools._sklearn import (
+    HAVE_SKLEARN,
+    check_sklearn_available as _check_sklearn_available,
+    clone_sklearn_estimator as clone_estimator,
+    fit_clean_sklearn_estimator as fit_clean_estimator,
+    sklearn,
+    sync_sklearn_estimator_state as sync_estimator_state,
+)
+from rsgispy.tools.files import ensure_parent_dir
 from rsgispy.vectorprocess import (
     VectorInput,
     finish_vec_output,
     read_vec_gdf,
     validate_columns_exist,
 )
-
-try:
-    import sklearn.base  # pylint: disable=import-error
-    import sklearn.metrics  # pylint: disable=import-error
-
-    HAVE_SKLEARN = True
-except ImportError:
-    sklearn = None  # type: ignore[assignment]  # pylint: disable=invalid-name
-    HAVE_SKLEARN = False
 
 __all__ = [
     "HAVE_SKLEARN",
@@ -166,9 +168,7 @@ class EnvVarInfo:
 
 def check_sklearn_available(feature_name: str) -> None:
     """Verify ``scikit-learn`` is installed before running model routines."""
-    rsgispy.check_optional_dep(
-        HAVE_SKLEARN, feature_name, "scikit-learn", "stats"
-    )
+    _check_sklearn_available(feature_name, extra="stats")
 
 
 def resolve_analysis_vars(
@@ -267,56 +267,6 @@ def normalise_array_with_info(
     return values
 
 
-def clone_estimator(
-    est_cls_obj: Any,
-    random_state: Optional[int] = None,
-) -> Any:
-    """
-    Create a completely fresh, unfitted ``scikit-learn`` estimator clone so no
-    fitted attributes or ``warm_start`` state leak across iterations.
-    """
-    check_sklearn_available("clone_estimator")
-    cloned = sklearn.base.clone(est_cls_obj, safe=True)
-    if random_state is not None:
-        params = cloned.get_params(deep=False)
-        if "random_state" in params:
-            cloned.set_params(random_state=int(random_state))
-    return cloned
-
-
-def sync_estimator_state(target_est: Any, fitted_est: Any) -> None:
-    """
-    Replace ``target_est`` internal state with ``fitted_est`` so callers holding
-    a reference to an estimator passed into ``fit_sklearn_mdl`` see the cleanly
-    fitted state without carrying over stale attributes from prior loops.
-    """
-    if type(target_est) is type(fitted_est):  # pylint: disable=unidiomatic-typecheck
-        target_est.__dict__.clear()
-        target_est.__dict__.update(fitted_est.__dict__)
-
-
-def fit_clean_estimator(
-    est_cls_obj: Any,
-    train_x: pd.DataFrame,
-    train_y: Optional[np.ndarray] = None,
-    sync_input: bool = True,
-    random_state: Optional[int] = None,
-) -> Any:
-    """
-    Clone ``est_cls_obj`` into a fresh unfitted estimator, fit on ``train_x``
-    (and ``train_y`` when provided), and optionally update ``est_cls_obj`` in
-    place cleanly.
-    """
-    clean_est = clone_estimator(est_cls_obj, random_state=random_state)
-    if train_y is None:
-        clean_est.fit(train_x)
-    else:
-        clean_est.fit(train_x, train_y)
-    if sync_input:
-        sync_estimator_state(est_cls_obj, clean_est)
-    return clean_est
-
-
 def get_positive_class_probs(
     est_cls_obj: Any,
     x_data: pd.DataFrame,
@@ -362,28 +312,6 @@ def calc_binary_roc_auc(
     fpr, tpr, _ = sklearn.metrics.roc_curve(y_true, scores)
     roc_auc = float(sklearn.metrics.auc(fpr, tpr))
     return fpr, tpr, roc_auc
-
-
-def finalise_plot(
-    fig: Any,
-    out_file: Optional[Union[str, os.PathLike]] = None,
-    dpi: int = 150,
-) -> None:
-    """
-    Save or display ``fig`` and always close it to prevent Matplotlib state and
-    memory leaks when iterating over multiple models or covariates.
-    """
-    try:
-        if out_file is not None:
-            out_path = os.fspath(out_file)
-            parent = os.path.dirname(os.path.abspath(out_path))
-            if parent:
-                os.makedirs(parent, exist_ok=True)
-            fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
-        elif rsgispy.is_notebook():
-            plt.show()
-    finally:
-        plt.close(fig)
 
 
 def plot_roc_curve(
@@ -474,39 +402,28 @@ def build_env_block_matrix(
     Returns ``(valid_df_matrix, flat_valid_indices)`` where
     ``valid_df_matrix`` has shape ``(n_valid_pxls, n_vars)``.
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     msk_flat = block_vars[_MASK_BAND_KEY].ravel()
     roi_idx = np.flatnonzero(msk_flat == img_msk_val)
     if roi_idx.size == 0:
         return np.empty((0, len(analysis_vars)), dtype=np.float64), roi_idx
 
-    n_vars = len(analysis_vars)
-    env_mat = np.empty((roi_idx.size, n_vars), dtype=np.float64)
-    finite_mask = np.ones(roi_idx.size, dtype=bool)
-
-    for col_idx, var_name in enumerate(analysis_vars):
+    band_arrays: List[Tuple[np.ndarray, Optional[float]]] = []
+    for var_name in analysis_vars:
         info = env_vars[var_name]
         assert info.file is not None
-        band_arr = block_vars[var_keys[var_name]].ravel()[roi_idx].astype(
-            np.float64, copy=False
-        )
-        valid_col = np.isfinite(band_arr)
-
         ds = datasets[os.fspath(info.file)]
         nd_val = ds.nodatavals[info.band - 1]
-        if nd_val is not None and not (isinstance(nd_val, float) and np.isnan(nd_val)):
-            valid_col &= band_arr != float(nd_val)
+        band_arrays.append((block_vars[var_keys[var_name]], nd_val))
 
-        if normalise_data:
-            band_arr = np.asarray(
-                normalise_array_with_info(band_arr, info), dtype=np.float64
+    env_mat, valid_idx = extract_roi_feature_matrix(band_arrays, roi_idx)
+    if normalise_data and env_mat.shape[0] > 0:
+        for col_idx, var_name in enumerate(analysis_vars):
+            env_mat[:, col_idx] = np.asarray(
+                normalise_array_with_info(env_mat[:, col_idx], env_vars[var_name]),
+                dtype=np.float64,
             )
-
-        env_mat[:, col_idx] = band_arr
-        finite_mask &= valid_col
-
-    valid_idx = roi_idx[finite_mask]
-    return env_mat[finite_mask], valid_idx
+    return env_mat, valid_idx
 
 
 def run_env_block_pipeline(
@@ -547,17 +464,14 @@ def run_env_block_pipeline(
         mask_band=1,
     )
     out_np_dtype = np.dtype(out_rio_dtype)
-
-    out_dir = os.path.dirname(os.path.abspath(os.fspath(output_img)))
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
+    out_path = ensure_parent_dir(output_img)
 
     with ExitStack() as stack:
         datasets = open_input_datasets(stack, band_defs)
         grid = compute_spatial_intersection(datasets)
         dst = open_output_dataset(
             stack=stack,
-            output_img=os.fspath(output_img),
+            output_img=out_path,
             gdalformat=gdalformat,
             out_rio_dtype=out_rio_dtype,
             grid=grid,

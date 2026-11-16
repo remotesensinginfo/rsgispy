@@ -1418,6 +1418,51 @@ def process_blocks(
             dst.write(out_arr, 1, window=out_win)
 
 
+def extract_roi_feature_matrix(
+    band_arrays: Sequence[Tuple[np.ndarray, Optional[float]]],
+    roi_idx: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Extract a dense ``float64`` matrix of valid pixels at flat ROI indices
+    ``roi_idx`` across a sequence of ``(band_array, nodata_val)`` pairs.
+
+    Pixels with non-finite values or matching any band's ``nodata_val`` are
+    filtered out cleanly.
+
+    :param band_arrays: Sequence of ``(band_array, nodata_val)`` tuples for a
+                        processing block.
+    :param roi_idx: 1D flat pixel indices inside the block matching the ROI mask.
+    :return: Tuple ``(valid_features, valid_roi_indices)`` where
+             ``valid_features`` has shape ``(n_valid_pxls, n_bands)``.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.imageprocess as ip
+
+        b1 = np.array([[1.0, np.nan], [3.0, 4.0]])
+        roi = np.array([0, 1, 2, 3])
+        feats, valid_idx = ip.extract_roi_feature_matrix([(b1, None)], roi)
+    """
+    n_features = len(band_arrays)
+    if roi_idx.size == 0:
+        return np.empty((0, n_features), dtype=np.float64), roi_idx
+
+    feat_mat = np.empty((roi_idx.size, n_features), dtype=np.float64)
+    valid_mask = np.ones(roi_idx.size, dtype=bool)
+    for col_idx, (band_arr, band_nd) in enumerate(band_arrays):
+        vals = band_arr.ravel()[roi_idx].astype(np.float64, copy=False)
+        valid_col = np.isfinite(vals)
+        if band_nd is not None and not (
+            isinstance(band_nd, (float, np.floating)) and math.isnan(float(band_nd))
+        ):
+            valid_col &= vals != float(band_nd)
+        feat_mat[:, col_idx] = vals
+        valid_mask &= valid_col
+
+    return feat_mat[valid_mask], roi_idx[valid_mask]
+
+
 def run_window_halo_blocks(
     input_img: str,
     output_img: str,

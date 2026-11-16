@@ -676,3 +676,28 @@ def test_build_valid_mask_and_read_raster_band(tmp_path):
         rsgispy.imageprocess.read_raster_band(raster_path, img_band=3)
     with pytest.raises(rsgispy.RSGISPyException):
         rsgispy.imageprocess.read_raster_band(tmp_path / "missing.tif", img_band=1)
+
+
+def test_extract_roi_feature_matrix():
+    """Test extract_roi_feature_matrix filtering NaN, nodata, and empty ROIs."""
+    b1 = np.array([[1.0, np.nan], [-9999.0, 4.0]], dtype=np.float32)
+    b2 = np.array([[10, 20], [30, 40]], dtype=np.int16)
+    roi = np.array([0, 1, 2, 3], dtype=np.int64)
+
+    feats, valid_idx = rsgispy.imageprocess.extract_roi_feature_matrix(
+        [(b1, np.float32(np.nan)), (b2, 40)], roi
+    )
+    assert valid_idx.tolist() == [0, 2]
+    np.testing.assert_allclose(feats, np.array([[1.0, 10.0], [-9999.0, 30.0]]))
+
+    feats_nd, valid_idx_nd = rsgispy.imageprocess.extract_roi_feature_matrix(
+        [(b1, -9999.0), (b2, None)], roi
+    )
+    assert valid_idx_nd.tolist() == [0, 3]
+    np.testing.assert_allclose(feats_nd, np.array([[1.0, 10.0], [4.0, 40.0]]))
+
+    empty_feats, empty_idx = rsgispy.imageprocess.extract_roi_feature_matrix(
+        [(b1, None), (b2, None)], np.array([], dtype=np.int64)
+    )
+    assert empty_feats.shape == (0, 2)
+    assert empty_idx.size == 0

@@ -50,6 +50,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+classification = [
+    "optuna>=3.0",
+    "pyarrow>=14.0",
+    "scikit-learn>=1.2",
+    "scipy>=1.7",
+]
 stats = [
     "scikit-gstat>=1.0",
     "scikit-learn>=1.2",
@@ -96,14 +102,14 @@ jupyter = [
     "ipywidgets>=8.0",
 ]
 all = [
-    "rsgispy[stats,vector,mapping,dataaccess,imaging,unmixing,jupyter]",
+    "rsgispy[classification,stats,vector,mapping,dataaccess,imaging,unmixing,jupyter]",
 ]
 test = [
     "flake8>=6.0",
     "pylint>=3.0",
     "pytest>=7.0",
     "pytest-cov>=4.0",
-    "rsgispy[stats]",
+    "rsgispy[classification,stats]",
 ]
 docs = [
     "sphinx>=7.0",

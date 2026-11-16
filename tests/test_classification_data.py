@@ -3,13 +3,13 @@ Tests for rsgispy.classification.classdata: data structures, config JSON I/O,
 Parquet (Snappy default) sample extraction/splitting, and class ID recoding.
 """
 
+import importlib.util
 import inspect
 from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-import pyarrow.parquet as pq
 import pytest
 import rasterio
 from rasterio.transform import from_origin
@@ -221,6 +221,8 @@ def test_extract_point_and_polygon_samples_snappy_parquet(tmp_path):
     export_poly_pxls_to_df (polygons), mixed vector types, multi-image rasters,
     and train/test/valid splitting into Snappy-compressed Parquet files.
     """
+    pq = pytest.importorskip("pyarrow.parquet")
+
     # 10x10 rasters at 10m pixels: X=[500000..500100], Y=[5599900..5600000]
     b1 = np.arange(100, dtype=np.float32).reshape(10, 10)
     b2 = (np.arange(100, dtype=np.float32).reshape(10, 10)) * 2.0 + 10.0
@@ -345,7 +347,10 @@ def test_sample_formats_other_than_parquet(tmp_path):
         }
     )
 
-    for ext in ("csv", "tsv", "feather", "json", "pkl"):
+    formats = ["csv", "tsv", "json", "pkl"]
+    if importlib.util.find_spec("pyarrow") is not None:
+        formats.append("feather")
+    for ext in formats:
         out_path = tmp_path / f"samples.{ext}"
         rcd.write_cls_samples(df, out_path)
         assert out_path.exists()
