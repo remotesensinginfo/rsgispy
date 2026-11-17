@@ -1,3 +1,8 @@
+[![Python package](https://github.com/remotesensinginfo/rsgispy/actions/workflows/python-package.yml/badge.svg)](https://github.com/remotesensinginfo/rsgispy/actions/workflows/python-package.yml)[![Pylint](https://github.com/remotesensinginfo/rsgispy/actions/workflows/pylint.yml/badge.svg)](https://github.com/remotesensinginfo/rsgispy/actions/workflows/pylint.yml)[![CodeQL](https://github.com/remotesensinginfo/rsgispy/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/remotesensinginfo/rsgispy/actions/workflows/github-code-scanning/codeql)[![Upload Python Package](https://github.com/remotesensinginfo/rsgispy/actions/workflows/python-publish.yml/badge.svg)](https://github.com/remotesensinginfo/rsgispy/actions/workflows/python-publish.yml)![PyPI Version](https://img.shields.io/pypi/v/rsgispy)
+
+
+
+
 # rsgispy
 
 **rsgispy** is a pure Python reimplementation of the [Remote Sensing and GIS Software Library (RSGISLib)](https://www.rsgislib.org) designed to be easy to install, cross-platform, and straightforward to maintain while preserving a familiar API.
