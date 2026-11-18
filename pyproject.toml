@@ -126,14 +126,14 @@ jupyter = [
     "ipywidgets>=8.0",
 ]
 all = [
-    "rsgispy[classification,stats,vector,mapping,dataaccess,imaging,unmixing,jupyter]",
+    "rsgispy[classification,regression,stats,vector,mapping,dataaccess,imaging,unmixing,jupyter]",
 ]
 test = [
     "flake8>=6.0",
     "pylint>=3.0",
     "pytest>=7.0",
     "pytest-cov>=4.0",
-    "rsgispy[classification,stats]",
+    "rsgispy[classification,regression,stats]",
 ]
 docs = [
     "sphinx>=7.0",

@@ -20,7 +20,6 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.classification._helpers import (
@@ -31,7 +30,6 @@ from rsgispy.classification._helpers import (
     extract_xy,
     finalise_thematic_output_img,
     load_samples_df,
-    read_feature_block,
     resolve_apply_band_specs,
     resolve_feature_cols,
     resolve_out_nodata,
@@ -45,7 +43,6 @@ from rsgispy.classification.classdata import (
 )
 from rsgispy.imageprocess import (
     ensure_file_exists,
-    extract_roi_feature_matrix,
     iter_dataset_windows,
     open_output_dataset,
 )
@@ -54,6 +51,7 @@ from rsgispy.imageutils.colourtable import set_img_not_thematic
 from rsgispy.imageutils.stats import pop_img_stats
 from rsgispy.tools._ml_data import (
     open_apply_datasets as _open_apply_datasets,
+    read_valid_roi_block as _read_valid_roi_block,
     resolve_estimator_feature_cols as _resolve_estimator_feature_cols,
 )
 from rsgispy.tools._sklearn import check_sklearn_estimator_fitted, sklearn
@@ -448,36 +446,20 @@ def apply_classifier_raster(
         ):
             win_h = int(out_win.height)
             win_w = int(out_win.width)
-            msk_win = Window(
-                base_msk_col + int(out_win.col_off),
-                base_msk_row + int(out_win.row_off),
-                win_w,
-                win_h,
+            valid_idx, x_valid = _read_valid_roi_block(
+                msk_ds=msk_ds,
+                msk_path=msk_path,
+                img_msk_val=img_msk_val,
+                band_specs=band_specs,
+                datasets=datasets,
+                grid=grid,
+                out_win=out_win,
+                all_compatible=all_compatible,
+                use_df_input=use_df_input,
+                df_cols=df_cols,
+                base_msk_col=base_msk_col,
+                base_msk_row=base_msk_row,
             )
-            msk_arr = msk_ds.read(1, window=msk_win)
-            roi_idx = np.flatnonzero(msk_arr.ravel() == img_msk_val)
-
-            if roi_idx.size > 0:
-                feat_arrays = read_feature_block(
-                    band_specs=band_specs,
-                    datasets=datasets,
-                    ref_ds=msk_ds,
-                    grid=grid,
-                    out_win=out_win,
-                    all_compatible=all_compatible,
-                    ref_path=msk_path,
-                )
-                valid_feats, valid_idx = extract_roi_feature_matrix(
-                    feat_arrays, roi_idx
-                )
-                x_valid = (
-                    pd.DataFrame(valid_feats, columns=df_cols)
-                    if use_df_input
-                    else valid_feats
-                )
-            else:
-                valid_idx = np.empty(0, dtype=np.intp)
-                x_valid = None
 
             aligned_probs: Optional[np.ndarray] = None
             need_probs = (

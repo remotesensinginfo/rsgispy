@@ -44,6 +44,12 @@ from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-imp
 from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
     resolve_rng,
 )
+from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
+    resolve_bootstrap_sample_size,
+)
+from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
+    summarise_bootstrap_interval,
+)
 from rsgispy.tools._ml_tune import resolve_cv_splitter as _tools_resolve_cv_splitter
 from rsgispy.tools._sklearn import (
     check_sklearn_available as _check_sklearn_available,
@@ -66,15 +72,6 @@ ClsConfigInput = Union[
 SamplesInput = Union[pd.DataFrame, str, os.PathLike]
 
 _CONF_INT_CONSTS: Tuple[float, ...] = (1.64, 1.96, 2.33, 2.58)
-_BOOTSTRAP_PERCENTILES: Tuple[float, ...] = (
-    0.5,
-    2.5,
-    5.0,
-    50.0,
-    95.0,
-    97.5,
-    99.5,
-)
 
 
 def _safe_divide_scalar(num: float, denom: float) -> float:
@@ -441,41 +438,6 @@ def compute_cls_areas_from_img(
             "Total mapped pixel area across classes in cls_img is zero."
         )
     return cls_area_dict, cls_id_areas
-
-
-def resolve_bootstrap_sample_size(
-    n_total: int,
-    sample_frac: float,
-    sample_n_smps: Optional[int],
-    bootstrap_n: int,
-) -> int:
-    """Validate bootstrap parameters and return sample size per iteration."""
-    if bootstrap_n < 1:
-        raise rsgispy.RSGISPyException("bootstrap_n must be at least 1.")
-    if sample_n_smps is None:
-        if sample_frac <= 0.0 or sample_frac > 1.0:
-            raise rsgispy.RSGISPyException(
-                "sample_frac must be within (0.0, 1.0]."
-            )
-        n_samples = max(1, int(n_total * sample_frac))
-    else:
-        if sample_n_smps < 1:
-            raise rsgispy.RSGISPyException("sample_n_smps must be at least 1.")
-        n_samples = min(int(sample_n_smps), n_total)
-    return n_samples
-
-
-def summarise_bootstrap_interval(values: Sequence[float]) -> Dict[str, Any]:
-    """Compute mean, median, and 90th/95th/99th percentile bounds."""
-    arr = np.asarray(values, dtype=float)
-    inters = np.percentile(arr, _BOOTSTRAP_PERCENTILES)
-    return {
-        "mean": float(np.mean(arr)),
-        "median": float(inters[3]),
-        "90th": [float(inters[2]), float(inters[4])],
-        "95th": [float(inters[1]), float(inters[5])],
-        "99th": [float(inters[0]), float(inters[6])],
-    }
 
 
 def aggregate_bootstrap_runs(

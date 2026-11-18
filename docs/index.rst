@@ -40,6 +40,10 @@ Additional functionality uses optional third-party packages defined under
      - ``scikit-gstat``, ``scikit-learn``, ``scipy``
      - Empirical semi-variograms, accuracy/feature selection, thresholding,
        KNN gap filling, distance transforms, and spatial interpolation.
+   * - ``regression``
+     - ``optuna``, ``pyarrow``, ``scikit-learn``, ``scipy``
+     - Continuous univariate and multivariate image regression with
+       ``scikit-learn`` (plus optional GBDT, SHAP, and SALib extras).
    * - ``vector``
      - ``alphashape``, ``h3``, ``openpyxl``, ``pyarrow``, ``rtree``,
        ``xlsxwriter``
@@ -68,11 +72,12 @@ Additional functionality uses optional third-party packages defined under
      - ``ipywidgets``
      - Interactive Jupyter notebook progress bars.
    * - ``all``
-     - ``stats``, ``vector``, ``mapping``, ``dataaccess``, ``imaging``,
-       ``unmixing``, ``jupyter``
+     - ``classification``, ``regression``, ``stats``, ``vector``, ``mapping``,
+       ``dataaccess``, ``imaging``, ``unmixing``, ``jupyter``
      - All optional runtime dependencies.
    * - ``test``
-     - ``flake8``, ``pylint``, ``pytest``, ``pytest-cov``, ``stats``
+     - ``flake8``, ``pylint``, ``pytest``, ``pytest-cov``,
+       ``classification``, ``regression``, ``stats``
      - Running the test suite and linters.
    * - ``docs``
      - ``sphinx``, ``sphinx-rtd-theme``
@@ -145,6 +150,7 @@ Package Overview
 * :doc:`rsgispy_imagespectral` — Spectral classification (SAM, SCM), linear unmixing, endmembers, PPI, PCA, MNF, Tasseled Cap, histogram matching, whitening, and smoothing.
 * :doc:`rsgispy_imageutils` — Raster creation, rasterisation, metadata, masking, mosaicking, tiling, VRT, and warping.
 * :doc:`rsgispy_modelling` — Environmental and species distribution modelling with ``scikit-learn`` and :mod:`rsgispy.imageprocess`.
+* :doc:`rsgispy_regression` — Continuous univariate and multivariate image regression with ``scikit-learn``, XGBoost, LightGBM, and CatBoost, response curves, feature selection, and accuracy metrics.
 * :doc:`rsgispy_segmentation` — Connected-component clumping (:func:`~rsgispy.segmentation.clump.clump`) and union of clumps (:func:`~rsgispy.segmentation.clump.union_of_clumps`).
 * :doc:`rsgispy_tools` — General geospatial, geometry, projection, plotting, mapping, and file utilities.
 * :doc:`rsgispy_vectorattrs` — Vector attribute table, column, and spatial join utilities.
@@ -172,6 +178,7 @@ Package Overview
    rsgispy_imagespectral
    rsgispy_imageutils
    rsgispy_modelling
+   rsgispy_regression
    rsgispy_segmentation
    rsgispy_tools
    rsgispy_vectorattrs
