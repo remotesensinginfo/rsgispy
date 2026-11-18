@@ -16,6 +16,7 @@ __all__ = [
     "set_env_vars_zstd_gtiff_outs",
     "set_env_vars_lzw_cog_outs",
     "set_env_vars_deflate_cog_outs",
+    "set_env_vars_zstd_cog_outs",
 ]
 
 
@@ -100,26 +101,6 @@ def set_env_vars_zstd_gtiff_outs(bigtiff: bool = False) -> None:
     opts_str = (
         f"TILED=YES:COMPRESS=ZSTD:INTERLEAVE=BAND:BIGTIFF={bigtiff_val}"
     )
-    os.environ["RSGISLIB_IMG_CRT_OPTS_GTIFF"] = opts_str
-    os.environ["RSGISPY_IMG_CRT_OPTS_GTIFF"] = opts_str
-
-
-def set_env_vars_zstd_gtiff_outs(bigtiff: bool = False) -> None:
-    """
-    Set environment variables such that outputted GeoTIFF files are created
-    tiled and compressed using the ZSTD algorithm.
-
-    :param bigtiff: If True, GTIFF files will be created as BigTIFF (``BIGTIFF=YES``),
-                    otherwise ``BIGTIFF=IF_SAFER`` (Default = False).
-
-    .. code:: python
-
-        import rsgispy.imageutils.envopts
-
-        rsgispy.imageutils.envopts.set_env_vars_zstd_gtiff_outs()
-    """
-    bigtiff_val = "YES" if bigtiff else "IF_SAFER"
-    opts_str = f"TILED=YES:COMPRESS=ZSTD:INTERLEAVE=BAND:BIGTIFF={bigtiff_val}"
     os.environ["RSGISLIB_IMG_CRT_OPTS_GTIFF"] = opts_str
     os.environ["RSGISPY_IMG_CRT_OPTS_GTIFF"] = opts_str
 

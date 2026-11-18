@@ -632,7 +632,7 @@ def calc_zonal_poly_pts_band_stats(
             else:
                 centroid = geom.centroid
                 sampled = _sample_point_pixel(
-                    src, img_band, centroid.x, centroid.y, clamp=True
+                    src, img_band, centroid.x, centroid.y, clamp=False
                 )
                 out_vals.append(
                     float(sampled) if sampled is not None else float("nan")
@@ -1010,7 +1010,7 @@ def calc_zonal_band_pxl_counts(
 
     with _open_validated_zonal_inputs(
         vec_gdf, input_img, img_band, vec_def_epsg=vec_def_epsg
-    ) as (src, _, geom_series):
+    ) as (src, img_nodata, geom_series):
         total_col = total_field.lower()
         lut_cols = {pxl_val: name.lower() for pxl_val, name in vals_lut.items()}
         totals: List[float] = []

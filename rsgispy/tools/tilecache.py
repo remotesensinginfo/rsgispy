@@ -98,13 +98,14 @@ def get_tile_for_point(
     )
     metre_y = metre_y * ORIGIN_SHIFT / 180.0
 
-    pixel_x = abs(round((metre_x + ORIGIN_SHIFT) / resolution(zoom)))
-    pixel_y = abs(round((metre_y - ORIGIN_SHIFT) / resolution(zoom)))
+    pixel_x = max(0.0, (metre_x + ORIGIN_SHIFT) / resolution(zoom))
+    pixel_y = max(0.0, (ORIGIN_SHIFT - metre_y) / resolution(zoom))
 
-    tile_x = int(math.ceil(pixel_x / float(tile_size)) - 1)
-    tile_y = int(math.ceil(pixel_y / float(tile_size)) - 1)
+    max_idx = (2**zoom) - 1
+    tile_x = max(0, min(max_idx, int(math.floor(pixel_x / float(tile_size)))))
+    tile_y = max(0, min(max_idx, int(math.floor(pixel_y / float(tile_size)))))
     if tms:
-        tile_y = (2**zoom - 1) - tile_y
+        tile_y = max_idx - tile_y
 
     return tile_x, tile_y, zoom
 
@@ -158,8 +159,9 @@ def get_tile_bbox(
         import rsgispy.tools.tilecache
         bbox = rsgispy.tools.tilecache.get_tile_bbox(2001, 2745, zoom=12)
     """
-    tl_pt = get_tile_tl_lonlat(tile_x, tile_y, zoom, tms)
-    br_pt = get_tile_tl_lonlat(tile_x + 1, tile_y + 1, zoom, tms)
+    xyz_y = (2**zoom - 1) - tile_y if tms else tile_y
+    tl_pt = get_tile_tl_lonlat(tile_x, xyz_y, zoom, tms=False)
+    br_pt = get_tile_tl_lonlat(tile_x + 1, xyz_y + 1, zoom, tms=False)
     return [tl_pt[0], br_pt[0], br_pt[1], tl_pt[1]]
 
 
@@ -404,20 +406,12 @@ def get_tiles(
             )
 
             min_x_tile = min(llx_i, urx_i)
-            if llx_i == urx_i:
-                n_x_tiles = 1
-            elif llx_i < urx_i:
-                n_x_tiles = max(1, urx_i - min(llx_i + 1, 2**z_lvl))
-            else:
-                n_x_tiles = max(1, llx_i - min(urx_i + 1, 2**z_lvl))
+            max_x_tile = min(max(llx_i, urx_i), (2**z_lvl) - 1)
+            n_x_tiles = max(1, (max_x_tile - min_x_tile) + 1)
 
             min_y_tile = min(ury_i, lly_i)
-            if ury_i == lly_i:
-                n_y_tiles = 1
-            elif ury_i < lly_i:
-                n_y_tiles = max(1, lly_i - min(ury_i + 1, 2**z_lvl))
-            else:
-                n_y_tiles = max(1, ury_i - min(lly_i + 1, 2**z_lvl))
+            max_y_tile = min(max(ury_i, lly_i), (2**z_lvl) - 1)
+            n_y_tiles = max(1, (max_y_tile - min_y_tile) + 1)
 
             for i_x in range(min_x_tile, min_x_tile + n_x_tiles):
                 for j_y in range(min_y_tile, min_y_tile + n_y_tiles):
@@ -447,16 +441,25 @@ def convert_between_tms_xyz(tiles_dir: str, use_pbar: bool = True) -> None:
         and rsgispy.tools.maths.is_number(entry)
     ]
 
-    for zoom_dir in tqdm_cls(in_zoom_dirs, desc="overall", disable=not use_pbar):
+    for zoom_dir in tqdm_cls(
+        in_zoom_dirs, desc="overall", disable=not use_pbar
+    ):
         zoom = int(os.path.basename(zoom_dir))
         for x_entry in tqdm_cls(
-            os.listdir(zoom_dir), desc=f"zoom {zoom}", leave=False, disable=not use_pbar
+            os.listdir(zoom_dir),
+            desc=f"zoom {zoom}",
+            leave=False,
+            disable=not use_pbar,
         ):
             x_dir = os.path.join(zoom_dir, x_entry)
             if os.path.isdir(x_dir) and rsgispy.tools.maths.is_number(x_entry):
                 x_val = int(x_entry)
+                staged_moves: List[Tuple[str, str]] = []
                 for y_file in tqdm_cls(
-                    os.listdir(x_dir), desc="y", leave=False, disable=not use_pbar
+                    os.listdir(x_dir),
+                    desc="y",
+                    leave=False,
+                    disable=not use_pbar,
                 ):
                     y_cur_file = os.path.join(x_dir, y_file)
                     y_in_str, img_ext = os.path.splitext(y_file)
@@ -464,6 +467,14 @@ def convert_between_tms_xyz(tiles_dir: str, use_pbar: bool = True) -> None:
                         _, n_tile_y, _ = flip_xyz_tms_tiles(
                             x_val, int(y_in_str), zoom
                         )
-                        out_img_file = os.path.join(x_dir, f"{n_tile_y}{img_ext}")
+                        out_img_file = os.path.join(
+                            x_dir, f"{n_tile_y}{img_ext}"
+                        )
                         if y_cur_file != out_img_file:
-                            os.rename(y_cur_file, out_img_file)
+                            tmp_file = os.path.join(
+                                x_dir, f".__rsgispy_tmp_{n_tile_y}{img_ext}"
+                            )
+                            os.rename(y_cur_file, tmp_file)
+                            staged_moves.append((tmp_file, out_img_file))
+                for tmp_file, out_img_file in staged_moves:
+                    os.rename(tmp_file, out_img_file)

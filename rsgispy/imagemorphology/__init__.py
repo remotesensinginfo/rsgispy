@@ -29,9 +29,11 @@ __all__ = [
     "image_dilate",
     "image_erode",
     "image_gradiant",
+    "image_gradient",
     "image_dilate_combined_out",
     "image_erode_combined_out",
     "image_gradiant_combined_out",
+    "image_gradient_combined_out",
     "image_local_minima",
     "image_local_minima_combined_out",
     "image_opening",
@@ -146,7 +148,7 @@ def _compute_local_minima_block(
     out_w = padded.shape[2] - (2 * half)
 
     ii, jj = np.ogrid[:win_size, :win_size]
-    nbr_mask = op_mask & (ii != half) & (jj != half)
+    nbr_mask = op_mask & ((ii != half) | (jj != half))
     has_nbrs = bool(np.any(nbr_mask))
 
     centres = padded[:, half:half + out_h, half:half + out_w]
@@ -249,7 +251,7 @@ def _run_window_morphology(
         out_np_dtype=out_np_dtype,
         out_count=out_count,
         per_band=False,
-        read_dtype=np.float32,
+        read_dtype=np.float64,
         pad_mode="constant",
         fill_value=0.0,
         clamp_int=True,
@@ -315,8 +317,9 @@ def _run_two_step_seq(
     use_pbar: bool = True,
 ) -> None:
     """
-    Execute ``niters`` iterations of ``first_op`` followed by ``second_op``
-    (e.g., ``erode`` -> ``dilate`` for opening, or ``dilate`` -> ``erode`` for closing).
+    Execute ``niters`` iterations of ``first_op`` followed by ``niters``
+    iterations of ``second_op`` (e.g., ``n`` erosions -> ``n`` dilations for
+    opening, or ``n`` dilations -> ``n`` erosions for closing).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
@@ -330,31 +333,34 @@ def _run_two_step_seq(
         cur_in = input_img
 
         for idx in range(niters):
-            step_tmp = (
-                str(tmp_img)
-                if use_user_tmp
-                else os.path.join(tmp_dir, f"morph_tmp_{idx}.tif")
-            )
-            step_fmt = gdalformat if use_user_tmp else "GTIFF"
-            is_last = idx == (niters - 1)
+            is_last_first = idx == (niters - 1)
             step_out = (
-                output_img
-                if is_last
-                else os.path.join(tmp_dir, f"morph_iter_{idx}.tif")
+                str(tmp_img)
+                if (is_last_first and use_user_tmp)
+                else os.path.join(tmp_dir, f"morph_first_{idx}.tif")
             )
-            out_fmt = gdalformat if is_last else "GTIFF"
-
+            step_fmt = gdalformat if (is_last_first and use_user_tmp) else "GTIFF"
             _run_window_morphology(
                 input_img=cur_in,
-                output_img=step_tmp,
+                output_img=step_out,
                 op_mask=op_mask,
                 gdalformat=step_fmt,
                 datatype=datatype,
                 op_kind=first_op,
                 use_pbar=use_pbar,
             )
+            cur_in = step_out
+
+        for idx in range(niters):
+            is_last_second = idx == (niters - 1)
+            step_out = (
+                output_img
+                if is_last_second
+                else os.path.join(tmp_dir, f"morph_second_{idx}.tif")
+            )
+            out_fmt = gdalformat if is_last_second else "GTIFF"
             _run_window_morphology(
-                input_img=step_tmp,
+                input_img=cur_in,
                 output_img=step_out,
                 op_mask=op_mask,
                 gdalformat=out_fmt,
@@ -1123,3 +1129,7 @@ def image_white_top_hat(
             datatype=datatype,
             use_pbar=use_pbar,
         )
+
+
+image_gradient = image_gradiant
+image_gradient_combined_out = image_gradiant_combined_out

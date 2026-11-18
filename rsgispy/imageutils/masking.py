@@ -356,9 +356,8 @@ def gen_valid_mask(
                     win_h,
                 )
                 arr = ds.read(window=in_win, out_dtype=np.float64)
-                if nd_is_nan:
-                    valid &= np.all(~np.isnan(arr), axis=0)
-                else:
+                valid &= np.all(np.isfinite(arr), axis=0)
+                if not nd_is_nan:
                     valid &= np.all(arr != float(no_data_val), axis=0)
             dst.write(valid.astype(np.uint8), 1, window=out_win)
 

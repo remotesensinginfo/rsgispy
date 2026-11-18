@@ -92,53 +92,50 @@ def calc_basic_img_band_stats(
             )
 
     np_dt = rsgispy.get_numpy_datatype(rsgis_dt)
-    min_vals = np.zeros(n_bands, dtype=np_dt)
-    max_vals = np.zeros(n_bands, dtype=np_dt)
-    sum_vals = np.zeros(n_bands, dtype=np.float64)
+    min_vals_f = np.zeros(n_bands, dtype=np.float64)
+    max_vals_f = np.zeros(n_bands, dtype=np.float64)
+    mean_vals = np.zeros(n_bands, dtype=np.float64)
+    m2_vals = np.zeros(n_bands, dtype=np.float64)
     n_vals = np.zeros(n_bands, dtype=np.int64)
     first_arr = np.ones(n_bands, dtype=bool)
 
     for _, block_arrays in iter_single_image_band_blocks(
-        input_img=input_img, use_pbar=use_pbar
+        input_img=input_img, read_dtype=np.float64, use_pbar=use_pbar
     ):
         for idx, band_arr in enumerate(block_arrays):
             data = band_arr.ravel()
             if use_no_data and no_data_val is not None:
                 data = data[data != no_data_val]
             data = data[np.isfinite(data)]
-            if data.size > 0:
-                d_min = data.min()
-                d_max = data.max()
+            k = int(data.size)
+            if k > 0:
+                d_min = float(data.min())
+                d_max = float(data.max())
                 if first_arr[idx]:
-                    min_vals[idx] = d_min
-                    max_vals[idx] = d_max
+                    min_vals_f[idx] = d_min
+                    max_vals_f[idx] = d_max
                     first_arr[idx] = False
                 else:
-                    if d_min < min_vals[idx]:
-                        min_vals[idx] = d_min
-                    if d_max > max_vals[idx]:
-                        max_vals[idx] = d_max
-                sum_vals[idx] += float(np.sum(data))
-                n_vals[idx] += data.size
+                    if d_min < min_vals_f[idx]:
+                        min_vals_f[idx] = d_min
+                    if d_max > max_vals_f[idx]:
+                        max_vals_f[idx] = d_max
 
-    mean_vals = np.where(n_vals > 0, sum_vals / np.maximum(n_vals, 1), 0.0)
-    sq_diff_vals = np.zeros(n_bands, dtype=np.float64)
-
-    for _, block_arrays in iter_single_image_band_blocks(
-        input_img=input_img, use_pbar=use_pbar
-    ):
-        for idx, band_arr in enumerate(block_arrays):
-            data = band_arr.ravel()
-            if use_no_data and no_data_val is not None:
-                data = data[data != no_data_val]
-            data = data[np.isfinite(data)]
-            if data.size > 0:
-                sq_diff_vals[idx] += float(
-                    np.sum(np.power(data - mean_vals[idx], 2))
+                batch_mean = float(np.mean(data))
+                batch_m2 = float(np.sum((data - batch_mean) ** 2))
+                n_prev = int(n_vals[idx])
+                n_new = n_prev + k
+                delta = batch_mean - mean_vals[idx]
+                mean_vals[idx] += delta * (float(k) / float(n_new))
+                m2_vals[idx] += batch_m2 + (delta * delta) * (
+                    float(n_prev) * float(k) / float(n_new)
                 )
+                n_vals[idx] = n_new
 
+    min_vals = min_vals_f.astype(np_dt)
+    max_vals = max_vals_f.astype(np_dt)
     stddev_vals = np.where(
-        n_vals > 0, np.sqrt(sq_diff_vals / np.maximum(n_vals, 1)), 0.0
+        n_vals > 0, np.sqrt(np.maximum(m2_vals / np.maximum(n_vals, 1), 0.0)), 0.0
     )
 
     return min_vals, max_vals, mean_vals, stddev_vals

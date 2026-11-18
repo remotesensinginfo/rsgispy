@@ -522,8 +522,7 @@ def latlon_arr_to_utm_zone_number(
         lons = np.array([-4.08, -3.18])
         zones = rsgispy.tools.utm.latlon_arr_to_utm_zone_number(lats, lons)
     """
-    utm_zones = ((longitude + 180) / 6) + 1
-    utm_zones = np.rint(utm_zones).astype(int)
+    utm_zones = np.floor((longitude + 180) / 6).astype(int) + 1
 
     utm_zones[
         (56 <= latitude) & (latitude < 64) & (3 <= longitude) & (longitude < 12)
@@ -532,13 +531,13 @@ def latlon_arr_to_utm_zone_number(
         (72 <= latitude) & (latitude <= 84) & (longitude >= 0) & (longitude < 9)
     ] = 31
     utm_zones[
-        (72 <= latitude) & (latitude <= 84) & (longitude >= 0) & (longitude < 21)
+        (72 <= latitude) & (latitude <= 84) & (longitude >= 9) & (longitude < 21)
     ] = 33
     utm_zones[
-        (72 <= latitude) & (latitude <= 84) & (longitude >= 0) & (longitude < 33)
+        (72 <= latitude) & (latitude <= 84) & (longitude >= 21) & (longitude < 33)
     ] = 35
     utm_zones[
-        (72 <= latitude) & (latitude <= 84) & (longitude >= 0) & (longitude < 42)
+        (72 <= latitude) & (latitude <= 84) & (longitude >= 33) & (longitude < 42)
     ] = 37
 
     return utm_zones

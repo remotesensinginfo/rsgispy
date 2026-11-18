@@ -485,7 +485,7 @@ def query_scn_lst(
 
     query_url = f"{query_url}&$top={max_n_rslts}"
     if start_n is not None and start_n > 0:
-        query_url = f"{query_url}&skip={start_n}"
+        query_url = f"{query_url}&$skip={start_n}"
 
     query_url = f"{query_url}&$expand=Locations"
 

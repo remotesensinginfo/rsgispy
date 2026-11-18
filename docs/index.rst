@@ -36,14 +36,26 @@ Additional functionality uses optional third-party packages defined under
    * - Extra
      - Packages Installed
      - Features / Modules Enabled
-   * - ``stats``
-     - ``scikit-gstat``, ``scikit-learn``, ``scipy``
-     - Empirical semi-variograms, accuracy/feature selection, thresholding,
-       KNN gap filling, distance transforms, and spatial interpolation.
+   * - ``classification``
+     - ``optuna``, ``pyarrow``, ``scikit-learn``, ``scipy``
+     - Supervised image classification, hyperparameter tuning, accuracy
+       assessment, and post-classification majority/sieve filtering.
    * - ``regression``
      - ``optuna``, ``pyarrow``, ``scikit-learn``, ``scipy``
      - Continuous univariate and multivariate image regression with
        ``scikit-learn`` (plus optional GBDT, SHAP, and SALib extras).
+   * - ``gbdt``
+     - ``xgboost``, ``lightgbm``, ``catboost``, ``optuna``, ``scikit-learn``
+     - Gradient-boosted decision tree classifiers and regressors (also
+       installable individually as ``xgboost``, ``lightgbm``, or ``catboost``).
+   * - ``modelling``
+     - ``imbalanced-learn``, ``SALib``, ``scikit-learn``, ``scipy``, ``shap``
+     - Species distribution modelling, SHAP model explanations, and SALib
+       Sobol global sensitivity analysis.
+   * - ``stats``
+     - ``scikit-gstat``, ``scikit-learn``, ``scipy``
+     - Empirical semi-variograms, accuracy/feature selection, thresholding,
+       KNN gap filling, distance transforms, and spatial interpolation.
    * - ``vector``
      - ``alphashape``, ``h3``, ``openpyxl``, ``pyarrow``, ``rtree``,
        ``xlsxwriter``
@@ -72,8 +84,9 @@ Additional functionality uses optional third-party packages defined under
      - ``ipywidgets``
      - Interactive Jupyter notebook progress bars.
    * - ``all``
-     - ``classification``, ``regression``, ``stats``, ``vector``, ``mapping``,
-       ``dataaccess``, ``imaging``, ``unmixing``, ``jupyter``
+     - ``classification``, ``regression``, ``gbdt``, ``stats``, ``vector``,
+       ``mapping``, ``dataaccess``, ``imaging``, ``unmixing``, ``jupyter``,
+       ``modelling``
      - All optional runtime dependencies.
    * - ``test``
      - ``flake8``, ``pylint``, ``pytest``, ``pytest-cov``,

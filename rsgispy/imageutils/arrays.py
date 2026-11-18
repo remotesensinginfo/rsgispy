@@ -84,7 +84,8 @@ def create_img_from_array(
             "GTIFF", rsgispy.TYPE_32FLOAT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,c-extension-no-member
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,c-extension-no-member
     arr = np.asarray(data_arr)
     if arr.ndim == 2:
         arr = arr[np.newaxis, :, :]

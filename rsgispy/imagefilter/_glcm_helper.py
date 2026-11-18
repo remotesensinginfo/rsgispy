@@ -177,8 +177,8 @@ def _quantise_halo(
     span = float(hi) - float(lo)
     if span <= 0.0 or not math.isfinite(span):
         return q
-    scaled = np.round(
-        np.where(valid_halo, (halo - float(lo)) / span, 0.0) * float(n_levels - 1)
+    scaled = np.floor(
+        np.where(valid_halo, (halo - float(lo)) / span, 0.0) * float(n_levels)
     )
     return np.clip(scaled, 0, n_levels - 1).astype(np.int32)
 

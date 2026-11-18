@@ -74,8 +74,8 @@ def test_calc_zonal_band_stats_and_file(tmp_path):
     tif_path = str(tmp_path / "vals.tif")
     _write_test_raster(tif_path, arr, nodata=-9999.0)
 
-    # Poly 1 covers top-left 3x3 (rows 0..2, cols 0..2): values [1, 2, 2, 1, 2, 10, 3, 3, 4] -> valid <= 100
-    # Wait: top-left 4x4 cols 0..3 rows 0..3 includes row1 col3=999 (above max_thres=100) and row3 col0=-9999 (nodata)
+    # Poly 1 covers top-left 4x4 (cols 0..3, rows 0..3) including row1 col3=999
+    # (above max_thres=100) and row3 col0=-9999 (nodata)
     poly1 = box(500000.0, 5199960.0, 500040.0, 5200000.0)
     # Poly 2 completely outside valid thresholds (row 1 col 3 only: 999)
     poly2 = box(500031.0, 5199981.0, 500039.0, 5199989.0)
@@ -164,7 +164,8 @@ def test_calc_zonal_poly_pts_and_test_poly_pts(tmp_path):
 
     # Poly covering 2x2 pixels (rows 0..1, cols 0..1 -> values 1, 2, 6, 7)
     big_poly = box(500000.0, 5199980.0, 500020.0, 5200000.0)
-    # Tiny poly strictly inside pixel (row=2, col=3 -> value 14) not containing pixel centre (500035, 5199975)
+    # Tiny poly strictly inside pixel (row=2, col=3 -> value 14) not containing
+    # pixel centre (500035, 5199975)
     tiny_poly = box(500031.0, 5199971.0, 500033.0, 5199973.0)
 
     gpkg_path = str(tmp_path / "poly_pts.gpkg")
@@ -214,7 +215,6 @@ def test_calc_zonal_poly_pts_and_test_poly_pts(tmp_path):
         zs_poly.calc_zonal_band_stats_test_poly_pts(
             res_hybrid, tif_path, 1, 0.0, 100.0, -99.0, percentile=105.0, percentile_field="bad_p"
         )
-
 
 
 def test_calc_zonal_band_pxl_counts_and_ext_point_band_values(tmp_path):

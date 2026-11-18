@@ -346,7 +346,7 @@ def pop_reg_img_pred_pts(
         if pred_img_bands is not None:
             bands = [int(b) for b in pred_img_bands]
             for band_idx in bands:
-                validate_band_index(src, band_idx)
+                validate_band_index(band_idx, src.count, img_path)
         elif pred_cols is not None:
             if len(pred_cols) > src.count:
                 raise rsgispy.RSGISPyException(

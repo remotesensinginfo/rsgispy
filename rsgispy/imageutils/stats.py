@@ -461,10 +461,11 @@ def _stats_from_int_hist(
         )
         stddev_val = float(np.sqrt(variance))
 
-    mode_val = int(vals[int(np.argmax(hist))])
-    if int(hist.sum()) > 0:
-        mid_num = hist.sum() / 2.0
-        median_idx = int(np.nonzero(hist.cumsum() >= mid_num)[0][0])
+    active_hist = stat_counts if total_valid > 0 else hist
+    mode_val = int(vals[int(np.argmax(active_hist))])
+    if int(active_hist.sum()) > 0:
+        mid_num = active_hist.sum() / 2.0
+        median_idx = int(np.nonzero(active_hist.cumsum() >= mid_num)[0][0])
         median_val = int(vals[median_idx])
     else:
         median_val = 0
@@ -678,10 +679,15 @@ def pop_img_stats(
         rsgispy.imageutils.stats.pop_img_stats("input_img.tif", no_data_val=0.0)
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    use_no_data = no_data_val is not None
+    eff_no_data = no_data_val
+    if eff_no_data is None and os.path.exists(input_img):
+        with rasterio.open(input_img, "r") as src_hdr:
+            eff_no_data = src_hdr.nodata
+
+    use_no_data = eff_no_data is not None
     img_min, img_max, img_mean, img_std = calc_basic_img_band_stats(
         input_img=input_img,
-        no_data_val=no_data_val,
+        no_data_val=eff_no_data,
         use_no_data=use_no_data,
         use_pbar=use_pbar,
     )
@@ -690,7 +696,7 @@ def pop_img_stats(
         input_img=input_img,
         img_min=img_min,
         img_max=img_max,
-        no_data_val=no_data_val,
+        no_data_val=eff_no_data,
         use_pbar=use_pbar,
     )
 
@@ -701,7 +707,8 @@ def pop_img_stats(
     float_dtypes = {"float32", "float64"}
 
     with rasterio.open(input_img, "r+", **open_opts) as dst:
-        dst.nodata = no_data_val
+        if no_data_val is not None:
+            dst.nodata = no_data_val
 
         for idx in range(dst.count):
             bidx = idx + 1

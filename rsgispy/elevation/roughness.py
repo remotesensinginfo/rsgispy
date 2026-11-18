@@ -2,7 +2,6 @@
 A module to calculate surface roughness metrics for elevation data.
 """
 
-import math
 import os
 from typing import Dict, Optional, Tuple, Union
 
@@ -64,8 +63,8 @@ def _extract_xy_profiles(
     img_arr = in_img_ds_obj.read(1).astype(np.float64)
     y_size, x_size = img_arr.shape
 
-    mid_x = min(math.ceil(x_size / 2), x_size - 1)
-    mid_y = min(math.ceil(y_size / 2), y_size - 1)
+    mid_x = min(x_size // 2, max(0, x_size - 1))
+    mid_y = min(y_size // 2, max(0, y_size - 1))
 
     x_orig_arr = img_arr[mid_y, :]
     y_orig_arr = img_arr[:, mid_x]
@@ -231,11 +230,11 @@ class CalcProfileRoughMetrics(rsgispy.imagecalc.calc_pt_win_smpls.RSGISCalcSumVa
         # Microrelief peak counts (MIF)
         x_mif_pxls = np.logical_and(
             (x_arr[1:-1] - x_arr[:-2]) > 0.0,
-            (x_arr[2:] - x_arr[:-2]) > 0.0,
+            (x_arr[1:-1] - x_arr[2:]) > 0.0,
         )
         y_mif_pxls = np.logical_and(
             (y_arr[1:-1] - y_arr[:-2]) > 0.0,
-            (y_arr[2:] - y_arr[:-2]) > 0.0,
+            (y_arr[1:-1] - y_arr[2:]) > 0.0,
         )
         out_dict["x_MIF"] = float(np.sum(x_mif_pxls))
         out_dict["y_MIF"] = float(np.sum(y_mif_pxls))

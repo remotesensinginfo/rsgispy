@@ -502,12 +502,16 @@ def calc_img_earth_move_dist(
 
     bins_a = 10 if hist_a_bins is None else int(hist_a_bins)
     bins_b = 10 if hist_b_bins is None else int(hist_b_bins)
-    hist_a, _ = np.histogram(arr_a, bins=bins_a, range=img_range)
-    hist_b, _ = np.histogram(arr_b, bins=bins_b, range=img_range)
+    hist_a, edges_a = np.histogram(arr_a, bins=bins_a, range=img_range)
+    hist_b, edges_b = np.histogram(arr_b, bins=bins_b, range=img_range)
 
+    centres_a = 0.5 * (edges_a[:-1] + edges_a[1:])
+    centres_b = 0.5 * (edges_b[:-1] + edges_b[1:])
     hist_a_prob = hist_a / float(arr_a.size)
     hist_b_prob = hist_b / float(arr_b.size)
-    em_val = scipy.stats.wasserstein_distance(hist_a_prob, hist_b_prob)
+    em_val = scipy.stats.wasserstein_distance(
+        centres_a, centres_b, u_weights=hist_a_prob, v_weights=hist_b_prob
+    )
     return float(em_val)
 
 
@@ -566,15 +570,19 @@ def calc_img_mutual_info(
         img_b_no_data,
     )
 
-    if (
-        img_a_min is not None
-        and img_a_max is not None
-        and img_b_min is not None
-        and img_b_max is not None
+    if any(
+        bound is not None
+        for bound in (img_a_min, img_a_max, img_b_min, img_b_max)
     ):
-        msk_a = (arr_a > img_a_min) & (arr_a < img_a_max)
-        msk_b = (arr_b > img_b_min) & (arr_b < img_b_max)
-        msk = msk_a & msk_b
+        msk = np.ones(arr_a.shape, dtype=bool)
+        if img_a_min is not None:
+            msk &= arr_a > img_a_min
+        if img_a_max is not None:
+            msk &= arr_a < img_a_max
+        if img_b_min is not None:
+            msk &= arr_b > img_b_min
+        if img_b_max is not None:
+            msk &= arr_b < img_b_max
         arr_a = arr_a[msk]
         arr_b = arr_b[msk]
 

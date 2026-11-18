@@ -21,6 +21,12 @@ from rsgispy.imageutils._helpers import (
     parse_epsg_crs as _parse_epsg_crs,
 )
 
+__all__ = [
+    "create_stack_images_vrt",
+    "create_mosaic_images_vrt",
+    "create_vrt_band_subset",
+]
+
 
 def _resampling_to_vrt_name(
     interp_method: Union[int, str, Resampling],
@@ -54,7 +60,8 @@ def _compute_vrt_grid(
     """
     Calculate the VRT output dimensions, affine transform, and CRS from input datasets.
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches
     if not datasets:
         raise rsgispy.RSGISPyException(
             "At least one input image must be provided to create a VRT."
@@ -459,7 +466,8 @@ def create_mosaic_images_vrt(
             ["tile1.tif", "tile2.tif"], "mosaic.vrt"
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     if not input_imgs:
         raise rsgispy.RSGISPyException(
             "input_imgs must contain at least one image path."

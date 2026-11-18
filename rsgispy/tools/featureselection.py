@@ -94,9 +94,9 @@ def calc_pandas_vif(
 
         ss_tot = float(np.sum((y_vals - np.mean(y_vals)) ** 2))
         ss_res = float(np.sum((y_vals - y_pred) ** 2))
-        r2 = 1.0 - (ss_res / ss_tot)
+        r2 = 1.0 if ss_tot <= 0.0 else 1.0 - (ss_res / ss_tot)
 
-        vif_scores[col] = 0.0 if r2 == 1.0 else 1.0 / (1.0 - r2)
+        vif_scores[col] = float(np.inf) if r2 >= 1.0 else 1.0 / (1.0 - r2)
 
     return pd.Series(vif_scores, name="VIF")
 
@@ -200,15 +200,13 @@ def corr_feature_selection(
         ]
         corr_data.append(corr_vals)
 
-    pearson_corr = np.tanh(np.mean(np.arctanh(corr_data), axis=0))
+    abs_corr = np.clip(np.abs(np.asarray(corr_data, dtype=np.float64)), 0.0, 1.0 - 1e-12)
+    pearson_corr = np.tanh(np.mean(np.arctanh(abs_corr), axis=0))
 
     def _pearson_affinity(arr: np.ndarray) -> np.ndarray:
-        return 1.0 - np.array(
-            [
-                [abs(scipy.stats.pearsonr(col_a, col_b)[0]) for col_a in arr]
-                for col_b in arr
-            ]
-        )
+        corr_mat = np.corrcoef(arr)
+        np.nan_to_num(corr_mat, copy=False, nan=0.0)
+        return 1.0 - np.abs(corr_mat)
 
     def _cluster_features(feat_arr: np.ndarray, n_clst: int) -> np.ndarray:
         if feat_arr.ndim != 2:

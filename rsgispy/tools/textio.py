@@ -142,7 +142,7 @@ def prettify_xml_file(input_file: str, output_file: str) -> None:
         import rsgispy.tools.textio
         rsgispy.tools.textio.prettify_xml_file("raw.xml", "pretty.xml")
     """
-    xml_str = read_text_file_no_new_lines(input_file)
+    xml_str = read_text_file(input_file)
     xml_elements = ET.XML(xml_str)
     ET.indent(xml_elements)
     pretty_xml = ET.tostring(xml_elements, encoding="unicode")

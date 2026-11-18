@@ -47,6 +47,7 @@ Bundle Types
 
 import asyncio
 import datetime
+import inspect
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import rsgispy
@@ -617,7 +618,13 @@ async def _get_planet_orders(auth_obj: Any) -> List[Dict]:
 
     async with planet.Session(auth=auth_obj) as planet_sess:
         planet_cl = planet_sess.client("orders")
-        orders_lst = planet_cl.list_orders()
+        orders_res = planet_cl.list_orders()
+        if hasattr(orders_res, "__aiter__"):
+            orders_lst = [order async for order in orders_res]
+        elif inspect.isawaitable(orders_res):
+            orders_lst = list(await orders_res)
+        else:
+            orders_lst = list(orders_res)
 
     return orders_lst
 
@@ -647,7 +654,11 @@ async def _cancel_planet_orders(
 
     async with planet.Session(auth=auth_obj) as planet_sess:
         planet_cl = planet_sess.client("orders")
-        orders_info = planet_cl.cancel_orders(order_ids=order_ids)
+        cancel_res = planet_cl.cancel_orders(order_ids=order_ids)
+        if inspect.isawaitable(cancel_res):
+            orders_info = await cancel_res
+        else:
+            orders_info = cancel_res
 
     return orders_info
 

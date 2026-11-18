@@ -29,6 +29,47 @@ from rsgispy.tools.geometry import (
     reproj_bbox,
 )
 
+__all__ = [
+    "get_img_no_data_value",
+    "set_img_no_data_value",
+    "get_img_res",
+    "get_img_size",
+    "get_img_band_count",
+    "get_img_bbox",
+    "get_img_bbox_in_proj",
+    "get_img_subset_pxl_bbox",
+    "get_img_pxl_spatial_coords",
+    "get_img_pxl_coords",
+    "get_img_files",
+    "has_gcps",
+    "copy_gcps",
+    "get_gdal_format_name",
+    "assign_proj",
+    "assign_spatial_info",
+    "copy_proj_from_img",
+    "copy_spatial_and_proj_from_img",
+    "get_wkt_proj_from_img",
+    "get_epsg_proj_from_img",
+    "get_utm_zone",
+    "set_band_names",
+    "get_band_names",
+    "get_gdal_datatype_from_img",
+    "get_rsgislib_datatype_from_img",
+    "get_gdal_datatype_name_from_img",
+    "get_gdal_format_from_ext",
+    "get_file_img_extension",
+    "rename_gdal_layer",
+    "delete_gdal_layer",
+    "set_img_band_metadata",
+    "get_img_band_metadata",
+    "get_img_band_metadata_fields",
+    "get_img_band_metadata_fields_dict",
+    "set_img_metadata",
+    "get_img_metadata",
+    "get_img_metadata_fields",
+    "get_img_metadata_fields_dict",
+]
+
 
 def get_img_no_data_value(
     input_img: str, img_band: int = 1
@@ -295,8 +336,10 @@ def get_img_pxl_coords(
         tl_y = float(src.transform.f)
         x_res = abs(float(src.transform.a))
         y_res = abs(float(src.transform.e))
-        br_x = tl_x + (x_res * src.width)
-        br_y = tl_y - (y_res * src.height)
+        width = int(src.width)
+        height = int(src.height)
+        br_x = tl_x + (x_res * width)
+        br_y = tl_y - (y_res * height)
 
     if np.any((x_arr < tl_x) | (x_arr > br_x)):
         raise rsgispy.RSGISPyException(

@@ -47,9 +47,15 @@ def get_nbins_histogram(data: np.ndarray) -> Tuple[int, float]:
     n_pts = data.shape[0]
     lower_q = np.percentile(data, 25)
     upper_q = np.percentile(data, 75)
-    iqr = upper_q - lower_q
+    iqr = float(upper_q - lower_q)
+    data_range = float(np.max(data) - np.min(data))
+    if data_range <= 0.0:
+        return 2, 1.0
+    if iqr <= 0.0:
+        n_bins = max(2, min(256, int(np.ceil(np.sqrt(max(n_pts, 1))))))
+        return n_bins, data_range / float(n_bins)
     bin_width = 2.0 * iqr * n_pts ** (-1.0 / 3.0)
-    n_bins = int((np.max(data) - np.min(data)) / bin_width) + 2
+    n_bins = max(2, int(data_range / bin_width) + 2)
     return n_bins, float(bin_width)
 
 
@@ -95,13 +101,16 @@ def calc_otsu_threshold(data: np.ndarray) -> float:
     hist, bin_edges = np.histogram(data, bins=n_bins)
     bin_centres = get_bin_centres(bin_edges)
 
-    hist_prob = hist.astype(np.float32)
-    hist_prob = hist_prob / np.sum(hist_prob)
+    hist_prob = hist.astype(np.float64)
+    hist_prob = hist_prob / np.maximum(np.sum(hist_prob), 1e-12)
 
     weight1 = np.cumsum(hist_prob)
     weight2 = np.cumsum(hist_prob[::-1])[::-1]
-    mean1 = np.cumsum(hist_prob * bin_centres) / weight1
-    mean2 = (np.cumsum((hist_prob * bin_centres)[::-1]) / weight2[::-1])[::-1]
+    mean1 = np.cumsum(hist_prob * bin_centres) / np.maximum(weight1, 1e-12)
+    mean2 = (
+        np.cumsum((hist_prob * bin_centres)[::-1])
+        / np.maximum(weight2[::-1], 1e-12)
+    )[::-1]
 
     variance12 = weight1[:-1] * weight2[1:] * (mean1[:-1] - mean2[1:]) ** 2
     return float(bin_centres[int(np.argmax(variance12))])
@@ -125,14 +134,14 @@ def calc_yen_threshold(data: np.ndarray) -> float:
     hist, bin_edges = np.histogram(data, bins=n_bins)
     bin_centres = get_bin_centres(bin_edges)
 
-    pmf = hist.astype(np.float32) / np.sum(hist)
+    pmf = hist.astype(np.float64) / np.maximum(np.sum(hist), 1e-12)
     p1 = np.cumsum(pmf)
     p1_sq = np.cumsum(pmf**2)
     p2_sq = np.cumsum(pmf[::-1] ** 2)[::-1]
 
-    crit = np.log(
-        ((p1_sq[:-1] * p2_sq[1:]) ** -1) * (p1[:-1] * (1.0 - p1[:-1])) ** 2
-    )
+    denom = np.maximum(p1_sq[:-1] * p2_sq[1:], 1e-12)
+    numer = np.maximum((p1[:-1] * (1.0 - p1[:-1])) ** 2, 1e-12)
+    crit = np.log(numer / denom)
     return float(bin_centres[int(crit.argmax())])
 
 
@@ -155,17 +164,21 @@ def calc_isodata_threshold(data: np.ndarray) -> float:
     hist, bin_edges = np.histogram(data, bins=n_bins)
     bin_centres = get_bin_centres(bin_edges)
 
-    hist_prob = hist.astype(np.float32)
-    hist_prob = hist_prob / np.sum(hist_prob)
+    hist_prob = hist.astype(np.float64)
+    hist_prob = hist_prob / np.maximum(np.sum(hist_prob), 1e-12)
 
     csuml = np.cumsum(hist_prob)
     csum_intensity = np.cumsum(hist_prob * bin_centres)
-    lower = csum_intensity[:-1] / csuml[:-1]
-    higher = (csum_intensity[-1] - csum_intensity[:-1]) / (csuml[-1] - csuml)[:-1]
+    lower = csum_intensity[:-1] / np.maximum(csuml[:-1], 1e-12)
+    higher = (csum_intensity[-1] - csum_intensity[:-1]) / np.maximum(
+        (csuml[-1] - csuml)[:-1], 1e-12
+    )
 
     distances = ((lower + higher) / 2.0) - bin_centres[:-1]
     bin_width = bin_centres[1] - bin_centres[0]
     thresholds = bin_centres[:-1][(distances >= 0) & (distances < bin_width)]
+    if thresholds.size == 0:
+        return float(bin_centres[:-1][int(np.argmin(np.abs(distances)))])
     return float(thresholds[0])
 
 
@@ -331,7 +344,7 @@ def calc_kurt_skew_threshold(
         data_sub = vals[vals > x_arr] if low_thres else vals[vals < x_arr]
         kurtosis = float(scipy.stats.kurtosis(data_sub))
         if only_kurtosis:
-            return kurtosis
+            return abs(kurtosis)
         skew = float(scipy.stats.skew(data_sub))
         return abs(kurtosis) + abs(skew)
 

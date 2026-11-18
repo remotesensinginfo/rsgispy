@@ -27,6 +27,7 @@ __all__ = [
     "aspect",
     "aspect_pxl_res_img",
     "catagorise_aspect",
+    "categorise_aspect",
 ]
 
 
@@ -282,3 +283,6 @@ def catagorise_aspect(
             bins = np.clip((norm[valid] // 45.0).astype(np.int64) + 1, 1, 8)
             out_cls[valid] = bins.astype(np.uint8)
             dst.write(out_cls, 1, window=out_win)
+
+
+categorise_aspect = catagorise_aspect

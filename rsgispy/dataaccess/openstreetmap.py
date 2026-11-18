@@ -119,12 +119,13 @@ def get_osm_gdf(
         osm_bbox = (wgs84_bbox[0], wgs84_bbox[2], wgs84_bbox[1], wgs84_bbox[3])
         data_gdf = osmnx.features.features_from_bbox(bbox=osm_bbox, tags=osm_tags)
 
-        data_gdf = data_gdf.loc[:, data_gdf.columns.str.contains("addr:|geometry")]
-        data_gdf = data_gdf.loc[data_gdf.geometry.type == geom_type_str]
+        valid_geom_types = {geom_type_str, f"Multi{geom_type_str}"}
+        data_gdf = data_gdf.loc[data_gdf.geometry.geom_type.isin(valid_geom_types)]
 
         if clip_to_roi:
             data_gdf = data_gdf.clip(osm_bbox)
 
+        data_gdf = data_gdf.filter(regex="addr:|geometry")
         return data_gdf
     except Exception:
         print(f"Error: Unable to download OSM {osm_tags}")

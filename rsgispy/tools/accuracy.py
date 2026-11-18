@@ -180,10 +180,10 @@ def accuracy_scores_binary(
 
         tp_cnt = np.where((y_true_u8 == 1) & (y_pred_u8 == 1))[0].size
         ta_cnt = np.where((y_true_u8 == 0) & (y_pred_u8 == 0))[0].size
-        fp_cnt = np.where((y_true_u8 == 1) & (y_pred_u8 == 0))[0].size
-        fa_cnt = np.where((y_true_u8 == 0) & (y_pred_u8 == 1))[0].size
+        fp_cnt = np.where((y_true_u8 == 0) & (y_pred_u8 == 1))[0].size
+        fa_cnt = np.where((y_true_u8 == 1) & (y_pred_u8 == 0))[0].size
 
-        prevalence = (tp_cnt / fa_cnt) / y_true_u8.size
+        prevalence = n_presence / y_true_u8.size
         odp = 1.0 - prevalence
         ccr = (tp_cnt + ta_cnt) / y_true_u8.size
         mr_val = (fp_cnt + fa_cnt) / y_true_u8.size

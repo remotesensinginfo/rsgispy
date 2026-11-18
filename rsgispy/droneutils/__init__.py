@@ -301,17 +301,25 @@ def _init_img_info_table(include_relative_alt: bool) -> Dict[str, List[Any]]:
     return img_info
 
 
+def _opt_float(val: Any) -> Optional[float]:
+    return None if val is None else float(val)
+
+
+def _opt_int(val: Any) -> Optional[int]:
+    return None if val is None else int(val)
+
+
 def _append_common_exif_fields(
     img_info: Dict[str, List[Any]],
     img_path: str,
     img_exif: Dict[str, Any],
-    gimbal_default: Optional[float] = None,
+    gimbal_default: Optional[float] = 999.0,
 ) -> None:
     """Populate orientation, lens, and sensor EXIF fields into ``img_info``."""
     img_info["image_filename"].append(os.path.split(img_path)[1])
 
     img_info["gimbal_roll_degree"].append(
-        float(
+        _opt_float(
             _first_valid(
                 img_exif,
                 ("XMP:GimbalRollDegree", "MakerNotes:CameraRoll", "XMP:Roll"),
@@ -320,7 +328,7 @@ def _append_common_exif_fields(
         )
     )
     img_info["gimbal_pitch_degree"].append(
-        float(
+        _opt_float(
             _first_valid(
                 img_exif,
                 ("XMP:GimbalPitchDegree", "MakerNotes:CameraPitch", "XMP:Pitch"),
@@ -329,7 +337,7 @@ def _append_common_exif_fields(
         )
     )
     img_info["gimbal_yaw_degree"].append(
-        float(
+        _opt_float(
             _first_valid(
                 img_exif,
                 ("XMP:GimbalYawDegree", "MakerNotes:CameraYaw", "XMP:Yaw"),
@@ -343,10 +351,10 @@ def _append_common_exif_fields(
     img_w = _first_valid(img_exif, ("EXIF:ImageWidth", "EXIF:ExifImageWidth"))
     img_h = _first_valid(img_exif, ("EXIF:ImageHeight", "EXIF:ExifImageHeight"))
 
-    img_info["focal_length"].append(float(focal_len))
-    img_info["focal_length35mm"].append(float(focal_35))
-    img_info["image_width"].append(int(img_w))
-    img_info["image_height"].append(int(img_h))
+    img_info["focal_length"].append(_opt_float(focal_len))
+    img_info["focal_length35mm"].append(_opt_float(focal_35))
+    img_info["image_width"].append(_opt_int(img_w))
+    img_info["image_height"].append(_opt_int(img_h))
     img_info["max_aperture_value"].append(img_exif.get("EXIF:MaxApertureValue"))
     img_info["datetime_original"].append(img_exif.get("EXIF:DateTimeOriginal"))
     img_info["sensor_model_data"].append(img_exif.get("EXIF:Model"))

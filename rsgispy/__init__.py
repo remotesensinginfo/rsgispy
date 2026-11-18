@@ -486,7 +486,7 @@ def get_rsgispy_version() -> str:
     """
     Return the installed ``rsgispy`` version string.
 
-    :return: Version string (e.g., ``'0.0.1'``).
+    :return: Version string (e.g., ``'0.0.4'``).
 
     .. code:: python
 

@@ -664,29 +664,44 @@ def _resolve_coord_columns(
     """Extract source and target coordinate arrays for outlier filtering."""
     space_key = coord_space.strip().lower()
     if space_key == "map":
-        if not {"flt_x", "flt_y", "ref_x", "ref_y"}.issubset(tie_df.columns):
-            raise rsgispy.RSGISPyException(
-                "Map-space filtering requires 'flt_x', 'flt_y', 'ref_x', 'ref_y' columns."
+        if {"flt_x", "flt_y", "ref_x", "ref_y"}.issubset(tie_df.columns):
+            return (
+                tie_df["flt_x"].to_numpy(dtype=np.float64),
+                tie_df["flt_y"].to_numpy(dtype=np.float64),
+                tie_df["ref_x"].to_numpy(dtype=np.float64),
+                tie_df["ref_y"].to_numpy(dtype=np.float64),
             )
-        return (
-            tie_df["flt_x"].to_numpy(dtype=np.float64),
-            tie_df["flt_y"].to_numpy(dtype=np.float64),
-            tie_df["ref_x"].to_numpy(dtype=np.float64),
-            tie_df["ref_y"].to_numpy(dtype=np.float64),
+        if {"flt_pxl_x", "flt_pxl_y", "ref_x", "ref_y"}.issubset(tie_df.columns):
+            return (
+                tie_df["flt_pxl_x"].to_numpy(dtype=np.float64),
+                tie_df["flt_pxl_y"].to_numpy(dtype=np.float64),
+                tie_df["ref_x"].to_numpy(dtype=np.float64),
+                tie_df["ref_y"].to_numpy(dtype=np.float64),
+            )
+        raise rsgispy.RSGISPyException(
+            "Map-space filtering requires 'flt_x', 'flt_y', 'ref_x', 'ref_y' "
+            "(or 'flt_pxl_x', 'flt_pxl_y', 'ref_x', 'ref_y') columns."
         )
     if space_key == "pixel":
-        if not {"flt_pxl_x", "flt_pxl_y", "ref_pxl_x", "ref_pxl_y"}.issubset(
+        if {"flt_pxl_x", "flt_pxl_y", "ref_pxl_x", "ref_pxl_y"}.issubset(
             tie_df.columns
         ):
-            raise rsgispy.RSGISPyException(
-                "Pixel-space filtering requires 'flt_pxl_x', 'flt_pxl_y', "
-                "'ref_pxl_x', and 'ref_pxl_y' columns."
+            return (
+                tie_df["flt_pxl_x"].to_numpy(dtype=np.float64),
+                tie_df["flt_pxl_y"].to_numpy(dtype=np.float64),
+                tie_df["ref_pxl_x"].to_numpy(dtype=np.float64),
+                tie_df["ref_pxl_y"].to_numpy(dtype=np.float64),
             )
-        return (
-            tie_df["flt_pxl_x"].to_numpy(dtype=np.float64),
-            tie_df["flt_pxl_y"].to_numpy(dtype=np.float64),
-            tie_df["ref_pxl_x"].to_numpy(dtype=np.float64),
-            tie_df["ref_pxl_y"].to_numpy(dtype=np.float64),
+        if {"flt_pxl_x", "flt_pxl_y", "ref_x", "ref_y"}.issubset(tie_df.columns):
+            return (
+                tie_df["flt_pxl_x"].to_numpy(dtype=np.float64),
+                tie_df["flt_pxl_y"].to_numpy(dtype=np.float64),
+                tie_df["ref_x"].to_numpy(dtype=np.float64),
+                tie_df["ref_y"].to_numpy(dtype=np.float64),
+            )
+        raise rsgispy.RSGISPyException(
+            "Pixel-space filtering requires 'flt_pxl_x', 'flt_pxl_y', "
+            "'ref_pxl_x', and 'ref_pxl_y' columns."
         )
     raise rsgispy.RSGISPyException(
         f"Unsupported coord_space '{coord_space}'. Use 'map' or 'pixel'."
@@ -751,7 +766,10 @@ def filter_tie_points_outliers(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches
+    src_crs = getattr(tie_points, "crs", None)
     tie_df = load_tie_points_table(tie_points)
+    if src_crs is None:
+        src_crs = getattr(tie_df, "crs", None)
 
     if len(tie_df) == 0:
         raise rsgispy.RSGISPyException("Input tie_points table is empty.")
@@ -874,7 +892,9 @@ def filter_tie_points_outliers(
     }
 
     if out_gcp_file is not None:
-        write_tie_points_file(filtered_df, out_gcp_file, output_type=output_type)
+        write_tie_points_file(
+            filtered_df, out_gcp_file, output_type=output_type, crs=src_crs
+        )
         return None
     if return_model:
         return filtered_df, diagnostics
