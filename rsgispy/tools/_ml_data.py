@@ -306,15 +306,32 @@ def resolve_feature_cols(
 def resolve_estimator_feature_cols(
     estimator: Any,
     band_specs: Sequence[Tuple[str, int, str]],
-) -> Tuple[bool, List[str]]:
-    """Determine whether estimator expects named DataFrame columns."""
-    col_names = [spec[2] for spec in band_specs]
+) -> Tuple[bool, List[str], List[Tuple[str, int, str]]]:
+    """
+    Determine whether ``estimator`` expects named DataFrame columns and align
+    ``band_specs`` to match ``estimator``'s trained feature order (including
+    when the model was trained on a subset or reordered list of features).
+    """
+    specs_list = list(band_specs)
+    col_names = [spec[2] for spec in specs_list]
     feat_names = getattr(estimator, "feature_names_in_", None)
     if feat_names is None:
         feat_names = getattr(estimator, "feature_names_", None)
-    if feat_names is not None and len(feat_names) == len(col_names):
-        return True, [str(c) for c in feat_names]
-    return False, col_names
+    if feat_names is not None:
+        est_cols = [str(c) for c in feat_names]
+        spec_by_col = {spec[2]: spec for spec in specs_list}
+        if all(col in spec_by_col for col in est_cols):
+            aligned_specs = [spec_by_col[col] for col in est_cols]
+            return True, est_cols, aligned_specs
+        if len(est_cols) == len(col_names):
+            return True, est_cols, specs_list
+        missing = [col for col in est_cols if col not in spec_by_col]
+        raise rsgispy.RSGISPyException(
+            f"Estimator was trained on {len(est_cols)} feature(s) {est_cols}, "
+            f"which do not match the {len(col_names)} configured image band(s) "
+            f"{col_names} (missing: {missing})."
+        )
+    return False, col_names, specs_list
 
 
 def open_apply_datasets(
@@ -885,6 +902,8 @@ def read_valid_roi_block(
         ref_path=msk_path,
     )
     valid_feats, valid_idx = extract_roi_feature_matrix(feat_arrays, roi_idx)
+    if valid_idx.size == 0:
+        return valid_idx, None
     x_valid: Union[pd.DataFrame, np.ndarray] = (
         pd.DataFrame(valid_feats, columns=list(df_cols))
         if use_df_input

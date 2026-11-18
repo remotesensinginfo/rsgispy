@@ -125,11 +125,11 @@ Default Search Space (Core Key Parameters)
      - Maximum depth of each decision tree.
    * - ``min_child_weight``
      - int
-     - ``1`` to ``10``
+     - ``1`` to ``5``
      - Minimum sum of instance Hessian weight needed in a child.
    * - ``gamma``
      - float (log)
-     - ``1e-4`` to ``5.0``
+     - ``1e-4`` to ``1.0``
      - Minimum loss reduction required to make a further partition.
    * - ``subsample``
      - float
@@ -141,7 +141,7 @@ Default Search Space (Core Key Parameters)
      - Subsample ratio of features when constructing each tree.
    * - ``reg_alpha``
      - float (log)
-     - ``1e-4`` to ``10.0``
+     - ``1e-4`` to ``1.0``
      - L1 regularisation term on leaf weights.
    * - ``reg_lambda``
      - float (log)
@@ -173,11 +173,11 @@ Extended Search Space (``extended_param_space=True``)
      - Deeper maximum tree depth range.
    * - ``min_child_weight``
      - float (log)
-     - ``0.5`` to ``20.0``
+     - ``0.1`` to ``10.0``
      - Continuous Hessian leaf threshold.
    * - ``gamma``
      - float (log)
-     - ``1e-4`` to ``10.0``
+     - ``1e-4`` to ``5.0``
      - Wider split-pruning regularisation range.
    * - ``subsample``
      - float
@@ -197,7 +197,7 @@ Extended Search Space (``extended_param_space=True``)
      - Feature subsampling ratio at each individual split node.
    * - ``reg_alpha``
      - float (log)
-     - ``1e-5`` to ``20.0``
+     - ``1e-5`` to ``5.0``
      - Wider L1 weight regularisation range.
    * - ``reg_lambda``
      - float (log)

@@ -159,14 +159,14 @@ def get_xgboost_optuna_param_space(
                 "log": True,
             },
             "max_depth": {"type": "int", "low": 3, "high": 10},
-            "min_child_weight": {"type": "int", "low": 1, "high": 10},
-            "gamma": {"type": "float", "low": 1e-4, "high": 5.0, "log": True},
+            "min_child_weight": {"type": "int", "low": 1, "high": 5},
+            "gamma": {"type": "float", "low": 1e-4, "high": 1.0, "log": True},
             "subsample": {"type": "float", "low": 0.5, "high": 1.0},
             "colsample_bytree": {"type": "float", "low": 0.5, "high": 1.0},
             "reg_alpha": {
                 "type": "float",
                 "low": 1e-4,
-                "high": 10.0,
+                "high": 1.0,
                 "log": True,
             },
             "reg_lambda": {
@@ -188,16 +188,16 @@ def get_xgboost_optuna_param_space(
         "max_depth": {"type": "int", "low": 3, "high": 12},
         "min_child_weight": {
             "type": "float",
-            "low": 0.5,
-            "high": 20.0,
+            "low": 0.1,
+            "high": 10.0,
             "log": True,
         },
-        "gamma": {"type": "float", "low": 1e-4, "high": 10.0, "log": True},
+        "gamma": {"type": "float", "low": 1e-4, "high": 5.0, "log": True},
         "subsample": {"type": "float", "low": 0.5, "high": 1.0},
         "colsample_bytree": {"type": "float", "low": 0.4, "high": 1.0},
         "colsample_bylevel": {"type": "float", "low": 0.4, "high": 1.0},
         "colsample_bynode": {"type": "float", "low": 0.4, "high": 1.0},
-        "reg_alpha": {"type": "float", "low": 1e-5, "high": 20.0, "log": True},
+        "reg_alpha": {"type": "float", "low": 1e-5, "high": 5.0, "log": True},
         "reg_lambda": {"type": "float", "low": 1e-5, "high": 20.0, "log": True},
         "max_delta_step": {"type": "int", "low": 0, "high": 10},
         "max_bin": {"type": "int", "low": 64, "high": 512, "step": 64},
@@ -392,7 +392,7 @@ def get_lightgbm_optuna_param_space(
             },
             "num_leaves": {"type": "int", "low": 15, "high": 127},
             "max_depth": {"type": "int", "low": 3, "high": 12},
-            "min_child_samples": {"type": "int", "low": 5, "high": 50},
+            "min_child_samples": {"type": "int", "low": 1, "high": 30},
             "min_split_gain": {
                 "type": "float",
                 "low": 1e-4,
@@ -405,7 +405,7 @@ def get_lightgbm_optuna_param_space(
             "reg_alpha": {
                 "type": "float",
                 "low": 1e-4,
-                "high": 10.0,
+                "high": 1.0,
                 "log": True,
             },
             "reg_lambda": {
@@ -426,7 +426,7 @@ def get_lightgbm_optuna_param_space(
         },
         "num_leaves": {"type": "int", "low": 8, "high": 255},
         "max_depth": {"type": "int", "low": 3, "high": 15},
-        "min_child_samples": {"type": "int", "low": 3, "high": 100},
+        "min_child_samples": {"type": "int", "low": 1, "high": 50},
         "min_child_weight": {
             "type": "float",
             "low": 1e-4,
@@ -442,7 +442,7 @@ def get_lightgbm_optuna_param_space(
         "subsample": {"type": "float", "low": 0.5, "high": 1.0},
         "subsample_freq": {"type": "int", "low": 1, "high": 7},
         "colsample_bytree": {"type": "float", "low": 0.4, "high": 1.0},
-        "reg_alpha": {"type": "float", "low": 1e-5, "high": 20.0, "log": True},
+        "reg_alpha": {"type": "float", "low": 1e-5, "high": 5.0, "log": True},
         "reg_lambda": {"type": "float", "low": 1e-5, "high": 20.0, "log": True},
         "max_bin": {"type": "int", "low": 63, "high": 511, "step": 64},
         "subsample_for_bin": {
@@ -709,6 +709,20 @@ def fit_cb_estimator(
 # ---------------------------------------------------------------------------
 
 
+_TASK_STRUCTURAL_KEYS = frozenset(
+    {
+        "objective",
+        "num_class",
+        "classes_count",
+        "eval_metric",
+        "loss_function",
+        "multi_strategy",
+        "verbosity",
+        "verbose",
+    }
+)
+
+
 def merge_gbdt_params(
     backend_name: str,
     task_defaults: Dict[str, Any],
@@ -736,7 +750,11 @@ def merge_gbdt_params(
         }
         merged.update(base_params)
         for k, v in task_defaults.items():
-            if k not in base_params or base_params[k] is None:
+            if (
+                k in _TASK_STRUCTURAL_KEYS
+                or k not in base_params
+                or base_params[k] is None
+            ):
                 merged[k] = v
 
     if explicit_params:

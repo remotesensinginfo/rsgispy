@@ -508,7 +508,7 @@ def apply_regressor_raster(
     msk_path = os.fspath(in_msk_img)
     ensure_file_exists(msk_path, label="Input mask image")
     c_opts = normalise_creation_options(creation_opts)
-    use_df_input, df_cols = _resolve_estimator_feature_cols(
+    use_df_input, df_cols, band_specs = _resolve_estimator_feature_cols(
         estimator, band_specs
     )
     out_path = ensure_parent_dir(out_img)
@@ -531,6 +531,7 @@ def apply_regressor_raster(
             dst.set_band_description(b_idx, str(t_name))
 
         base_msk_col, base_msk_row = grid.offsets[msk_path]
+        total_valid_pxls = 0
         for out_win in iter_dataset_windows(
             grid.height, grid.width, block_size=block_size, use_pbar=use_pbar
         ):
@@ -550,6 +551,7 @@ def apply_regressor_raster(
                 base_msk_col=base_msk_col,
                 base_msk_row=base_msk_row,
             )
+            total_valid_pxls += int(valid_idx.size)
 
             out_flat = np.full(
                 (n_targets, win_h * win_w),
@@ -577,6 +579,17 @@ def apply_regressor_raster(
             dst.write(
                 out_flat.reshape((n_targets, win_h, win_w)),
                 window=out_win,
+            )
+
+        if total_valid_pxls == 0:
+            warnings.warn(
+                f"No valid pixels were predicted (in_msk_img='{msk_path}', "
+                f"img_msk_val={img_msk_val}). Output raster contains only "
+                f"no-data values ({out_no_data_val}); check that img_msk_val "
+                "is present in in_msk_img and that source bands are not "
+                "masked out by band nodata metadata.",
+                UserWarning,
+                stacklevel=2,
             )
 
     set_img_not_thematic(out_path)
