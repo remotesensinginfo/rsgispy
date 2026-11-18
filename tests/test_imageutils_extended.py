@@ -791,14 +791,14 @@ def test_gdal_translate_metadata_spatial_mask_gcps_and_cli(tmp_path):
 
 
 def test_gdal_warp_srs_res_size_extent_tap(tmp_path):
-    """Test gdal_warp CRS overrides, -tr, -ts, -te, -te_srs, -tap, and alias."""
+    """Test gdal_warp CRS overrides, -tr, -ts, -te, -te_srs, and -tap."""
     arr = np.arange(16 * 8, dtype=np.uint8).reshape(1, 8, 16)
     in_p = tmp_path / "gw_in.tif"
     _write_test_tif(in_p, arr, tl_x=500000.0, tl_y=5200000.0, res=10.0)
 
     # -tr + -tap + same CRS (no out_epsg required)
     tr_out = tmp_path / "gw_tr_tap.tif"
-    iu_warp.gdalwarp(
+    iu_warp.gdal_warp(
         str(in_p),
         str(tr_out),
         target_res=(20.0, 20.0),

@@ -15,7 +15,7 @@ from rasterio.transform import from_origin
 import rsgispy
 import rsgispy.classification as rsgis_cls
 import rsgispy.classification.classpostprocess as classpost
-import rsgispy.imagefilter as imagefilter
+import rsgispy.imagefilter.stats as imagefilter_stats
 from rsgispy.imageprocess import get_default_block_size, set_default_block_size
 from rsgispy.imageutils.colourtable import is_img_thematic
 
@@ -132,7 +132,7 @@ def test_majority_filter_keep_centre_on_tie_and_matches_imagefilter(
         calc_stats=False,
         use_pbar=False,
     )
-    imagefilter.apply_mode_filter(
+    imagefilter_stats.apply_mode_filter(
         str(in_img),
         str(out_mode),
         filter_size=3,

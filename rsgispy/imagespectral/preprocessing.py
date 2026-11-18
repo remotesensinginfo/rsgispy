@@ -31,7 +31,6 @@ from rsgispy.imageutils.stats import pop_img_stats
 
 __all__: List[str] = [
     "spectral_smoothing",
-    "mask_outliners_data_values",
     "mask_outliers_data_values",
     "polyfill_nan_data_values",
 ]
@@ -209,7 +208,7 @@ def spectral_smoothing(
     )
 
 
-def mask_outliners_data_values(
+def mask_outliers_data_values(
     input_img: str,
     valid_msk_img: str,
     valid_msk_val: int,
@@ -241,7 +240,7 @@ def mask_outliners_data_values(
 
         import rsgispy.imagespectral.preprocessing as sp
 
-        sp.mask_outliners_data_values(
+        sp.mask_outliers_data_values(
             "input_img.tif", "valid_msk.tif", 1, "masked_img.tif"
         )
     """
@@ -270,9 +269,6 @@ def mask_outliners_data_values(
         pixel_fn=_outlier_fn,
         use_pbar=use_pbar,
     )
-
-
-mask_outliers_data_values = mask_outliners_data_values
 
 
 def polyfill_nan_data_values(

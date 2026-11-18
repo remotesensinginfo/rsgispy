@@ -880,9 +880,6 @@ def gdal_warp(
             )
 
 
-gdalwarp = gdal_warp
-
-
 def _apply_scale_and_unscale(
     block: np.ndarray,
     src: rasterio.io.DatasetReader,

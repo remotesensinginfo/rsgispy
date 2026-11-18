@@ -29,7 +29,6 @@ from rsgispy.imageprocess import (
 __all__ = [
     "BandDefn",
     "band_maths",
-    "band_math",
     "image_math",
     "image_band_math",
     "calc_prop_true_exp",
@@ -159,10 +158,6 @@ def band_maths(
             out_np_dtype=out_np_dtype,
             use_pbar=use_pbar,
         )
-
-
-# Alias for backwards compatibility with rsgislib.imagecalc.band_math
-band_math = band_maths
 
 
 def image_math(

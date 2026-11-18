@@ -56,26 +56,26 @@ def test_window_stat_and_difference_filters(tmp_path):
     img_proc.set_default_block_size(3)
     try:
         checks = [
-            (imf.apply_mean_filter, np.mean(win_vals)),
-            (imf.apply_median_filter, np.median(win_vals)),
-            (imf.apply_min_filter, np.min(win_vals)),
-            (imf.apply_max_filter, np.max(win_vals)),
-            (imf.apply_range_filter, np.max(win_vals) - np.min(win_vals)),
-            (imf.apply_total_filter, np.sum(win_vals)),
-            (imf.apply_stddev_filter, np.std(win_vals)),
-            (imf.apply_texture_var_filter, np.var(win_vals)),
-            (imf.apply_mean_diff_filter, np.mean(win_vals - 13.0)),
-            (imf.apply_mean_diff_abs_filter, np.mean(np.abs(win_vals - 13.0))),
-            (imf.apply_total_diff_filter, np.sum(win_vals - 13.0)),
-            (imf.apply_total_diff_abs_filter, np.sum(np.abs(win_vals - 13.0))),
-            (imf.apply_coeff_of_var_filter, np.std(win_vals) / np.mean(win_vals)),
-            (imf.apply_norm_var_filter, np.var(win_vals) / (np.mean(win_vals) ** 2)),
+            (imf.stats.apply_mean_filter, np.mean(win_vals)),
+            (imf.stats.apply_median_filter, np.median(win_vals)),
+            (imf.stats.apply_min_filter, np.min(win_vals)),
+            (imf.stats.apply_max_filter, np.max(win_vals)),
+            (imf.stats.apply_range_filter, np.max(win_vals) - np.min(win_vals)),
+            (imf.stats.apply_total_filter, np.sum(win_vals)),
+            (imf.stats.apply_stddev_filter, np.std(win_vals)),
+            (imf.stats.apply_texture_var_filter, np.var(win_vals)),
+            (imf.stats.apply_mean_diff_filter, np.mean(win_vals - 13.0)),
+            (imf.stats.apply_mean_diff_abs_filter, np.mean(np.abs(win_vals - 13.0))),
+            (imf.stats.apply_total_diff_filter, np.sum(win_vals - 13.0)),
+            (imf.stats.apply_total_diff_abs_filter, np.sum(np.abs(win_vals - 13.0))),
+            (imf.stats.apply_coeff_of_var_filter, np.std(win_vals) / np.mean(win_vals)),
+            (imf.stats.apply_norm_var_filter, np.var(win_vals) / (np.mean(win_vals) ** 2)),
             (
-                imf.apply_norm_var_sqrt_filter,
+                imf.stats.apply_norm_var_sqrt_filter,
                 np.std(win_vals) / abs(np.mean(win_vals)),
             ),
             (
-                imf.apply_norm_var_ln_filter,
+                imf.stats.apply_norm_var_ln_filter,
                 np.log1p(np.var(win_vals) / (np.mean(win_vals) ** 2)),
             ),
         ]
@@ -105,7 +105,7 @@ def test_window_stat_and_difference_filters(tmp_path):
         dtype=np.uint8,
     )
     _write_raster(cat_in, cat)
-    imf.apply_mode_filter(
+    imf.stats.apply_mode_filter(
         str(cat_in),
         str(cat_out),
         filter_size=3,
@@ -122,7 +122,7 @@ def test_window_stat_and_difference_filters(tmp_path):
     step = np.zeros((9, 9), dtype=np.float32)
     step[:, 5:] = 100.0
     _write_raster(step_in, step)
-    imf.apply_kuwahara_filter(str(step_in), str(step_out), filter_size=5, use_pbar=False)
+    imf.smooth.apply_kuwahara_filter(str(step_in), str(step_out), filter_size=5, use_pbar=False)
     with rasterio.open(step_out) as src:
         kuw = src.read(1)
     assert kuw[4, 4] == pytest.approx(0.0, abs=1e-6)
@@ -135,7 +135,7 @@ def test_window_stat_and_difference_filters(tmp_path):
     sar = rng.normal(50.0, 2.0, size=(12, 12)).astype(np.float32)
     sar[6, 6] = 500.0
     _write_raster(sar_in, sar)
-    imf.apply_lee_filter(
+    imf.sar.apply_lee_filter(
         str(sar_in), str(sar_out), filter_size=5, n_looks=4.0, use_pbar=False
     )
     with rasterio.open(sar_out) as src:
@@ -160,12 +160,12 @@ def test_edge_gaussian_laplacian_and_custom_kernel_filters(tmp_path):
 
     img_proc.set_default_block_size(5)
     try:
-        imf.apply_sobel_x_filter(str(step_in), str(sobel_x), use_pbar=False)
-        imf.apply_sobel_y_filter(str(step_in), str(sobel_y), use_pbar=False)
-        imf.apply_sobel_filter(str(step_in), str(sobel_m), use_pbar=False)
-        imf.apply_prewitt_x_filter(str(step_in), str(prewitt_x), use_pbar=False)
-        imf.apply_prewitt_y_filter(str(step_in), str(prewitt_y), use_pbar=False)
-        imf.apply_prewitt_filter(str(step_in), str(prewitt_m), use_pbar=False)
+        imf.edge.apply_sobel_x_filter(str(step_in), str(sobel_x), use_pbar=False)
+        imf.edge.apply_sobel_y_filter(str(step_in), str(sobel_y), use_pbar=False)
+        imf.edge.apply_sobel_filter(str(step_in), str(sobel_m), use_pbar=False)
+        imf.edge.apply_prewitt_x_filter(str(step_in), str(prewitt_x), use_pbar=False)
+        imf.edge.apply_prewitt_y_filter(str(step_in), str(prewitt_y), use_pbar=False)
+        imf.edge.apply_prewitt_filter(str(step_in), str(prewitt_m), use_pbar=False)
     finally:
         img_proc.reset_default_block_size()
 
@@ -194,19 +194,19 @@ def test_edge_gaussian_laplacian_and_custom_kernel_filters(tmp_path):
     g1_out = tmp_path / "g1.tif"
     g2_out = tmp_path / "g2.tif"
     lap_out = tmp_path / "lap.tif"
-    imf.apply_gaussian_smooth_filter(
+    imf.smooth.apply_gaussian_smooth_filter(
         str(const_in), str(gs_out), filter_size=5, stddev_x=1.0, stddev_y=1.5,
         filter_angle=30.0, use_pbar=False
     )
-    imf.apply_gaussian_1st_deriv_filter(
+    imf.edge.apply_gaussian_1st_deriv_filter(
         str(step_in), str(g1_out), filter_size=5, stddev_x=1.0, stddev_y=1.0,
         filter_angle=0.0, use_pbar=False
     )
-    imf.apply_gaussian_2nd_deriv_filter(
+    imf.edge.apply_gaussian_2nd_deriv_filter(
         str(const_in), str(g2_out), filter_size=5, stddev_x=1.0, stddev_y=1.0,
         filter_angle=45.0, use_pbar=False
     )
-    imf.apply_laplacian_filter(
+    imf.edge.apply_laplacian_filter(
         str(const_in), str(lap_out), filter_size=5, stddev=1.0, use_pbar=False
     )
 
@@ -222,7 +222,7 @@ def test_edge_gaussian_laplacian_and_custom_kernel_filters(tmp_path):
 
     # Custom kernel with normalisation
     kern_out = tmp_path / "kern.tif"
-    imf.apply_kernel_filter(
+    imf.smooth.apply_kernel_filter(
         str(const_in),
         str(kern_out),
         kernel=[[1.0, 1.0, 1.0], [1.0, 2.0, 1.0], [1.0, 1.0, 1.0]],
@@ -234,11 +234,11 @@ def test_edge_gaussian_laplacian_and_custom_kernel_filters(tmp_path):
 
     # Parameter validation errors
     with pytest.raises(rsgispy.RSGISPyException):
-        imf.apply_mean_filter(str(const_in), str(tmp_path / "bad.tif"), filter_size=4)
+        imf.stats.apply_mean_filter(str(const_in), str(tmp_path / "bad.tif"), filter_size=4)
     with pytest.raises(rsgispy.RSGISPyException):
-        imf.apply_lee_filter(str(const_in), str(tmp_path / "bad_lee.tif"), n_looks=0)
+        imf.sar.apply_lee_filter(str(const_in), str(tmp_path / "bad_lee.tif"), n_looks=0)
     with pytest.raises(rsgispy.RSGISPyException):
-        imf.apply_kernel_filter(
+        imf.smooth.apply_kernel_filter(
             str(const_in),
             str(tmp_path / "bad_k.tif"),
             kernel=[[-1.0, 0.0, 1.0], [-1.0, 0.0, 1.0], [-1.0, 0.0, 1.0]],
@@ -254,12 +254,14 @@ def test_imagefilter_submodules_and_sar_filters(tmp_path):
     import rsgispy.imagefilter.stats as if_stats
     import rsgispy.imagefilter.texture as if_tex
 
-    # Backwards-compatible exports match submodule definitions
-    assert imf.apply_mean_filter is if_stats.apply_mean_filter
-    assert imf.apply_kuwahara_filter is if_smooth.apply_kuwahara_filter
-    assert imf.apply_sobel_filter is if_edge.apply_sobel_filter
-    assert imf.apply_lee_filter is if_sar.apply_lee_filter
-    assert imf.apply_glcm_filter is if_tex.apply_glcm_filter
+    # Package exports only its submodules, not individual filter functions
+    assert imf.__all__ == ["stats", "smooth", "edge", "sar", "texture"]
+    assert imf.stats is if_stats
+    assert imf.smooth is if_smooth
+    assert imf.edge is if_edge
+    assert imf.sar is if_sar
+    assert imf.texture is if_tex
+    assert not hasattr(imf, "apply_mean_filter")
 
     # Synthetic SAR intensity image: low region + high region + strong point target + nodata
     sar_in = tmp_path / "sar_test.tif"

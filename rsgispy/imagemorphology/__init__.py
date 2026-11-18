@@ -28,11 +28,9 @@ __all__ = [
     "create_circular_op",
     "image_dilate",
     "image_erode",
-    "image_gradiant",
     "image_gradient",
     "image_dilate_combined_out",
     "image_erode_combined_out",
-    "image_gradiant_combined_out",
     "image_gradient_combined_out",
     "image_local_minima",
     "image_local_minima_combined_out",
@@ -203,7 +201,7 @@ def _run_window_morphology(
     """Apply a windowed morphological operation across ``input_img`` block-by-block."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
-    if op_kind not in ("dilate", "erode", "gradiant", "local_minima"):
+    if op_kind not in ("dilate", "erode", "gradient", "local_minima"):
         raise rsgispy.RSGISPyException(
             f"Unsupported morphology operation: '{op_kind}'."
         )
@@ -513,7 +511,7 @@ def image_erode(
     )
 
 
-def image_gradiant(
+def image_gradient(
     input_img: str,
     output_img: str,
     morph_op_file: str,
@@ -543,7 +541,7 @@ def image_gradiant(
         import rsgispy
         import rsgispy.imagemorphology
 
-        rsgispy.imagemorphology.image_gradiant(
+        rsgispy.imagemorphology.image_gradient(
             input_img="img.tif",
             output_img="img_grad.tif",
             morph_op_file="",
@@ -561,7 +559,7 @@ def image_gradiant(
         op_mask=op_mask,
         gdalformat=gdalformat,
         datatype=datatype,
-        op_kind="gradiant",
+        op_kind="gradient",
         combined=False,
         use_pbar=use_pbar,
     )
@@ -675,7 +673,7 @@ def image_erode_combined_out(
     )
 
 
-def image_gradiant_combined_out(
+def image_gradient_combined_out(
     input_img: str,
     output_img: str,
     morph_op_file: str,
@@ -705,7 +703,7 @@ def image_gradiant_combined_out(
         import rsgispy
         import rsgispy.imagemorphology
 
-        rsgispy.imagemorphology.image_gradiant_combined_out(
+        rsgispy.imagemorphology.image_gradient_combined_out(
             input_img="img.tif",
             output_img="img_grad_comb.tif",
             morph_op_file="",
@@ -723,7 +721,7 @@ def image_gradiant_combined_out(
         op_mask=op_mask,
         gdalformat=gdalformat,
         datatype=datatype,
-        op_kind="gradiant",
+        op_kind="gradient",
         combined=True,
         use_pbar=use_pbar,
     )
@@ -1129,7 +1127,3 @@ def image_white_top_hat(
             datatype=datatype,
             use_pbar=use_pbar,
         )
-
-
-image_gradient = image_gradiant
-image_gradient_combined_out = image_gradiant_combined_out

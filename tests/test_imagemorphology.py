@@ -32,7 +32,7 @@ def _write_raster(path, arr, dtype="uint8", nodata=None):
 
 
 def test_create_circular_op_and_single_band_dilate_erode_gradient(tmp_path):
-    """Test create_circular_op, image_dilate, image_erode, and image_gradiant."""
+    """Test create_circular_op, image_dilate, image_erode, and image_gradient."""
     op_no_ext = tmp_path / "circ5"
     rimorph.create_circular_op(str(op_no_ext), op_size=5)
     op_file = tmp_path / "circ5.gmtxt"
@@ -105,7 +105,7 @@ def test_create_circular_op_and_single_band_dilate_erode_gradient(tmp_path):
     blk_path = tmp_path / "blk.tif"
     _write_raster(blk_path, blk, dtype="float32")
     grad_out = tmp_path / "grad.tif"
-    rimorph.image_gradiant(
+    rimorph.image_gradient(
         str(blk_path),
         str(grad_out),
         "",
@@ -141,7 +141,7 @@ def test_combined_out_and_local_minima(tmp_path):
     rimorph.image_erode_combined_out(
         str(in_path), str(ero_comb), "", False, 3, "GTIFF", rsgispy.TYPE_32FLOAT
     )
-    rimorph.image_gradiant_combined_out(
+    rimorph.image_gradient_combined_out(
         str(in_path), str(grad_comb), "", False, 3, "GTIFF", rsgispy.TYPE_32FLOAT
     )
     with (
