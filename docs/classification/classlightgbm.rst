@@ -129,7 +129,7 @@ Default Search Space (Core Key Parameters)
      - Maximum tree depth limit.
    * - ``min_child_samples``
      - int
-     - ``5`` to ``50``
+     - ``1`` to ``30``
      - Minimum number of training samples required in a leaf.
    * - ``min_split_gain``
      - float (log)
@@ -149,7 +149,7 @@ Default Search Space (Core Key Parameters)
      - Feature subsampling fraction per tree.
    * - ``reg_alpha``
      - float (log)
-     - ``1e-4`` to ``10.0``
+     - ``1e-4`` to ``1.0``
      - L1 regularisation term on leaf weights.
    * - ``reg_lambda``
      - float (log)
@@ -185,7 +185,7 @@ Extended Search Space (``extended_param_space=True``)
      - Expanded tree depth limit.
    * - ``min_child_samples``
      - int
-     - ``3`` to ``100``
+     - ``1`` to ``50``
      - Expanded minimum leaf sample threshold.
    * - ``min_child_weight``
      - float (log)
@@ -209,7 +209,7 @@ Extended Search Space (``extended_param_space=True``)
      - Feature subsampling fraction per tree.
    * - ``reg_alpha``
      - float (log)
-     - ``1e-5`` to ``20.0``
+     - ``1e-5`` to ``5.0``
      - Wider L1 leaf weight regularisation.
    * - ``reg_lambda``
      - float (log)

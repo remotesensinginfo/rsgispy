@@ -998,3 +998,124 @@ def test_gbdt_gpu_parameter_mapping_and_inference(tmp_path: Path, monkeypatch):
     )
     assert ("predict", {"task_type": "GPU"}) in recorded_predict_kwargs
     assert ("predict_proba", {"task_type": "GPU"}) in recorded_predict_kwargs
+
+
+def test_xgboost_feature_order_subset_and_id_mismatch_guards(tmp_path: Path):
+    """
+    Verify raster apply aligns reordered/subset feature_cols, raises when
+    use_internal_id mismatches trained classes, and preserves multiclass
+    objective when a default XGBClassifier instance is supplied.
+    """
+    xgb = pytest.importorskip("xgboost")
+    fix = _create_multiclass_fixture(tmp_path)
+
+    # 1. Passing a default XGBClassifier() (objective='binary:logistic')
+    #    to train_xgboost_multiclass_classifier must preserve multi:softprob
+    base_clf = xgb.XGBClassifier(n_estimators=15, max_depth=3)
+    trained_mc, mc_metrics = rcxgb.train_xgboost_multiclass_classifier(
+        cls_cfg=fix["cfg"],
+        train_data=fix["train_df"],
+        xgb_classifier=base_clf,
+        rnd_seed=42,
+    )
+    assert trained_mc.get_params()["objective"] == "multi:softprob"
+    assert mc_metrics["train_accuracy"] >= 0.95
+
+    # 2. Training with reversed feature_cols=['B2', 'B1'] and applying to a
+    #    raster with ['B1', 'B2'] must reorder raster bands to match
+    rev_mdl, _ = rcxgb.train_xgboost_multiclass_classifier(
+        cls_cfg=fix["cfg"],
+        train_data=fix["train_df"],
+        feature_cols=["B2", "B1"],
+        model_params={"n_estimators": 20, "max_depth": 3},
+        rnd_seed=42,
+    )
+    out_rev = tmp_path / "mc_rev_cls.tif"
+    rcxgb.apply_xgboost_multiclass_classifier(
+        cls_cfg=fix["cfg"],
+        xgb_classifier=rev_mdl,
+        in_msk_img=fix["msk_img"],
+        img_msk_val=1,
+        out_class_img=out_rev,
+        use_pbar=False,
+    )
+    with rasterio.open(out_rev, "r") as src:
+        arr_rev = src.read(1)
+        assert set(np.unique(arr_rev[1:6, 5:14])) == {10}
+        assert set(np.unique(arr_rev[6:12, 5:14])) == {50}
+        assert set(np.unique(arr_rev[12:17, 5:14])) == {300}
+
+    # 3. Training on a 1-feature subset feature_cols=['B1'] (e.g. after feature
+    #    selection) and applying with 2-band cls_cfg must subset raster bands
+    sub_mdl, _ = rcxgb.train_xgboost_multiclass_classifier(
+        cls_cfg=fix["cfg"],
+        train_data=fix["train_df"],
+        feature_cols=["B1"],
+        model_params={"n_estimators": 20, "max_depth": 3},
+        rnd_seed=42,
+    )
+    out_sub = tmp_path / "mc_sub_cls.tif"
+    rcxgb.apply_xgboost_multiclass_classifier(
+        cls_cfg=fix["cfg"],
+        xgb_classifier=sub_mdl,
+        in_msk_img=fix["msk_img"],
+        img_msk_val=1,
+        out_class_img=out_sub,
+        use_pbar=False,
+    )
+    with rasterio.open(out_sub, "r") as src:
+        arr_sub = src.read(1)
+        assert len(np.unique(arr_sub[arr_sub > 0])) >= 2
+
+    # 4. Mismatched use_internal_id between train (True -> [0, 1, 2]) and apply
+    #    (False -> expects [10, 50, 300]) raises a clear RSGISPyException
+    with pytest.raises(
+        rsgispy.RSGISPyException,
+        match="do not match any expected target class IDs",
+    ):
+        rcxgb.apply_xgboost_multiclass_classifier(
+            cls_cfg=fix["cfg"],
+            xgb_classifier=trained_mc,
+            in_msk_img=fix["msk_img"],
+            img_msk_val=1,
+            out_class_img=tmp_path / "mc_mismatch.tif",
+            use_internal_id=False,
+            use_pbar=False,
+        )
+
+    # 5. Model trained on a feature name missing from a 1-band img_band_info
+    #    raises a clear RSGISPyException
+    one_band_info = [
+        rcd.ImageBandInfo(
+            file_name=fix["cfg"].img_band_info[0].file_name,
+            name="feat",
+            bands=[1],
+            band_names=["B1"],
+        )
+    ]
+    with pytest.raises(
+        rsgispy.RSGISPyException,
+        match="do not match the 1 configured image band",
+    ):
+        rcxgb.apply_xgboost_multiclass_classifier(
+            cls_cfg=fix["cfg"],
+            xgb_classifier=trained_mc,
+            in_msk_img=fix["msk_img"],
+            img_msk_val=1,
+            img_band_info=one_band_info,
+            out_class_img=tmp_path / "mc_missing_band.tif",
+            use_pbar=False,
+        )
+
+    # 6. Applying with an img_msk_val that matches 0 valid pixels emits a
+    #    UserWarning explaining why the output raster contains only nodata
+    with pytest.warns(UserWarning, match="No valid pixels were classified"):
+        rcxgb.apply_xgboost_multiclass_classifier(
+            cls_cfg=fix["cfg"],
+            xgb_classifier=trained_mc,
+            in_msk_img=fix["msk_img"],
+            img_msk_val=99,
+            out_class_img=tmp_path / "mc_empty_msk.tif",
+            calc_img_stats=False,
+            use_pbar=False,
+        )

@@ -382,7 +382,7 @@ def apply_classifier_raster(
     msk_path = os.fspath(in_msk_img)
     ensure_file_exists(msk_path, label="Input mask image")
     c_opts = normalise_creation_options(creation_opts)
-    use_df_input, df_cols = _resolve_estimator_feature_cols(
+    use_df_input, df_cols, band_specs = _resolve_estimator_feature_cols(
         estimator, band_specs
     )
 
@@ -440,7 +440,40 @@ def apply_classifier_raster(
 
         base_msk_col, base_msk_row = grid.offsets[msk_path]
         est_classes = getattr(estimator, "classes_", None)
+        if est_classes is not None and len(est_classes) > 0:
+            est_id_set: set = set()
+            for cls_val in est_classes:
+                try:
+                    est_id_set.add(int(cls_val))
+                except (TypeError, ValueError):
+                    pass
+            expected_id_set = {int(c) for c in ordered_train_ids}
+            if est_id_set and not est_id_set.intersection(expected_id_set):
+                alt_col = "out_id" if use_internal_id else "internal_id"
+                alt_ids = {
+                    int(
+                        entry[1].out_id
+                        if use_internal_id
+                        else entry[1].internal_id  # type: ignore[arg-type]
+                    )
+                    for entry in ordered_classes
+                }
+                hint = (
+                    f" Hint: estimator classes match cls_cfg {alt_col} values "
+                    f"{sorted(alt_ids)}; set use_internal_id="
+                    f"{not use_internal_id} to match how the classifier was "
+                    "trained."
+                    if est_id_set.intersection(alt_ids)
+                    else ""
+                )
+                raise rsgispy.RSGISPyException(
+                    f"Classifier trained class IDs {sorted(est_id_set)} do "
+                    f"not match any expected target class IDs "
+                    f"{sorted(expected_id_set)} (use_internal_id="
+                    f"{use_internal_id}).{hint}"
+                )
 
+        total_valid_pxls = 0
         for out_win in iter_dataset_windows(
             grid.height, grid.width, block_size=block_size, use_pbar=use_pbar
         ):
@@ -460,6 +493,7 @@ def apply_classifier_raster(
                 base_msk_col=base_msk_col,
                 base_msk_row=base_msk_row,
             )
+            total_valid_pxls += int(valid_idx.size)
 
             aligned_probs: Optional[np.ndarray] = None
             need_probs = (
@@ -525,6 +559,17 @@ def apply_classifier_raster(
                     scr_flat.reshape((scr_dst.count, win_h, win_w)),
                     window=out_win,
                 )
+
+        if total_valid_pxls == 0:
+            warnings.warn(
+                f"No valid pixels were classified (in_msk_img='{msk_path}', "
+                f"img_msk_val={img_msk_val}). Output raster contains only "
+                f"no-data values ({eff_nodata}); check that img_msk_val "
+                "is present in in_msk_img and that source bands are not "
+                "masked out by band nodata metadata.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     if out_cls_path is not None:
         clr_lut: Optional[Dict[int, List[int]]] = None
