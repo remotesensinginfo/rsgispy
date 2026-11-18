@@ -257,6 +257,7 @@ def perform_sklearn_regressor_param_search(
     return_results: bool = False,
     verbose: int = 0,
     extended_param_space: bool = False,
+    use_pbar: bool = True,
 ) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
     """
     Optimise hyperparameters for a univariate or multivariate ``scikit-learn``
@@ -305,6 +306,8 @@ def perform_sklearn_regressor_param_search(
     :param verbose: Verbosity level (Default = ``0``).
     :param extended_param_space: Use broader extended built-in parameter space
                                  when ``param_space`` is ``None``.
+    :param use_pbar: Display a ``tqdm`` progress bar during Optuna trials
+                     (Default = ``True``).
     :return: Optimised regressor estimator, or ``(best_estimator, results_dict)``.
 
     .. code:: python
@@ -377,6 +380,7 @@ def perform_sklearn_regressor_param_search(
                 stratified=False,
                 func_name="perform_sklearn_regressor_param_search",
                 extra="regression",
+                use_pbar=use_pbar,
             )
         )
     else:

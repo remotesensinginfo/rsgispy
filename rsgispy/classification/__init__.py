@@ -111,4 +111,19 @@ Submodules:
   :func:`~rsgispy.classification.classaccuracymetrics.calc_acc_stats_ptonly`,
   :func:`~rsgispy.classification.classaccuracymetrics.calc_acc_stats_img_bootstrap_conf`,
   :func:`~rsgispy.classification.classaccuracymetrics.calc_acc_stats_ptonly_bootstrap_conf`).
+* :mod:`rsgispy.classification.classpostprocess` — Thematic classification
+  post-processing filters for boundary smoothing and minimum-mapping-unit
+  clump elimination
+  (:func:`~rsgispy.classification.classpostprocess.apply_majority_filter`,
+  :func:`~rsgispy.classification.classpostprocess.apply_sieve_filter`).
 """
+
+from rsgispy.classification.classpostprocess import (
+    apply_majority_filter,
+    apply_sieve_filter,
+)
+
+__all__ = [
+    "apply_majority_filter",
+    "apply_sieve_filter",
+]

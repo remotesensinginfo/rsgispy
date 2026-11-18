@@ -6,7 +6,7 @@ raster and vector data using rasterio, geopandas, and matplotlib.
 # pylint: disable=too-many-lines
 import math
 import os
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 import uuid
 import xml.etree.ElementTree as ET
 
@@ -36,6 +36,15 @@ import rsgispy
 import rsgispy.imageutils.metadata
 import rsgispy.imageutils.warp
 import rsgispy.tools.files
+from rsgispy.tools._legend import (
+    _measure_axis_inches,
+    _style_legend,
+    build_legend_handles,
+    calc_categorical_legend_layout,
+    create_companion_legend_axis,
+    resolve_legend_entries,
+    save_standalone_legend,
+)
 import rsgispy.tools.plotting
 import rsgispy.tools.projection
 
@@ -116,6 +125,11 @@ __all__ = [
     "create_choropleth_vec_lyr_map",
     "create_raster_cmap_img_map",
     "create_vec_pt_density_map",
+    "calc_categorical_legend_layout",
+    "create_categorical_legend_patches",
+    "add_categorical_legend",
+    "add_categorical_legend_axis",
+    "save_categorical_legend_img",
 ]
 
 
@@ -1883,10 +1897,19 @@ def create_thematic_raster_map(
     show_north_arrow: bool = False,
     north_arrow_style: str = NORTH_ARROW_STYLE_TRIANGLE,
     north_arrow_loc: str = "upper left",
+    show_legend: bool = False,
+    classes_info: Optional[Any] = None,
+    legend_position: str = "right",
+    legend_title: Optional[str] = None,
+    legend_ncols: Optional[int] = None,
+    legend_nrows: Optional[int] = None,
+    legend_overlay: bool = False,
+    legend_loc: str = "lower right",
+    legend_kwargs: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Display one or more thematic raster layers onto ``ax`` using the colour
-    table stored in each image.
+    table stored in each image, optionally attaching a categorical legend.
 
     :param ax: Matplotlib axis to which the thematic image(s) are added.
     :param input_img: Path or list of paths to thematic raster images.
@@ -1907,6 +1930,25 @@ def create_thematic_raster_map(
     :param north_arrow_style: North arrow style constant
                               (Default = :data:`NORTH_ARROW_STYLE_TRIANGLE`).
     :param north_arrow_loc: North arrow placement string (Default = ``'upper left'``).
+    :param show_legend: If ``True``, automatically create and attach a
+                        categorical classification legend (Default = ``False``).
+    :param classes_info: Optional class label/colour definitions (dict,
+                         ``ClassificationConfig``, or JSON path) passed to the
+                         legend builder (Default = ``None``).
+    :param legend_position: Companion axis side when ``legend_overlay=False``
+                            (``'right'``, ``'left'``, ``'bottom'``, or ``'top'``;
+                            Default = ``'right'``).
+    :param legend_title: Optional legend title (Default = ``None``).
+    :param legend_ncols: Optional explicit legend column count (Default = auto).
+    :param legend_nrows: Optional explicit legend row count (Default = auto).
+    :param legend_overlay: If ``True``, overlay the legend inside ``ax`` at
+                           ``legend_loc`` instead of appending a companion axis
+                           (Default = ``False``).
+    :param legend_loc: Overlay legend placement string when
+                       ``legend_overlay=True`` (Default = ``'lower right'``).
+    :param legend_kwargs: Optional extra keyword arguments forwarded to
+                          :func:`add_categorical_legend` or
+                          :func:`add_categorical_legend_axis`.
 
     .. code:: python
 
@@ -1915,7 +1957,11 @@ def create_thematic_raster_map(
 
         fig, ax = plt.subplots()
         rsgispy.tools.mapping.create_thematic_raster_map(
-            ax=ax, input_img="landcover.kea", title_str="Land Cover"
+            ax=ax,
+            input_img="landcover.kea",
+            title_str="Land Cover",
+            show_legend=True,
+            classes_info={1: "Forest", 2: "Grassland", 3: "Water"},
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -1974,6 +2020,34 @@ def create_thematic_raster_map(
         north_arrow_style=north_arrow_style,
         north_arrow_loc=north_arrow_loc,
     )
+
+    if show_legend:
+        extra_kw = dict(legend_kwargs or {})
+        if legend_overlay:
+            add_categorical_legend(
+                ax=ax,
+                classes_info=classes_info,
+                input_img=input_imgs[0],
+                bbox=bbox,
+                ncols=legend_ncols,
+                nrows=legend_nrows,
+                title=legend_title,
+                loc=legend_loc,
+                overlay=True,
+                **extra_kw,
+            )
+        else:
+            add_categorical_legend_axis(
+                ax=ax,
+                classes_info=classes_info,
+                input_img=input_imgs[0],
+                bbox=bbox,
+                position=legend_position,
+                ncols=legend_ncols,
+                nrows=legend_nrows,
+                title=legend_title,
+                **extra_kw,
+            )
 
 
 def create_choropleth_vec_lyr_map(
@@ -2317,3 +2391,530 @@ def create_vec_pt_density_map(
     )
 
     return c_cmap, c_norm
+
+
+def create_categorical_legend_patches(
+    classes_info: Optional[Any] = None,
+    input_img: Optional[Union[str, os.PathLike]] = None,
+    band: int = 1,
+    colour_lut: Optional[Mapping[int, Any]] = None,
+    bbox: Optional[Tuple[float, float, float, float]] = None,
+    ignore_zero: bool = True,
+    include_vals: Optional[Sequence[int]] = None,
+    exclude_vals: Optional[Sequence[int]] = None,
+    only_present_in_img: bool = False,
+    sort_by: str = "id",
+    show_pxl_vals: bool = False,
+    pxl_val_fmt: str = "{val}: {name}",
+    max_label_width: Optional[int] = None,
+    swatch_shape: str = "rectangle",
+    swatch_edgecolor: str = "#333333",
+    swatch_linewidth: float = 0.6,
+    swatch_size: float = 9.0,
+) -> List[Any]:
+    """
+    Build styled Matplotlib legend handles (``Patch`` or ``Line2D`` markers)
+    for categorical or classification maps.
+
+    Accepts a ``{pixel_val: class_name}`` dict, ``{pixel_val: (name, colour)}``
+    dict, ``{class_name: ClassInfoObj}`` dict, :class:`ClassificationConfig`,
+    classification config JSON path, or a thematic raster ``input_img`` with
+    an embedded colour table.
+
+    :param classes_info: Class definition dict, :class:`ClassificationConfig`,
+                         sequence of :class:`ClassInfoObj`, or JSON file path.
+    :param input_img: Optional thematic raster used to extract class colours
+                      (when not explicitly supplied) or filter present classes.
+    :param band: 1-based band index for reading raster colour table (Default = ``1``).
+    :param colour_lut: Optional ``{pixel_val: colour}`` override mapping.
+    :param bbox: Optional map extent ``(MinX, MaxX, MinY, MaxY)`` used when
+                 ``only_present_in_img=True``.
+    :param ignore_zero: Exclude background pixel value ``0`` (Default = ``True``).
+    :param include_vals: Optional explicit whitelist of pixel values to keep.
+    :param exclude_vals: Optional pixel values to exclude from the legend.
+    :param only_present_in_img: If ``True`` and ``input_img`` is provided,
+                                show only classes actually present in the raster.
+    :param sort_by: Class ordering: ``'id'``, ``'name'``, or ``'none'``
+                    (Default = ``'id'``).
+    :param show_pxl_vals: Prefix/format labels with pixel IDs (Default = ``False``).
+    :param pxl_val_fmt: Format template when ``show_pxl_vals=True``
+                        (Default = ``'{val}: {name}'``).
+    :param max_label_width: Optional character width for wrapping long labels.
+    :param swatch_shape: Marker shape: ``'rectangle'``, ``'square'``, or
+                         ``'circle'`` (Default = ``'rectangle'``).
+    :param swatch_edgecolor: Swatch outline colour (Default = ``'#333333'``).
+    :param swatch_linewidth: Swatch outline width (Default = ``0.6``).
+    :param swatch_size: Marker size when ``swatch_shape`` is ``'square'`` or
+                        ``'circle'`` (Default = ``9.0``).
+    :return: List of Matplotlib legend handles.
+
+    .. code:: python
+
+        import rsgispy.tools.mapping as mapping
+
+        handles = mapping.create_categorical_legend_patches(
+            classes_info={1: "Forest", 2: "Grassland", 3: "Urban"},
+            colour_lut={1: "#228b22", 2: "#9acd32", 3: "#d62728"},
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    entries = resolve_legend_entries(
+        classes_info=classes_info,
+        input_img=input_img,
+        band=band,
+        colour_lut=colour_lut,
+        bbox=bbox,
+        ignore_zero=ignore_zero,
+        include_vals=include_vals,
+        exclude_vals=exclude_vals,
+        only_present_in_img=only_present_in_img,
+        sort_by=sort_by,
+        show_pxl_vals=show_pxl_vals,
+        pxl_val_fmt=pxl_val_fmt,
+        max_label_width=max_label_width,
+    )
+    return build_legend_handles(
+        entries=entries,
+        swatch_shape=swatch_shape,
+        swatch_edgecolor=swatch_edgecolor,
+        swatch_linewidth=swatch_linewidth,
+        swatch_size=swatch_size,
+    )
+
+
+def add_categorical_legend(
+    ax: matplotlib.axes.Axes,
+    classes_info: Optional[Any] = None,
+    input_img: Optional[Union[str, os.PathLike]] = None,
+    band: int = 1,
+    colour_lut: Optional[Mapping[int, Any]] = None,
+    bbox: Optional[Tuple[float, float, float, float]] = None,
+    ncols: Optional[int] = None,
+    nrows: Optional[int] = None,
+    title: Optional[str] = None,
+    loc: str = "upper right",
+    bbox_to_anchor: Optional[Tuple[float, ...]] = None,
+    overlay: bool = True,
+    fontsize: float = 9.5,
+    title_fontsize: Optional[float] = None,
+    ignore_zero: bool = True,
+    include_vals: Optional[Sequence[int]] = None,
+    exclude_vals: Optional[Sequence[int]] = None,
+    only_present_in_img: bool = False,
+    sort_by: str = "id",
+    show_pxl_vals: bool = False,
+    pxl_val_fmt: str = "{val}: {name}",
+    max_label_width: Optional[int] = None,
+    swatch_shape: str = "rectangle",
+    swatch_edgecolor: str = "#333333",
+    swatch_linewidth: float = 0.6,
+    swatch_size: float = 9.0,
+    frameon: bool = True,
+    facecolor: str = "white",
+    edgecolor: str = "#CCCCCC",
+    framealpha: float = 0.92,
+    fancybox: bool = True,
+    columnspacing: float = 1.2,
+    handletextpad: float = 0.6,
+    labelspacing: float = 0.45,
+    borderpad: float = 0.6,
+) -> Any:
+    """
+    Add a professionally formatted categorical legend onto an existing Matplotlib
+    axis ``ax``.
+
+    By default (``overlay=True``), the legend is placed on the map axis at
+    ``loc`` (e.g. ``'lower right'``). Set ``overlay=False`` when ``ax`` is a
+    dedicated subplot/panel reserved exclusively for the legend (ticks and frame
+    on ``ax`` will be hidden and the legend centred cleanly).
+
+    When both ``ncols`` and ``nrows`` are ``None`` (auto mode), column and row
+    counts are chosen automatically from the axis size and class label lengths.
+
+    :param ax: Target Matplotlib axis.
+    :param classes_info: ``{pixel_val: class_name}`` dict,
+                         ``{pixel_val: (name, colour)}`` dict,
+                         ``{class_name: ClassInfoObj}`` dict,
+                         :class:`ClassificationConfig`, or JSON file path.
+    :param input_img: Optional thematic raster for extracting embedded colours
+                      or filtering visible classes.
+    :param band: 1-based band index for reading raster colour table (Default = ``1``).
+    :param colour_lut: Optional ``{pixel_val: colour}`` override mapping.
+    :param bbox: Optional map extent used when ``only_present_in_img=True``.
+    :param ncols: Explicit number of columns (Default = ``None``, auto).
+    :param nrows: Explicit number of rows (Default = ``None``, auto).
+    :param title: Optional bold legend title.
+    :param loc: Matplotlib legend placement string (Default = ``'upper right'``;
+                ignored and centred when ``overlay=False``).
+    :param bbox_to_anchor: Optional Matplotlib ``bbox_to_anchor`` coordinates.
+    :param overlay: If ``True``, overlay onto ``ax``; if ``False``, turn off
+                    ``ax`` frame/ticks and draw as a standalone panel legend.
+    :param fontsize: Class label font size in points (Default = ``9.5``).
+    :param title_fontsize: Optional title font size (Default = ``fontsize + 1``).
+    :param ignore_zero: Exclude background pixel value ``0`` (Default = ``True``).
+    :param include_vals: Optional whitelist of pixel values to keep.
+    :param exclude_vals: Optional pixel values to exclude.
+    :param only_present_in_img: Show only classes present in ``input_img``.
+    :param sort_by: Ordering mode: ``'id'``, ``'name'``, or ``'none'``.
+    :param show_pxl_vals: Include pixel values in legend labels.
+    :param pxl_val_fmt: Format template when ``show_pxl_vals=True``.
+    :param max_label_width: Optional line-wrap width for long class names.
+    :param swatch_shape: ``'rectangle'``, ``'square'``, or ``'circle'``.
+    :param swatch_edgecolor: Colour of swatch border (Default = ``'#333333'``).
+    :param swatch_linewidth: Line width of swatch border (Default = ``0.6``).
+    :param swatch_size: Marker size for ``'square'`` / ``'circle'`` swatches.
+    :param frameon: Draw legend frame box (Default = ``True``).
+    :param facecolor: Legend background colour (Default = ``'white'``).
+    :param edgecolor: Legend border colour (Default = ``'#CCCCCC'``).
+    :param framealpha: Legend background opacity (Default = ``0.92``).
+    :param fancybox: Rounded legend corners (Default = ``True``).
+    :param columnspacing: Horizontal gap between columns (Default = ``1.2``).
+    :param handletextpad: Gap between swatch and text (Default = ``0.6``).
+    :param labelspacing: Vertical spacing between entries (Default = ``0.45``).
+    :param borderpad: Internal frame padding (Default = ``0.6``).
+    :return: Created :class:`matplotlib.legend.Legend` instance.
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import rsgispy.tools.mapping as mapping
+
+        fig, ax = plt.subplots()
+        mapping.add_categorical_legend(
+            ax=ax,
+            classes_info={1: "Woodland", 2: "Grassland", 3: "Urban"},
+            colour_lut={1: "#228b22", 2: "#9acd32", 3: "#d62728"},
+            title="Land Cover",
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    entries = resolve_legend_entries(
+        classes_info=classes_info,
+        input_img=input_img,
+        band=band,
+        colour_lut=colour_lut,
+        bbox=bbox,
+        ignore_zero=ignore_zero,
+        include_vals=include_vals,
+        exclude_vals=exclude_vals,
+        only_present_in_img=only_present_in_img,
+        sort_by=sort_by,
+        show_pxl_vals=show_pxl_vals,
+        pxl_val_fmt=pxl_val_fmt,
+        max_label_width=max_label_width,
+    )
+    ax_w, ax_h = _measure_axis_inches(ax)
+    eff_avail_w = ax_w if not overlay else max(2.0, ax_w * 0.75)
+    _, eff_cols = calc_categorical_legend_layout(
+        labels=[e.label for e in entries],
+        ncols=ncols,
+        nrows=nrows,
+        avail_width_in=eff_avail_w,
+        avail_height_in=ax_h,
+        fontsize=fontsize,
+        prefer_vertical=False,
+    )
+    handles = build_legend_handles(
+        entries=entries,
+        swatch_shape=swatch_shape,
+        swatch_edgecolor=swatch_edgecolor,
+        swatch_linewidth=swatch_linewidth,
+        swatch_size=swatch_size,
+    )
+    if not overlay:
+        ax.set_axis_off()
+        eff_loc = "center"
+        eff_anchor: Optional[Tuple[float, ...]] = (0.5, 0.5)
+    else:
+        eff_loc = _LOC_ALIASES.get(loc.strip().lower(), loc)
+        eff_anchor = bbox_to_anchor
+
+    return _style_legend(
+        ax=ax,
+        handles=handles,
+        eff_cols=eff_cols,
+        loc=eff_loc,
+        bbox_to_anchor=eff_anchor,
+        title=title,
+        fontsize=fontsize,
+        title_fontsize=title_fontsize,
+        frameon=frameon,
+        facecolor=facecolor,
+        edgecolor=edgecolor,
+        framealpha=framealpha,
+        fancybox=fancybox,
+        columnspacing=columnspacing,
+        handletextpad=handletextpad,
+        labelspacing=labelspacing,
+        borderpad=borderpad,
+    )
+
+
+def add_categorical_legend_axis(
+    ax: matplotlib.axes.Axes,
+    classes_info: Optional[Any] = None,
+    input_img: Optional[Union[str, os.PathLike]] = None,
+    band: int = 1,
+    colour_lut: Optional[Mapping[int, Any]] = None,
+    bbox: Optional[Tuple[float, float, float, float]] = None,
+    position: str = "right",
+    size: Optional[str] = None,
+    pad: float = 0.15,
+    ncols: Optional[int] = None,
+    nrows: Optional[int] = None,
+    title: Optional[str] = None,
+    fontsize: float = 9.5,
+    title_fontsize: Optional[float] = None,
+    ignore_zero: bool = True,
+    include_vals: Optional[Sequence[int]] = None,
+    exclude_vals: Optional[Sequence[int]] = None,
+    only_present_in_img: bool = False,
+    sort_by: str = "id",
+    show_pxl_vals: bool = False,
+    pxl_val_fmt: str = "{val}: {name}",
+    max_label_width: Optional[int] = None,
+    swatch_shape: str = "rectangle",
+    swatch_edgecolor: str = "#333333",
+    swatch_linewidth: float = 0.6,
+    swatch_size: float = 9.0,
+    frameon: bool = True,
+    facecolor: str = "white",
+    edgecolor: str = "#CCCCCC",
+    framealpha: float = 0.95,
+    fancybox: bool = True,
+    columnspacing: float = 1.2,
+    handletextpad: float = 0.6,
+    labelspacing: float = 0.45,
+    borderpad: float = 0.6,
+) -> Tuple[matplotlib.axes.Axes, Any]:
+    """
+    Create a new companion Matplotlib axis next to ``ax`` and render a
+    formatted categorical legend inside it.
+
+    Supports placement on ``'right'``, ``'left'``, ``'bottom'``, or ``'top'``.
+    When ``ncols`` and ``nrows`` are omitted, the column/row grid adapts
+    automatically to the companion axis dimensions and class label lengths.
+
+    :param ax: Existing map Matplotlib axis to attach the companion legend axis to.
+    :param classes_info: Class dictionary, :class:`ClassificationConfig`, or JSON path.
+    :param input_img: Optional thematic raster for extracting embedded colours
+                      or filtering visible classes.
+    :param band: 1-based band index for reading raster colour table (Default = ``1``).
+    :param colour_lut: Optional ``{pixel_val: colour}`` override mapping.
+    :param bbox: Optional map extent used when ``only_present_in_img=True``.
+    :param position: Side relative to ``ax``: ``'right'``, ``'left'``,
+                     ``'bottom'``, or ``'top'`` (Default = ``'right'``).
+    :param size: Optional axes-divider size string (e.g. ``'25%'``; auto when ``None``).
+    :param pad: Gap in inches between ``ax`` and the new legend axis (Default = ``0.15``).
+    :param ncols: Explicit legend column count (Default = ``None``, auto).
+    :param nrows: Explicit legend row count (Default = ``None``, auto).
+    :param title: Optional bold legend title.
+    :param fontsize: Class label font size in points (Default = ``9.5``).
+    :param title_fontsize: Optional title font size (Default = ``fontsize + 1``).
+    :param ignore_zero: Exclude background pixel value ``0`` (Default = ``True``).
+    :param include_vals: Optional whitelist of pixel values to keep.
+    :param exclude_vals: Optional pixel values to exclude.
+    :param only_present_in_img: Show only classes present in ``input_img``.
+    :param sort_by: Ordering mode: ``'id'``, ``'name'``, or ``'none'``.
+    :param show_pxl_vals: Include pixel values in legend labels.
+    :param pxl_val_fmt: Format template when ``show_pxl_vals=True``.
+    :param max_label_width: Optional line-wrap width for long class names.
+    :param swatch_shape: ``'rectangle'``, ``'square'``, or ``'circle'``.
+    :param swatch_edgecolor: Colour of swatch border (Default = ``'#333333'``).
+    :param swatch_linewidth: Line width of swatch border (Default = ``0.6``).
+    :param swatch_size: Marker size for ``'square'`` / ``'circle'`` swatches.
+    :param frameon: Draw legend frame box (Default = ``True``).
+    :param facecolor: Legend background colour (Default = ``'white'``).
+    :param edgecolor: Legend border colour (Default = ``'#CCCCCC'``).
+    :param framealpha: Legend background opacity (Default = ``0.95``).
+    :param fancybox: Rounded legend corners (Default = ``True``).
+    :param columnspacing: Horizontal gap between columns (Default = ``1.2``).
+    :param handletextpad: Gap between swatch and text (Default = ``0.6``).
+    :param labelspacing: Vertical spacing between entries (Default = ``0.45``).
+    :param borderpad: Internal frame padding (Default = ``0.6``).
+    :return: Tuple ``(legend_ax, legend)``.
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import rsgispy.tools.mapping as mapping
+
+        fig, ax = plt.subplots()
+        mapping.create_thematic_raster_map(ax=ax, input_img="landcover.kea")
+        leg_ax, lgd = mapping.add_categorical_legend_axis(
+            ax=ax,
+            classes_info={1: "Forest", 2: "Grassland", 3: "Water"},
+            input_img="landcover.kea",
+            position="right",
+            title="Classes",
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    return create_companion_legend_axis(
+        ax=ax,
+        classes_info=classes_info,
+        input_img=input_img,
+        band=band,
+        colour_lut=colour_lut,
+        bbox=bbox,
+        position=position,
+        size=size,
+        pad=pad,
+        ncols=ncols,
+        nrows=nrows,
+        title=title,
+        fontsize=fontsize,
+        title_fontsize=title_fontsize,
+        ignore_zero=ignore_zero,
+        include_vals=include_vals,
+        exclude_vals=exclude_vals,
+        only_present_in_img=only_present_in_img,
+        sort_by=sort_by,
+        show_pxl_vals=show_pxl_vals,
+        pxl_val_fmt=pxl_val_fmt,
+        max_label_width=max_label_width,
+        swatch_shape=swatch_shape,
+        swatch_edgecolor=swatch_edgecolor,
+        swatch_linewidth=swatch_linewidth,
+        swatch_size=swatch_size,
+        frameon=frameon,
+        facecolor=facecolor,
+        edgecolor=edgecolor,
+        framealpha=framealpha,
+        fancybox=fancybox,
+        columnspacing=columnspacing,
+        handletextpad=handletextpad,
+        labelspacing=labelspacing,
+        borderpad=borderpad,
+    )
+
+
+def save_categorical_legend_img(
+    out_img_file: Union[str, os.PathLike],
+    classes_info: Optional[Any] = None,
+    input_img: Optional[Union[str, os.PathLike]] = None,
+    band: int = 1,
+    colour_lut: Optional[Mapping[int, Any]] = None,
+    bbox: Optional[Tuple[float, float, float, float]] = None,
+    ncols: Optional[int] = None,
+    nrows: Optional[int] = None,
+    fig_width: float = 6.5,
+    title: Optional[str] = None,
+    fontsize: float = 10.0,
+    title_fontsize: Optional[float] = None,
+    ignore_zero: bool = True,
+    include_vals: Optional[Sequence[int]] = None,
+    exclude_vals: Optional[Sequence[int]] = None,
+    only_present_in_img: bool = False,
+    sort_by: str = "id",
+    show_pxl_vals: bool = False,
+    pxl_val_fmt: str = "{val}: {name}",
+    max_label_width: Optional[int] = None,
+    swatch_shape: str = "rectangle",
+    swatch_edgecolor: str = "#333333",
+    swatch_linewidth: float = 0.6,
+    swatch_size: float = 9.0,
+    frameon: bool = True,
+    facecolor: str = "white",
+    edgecolor: str = "#CCCCCC",
+    framealpha: float = 1.0,
+    fancybox: bool = True,
+    columnspacing: float = 1.2,
+    handletextpad: float = 0.6,
+    labelspacing: float = 0.45,
+    borderpad: float = 0.6,
+    dpi: int = 300,
+    transparent: bool = False,
+) -> Tuple[int, int]:
+    """
+    Create and save a standalone categorical legend image file (e.g. PNG, PDF,
+    or SVG) tightly cropped around the formatted legend.
+
+    :param out_img_file: Output image file path (e.g. ``'legend.png'``).
+    :param classes_info: Class dictionary, :class:`ClassificationConfig`, or JSON path.
+    :param input_img: Optional thematic raster for extracting embedded colours
+                      or filtering visible classes.
+    :param band: 1-based band index for reading raster colour table (Default = ``1``).
+    :param colour_lut: Optional ``{pixel_val: colour}`` override mapping.
+    :param bbox: Optional map extent used when ``only_present_in_img=True``.
+    :param ncols: Explicit legend column count (Default = ``None``, auto).
+    :param nrows: Explicit legend row count (Default = ``None``, auto).
+    :param fig_width: Target available width in inches for auto-layout
+                      calculation (Default = ``6.5``).
+    :param title: Optional bold legend title.
+    :param fontsize: Class label font size in points (Default = ``10.0``).
+    :param title_fontsize: Optional title font size (Default = ``fontsize + 1``).
+    :param ignore_zero: Exclude background pixel value ``0`` (Default = ``True``).
+    :param include_vals: Optional whitelist of pixel values to keep.
+    :param exclude_vals: Optional pixel values to exclude.
+    :param only_present_in_img: Show only classes present in ``input_img``.
+    :param sort_by: Ordering mode: ``'id'``, ``'name'``, or ``'none'``.
+    :param show_pxl_vals: Include pixel values in legend labels.
+    :param pxl_val_fmt: Format template when ``show_pxl_vals=True``.
+    :param max_label_width: Optional line-wrap width for long class names.
+    :param swatch_shape: ``'rectangle'``, ``'square'``, or ``'circle'``.
+    :param swatch_edgecolor: Colour of swatch border (Default = ``'#333333'``).
+    :param swatch_linewidth: Line width of swatch border (Default = ``0.6``).
+    :param swatch_size: Marker size for ``'square'`` / ``'circle'`` swatches.
+    :param frameon: Draw legend frame box (Default = ``True``).
+    :param facecolor: Legend background colour (Default = ``'white'``).
+    :param edgecolor: Legend border colour (Default = ``'#CCCCCC'``).
+    :param framealpha: Legend background opacity (Default = ``1.0``).
+    :param fancybox: Rounded legend corners (Default = ``True``).
+    :param columnspacing: Horizontal gap between columns (Default = ``1.2``).
+    :param handletextpad: Gap between swatch and text (Default = ``0.6``).
+    :param labelspacing: Vertical spacing between entries (Default = ``0.45``).
+    :param borderpad: Internal frame padding (Default = ``0.6``).
+    :param dpi: Output figure resolution in DPI (Default = ``300``).
+    :param transparent: If ``True``, export with a transparent background.
+    :return: Tuple ``(nrows, ncols)`` used in the saved legend layout.
+
+    .. code:: python
+
+        import rsgispy.tools.mapping as mapping
+
+        nrows, ncols = mapping.save_categorical_legend_img(
+            out_img_file="landcover_legend.png",
+            classes_info={1: "Forest", 2: "Grassland", 3: "Urban", 4: "Water"},
+            colour_lut={1: "#228b22", 2: "#9acd32", 3: "#d62728", 4: "#1f77b4"},
+            title="Land Cover Classes",
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    return save_standalone_legend(
+        out_img_file=out_img_file,
+        classes_info=classes_info,
+        input_img=input_img,
+        band=band,
+        colour_lut=colour_lut,
+        bbox=bbox,
+        ncols=ncols,
+        nrows=nrows,
+        fig_width=fig_width,
+        title=title,
+        fontsize=fontsize,
+        title_fontsize=title_fontsize,
+        ignore_zero=ignore_zero,
+        include_vals=include_vals,
+        exclude_vals=exclude_vals,
+        only_present_in_img=only_present_in_img,
+        sort_by=sort_by,
+        show_pxl_vals=show_pxl_vals,
+        pxl_val_fmt=pxl_val_fmt,
+        max_label_width=max_label_width,
+        swatch_shape=swatch_shape,
+        swatch_edgecolor=swatch_edgecolor,
+        swatch_linewidth=swatch_linewidth,
+        swatch_size=swatch_size,
+        frameon=frameon,
+        facecolor=facecolor,
+        edgecolor=edgecolor,
+        framealpha=framealpha,
+        fancybox=fancybox,
+        columnspacing=columnspacing,
+        handletextpad=handletextpad,
+        labelspacing=labelspacing,
+        borderpad=borderpad,
+        dpi=dpi,
+        transparent=transparent,
+    )

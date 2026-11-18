@@ -293,6 +293,7 @@ def optimise_lightgbm_binary_classifier(
     verbose: int = 0,
     use_gpu: bool = False,
     gpu_device_id: Optional[int] = None,
+    use_pbar: bool = True,
 ) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
     """
     Optimise hyperparameters for a binary ``lightgbm.LGBMClassifier``
@@ -394,6 +395,7 @@ def optimise_lightgbm_binary_classifier(
         verbose=verbose,
         use_gpu=use_gpu,
         gpu_device_id=gpu_device_id,
+        use_pbar=use_pbar,
     )
 
 
@@ -427,6 +429,7 @@ def optimise_lightgbm_multiclass_classifier(
     verbose: int = 0,
     use_gpu: bool = False,
     gpu_device_id: Optional[int] = None,
+    use_pbar: bool = True,
 ) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
     """
     Optimise hyperparameters for a multi-class ``lightgbm.LGBMClassifier``
@@ -520,6 +523,7 @@ def optimise_lightgbm_multiclass_classifier(
         verbose=verbose,
         use_gpu=use_gpu,
         gpu_device_id=gpu_device_id,
+        use_pbar=use_pbar,
     )
 
 

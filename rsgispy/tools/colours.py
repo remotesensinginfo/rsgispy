@@ -26,16 +26,26 @@ def hex_to_rgb(hex_str: str) -> Tuple[int, int, int]:
         import rsgispy.tools.colours
         rgb = rsgispy.tools.colours.hex_to_rgb("#ff8800")
     """
-    cleaned = hex_str[1:] if hex_str.startswith("#") else hex_str
+    if not isinstance(hex_str, str):
+        raise rsgispy.RSGISPyException(
+            f"Hex colour must be a string, got {type(hex_str).__name__}."
+        )
+    trimmed = hex_str.strip()
+    cleaned = trimmed[1:] if trimmed.startswith("#") else trimmed
     if len(cleaned) != 6:
         raise rsgispy.RSGISPyException(
             "String must be of length 6 or 7 if starting with #"
         )
-    return (
-        int(cleaned[0:2], 16),
-        int(cleaned[2:4], 16),
-        int(cleaned[4:6], 16),
-    )
+    try:
+        return (
+            int(cleaned[0:2], 16),
+            int(cleaned[2:4], 16),
+            int(cleaned[4:6], 16),
+        )
+    except ValueError as err:
+        raise rsgispy.RSGISPyException(
+            f"Invalid hexadecimal colour string: {hex_str!r}."
+        ) from err
 
 
 def rgb_to_hex(

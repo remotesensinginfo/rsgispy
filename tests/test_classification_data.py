@@ -530,3 +530,48 @@ def test_recode_internal_to_output_ids_and_raster(tmp_path):
             src.read(1),
             np.array([[100, 100000, 0]], dtype=np.uint32),
         )
+
+
+def test_class_info_hex_colour(tmp_path):
+    """Test specifying ClassInfoObj colours via hex colour string or RGB."""
+    c_hex = rcd.ClassInfoObj(out_id=1, colour="#ff8800")
+    assert (c_hex.red, c_hex.green, c_hex.blue) == (255, 136, 0)
+    assert c_hex.colour == "#ff8800"
+
+    c_no_hash = rcd.ClassInfoObj(out_id=2, colour="1a2B3c")
+    assert (c_no_hash.red, c_no_hash.green, c_no_hash.blue) == (0x1A, 0x2B, 0x3C)
+    assert c_no_hash.colour == "#1a2b3c"
+
+    c_tuple = rcd.ClassInfoObj(out_id=3, colour=(10, 20, 30))
+    assert (c_tuple.red, c_tuple.green, c_tuple.blue) == (10, 20, 30)
+    assert c_tuple.colour == "#0a141e"
+
+    c_rgb = rcd.ClassInfoObj(out_id=4, red=0, green=180, blue=0)
+    assert c_rgb.colour == "#00b400"
+    c_rgb.colour = "#112233"
+    assert (c_rgb.red, c_rgb.green, c_rgb.blue) == (0x11, 0x22, 0x33)
+
+    # Roundtrip via dict and ClassificationConfig JSON
+    d_only_colour = {"out_id": 5, "colour": "#228b22"}
+    c_from_dict = rcd.ClassInfoObj.from_dict(d_only_colour)
+    assert (c_from_dict.red, c_from_dict.green, c_from_dict.blue) == (34, 139, 34)
+    assert rcd.ClassInfoObj.from_dict(c_hex.to_dict()) == c_hex
+
+    img_p = _write_raster(tmp_path / "feat.tif", np.ones((1, 4, 4), dtype=np.float32))
+    cfg_p = tmp_path / "hex_cfg.json"
+    cfg_w = rcd.write_cls_config(
+        cfg_p,
+        [rcd.ImageBandInfo(img_p, name="f")],
+        {"Forest": rcd.ClassInfoObj(out_id=10, colour="#228b22")},
+    )
+    cfg_r = rcd.read_cls_config(cfg_p)
+    assert cfg_r == cfg_w
+    assert cfg_r.get_colour_table() == {10: [34, 139, 34, 255]}
+
+    # Conflicting or invalid colour specifications raise RSGISPyException
+    with pytest.raises(rsgispy.RSGISPyException):
+        rcd.ClassInfoObj(out_id=1, red=10, colour="#ff0000")
+    with pytest.raises(rsgispy.RSGISPyException):
+        rcd.ClassInfoObj(out_id=1, colour="#zzzzzz")
+    with pytest.raises(rsgispy.RSGISPyException):
+        rcd.ClassInfoObj(out_id=1, colour="#123")

@@ -42,6 +42,7 @@ from rsgispy.tools._ml_data import (
     resolve_split_proportions,
     write_ml_samples,
 )
+from rsgispy.tools.colours import hex_to_rgb, rgb_to_hex
 from rsgispy.tools.files import ensure_parent_dir
 from rsgispy.tools.jsonio import read_json_to_dict, write_dict_to_json
 from rsgispy.vectorprocess import read_vec_gdf
@@ -95,6 +96,24 @@ def _validate_rgb_component(val: Any, label: str) -> int:
     return int_val
 
 
+def _parse_colour_value(
+    colour: Union[str, Sequence[int]],
+) -> Tuple[int, int, int]:
+    """Parse a hex colour string (``'#RRGGBB'`` / ``'RRGGBB'``) or RGB sequence."""
+    if isinstance(colour, str):
+        return hex_to_rgb(colour)
+    if isinstance(colour, (tuple, list)) and len(colour) == 3:
+        return (
+            _validate_rgb_component(colour[0], "red"),
+            _validate_rgb_component(colour[1], "green"),
+            _validate_rgb_component(colour[2], "blue"),
+        )
+    raise rsgispy.RSGISPyException(
+        "colour must be a hex string (e.g. '#ff8800') or "
+        f"3-element (R, G, B) sequence, got {colour!r}."
+    )
+
+
 class ClassInfoObj:
     """
     Definition of a single classification class and its training vector samples.
@@ -104,16 +123,22 @@ class ClassInfoObj:
     :attr:`internal_id` (``0, 1, ..., N - 1``) required by classifiers such as
     XGBoost.
 
+    Class display colours may be specified either via ``red``, ``green``,
+    ``blue`` integer components (``0..255``) or via ``colour`` as a hexadecimal
+    string (``'#RRGGBB'`` or ``'RRGGBB'``) or ``(R, G, B)`` tuple.
+
     :param out_id: User-defined unsigned integer output class ID (``>= 0``).
     :param vec_file: Path to the training vector file (points or polygons).
     :param vec_lyr: Optional layer name within ``vec_file``.
-    :param red: Red colour value in ``0..255`` (Default = ``0``).
-    :param green: Green colour value in ``0..255`` (Default = ``0``).
-    :param blue: Blue colour value in ``0..255`` (Default = ``0``).
+    :param red: Red colour value in ``0..255`` (Default = ``0`` when ``colour`` is omitted).
+    :param green: Green colour value in ``0..255`` (Default = ``0`` when ``colour`` is omitted).
+    :param blue: Blue colour value in ``0..255`` (Default = ``0`` when ``colour`` is omitted).
     :param internal_id: Optional consecutive 0-based internal class ID. When
                         ``None`` (default), consecutive IDs ``0..N-1`` are
                         assigned automatically during normalisation.
     :param name: Optional logical class name.
+    :param colour: Optional hex colour string (e.g. ``'#228b22'``) or ``(R, G, B)`` tuple.
+                   Cannot conflict with explicitly supplied ``red``, ``green``, ``blue`` values.
     """
 
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -123,20 +148,44 @@ class ClassInfoObj:
         out_id: int,
         vec_file: Optional[Union[str, os.PathLike]] = None,
         vec_lyr: Optional[str] = None,
-        red: int = 0,
-        green: int = 0,
-        blue: int = 0,
+        red: Optional[int] = None,
+        green: Optional[int] = None,
+        blue: Optional[int] = None,
         internal_id: Optional[int] = None,
         name: Optional[str] = None,
+        colour: Optional[Union[str, Sequence[int]]] = None,
     ):
         self.out_id: int = _validate_uint_value(out_id, "out_id")
         self.vec_file: Optional[str] = (
             os.fspath(vec_file) if vec_file is not None else None
         )
         self.vec_lyr: Optional[str] = vec_lyr
-        self.red: int = _validate_rgb_component(red, "red")
-        self.green: int = _validate_rgb_component(green, "green")
-        self.blue: int = _validate_rgb_component(blue, "blue")
+        if colour is not None:
+            c_red, c_green, c_blue = _parse_colour_value(colour)
+            if red is not None and _validate_rgb_component(red, "red") != c_red:
+                raise rsgispy.RSGISPyException(
+                    f"Specified red={red} conflicts with colour={colour!r}."
+                )
+            if (
+                green is not None
+                and _validate_rgb_component(green, "green") != c_green
+            ):
+                raise rsgispy.RSGISPyException(
+                    f"Specified green={green} conflicts with colour={colour!r}."
+                )
+            if blue is not None and _validate_rgb_component(blue, "blue") != c_blue:
+                raise rsgispy.RSGISPyException(
+                    f"Specified blue={blue} conflicts with colour={colour!r}."
+                )
+            self.red: int = c_red
+            self.green: int = c_green
+            self.blue: int = c_blue
+        else:
+            self.red = _validate_rgb_component(0 if red is None else red, "red")
+            self.green = _validate_rgb_component(
+                0 if green is None else green, "green"
+            )
+            self.blue = _validate_rgb_component(0 if blue is None else blue, "blue")
         if internal_id is not None:
             self.internal_id: Optional[int] = _validate_uint_value(
                 internal_id, "internal_id"
@@ -144,6 +193,18 @@ class ClassInfoObj:
         else:
             self.internal_id = None
         self.name: Optional[str] = name
+
+    @property
+    def colour(self) -> str:
+        """Hexadecimal colour string (``'#rrggbb'``) synchronised with RGB values."""
+        return rgb_to_hex(self.red, self.green, self.blue)
+
+    @colour.setter
+    def colour(self, value: Union[str, Sequence[int]]) -> None:
+        r_val, g_val, b_val = _parse_colour_value(value)
+        self.red = r_val
+        self.green = g_val
+        self.blue = b_val
 
     def to_dict(self) -> Dict[str, Any]:
         """Return a JSON-serialisable dictionary representation."""
@@ -156,6 +217,7 @@ class ClassInfoObj:
             "red": self.red,
             "green": self.green,
             "blue": self.blue,
+            "colour": self.colour,
         }
 
     @classmethod
@@ -169,11 +231,12 @@ class ClassInfoObj:
             out_id=data["out_id"],
             vec_file=data.get("vec_file"),
             vec_lyr=data.get("vec_lyr"),
-            red=data.get("red", 0),
-            green=data.get("green", 0),
-            blue=data.get("blue", 0),
+            red=data.get("red"),
+            green=data.get("green"),
+            blue=data.get("blue"),
             internal_id=data.get("internal_id"),
             name=data.get("name"),
+            colour=data.get("colour"),
         )
 
     def __eq__(self, other: object) -> bool:
@@ -196,7 +259,7 @@ class ClassInfoObj:
             f"internal_id={self.internal_id!r}, "
             f"vec_file={self.vec_file!r}, vec_lyr={self.vec_lyr!r}, "
             f"red={self.red!r}, green={self.green!r}, blue={self.blue!r}, "
-            f"name={self.name!r})"
+            f"colour={self.colour!r}, name={self.name!r})"
         )
 
 

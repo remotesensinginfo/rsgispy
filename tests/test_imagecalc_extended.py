@@ -440,6 +440,155 @@ def test_rescale_functions(tmp_path):
         )
 
 
+def test_normalise_img_pxl_vals(tmp_path):
+    """Test calc_img_norm_params, apply_img_norm_params, and normalise_img_pxl_vals."""
+    in_p = tmp_path / "norm_in.tif"
+    b1 = np.arange(1, 26, dtype=np.float32).reshape(5, 5)
+    b2 = (b1 * 10.0).astype(np.float32)
+    b1[0, 0] = -9999.0
+    b2[0, 0] = -9999.0
+    b1[4, 4] = np.nan
+    _write_raster(in_p, np.stack([b1, b2]), nodata=-9999.0)
+
+    # 1. Split calc -> save JSON -> apply from file with linear stretch + custom bounds
+    stats_file = tmp_path / "linear_stats.json"
+    params = ic_resc.calc_img_norm_params(
+        str(in_p),
+        method=rsgispy.IMG_STRETCH_LINEAR,
+        out_min=0.0,
+        out_max=100.0,
+        out_stats_file=stats_file,
+        use_pbar=False,
+    )
+    assert stats_file.exists()
+    assert params["method"] == "linear"
+
+    out_lin = tmp_path / "out_linear.tif"
+    ic_resc.apply_img_norm_params(
+        str(in_p),
+        str(out_lin),
+        stats_file=stats_file,
+        out_no_data_val=-9999.0,
+        use_pbar=False,
+    )
+    with rasterio.open(out_lin) as src:
+        arr = src.read()
+        assert arr[0, 0, 0] == -9999.0
+        assert arr[0, 4, 4] == -9999.0
+        valid_b1 = arr[0][arr[0] != -9999.0]
+        assert np.min(valid_b1) == pytest.approx(0.0, abs=1e-5)
+        assert np.max(valid_b1) == pytest.approx(100.0, abs=1e-5)
+
+    # 2. Mapping stretches (stdev, cumulative, user) and z-score
+    for meth, extra_kw in [
+        ("stdev", {"n_stdevs": 1.5}),
+        ("cumulative", {"lower": 5.0, "upper": 95.0}),
+        ("user", {"in_min_max": [{"min": 0.0, "max": 30.0}, {"min": 0.0, "max": 300.0}]}),
+        ("none", {}),
+    ]:
+        out_m = tmp_path / f"out_{meth}.tif"
+        ic_resc.normalise_img_pxl_vals(
+            str(in_p),
+            str(out_m),
+            method=meth,
+            out_min=0.0,
+            out_max=1.0,
+            use_pbar=False,
+            **extra_kw,
+        )
+        assert out_m.exists()
+
+    out_z = tmp_path / "out_zscore.tif"
+    ic_resc.normalise_img_pxl_vals(
+        str(in_p), str(out_z), method="zscore", use_pbar=False
+    )
+    with rasterio.open(out_z) as src:
+        z_b1 = src.read(1)
+        valid_z = z_b1[z_b1 != -9999.0]
+        assert np.mean(valid_z) == pytest.approx(0.0, abs=1e-5)
+        assert np.std(valid_z) == pytest.approx(1.0, abs=1e-5)
+
+    # Z-score mapped to custom [out_min, out_max]
+    out_z_mm = tmp_path / "out_zscore_mm.tif"
+    ic_resc.normalise_img_pxl_vals(
+        str(in_p),
+        str(out_z_mm),
+        method="zscore",
+        out_min=-1.0,
+        out_max=1.0,
+        use_pbar=False,
+    )
+    with rasterio.open(out_z_mm) as src:
+        zm = src.read(1)
+        valid_zm = zm[zm != -9999.0]
+        assert np.min(valid_zm) == pytest.approx(-1.0, abs=1e-5)
+        assert np.max(valid_zm) == pytest.approx(1.0, abs=1e-5)
+
+    # 3. Additional non-sklearn scaling/normalisation methods
+    for meth in (
+        "robust_zscore",
+        "decimal_scaling",
+        "log",
+        "log1p",
+        "sigmoid",
+        "tanh",
+        "l2",
+        "softmax",
+    ):
+        out_extra = tmp_path / f"out_{meth}.tif"
+        ic_resc.normalise_img_pxl_vals(
+            str(in_p), str(out_extra), method=meth, use_pbar=False
+        )
+        with rasterio.open(out_extra) as src:
+            assert src.count == 2
+            assert src.read(1)[0, 0] == -9999.0
+
+    # 4. Scikit-learn scalers and transformers (including JSON save/load roundtrip)
+    pytest.importorskip("sklearn")
+    for sk_meth in (
+        "StandardScaler",
+        "MinMaxScaler",
+        "MaxAbsScaler",
+        "RobustScaler",
+        "PowerTransformer",
+        "QuantileTransformer",
+        "Normalizer",
+    ):
+        sk_stats = tmp_path / f"stats_{sk_meth}.json"
+        sk_out = tmp_path / f"out_{sk_meth}.tif"
+        ic_resc.calc_img_norm_params(
+            str(in_p),
+            method=sk_meth,
+            out_stats_file=sk_stats,
+            rnd_seed=42,
+            use_pbar=False,
+        )
+        ic_resc.apply_img_norm_params(
+            str(in_p),
+            str(sk_out),
+            stats_file=sk_stats,
+            use_pbar=False,
+        )
+        with rasterio.open(sk_out) as src:
+            d = src.read(1)
+            assert d[0, 0] == -9999.0
+            valid_d = d[d != -9999.0]
+            assert np.all(np.isfinite(valid_d))
+            if sk_meth == "MinMaxScaler":
+                assert np.min(valid_d) == pytest.approx(0.0, abs=1e-5)
+                assert np.max(valid_d) == pytest.approx(1.0, abs=1e-5)
+            elif sk_meth == "MaxAbsScaler":
+                assert np.max(np.abs(valid_d)) == pytest.approx(1.0, abs=1e-5)
+
+    # Validation errors
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_resc.calc_img_norm_params(str(in_p), method="unknown_algo")
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_resc.calc_img_norm_params(str(in_p), out_min=0.0, out_max=None)
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_resc.apply_img_norm_params(str(in_p), str(tmp_path / "err.tif"))
+
+
 def test_comparison_functions(tmp_path):
     """Test difference, equality, correlation, mutual info, and EMD."""
     a_p = tmp_path / "a.tif"

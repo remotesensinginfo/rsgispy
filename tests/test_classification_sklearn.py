@@ -758,3 +758,39 @@ def test_param_search_builtin_spaces(tmp_path):
             fix["train_df"],
             param_space="unknown_preset",
         )
+
+
+def test_optuna_progress_bar_option(tmp_path, monkeypatch):
+    """Verify Optuna optimisation enables tqdm progress bar by default and respects use_pbar."""
+    optuna = pytest.importorskip("optuna")
+    fix = _create_cls_fixture(tmp_path)
+
+    recorded = []
+    orig_optimize = optuna.Study.optimize
+
+    def _spy_optimize(self, func, *args, **kwargs):
+        recorded.append(kwargs.get("show_progress_bar"))
+        return orig_optimize(self, func, *args, **kwargs)
+
+    monkeypatch.setattr(optuna.Study, "optimize", _spy_optimize)
+
+    rcsk.perform_sklearn_classifier_param_search(
+        cls_cfg=fix["cfg"],
+        sk_classifier=RandomForestClassifier(random_state=0),
+        train_data=fix["train_df"],
+        valid_data=fix["valid_df"],
+        search_method="optuna",
+        n_trials=2,
+        rnd_seed=42,
+    )
+    rcsk.perform_sklearn_classifier_param_search(
+        cls_cfg=fix["cfg"],
+        sk_classifier=RandomForestClassifier(random_state=0),
+        train_data=fix["train_df"],
+        valid_data=fix["valid_df"],
+        search_method="optuna",
+        n_trials=2,
+        rnd_seed=42,
+        use_pbar=False,
+    )
+    assert recorded == [True, False]

@@ -507,36 +507,45 @@ def mask_all_band_zero_vals(
 
 def create_valid_mask(
     img_band_info: Sequence[ImageBandInfo],
-    out_msk_file: str,
-    gdalformat: str,
+    out_msk_file: Union[str, os.PathLike],
+    gdalformat: str = "GTIFF",
     tmp_dir: str = "",
     use_pbar: bool = True,
+    default_no_data_val: Optional[float] = 0.0,
 ) -> None:
     """
     Create a binary thematic valid-pixel mask (``1`` where all bands of every
-    image in ``img_band_info`` differ from their image's no-data value, ``0``
-    otherwise).
+    image in ``img_band_info`` are finite and differ from their image's
+    no-data value, ``0`` otherwise).
 
     :param img_band_info: Sequence of :class:`ImageBandInfo` objects describing
                           input images and optional bands to check.
     :param out_msk_file: Path to the output mask image file.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
+    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``;
+                       Default = ``'GTIFF'``).
     :param tmp_dir: Temporary directory path (accepted for API compatibility).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param default_no_data_val: Fallback no-data value checked when an input
+                                band has no embedded raster no-data value
+                                (``None`` in ``ds.nodatavals``; Default = ``0.0``).
+                                Pass ``None`` to check only finiteness for bands
+                                without embedded no-data metadata.
 
     .. code:: python
 
-        import rsgispy.imageutils.masking
+        import rsgispy.classification.classdata
+        import rsgispy.imageutils
 
         img_info = [
-            rsgispy.imageutils.masking.ImageBandInfo("img1.tif", "img1", [1, 2]),
-            rsgispy.imageutils.masking.ImageBandInfo("img2.tif", "img2"),
+            rsgispy.classification.classdata.ImageBandInfo("img1.tif", "img1", [1, 2]),
+            rsgispy.classification.classdata.ImageBandInfo("img2.tif", "img2"),
         ]
-        rsgispy.imageutils.masking.create_valid_mask(
+        rsgispy.imageutils.create_valid_mask(
             img_info, "valid_msk.tif", "GTIFF"
         )
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches
     if not img_band_info:
         raise rsgispy.RSGISPyException(
@@ -544,6 +553,7 @@ def create_valid_mask(
         )
     if tmp_dir:
         os.makedirs(tmp_dir, exist_ok=True)
+    out_msk_path = os.fspath(out_msk_file)
 
     img_paths: List[str] = []
     for info in img_band_info:
@@ -575,7 +585,7 @@ def create_valid_mask(
 
         dst = open_output_dataset(
             stack=stack,
-            output_img=out_msk_file,
+            output_img=out_msk_path,
             gdalformat=gdalformat,
             out_rio_dtype="uint8",
             grid=grid,
@@ -599,12 +609,13 @@ def create_valid_mask(
                 )
                 for b_idx in bands:
                     arr = ds.read(b_idx, window=in_win, out_dtype=np.float64)
+                    valid &= np.isfinite(arr)
                     nd = ds.nodatavals[b_idx - 1]
-                    eff_nd = 0.0 if nd is None else float(nd)
-                    if math.isnan(eff_nd):
-                        valid &= ~np.isnan(arr)
-                    else:
-                        valid &= arr != eff_nd
+                    eff_nd = (
+                        default_no_data_val if nd is None else float(nd)
+                    )
+                    if eff_nd is not None and not math.isnan(float(eff_nd)):
+                        valid &= arr != float(eff_nd)
             dst.write(valid.astype(np.uint8), 1, window=out_win)
 
-    set_img_thematic(out_msk_file)
+    set_img_thematic(out_msk_path)
