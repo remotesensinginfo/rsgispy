@@ -30,9 +30,7 @@ import rsgispy.tools.strings
 __all__ = [
     "dtm_aspect_median_filter",
     "fill_dem_soille_gratin_1994",
-    "plane_fit_detreat_dem",
     "plane_fit_detrend_dem",
-    "resampling_detread_dem",
     "resampling_detrend_dem",
 ]
 
@@ -278,7 +276,7 @@ def fill_dem_soille_gratin_1994(
         dst.write(out.astype(out_np_dtype), 1)
 
 
-def plane_fit_detreat_dem(
+def plane_fit_detrend_dem(
     input_img: str,
     output_img: str,
     gdalformat: str,
@@ -300,7 +298,7 @@ def plane_fit_detreat_dem(
 
         import rsgispy.elevation.filtering
 
-        rsgispy.elevation.filtering.plane_fit_detreat_dem(
+        rsgispy.elevation.filtering.plane_fit_detrend_dem(
             input_img="dem.tif",
             output_img="dem_detrend.tif",
             gdalformat="GTIFF",
@@ -390,7 +388,7 @@ def plane_fit_detreat_dem(
             dst.write(out_c.astype(np.float32), 1, window=out_win)
 
 
-def resampling_detread_dem(
+def resampling_detrend_dem(
     input_img: str,
     output_img: str,
     resmp_res: float,
@@ -422,7 +420,7 @@ def resampling_detread_dem(
 
         import rsgispy.elevation.filtering
 
-        rsgispy.elevation.filtering.resampling_detread_dem(
+        rsgispy.elevation.filtering.resampling_detrend_dem(
             input_img="dem.tif",
             output_img="dem_detrend.tif",
             resmp_res=100.0,
@@ -507,7 +505,3 @@ def resampling_detread_dem(
             no_data_val=no_data_val,
             multicore=False,
         )
-
-
-plane_fit_detrend_dem = plane_fit_detreat_dem
-resampling_detrend_dem = resampling_detread_dem

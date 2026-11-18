@@ -162,7 +162,7 @@ def test_thresholding_masking_normalisation_and_variogram(tmp_path):
             [[10.0, 20.0], [30.0, 40.0]],
         ]
     )
-    std_img = rstats.standarise_img_data(img3d)
+    std_img = rstats.standardise_img_data(img3d)
     assert std_img.shape == img3d.shape
     assert np.mean(std_img[0]) == pytest.approx(0.0, abs=1e-7)
     assert np.std(std_img[0]) == pytest.approx(1.0, abs=1e-7)

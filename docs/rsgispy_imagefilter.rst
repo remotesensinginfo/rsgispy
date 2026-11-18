@@ -11,9 +11,6 @@ organised into thematic submodules:
 * :doc:`imagefilter/sar` — Lee, Enhanced Lee, Frost, Enhanced Frost, Kuan, Gamma MAP, and Refined Lee SAR speckle filters.
 * :doc:`imagefilter/texture` — Gray-Level Co-occurrence Matrix (GLCM) spatial texture filters.
 
-For convenience and backwards compatibility, all filter functions are also
-re-exported directly under :mod:`rsgispy.imagefilter`.
-
 Example
 -------
 

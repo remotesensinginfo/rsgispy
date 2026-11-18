@@ -14,7 +14,6 @@ import rsgispy
 __all__ = [
     "mask_data_to_valid",
     "calc_semivariogram",
-    "standarise_img_data",
     "standardise_img_data",
     "normalise_img_data",
     "validate_percentiles_0_100",
@@ -204,7 +203,7 @@ def calc_semivariogram(
     return vario_out_df
 
 
-def standarise_img_data(img_data: np.ndarray) -> np.ndarray:
+def standardise_img_data(img_data: np.ndarray) -> np.ndarray:
     """
     Standardise image data per band: ``(data - mean) / std``.
 
@@ -217,7 +216,7 @@ def standarise_img_data(img_data: np.ndarray) -> np.ndarray:
         import numpy as np
         import rsgispy.tools.stats
         img = np.random.rand(3, 10, 10)
-        std_img = rsgispy.tools.stats.standarise_img_data(img)
+        std_img = rsgispy.tools.stats.standardise_img_data(img)
     """
     if len(img_data.shape) == 3:
         img_bands, img_height, img_width = img_data.shape
@@ -247,9 +246,6 @@ def standarise_img_data(img_data: np.ndarray) -> np.ndarray:
         std_img_data = np.reshape(std_img_data, (img_bands, img_height, img_width))
 
     return std_img_data
-
-
-standardise_img_data = standarise_img_data
 
 
 def normalise_img_data(img_data: np.ndarray) -> np.ndarray:

@@ -104,7 +104,7 @@ def test_exports_and_default_gdalformat():
         (sc, sc.spectral_angle_mapper),
         (sc, sc.spectral_correlation_mapper),
         (sp, sp.spectral_smoothing),
-        (sp, sp.mask_outliners_data_values),
+        (sp, sp.mask_outliers_data_values),
         (sp, sp.polyfill_nan_data_values),
         (st, st.whiten_image),
         (st, st.calc_pca),
@@ -927,7 +927,7 @@ def test_spectral_correlation_mapper(tmp_path):
 
 
 def test_spectral_smoothing_and_outlier_mask(tmp_path):
-    """Test spectral_smoothing (with calc_stats) and mask_outliners_data_values."""
+    """Test spectral_smoothing (with calc_stats) and mask_outliers_data_values."""
     n_bands = 7
     wavelengths = np.arange(n_bands, dtype=np.float64)
     clean_spec = 2.0 * wavelengths + 1.0
@@ -966,7 +966,7 @@ def test_spectral_smoothing_and_outlier_mask(tmp_path):
     outl_in = tmp_path / "outl_in.tif"
     outl_out = tmp_path / "outl_out.tif"
     _write_raster(outl_in, outl_arr)
-    sp.mask_outliners_data_values(
+    sp.mask_outliers_data_values(
         str(outl_in),
         str(msk_img),
         1,

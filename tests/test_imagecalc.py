@@ -81,7 +81,7 @@ def test_band_defn():
 
 
 def test_band_maths_basic_multiplication(tmp_path):
-    """Test basic two-band multiplication with band_maths and band_math alias."""
+    """Test basic two-band multiplication with band_maths."""
     in_img = tmp_path / "img.tif"
     out_img1 = tmp_path / "out1.tif"
     out_img2 = tmp_path / "out2.tif"
@@ -102,7 +102,7 @@ def test_band_maths_basic_multiplication(tmp_path):
         datatype=rsgispy.TYPE_32FLOAT,
         band_defs=band_defns,
     )
-    rsgispy.imagecalc.maths.band_math(
+    rsgispy.imagecalc.maths.band_maths(
         output_img=str(out_img2),
         exp="b1*b2",
         gdalformat="GTIFF",

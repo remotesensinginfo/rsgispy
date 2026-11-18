@@ -26,7 +26,6 @@ __all__ = [
     "slope_pxl_res_img",
     "aspect",
     "aspect_pxl_res_img",
-    "catagorise_aspect",
     "categorise_aspect",
 ]
 
@@ -228,7 +227,7 @@ def aspect_pxl_res_img(
     )
 
 
-def catagorise_aspect(
+def categorise_aspect(
     input_img: str,
     output_img: str,
     gdalformat: str,
@@ -247,7 +246,7 @@ def catagorise_aspect(
 
         import rsgispy.elevation.terrain
 
-        rsgispy.elevation.terrain.catagorise_aspect(
+        rsgispy.elevation.terrain.categorise_aspect(
             input_img="aspect.tif",
             output_img="aspect_cats.tif",
             gdalformat="GTIFF",
@@ -283,6 +282,3 @@ def catagorise_aspect(
             bins = np.clip((norm[valid] // 45.0).astype(np.int64) + 1, 1, 8)
             out_cls[valid] = bins.astype(np.uint8)
             dst.write(out_cls, 1, window=out_win)
-
-
-categorise_aspect = catagorise_aspect

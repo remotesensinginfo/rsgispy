@@ -31,7 +31,6 @@ __all__ = [
     "hillshade_pxl_res_img",
     "shadow_mask",
     "local_incidence_angle",
-    "local_existance_angle",
     "local_exitance_angle",
 ]
 
@@ -415,7 +414,7 @@ def local_incidence_angle(
     )
 
 
-def local_existance_angle(
+def local_exitance_angle(
     input_img: str,
     output_img: str,
     azimuth: float,
@@ -438,7 +437,7 @@ def local_existance_angle(
 
         import rsgispy.elevation.illumination
 
-        rsgispy.elevation.illumination.local_existance_angle(
+        rsgispy.elevation.illumination.local_exitance_angle(
             input_img="dem.tif",
             output_img="exitance.tif",
             azimuth=180.0,
@@ -471,6 +470,3 @@ def local_existance_angle(
     _process_single_dem_3x3(
         input_img, output_img, gdalformat, "float32", _block, use_pbar=use_pbar
     )
-
-
-local_exitance_angle = local_existance_angle

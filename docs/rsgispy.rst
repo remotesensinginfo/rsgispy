@@ -119,7 +119,7 @@ Modelling Variable Type Constants
 Version
 ~~~~~~~
 
-* ``rsgispy.__version__`` — Package version string (e.g. ``"0.0.4"``).
+* ``rsgispy.__version__`` — Package version string.
 
 Example
 -------

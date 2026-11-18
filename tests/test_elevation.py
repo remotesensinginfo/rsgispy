@@ -36,8 +36,8 @@ def _write_raster(path, arr, res=10.0, nodata=None, crs="EPSG:32630"):
         dst.write(data)
 
 
-def test_slope_aspect_catagorise_and_pxl_res(tmp_path):
-    """Test slope, aspect, catagorise_aspect, and *_pxl_res_img variants."""
+def test_slope_aspect_categorise_and_pxl_res(tmp_path):
+    """Test slope, aspect, categorise_aspect, and *_pxl_res_img variants."""
     # Tilted plane: elevation increases linearly to the North
     # (row 0 highest -> faces South = 180 deg), dy = 10 m per 10 m pixel -> 45 deg slope
     rows = np.arange(5, dtype=np.float32)[:, None]
@@ -60,7 +60,7 @@ def test_slope_aspect_catagorise_and_pxl_res(tmp_path):
     with rasterio.open(aspect_path) as asp_ds:
         assert asp_ds.read(1)[2, 2] == pytest.approx(180.0, abs=1e-4)
 
-    # Multi-directional aspect grid + catagorise_aspect + nodata NaN
+    # Multi-directional aspect grid + categorise_aspect + nodata NaN
     asp_vals = np.array(
         [[10.0, 60.0, 100.0], [150.0, 200.0, 250.0], [300.0, 350.0, np.nan]],
         dtype=np.float32,
@@ -68,7 +68,7 @@ def test_slope_aspect_catagorise_and_pxl_res(tmp_path):
     asp_grid = tmp_path / "asp_grid.tif"
     cat_path = tmp_path / "asp_cat.tif"
     _write_raster(asp_grid, asp_vals)
-    elev_terr.catagorise_aspect(str(asp_grid), str(cat_path), "GTIFF")
+    elev_terr.categorise_aspect(str(asp_grid), str(cat_path), "GTIFF")
     with rasterio.open(cat_path) as cat_ds:
         assert cat_ds.dtypes[0] == "uint8"
         expected = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 0]], dtype=np.uint8)
@@ -173,7 +173,7 @@ def test_hillshade_shadow_and_ray_angles(tmp_path):
     elev_illum.local_incidence_angle(
         str(dem_path), str(inc_path), azimuth=180.0, zenith=45.0, gdalformat="GTIFF"
     )
-    elev_illum.local_existance_angle(
+    elev_illum.local_exitance_angle(
         str(dem_path), str(ext_path), azimuth=180.0, zenith=45.0, gdalformat="GTIFF"
     )
     with rasterio.open(inc_path) as inc_ds, rasterio.open(ext_path) as ext_ds:
@@ -254,18 +254,18 @@ def test_filtering_fill_detrend_and_fusion(tmp_path):
         # Lowest rim cell is 4, so pit at (2, 2) must be filled to 4
         assert fld_ds.read(1)[2, 2] == 4
 
-    # 3. plane_fit_detreat_dem on exact planar DEM preserves value at centre
+    # 3. plane_fit_detrend_dem on exact planar DEM preserves value at centre
     yy, xx = np.mgrid[0:6, 0:6]
     plane = (2.0 * xx + 3.0 * yy + 10.0).astype(np.float32)
     plane_path = tmp_path / "plane.tif"
     plane_out = tmp_path / "plane_fit.tif"
     _write_raster(plane_path, plane, nodata=-9999.0)
-    elev_filt.plane_fit_detreat_dem(str(plane_path), str(plane_out), "GTIFF", win_size=3)
+    elev_filt.plane_fit_detrend_dem(str(plane_path), str(plane_out), "GTIFF", win_size=3)
     with rasterio.open(plane_out) as pds:
         np.testing.assert_allclose(pds.read(1)[1:-1, 1:-1], plane[1:-1, 1:-1], atol=1e-4)
 
     with pytest.raises(rsgispy.RSGISPyException):
-        elev_filt.plane_fit_detreat_dem(str(plane_path), str(plane_out), "GTIFF", win_size=4)
+        elev_filt.plane_fit_detrend_dem(str(plane_path), str(plane_out), "GTIFF", win_size=4)
 
     # 4. fft_dem_fusion
     high_dem = np.full((16, 16), 100.0, dtype=np.float32)
@@ -282,12 +282,12 @@ def test_filtering_fill_detrend_and_fusion(tmp_path):
         # DC component came from high_dem -> mean matches 100.0
         assert float(fds.read(1).mean()) == pytest.approx(100.0, abs=1e-3)
 
-    # 5. resampling_detread_dem
+    # 5. resampling_detrend_dem
     resamp_in = np.full((10, 10), 25.0, dtype=np.float32)
     resamp_path = tmp_path / "resamp_in.tif"
     resamp_out = tmp_path / "resamp_out.tif"
     _write_raster(resamp_path, resamp_in, res=10.0, nodata=-9999.0)
-    elev_filt.resampling_detread_dem(
+    elev_filt.resampling_detrend_dem(
         str(resamp_path),
         str(resamp_out),
         resmp_res=30.0,

@@ -26,7 +26,7 @@ from rsgispy.imageutils.arrays import (
 )
 from rsgispy.imageutils.checks import check_img_file_comparison
 from rsgispy.imageutils.metadata import get_img_band_count, get_img_size
-from rsgispy.tools.stats import standarise_img_data
+from rsgispy.tools.stats import standardise_img_data
 from rsgispy.tools.thresholding import calc_otsu_threshold
 
 try:
@@ -175,10 +175,10 @@ def _prepare_change_inputs(
 
     if apply_std and pxl_ids.size > 0:
         base_flat = np.nan_to_num(
-            standarise_img_data(base_flat), copy=False, nan=0.0, posinf=0.0, neginf=0.0
+            standardise_img_data(base_flat), copy=False, nan=0.0, posinf=0.0, neginf=0.0
         )
         chng_flat = np.nan_to_num(
-            standarise_img_data(chng_flat), copy=False, nan=0.0, posinf=0.0, neginf=0.0
+            standardise_img_data(chng_flat), copy=False, nan=0.0, posinf=0.0, neginf=0.0
         )
 
     return n_bands, img_size_x, img_size_y, n_pxls, pxl_ids, base_flat, chng_flat
