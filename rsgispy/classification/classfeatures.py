@@ -13,9 +13,7 @@ contributions, and SALib Sobol global sensitivity analysis).
 
 import os
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
-import warnings
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -28,33 +26,34 @@ from rsgispy.classification._helpers import (
     coerce_cls_config,
     extract_xy,
     load_samples_df,
-    resolve_cv_splitter,
     resolve_feature_cols,
 )
 from rsgispy.classification.classdata import ClassInfoObj
 from rsgispy.tools._ml_explain import (
-    extract_native_feature_importances,
-    finalise_plot,
     plot_class_feature_distributions,
-    plot_correlation_heatmap,
-    plot_feature_importance_bars,
     plot_jackknife_bars,
     run_boruta_shap_selection,
     run_salib_sobol_sensitivity,
     run_shap_explainer,
     run_variable_response_curves,
 )
+from rsgispy.tools._ml_features import (
+    run_corr_cluster_selection,
+    run_correlation_matrix,
+    run_feature_importance,
+    run_from_model_selection,
+    run_iterative_vif_selection,
+    run_rfe_selection,
+    run_univariate_selection,
+)
 from rsgispy.tools._sklearn import (
     check_sklearn_estimator_fitted,
-    clone_sklearn_estimator,
     fit_clean_sklearn_estimator,
     sklearn,
 )
 from rsgispy.tools.featureselection import (
     calc_pandas_vif,
-    corr_feature_selection,
     cqv_threshold,
-    lassolars_feature_selection,
 )
 from rsgispy.tools.files import ensure_parent_dir
 
@@ -75,8 +74,6 @@ __all__ = [
     "calc_shap_feature_contributions",
     "calc_salib_feature_sensitivity",
 ]
-
-_VALID_CORR_METHODS = {"pearson", "spearman", "kendall"}
 
 
 def _prepare_classification_data(
@@ -438,13 +435,6 @@ def correlation_matrix(
             out_corr_file="corr.csv", out_plt_file="corr.png",
         )
     """
-    corr_method = method.strip().lower()
-    if corr_method not in _VALID_CORR_METHODS:
-        raise rsgispy.RSGISPyException(
-            f"Unsupported correlation method '{method}'. Expected one of "
-            f"{sorted(_VALID_CORR_METHODS)}."
-        )
-
     df, feat_cols, _, _, _, _, _, _ = _prepare_classification_data(
         samples_data=samples_data,
         cls_cfg=cls_cfg,
@@ -455,20 +445,15 @@ def correlation_matrix(
         label="samples_data",
         require_target=False,
     )
-
-    corr_df = df[feat_cols].corr(method=corr_method)  # type: ignore[arg-type]
-    if out_corr_file is not None:
-        corr_df.to_csv(ensure_parent_dir(out_corr_file), index=True)
-
-    if out_plt_file is not None:
-        plot_correlation_heatmap(
-            corr_df=corr_df,
-            var_names=feat_cols,
-            out_plt_file=out_plt_file,
-            fig_width=fig_width,
-            fig_height=fig_height,
-        )
-    return corr_df
+    return run_correlation_matrix(
+        df=df,
+        cols=feat_cols,
+        method=method,
+        out_corr_file=out_corr_file,
+        out_plt_file=out_plt_file,
+        fig_width=fig_width,
+        fig_height=fig_height,
+    )
 
 
 def calc_vif_multicollinearity(
@@ -603,7 +588,7 @@ def select_features_corr(
         )
     """
     # pylint: disable=too-many-locals
-    df, feat_cols, _, y_arr, _, eff_out_col, eff_int_col, _ = (
+    df, feat_cols, x_df, y_arr, _, eff_out_col, eff_int_col, _ = (
         _prepare_classification_data(
             samples_data=samples_data,
             cls_cfg=cls_cfg,
@@ -615,39 +600,17 @@ def select_features_corr(
             require_target=True,
         )
     )
-    assert y_arr is not None
-    if len(feat_cols) < 3:
-        raise rsgispy.RSGISPyException(
-            "select_features_corr requires at least 3 features."
-        )
-
-    eff_max = min(int(n_max_clusters), len(feat_cols))
-    eff_min = max(2, min(int(n_min_clusters), eff_max - 1))
-    if eff_min >= eff_max:
-        raise rsgispy.RSGISPyException(
-            f"Invalid cluster range [{eff_min}, {eff_max}) for "
-            f"{len(feat_cols)} features."
-        )
-
+    assert x_df is not None and y_arr is not None
     target_col = eff_int_col if (use_internal_id and eff_int_col in df.columns) else eff_out_col
-    work_df = df[feat_cols].copy()
-    work_df["__rsgis_target__"] = y_arr.astype(np.float64)
-    if np.std(y_arr) == 0.0:
-        raise rsgispy.RSGISPyException(
-            f"Target column '{target_col}' has zero variance; cannot compute "
-            "correlation-based feature selection."
-        )
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        return corr_feature_selection(
-            work_df,
-            dep_vars=["__rsgis_target__"],
-            ind_vars=feat_cols,
-            n_min_clusters=eff_min,
-            n_max_clusters=eff_max,
-            use_pbar=use_pbar,
-        )
+    return run_corr_cluster_selection(
+        x_df=x_df,
+        y_arr=y_arr,
+        feat_cols=feat_cols,
+        target_names=[target_col],
+        n_min_clusters=n_min_clusters,
+        n_max_clusters=n_max_clusters,
+        use_pbar=use_pbar,
+    )
 
 
 def select_features_vif(
@@ -685,12 +648,6 @@ def select_features_vif(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals
-    if vif_threshold <= 0.0:
-        raise rsgispy.RSGISPyException("vif_threshold must be > 0.")
-    if min_features < 2:
-        raise rsgispy.RSGISPyException("min_features must be at least 2.")
-
     _, feat_cols, x_df, _, _, _, _, _ = _prepare_classification_data(
         samples_data=samples_data,
         cls_cfg=cls_cfg,
@@ -702,36 +659,14 @@ def select_features_vif(
         require_target=False,
     )
     assert x_df is not None
-    if len(feat_cols) < 2:
-        raise rsgispy.RSGISPyException(
-            "select_features_vif requires at least 2 features."
-        )
-
-    remaining = list(feat_cols)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        vif_series = calc_pandas_vif(x_df[remaining], cols=remaining)
-        while len(remaining) > min_features:
-            eff_scores: Dict[str, float] = {}
-            for col in remaining:
-                val = float(vif_series[col])
-                if not np.isfinite(val):
-                    eff_scores[col] = np.inf
-                elif val == 0.0 and float(x_df[col].std()) > 0.0:
-                    eff_scores[col] = np.inf
-                else:
-                    eff_scores[col] = val
-            worst_col = max(eff_scores, key=lambda k: eff_scores[k])
-            if eff_scores[worst_col] <= vif_threshold:
-                break
-            remaining.remove(worst_col)
-            vif_series = calc_pandas_vif(x_df[remaining], cols=remaining)
-
-    if out_vif_file is not None:
-        vif_series.to_csv(ensure_parent_dir(out_vif_file), index=True)
-    if return_vif:
-        return remaining, vif_series
-    return remaining
+    return run_iterative_vif_selection(
+        x_df=x_df,
+        feat_cols=feat_cols,
+        vif_threshold=vif_threshold,
+        min_features=min_features,
+        out_vif_file=out_vif_file,
+        return_vif=return_vif,
+    )
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -816,60 +751,16 @@ def select_features_univariate(
             "'mutual_info_classif', or 'chi2'."
         )
 
-    if percentile is not None:
-        if percentile <= 0 or percentile > 100:
-            raise rsgispy.RSGISPyException(
-                "percentile must be in the range (0, 100]."
-            )
-        selector: Any = sklearn.feature_selection.SelectPercentile(
-            score_func=fn, percentile=int(percentile)
-        )
-    else:
-        if isinstance(k, (int, np.integer)) and not isinstance(k, bool):
-            if int(k) < 1:
-                raise rsgispy.RSGISPyException("k must be at least 1.")
-            eff_k: Union[int, str] = min(int(k), len(feat_cols))
-        elif k == "all":
-            eff_k = "all"
-        else:
-            raise rsgispy.RSGISPyException(
-                "k must be a positive integer or 'all'."
-            )
-        selector = sklearn.feature_selection.SelectKBest(
-            score_func=fn, k=eff_k
-        )
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        selector.fit(x_df, y_arr)
-
-    support = np.asarray(selector.get_support(), dtype=bool)
-    raw_scores = np.asarray(selector.scores_, dtype=np.float64)
-    raw_pvals = (
-        np.asarray(selector.pvalues_, dtype=np.float64)
-        if getattr(selector, "pvalues_", None) is not None
-        else np.full(len(feat_cols), np.nan, dtype=np.float64)
+    return run_univariate_selection(
+        x_df=x_df,
+        y_arr=y_arr,
+        feat_cols=feat_cols,
+        score_callable=fn,
+        k=k,
+        percentile=percentile,
+        out_scores_file=out_scores_file,
+        return_scores=return_scores,
     )
-
-    selected = [col for col, keep in zip(feat_cols, support) if keep]
-    scores_df = pd.DataFrame(
-        {
-            "feature": feat_cols,
-            "score": raw_scores,
-            "p_value": raw_pvals,
-            "selected": support,
-        }
-    )
-    scores_df = scores_df.sort_values(
-        "score", ascending=False, na_position="last"
-    ).reset_index(drop=True)
-    scores_df["rank"] = np.arange(1, len(scores_df) + 1, dtype=int)
-
-    if out_scores_file is not None:
-        scores_df.to_csv(ensure_parent_dir(out_scores_file), index=False)
-    if return_scores:
-        return selected, scores_df
-    return selected
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -949,77 +840,25 @@ def select_features_rfe(
         require_target=True,
     )
     assert x_df is not None and y_arr is not None
-
-    base_est = clone_sklearn_estimator(
-        sk_classifier, random_state=rnd_seed, extra="classification"
+    return run_rfe_selection(
+        sk_estimator=sk_classifier,
+        x_df=x_df,
+        y_arr=y_arr,
+        feat_cols=feat_cols,
+        n_features_to_select=n_features_to_select,
+        step=step,
+        use_cv=use_cv,
+        cv=cv,
+        scoring=scoring,
+        min_features_to_select=min_features_to_select,
+        stratified=True,
+        rnd_seed=rnd_seed,
+        out_scores_file=out_scores_file,
+        out_cv_plot=out_cv_plot,
+        n_jobs=n_jobs,
+        extra="classification",
+        return_scores=return_scores,
     )
-    if use_cv:
-        cv_splitter = resolve_cv_splitter(cv, y_arr, rnd_seed=rnd_seed)
-        selector: Any = sklearn.feature_selection.RFECV(
-            estimator=base_est,
-            step=step,
-            min_features_to_select=min(int(min_features_to_select), len(feat_cols)),
-            cv=cv_splitter,
-            scoring=scoring,
-            n_jobs=n_jobs,
-        )
-    else:
-        eff_n = n_features_to_select
-        if isinstance(eff_n, (int, np.integer)) and not isinstance(eff_n, bool):
-            eff_n = min(max(1, int(eff_n)), len(feat_cols))
-        selector = sklearn.feature_selection.RFE(
-            estimator=base_est,
-            n_features_to_select=eff_n,
-            step=step,
-        )
-
-    selector.fit(x_df, y_arr)
-    support = np.asarray(selector.get_support(), dtype=bool)
-    ranking = np.asarray(selector.ranking_, dtype=int)
-    selected = [col for col, keep in zip(feat_cols, support) if keep]
-
-    rank_df = pd.DataFrame(
-        {"feature": feat_cols, "ranking": ranking, "selected": support}
-    )
-    rank_df = rank_df.sort_values(
-        ["ranking", "feature"], ascending=[True, True]
-    ).reset_index(drop=True)
-
-    if out_cv_plot is not None and use_cv and hasattr(selector, "cv_results_"):
-        mean_scores = np.asarray(
-            selector.cv_results_["mean_test_score"], dtype=float
-        )
-        n_feats_axis = np.asarray(
-            selector.cv_results_.get(
-                "n_features",
-                np.arange(
-                    len(feat_cols) - len(mean_scores) + 1, len(feat_cols) + 1
-                ),
-            ),
-            dtype=int,
-        )
-        fig, ax = plt.subplots(figsize=(7, 4))
-        try:
-            ax.plot(n_feats_axis, mean_scores, marker="o", color="#1E88E5")
-            ax.axvline(
-                x=int(selector.n_features_),
-                color="#D81B60",
-                linestyle="--",
-                label=f"Optimal = {int(selector.n_features_)}",
-            )
-            ax.set_xlabel("Number of Selected Features")
-            ax.set_ylabel("CV Score")
-            ax.set_title("RFECV Feature Selection")
-            ax.legend()
-            fig.tight_layout()
-        finally:
-            finalise_plot(fig, out_file=out_cv_plot)
-
-    if out_scores_file is not None:
-        rank_df.to_csv(ensure_parent_dir(out_scores_file), index=False)
-    if return_scores:
-        return selected, rank_df
-    return selected
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -1078,7 +917,7 @@ def select_features_from_model(
     """
     # pylint: disable=too-many-locals
     check_sklearn_available("select_features_from_model")
-    df, feat_cols, x_df, y_arr, _, _, _, _ = _prepare_classification_data(
+    _, feat_cols, x_df, y_arr, _, _, _, _ = _prepare_classification_data(
         samples_data=train_data,
         cls_cfg=cls_cfg,
         feature_cols=feature_cols,
@@ -1089,71 +928,22 @@ def select_features_from_model(
         require_target=True,
     )
     assert x_df is not None and y_arr is not None
-
-    if use_lassolars:
-        work_df = df[feat_cols].copy()
-        work_df["__rsgis_target__"] = y_arr.astype(np.float64)
-        selected = lassolars_feature_selection(
-            work_df,
-            dep_vars=["__rsgis_target__"],
-            ind_vars=feat_cols,
-            alpha_val=alpha_val,
-        )
-        selected_set = set(selected)
-        scores_df = pd.DataFrame(
-            {
-                "feature": feat_cols,
-                "selected": [col in selected_set for col in feat_cols],
-            }
-        )
-        if out_scores_file is not None:
-            scores_df.to_csv(ensure_parent_dir(out_scores_file), index=False)
-        if return_scores:
-            return selected, scores_df
-        return selected
-
-    if sk_classifier is None:
-        raise rsgispy.RSGISPyException(
-            "sk_classifier must be provided when use_lassolars=False."
-        )
-
-    if prefit:
-        check_sklearn_estimator_fitted(sk_classifier, label="sk_classifier")
-        est = sk_classifier
-    else:
-        est = fit_clean_sklearn_estimator(
-            sk_classifier,
-            x_df,
-            y_arr,
-            sync_input=False,
-            random_state=rnd_seed,
-            extra="classification",
-        )
-
-    selector = sklearn.feature_selection.SelectFromModel(
-        est, threshold=threshold, max_features=max_features, prefit=True
+    return run_from_model_selection(
+        sk_estimator=sk_classifier,
+        x_df=x_df,
+        y_arr=y_arr,
+        feat_cols=feat_cols,
+        threshold=threshold,
+        max_features=max_features,
+        prefit=prefit,
+        use_lassolars=use_lassolars,
+        alpha_val=alpha_val,
+        rnd_seed=rnd_seed,
+        out_scores_file=out_scores_file,
+        return_scores=return_scores,
+        extra="classification",
+        role_label="sk_classifier",
     )
-    support = np.asarray(selector.get_support(), dtype=bool)
-    selected = [col for col, keep in zip(feat_cols, support) if keep]
-
-    importances = extract_native_feature_importances(est, len(feat_cols))
-    scores_df = pd.DataFrame(
-        {
-            "feature": feat_cols,
-            "importance": importances if importances is not None else np.nan,
-            "selected": support,
-        }
-    )
-    if importances is not None:
-        scores_df = scores_df.sort_values(
-            "importance", ascending=False
-        ).reset_index(drop=True)
-
-    if out_scores_file is not None:
-        scores_df.to_csv(ensure_parent_dir(out_scores_file), index=False)
-    if return_scores:
-        return selected, scores_df
-    return selected
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -1430,20 +1220,6 @@ def calc_feature_importance(
     # pylint: disable=too-many-locals
     check_sklearn_available("calc_feature_importance")
     check_sklearn_estimator_fitted(sk_classifier, label="sk_classifier")
-
-    method_key = method.strip().lower()
-    if method_key in {"model", "native", "gini", "impurity"}:
-        eff_method = "model"
-    elif method_key in {"permutation", "perm"}:
-        eff_method = "permutation"
-    elif method_key == "both":
-        eff_method = "both"
-    else:
-        raise rsgispy.RSGISPyException(
-            f"Unsupported importance method '{method}'. Expected 'permutation', "
-            "'model', or 'both'."
-        )
-
     _, feat_cols, x_df, y_arr, _, _, _, _ = _prepare_classification_data(
         samples_data=eval_data,
         cls_cfg=cls_cfg,
@@ -1455,67 +1231,21 @@ def calc_feature_importance(
         require_target=True,
     )
     assert x_df is not None and y_arr is not None
-
-    data: Dict[str, Any] = {"feature": feat_cols}
-    sort_col = "importance_mean"
-    err_vals: Optional[np.ndarray] = None
-
-    if eff_method in {"model", "both"}:
-        native_imp = extract_native_feature_importances(
-            sk_classifier, len(feat_cols)
-        )
-        if native_imp is None:
-            if eff_method == "model":
-                raise rsgispy.RSGISPyException(
-                    "Classifier does not expose 'feature_importances_' or 'coef_'."
-                )
-        else:
-            data["model_importance"] = native_imp
-            if eff_method == "model":
-                sort_col = "model_importance"
-
-    if eff_method in {"permutation", "both"}:
-        perm_res = sklearn.inspection.permutation_importance(
-            sk_classifier,
-            x_df,
-            y_arr,
-            scoring=scoring,
-            n_repeats=int(n_repeats),
-            random_state=rnd_seed,
-            n_jobs=n_jobs,
-        )
-        data["importance_mean"] = np.asarray(
-            perm_res.importances_mean, dtype=np.float64
-        )
-        data["importance_std"] = np.asarray(
-            perm_res.importances_std, dtype=np.float64
-        )
-        err_vals = data["importance_std"]
-
-    imp_df = pd.DataFrame(data)
-    imp_df = imp_df.sort_values(sort_col, ascending=False).reset_index(drop=True)
-    imp_df["rank"] = np.arange(1, len(imp_df) + 1, dtype=int)
-
-    if out_importance_file is not None:
-        imp_df.to_csv(ensure_parent_dir(out_importance_file), index=False)
-
-    if out_plot_file is not None:
-        plot_errs = imp_df["importance_std"].to_numpy() if err_vals is not None else None
-        xlabel = (
-            "Permutation Importance (Mean Score Decrease)"
-            if eff_method in {"permutation", "both"}
-            else "Model Feature Importance"
-        )
-        plot_feature_importance_bars(
-            features=imp_df["feature"].tolist(),
-            importances=imp_df[sort_col].to_numpy(),
-            out_plot=out_plot_file,
-            errors=plot_errs,
-            title="Classification Feature Importance",
-            xlabel=xlabel,
-        )
-
-    return imp_df
+    return run_feature_importance(
+        sk_estimator=sk_classifier,
+        x_df=x_df,
+        y_arr=y_arr,
+        feat_cols=feat_cols,
+        method=method,
+        scoring=scoring,
+        n_repeats=n_repeats,
+        rnd_seed=rnd_seed,
+        n_jobs=n_jobs,
+        out_importance_file=out_importance_file,
+        out_plot_file=out_plot_file,
+        plot_title="Classification Feature Importance",
+        missing_native_msg="Classifier does not expose 'feature_importances_' or 'coef_'.",
+    )
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments

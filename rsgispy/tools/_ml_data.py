@@ -36,6 +36,7 @@ from rsgispy.imageprocess import (
     IntersectionGrid,
     compute_spatial_intersection,
     ensure_file_exists,
+    extract_roi_feature_matrix,
     grids_compatible,
     validate_band_index,
 )
@@ -842,3 +843,95 @@ def allocate_split_counts(
         n_tr = min(int(round(n_total * train_p)), n_total - n_te - n_va)
 
     return n_tr, n_te, n_va
+
+
+def read_valid_roi_block(
+    msk_ds: DatasetReader,
+    msk_path: str,
+    img_msk_val: int,
+    band_specs: Sequence[Tuple[str, int, str]],
+    datasets: Mapping[str, DatasetReader],
+    grid: IntersectionGrid,
+    out_win: Window,
+    all_compatible: bool,
+    use_df_input: bool,
+    df_cols: Sequence[str],
+    base_msk_col: int,
+    base_msk_row: int,
+) -> Tuple[np.ndarray, Optional[Union[pd.DataFrame, np.ndarray]]]:
+    """Read mask + feature block and return valid ROI indices and feature matrix."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals
+    win_h = int(out_win.height)
+    win_w = int(out_win.width)
+    msk_win = Window(
+        base_msk_col + int(out_win.col_off),
+        base_msk_row + int(out_win.row_off),
+        win_w,
+        win_h,
+    )
+    msk_arr = msk_ds.read(1, window=msk_win)
+    roi_idx = np.flatnonzero(msk_arr.ravel() == img_msk_val)
+    if roi_idx.size == 0:
+        return np.empty(0, dtype=np.intp), None
+
+    feat_arrays = read_feature_block(
+        band_specs=band_specs,
+        datasets=datasets,
+        ref_ds=msk_ds,
+        grid=grid,
+        out_win=out_win,
+        all_compatible=all_compatible,
+        ref_path=msk_path,
+    )
+    valid_feats, valid_idx = extract_roi_feature_matrix(feat_arrays, roi_idx)
+    x_valid: Union[pd.DataFrame, np.ndarray] = (
+        pd.DataFrame(valid_feats, columns=list(df_cols))
+        if use_df_input
+        else valid_feats
+    )
+    return valid_idx, x_valid
+
+
+def resolve_bootstrap_sample_size(
+    n_total: int,
+    sample_frac: float,
+    sample_n_smps: Optional[int],
+    bootstrap_n: int,
+) -> int:
+    """Validate bootstrap parameters and return sample size per iteration."""
+    if bootstrap_n < 1:
+        raise rsgispy.RSGISPyException("bootstrap_n must be at least 1.")
+    if sample_n_smps is None:
+        if sample_frac <= 0.0 or sample_frac > 1.0:
+            raise rsgispy.RSGISPyException(
+                "sample_frac must be within (0.0, 1.0]."
+            )
+        return max(1, int(n_total * sample_frac))
+    if sample_n_smps < 1:
+        raise rsgispy.RSGISPyException("sample_n_smps must be at least 1.")
+    return min(int(sample_n_smps), n_total)
+
+
+_BOOTSTRAP_PERCENTILES: Tuple[float, ...] = (
+    0.5,
+    2.5,
+    5.0,
+    50.0,
+    95.0,
+    97.5,
+    99.5,
+)
+
+
+def summarise_bootstrap_interval(values: Sequence[float]) -> Dict[str, Any]:
+    """Compute mean, median, and 90th/95th/99th percentile bounds."""
+    arr = np.asarray(values, dtype=float)
+    inters = np.percentile(arr, _BOOTSTRAP_PERCENTILES)
+    return {
+        "mean": float(np.mean(arr)),
+        "median": float(inters[3]),
+        "90th": [float(inters[2]), float(inters[4])],
+        "95th": [float(inters[1]), float(inters[5])],
+        "99th": [float(inters[0]), float(inters[6])],
+    }
