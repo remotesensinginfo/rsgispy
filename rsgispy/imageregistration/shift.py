@@ -188,8 +188,13 @@ def find_image_offset(
         col_shift = ix_f - float(x_search)
         n_valid = int(counts[iy, ix])
 
-    x_offset_map = float(col_shift * ov_transform.a)
-    y_offset_map = float(row_shift * ov_transform.e)
+    flt_win_transform = ov["flt_win_transform"]
+    x_offset_map = float(
+        (ov_transform.c - flt_win_transform.c) + col_shift * ov_transform.a
+    )
+    y_offset_map = float(
+        (ov_transform.f - flt_win_transform.f) + row_shift * ov_transform.e
+    )
     x_offset_pxl = float(x_offset_map / abs(ov_transform.a))
     y_offset_pxl = float(y_offset_map / abs(ov_transform.e))
 

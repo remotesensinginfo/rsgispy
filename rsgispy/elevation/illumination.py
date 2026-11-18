@@ -32,6 +32,7 @@ __all__ = [
     "shadow_mask",
     "local_incidence_angle",
     "local_existance_angle",
+    "local_exitance_angle",
 ]
 
 
@@ -388,6 +389,7 @@ def local_incidence_angle(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
+    _validate_sun_angles(azimuth, zenith)
 
     def _block(
         dx: np.ndarray,
@@ -404,7 +406,7 @@ def local_incidence_angle(
             ns_res,
             azimuth,
             zenith,
-            flat_aspect_val=float("nan"),
+            flat_aspect_val=0.0,
             fallback_val=float(zenith),
         )
 
@@ -445,6 +447,7 @@ def local_existance_angle(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
+    _validate_sun_angles(azimuth, zenith)
 
     def _block(
         dx: np.ndarray,
@@ -468,3 +471,6 @@ def local_existance_angle(
     _process_single_dem_3x3(
         input_img, output_img, gdalformat, "float32", _block, use_pbar=use_pbar
     )
+
+
+local_exitance_angle = local_existance_angle

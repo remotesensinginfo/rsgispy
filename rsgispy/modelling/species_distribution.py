@@ -1263,7 +1263,7 @@ def shap_sklearn_mdl_explainer(
     shap_scatter_plots_dir: Optional[str] = None,
     shap_depend_plots_dir: Optional[str] = None,
     subsample_n_smpls: Optional[int] = None,
-    use_tree_explainer: bool = False,
+    use_tree_explainer: Optional[bool] = None,
     use_linear_explainer: bool = False,
 ) -> None:
     """

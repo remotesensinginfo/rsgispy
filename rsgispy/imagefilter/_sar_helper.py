@@ -247,28 +247,29 @@ def _select_directional_stats(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Evaluate 8 Lee directional sub-windows on ``(N, k, k)`` masked pixels and
-    return ``(best_mean, best_var)`` for each pixel.
+    return ``(best_mean, best_var)`` for each pixel without allocating
+    ``(N, 8, k, k)`` arrays.
     """
+    # pylint: disable=too-many-locals
     n_px = wins_ok.shape[0]
-    m_all = valid_ok[:, None, :, :] & templates[None, :, :, :]  # (N, 8, k, k)
-    counts = np.sum(m_all, axis=(2, 3))  # (N, 8)
-    vals_masked = np.where(m_all, wins_ok[:, None, :, :], 0.0)
-    means = np.divide(
-        np.sum(vals_masked, axis=(2, 3)),
-        np.maximum(counts, 1),
-    )
+    t_flt = templates.astype(np.float64)
+    v_flt = valid_ok.astype(np.float64)
+    w_val = np.where(valid_ok, wins_ok, 0.0)
+    w_sq = w_val * w_val
 
-    diff_sq = np.where(m_all, (wins_ok[:, None, :, :] - means[:, :, None, None]) ** 2, 0.0)
-    vars_ = np.divide(
-        np.sum(diff_sq, axis=(2, 3)),
-        np.maximum(counts, 1),
-    )
+    counts = np.einsum("nij,mij->nm", v_flt, t_flt)
+    sums = np.einsum("nij,mij->nm", w_val, t_flt)
+    sum_sq = np.einsum("nij,mij->nm", w_sq, t_flt)
+
+    safe_counts = np.maximum(counts, 1.0)
+    means = sums / safe_counts
+    vars_ = np.maximum(0.0, (sum_sq / safe_counts) - (means * means))
 
     # Opposite pairs: (0,1), (2,3), (4,5), (6,7)
     pair_diff = np.empty((n_px, 4), dtype=np.float64)
     for p_idx in range(4):
         a_idx, b_idx = 2 * p_idx, 2 * p_idx + 1
-        both_ok = (counts[:, a_idx] > 0) & (counts[:, b_idx] > 0)
+        both_ok = (counts[:, a_idx] > 0.5) & (counts[:, b_idx] > 0.5)
         pair_diff[:, p_idx] = np.where(
             both_ok, np.abs(means[:, a_idx] - means[:, b_idx]), -1.0
         )
@@ -283,10 +284,10 @@ def _select_directional_stats(
     mb = means[rows, idx_b]
 
     choose_a = np.where(
-        ca == 0,
+        ca < 0.5,
         False,
         np.where(
-            cb == 0,
+            cb < 0.5,
             True,
             np.abs(ma - centre_ok) <= np.abs(mb - centre_ok),
         ),
@@ -305,27 +306,34 @@ def make_refined_lee_stat_fn(n_looks: float) -> StatFunc:
         valid: np.ndarray,
         centre_valid: np.ndarray,
     ) -> np.ndarray:
+        mean_full, var_full, n_valid = _window_mean_var(wins, valid)
         out = np.full(centre_valid.shape, np.nan, dtype=np.float64)
-        ok = centre_valid & np.any(valid, axis=(2, 3))
+        ok = centre_valid & (n_valid > 0)
         if not np.any(ok):
+            return out
+        out[ok] = mean_full[ok]
+
+        # Only apply directional sub-window selection in heterogeneous/edge windows
+        het = ok & (mean_full != 0.0) & (var_full > (cu2 * mean_full * mean_full))
+        if not np.any(het):
             return out
 
         k_size = wins.shape[2]
         templates = _refined_lee_templates(k_size)
-        wins_ok = wins[ok]
-        valid_ok = valid[ok]
-        centre_ok = centre[ok]
+        wins_het = wins[het]
+        valid_het = valid[het]
+        centre_het = centre[het]
 
         sub_mean, sub_var = _select_directional_stats(
-            wins_ok, valid_ok, centre_ok, templates
+            wins_het, valid_het, centre_het, templates
         )
         res = sub_mean.copy()
         nz = (sub_mean != 0.0) & (sub_var > 0.0)
         if np.any(nz):
             ci2 = sub_var[nz] / (sub_mean[nz] * sub_mean[nz])
-            w = np.maximum(0.0, (ci2 - cu2) / (ci2 * (1.0 + cu2)))
-            res[nz] = sub_mean[nz] + w * (centre_ok[nz] - sub_mean[nz])
-        out[ok] = res
+            w = np.clip((ci2 - cu2) / np.maximum(ci2, 1e-12), 0.0, 1.0)
+            res[nz] = sub_mean[nz] + w * (centre_het[nz] - sub_mean[nz])
+        out[het] = res
         return out
 
     return _stat_refined_lee

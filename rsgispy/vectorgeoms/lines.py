@@ -1029,10 +1029,7 @@ def estimate_future_coastline(
 
         dy = pt2[1] - pt1[1]
         dx = pt2[0] - pt1[0]
-        if dx == 0:
-            theta = math.pi / 2.0 if dy >= 0 else -math.pi / 2.0
-        else:
-            theta = math.atan(dy / dx)
+        theta = math.atan2(dy, dx)
 
         rate_of_chng = float(trans_row[trans_rate_col])
         new_coast_dist = pred_period_years * rate_of_chng

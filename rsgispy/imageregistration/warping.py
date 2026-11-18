@@ -482,13 +482,14 @@ def warp_with_tie_points(
         fit_key = TRANSFORM_AFFINE
 
     rmse = float("nan")
+    fitted_model: Optional[Dict[str, Any]] = None
     if {"flt_x", "flt_y", "ref_x", "ref_y"}.issubset(tie_df.columns):
         sx = tie_df["flt_x"].to_numpy(dtype=np.float64)
         sy = tie_df["flt_y"].to_numpy(dtype=np.float64)
         dx = tie_df["ref_x"].to_numpy(dtype=np.float64)
         dy = tie_df["ref_y"].to_numpy(dtype=np.float64)
-        fitted = fit_geometric_model(sx, sy, dx, dy, model=fit_key)
-        px, py = evaluate_geometric_model(fitted, sx, sy)
+        fitted_model = fit_geometric_model(sx, sy, dx, dy, model=fit_key)
+        px, py = evaluate_geometric_model(fitted_model, sx, sy)
         rmse = float(np.sqrt(np.mean((px - dx) ** 2 + (py - dy) ** 2)))
 
     out_dir = os.path.dirname(os.path.abspath(out_path))
@@ -552,11 +553,33 @@ def warp_with_tie_points(
             "output_img": out_path,
         }
 
+    gcp_df = tie_df
+    if t_key == TRANSFORM_SIMILARITY and not eff_tps and fitted_model is not None:
+        with rasterio.open(flt_path, "r") as flt_src:
+            c_px_x = np.array(
+                [0.0, float(flt_src.width), 0.0, float(flt_src.width)],
+                dtype=np.float64,
+            )
+            c_px_y = np.array(
+                [0.0, 0.0, float(flt_src.height), float(flt_src.height)],
+                dtype=np.float64,
+            )
+            c_flt_x, c_flt_y = flt_src.transform * (c_px_x, c_px_y)
+        c_ref_x, c_ref_y = evaluate_geometric_model(fitted_model, c_flt_x, c_flt_y)
+        gcp_df = pd.DataFrame(
+            {
+                "ref_x": c_ref_x,
+                "ref_y": c_ref_y,
+                "flt_pxl_x": c_px_x,
+                "flt_pxl_y": c_px_y,
+            }
+        )
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         gcp_tmp = os.path.join(tmp_dir, "with_gcps.tif")
         gcp_to_gdal(
             flt_path,
-            tie_df,
+            gcp_df,
             gcp_tmp,
             gdalformat="GTIFF",
             datatype=datatype,

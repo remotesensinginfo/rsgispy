@@ -287,18 +287,28 @@ def get_earth_explorer_datasets(api_key: str) -> Dict[str, List[str]]:
     dataset_info = _check_usgs_response(rtnd_data)
 
     dataset_names: Dict[str, List[str]] = {}
-    for dataset_id in dataset_info:
-        cat_name = dataset_info[dataset_id]["categoryName"]
+    cat_entries = (
+        dataset_info.values()
+        if isinstance(dataset_info, dict)
+        else dataset_info
+    )
+    for cat_entry in cat_entries:
+        if not isinstance(cat_entry, dict):
+            continue
+        cat_name = cat_entry["categoryName"]
         dataset_names[cat_name] = []
-        if "subCategories" in dataset_info[dataset_id]:
-            for sub_cat_id in dataset_info[dataset_id]["subCategories"]:
-                if not isinstance(sub_cat_id, dict):
-                    sub_datasets = dataset_info[dataset_id]["subCategories"][sub_cat_id][
-                        "datasets"
-                    ]
-                    for dataset_item in sub_datasets:
-                        dataset_names[cat_name].append(dataset_item["datasetAlias"])
-        for dataset_item in dataset_info[dataset_id]["datasets"]:
+        sub_cats = cat_entry.get("subCategories")
+        if sub_cats:
+            sub_entries = (
+                sub_cats.values() if isinstance(sub_cats, dict) else sub_cats
+            )
+            for sub_entry in sub_entries:
+                if isinstance(sub_entry, dict):
+                    for dataset_item in sub_entry.get("datasets", []):
+                        dataset_names[cat_name].append(
+                            dataset_item["datasetAlias"]
+                        )
+        for dataset_item in cat_entry.get("datasets", []):
             dataset_names[cat_name].append(dataset_item["datasetAlias"])
     return dataset_names
 
@@ -361,15 +371,13 @@ def usgs_search(
         )
 
     search_data: Dict[str, Any] = {"datasetName": dataset}
-    if end_date is None:
-        end_date = datetime.datetime.now()
-
     scn_filter: Dict[str, Any] = {}
-    if start_date is not None:
-        scn_filter["acquisitionFilter"] = {
-            "start": f"{start_date}",
-            "end": f"{end_date}",
-        }
+    if start_date is not None or end_date is not None:
+        eff_end = datetime.datetime.now() if end_date is None else end_date
+        acq_filter: Dict[str, str] = {"end": f"{eff_end}"}
+        if start_date is not None:
+            acq_filter["start"] = f"{start_date}"
+        scn_filter["acquisitionFilter"] = acq_filter
 
     if cloud_max is not None:
         scn_filter["cloudCoverFilter"] = {

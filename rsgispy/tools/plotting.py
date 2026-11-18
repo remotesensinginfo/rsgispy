@@ -203,37 +203,70 @@ def get_thematic_raster_mpl_imshow(
         win, coords_bbox = _get_subset_window_and_coords(src, bbox)
         img_data_arr = src.read(band, window=win)
 
-    red_arr = np.zeros_like(img_data_arr, dtype=np.uint8)
-    grn_arr = np.zeros_like(img_data_arr, dtype=np.uint8)
-    blu_arr = np.zeros_like(img_data_arr, dtype=np.uint8)
     use_alpha = alpha_lyr or ctab_alpha
-    alp_arr = np.zeros_like(img_data_arr, dtype=np.uint8) if use_alpha else None
-
     lgd_out_patches: Optional[List[Patch]] = [] if out_patches else None
+    present_vals = set(int(v) for v in np.unique(img_data_arr))
+    max_key = max((int(k) for k in clr_tab.keys()), default=0)
 
-    for val, rgba in sorted(clr_tab.items()):
-        r_val = int(rgba[0])
-        g_val = int(rgba[1])
-        b_val = int(rgba[2])
-        a_val = int(rgba[3]) if len(rgba) >= 4 else 255
-
-        mask = img_data_arr == val
-        if np.any(mask):
-            red_arr[mask] = r_val
-            grn_arr[mask] = g_val
-            blu_arr[mask] = b_val
-            if alp_arr is not None:
-                if ctab_alpha:
-                    alp_arr[mask] = 0 if (alpha_lyr and val == 0) else a_val
-                elif alpha_lyr and val > 0:
-                    alp_arr[mask] = 255
-
-        if lgd_out_patches is not None and val > 0:
-            cls_name = (
-                f"{cls_names_lut[val]}"
-                if (cls_names_lut is not None and val in cls_names_lut)
-                else f"{val}"
+    if (
+        img_data_arr.dtype.kind in ("u", "i")
+        and int(np.min(img_data_arr)) >= 0
+        and max(int(np.max(img_data_arr)), max_key) < 65536
+    ):
+        lut_size = max(int(np.max(img_data_arr)), max_key) + 1
+        n_ch = 4 if use_alpha else 3
+        lut = np.zeros((lut_size, n_ch), dtype=np.uint8)
+        for val, rgba in clr_tab.items():
+            idx = int(val)
+            if 0 <= idx < lut_size:
+                lut[idx, 0] = int(rgba[0])
+                lut[idx, 1] = int(rgba[1])
+                lut[idx, 2] = int(rgba[2])
+                if use_alpha:
+                    a_val = int(rgba[3]) if len(rgba) >= 4 else 255
+                    if ctab_alpha:
+                        lut[idx, 3] = 0 if (alpha_lyr and idx == 0) else a_val
+                    elif alpha_lyr and idx > 0:
+                        lut[idx, 3] = 255
+        img_clr_data_arr = lut[img_data_arr]
+    else:
+        red_arr = np.zeros_like(img_data_arr, dtype=np.uint8)
+        grn_arr = np.zeros_like(img_data_arr, dtype=np.uint8)
+        blu_arr = np.zeros_like(img_data_arr, dtype=np.uint8)
+        alp_arr = (
+            np.zeros_like(img_data_arr, dtype=np.uint8) if use_alpha else None
+        )
+        for val in sorted(present_vals):
+            if val in clr_tab:
+                rgba = clr_tab[val]
+                r_val, g_val, b_val = int(rgba[0]), int(rgba[1]), int(rgba[2])
+                a_val = int(rgba[3]) if len(rgba) >= 4 else 255
+                mask = img_data_arr == val
+                red_arr[mask] = r_val
+                grn_arr[mask] = g_val
+                blu_arr[mask] = b_val
+                if alp_arr is not None:
+                    if ctab_alpha:
+                        alp_arr[mask] = 0 if (alpha_lyr and val == 0) else a_val
+                    elif alpha_lyr and val > 0:
+                        alp_arr[mask] = 255
+        if alp_arr is not None:
+            img_clr_data_arr = np.stack(
+                [red_arr, grn_arr, blu_arr, alp_arr], axis=-1
             )
+        else:
+            img_clr_data_arr = np.stack([red_arr, grn_arr, blu_arr], axis=-1)
+
+    if lgd_out_patches is not None:
+        for val, rgba in sorted(clr_tab.items()):
+            if val <= 0:
+                continue
+            in_lut = cls_names_lut is not None and val in cls_names_lut
+            if val not in present_vals and not in_lut:
+                continue
+            r_val, g_val, b_val = int(rgba[0]), int(rgba[1]), int(rgba[2])
+            a_val = int(rgba[3]) if len(rgba) >= 4 else 255
+            cls_name = f"{cls_names_lut[val]}" if in_lut else f"{val}"
             if ctab_alpha:
                 patch_clr: Tuple[float, ...] = (
                     r_val / 255.0,
@@ -246,11 +279,6 @@ def get_thematic_raster_mpl_imshow(
             lgd_out_patches.append(
                 Patch(facecolor=patch_clr, edgecolor=patch_clr, label=cls_name)
             )
-
-    if alp_arr is not None:
-        img_clr_data_arr = np.stack([red_arr, grn_arr, blu_arr, alp_arr], axis=-1)
-    else:
-        img_clr_data_arr = np.stack([red_arr, grn_arr, blu_arr], axis=-1)
 
     return img_clr_data_arr, coords_bbox, lgd_out_patches
 

@@ -595,7 +595,7 @@ def subset_by_attribute(
             mask = mask | (col_series == val)
         elif match_key == "contains":
             mask = mask | col_series.astype(str).str.contains(
-                str(val), na=False
+                str(val), na=False, regex=False
             )
         else:
             mask = mask | col_series.astype(str).str.match(str(val), na=False)

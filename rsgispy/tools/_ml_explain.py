@@ -425,7 +425,7 @@ def _build_shap_explainer(
     est_cls_obj: Any,
     eval_x: pd.DataFrame,
     feature_names: Sequence[str],
-    use_tree_explainer: Optional[bool] = False,
+    use_tree_explainer: Optional[bool] = None,
     use_linear_explainer: bool = False,
     task: str = "classification",
 ) -> Any:
@@ -495,7 +495,7 @@ def run_shap_explainer(
     shap_scatter_plots_dir: Optional[Union[str, os.PathLike]] = None,
     shap_depend_plots_dir: Optional[Union[str, os.PathLike]] = None,
     subsample_n_smpls: Optional[int] = None,
-    use_tree_explainer: Optional[bool] = False,
+    use_tree_explainer: Optional[bool] = None,
     use_linear_explainer: bool = False,
     target_class_idx: Optional[int] = -1,
     class_labels: Optional[Sequence[str]] = None,
@@ -599,8 +599,7 @@ def run_shap_explainer(
 
         for name in var_list:
             out_plot_file = os.path.join(depend_dir, f"shap_depends_{name}.png")
-            # pylint: disable=unpacking-non-sequence
-            fig, _ = shap.partial_dependence_plot(
+            pdp_res = shap.partial_dependence_plot(
                 name,
                 model_fn,
                 train_x_smpl,
@@ -610,7 +609,13 @@ def run_shap_explainer(
                 ice=False,
                 shap_values=shap_2d[sample_ind:sample_ind + 1, :],
             )
-            finalise_plot(fig, out_file=out_plot_file)  # pylint: disable=unreachable
+            if isinstance(pdp_res, tuple):
+                fig = pdp_res[0]
+            elif pdp_res is not None:
+                fig = pdp_res
+            else:
+                fig = plt.gcf()
+            finalise_plot(fig, out_file=out_plot_file)
 
     return summary_df
 

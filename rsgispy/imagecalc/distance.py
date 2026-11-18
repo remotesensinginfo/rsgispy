@@ -249,7 +249,7 @@ def calc_dist_to_img_vals_tiled(
     pxl_vals: Union[int, float, Sequence[Union[int, float]]],
     img_band: int = 1,
     max_dist: float = 1000,
-    no_data_val: Optional[float] = 1000,
+    no_data_val: Optional[float] = None,
     out_no_data_val: Optional[float] = None,
     gdalformat: str = "GTIFF",
     unit_geo: bool = True,
@@ -268,7 +268,7 @@ def calc_dist_to_img_vals_tiled(
     :param pxl_vals: Target pixel value or sequence of pixel values.
     :param img_band: 1-based band index to inspect (Default = ``1``).
     :param max_dist: Maximum distance to compute (Default = ``1000``).
-    :param no_data_val: Optional input no-data value (Default = ``1000``).
+    :param no_data_val: Optional input no-data value (Default = ``None``).
     :param out_no_data_val: Output no-data value (defaults to ``max_dist`` if
                             ``None``).
     :param gdalformat: GDAL/rasterio driver format for the output file

@@ -506,15 +506,17 @@ def apply_band_norm_1d(
     if method == "none":
         out = vals.copy()
     elif method in ("linear", "stdev", "cumulative", "user"):
+        stored_min = band_params.get("out_min")
+        stored_max = band_params.get("out_max")
         target_min = (
             float(eff_out_min)
             if eff_out_min is not None
-            else float(band_params.get("out_min") or 0.0)
+            else (float(stored_min) if stored_min is not None else 0.0)
         )
         target_max = (
             float(eff_out_max)
             if eff_out_max is not None
-            else float(band_params.get("out_max") or 1.0)
+            else (float(stored_max) if stored_max is not None else 1.0)
         )
         out = _linear_map_array(
             vals,

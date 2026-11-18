@@ -286,7 +286,7 @@ def test_pop_img_stats(tmp_path):
 
 
 def test_create_blank_and_copy_and_bbox_and_buf_imgs(tmp_path, monkeypatch):
-    """Test create_blank_img, create_copy_img, create_blank_buf_img_from_ref_img, and create_blank_img_from_bbox."""
+    """Test create_blank_img, create_copy_img, and buffered/bbox blank image functions."""
     monkeypatch.delenv("RSGISLIB_IMG_CRT_OPTS_GTIFF", raising=False)
     monkeypatch.delenv("RSGISPY_IMG_CRT_OPTS_GTIFF", raising=False)
     rsgispy.imageutils.envopts.set_env_vars_deflate_gtiff_outs()
@@ -534,7 +534,8 @@ def test_create_stack_mosaic_and_band_subset_vrts(tmp_path):
         dst.write(np.full((10, 10), 20, dtype="uint16"), 2)
         dst.descriptions = ("b1_a", "b2_a")
 
-    # img2: 10x10 overlapping half of img1 at x=[500050, 500150], y=[5199900, 5200000], 2 bands (values 30, 40)
+    # img2: 10x10 overlapping half of img1 at x=[500050, 500150],
+    # y=[5199900, 5200000], 2 bands (values 30, 40)
     with rasterio.open(
         img2,
         "w",
@@ -696,7 +697,7 @@ def test_img_metadata_nodata_res_size_bbox_and_format(tmp_path):
 
 
 def test_img_spatial_coords_subset_and_reproj_bbox(tmp_path):
-    """Test get_img_bbox_in_proj, get_img_subset_pxl_bbox, get_img_pxl_spatial_coords, and get_img_pxl_coords."""
+    """Test get_img_bbox_in_proj, get_img_subset_pxl_bbox, and pixel coordinate helpers."""
     img_path = tmp_path / "coords.tif"
     with rasterio.open(
         img_path,
@@ -1068,7 +1069,8 @@ def test_include_imgs_and_with_overlap(tmp_path):
         assert out[1, 2, 2] == 11.0  # from band 1
         assert out[0, 0, 0] == 5.0  # outside patch
 
-    # include_imgs_with_overlap: 6x6 tile with overlap=1 -> 4x4 core inserted at cols 4..8, rows 4..8
+    # include_imgs_with_overlap: 6x6 tile with overlap=1 -> 4x4 core inserted at cols 4..8,
+    # rows 4..8
     ovl_arr = np.full((2, 6, 6), 99.0, dtype=np.float32)
     ovl_arr[:, 0, :] = -50.0  # border should be cropped away
     ovl_arr[:, -1, :] = -50.0
@@ -1289,7 +1291,7 @@ def test_colour_interp_thematic_and_colour_table(tmp_path):
 
 
 def test_masking_functions(tmp_path):
-    """Test mask_img, gen_finite_mask, gen_valid_mask, gen_img_edge_mask, mask_all_band_zero_vals, create_valid_mask."""
+    """Test mask_img, gen_finite_mask, gen_valid_mask, edge/zero masks, and create_valid_mask."""
     in_img = tmp_path / "in_vals.tif"
     msk_img = tmp_path / "in_msk.tif"
     masked_out = tmp_path / "masked.tif"
@@ -1449,11 +1451,13 @@ def test_masking_functions(tmp_path):
         dtype="float32",
         nodata=-999.0,
     )
+    from rsgispy.classification import classdata
+
     band_info_f = [
-        rsgispy.classification.classdata.ImageBandInfo(
+        classdata.ImageBandInfo(
             file_name=str(img_f), name="flt", bands=[1]
         ),
-        rsgispy.classification.classdata.ImageBandInfo(
+        classdata.ImageBandInfo(
             file_name=str(img_b1), name="b1", bands=[1]
         ),
     ]

@@ -15,6 +15,7 @@ __all__ = [
     "mask_data_to_valid",
     "calc_semivariogram",
     "standarise_img_data",
+    "standardise_img_data",
     "normalise_img_data",
     "validate_percentiles_0_100",
     "compute_nanpercentiles",
@@ -236,11 +237,19 @@ def standarise_img_data(img_data: np.ndarray) -> np.ndarray:
         np.sum(np.power(img_band_cen, 2), axis=1, keepdims=True) / n_img_pxls
     )
     img_band_std = np.sqrt(img_band_var)
-    std_img_data = img_band_cen / img_band_std
+    std_img_data = np.divide(
+        img_band_cen,
+        img_band_std,
+        out=np.zeros_like(img_band_cen, dtype=np.float64),
+        where=img_band_std > 0,
+    )
     if len(img_data.shape) == 3:
         std_img_data = np.reshape(std_img_data, (img_bands, img_height, img_width))
 
     return std_img_data
+
+
+standardise_img_data = standarise_img_data
 
 
 def normalise_img_data(img_data: np.ndarray) -> np.ndarray:

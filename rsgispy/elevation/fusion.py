@@ -81,12 +81,12 @@ def fft_dem_fusion(
     rows, cols = low_arr.shape
     crow, ccol = rows // 2, cols // 2
     r0 = max(0, crow - c_size)
-    r1 = min(rows, crow + c_size)
+    r1 = min(rows, crow + c_size + 1)
     c0 = max(0, ccol - c_size)
-    c1 = min(cols, ccol + c_size)
+    c1 = min(cols, ccol + c_size + 1)
     fshift_low[r0:r1, c0:c1] = fshift_high[r0:r1, c0:c1]
 
-    img_back = np.abs(np.fft.ifft2(np.fft.ifftshift(fshift_low))).astype(np.float32)
+    img_back = np.real(np.fft.ifft2(np.fft.ifftshift(fshift_low))).astype(np.float32)
 
     with ExitStack() as stack:
         dst = open_output_dataset(

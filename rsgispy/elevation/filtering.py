@@ -31,7 +31,9 @@ __all__ = [
     "dtm_aspect_median_filter",
     "fill_dem_soille_gratin_1994",
     "plane_fit_detreat_dem",
+    "plane_fit_detrend_dem",
     "resampling_detread_dem",
+    "resampling_detrend_dem",
 ]
 
 
@@ -218,12 +220,7 @@ def fill_dem_soille_gratin_1994(
 
         min_val = int(valid_vals.min())
         max_val = int(valid_vals.max())
-        mean_val = float(valid_vals.mean())
-        std_val = float(valid_vals.std())
-        if (mean_val - std_val) > min_val:
-            border_val = int(math.floor((mean_val - std_val) + 0.5))
-        else:
-            border_val = int(math.floor(mean_val + 0.5))
+        border_val = min_val
 
         fill_nodata = int(dem_nodata) if dem_nodata is not None else 0
         out = np.full(dem.shape, fill_nodata, dtype=np.int64)
@@ -325,6 +322,7 @@ def plane_fit_detreat_dem(
     flat_xx = flat_x * flat_x
     flat_yy = flat_y * flat_y
     flat_xy = flat_x * flat_y
+    n_win = float(win_size * win_size)
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
@@ -337,6 +335,8 @@ def plane_fit_detreat_dem(
             out_rio_dtype="float32",
             count=1,
         )
+        if no_data_val is not None:
+            dst.nodata = no_data_val
 
         for out_win in iter_dataset_windows(
             src.height, src.width, use_pbar=use_pbar
@@ -348,8 +348,16 @@ def plane_fit_detreat_dem(
                 dem_halo, (win_size, win_size)
             ).reshape(win_h, win_w, -1)
 
-            valid = _valid_mask(wins, no_data_val).astype(np.float64)
-            z_clean = np.where(valid > 0.0, wins, 0.0)
+            v_bool = _valid_mask(wins, no_data_val)
+            if np.all(v_bool):
+                # When all window pixels are valid, symmetric coordinates sum to 0,
+                # so the plane intercept c at (0, 0) equals the window mean.
+                out_c = wins.sum(axis=2) / n_win
+                dst.write(out_c.astype(np.float32), 1, window=out_win)
+                continue
+
+            valid = v_bool.astype(np.float64)
+            z_clean = np.where(v_bool, wins, 0.0)
 
             s_n = valid.sum(axis=2)
             s_x = valid @ flat_x
@@ -372,10 +380,11 @@ def plane_fit_detreat_dem(
                 + ((s_xy * s_x) - (s_xx * s_y)) * s_yz
                 + ((s_xx * s_yy) - (s_xy * s_xy)) * s_z
             )
+            fill_val = float(no_data_val) if no_data_val is not None else 0.0
             out_c = np.divide(
                 num_c,
                 det,
-                out=np.zeros_like(det, dtype=np.float64),
+                out=np.full_like(det, fill_val, dtype=np.float64),
                 where=(s_n > 0) & (np.abs(det) > 1e-12),
             )
             dst.write(out_c.astype(np.float32), 1, window=out_win)
@@ -498,3 +507,7 @@ def resampling_detread_dem(
             no_data_val=no_data_val,
             multicore=False,
         )
+
+
+plane_fit_detrend_dem = plane_fit_detreat_dem
+resampling_detrend_dem = resampling_detread_dem

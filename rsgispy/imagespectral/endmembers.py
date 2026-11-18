@@ -46,6 +46,8 @@ __all__: List[str] = [
     "extract_avg_endmembers",
     "read_endmembers_df",
     "write_endmembers_df",
+    "coerce_endmembers_df",
+    "prepare_endmembers_array",
     "convert_mtxt_to_df",
     "plot_endmembers",
     "are_endmembers_equal",
@@ -849,7 +851,17 @@ def extract_avg_endmembers(
                     c_arr = (
                         src.read(window=cent_win).astype(np.float64).ravel()
                     )
-                    if np.all(np.isfinite(c_arr)):
+                    c_vld = bool(np.all(np.isfinite(c_arr)))
+                    if (
+                        c_vld
+                        and nodata_val is not None
+                        and not (
+                            isinstance(nodata_val, float)
+                            and math.isnan(nodata_val)
+                        )
+                    ):
+                        c_vld = bool(np.all(c_arr != nodata_val))
+                    if c_vld:
                         pxls = c_arr[np.newaxis, :]
 
             if pxls.shape[0] == 0:
@@ -898,8 +910,8 @@ def calc_ppi(
                    (Default = ``0``).
     :param uthres: Upper extreme threshold distance in scaled image units
                    (Default = ``0``).
-    :param img_gain: Gain divisor applied to input reflectance values when
-                     greater than ``1`` (Default = ``1``).
+    :param img_gain: Positive gain divisor applied to input reflectance values
+                     when not equal to ``1`` (Default = ``1``).
     :param seed: Optional random seed for reproducible projections.
     :param calc_stats: If ``True``, compute statistics and pyramids on
                        ``output_img`` (Default = ``True``).
@@ -922,6 +934,8 @@ def calc_ppi(
     ensure_file_exists(input_img, "Input image")
     if niters < 1:
         raise rsgispy.RSGISPyException("niters must be at least 1.")
+    if img_gain <= 0:
+        raise rsgispy.RSGISPyException("img_gain must be positive.")
 
     pbar_cls = rsgispy.get_tqdm()
     with ExitStack() as stack:
@@ -947,33 +961,47 @@ def calc_ppi(
                 b_vld &= band_arr != nd
             img_msk &= b_vld
 
-            if img_gain > 1:
+            if img_gain != 1.0:
                 band_arr = band_arr / float(img_gain)
             band_tmp = np.where(b_vld, band_arr, np.nan)
             band_mean = float(np.nanmean(band_tmp)) if np.any(b_vld) else 0.0
             img_data[b_idx] = band_arr - band_mean
 
-        vld_data = img_data[:, img_msk].T  # (n_valid, n_bands)
+        vld_data = np.ascontiguousarray(img_data[:, img_msk].T)
         counts = np.zeros(vld_data.shape[0], dtype=np.uint16)
 
         if vld_data.shape[0] > 0:
             rng = np.random.default_rng(seed)
-            for _ in pbar_cls(
-                range(niters), desc="Calculating PPI", disable=not use_pbar
+            batch_size = 256
+            batch_starts = range(0, niters, batch_size)
+            for b_start in pbar_cls(
+                batch_starts, desc="Calculating PPI", disable=not use_pbar
             ):
-                skewer = rng.random(n_bands) - 0.5
-                proj = vld_data @ skewer
-                s_min = float(np.min(proj))
-                s_max = float(np.max(proj))
+                cur_batch = min(batch_size, niters - b_start)
+                skewers = (
+                    rng.random((cur_batch, n_bands)).T.astype(
+                        np.float32, copy=False
+                    )
+                    - np.float32(0.5)
+                )
+                proj = vld_data @ skewers  # (n_valid, cur_batch)
                 if lthres == 0:
-                    counts[int(np.argmin(proj))] += 1
+                    min_idx = np.argmin(proj, axis=0)
+                    np.add.at(counts, min_idx, 1)
                 else:
-                    counts[proj <= (s_min + lthres)] += 1
+                    s_min = np.min(proj, axis=0, keepdims=True)
+                    counts += np.sum(
+                        proj <= (s_min + lthres), axis=1
+                    ).astype(np.uint16)
 
                 if uthres == 0:
-                    counts[int(np.argmax(proj))] += 1
+                    max_idx = np.argmax(proj, axis=0)
+                    np.add.at(counts, max_idx, 1)
                 else:
-                    counts[proj >= (s_max - uthres)] += 1
+                    s_max = np.max(proj, axis=0, keepdims=True)
+                    counts += np.sum(
+                        proj >= (s_max - uthres), axis=1
+                    ).astype(np.uint16)
 
         out_full = np.zeros(n_pxls, dtype=np.uint16)
         out_full[img_msk] = counts

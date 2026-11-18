@@ -24,7 +24,15 @@ import rsgispy.tools.mapping as mapping  # noqa: E402
 import rsgispy.tools.plotting as plotting  # noqa: E402
 
 
-def _write_continuous_raster(path, data, x_min=500000.0, y_max=5200000.0, res=10.0, crs="EPSG:32630", nodata=0.0):
+def _write_continuous_raster(
+    path,
+    data,
+    x_min=500000.0,
+    y_max=5200000.0,
+    res=10.0,
+    crs="EPSG:32630",
+    nodata=0.0,
+):
     """Helper to write a 1-band or multi-band float32 GeoTIFF."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     if data.ndim == 2:
@@ -47,7 +55,15 @@ def _write_continuous_raster(path, data, x_min=500000.0, y_max=5200000.0, res=10
         dst.write(data_3d)
 
 
-def _write_thematic_raster(path, data, clr_tab=None, x_min=500000.0, y_max=5200000.0, res=10.0, crs="EPSG:32630"):
+def _write_thematic_raster(
+    path,
+    data,
+    clr_tab=None,
+    x_min=500000.0,
+    y_max=5200000.0,
+    res=10.0,
+    crs="EPSG:32630",
+):
     """Helper to write a 1-band uint8 GeoTIFF with optional colour table."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     height, width = data.shape
@@ -91,13 +107,17 @@ def test_calc_y_fig_size_and_extent_and_ticks():
 def test_get_overview_info_and_add_overview_maps():
     """Test get_overview_info (including reprojection) and add_overview_maps."""
     bbox_wgs84 = (-4.2, -4.0, 52.3, 52.5)
-    over_bbox, pt = mapping.get_overview_info(bbox_wgs84, roi_epsg=4326, overview_buf=10.0, out_epsg=4326)
+    over_bbox, pt = mapping.get_overview_info(
+        bbox_wgs84, roi_epsg=4326, overview_buf=10.0, out_epsg=4326
+    )
     assert pt == pytest.approx((-4.1, 52.4))
     assert over_bbox == pytest.approx((-14.1, 5.9, 42.4, 62.4))
 
     # Reproject UTM zone 30N bbox to WGS84
     utm_bbox = (420000.0, 430000.0, 5800000.0, 5810000.0)
-    over_utm, pt_utm = mapping.get_overview_info(utm_bbox, roi_epsg=32630, overview_buf=5.0, out_epsg=4326)
+    over_utm, pt_utm = mapping.get_overview_info(
+        utm_bbox, roi_epsg=32630, overview_buf=5.0, out_epsg=4326
+    )
     assert -5.0 < pt_utm[0] < -3.0
     assert 52.0 < pt_utm[1] < 53.0
     assert over_utm[1] - over_utm[0] == pytest.approx(10.0)
@@ -247,7 +267,9 @@ def test_plotting_imshow_and_stretches(tmp_path):
         assert out3.shape == full_data.shape
         assert np.all(out3 >= 0.0) and np.all(out3 <= 1.0)
 
-    out2 = plotting.linear_stretch_np_arr(sub_data, no_data_val=0.0, out_int_type=True, out_gain=255, max_out_val=255)
+    out2 = plotting.linear_stretch_np_arr(
+        sub_data, no_data_val=0.0, out_int_type=True, out_gain=255, max_out_val=255
+    )
     assert out2.dtype.kind in ("i", "u")
 
     # Constant band edge case (no division by zero)
@@ -287,7 +309,9 @@ def test_plotting_imshow_and_stretches(tmp_path):
     # Single-band USER stretch without min_max raises
     fig, ax = plt.subplots()
     with pytest.raises(rsgispy.RSGISPyException):
-        mapping.create_raster_img_map(ax, str(rgb_tif), img_bands=[1], img_stch=rsgispy.IMG_STRETCH_USER)
+        mapping.create_raster_img_map(
+            ax, str(rgb_tif), img_bands=[1], img_stch=rsgispy.IMG_STRETCH_USER
+        )
     plt.close(fig)
 
 
@@ -361,7 +385,7 @@ def test_thematic_raster_map(tmp_path):
 
 
 def test_optional_contextily_density_and_wmts(tmp_path):
-    """Test add_contextily_basemap, create_vec_pt_density_map, and create_wmts_img_map using mocks."""
+    """Test add_contextily_basemap, create_vec_pt_density_map, and create_wmts_img_map."""
     # Mock contextily
     mock_cx = types.ModuleType("contextily")
     mock_cx.add_basemap = MagicMock()

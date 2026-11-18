@@ -433,7 +433,9 @@ def test_band_percentiles(tmp_path):
     assert pcts == pytest.approx([30.0, 300.0])
 
     # All values without no_data_val
-    pcts_all = rsgispy.imagecalc.percentiles.calc_band_percentile(str(in_img), 0.5, no_data_val=None)
+    pcts_all = rsgispy.imagecalc.percentiles.calc_band_percentile(
+        str(in_img), 0.5, no_data_val=None
+    )
     assert pcts_all == pytest.approx([25.0, 250.0])
 
     with pytest.raises(rsgispy.RSGISPyException):

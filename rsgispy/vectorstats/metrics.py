@@ -320,14 +320,19 @@ def calc_near_dist_to_feats(
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     dist_gdf = read_vec_gdf(vec_dist_file, vec_dist_lyr, copy=False)
 
+    dist_geom_gdf = dist_gdf[[dist_gdf.geometry.name]]
     data_dist_gdf = gpd.sjoin_nearest(
         data_gdf,
-        dist_gdf,
+        dist_geom_gdf,
         distance_col=out_col,
         lsuffix="left",
         rsuffix="right",
         exclusive=True,
     )
+    if "index_right" in data_dist_gdf.columns:
+        data_dist_gdf = data_dist_gdf.drop(columns=["index_right"])
+    if data_dist_gdf.index.duplicated().any():
+        data_dist_gdf = data_dist_gdf[~data_dist_gdf.index.duplicated(keep="first")]
     return finish_vec_output(
         data_dist_gdf,
         out_vec_file,

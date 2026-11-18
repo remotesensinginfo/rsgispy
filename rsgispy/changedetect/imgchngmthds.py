@@ -155,8 +155,12 @@ def _prepare_change_inputs(
             )
         vld_msk_arr = get_img_data_as_arr(vld_msk_img, img_bands=[1])[0]
     else:
-        base_vld = np.any(base_arr != base_img_no_data, axis=0)
-        chng_vld = np.any(chng_arr != chng_img_no_data, axis=0)
+        base_vld = np.any(
+            (base_arr != base_img_no_data) & np.isfinite(base_arr), axis=0
+        )
+        chng_vld = np.any(
+            (chng_arr != chng_img_no_data) & np.isfinite(chng_arr), axis=0
+        )
         vld_msk_arr = np.where(base_vld | chng_vld, int(vld_msk_val), 0)
 
     vld_flat = vld_msk_arr.reshape(n_pxls) == vld_msk_val
@@ -616,8 +620,12 @@ def slow_feature_analysis(
 
         isfa_var = (trans_mat.T @ norm_x) - (trans_mat.T @ norm_y)
         eig_col = eigenvalue.reshape(n_bands, 1)
+        var_isfa = np.maximum(
+            np.diag(trans_mat.T @ mat_a @ trans_mat).reshape(n_bands, 1),
+            1e-12,
+        )
         t_stat = np.sum(
-            np.square(isfa_var) / np.sqrt(np.maximum(eig_col, 1e-12)),
+            np.square(isfa_var) / var_isfa,
             axis=0,
         )
 
@@ -797,6 +805,9 @@ def multivariate_alteration_detection(
         norm_y = 1.0 / np.sqrt(np.maximum(denom_y, 1e-12))
         eigenvector_x = norm_x * eigenvector_x
         eigenvector_y = norm_y * eigenvector_y
+        cross_corr = np.diag(eigenvector_x.T @ sigma_12 @ eigenvector_y)
+        signs = np.where(cross_corr < 0.0, -1.0, 1.0)
+        eigenvector_y = eigenvector_y * signs
 
         mad_variates = (eigenvector_x.T @ center_x) - (eigenvector_y.T @ center_y)
         mad_var = np.maximum(2.0 * (1.0 - np.clip(eigenvalue, -1.0, 0.999999)), 1e-12)

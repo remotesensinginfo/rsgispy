@@ -24,7 +24,10 @@ import rsgispy.tools.hashing as hashing
 def test_basename_and_path_helpers(tmp_path):
     """Test get_file_basename, get_dir_name, split_path_all, and path validity checks."""
     assert rfiles.get_file_basename("/a/b/my_img_20250101.tar.gz") == "my_img_20250101"
-    assert rfiles.get_file_basename("/a/b/my_img_20250101.tar.gz", rm_n_exts=1) == "my_img_20250101.tar"
+    assert (
+        rfiles.get_file_basename("/a/b/my_img_20250101.tar.gz", rm_n_exts=1)
+        == "my_img_20250101.tar"
+    )
     assert rfiles.get_file_basename("/a/b/a! b@c-d_e.tif", check_valid=True) == "a_bc-d_e"
     assert rfiles.get_file_basename("/a/b/scene_tile1_b2.tif", n_comps=2) == "scene_tile1"
 
@@ -122,7 +125,9 @@ def test_file_sizes_mod_times_and_dirs(tmp_path):
     assert mod_dt.year == 2020
 
     cutoff = datetime.datetime.fromtimestamp(1_700_000_000)
-    before_res = rfiles.get_files_mod_time([str(f_old), str(f_new), str(tmp_path / "nope")], dt_before=cutoff)
+    before_res = rfiles.get_files_mod_time(
+        [str(f_old), str(f_new), str(tmp_path / "nope")], dt_before=cutoff
+    )
     assert before_res == [str(f_old)]
     after_res = rfiles.get_files_mod_time([str(f_old), str(f_new)], dt_after=cutoff)
     assert after_res == [str(f_new)]
@@ -146,7 +151,11 @@ def test_file_sizes_mod_times_and_dirs(tmp_path):
     assert rfiles.file_is_hidden(str(hid))
     assert not rfiles.file_is_hidden(str(vis1))
     assert set(rfiles.get_dir_list(str(tmp_path))) == {str(vis1), str(vis2)}
-    assert set(rfiles.get_dir_list(str(tmp_path), inc_hidden=True)) == {str(vis1), str(vis2), str(hid)}
+    assert set(rfiles.get_dir_list(str(tmp_path), inc_hidden=True)) == {
+        str(vis1),
+        str(vis2),
+        str(hid),
+    }
     assert rfiles.get_dir_list_srch(str(tmp_path), "alpha") == [str(vis1)]
 
 
@@ -249,7 +258,7 @@ def test_hashes(tmp_path):
 
 
 def test_archives_and_cmd_tool(tmp_path):
-    """Test is_cmd_tool_avail, create_targz_arch, create_directory_archive, and untar/unzip helpers."""
+    """Test is_cmd_tool_avail, create_targz_arch, create_directory_archive, and untar/unzip."""
     assert rfiles.is_cmd_tool_avail("tar", ["tar", "--version"])
     assert not rfiles.is_cmd_tool_avail("definitely_nonexistent_tool_xyz_123")
     with pytest.raises(rsgispy.RSGISPyException):

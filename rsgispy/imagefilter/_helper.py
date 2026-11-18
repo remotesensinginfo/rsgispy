@@ -226,24 +226,30 @@ def stat_mode(
     if valid_px.size == 0:
         return out_flat.reshape(h, w)
 
-    chunk_sz = max(256, min(16384, 2_000_000 // max(1, k_len * k_len)))
+    chunk_sz = max(1024, min(65536, 4_000_000 // max(1, k_len)))
     for start in range(0, valid_px.size, chunk_sz):
         stop = start + chunk_sz
         idx = valid_px[start:stop]
         v_c = vflat[idx]
         a_c = np.where(v_c, flat[idx], np.inf)
-        order = np.argsort(a_c, axis=1)
-        rows = np.arange(idx.size)[:, None]
-        a_sorted = a_c[rows, order]
-        v_sorted = v_c[rows, order]
-        matches = (
-            (a_sorted[:, :, None] == a_sorted[:, None, :])
-            & v_sorted[:, :, None]
-            & v_sorted[:, None, :]
-        )
-        counts = np.sum(matches, axis=2)
+        a_sorted = np.sort(a_c, axis=1)
+        v_sorted = np.isfinite(a_sorted)
+        n_rows = idx.size
+        counts = np.zeros((n_rows, k_len), dtype=np.int32)
+        run_start = np.zeros(n_rows, dtype=np.int32)
+        run_len = v_sorted[:, 0].astype(np.int32)
+        counts[np.arange(n_rows), 0] = run_len
+        rows_idx = np.arange(n_rows)
+        for col in range(1, k_len):
+            same = v_sorted[:, col] & (a_sorted[:, col] == a_sorted[:, col - 1])
+            new_valid = v_sorted[:, col] & ~same
+            run_start = np.where(new_valid, col, run_start)
+            run_len = np.where(same, run_len + 1, np.where(new_valid, 1, 0))
+            upd = v_sorted[:, col]
+            if np.any(upd):
+                counts[rows_idx[upd], run_start[upd]] = run_len[upd]
         best = np.argmax(counts, axis=1)
-        out_flat[idx] = a_sorted[np.arange(idx.size), best]
+        out_flat[idx] = a_sorted[rows_idx, best]
 
     return out_flat.reshape(h, w)
 
@@ -469,7 +475,7 @@ def stat_kuwahara(
 
 
 def make_lee_stat_fn(n_looks: float) -> StatFunc:
-    """Create a Lee SAR adaptive speckle filter reducer for ``n_looks``."""
+    """Create a Lee (1980) SAR adaptive speckle filter reducer for ``n_looks``."""
     cu2 = 1.0 / float(n_looks)
 
     def _stat_lee(
@@ -485,7 +491,7 @@ def make_lee_stat_fn(n_looks: float) -> StatFunc:
         nz = ok & (mean != 0.0) & (var > 0.0)
         if np.any(nz):
             ci2 = var[nz] / (mean[nz] * mean[nz])
-            weights = np.maximum(0.0, (ci2 - cu2) / (ci2 * (1.0 + cu2)))
+            weights = np.clip((ci2 - cu2) / np.maximum(ci2, 1e-12), 0.0, 1.0)
             out[nz] = mean[nz] + weights * (centre[nz] - mean[nz])
         return out
 
@@ -544,7 +550,7 @@ def gaussian_kernel(
     if deriv_order == 0:
         return gauss
     if deriv_order == 1:
-        k1 = -(u / (sx * sx)) * gauss
+        k1 = (u / (sx * sx)) * gauss
         k1 -= np.mean(k1)
         return k1
     if deriv_order == 2:
@@ -589,9 +595,8 @@ def _convolve_tile_with_mask(
 
     if not zero_dc and np.all(kernel >= 0.0):
         k_sum = float(np.sum(kernel))
-        w_valid = valid * kernel[None, None, :, :]
-        denom = np.sum(w_valid, axis=(2, 3))
-        numer = np.sum(np.where(valid, wins, 0.0) * kernel[None, None, :, :], axis=(2, 3))
+        denom = np.einsum("ijkl,kl->ij", valid.astype(np.float64), kernel)
+        numer = np.einsum("ijkl,kl->ij", np.where(valid, wins, 0.0), kernel)
         ok = centre_valid & (denom > 0.0)
         out[ok] = (numer[ok] / denom[ok]) * k_sum
         return out
