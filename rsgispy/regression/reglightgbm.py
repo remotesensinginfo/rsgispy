@@ -269,6 +269,7 @@ def optimise_lightgbm_regressor(
     verbose: int = 0,
     use_gpu: bool = False,
     gpu_device_id: Optional[int] = None,
+    use_pbar: bool = True,
 ) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
     """
     Optimise hyperparameters for a univariate or multi-target
@@ -344,6 +345,7 @@ def optimise_lightgbm_regressor(
         verbose=verbose,
         use_gpu=use_gpu,
         gpu_device_id=gpu_device_id,
+        use_pbar=use_pbar,
     )
 
 

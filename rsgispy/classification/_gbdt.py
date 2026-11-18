@@ -249,6 +249,7 @@ def optimise_gbdt_classifier(
     verbose: int = 0,
     use_gpu: bool = False,
     gpu_device_id: Optional[int] = None,
+    use_pbar: bool = True,
 ) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
     """
     Optimise hyperparameters for a GBDT binary or multi-class classifier using
@@ -369,6 +370,7 @@ def optimise_gbdt_classifier(
         verbose=verbose,
         func_name=func_name,
         extra=backend.extra,
+        use_pbar=use_pbar,
     )
 
     best_trial_params = dict(study.best_trial.params)

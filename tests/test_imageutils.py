@@ -1440,6 +1440,34 @@ def test_masking_functions(tmp_path):
         expected_cv = np.array([[1, 0, 0], [1, 1, 1]], dtype=np.uint8)
         np.testing.assert_array_equal(cv, expected_cv)
 
+    # 7. rsgispy.imageutils.create_valid_mask with float NaN/Inf + nodata
+    img_f = tmp_path / "cvalid_flt.tif"
+    cvalid_out2 = tmp_path / "create_valid_flt.tif"
+    _write_geo_raster(
+        img_f,
+        np.array([[1.0, np.nan, 2.0], [np.inf, -np.inf, -999.0]], dtype=np.float32),
+        dtype="float32",
+        nodata=-999.0,
+    )
+    band_info_f = [
+        rsgispy.classification.classdata.ImageBandInfo(
+            file_name=str(img_f), name="flt", bands=[1]
+        ),
+        rsgispy.classification.classdata.ImageBandInfo(
+            file_name=str(img_b1), name="b1", bands=[1]
+        ),
+    ]
+    rsgispy.imageutils.create_valid_mask(
+        band_info_f,
+        cvalid_out2,
+        gdalformat="GTIFF",
+        use_pbar=False,
+    )
+    with rasterio.open(cvalid_out2) as src:
+        cv2 = src.read(1)
+        expected_cv2 = np.array([[1, 0, 1], [0, 0, 0]], dtype=np.uint8)
+        np.testing.assert_array_equal(cv2, expected_cv2)
+
 
 def test_subset_functions(tmp_path):
     """Test subset_bbox, subset_to_img, and subset with GeoPackage vector."""

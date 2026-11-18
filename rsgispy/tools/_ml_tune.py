@@ -261,6 +261,7 @@ def run_optuna_study(
     verbose: int,
     func_name: str,
     extra: str,
+    use_pbar: bool = True,
 ) -> Tuple[Any, str]:
     """Create and execute an Optuna TPE study cleanly."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -283,7 +284,7 @@ def run_optuna_study(
             objective,
             n_trials=int(n_trials),
             timeout=timeout,
-            show_progress_bar=False,
+            show_progress_bar=bool(use_pbar),
         )
     finally:
         optuna.logging.set_verbosity(prev_verbosity)
@@ -402,6 +403,7 @@ def run_optuna_search(
     stratified: bool = True,
     func_name: str = "perform_sklearn_classifier_param_search",
     extra: str = "classification",
+    use_pbar: bool = True,
 ) -> Tuple[Any, Dict[str, Any], float, pd.DataFrame, Any]:
     """Execute Bayesian hyperparameter optimisation with Optuna."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -452,6 +454,7 @@ def run_optuna_search(
         verbose=verbose,
         func_name=f"{func_name}(..., search_method='optuna')",
         extra=extra,
+        use_pbar=use_pbar,
     )
 
     if callable(param_space):

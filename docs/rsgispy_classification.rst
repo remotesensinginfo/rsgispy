@@ -16,6 +16,7 @@ Submodules
 * :doc:`classification/classfeatures` — Feature diagnostics (box/violin plots, correlation, VIF), feature selection (CQV, correlation, VIF, univariate, RFE/RFECV, model/LassoLars, BorutaShap), and importance/contribution analysis (permutation/model importance, jackknife, response curves, SHAP, SALib Sobol).
 * :doc:`classification/classrefpts` — Random and stratified random reference point generation and accuracy point population.
 * :doc:`classification/classaccuracymetrics` — Image area-weighted and point-only classification accuracy statistics and bootstrap confidence intervals.
+* :doc:`classification/classpostprocess` — Thematic classification post-processing (moving-window majority/modal filter and 4/8-connected sieve clump elimination).
 
 .. toctree::
    :maxdepth: 1
@@ -29,3 +30,4 @@ Submodules
    classification/classfeatures
    classification/classrefpts
    classification/classaccuracymetrics
+   classification/classpostprocess

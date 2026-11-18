@@ -244,3 +244,186 @@ def test_edge_gaussian_laplacian_and_custom_kernel_filters(tmp_path):
             kernel=[[-1.0, 0.0, 1.0], [-1.0, 0.0, 1.0], [-1.0, 0.0, 1.0]],
             normalise=True,
         )
+
+
+def test_imagefilter_submodules_and_sar_filters(tmp_path):
+    """Test submodule imports and all SAR backscatter speckle filters."""
+    import rsgispy.imagefilter.edge as if_edge
+    import rsgispy.imagefilter.sar as if_sar
+    import rsgispy.imagefilter.smooth as if_smooth
+    import rsgispy.imagefilter.stats as if_stats
+    import rsgispy.imagefilter.texture as if_tex
+
+    # Backwards-compatible exports match submodule definitions
+    assert imf.apply_mean_filter is if_stats.apply_mean_filter
+    assert imf.apply_kuwahara_filter is if_smooth.apply_kuwahara_filter
+    assert imf.apply_sobel_filter is if_edge.apply_sobel_filter
+    assert imf.apply_lee_filter is if_sar.apply_lee_filter
+    assert imf.apply_glcm_filter is if_tex.apply_glcm_filter
+
+    # Synthetic SAR intensity image: low region + high region + strong point target + nodata
+    sar_in = tmp_path / "sar_test.tif"
+    rng = np.random.default_rng(77)
+    sar = rng.normal(50.0, 6.0, size=(20, 20)).astype(np.float32)
+    sar[:, 10:] = rng.normal(200.0, 20.0, size=(20, 10)).astype(np.float32)
+    sar[4, 4] = 800.0  # Point target inside uniform low region
+    sar[0, 0] = -9999.0
+    _write_raster(sar_in, sar, nodata=-9999.0, descriptions=["VV"])
+
+    img_proc.set_default_block_size(8)
+    try:
+        for name, fn, extra in [
+            ("elee", if_sar.apply_enhanced_lee_filter, {"n_looks": 4.0, "damping": 1.0}),
+            ("frost", if_sar.apply_frost_filter, {"damping": 1.0}),
+            ("efrost", if_sar.apply_enhanced_frost_filter, {"n_looks": 4.0, "damping": 1.0}),
+            ("kuan", if_sar.apply_kuan_filter, {"n_looks": 4.0}),
+            ("gmap", if_sar.apply_gamma_map_filter, {"n_looks": 4.0}),
+            ("reflee", if_sar.apply_refined_lee_filter, {"n_looks": 4.0}),
+        ]:
+            out_p = tmp_path / f"sar_{name}.tif"
+            fn(
+                str(sar_in),
+                str(out_p),
+                filter_size=5,
+                use_pbar=False,
+                **extra,
+            )
+            with rasterio.open(out_p) as src:
+                out = src.read(1)
+                assert list(src.descriptions) == ["VV"]
+                assert src.nodata == -9999.0
+            assert out[0, 0] == -9999.0
+            # Homogeneous corner variance reduced compared to raw input
+            assert np.std(out[12:18, 2:8]) < np.std(sar[12:18, 2:8])
+            # Point target preserved well above background mean (50)
+            assert out[4, 4] > 200.0
+    finally:
+        img_proc.reset_default_block_size()
+
+    # Step-edge test for Refined Lee vs uniform blurring
+    edge_in = tmp_path / "sar_step.tif"
+    edge_arr = np.full((15, 15), 20.0, dtype=np.float32)
+    edge_arr[:, 8:] = 200.0
+    _write_raster(edge_in, edge_arr)
+    ref_out = tmp_path / "sar_reflee_step.tif"
+    if_sar.apply_refined_lee_filter(
+        str(edge_in), str(ref_out), filter_size=7, n_looks=4.0, use_pbar=False
+    )
+    with rasterio.open(ref_out) as src:
+        ref = src.read(1)
+    assert ref[7, 7] == pytest.approx(20.0, abs=1e-4)
+    assert ref[7, 8] == pytest.approx(200.0, abs=1e-4)
+
+
+def test_glcm_texture_filters(tmp_path):
+    """Test GLCM texture properties against skimage and multi-band/nodata behavior."""
+    import rsgispy.imagefilter.texture as if_tex
+
+    sk_feat = pytest.importorskip("skimage.feature")
+
+    rng = np.random.default_rng(12)
+    img_arr = rng.integers(0, 8, size=(12, 12), dtype=np.uint8).astype(np.float32)
+    img2 = np.full((12, 12), 3.0, dtype=np.float32)
+    in_p = tmp_path / "glcm_in.tif"
+    _write_raster(
+        in_p,
+        np.stack([img_arr, img2], axis=0),
+        descriptions=["Red", "Const"],
+    )
+
+    out_p = tmp_path / "glcm_out.tif"
+    props = [
+        if_tex.GLCM_CONTRAST,
+        if_tex.GLCM_DISSIMILARITY,
+        if_tex.GLCM_HOMOGENEITY,
+        if_tex.GLCM_ASM,
+        if_tex.GLCM_ENERGY,
+        if_tex.GLCM_CORRELATION,
+        if_tex.GLCM_ENTROPY,
+        if_tex.GLCM_MEAN,
+        if_tex.GLCM_VARIANCE,
+        if_tex.GLCM_MAX_PROB,
+    ]
+    img_proc.set_default_block_size(5)
+    try:
+        if_tex.apply_glcm_filter(
+            str(in_p),
+            str(out_p),
+            properties=props,
+            filter_size=5,
+            distances=1,
+            angles=(0.0, 45.0, 90.0, 135.0),
+            n_levels=8,
+            min_val=0.0,
+            max_val=7.0,
+            symmetric=True,
+            average_angles=True,
+            use_pbar=False,
+        )
+    finally:
+        img_proc.reset_default_block_size()
+
+    with rasterio.open(out_p) as src:
+        assert src.count == 20
+        assert src.descriptions[0] == "Red_glcm_contrast"
+        assert src.descriptions[9] == "Red_glcm_max_prob"
+        assert src.descriptions[10] == "Const_glcm_contrast"
+        data = src.read()
+
+    # Exact comparison on interior 5x5 patch at (6, 6) against skimage
+    patch = img_arr[4:9, 4:9].astype(np.uint8)
+    glcm = sk_feat.graycomatrix(
+        patch,
+        distances=[1],
+        angles=[0.0, np.pi / 4.0, np.pi / 2.0, 3.0 * np.pi / 4.0],
+        levels=8,
+        symmetric=True,
+        normed=True,
+    )
+    for b_idx, prop in enumerate(
+        ["contrast", "dissimilarity", "homogeneity", "ASM", "energy", "correlation"]
+    ):
+        exp_val = float(np.mean(sk_feat.graycoprops(glcm, prop)))
+        assert data[b_idx, 6, 6] == pytest.approx(exp_val, rel=1e-5, abs=1e-5)
+
+    # Constant second band: contrast=0, homogeneity=1, energy=1, entropy=0, max_prob=1
+    assert data[10, 6, 6] == pytest.approx(0.0, abs=1e-5)
+    assert data[12, 6, 6] == pytest.approx(1.0, abs=1e-5)
+    assert data[14, 6, 6] == pytest.approx(1.0, abs=1e-5)
+    assert data[16, 6, 6] == pytest.approx(0.0, abs=1e-5)
+    assert data[19, 6, 6] == pytest.approx(1.0, abs=1e-5)
+
+    # Non-averaged multi-angle output + nodata mask check
+    nd_in = tmp_path / "glcm_nd.tif"
+    arr_nd = img_arr.copy()
+    arr_nd[0, 0] = -9999.0
+    _write_raster(nd_in, arr_nd, nodata=-9999.0, descriptions=["B1"])
+    out_sep = tmp_path / "glcm_sep.tif"
+    if_tex.apply_glcm_filter(
+        str(nd_in),
+        str(out_sep),
+        properties="contrast",
+        filter_size=5,
+        distances=[1, 2],
+        angles=[0.0, 90.0],
+        n_levels=8,
+        average_angles=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out_sep) as src:
+        assert src.count == 4
+        assert list(src.descriptions) == [
+            "B1_glcm_contrast_d1_a0",
+            "B1_glcm_contrast_d1_a90",
+            "B1_glcm_contrast_d2_a0",
+            "B1_glcm_contrast_d2_a90",
+        ]
+        assert src.read(1)[0, 0] == -9999.0
+
+    # Validation checks
+    with pytest.raises(rsgispy.RSGISPyException):
+        if_tex.apply_glcm_filter(str(nd_in), str(tmp_path / "err1.tif"), properties="bad_prop")
+    with pytest.raises(rsgispy.RSGISPyException):
+        if_tex.apply_glcm_filter(str(nd_in), str(tmp_path / "err2.tif"), filter_size=3, distances=3)
+    with pytest.raises(rsgispy.RSGISPyException):
+        if_tex.apply_glcm_filter(str(nd_in), str(tmp_path / "err3.tif"), min_val=0.0, max_val=None)

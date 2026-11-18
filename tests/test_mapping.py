@@ -589,3 +589,146 @@ def test_north_arrow_styles_and_map_integration(tmp_path):
     fig.savefig(out_full, dpi=72, bbox_inches="tight")
     assert out_full.exists() and out_full.stat().st_size > 0
     plt.close(fig)
+
+
+def test_categorical_map_legends(tmp_path):
+    """Test categorical/classification legends: inputs, layouts, and placements."""
+    from rsgispy.classification.classdata import (
+        ClassInfoObj,
+        ClassificationConfig,
+        ImageBandInfo,
+    )
+
+    thm_img = tmp_path / "thematic_lgd.tif"
+    data = np.array(
+        [
+            [0, 1, 1, 2],
+            [1, 1, 2, 2],
+            [2, 3, 3, 3],
+            [3, 3, 1, 0],
+        ],
+        dtype=np.uint8,
+    )
+    clr_tab = {
+        0: (0, 0, 0, 0),
+        1: (34, 139, 34, 255),
+        2: (218, 165, 32, 255),
+        3: (30, 144, 255, 255),
+        4: (200, 50, 50, 255),  # Absent from image pixel array
+    }
+    _write_thematic_raster(str(thm_img), data, clr_tab=clr_tab)
+
+    # 1. Auto layout adapts column count to class label lengths
+    r_short, c_short = mapping.calc_categorical_legend_layout(
+        labels=["Water", "Forest", "Grass", "Urban", "Sand", "Rock"],
+        avail_width_in=6.5,
+    )
+    r_long, c_long = mapping.calc_categorical_legend_layout(
+        labels=[
+            "Temperate Broadleaf and Mixed Evergreen Forest",
+            "Intensified Irrigated Arable Cropland and Pasture",
+            "High Density Impervious Urban Commercial Settlement",
+            "Inland Freshwater Rivers Lakes and Reservoirs",
+        ],
+        avail_width_in=6.5,
+    )
+    assert c_short >= 2 and r_short * c_short >= 6
+    assert c_long == 1 and r_long == 4
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        mapping.calc_categorical_legend_layout(["A", "B", "C"], ncols=1, nrows=2)
+
+    # 2. {pixel_val: class_name} dict + embedded raster colour table + overlay
+    fig, ax = plt.subplots(figsize=(6, 5))
+    mapping.create_thematic_raster_map(
+        ax=ax,
+        input_img=str(thm_img),
+        title_str="Land Cover",
+        show_legend=True,
+        classes_info={1: "Forest", 2: "Cropland", 3: "Water", 4: "Urban"},
+        legend_title="Classes",
+        legend_kwargs={"only_present_in_img": True, "show_pxl_vals": True},
+    )
+    # Companion axis was added (figure now has 2 axes)
+    assert len(fig.axes) == 2
+    lgd_comp = fig.axes[1].get_legend()
+    assert lgd_comp is not None
+    assert [t.get_text() for t in lgd_comp.get_texts()] == [
+        "1: Forest",
+        "2: Cropland",
+        "3: Water",
+    ]
+    out_comp = tmp_path / "map_with_companion_legend.png"
+    fig.savefig(out_comp, dpi=100, bbox_inches="tight")
+    assert out_comp.exists() and out_comp.stat().st_size > 0
+    plt.close(fig)
+
+    # 3. Companion axes in all 4 positions + explicit ncols/nrows
+    for pos in ("right", "left", "bottom", "top"):
+        fig, ax = plt.subplots(figsize=(6, 5))
+        mapping.create_thematic_raster_map(ax=ax, input_img=str(thm_img))
+        leg_ax, lgd = mapping.add_categorical_legend_axis(
+            ax=ax,
+            classes_info={
+                1: ("Forest", "#228b22"),
+                2: ("Crop", "#daa520"),
+                3: ("Water", "#1e90ff"),
+            },
+            position=pos,
+            ncols=2 if pos in ("bottom", "top") else None,
+            swatch_shape="square" if pos == "bottom" else "rectangle",
+            title="Legend",
+        )
+        assert leg_ax in fig.axes
+        assert lgd.get_title().get_text() == "Legend"
+        plt.close(fig)
+
+    # 4. Existing axis overlay=True and dedicated axis overlay=False
+    fig, (ax_map, ax_leg) = plt.subplots(1, 2, figsize=(8, 4))
+    mapping.create_thematic_raster_map(ax=ax_map, input_img=str(thm_img))
+    lgd_ov = mapping.add_categorical_legend(
+        ax=ax_map,
+        classes_info={1: "Forest", 2: "Crop", 3: "Water"},
+        input_img=str(thm_img),
+        loc="bottom left",
+        overlay=True,
+    )
+    assert lgd_ov in ax_map.get_children()
+    lgd_panel = mapping.add_categorical_legend(
+        ax=ax_leg,
+        classes_info={1: "Forest", 2: "Crop", 3: "Water"},
+        colour_lut={1: "#228b22", 2: "#daa520", 3: "#1e90ff"},
+        overlay=False,
+        nrows=2,
+        sort_by="name",
+        swatch_shape="circle",
+    )
+    assert not ax_leg.axison
+    assert [t.get_text() for t in lgd_panel.get_texts()] == ["Crop", "Forest", "Water"]
+    plt.close(fig)
+
+    # 5. ClassificationConfig + JSON config path + standalone saved legend image
+    cfg = ClassificationConfig(
+        img_band_info=[ImageBandInfo(str(thm_img), name="lc", bands=[1])],
+        class_info={
+            "Forest": ClassInfoObj(out_id=1, name="Forest", colour="#228b22"),
+            "Cropland": ClassInfoObj(out_id=2, name="Cropland", colour="#daa520"),
+            "Water": ClassInfoObj(out_id=3, name="Water", red=30, green=144, blue=255),
+        },
+    )
+    cfg_json = tmp_path / "cls_cfg.json"
+    cfg.save(cfg_json)
+
+    handles_cfg = mapping.create_categorical_legend_patches(cfg, max_label_width=6)
+    assert len(handles_cfg) == 3
+
+    out_lgd_png = tmp_path / "standalone_legend.png"
+    r_saved, c_saved = mapping.save_categorical_legend_img(
+        out_img_file=out_lgd_png,
+        classes_info=cfg_json,
+        title="Land Cover Classification",
+        dpi=120,
+        transparent=True,
+    )
+    assert out_lgd_png.exists() and out_lgd_png.stat().st_size > 0
+    assert r_saved * c_saved >= 3

@@ -1480,6 +1480,8 @@ def run_window_halo_blocks(
     clamp_int: bool = True,
     full_width_strips: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Mapping[str, Any]] = None,
+    band_idx: Optional[int] = None,
 ) -> None:
     """
     Process ``input_img`` block-by-block with a halo neighbourhood border and write
@@ -1490,8 +1492,9 @@ def run_window_halo_blocks(
     :param win_shape: ``(window_height, window_width)`` defining halo radius
                       ``(kh // 2, kw // 2)``.
     :param block_fn: Callable accepting a halo-padded NumPy array (2D when
-                     ``per_band=True``, 3D ``(bands, H, W)`` when
-                     ``per_band=False``) and returning the core tile output.
+                     ``per_band=True`` or ``band_idx`` is set, 3D
+                     ``(bands, H, W)`` when ``per_band=False`` and
+                     ``band_idx=None``) and returning the core tile output.
     :param gdalformat: Output GDAL/rasterio format name (Default = ``'GTIFF'``).
     :param out_rio_dtype: Rasterio output dtype string (Default = ``'float32'``).
     :param out_np_dtype: Target NumPy dtype for casting (defaults to
@@ -1499,7 +1502,7 @@ def run_window_halo_blocks(
     :param out_count: Number of output bands (defaults to ``src.count``).
     :param per_band: If ``True``, read and pass each band separately as a 2D
                      halo array; if ``False``, read all bands together as a 3D
-                     halo cube (Default = ``False``).
+                     halo cube unless ``band_idx`` is set (Default = ``False``).
     :param read_dtype: NumPy dtype passed to :func:`read_window_with_halo`
                        (Default = ``float64``).
     :param pad_mode: Border padding mode passed to :func:`read_window_with_halo`
@@ -1513,6 +1516,9 @@ def run_window_halo_blocks(
                               (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional mapping of GDAL creation options.
+    :param band_idx: Optional 1-based band index to read alone as a 2D halo
+                     array and write as a single-band output (Default = ``None``).
 
     .. code:: python
 
@@ -1538,6 +1544,8 @@ def run_window_halo_blocks(
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
+        if band_idx is not None:
+            validate_band_index(band_idx, src.count, input_img)
         dst = create_output_from_dataset(
             stack=stack,
             src=src,
@@ -1545,6 +1553,7 @@ def run_window_halo_blocks(
             gdalformat=gdalformat,
             out_rio_dtype=out_rio_dtype,
             count=out_count,
+            creation_opts=creation_opts,
         )
         if out_nodata is not None:
             dst.nodata = out_nodata
@@ -1555,7 +1564,29 @@ def run_window_halo_blocks(
         ):
             win_h = int(out_win.height)
             win_w = int(out_win.width)
-            if per_band:
+            if band_idx is not None:
+                halo = read_window_with_halo(
+                    src,
+                    int(band_idx),
+                    out_win,
+                    pad=pad,
+                    out_dtype=read_dtype,
+                    pad_mode=pad_mode,
+                    fill_value=fill_value,
+                )
+                res = block_fn(halo)
+                out_blk = cast_result_block(
+                    res,
+                    win_h,
+                    win_w,
+                    target_np_dtype,
+                    clamp_int=clamp_int,
+                )
+                if out_blk.ndim == 2:
+                    dst.write(out_blk, 1, window=out_win)
+                else:
+                    dst.write(out_blk, window=out_win)
+            elif per_band:
                 for b_idx in range(1, src.count + 1):
                     halo = read_window_with_halo(
                         src,
@@ -1589,13 +1620,14 @@ def run_window_halo_blocks(
                     fill_value=fill_value,
                 )
                 res = block_fn(halo)
-                dst.write(
-                    cast_result_block(
-                        res,
-                        win_h,
-                        win_w,
-                        target_np_dtype,
-                        clamp_int=clamp_int,
-                    ),
-                    window=out_win,
+                out_blk = cast_result_block(
+                    res,
+                    win_h,
+                    win_w,
+                    target_np_dtype,
+                    clamp_int=clamp_int,
                 )
+                if out_blk.ndim == 2:
+                    dst.write(out_blk, 1, window=out_win)
+                else:
+                    dst.write(out_blk, window=out_win)

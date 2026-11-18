@@ -202,6 +202,7 @@ def perform_sklearn_classifier_param_search(
     return_results: bool = False,
     verbose: int = 0,
     extended_param_space: bool = False,
+    use_pbar: bool = True,
 ) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
     """
     Optimise hyperparameters for a ``scikit-learn`` (or compatible) classifier
@@ -278,6 +279,8 @@ def perform_sklearn_classifier_param_search(
     :param extended_param_space: If ``True`` (and ``param_space`` is ``None``),
                                  use the broader extended built-in parameter
                                  space for ``sk_classifier`` (Default = ``False``).
+    :param use_pbar: Display a ``tqdm`` progress bar during Optuna trials
+                     (Default = ``True``).
     :return: Optimised classifier estimator, or ``(best_estimator, results_dict)``
              when ``return_results=True``.
 
@@ -356,6 +359,7 @@ def perform_sklearn_classifier_param_search(
                 stratified=True,
                 func_name="perform_sklearn_classifier_param_search",
                 extra="classification",
+                use_pbar=use_pbar,
             )
         )
     else:
