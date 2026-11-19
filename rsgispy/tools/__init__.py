@@ -17,7 +17,6 @@ networking, and visualisation utilities:
 * :mod:`rsgispy.tools.http` — HTTP requests, downloads, and tracking databases
 * :mod:`rsgispy.tools.imaging` — non-spatial image, EXIF, PDF, and QR code utilities
 * :mod:`rsgispy.tools.jsonio` — JSON and gzipped JSON serialisation utilities
-* :mod:`rsgispy.tools.mapping` — cartographic map composition with matplotlib
 * :mod:`rsgispy.tools.maths` — rounding, numeric bounds, powersets, and combinations
 * :mod:`rsgispy.tools.plotting` — scatter, histogram, ROC, and summary plots
 * :mod:`rsgispy.tools.projection` — CRS lookup, unit conversion, and distances

@@ -162,10 +162,11 @@ Package Overview
 * :doc:`rsgispy_imageregistration` — Image registration, tie-point co-registration, outlier filtering, whole-image shift estimation, and GCP warping.
 * :doc:`rsgispy_imagespectral` — Spectral classification (SAM, SCM), linear unmixing, endmembers, PPI, PCA, MNF, Tasseled Cap, histogram matching, whitening, and smoothing.
 * :doc:`rsgispy_imageutils` — Raster creation, rasterisation, metadata, masking, mosaicking, tiling, VRT, and warping.
+* :doc:`rsgispy_mapping` — Cartographic map composition, scale bars, north arrows, raster/vector/basemap layers, and categorical legends.
 * :doc:`rsgispy_modelling` — Environmental and species distribution modelling with ``scikit-learn`` and :mod:`rsgispy.imageprocess`.
 * :doc:`rsgispy_regression` — Continuous univariate and multivariate image regression with ``scikit-learn``, XGBoost, LightGBM, and CatBoost, response curves, feature selection, and accuracy metrics.
 * :doc:`rsgispy_segmentation` — Connected-component clumping (:func:`~rsgispy.segmentation.clump.clump`) and union of clumps (:func:`~rsgispy.segmentation.clump.union_of_clumps`).
-* :doc:`rsgispy_tools` — General geospatial, geometry, projection, plotting, mapping, and file utilities.
+* :doc:`rsgispy_tools` — General geospatial, geometry, projection, plotting, and file utilities.
 * :doc:`rsgispy_vectorattrs` — Vector attribute table, column, and spatial join utilities.
 * :doc:`rsgispy_vectorgeoms` — Vector geometry creation, grids, polygonisation, manipulation, overlay, clipping, transects, and spatial predicates.
 * :doc:`rsgispy_vectorprocess` — Shared low-level vector I/O, CRS, bounding-box, and attribute helpers.
@@ -190,6 +191,7 @@ Package Overview
    rsgispy_imageregistration
    rsgispy_imagespectral
    rsgispy_imageutils
+   rsgispy_mapping
    rsgispy_modelling
    rsgispy_regression
    rsgispy_segmentation
