@@ -1,6 +1,6 @@
 """
 Internal helper functions for categorical and classification map legends in
-:mod:`rsgispy.tools.mapping`.
+:mod:`rsgispy.mapping.legend`.
 """
 
 from dataclasses import dataclass

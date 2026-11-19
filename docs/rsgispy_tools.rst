@@ -1,7 +1,7 @@
 rsgispy.tools
 =============
 
-The :mod:`rsgispy.tools` subpackage provides plotting, mapping, file, hashing,
+The :mod:`rsgispy.tools` subpackage provides plotting, file, hashing,
 archive, text/JSON I/O, geometry, projection, UTM, statistics, feature
 selection, thresholding, accuracy, tile cache, image/PDF, web, HTTP, FTP, and
 WMTS utilities without requiring GDAL's ``osgeo`` bindings.
@@ -46,11 +46,10 @@ Geometry, Projections, UTM & Tile Caches
    tools/utm
    tools/tilecache
 
-Visualisation, Cartography & Imaging
-------------------------------------
+Visualisation & Imaging
+-----------------------
 
 * :doc:`tools/plotting` — Reading raster arrays and applying image stretches for Matplotlib.
-* :doc:`tools/mapping` — Creating raster, thematic, choropleth, density, and WMTS maps.
 * :doc:`tools/colours` — Hex and RGB colour conversions.
 * :doc:`tools/imaging` — GIF animations, EXIF reading, PDF image extraction, and QR codes.
 * :doc:`tools/wmts` — Querying WMTS capabilities and downloading WMTS imagery.
@@ -59,7 +58,6 @@ Visualisation, Cartography & Imaging
    :maxdepth: 1
 
    tools/plotting
-   tools/mapping
    tools/colours
    tools/imaging
    tools/wmts

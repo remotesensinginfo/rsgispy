@@ -73,7 +73,8 @@ If you use `rsgispy` or build on concepts from RSGISLib in academic work, please
 | `rsgispy.zonalstats` | Polygon and point zonal statistics extraction |
 | `rsgispy.dataaccess` | API clients for Copernicus OData, NASA CMR, OpenStreetMap, Planet, and USGS M2M |
 | `rsgispy.droneutils` | Drone photo organisation, EXIF metadata handling, and flightline vector generation |
-| `rsgispy.tools` | General geospatial, geometry, projection, plotting, mapping, WMTS, archiving, file/system, accuracy/feature selection, and HTTP/FTP utilities |
+| `rsgispy.mapping` | Cartographic map composition (layout, scale bars, north arrows, raster/vector/basemap layers, and categorical legends) |
+| `rsgispy.tools` | General geospatial, geometry, projection, plotting, WMTS, archiving, file/system, accuracy/feature selection, and HTTP/FTP utilities |
 
 ## Installation
 
