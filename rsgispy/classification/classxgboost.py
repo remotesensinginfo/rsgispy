@@ -32,17 +32,12 @@ from rsgispy.tools._gbdt_common import (
     get_xgboost_optuna_param_space as _tools_get_xgboost_optuna_param_space,
     load_xgb_or_cb_model,
     prepare_xgb_predict_estimator as _prepare_xgb_predict_estimator,
+    safe_import_optional,
     save_xgb_or_cb_model,
     validate_gpu_device_id,
 )
 
-try:
-    import xgboost as xgb  # pylint: disable=import-error
-
-    HAVE_XGBOOST = True
-except ImportError:
-    xgb = None  # type: ignore[assignment]
-    HAVE_XGBOOST = False
+xgb, HAVE_XGBOOST, _XGBOOST_LOAD_ERROR = safe_import_optional("xgboost")
 
 __all__ = [
     "is_xgboost_gpu_available",
@@ -79,7 +74,7 @@ def is_xgboost_gpu_available(gpu_device_id: Optional[int] = None) -> bool:
             print("XGBoost CUDA GPU ready")
     """
     dev_idx = validate_gpu_device_id(gpu_device_id)
-    if not HAVE_XGBOOST:
+    if not HAVE_XGBOOST or xgb is None:
         return False
     try:
         build_info = xgb.build_info()
@@ -196,6 +191,7 @@ def save_xgboost_classifier(
         pkg_name="xgboost",
         extra="xgboost",
         func_name="save_xgboost_classifier",
+        error_detail=_XGBOOST_LOAD_ERROR,
     )
 
 
@@ -225,6 +221,7 @@ def load_xgboost_classifier(
         extra="xgboost",
         func_name="load_xgboost_classifier",
         label="XGBoost model",
+        error_detail=_XGBOOST_LOAD_ERROR,
     )
 
 
@@ -257,6 +254,7 @@ _XGB_BACKEND = GBDTBackendSpec(
     save_model=save_xgboost_classifier,
     prepare_predict_estimator=_prepare_xgb_predict_estimator,
     require_consecutive_zero_labels=True,
+    get_error_detail=lambda: _XGBOOST_LOAD_ERROR,
 )
 
 

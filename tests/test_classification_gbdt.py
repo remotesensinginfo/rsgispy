@@ -24,6 +24,19 @@ import rsgispy.imageutils.colourtable as rct
 
 _HAS_OPTUNA = importlib.util.find_spec("optuna") is not None
 
+_HAVE_CLS_GBDT = {
+    "xgboost": rcxgb.HAVE_XGBOOST,
+    "lightgbm": rclgb.HAVE_LIGHTGBM,
+    "catboost": rccb.HAVE_CATBOOST,
+}
+
+
+def _skip_if_gbdt_unavailable(pkg: str):
+    """Skip test cleanly when optional GBDT package is missing or failed to load."""
+    if not _HAVE_CLS_GBDT.get(pkg, False):
+        pytest.skip(f"{pkg} is not available or failed to load")
+    return pytest.importorskip(pkg)
+
 
 def _write_raster(
     path: Path,
@@ -290,7 +303,7 @@ def _backend_specs():
 @pytest.mark.parametrize("spec", _backend_specs())
 def test_gbdt_binary_optimise_train_and_apply(tmp_path: Path, spec: dict):
     """Verify binary Optuna search, training, persistence, and scene application."""
-    pytest.importorskip(spec["pkg"])
+    _skip_if_gbdt_unavailable(spec["pkg"])
     fix = _create_binary_fixture(tmp_path)
 
     model_path = tmp_path / f"bin_model{spec['ext']}"
@@ -419,7 +432,7 @@ def test_gbdt_binary_optimise_train_and_apply(tmp_path: Path, spec: dict):
 @pytest.mark.parametrize("spec", _backend_specs())
 def test_gbdt_multiclass_optimise_train_and_apply(tmp_path: Path, spec: dict):
     """Verify multi-class Optuna CV search, training, and recoded uint16 output."""
-    pytest.importorskip(spec["pkg"])
+    _skip_if_gbdt_unavailable(spec["pkg"])
     fix = _create_multiclass_fixture(tmp_path)
 
     model, metrics = spec["train_mc"](
@@ -511,7 +524,7 @@ def test_gbdt_default_optuna_search_spaces(tmp_path: Path):
         ),
         ("catboost", rccb.optimise_catboost_binary_classifier, {"iterations": 10}),
     ]:
-        pytest.importorskip(pkg)
+        _skip_if_gbdt_unavailable(pkg)
         clf, res = opt_fn(
             cls_cfg=fix["cfg"],
             train_data=fix["train_df"],
@@ -583,7 +596,7 @@ def test_gbdt_extended_optuna_search_spaces(tmp_path: Path):
             {"iterations": 10, "depth": 4},
         ),
     ]:
-        pytest.importorskip(pkg)
+        _skip_if_gbdt_unavailable(pkg)
         clf_bin, res_bin = opt_bin(
             cls_cfg=bin_fix["cfg"],
             train_data=bin_fix["train_df"],
@@ -610,7 +623,7 @@ def test_gbdt_extended_optuna_search_spaces(tmp_path: Path):
         assert clf_mc is not None
         assert res_mc["param_space_mode"] == "extended"
 
-    if importlib.util.find_spec("xgboost") is not None:
+    if rcxgb.HAVE_XGBOOST:
         with pytest.raises(rsgispy.RSGISPyException, match="not both"):
             rcxgb.optimise_xgboost_binary_classifier(
                 cls_cfg=bin_fix["cfg"],
@@ -634,7 +647,7 @@ def test_gbdt_validation_and_missing_dep_errors(tmp_path: Path, monkeypatch):
     bin_fix = _create_binary_fixture(tmp_path)
 
     # Binary functions reject 3-class config
-    if importlib.util.find_spec("xgboost") is not None:
+    if rcxgb.HAVE_XGBOOST:
         with pytest.raises(rsgispy.RSGISPyException, match="exactly 2 classes"):
             rcxgb.train_xgboost_binary_classifier(
                 cls_cfg=mc_fix["cfg"], train_data=mc_fix["train_df"]
@@ -668,7 +681,7 @@ def test_gbdt_validation_and_missing_dep_errors(tmp_path: Path, monkeypatch):
     single_cfg = {
         "OnlyOne": rcd.ClassInfoObj(out_id=1),
     }
-    if importlib.util.find_spec("lightgbm") is not None:
+    if rclgb.HAVE_LIGHTGBM:
         with pytest.raises(rsgispy.RSGISPyException, match="at least 2 classes"):
             rclgb.train_lightgbm_multiclass_classifier(
                 cls_cfg=single_cfg, train_data=mc_fix["train_df"]
@@ -706,7 +719,7 @@ def test_gbdt_gpu_availability_and_validation(monkeypatch):
             assert fn() is False
 
     # CatBoost device-index count checks
-    if importlib.util.find_spec("catboost") is not None:
+    if rccb.HAVE_CATBOOST:
         with monkeypatch.context() as mp:
             mp.setattr(rccb, "HAVE_CATBOOST", True)
             mp.setattr(rccb, "_cb_get_gpu_device_count", lambda: 2)
@@ -719,7 +732,7 @@ def test_gbdt_gpu_availability_and_validation(monkeypatch):
 @pytest.mark.parametrize("spec", _backend_specs())
 def test_gbdt_gpu_fallback_and_validation(tmp_path: Path, monkeypatch, spec: dict):
     """Verify use_gpu=True falls back cleanly to CPU when no GPU is detected."""
-    pytest.importorskip(spec["pkg"])
+    _skip_if_gbdt_unavailable(spec["pkg"])
     fix = _create_binary_fixture(tmp_path)
 
     # Invalid gpu_device_id raises before training
@@ -893,7 +906,7 @@ def test_gbdt_gpu_parameter_mapping_and_inference(tmp_path: Path, monkeypatch):
     assert cb_kw_off == {}
 
     # 4. Verify mocked GPU Optuna CV uses n_jobs=1 on cross_val_score and records gpu_used=True
-    if _HAS_OPTUNA and importlib.util.find_spec("xgboost") is not None:
+    if _HAS_OPTUNA and rcxgb.HAVE_XGBOOST:
         import rsgispy.classification._gbdt as _gbdt  # noqa: PLC0415
 
         fix = _create_binary_fixture(tmp_path)
@@ -1006,7 +1019,7 @@ def test_xgboost_feature_order_subset_and_id_mismatch_guards(tmp_path: Path):
     use_internal_id mismatches trained classes, and preserves multiclass
     objective when a default XGBClassifier instance is supplied.
     """
-    xgb = pytest.importorskip("xgboost")
+    xgb = _skip_if_gbdt_unavailable("xgboost")
     fix = _create_multiclass_fixture(tmp_path)
 
     # 1. Passing a default XGBClassifier() (objective='binary:logistic')
@@ -1119,3 +1132,123 @@ def test_xgboost_feature_order_subset_and_id_mismatch_guards(tmp_path: Path):
             calc_img_stats=False,
             use_pbar=False,
         )
+
+
+def test_gbdt_common_lazy_imports():
+    """
+    Cold-starting _gbdt_common, rsgispy.ml, regsklearn, regmetrics, and
+    classsklearn must not eagerly import xgboost, lightgbm, or catboost
+    (protecting non-GBDT modules from native shared-library wheel errors).
+    """
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    script = """
+import importlib.abc
+import sys
+
+class _BlockGBDT(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        root = fullname.split(".")[0]
+        if root in ("xgboost", "lightgbm", "catboost"):
+            raise OSError(f"Simulated missing libomp.dylib for {root}")
+        return None
+
+sys.meta_path.insert(0, _BlockGBDT())
+import rsgispy.tools._gbdt_common
+import rsgispy.ml
+import rsgispy.regression.regsklearn
+import rsgispy.regression.regmetrics
+import rsgispy.classification.classsklearn
+assert "xgboost" not in sys.modules
+assert "lightgbm" not in sys.modules
+assert "catboost" not in sys.modules
+"""
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_gbdt_native_load_error_hardening(tmp_path: Path, monkeypatch):
+    """
+    Verify XGBoostError / OSError (e.g., missing libomp.dylib on macOS) are
+    caught cleanly on import and surfaced via RSGISPyException on use.
+    """
+    import importlib  # noqa: PLC0415
+    import rsgispy.tools._gbdt_common as gbdt_common  # noqa: PLC0415
+    import rsgispy.regression.regxgboost as rxgb  # noqa: PLC0415
+    import rsgispy.regression.reglightgbm as rlgb  # noqa: PLC0415
+
+    class _FakeXGBoostError(Exception):
+        pass
+
+    orig_import_module = importlib.import_module
+
+    def _failing_import(name, package=None):
+        if name == "xgboost":
+            raise _FakeXGBoostError(
+                "Library not loaded: @rpath/libomp.dylib; Run `brew install libomp`"
+            )
+        if name == "lightgbm":
+            raise OSError(
+                "dlopen(.../lib_lightgbm.so): Library not loaded: @rpath/libomp.dylib"
+            )
+        return orig_import_module(name, package=package)
+
+    monkeypatch.setattr(importlib, "import_module", _failing_import)
+
+    # 1. safe_import_optional captures both custom Exception and OSError
+    mod_xgb, ok_xgb, err_xgb = gbdt_common.safe_import_optional("xgboost")
+    assert mod_xgb is None
+    assert ok_xgb is False
+    assert err_xgb is not None and "libomp.dylib" in err_xgb
+
+    mod_lgb, ok_lgb, err_lgb = gbdt_common.safe_import_optional("lightgbm")
+    assert mod_lgb is None
+    assert ok_lgb is False
+    assert err_lgb is not None and "libomp.dylib" in err_lgb
+
+    # 2. Reloading GBDT modules succeeds without raising and preserves flags
+    try:
+        reloaded_cxgb = importlib.reload(rcxgb)
+        reloaded_clgb = importlib.reload(rclgb)
+        reloaded_rxgb = importlib.reload(rxgb)
+        reloaded_rlgb = importlib.reload(rlgb)
+
+        assert reloaded_cxgb.HAVE_XGBOOST is False
+        assert reloaded_clgb.HAVE_LIGHTGBM is False
+        assert reloaded_rxgb.HAVE_XGBOOST is False
+        assert reloaded_rlgb.HAVE_LIGHTGBM is False
+
+        assert reloaded_cxgb.is_xgboost_gpu_available() is False
+        assert reloaded_clgb.is_lightgbm_gpu_available() is False
+        assert reloaded_rxgb.is_xgboost_gpu_available() is False
+        assert reloaded_rlgb.is_lightgbm_gpu_available() is False
+
+        # Param-space helpers remain usable even when native lib failed
+        assert "n_estimators" in reloaded_cxgb.get_xgboost_optuna_param_space()
+        assert "num_leaves" in reloaded_clgb.get_lightgbm_optuna_param_space()
+
+        bin_fix = _create_binary_fixture(tmp_path)
+        with pytest.raises(
+            rsgispy.RSGISPyException, match=r"(?=.*xgboost)(?=.*libomp\.dylib)"
+        ):
+            reloaded_cxgb.train_xgboost_binary_classifier(
+                bin_fix["cfg"], bin_fix["train_df"]
+            )
+        with pytest.raises(
+            rsgispy.RSGISPyException, match=r"(?=.*lightgbm)(?=.*libomp\.dylib)"
+        ):
+            reloaded_clgb.train_lightgbm_binary_classifier(
+                bin_fix["cfg"], bin_fix["train_df"]
+            )
+    finally:
+        monkeypatch.undo()
+        importlib.reload(rcxgb)
+        importlib.reload(rclgb)
+        importlib.reload(rxgb)
+        importlib.reload(rlgb)

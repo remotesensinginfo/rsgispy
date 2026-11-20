@@ -33,16 +33,12 @@ from rsgispy.tools._gbdt_common import (
     is_xgboost_gpu_available as _tools_is_xgboost_gpu_available,
     load_xgb_or_cb_model,
     prepare_xgb_predict_estimator as _prepare_xgb_predict_estimator,
+    safe_import_optional,
     save_xgb_or_cb_model,
+    validate_gpu_device_id,
 )
 
-try:
-    import xgboost as xgb  # pylint: disable=import-error
-
-    HAVE_XGBOOST = True
-except ImportError:
-    xgb = None  # type: ignore[assignment]
-    HAVE_XGBOOST = False
+xgb, HAVE_XGBOOST, _XGBOOST_LOAD_ERROR = safe_import_optional("xgboost")
 
 __all__ = [
     "is_xgboost_gpu_available",
@@ -71,6 +67,9 @@ def is_xgboost_gpu_available(gpu_device_id: Optional[int] = None) -> bool:
         if rxgb.is_xgboost_gpu_available():
             print("XGBoost CUDA GPU ready")
     """
+    validate_gpu_device_id(gpu_device_id)
+    if not HAVE_XGBOOST:
+        return False
     return _tools_is_xgboost_gpu_available(gpu_device_id)
 
 
@@ -141,6 +140,7 @@ def save_xgboost_regressor(
         pkg_name="xgboost",
         extra="xgboost",
         func_name="save_xgboost_regressor",
+        error_detail=_XGBOOST_LOAD_ERROR,
     )
 
 
@@ -167,6 +167,7 @@ def load_xgboost_regressor(
         extra="xgboost",
         func_name="load_xgboost_regressor",
         label="XGBoost regressor model",
+        error_detail=_XGBOOST_LOAD_ERROR,
     )
 
 
@@ -187,6 +188,7 @@ _XGB_REG_BACKEND = GBDTRegBackendSpec(
     load_model=load_xgboost_regressor,
     save_model=save_xgboost_regressor,
     prepare_predict_estimator=_prepare_xgb_predict_estimator,
+    get_error_detail=lambda: _XGBOOST_LOAD_ERROR,
 )
 
 

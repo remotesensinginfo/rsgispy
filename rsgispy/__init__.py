@@ -99,7 +99,7 @@ Environmental/modelling variable types:
     * ``VAR_TYPE_CATEGORICAL = 2``
 """
 
-from typing import Union
+from typing import Optional, Union
 import numpy as np
 from rasterio.enums import Resampling
 
@@ -503,6 +503,7 @@ def check_optional_dep(
     feature_name: str,
     package_name: str,
     extra: str,
+    error_detail: Optional[str] = None,
 ) -> None:
     """
     Verify that an optional dependency is available and raise
@@ -512,6 +513,8 @@ def check_optional_dep(
     :param feature_name: Name of the function or class requiring the package.
     :param package_name: PyPI/import name of the missing optional package.
     :param extra: Optional-dependency extra name defined in ``pyproject.toml``.
+    :param error_detail: Optional diagnostic message captured when importing
+                         the package failed (e.g., missing shared library).
 
     .. code:: python
 
@@ -520,7 +523,10 @@ def check_optional_dep(
         rsgispy.check_optional_dep(True, "spec_unmix_fcls", "scipy", "unmixing")
     """
     if not available:
-        raise RSGISPyException(
+        msg = (
             f"{feature_name} requires '{package_name}'. "
             f"Install it with: pip install \"rsgispy[{extra}]\""
         )
+        if error_detail:
+            msg += f" (import failed with: {error_detail})"
+        raise RSGISPyException(msg)

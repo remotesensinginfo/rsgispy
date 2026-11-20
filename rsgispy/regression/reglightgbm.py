@@ -36,17 +36,13 @@ from rsgispy.tools._gbdt_common import (
     get_lightgbm_optuna_param_space as _tools_get_lightgbm_optuna_param_space,
     is_lightgbm_gpu_available as _tools_is_lightgbm_gpu_available,
     load_joblib_model,
+    safe_import_optional,
     save_joblib_model,
+    validate_gpu_device_id,
 )
 from rsgispy.tools._sklearn import clone_sklearn_estimator, sklearn
 
-try:
-    import lightgbm as lgb  # pylint: disable=import-error
-
-    HAVE_LIGHTGBM = True
-except ImportError:
-    lgb = None  # type: ignore[assignment]
-    HAVE_LIGHTGBM = False
+lgb, HAVE_LIGHTGBM, _LIGHTGBM_LOAD_ERROR = safe_import_optional("lightgbm")
 
 __all__ = [
     "is_lightgbm_gpu_available",
@@ -75,6 +71,9 @@ def is_lightgbm_gpu_available(gpu_device_id: Optional[int] = None) -> bool:
         if rlgb.is_lightgbm_gpu_available():
             print("LightGBM GPU ready")
     """
+    validate_gpu_device_id(gpu_device_id)
+    if not HAVE_LIGHTGBM:
+        return False
     return _tools_is_lightgbm_gpu_available(gpu_device_id)
 
 
@@ -193,6 +192,7 @@ def save_lightgbm_regressor(
         pkg_name="lightgbm",
         extra="lightgbm",
         func_name="save_lightgbm_regressor",
+        error_detail=_LIGHTGBM_LOAD_ERROR,
     )
 
 
@@ -219,6 +219,7 @@ def load_lightgbm_regressor(
         extra="lightgbm",
         func_name="load_lightgbm_regressor",
         label="LightGBM regressor model",
+        error_detail=_LIGHTGBM_LOAD_ERROR,
     )
 
 
@@ -238,6 +239,7 @@ _LGB_REG_BACKEND = GBDTRegBackendSpec(
     fit_estimator=_fit_lgb_reg_estimator,
     load_model=load_lightgbm_regressor,
     save_model=save_lightgbm_regressor,
+    get_error_detail=lambda: _LIGHTGBM_LOAD_ERROR,
 )
 
 

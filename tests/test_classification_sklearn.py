@@ -448,6 +448,10 @@ def test_apply_class_zero_and_xgboost_workflow(tmp_path):
     Verify out_id=0 collision avoidance, class_info dict input, and XGBoost
     0-based consecutive internal ID training -> recoded output ID raster.
     """
+    import rsgispy.classification.classxgboost as rcxgb  # noqa: PLC0415
+
+    if not rcxgb.HAVE_XGBOOST:
+        pytest.skip("xgboost is not available or failed to load")
     xgboost = pytest.importorskip("xgboost")
 
     b1 = np.tile(np.linspace(0.0, 100.0, 10, dtype=np.float32), (10, 1))

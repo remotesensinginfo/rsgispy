@@ -644,6 +644,26 @@ class GBDTRegBackendSpec:
             Tuple[Any, Dict[str, Any], Optional[Callable[[], None]]],
         ]
     ] = None
+    get_error_detail: Optional[Callable[[], Optional[str]]] = None
+
+
+def _check_reg_backend_available(
+    backend: GBDTRegBackendSpec,
+    func_name: str,
+) -> None:
+    """Verify GBDT regressor backend availability and surface native errors."""
+    err_detail = (
+        backend.get_error_detail()
+        if backend.get_error_detail is not None
+        else None
+    )
+    rsgispy.check_optional_dep(
+        backend.is_available(),
+        func_name,
+        backend.package_name,
+        backend.extra,
+        error_detail=err_detail,
+    )
 
 
 def _merge_gbdt_reg_params(
@@ -737,9 +757,7 @@ def optimise_gbdt_regressor(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches
-    rsgispy.check_optional_dep(
-        backend.is_available(), func_name, backend.package_name, backend.extra
-    )
+    _check_reg_backend_available(backend, func_name)
     rsgispy.check_optional_dep(
         HAVE_OPTUNA, func_name, "optuna", backend.extra
     )
@@ -953,9 +971,7 @@ def train_gbdt_regressor(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    rsgispy.check_optional_dep(
-        backend.is_available(), func_name, backend.package_name, backend.extra
-    )
+    _check_reg_backend_available(backend, func_name)
     check_sklearn_available(func_name)
     gpu_active, eff_gpu_id = _tools_resolve_gbdt_gpu(
         backend.name, backend.gpu_available, use_gpu, gpu_device_id
@@ -1084,9 +1100,7 @@ def apply_gbdt_regressor(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    rsgispy.check_optional_dep(
-        backend.is_available(), func_name, backend.package_name, backend.extra
-    )
+    _check_reg_backend_available(backend, func_name)
     check_sklearn_available(func_name)
     gpu_active, eff_gpu_id = _tools_resolve_gbdt_gpu(
         backend.name, backend.gpu_available, use_gpu, gpu_device_id

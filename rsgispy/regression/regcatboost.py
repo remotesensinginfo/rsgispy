@@ -33,16 +33,12 @@ from rsgispy.tools._gbdt_common import (
     is_catboost_gpu_available as _tools_is_catboost_gpu_available,
     load_xgb_or_cb_model,
     prepare_cb_predict_estimator as _prepare_cb_predict_estimator,
+    safe_import_optional,
     save_xgb_or_cb_model,
+    validate_gpu_device_id,
 )
 
-try:
-    import catboost as cb  # pylint: disable=import-error
-
-    HAVE_CATBOOST = True
-except ImportError:
-    cb = None  # type: ignore[assignment]
-    HAVE_CATBOOST = False
+cb, HAVE_CATBOOST, _CATBOOST_LOAD_ERROR = safe_import_optional("catboost")
 
 __all__ = [
     "is_catboost_gpu_available",
@@ -71,6 +67,9 @@ def is_catboost_gpu_available(gpu_device_id: Optional[int] = None) -> bool:
         if rcb.is_catboost_gpu_available():
             print("CatBoost GPU ready")
     """
+    validate_gpu_device_id(gpu_device_id)
+    if not HAVE_CATBOOST:
+        return False
     return _tools_is_catboost_gpu_available(gpu_device_id)
 
 
@@ -145,6 +144,7 @@ def save_catboost_regressor(
         pkg_name="catboost",
         extra="catboost",
         func_name="save_catboost_regressor",
+        error_detail=_CATBOOST_LOAD_ERROR,
     )
 
 
@@ -171,6 +171,7 @@ def load_catboost_regressor(
         extra="catboost",
         func_name="load_catboost_regressor",
         label="CatBoost regressor model",
+        error_detail=_CATBOOST_LOAD_ERROR,
     )
 
 
@@ -191,6 +192,7 @@ _CB_REG_BACKEND = GBDTRegBackendSpec(
     load_model=load_catboost_regressor,
     save_model=save_catboost_regressor,
     prepare_predict_estimator=_prepare_cb_predict_estimator,
+    get_error_detail=lambda: _CATBOOST_LOAD_ERROR,
 )
 
 

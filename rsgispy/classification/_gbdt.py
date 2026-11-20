@@ -94,6 +94,23 @@ class GBDTBackendSpec:
         ]
     ] = None
     require_consecutive_zero_labels: bool = False
+    get_error_detail: Optional[Callable[[], Optional[str]]] = None
+
+
+def _check_backend_available(backend: GBDTBackendSpec, func_name: str) -> None:
+    """Verify GBDT backend availability and surface any native load error."""
+    err_detail = (
+        backend.get_error_detail()
+        if backend.get_error_detail is not None
+        else None
+    )
+    rsgispy.check_optional_dep(
+        backend.is_available(),
+        func_name,
+        backend.package_name,
+        backend.extra,
+        error_detail=err_detail,
+    )
 
 
 def resolve_gbdt_gpu(
@@ -257,9 +274,7 @@ def optimise_gbdt_classifier(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
-    rsgispy.check_optional_dep(
-        backend.is_available(), func_name, backend.package_name, backend.extra
-    )
+    _check_backend_available(backend, func_name)
     rsgispy.check_optional_dep(
         HAVE_OPTUNA, func_name, "optuna", backend.extra
     )
@@ -483,9 +498,7 @@ def train_gbdt_classifier(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    rsgispy.check_optional_dep(
-        backend.is_available(), func_name, backend.package_name, backend.extra
-    )
+    _check_backend_available(backend, func_name)
     check_sklearn_available(func_name)
     gpu_active, eff_gpu_id = resolve_gbdt_gpu(backend, use_gpu, gpu_device_id)
 
@@ -635,9 +648,7 @@ def apply_gbdt_classifier(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    rsgispy.check_optional_dep(
-        backend.is_available(), func_name, backend.package_name, backend.extra
-    )
+    _check_backend_available(backend, func_name)
     check_sklearn_available(func_name)
     gpu_active, eff_gpu_id = resolve_gbdt_gpu(backend, use_gpu, gpu_device_id)
     estimator = (
