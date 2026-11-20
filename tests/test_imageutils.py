@@ -11,7 +11,7 @@ import pytest
 import rasterio
 from rasterio.enums import ColorInterp, Compression
 from rasterio.transform import from_origin
-from shapely.geometry import box
+from shapely.geometry import MultiPolygon, Point, box
 
 import rsgispy
 import rsgispy.imagecalc.maths
@@ -404,6 +404,204 @@ def test_create_blank_and_copy_and_bbox_and_buf_imgs(tmp_path, monkeypatch):
         assert src.crs.to_epsg() == 32630
         assert src.compression == Compression.deflate
         assert np.all(src.read(1) == 1)
+
+
+def test_create_blank_ref_imgs(tmp_path, monkeypatch):
+    """Test create_blank_ref_imgs with file path, GeoDataFrame, MultiPolygon, and grid snapping."""
+    polys_gpkg = tmp_path / "tiles.gpkg"
+    out_dir_gpkg = tmp_path / "ref_imgs_gpkg"
+    out_dir_gdf = tmp_path / "ref_imgs_gdf"
+
+    poly1 = box(500000.0, 5199800.0, 500200.0, 5200000.0)
+    poly2 = MultiPolygon(
+        [
+            box(500300.0, 5199700.0, 500400.0, 5199900.0),
+            box(500450.0, 5199800.0, 500600.0, 5200050.0),
+        ]
+    )
+    gdf = gpd.GeoDataFrame(
+        {"tile_id": ["zone_a", "zone_b"]},
+        geometry=[poly1, poly2],
+        crs="EPSG:32630",
+    )
+    gdf.to_file(polys_gpkg, layer="tiles", driver="GPKG")
+
+    # Spy on create_blank_img to confirm it is called once per polygon
+    call_count = 0
+    orig_create_blank = rsgispy.imageutils.blank.create_blank_img
+
+    def _spy_create_blank(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return orig_create_blank(*args, **kwargs)
+
+    monkeypatch.setattr(rsgispy.imageutils.blank, "create_blank_img", _spy_create_blank)
+
+    out_paths = rsgispy.imageutils.create_blank_ref_imgs(
+        vec_file=str(polys_gpkg),
+        vec_lyr="tiles",
+        out_img_col="tile_id",
+        out_img_dir=out_dir_gpkg,
+        out_img_res=10.0,
+        out_img_prefix="ref_",
+        out_img_pxl_val=-99.0,
+        out_img_n_bands=2,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+        no_data_val=-99.0,
+        use_pbar=False,
+    )
+
+    assert call_count == 2
+    assert out_paths == [
+        str(out_dir_gpkg / "ref_zone_a.tif"),
+        str(out_dir_gpkg / "ref_zone_b.tif"),
+    ]
+
+    with rasterio.open(out_paths[0]) as src:
+        assert src.count == 2
+        assert src.width == 20
+        assert src.height == 20
+        assert src.crs.to_epsg() == 32630
+        assert src.nodata == -99.0
+        assert src.bounds.left == pytest.approx(500000.0)
+        assert src.bounds.right == pytest.approx(500200.0)
+        assert src.bounds.bottom == pytest.approx(5199800.0)
+        assert src.bounds.top == pytest.approx(5200000.0)
+        np.testing.assert_allclose(src.read(), -99.0)
+
+    with rasterio.open(out_paths[1]) as src:
+        assert src.count == 2
+        assert src.width == 30
+        assert src.height == 35
+        assert src.bounds.left == pytest.approx(500300.0)
+        assert src.bounds.right == pytest.approx(500600.0)
+        assert src.bounds.bottom == pytest.approx(5199700.0)
+        assert src.bounds.top == pytest.approx(5200050.0)
+
+    # GeoDataFrame without CRS using explicit epsg_code, integer column, and snap_to_grid
+    gdf_no_crs = gpd.GeoDataFrame(
+        {"uid": [101, 102]},
+        geometry=[
+            box(500003.0, 5199904.0, 500052.0, 5199953.0),
+            box(500100.0, 5199900.0, 500140.0, 5199940.0),
+        ],
+    )
+    gdf_paths = rsgispy.imageutils.blank.create_blank_ref_imgs(
+        vec_file=gdf_no_crs,
+        vec_lyr=None,
+        out_img_col="uid",
+        out_img_dir=out_dir_gdf,
+        out_img_res=10.0,
+        out_img_pxl_val=5.0,
+        snap_to_grid=True,
+        epsg_code=32630,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_8UINT,
+        use_pbar=False,
+    )
+    assert gdf_paths == [
+        str(out_dir_gdf / "101.tif"),
+        str(out_dir_gdf / "102.tif"),
+    ]
+    with rasterio.open(gdf_paths[0]) as src:
+        assert src.crs.to_epsg() == 32630
+        assert src.dtypes == ("uint8",)
+        assert src.bounds.left == pytest.approx(500000.0)
+        assert src.bounds.right >= 500052.0
+        assert src.bounds.bottom <= 5199904.0
+        assert src.bounds.top == pytest.approx(5199960.0)
+        assert np.all(src.read(1) == 5)
+
+
+def test_create_blank_ref_imgs_validation(tmp_path):
+    """Test error handling for create_blank_ref_imgs invalid inputs."""
+    out_dir = tmp_path / "bad_out"
+    base_geoms = [
+        box(500000.0, 5199900.0, 500100.0, 5200000.0),
+        box(500100.0, 5199900.0, 500200.0, 5200000.0),
+    ]
+
+    # Missing column
+    gdf = gpd.GeoDataFrame(
+        {"tile_id": ["a", "b"]}, geometry=base_geoms, crs="EPSG:32630"
+    )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageutils.create_blank_ref_imgs(
+            gdf, None, "missing_col", out_dir, 10.0, use_pbar=False
+        )
+
+    # Duplicate values in unique column
+    gdf_dup = gpd.GeoDataFrame(
+        {"tile_id": ["dup", "dup"]}, geometry=base_geoms, crs="EPSG:32630"
+    )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageutils.create_blank_ref_imgs(
+            gdf_dup, None, "tile_id", out_dir, 10.0, use_pbar=False
+        )
+
+    # Null / empty values in unique column
+    gdf_null = gpd.GeoDataFrame(
+        {"tile_id": ["ok", None]}, geometry=base_geoms, crs="EPSG:32630"
+    )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageutils.create_blank_ref_imgs(
+            gdf_null, None, "tile_id", out_dir, 10.0, use_pbar=False
+        )
+
+    gdf_empty_name = gpd.GeoDataFrame(
+        {"tile_id": ["ok", "  "]}, geometry=base_geoms, crs="EPSG:32630"
+    )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageutils.create_blank_ref_imgs(
+            gdf_empty_name, None, "tile_id", out_dir, 10.0, use_pbar=False
+        )
+
+    # Path separator in name value
+    gdf_bad_name = gpd.GeoDataFrame(
+        {"tile_id": ["ok", "../bad"]}, geometry=base_geoms, crs="EPSG:32630"
+    )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageutils.create_blank_ref_imgs(
+            gdf_bad_name, None, "tile_id", out_dir, 10.0, use_pbar=False
+        )
+
+    # Empty vector layer
+    gdf_empty = gpd.GeoDataFrame(
+        {"tile_id": []}, geometry=[], crs="EPSG:32630"
+    )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageutils.create_blank_ref_imgs(
+            gdf_empty, None, "tile_id", out_dir, 10.0, use_pbar=False
+        )
+
+    # Missing CRS without epsg_code
+    gdf_nocrs = gpd.GeoDataFrame({"tile_id": ["a", "b"]}, geometry=base_geoms)
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageutils.create_blank_ref_imgs(
+            gdf_nocrs, None, "tile_id", out_dir, 10.0, use_pbar=False
+        )
+
+    # Non-polygon geometry
+    gdf_pt = gpd.GeoDataFrame(
+        {"tile_id": ["pt1"]},
+        geometry=[Point(500000.0, 5200000.0)],
+        crs="EPSG:32630",
+    )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageutils.create_blank_ref_imgs(
+            gdf_pt, None, "tile_id", out_dir, 10.0, use_pbar=False
+        )
+
+    # Invalid resolution / n_bands
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageutils.create_blank_ref_imgs(
+            gdf, None, "tile_id", out_dir, -10.0, use_pbar=False
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imageutils.create_blank_ref_imgs(
+            gdf, None, "tile_id", out_dir, 10.0, out_img_n_bands=0, use_pbar=False
+        )
 
 
 def test_resample_img_to_match_and_reproject_image(tmp_path, monkeypatch):
