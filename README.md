@@ -112,7 +112,7 @@ pip install -e ".[all,test]"
 pip install -e ".[dev]"
 ```
 
-> **Note:** On Linux, installing `dataaccess` or `all` may require `libcurl4-openssl-dev` and `libssl-dev` if `pycurl` is built from source. Functions using `pyexiftool` (`imaging` / `all`) also require the `exiftool` command-line tool on `PATH`.
+> **Note:** On Linux, installing `dataaccess` or `all` may require `libcurl4-openssl-dev` and `libssl-dev` if `pycurl` is built from source. On macOS, `xgboost` and `lightgbm` (included in `xgboost`, `lightgbm`, `gbdt`, and `all`) require the OpenMP runtime (`brew install libomp`). Functions using `pyexiftool` (`imaging` / `all`) also require the `exiftool` command-line tool on `PATH`.
 
 ## Quickstart
 

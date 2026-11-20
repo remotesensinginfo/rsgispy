@@ -31,17 +31,12 @@ from rsgispy.tools._gbdt_common import (
     fit_lgb_estimator as _fit_lgb_estimator,
     get_lightgbm_optuna_param_space as _tools_get_lightgbm_optuna_param_space,
     load_joblib_model,
+    safe_import_optional,
     save_joblib_model,
     validate_gpu_device_id,
 )
 
-try:
-    import lightgbm as lgb  # pylint: disable=import-error
-
-    HAVE_LIGHTGBM = True
-except ImportError:
-    lgb = None  # type: ignore[assignment]
-    HAVE_LIGHTGBM = False
+lgb, HAVE_LIGHTGBM, _LIGHTGBM_LOAD_ERROR = safe_import_optional("lightgbm")
 
 __all__ = [
     "is_lightgbm_gpu_available",
@@ -67,7 +62,7 @@ def _detect_lightgbm_gpu_device(
     CPU-only builds do not emit C++ fatal stderr messages.
     """
     dev_idx = validate_gpu_device_id(gpu_device_id)
-    if not HAVE_LIGHTGBM:
+    if not HAVE_LIGHTGBM or lgb is None:
         return None
     has_nvidia = (
         shutil.which("nvidia-smi") is not None
@@ -196,6 +191,7 @@ def save_lightgbm_classifier(
         pkg_name="lightgbm",
         extra="lightgbm",
         func_name="save_lightgbm_classifier",
+        error_detail=_LIGHTGBM_LOAD_ERROR,
     )
 
 
@@ -221,6 +217,7 @@ def load_lightgbm_classifier(
         extra="lightgbm",
         func_name="load_lightgbm_classifier",
         label="LightGBM model",
+        error_detail=_LIGHTGBM_LOAD_ERROR,
     )
 
 
@@ -260,6 +257,7 @@ _LGB_BACKEND = GBDTBackendSpec(
     load_model=load_lightgbm_classifier,
     save_model=save_lightgbm_classifier,
     require_consecutive_zero_labels=False,
+    get_error_detail=lambda: _LIGHTGBM_LOAD_ERROR,
 )
 
 

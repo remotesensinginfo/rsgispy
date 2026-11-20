@@ -30,22 +30,22 @@ from rsgispy.tools._gbdt_common import (
     get_catboost_optuna_param_space as _tools_get_catboost_optuna_param_space,
     load_xgb_or_cb_model,
     prepare_cb_predict_estimator as _prepare_cb_predict_estimator,
+    safe_import_optional,
     sample_extended_cb_optuna_params as _tools_sample_extended_cb_optuna_params,
     save_xgb_or_cb_model,
     validate_gpu_device_id,
 )
 
-try:
-    import catboost as cb  # pylint: disable=import-error
-    from catboost.utils import (  # pylint: disable=import-error
-        get_gpu_device_count as _cb_get_gpu_device_count,
+cb, HAVE_CATBOOST, _CATBOOST_LOAD_ERROR = safe_import_optional("catboost")
+if HAVE_CATBOOST:
+    _cb_utils, _have_cb_utils, _ = safe_import_optional("catboost.utils")
+    _cb_get_gpu_device_count = (
+        getattr(_cb_utils, "get_gpu_device_count", None)
+        if _have_cb_utils and _cb_utils is not None
+        else None
     )
-
-    HAVE_CATBOOST = True
-except ImportError:
-    cb = None  # type: ignore[assignment]
+else:
     _cb_get_gpu_device_count = None  # type: ignore[assignment]
-    HAVE_CATBOOST = False
 
 __all__ = [
     "is_catboost_gpu_available",
@@ -197,6 +197,7 @@ def save_catboost_classifier(
         pkg_name="catboost",
         extra="catboost",
         func_name="save_catboost_classifier",
+        error_detail=_CATBOOST_LOAD_ERROR,
     )
 
 
@@ -226,6 +227,7 @@ def load_catboost_classifier(
         extra="catboost",
         func_name="load_catboost_classifier",
         label="CatBoost model",
+        error_detail=_CATBOOST_LOAD_ERROR,
     )
 
 
@@ -250,6 +252,7 @@ _CB_BACKEND = GBDTBackendSpec(
     save_model=save_catboost_classifier,
     prepare_predict_estimator=_prepare_cb_predict_estimator,
     require_consecutive_zero_labels=False,
+    get_error_detail=lambda: _CATBOOST_LOAD_ERROR,
 )
 
 

@@ -5,9 +5,11 @@ serialisation helpers reused across :mod:`rsgispy.classification` and
 :mod:`rsgispy.regression`.
 """
 
+import importlib
 import inspect
 import os
 import shutil
+import sys
 from typing import (
     Any,
     Callable,
@@ -26,43 +28,61 @@ import rsgispy
 from rsgispy.imageprocess import ensure_file_exists
 from rsgispy.tools.files import ensure_parent_dir
 
-try:
-    import xgboost as xgb  # pylint: disable=import-error
-
-    HAVE_XGBOOST = True
-except ImportError:
-    xgb = None  # type: ignore[assignment]
-    HAVE_XGBOOST = False
-
-try:
-    import lightgbm as lgb  # pylint: disable=import-error
-
-    HAVE_LIGHTGBM = True
-except ImportError:
-    lgb = None  # type: ignore[assignment]
-    HAVE_LIGHTGBM = False
-
-try:
-    import catboost as cb  # pylint: disable=import-error
-    from catboost.utils import (  # pylint: disable=import-error
-        get_gpu_device_count as _cb_get_gpu_device_count,
-    )
-
-    HAVE_CATBOOST = True
-except ImportError:
-    cb = None  # type: ignore[assignment]
-    _cb_get_gpu_device_count = None  # type: ignore[assignment]
-    HAVE_CATBOOST = False
-
-try:
-    import joblib  # pylint: disable=import-error
-
-    HAVE_JOBLIB = True
-except ImportError:
-    joblib = None  # type: ignore[assignment]
-    HAVE_JOBLIB = False
-
 OptunaSpaceType = Union[Dict[str, Any], Callable[[Any], Mapping[str, Any]]]
+
+
+def safe_import_optional(
+    module_name: str,
+) -> Tuple[Optional[Any], bool, Optional[str]]:
+    """
+    Safely import an optional module, catching both ``ImportError`` and native
+    shared-library load errors (such as ``XGBoostError`` or ``OSError`` when
+    ``libomp.dylib`` is missing on macOS).
+
+    :param module_name: Dotted module name to import.
+    :return: ``(module, is_available, error_detail)``.
+    """
+    try:
+        mod = importlib.import_module(module_name)
+        return mod, True, None
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        err_detail = f"{type(exc).__name__}: {exc}"
+        if (
+            sys.platform == "darwin"
+            and "libomp" in err_detail
+            and "brew install libomp" not in err_detail
+        ):
+            err_detail += " (on macOS, install OpenMP with: brew install libomp)"
+        return None, False, err_detail
+
+
+def _get_xgb_module() -> Optional[Any]:
+    """Lazily import ``xgboost`` if available and loadable."""
+    xgb_mod, ok, _ = safe_import_optional("xgboost")
+    return xgb_mod if ok else None
+
+
+def _get_lgb_module() -> Optional[Any]:
+    """Lazily import ``lightgbm`` if available and loadable."""
+    lgb_mod, ok, _ = safe_import_optional("lightgbm")
+    return lgb_mod if ok else None
+
+
+def _get_cb_gpu_device_count() -> Optional[Callable[[], Any]]:
+    """Lazily import ``catboost.utils.get_gpu_device_count`` if loadable."""
+    cb_utils, ok, _ = safe_import_optional("catboost.utils")
+    if not ok or cb_utils is None:
+        return None
+    return getattr(cb_utils, "get_gpu_device_count", None)
+
+
+def _import_joblib(func_name: str, extra: str) -> Any:
+    """Lazily import ``joblib`` or raise ``RSGISPyException`` if unavailable."""
+    jb_mod, ok, err_detail = safe_import_optional("joblib")
+    rsgispy.check_optional_dep(
+        ok, func_name, "joblib", extra, error_detail=err_detail
+    )
+    return jb_mod
 
 
 def validate_gpu_device_id(gpu_device_id: Optional[int]) -> Optional[int]:
@@ -116,10 +136,11 @@ def resolve_gbdt_gpu(
 def is_xgboost_gpu_available(gpu_device_id: Optional[int] = None) -> bool:
     """Check whether CUDA GPU execution is supported and available for XGBoost."""
     dev_idx = validate_gpu_device_id(gpu_device_id)
-    if not HAVE_XGBOOST:
+    xgb_mod = _get_xgb_module()
+    if xgb_mod is None:
         return False
     try:
-        build_info = xgb.build_info()
+        build_info = xgb_mod.build_info()
     except Exception:  # pylint: disable=broad-exception-caught
         return False
     if not bool(build_info.get("USE_CUDA", False)):
@@ -131,7 +152,7 @@ def is_xgboost_gpu_available(gpu_device_id: Optional[int] = None) -> bool:
     )
     probe_y = np.array([0, 1, 0, 1], dtype=np.int32)
     try:
-        xgb.XGBClassifier(
+        xgb_mod.XGBClassifier(
             n_estimators=1,
             max_depth=1,
             tree_method="hist",
@@ -294,15 +315,18 @@ def save_xgb_or_cb_model(
     pkg_name: str,
     extra: str,
     func_name: str,
+    error_detail: Optional[str] = None,
 ) -> None:
     """Save XGBoost or CatBoost model using joblib or native ``save_model()``."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    rsgispy.check_optional_dep(have_pkg, func_name, pkg_name, extra)
+    rsgispy.check_optional_dep(
+        have_pkg, func_name, pkg_name, extra, error_detail=error_detail
+    )
     out_path = ensure_parent_dir(out_file)
     ext = os.path.splitext(out_path)[1].lower()
     if ext in (".joblib", ".pkl"):
-        rsgispy.check_optional_dep(HAVE_JOBLIB, func_name, "joblib", extra)
-        joblib.dump(model, out_path)
+        jb_mod = _import_joblib(func_name, extra)
+        jb_mod.dump(model, out_path)
     else:
         model.save_model(out_path)
 
@@ -315,16 +339,19 @@ def load_xgb_or_cb_model(
     extra: str,
     func_name: str,
     label: str,
+    error_detail: Optional[str] = None,
 ) -> Any:
     """Load XGBoost or CatBoost model from joblib or native file format."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    rsgispy.check_optional_dep(have_pkg, func_name, pkg_name, extra)
+    rsgispy.check_optional_dep(
+        have_pkg, func_name, pkg_name, extra, error_detail=error_detail
+    )
     in_path = os.fspath(in_file)
     ensure_file_exists(in_path, label=label)
     ext = os.path.splitext(in_path)[1].lower()
     if ext in (".joblib", ".pkl"):
-        rsgispy.check_optional_dep(HAVE_JOBLIB, func_name, "joblib", extra)
-        return joblib.load(in_path)
+        jb_mod = _import_joblib(func_name, extra)
+        return jb_mod.load(in_path)
     mdl = model_factory()
     mdl.load_model(in_path)
     return mdl
@@ -340,7 +367,8 @@ def detect_lightgbm_gpu_device(
 ) -> Optional[str]:
     """Detect operational LightGBM GPU backend (``'cuda'`` or ``'gpu'``)."""
     dev_idx = validate_gpu_device_id(gpu_device_id)
-    if not HAVE_LIGHTGBM:
+    lgb_mod = _get_lgb_module()
+    if lgb_mod is None:
         return None
     has_nvidia = (
         shutil.which("nvidia-smi") is not None
@@ -364,7 +392,7 @@ def detect_lightgbm_gpu_device(
         if dev_idx is not None:
             kwargs["gpu_device_id"] = dev_idx
         try:
-            lgb.LGBMClassifier(**kwargs).fit(probe_x, probe_y)
+            lgb_mod.LGBMClassifier(**kwargs).fit(probe_x, probe_y)
             return dev_name
         except Exception:  # pylint: disable=broad-exception-caught
             continue
@@ -489,7 +517,17 @@ def fit_lgb_estimator(
     """Fit ``LGBMClassifier`` or ``LGBMRegressor`` with optional early stopping."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     if valid_x is not None and valid_y is not None and early_stopping_rounds is not None:
-        callbacks = [lgb.early_stopping(int(early_stopping_rounds), verbose=False)]
+        lgb_mod, ok, err_detail = safe_import_optional("lightgbm")
+        rsgispy.check_optional_dep(
+            ok,
+            "fit_lgb_estimator",
+            "lightgbm",
+            "lightgbm",
+            error_detail=err_detail,
+        )
+        callbacks = [
+            lgb_mod.early_stopping(int(early_stopping_rounds), verbose=False)
+        ]
         fit_sig = inspect.signature(est.fit).parameters
         if "eval_X" in fit_sig and "eval_y" in fit_sig:
             est.fit(
@@ -518,13 +556,16 @@ def save_joblib_model(
     pkg_name: str,
     extra: str,
     func_name: str,
+    error_detail: Optional[str] = None,
 ) -> None:
     """Save a joblib-serialised GBDT model after verifying package dependencies."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    rsgispy.check_optional_dep(have_pkg, func_name, pkg_name, extra)
-    rsgispy.check_optional_dep(HAVE_JOBLIB, func_name, "joblib", extra)
+    rsgispy.check_optional_dep(
+        have_pkg, func_name, pkg_name, extra, error_detail=error_detail
+    )
+    jb_mod = _import_joblib(func_name, extra)
     out_path = ensure_parent_dir(out_file)
-    joblib.dump(model, out_path)
+    jb_mod.dump(model, out_path)
 
 
 def load_joblib_model(
@@ -534,14 +575,17 @@ def load_joblib_model(
     extra: str,
     func_name: str,
     label: str,
+    error_detail: Optional[str] = None,
 ) -> Any:
     """Load a joblib-serialised GBDT model after verifying dependencies."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    rsgispy.check_optional_dep(have_pkg, func_name, pkg_name, extra)
-    rsgispy.check_optional_dep(HAVE_JOBLIB, func_name, "joblib", extra)
+    rsgispy.check_optional_dep(
+        have_pkg, func_name, pkg_name, extra, error_detail=error_detail
+    )
+    jb_mod = _import_joblib(func_name, extra)
     in_path = os.fspath(in_file)
     ensure_file_exists(in_path, label=label)
-    return joblib.load(in_path)
+    return jb_mod.load(in_path)
 
 
 # ---------------------------------------------------------------------------
@@ -552,10 +596,11 @@ def load_joblib_model(
 def is_catboost_gpu_available(gpu_device_id: Optional[int] = None) -> bool:
     """Check whether CUDA GPU execution is supported and available for CatBoost."""
     dev_idx = validate_gpu_device_id(gpu_device_id)
-    if not HAVE_CATBOOST or _cb_get_gpu_device_count is None:
+    get_gpu_cnt = _get_cb_gpu_device_count()
+    if get_gpu_cnt is None:
         return False
     try:
-        n_gpus = int(_cb_get_gpu_device_count())
+        n_gpus = int(get_gpu_cnt())
     except Exception:  # pylint: disable=broad-exception-caught
         return False
     if dev_idx is not None:

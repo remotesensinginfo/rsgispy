@@ -90,9 +90,16 @@ def _build_gbdt_fixture(tmp_path: Path):
     return uni_cfg, mv_cfg, train_df, valid_df, test_df, msk_path
 
 
+def _skip_if_reg_gbdt_unavailable(pkg: str, have_flag: bool):
+    """Skip test cleanly when optional GBDT package is missing or failed to load."""
+    if not have_flag:
+        pytest.skip(f"{pkg} is not available or failed to load")
+    return pytest.importorskip(pkg)
+
+
 def test_xgboost_univariate_and_multivariate(tmp_path: Path):
     """Test XGBoost regression Optuna tuning, training, save/load, and apply."""
-    pytest.importorskip("xgboost")
+    _skip_if_reg_gbdt_unavailable("xgboost", rxgb.HAVE_XGBOOST)
     pytest.importorskip("optuna")
 
     assert isinstance(rxgb.is_xgboost_gpu_available(), bool)
@@ -178,7 +185,7 @@ def test_xgboost_univariate_and_multivariate(tmp_path: Path):
 
 def test_lightgbm_univariate_and_multivariate(tmp_path: Path):
     """Test LightGBM regression Optuna tuning, MultiOutput wrapping, save/load, apply."""
-    pytest.importorskip("lightgbm")
+    _skip_if_reg_gbdt_unavailable("lightgbm", rlgb.HAVE_LIGHTGBM)
     pytest.importorskip("optuna")
 
     assert isinstance(rlgb.is_lightgbm_gpu_available(), bool)
@@ -237,7 +244,7 @@ def test_lightgbm_univariate_and_multivariate(tmp_path: Path):
 
 def test_catboost_univariate_and_multivariate(tmp_path: Path):
     """Test CatBoost regression Optuna tuning, MultiRMSE multivariate, save/load, apply."""
-    pytest.importorskip("catboost")
+    _skip_if_reg_gbdt_unavailable("catboost", rcb.HAVE_CATBOOST)
     pytest.importorskip("optuna")
 
     assert isinstance(rcb.is_catboost_gpu_available(), bool)
