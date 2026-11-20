@@ -66,6 +66,7 @@ def test_default_gdalformat_is_gtiff():
         ic_dist.buffer_img_pxl_vals,
         ic_fill.calc_fill_regions_knn,
         ic_fill.region_growing_fill,
+        ic_fill.region_growing_fill_tiled,
     ]
     for fn in funcs:
         sig = inspect.signature(fn)
@@ -852,8 +853,10 @@ def test_optional_scipy_sklearn_guards(monkeypatch):
         assert fill_fresh.HAVE_SCIPY is False
         assert hasattr(fill_fresh, "calc_fill_regions_knn")
         assert hasattr(fill_fresh, "region_growing_fill")
+        assert hasattr(fill_fresh, "region_growing_fill_tiled")
         assert "calc_fill_regions_knn" in fill_fresh.__all__
         assert "region_growing_fill" in fill_fresh.__all__
+        assert "region_growing_fill_tiled" in fill_fresh.__all__
         with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
             fill_fresh.calc_fill_regions_knn("in.tif", "fill.tif", "out.tif", 0, 1)
 
@@ -1242,3 +1245,426 @@ def test_region_growing_fill_errors(tmp_path):
 
     with pytest.raises(rsgispy.RSGISPyException, match="No valid seed"):
         ic_fill.region_growing_fill(empty_reg_p, mask_p, out_p)
+
+
+def _split_raster_into_tiles(
+    tmp_path,
+    prefix,
+    reg_arr,
+    mask_arr,
+    row_ranges,
+    col_ranges,
+    *,
+    origin=(0.0, 250.0),
+    pixel_size=(10.0, 10.0),
+    dtype="uint8",
+    reg_nodata=0,
+):
+    """Split 3D arrays into non-overlapping tile GeoTIFFs along (row_ranges, col_ranges)."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    reg_tiles = []
+    mask_tiles = []
+    out_tiles = []
+    slices = []
+    ox, oy = origin
+    px, py = pixel_size
+
+    for t_idx, (r0, r1) in enumerate(row_ranges):
+        for c_idx, (c0, c1) in enumerate(col_ranges):
+            tile_orig = (ox + c0 * px, oy - r0 * py)
+            rp = tmp_path / f"{prefix}_reg_{t_idx}_{c_idx}.tif"
+            mp = tmp_path / f"{prefix}_msk_{t_idx}_{c_idx}.tif"
+            op = tmp_path / f"{prefix}_out_{t_idx}_{c_idx}.tif"
+            _write_raster(
+                rp,
+                reg_arr[:, r0:r1, c0:c1],
+                origin=tile_orig,
+                pixel_size=pixel_size,
+                dtype=dtype,
+                nodata=reg_nodata,
+            )
+            _write_raster(
+                mp,
+                mask_arr[:, r0:r1, c0:c1],
+                origin=tile_orig,
+                pixel_size=pixel_size,
+                dtype="uint8",
+                nodata=0,
+            )
+            reg_tiles.append(rp)
+            mask_tiles.append(mp)
+            out_tiles.append(op)
+            slices.append((r0, r1, c0, c1))
+
+    return reg_tiles, mask_tiles, out_tiles, slices
+
+
+def _mosaic_tile_outputs(out_tiles, slices, shape, dtype):
+    """Assemble output tile GeoTIFFs back into a 2D NumPy array."""
+    mosaic = np.zeros(shape, dtype=dtype)
+    for op, (r0, r1, c0, c1) in zip(out_tiles, slices):
+        with rasterio.open(op) as src:
+            mosaic[r0:r1, c0:c1] = src.read(1)
+    return mosaic
+
+
+def test_region_growing_fill_tiled_matches_global(tmp_path):
+    """Test tile-list region_growing_fill_tiled matches global output for 1 and 2 cores."""
+    reg_p = tmp_path / "rgt_reg.tif"
+    mask_p = tmp_path / "rgt_mask.tif"
+    global_p = tmp_path / "rgt_global.tif"
+
+    # 15x15 grid split into irregular 4x4 tiles (widths/heights mixing 4 and 3)
+    # Seed 4 at (1, 1) and seed 34 at (13, 12), separated by a serpentine wall that forces
+    # waves to travel right, down, left, AND up across multiple empty-seed tiles.
+    # Also includes a completely empty-mask region (rows 0..2, cols 12..14) and an
+    # unreachable island at (0, 14).
+    mask = np.ones((1, 15, 15), dtype=np.uint8)
+    mask[0, :11, 5] = 0
+    mask[0, 4:, 10] = 0
+    mask[0, :3, 12:] = 0
+    mask[0, 0, 14] = 1
+
+    reg = np.zeros((1, 15, 15), dtype=np.uint8)
+    reg[0, 1, 1] = 4
+    reg[0, 13, 12] = 34
+
+    origin = (0.0, 250.0)
+    _write_raster(reg_p, reg, origin=origin, dtype="uint8", nodata=0)
+    _write_raster(mask_p, mask, origin=origin, dtype="uint8", nodata=0)
+
+    ic_fill.region_growing_fill(
+        reg_p, mask_p, global_p, connectivity=8, calc_stats=False, use_pbar=False
+    )
+    with rasterio.open(global_p) as s_glob:
+        g_arr = s_glob.read(1)
+
+    row_ranges = [(0, 4), (4, 7), (7, 12), (12, 15)]
+    col_ranges = [(0, 3), (3, 7), (7, 11), (11, 15)]
+    reg_tiles, msk_tiles, out1_tiles, slices = _split_raster_into_tiles(
+        tmp_path,
+        "irreg",
+        reg,
+        mask,
+        row_ranges,
+        col_ranges,
+        origin=origin,
+        dtype="uint8",
+        reg_nodata=0,
+    )
+
+    # Shuffle tile order to verify order-independence
+    perm = list(reversed(range(len(reg_tiles))))
+    reg_shuf = [reg_tiles[i] for i in perm]
+    msk_shuf = [msk_tiles[i] for i in perm]
+    out1_shuf = [out1_tiles[i] for i in perm]
+    slices_shuf = [slices[i] for i in perm]
+
+    ic_fill.region_growing_fill_tiled(
+        reg_shuf,
+        msk_shuf,
+        out1_shuf,
+        connectivity=8,
+        n_cores=1,
+        calc_stats=True,
+        use_pbar=False,
+    )
+    t1_arr = _mosaic_tile_outputs(out1_shuf, slices_shuf, (15, 15), np.uint8)
+    np.testing.assert_array_equal(t1_arr, g_arr)
+    assert t1_arr[0, 14] == 0
+
+    with rasterio.open(out1_shuf[-1]) as s_tile:
+        assert s_tile.dtypes[0] == "uint8"
+        assert s_tile.nodata == 0
+        tags = s_tile.tags(1)
+        assert float(tags["STATISTICS_MINIMUM"]) == 4.0
+
+    # Parallel execution with n_cores=2
+    out2_shuf = [tmp_path / f"irreg_out2_{i}.tif" for i in range(len(reg_shuf))]
+    ic_fill.region_growing_fill_tiled(
+        reg_shuf,
+        msk_shuf,
+        out2_shuf,
+        connectivity=8,
+        n_cores=2,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    t2_arr = _mosaic_tile_outputs(out2_shuf, slices_shuf, (15, 15), np.uint8)
+    np.testing.assert_array_equal(t2_arr, g_arr)
+
+    # Test 4-connectivity + max_iters=3 + n_cores=2 matches global identically
+    glob4_p = tmp_path / "rgt_glob4.tif"
+    ic_fill.region_growing_fill(
+        reg_p,
+        mask_p,
+        glob4_p,
+        connectivity=4,
+        max_iters=3,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    out4_tiles = [tmp_path / f"irreg_out4_{i}.tif" for i in range(len(reg_tiles))]
+    ic_fill.region_growing_fill_tiled(
+        reg_tiles,
+        msk_tiles,
+        out4_tiles,
+        connectivity=4,
+        max_iters=3,
+        n_cores=2,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    t4_arr = _mosaic_tile_outputs(out4_tiles, slices, (15, 15), np.uint8)
+    with rasterio.open(glob4_p) as s_g4:
+        np.testing.assert_array_equal(t4_arr, s_g4.read(1))
+
+    # Extreme 1x1 tile files on a 5x5 int32 grid with non-zero nodata (-99)
+    small_reg_p = tmp_path / "rgt_small_reg.tif"
+    small_msk_p = tmp_path / "rgt_small_msk.tif"
+    small_g_p = tmp_path / "rgt_small_g.tif"
+    s_reg = np.zeros((1, 5, 5), dtype=np.int32)
+    s_reg[0, 0, 0] = 10
+    s_reg[0, 4, 4] = 20
+    s_msk = np.ones((1, 5, 5), dtype=np.uint8)
+    _write_raster(small_reg_p, s_reg, origin=origin, dtype="int32", nodata=-99)
+    _write_raster(small_msk_p, s_msk, origin=origin, dtype="uint8", nodata=0)
+
+    ic_fill.region_growing_fill(
+        small_reg_p,
+        small_msk_p,
+        small_g_p,
+        ref_no_data=-99,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    one_by_one = [(i, i + 1) for i in range(5)]
+    s_reg_t, s_msk_t, s_out_t, s_slices = _split_raster_into_tiles(
+        tmp_path,
+        "px1",
+        s_reg,
+        s_msk,
+        one_by_one,
+        one_by_one,
+        origin=origin,
+        dtype="int32",
+        reg_nodata=-99,
+    )
+    ic_fill.region_growing_fill_tiled(
+        s_reg_t,
+        s_msk_t,
+        s_out_t,
+        ref_no_data=-99,
+        n_cores=2,
+        calc_stats=True,
+        use_pbar=False,
+    )
+    small_mosaic = _mosaic_tile_outputs(s_out_t, s_slices, (5, 5), np.int32)
+    with rasterio.open(small_g_p) as sg, rasterio.open(s_out_t[0]) as st0:
+        assert st0.nodata == -99
+        np.testing.assert_array_equal(small_mosaic, sg.read(1))
+
+
+def test_region_growing_fill_tiled_unseeded_eez_outside_seeds_and_errors(tmp_path):
+    """Test unseeded EEZ tiles, outside seeds, sparse omitted tiles, tmp_dir cleanup, and errors."""
+    # Build a 2x2 layout of 6x6 tiles:
+    # Tile 0 (TL): seed 4 at (1, 1) outside fill_mask
+    # Tile 1 (TR) & Tile 2 (BL): EEZ tiles with NO seeds
+    # Tile 3 (BR): seed 34 at (4, 3) (asymmetric to avoid exact equidistant ties)
+    reg_tiles = []
+    msk_tiles = []
+    origins = [(0.0, 120.0), (60.0, 120.0), (0.0, 60.0), (60.0, 60.0)]
+    for idx, orig in enumerate(origins):
+        r_arr = np.zeros((1, 6, 6), dtype=np.uint8)
+        m_arr = np.ones((1, 6, 6), dtype=np.uint8)
+        if idx == 0:
+            r_arr[0, 1, 1] = 4
+            m_arr[0, 1, 1] = 0  # seed outside fill_mask
+        elif idx == 3:
+            r_arr[0, 4, 3] = 34
+
+        rp = tmp_path / f"eez_reg_{idx}.tif"
+        mp = tmp_path / f"eez_msk_{idx}.tif"
+        _write_raster(
+            rp, r_arr, origin=orig, pixel_size=(10.0, 10.0), dtype="uint8", nodata=0
+        )
+        _write_raster(
+            mp, m_arr, origin=orig, pixel_size=(10.0, 10.0), dtype="uint8", nodata=0
+        )
+        reg_tiles.append(rp)
+        msk_tiles.append(mp)
+
+    # Reference global 12x12 arrays
+    full_reg = np.zeros((1, 12, 12), dtype=np.uint8)
+    full_reg[0, 1, 1] = 4
+    full_reg[0, 10, 9] = 34
+    full_msk = np.ones((1, 12, 12), dtype=np.uint8)
+    full_msk[0, 1, 1] = 0
+    full_reg_p = tmp_path / "eez_full_reg.tif"
+    full_msk_p = tmp_path / "eez_full_msk.tif"
+    glob_out = tmp_path / "eez_global.tif"
+    _write_raster(
+        full_reg_p,
+        full_reg,
+        origin=(0.0, 120.0),
+        pixel_size=(10.0, 10.0),
+        dtype="uint8",
+        nodata=0,
+    )
+    _write_raster(
+        full_msk_p,
+        full_msk,
+        origin=(0.0, 120.0),
+        pixel_size=(10.0, 10.0),
+        dtype="uint8",
+        nodata=0,
+    )
+    ic_fill.region_growing_fill(
+        full_reg_p, full_msk_p, glob_out, calc_stats=False, use_pbar=False
+    )
+    with rasterio.open(glob_out) as sg:
+        g_arr = sg.read(1)
+
+    work_parent = tmp_path / "custom_tmp"
+    out_tiles = [tmp_path / "nested_out" / f"eez_out_{idx}.tif" for idx in range(4)]
+    ic_fill.region_growing_fill_tiled(
+        reg_tiles,
+        msk_tiles,
+        out_tiles,
+        n_cores=2,
+        tmp_dir=work_parent,
+        calc_stats=False,
+        use_pbar=False,
+    )
+
+    tile_slices = [(0, 6, 0, 6), (0, 6, 6, 12), (6, 12, 0, 6), (6, 12, 6, 12)]
+    t_arr = _mosaic_tile_outputs(out_tiles, tile_slices, (12, 12), np.uint8)
+    np.testing.assert_array_equal(t_arr, g_arr)
+    assert t_arr[1, 1] == 0  # outside fill_mask cleared to nodata
+    assert t_arr[0, 11] == 4 or t_arr[11, 0] == 34  # unseeded EEZ tiles filled
+
+    # Temporary workspace inside work_parent was cleaned up automatically
+    assert work_parent.exists()
+    assert list(work_parent.iterdir()) == []
+
+    # Sparse L-shaped subset (3 of 4 tiles, omitting tile 2) with n_cores=-1
+    sparse_out = [tmp_path / f"sparse_out_{i}.tif" for i in (0, 1, 3)]
+    ic_fill.region_growing_fill_tiled(
+        [reg_tiles[0], reg_tiles[1], reg_tiles[3]],
+        [msk_tiles[0], msk_tiles[1], msk_tiles[3]],
+        sparse_out,
+        n_cores=-1,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(sparse_out[1]) as s_tr:
+        tr_arr = s_tr.read(1)
+        assert np.all(np.isin(tr_arr, [4, 34]))
+
+    # Validation errors
+    err_outs = [tmp_path / f"rgt_err_{i}.tif" for i in range(4)]
+    with pytest.raises(rsgispy.RSGISPyException, match="empty"):
+        ic_fill.region_growing_fill_tiled([], [], [])
+    with pytest.raises(rsgispy.RSGISPyException, match="same length"):
+        ic_fill.region_growing_fill_tiled(reg_tiles, msk_tiles[:2], err_outs)
+    with pytest.raises(rsgispy.RSGISPyException, match="max_sweeps"):
+        ic_fill.region_growing_fill_tiled(
+            reg_tiles, msk_tiles, err_outs, max_sweeps=-1
+        )
+    with pytest.raises(rsgispy.RSGISPyException, match="connectivity"):
+        ic_fill.region_growing_fill_tiled(
+            reg_tiles, msk_tiles, err_outs, connectivity=6
+        )
+    with pytest.raises(rsgispy.RSGISPyException, match="max_iters"):
+        ic_fill.region_growing_fill_tiled(
+            reg_tiles, msk_tiles, err_outs, max_iters=-2
+        )
+
+    # Overlapping tile check
+    ov_reg = tmp_path / "ov_reg.tif"
+    ov_msk = tmp_path / "ov_msk.tif"
+    _write_raster(
+        ov_reg,
+        np.zeros((1, 6, 6), dtype=np.uint8),
+        origin=(30.0, 120.0),
+        pixel_size=(10.0, 10.0),
+        dtype="uint8",
+        nodata=0,
+    )
+    _write_raster(
+        ov_msk,
+        np.ones((1, 6, 6), dtype=np.uint8),
+        origin=(30.0, 120.0),
+        pixel_size=(10.0, 10.0),
+        dtype="uint8",
+        nodata=0,
+    )
+    with pytest.raises(rsgispy.RSGISPyException, match="overlap"):
+        ic_fill.region_growing_fill_tiled(
+            [reg_tiles[0], ov_reg],
+            [msk_tiles[0], ov_msk],
+            err_outs[:2],
+        )
+
+    # Unaligned pixel grid origin
+    unaligned_reg = tmp_path / "unaligned_reg.tif"
+    unaligned_msk = tmp_path / "unaligned_msk.tif"
+    _write_raster(
+        unaligned_reg,
+        np.zeros((1, 6, 6), dtype=np.uint8),
+        origin=(63.0, 120.0),
+        pixel_size=(10.0, 10.0),
+        dtype="uint8",
+        nodata=0,
+    )
+    _write_raster(
+        unaligned_msk,
+        np.ones((1, 6, 6), dtype=np.uint8),
+        origin=(63.0, 120.0),
+        pixel_size=(10.0, 10.0),
+        dtype="uint8",
+        nodata=0,
+    )
+    with pytest.raises(rsgispy.RSGISPyException, match="aligned"):
+        ic_fill.region_growing_fill_tiled(
+            [reg_tiles[0], unaligned_reg],
+            [msk_tiles[0], unaligned_msk],
+            err_outs[:2],
+        )
+
+    # Different CRS between tiles
+    crs_reg = tmp_path / "crs_reg.tif"
+    crs_msk = tmp_path / "crs_msk.tif"
+    _write_raster(
+        crs_reg,
+        np.zeros((1, 6, 6), dtype=np.uint8),
+        origin=(60.0, 120.0),
+        pixel_size=(10.0, 10.0),
+        crs="EPSG:32631",
+        dtype="uint8",
+        nodata=0,
+    )
+    _write_raster(
+        crs_msk,
+        np.ones((1, 6, 6), dtype=np.uint8),
+        origin=(60.0, 120.0),
+        pixel_size=(10.0, 10.0),
+        crs="EPSG:32631",
+        dtype="uint8",
+        nodata=0,
+    )
+    with pytest.raises(rsgispy.RSGISPyException, match="CRS"):
+        ic_fill.region_growing_fill_tiled(
+            [reg_tiles[0], crs_reg],
+            [msk_tiles[0], crs_msk],
+            err_outs[:2],
+        )
+
+    # No valid seeds across all tiles
+    with pytest.raises(rsgispy.RSGISPyException, match="No valid seed"):
+        ic_fill.region_growing_fill_tiled(
+            [reg_tiles[1], reg_tiles[2]],
+            [msk_tiles[1], msk_tiles[2]],
+            err_outs[:2],
+            use_pbar=False,
+        )
