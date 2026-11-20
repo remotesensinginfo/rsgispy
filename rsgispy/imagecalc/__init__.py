@@ -10,7 +10,7 @@ transforms, region filling, percentiles, and windowed point sampling using
   EMD, and similarity metrics
 * :mod:`rsgispy.imagecalc.distance` — proximity distance transforms and buffering
 * :mod:`rsgispy.imagecalc.encoding` — integer recoding and one-hot category encoding
-* :mod:`rsgispy.imagecalc.fill` — KNN spatial region filling
+* :mod:`rsgispy.imagecalc.fill` — KNN and iterative region-growing spatial region filling
 * :mod:`rsgispy.imagecalc.leastcostpath` — least-cost path computation across raster cost surfaces
 * :mod:`rsgispy.imagecalc.maths` — muParser band/image math expressions and proportions
 * :mod:`rsgispy.imagecalc.percentiles` — band and per-pixel percentile computations

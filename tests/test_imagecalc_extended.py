@@ -65,6 +65,7 @@ def test_default_gdalformat_is_gtiff():
         ic_dist.calc_dist_to_img_vals_tiled,
         ic_dist.buffer_img_pxl_vals,
         ic_fill.calc_fill_regions_knn,
+        ic_fill.region_growing_fill,
     ]
     for fn in funcs:
         sig = inspect.signature(fn)
@@ -850,7 +851,9 @@ def test_optional_scipy_sklearn_guards(monkeypatch):
 
         assert fill_fresh.HAVE_SCIPY is False
         assert hasattr(fill_fresh, "calc_fill_regions_knn")
+        assert hasattr(fill_fresh, "region_growing_fill")
         assert "calc_fill_regions_knn" in fill_fresh.__all__
+        assert "region_growing_fill" in fill_fresh.__all__
         with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
             fill_fresh.calc_fill_regions_knn("in.tif", "fill.tif", "out.tif", 0, 1)
 
@@ -932,3 +935,310 @@ def test_calc_img_similarity_metrics(tmp_path):
         ic_cmp.calc_img_similarity_metrics(str(img_a), str(img_b), metrics=[])
     with pytest.raises(rsgispy.RSGISPyException):
         ic_cmp.calc_img_similarity_metrics(str(img_a), str(img_b), metrics=["corelation"])
+
+
+def test_region_growing_fill_balanced_voronoi(tmp_path):
+    """Test balanced nearest-boundary region growing on diagonal and cardinal seeds."""
+    reg_p = tmp_path / "rg_reg_diag.tif"
+    mask_p = tmp_path / "rg_mask_diag.tif"
+    out_p = tmp_path / "rg_out_diag.tif"
+
+    reg_arr = np.zeros((1, 9, 9), dtype=np.uint8)
+    reg_arr[0, 0, 0] = 4
+    reg_arr[0, 8, 8] = 34
+    mask_arr = np.ones((1, 9, 9), dtype=np.uint8)
+
+    _write_raster(reg_p, reg_arr, dtype="uint8", nodata=0)
+    _write_raster(mask_p, mask_arr, dtype="uint8", nodata=0)
+
+    ic_fill.region_growing_fill(
+        reg_p,
+        mask_p,
+        out_p,
+        calc_stats=True,
+        use_pbar=False,
+    )
+    with rasterio.open(out_p) as src:
+        out = src.read(1)
+        assert out.dtype == np.uint8
+        assert src.nodata == 0
+        tags = src.tags(1)
+        assert float(tags["STATISTICS_MINIMUM"]) == 4.0
+        assert float(tags["STATISTICS_MAXIMUM"]) == 34.0
+
+    rows, cols = np.indices((9, 9))
+    assert np.all(out[rows + cols < 8] == 4)
+    assert np.all(out[rows + cols > 8] == 34)
+    assert out[0, 0] == 4
+    assert out[8, 8] == 34
+    assert np.all(np.isin(out, [4, 34]))
+
+    # Non-axis-aligned triangle check: (0,0)=1, (0,8)=2, (8,4)=3 -> central pixel (3,4)
+    # Nearest to (8,4) is dist 5; to (0,0)/(0,8) is dist sqrt(9+16)=5 -> closer to (0,x) at row 2
+    reg_tri = np.zeros((1, 9, 9), dtype=np.uint8)
+    reg_tri[0, 0, 0] = 1
+    reg_tri[0, 0, 8] = 2
+    reg_tri[0, 8, 4] = 3
+    reg_tri_p = tmp_path / "rg_tri.tif"
+    out_tri_p = tmp_path / "rg_tri_out.tif"
+    _write_raster(reg_tri_p, reg_tri, dtype="uint8", nodata=0)
+    ic_fill.region_growing_fill(
+        reg_tri_p, mask_p, out_tri_p, calc_stats=False, use_pbar=False
+    )
+    with rasterio.open(out_tri_p) as src:
+        tri = src.read(1)
+    assert tri[1, 1] == 1
+    assert tri[1, 7] == 2
+    assert tri[6, 4] == 3
+
+
+def test_region_growing_fill_barriers_and_disconnected(tmp_path):
+    """Test geodesic barrier routing and disconnected component isolation."""
+    reg_p = tmp_path / "rg_reg_barrier.tif"
+    mask_p = tmp_path / "rg_mask_barrier.tif"
+    out8_p = tmp_path / "rg_out_barrier8.tif"
+    out4_p = tmp_path / "rg_out_barrier4.tif"
+
+    # Left block is connected except separated by a wall with an opening only at bottom,
+    # plus a completely disconnected island on cols 6..7.
+    mask = np.array(
+        [
+            [
+                [1, 1, 0, 1, 1, 0, 1, 1],
+                [1, 1, 0, 1, 1, 0, 1, 1],
+                [1, 1, 0, 1, 1, 0, 1, 1],
+                [1, 1, 0, 1, 1, 0, 0, 0],
+                [1, 1, 1, 1, 1, 0, 1, 1],
+            ]
+        ],
+        dtype=np.uint8,
+    )
+    # Seed 4 at (0, 0), Seed 34 at (3, 4) — 34 must dominate upper pocket (0, 3) around wall
+    reg = np.full((1, 5, 8), -99, dtype=np.int32)
+    reg[0, 0, 0] = 4
+    reg[0, 3, 4] = 34
+
+    _write_raster(reg_p, reg, dtype="int32", nodata=-99)
+    _write_raster(mask_p, mask, dtype="uint8", nodata=0)
+
+    ic_fill.region_growing_fill(
+        reg_p,
+        mask_p,
+        out8_p,
+        ref_no_data=-99,
+        fill_region_val=1,
+        connectivity=8,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out8_p) as src:
+        out8 = src.read(1)
+        assert out8.dtype == np.int32
+        assert src.nodata == -99
+
+    # Wall and non-mask pixels remain -99
+    assert np.all(out8[:, 2][:4] == -99)
+    assert np.all(out8[:, 5] == -99)
+    # Disconnected unseeded islands (cols 6..7) remain unfilled (-99)
+    assert np.all(out8[:, 6:] == -99)
+    # Upper pocket behind the barrier is claimed by 34 (geodesically much closer than 4)
+    assert out8[0, 3] == 34
+    assert out8[0, 4] == 34
+    # Left side claimed by 4 above the opening; 34 reaches (4, 1) first (17 vs 22)
+    assert np.all(out8[:4, :2] == 4)
+    assert out8[4, 0] == 4
+    assert out8[4, 1] == 34
+
+    # 4-connectivity check with diagonal-only gap across barrier
+    mask_diag = np.array(
+        [
+            [
+                [1, 1, 0, 1],
+                [1, 0, 1, 1],
+                [1, 1, 0, 1],
+            ]
+        ],
+        dtype=np.uint8,
+    )
+    reg_diag = np.zeros((1, 3, 4), dtype=np.uint8)
+    reg_diag[0, 0, 0] = 7
+    reg_diag_p = tmp_path / "rg_reg_4c.tif"
+    mask_diag_p = tmp_path / "rg_mask_4c.tif"
+    _write_raster(reg_diag_p, reg_diag, dtype="uint8", nodata=0)
+    _write_raster(mask_diag_p, mask_diag, dtype="uint8", nodata=0)
+
+    ic_fill.region_growing_fill(
+        reg_diag_p,
+        mask_diag_p,
+        out4_p,
+        connectivity=4,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out4_p) as src:
+        out4 = src.read(1)
+    # Under 4-connectivity, (0,1)->(1,2) cannot cross diagonal-only choke point
+    assert out4[0, 1] == 7
+    assert out4[2, 1] == 7
+    assert out4[1, 2] == 0
+    assert out4[0, 3] == 0
+
+
+def test_region_growing_fill_adjacent_overlap_max_iters_and_nodata(tmp_path):
+    """Test adjacent masks, spatial intersection offsets, max_iters, and float/NaN handling."""
+    # 1) Adjacent seed outside fill_mask == 2 + max_iters
+    reg = np.zeros((1, 7, 7), dtype=np.uint8)
+    reg[0, 3, 3] = 5
+    mask = np.full((1, 7, 7), 2, dtype=np.uint8)
+    mask[0, 3, 3] = 0  # seed sits just outside fill_mask==2
+
+    reg_p = tmp_path / "rg_adj_reg.tif"
+    mask_p = tmp_path / "rg_adj_mask.tif"
+    out_p = tmp_path / "rg_adj_out.tif"
+    _write_raster(reg_p, reg, dtype="uint8", nodata=0)
+    _write_raster(mask_p, mask, dtype="uint8", nodata=0)
+
+    ic_fill.region_growing_fill(
+        reg_p,
+        mask_p,
+        out_p,
+        fill_region_val=2,
+        max_iters=1,
+        no_data_val=99,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out_p) as src:
+        out = src.read(1)
+        assert src.nodata == 99
+    # Center (outside fill_mask==2) stays nodata=99; 3x3 ring around it gets 5; rest stays 99
+    assert out[3, 3] == 99
+    assert out[2, 2] == 5 and out[3, 4] == 5 and out[4, 4] == 5
+    assert out[1, 3] == 99 and out[0, 0] == 99
+
+    # max_iters=0 does not expand beyond initial seed pixels inside fill_mask
+    out_zero_p = tmp_path / "rg_zero_out.tif"
+    mask_full = np.full((1, 7, 7), 2, dtype=np.uint8)
+    mask_full_p = tmp_path / "rg_full_mask.tif"
+    _write_raster(mask_full_p, mask_full, dtype="uint8", nodata=0)
+    ic_fill.region_growing_fill(
+        reg_p,
+        mask_full_p,
+        out_zero_p,
+        fill_region_val=2,
+        max_iters=0,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out_zero_p) as src:
+        out_zero = src.read(1)
+    assert out_zero[3, 3] == 5
+    assert int(np.count_nonzero(out_zero == 5)) == 1
+
+    # 2) Partial spatial overlap with pixel offsets
+    reg_big = np.zeros((1, 6, 6), dtype=np.uint8)
+    reg_big[0, 1, 1] = 11
+    reg_big[0, 4, 4] = 22
+    mask_shifted = np.ones((1, 4, 4), dtype=np.uint8)
+    reg_big_p = tmp_path / "rg_big.tif"
+    mask_shifted_p = tmp_path / "rg_shifted.tif"
+    out_overlap_p = tmp_path / "rg_overlap.tif"
+    _write_raster(
+        reg_big_p,
+        reg_big,
+        origin=(0.0, 60.0),
+        pixel_size=(10.0, 10.0),
+        dtype="uint8",
+        nodata=0,
+    )
+    _write_raster(
+        mask_shifted_p,
+        mask_shifted,
+        origin=(10.0, 50.0),
+        pixel_size=(10.0, 10.0),
+        dtype="uint8",
+        nodata=0,
+    )
+    ic_fill.region_growing_fill(
+        reg_big_p,
+        mask_shifted_p,
+        out_overlap_p,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out_overlap_p) as src:
+        ov = src.read(1)
+        assert ov.shape == (4, 4)
+        assert ov[0, 0] == 11
+        assert ov[3, 3] == 22
+
+    # 3) Float raster with NaN nodata + works without scipy
+    flt_reg = np.full((1, 4, 4), np.nan, dtype=np.float32)
+    flt_reg[0, 0, 0] = 1.5
+    flt_reg[0, 3, 3] = 2.5
+    flt_mask = np.ones((1, 4, 4), dtype=np.uint8)
+    flt_reg_p = tmp_path / "rg_flt_reg.tif"
+    flt_mask_p = tmp_path / "rg_flt_mask.tif"
+    flt_out_p = tmp_path / "rg_flt_out.tif"
+    _write_raster(flt_reg_p, flt_reg, dtype="float32", nodata=np.nan)
+    _write_raster(flt_mask_p, flt_mask, dtype="uint8", nodata=0)
+
+    ic_fill.region_growing_fill(
+        flt_reg_p, flt_mask_p, flt_out_p, calc_stats=False, use_pbar=False
+    )
+    with rasterio.open(flt_out_p) as src:
+        fout = src.read(1)
+        assert fout.dtype == np.float32
+        assert fout[0, 0] == pytest.approx(1.5)
+        assert fout[3, 3] == pytest.approx(2.5)
+        assert np.all(np.isin(fout, [1.5, 2.5]))
+
+    # Casting NaN-nodata float seed raster to uint8 falls back out nodata to 0
+    uint_out_p = tmp_path / "rg_flt_to_uint.tif"
+    ic_fill.region_growing_fill(
+        flt_reg_p,
+        flt_mask_p,
+        uint_out_p,
+        datatype=rsgispy.TYPE_8UINT,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(uint_out_p) as src:
+        assert src.dtypes[0] == "uint8"
+        assert src.nodata == 0
+
+
+def test_region_growing_fill_errors(tmp_path):
+    """Test input validation errors in region_growing_fill."""
+    reg_p = tmp_path / "rg_err_reg.tif"
+    mask_p = tmp_path / "rg_err_mask.tif"
+    mask_crs_p = tmp_path / "rg_err_crs.tif"
+    empty_reg_p = tmp_path / "rg_err_empty.tif"
+    out_p = tmp_path / "rg_err_out.tif"
+
+    reg = np.array([[[0, 1], [0, 0]]], dtype=np.uint8)
+    mask = np.ones((1, 2, 2), dtype=np.uint8)
+    empty_reg = np.zeros((1, 2, 2), dtype=np.uint8)
+
+    _write_raster(reg_p, reg, dtype="uint8", nodata=0)
+    _write_raster(mask_p, mask, dtype="uint8", nodata=0)
+    _write_raster(mask_crs_p, mask, crs="EPSG:4326", dtype="uint8", nodata=0)
+    _write_raster(empty_reg_p, empty_reg, dtype="uint8", nodata=0)
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_fill.region_growing_fill(tmp_path / "missing.tif", mask_p, out_p)
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_fill.region_growing_fill(reg_p, tmp_path / "missing_mask.tif", out_p)
+
+    with pytest.raises(rsgispy.RSGISPyException, match="connectivity"):
+        ic_fill.region_growing_fill(reg_p, mask_p, out_p, connectivity=6)
+
+    with pytest.raises(rsgispy.RSGISPyException, match="max_iters"):
+        ic_fill.region_growing_fill(reg_p, mask_p, out_p, max_iters=-1)
+
+    with pytest.raises(rsgispy.RSGISPyException, match="projection"):
+        ic_fill.region_growing_fill(reg_p, mask_crs_p, out_p)
+
+    with pytest.raises(rsgispy.RSGISPyException, match="No valid seed"):
+        ic_fill.region_growing_fill(empty_reg_p, mask_p, out_p)

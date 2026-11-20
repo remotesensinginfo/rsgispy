@@ -3,7 +3,7 @@ rsgispy.imagecalc
 
 The :mod:`rsgispy.imagecalc` subpackage provides modules for performing
 mathematical calculations, summary statistics, percentiles, image comparison,
-encoding, rescaling, distance/buffering, KNN gap filling, and windowed sampling
+encoding, rescaling, distance/buffering, region filling, and windowed sampling
 on raster image bands using `pymu-eval <https://github.com/remotesensinginfo/pymu-eval>`_
 and `rasterio <https://rasterio.readthedocs.io/>`_.
 
@@ -85,7 +85,7 @@ Encoding, Distance, Least-Cost Path, Filling & Sampling
 * :doc:`imagecalc/encoding` — Integer recoding and one-hot category encoding.
 * :doc:`imagecalc/distance` — Distance-to-pixel-values (full and tiled) and morphological buffering.
 * :doc:`imagecalc/leastcostpath` — Least-cost path calculation across raster cost surfaces.
-* :doc:`imagecalc/fill` — K-nearest-neighbour region filling.
+* :doc:`imagecalc/fill` — K-nearest-neighbour and iterative region-growing filling.
 * :doc:`imagecalc/calc_pt_win_smpls` — Windowed summary statistics around point samples.
 
 .. toctree::
