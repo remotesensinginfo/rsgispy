@@ -16,13 +16,12 @@ import pytest
 from shapely.geometry import LineString, Point, box
 
 import rsgispy
-import rsgispy.vectorattrs
-import rsgispy.vectorattrs.columns as va_cols
-import rsgispy.vectorattrs.io as va_io
-import rsgispy.vectorattrs.spatial as va_spatial
-import rsgispy.vectorstats
-import rsgispy.vectorstats.metrics as vs_metrics
-import rsgispy.vectorstats.variogram as vs_vario
+import rsgispy.vector
+import rsgispy.vector.attrs as va_cols
+import rsgispy.vector.attrs as va_io
+import rsgispy.vector.attrs as va_spatial
+import rsgispy.vector.stats as vs_metrics
+import rsgispy.vector.stats as vs_vario
 
 
 def _can_import(mod_name: str) -> bool:
@@ -299,10 +298,9 @@ def test_columns_creation_luts_text_dates_and_angles(tmp_path, monkeypatch):
 
 def test_spatial_attrs_and_vectorstats(tmp_path):
     """Test vectorattrs.spatial functions and vectorstats.variogram/metrics."""
-    assert not hasattr(rsgispy.vectorattrs, "__all__")
-    assert not hasattr(rsgispy.vectorattrs, "read_vec_column")
-    assert not hasattr(rsgispy.vectorstats, "__all__")
-    assert not hasattr(rsgispy.vectorstats, "calc_vec_area")
+    assert rsgispy.vector.__all__ == ["io", "create", "geoms", "attrs", "stats", "selection"]
+    assert not hasattr(rsgispy.vector, "read_vec_column")
+    assert not hasattr(rsgispy.vector, "calc_vec_area")
 
     polys_gpkg = str(tmp_path / "polys.gpkg")
     pts_gpkg = str(tmp_path / "pts.gpkg")

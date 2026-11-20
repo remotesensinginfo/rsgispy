@@ -2,6 +2,8 @@
 Tests for rsgispy.imagemorphology.
 """
 
+import inspect
+
 import numpy as np
 import pytest
 import rasterio
@@ -65,6 +67,7 @@ def test_create_circular_op_and_single_band_dilate_erode_gradient(tmp_path):
         op_size=5,
         gdalformat="GTIFF",
         datatype=rsgispy.TYPE_8UINT,
+        use_pbar=False,
     )
     with rasterio.open(dil_file_out) as dds:
         dil = dds.read(1)
@@ -88,11 +91,10 @@ def test_create_circular_op_and_single_band_dilate_erode_gradient(tmp_path):
     rimorph.image_erode(
         str(dil_file_out),
         str(ero_out),
-        "",
-        use_op_file=False,
         op_size=3,
         gdalformat="GTIFF",
         datatype=rsgispy.TYPE_8UINT,
+        use_pbar=False,
     )
     with rasterio.open(ero_out) as eds:
         ero = eds.read(1)
@@ -108,11 +110,10 @@ def test_create_circular_op_and_single_band_dilate_erode_gradient(tmp_path):
     rimorph.image_gradient(
         str(blk_path),
         str(grad_out),
-        "",
-        use_op_file=False,
         op_size=3,
         gdalformat="GTIFF",
         datatype=rsgispy.TYPE_32FLOAT,
+        use_pbar=False,
     )
     with rasterio.open(grad_out) as gds:
         grad = gds.read(1)
@@ -136,13 +137,28 @@ def test_combined_out_and_local_minima(tmp_path):
     ero_comb = tmp_path / "ero_comb.tif"
     grad_comb = tmp_path / "grad_comb.tif"
     rimorph.image_dilate_combined_out(
-        str(in_path), str(dil_comb), "", False, 3, "GTIFF", rsgispy.TYPE_32FLOAT
+        str(in_path),
+        str(dil_comb),
+        op_size=3,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+        use_pbar=False,
     )
     rimorph.image_erode_combined_out(
-        str(in_path), str(ero_comb), "", False, 3, "GTIFF", rsgispy.TYPE_32FLOAT
+        str(in_path),
+        str(ero_comb),
+        op_size=3,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+        use_pbar=False,
     )
     rimorph.image_gradient_combined_out(
-        str(in_path), str(grad_comb), "", False, 3, "GTIFF", rsgispy.TYPE_32FLOAT
+        str(in_path),
+        str(grad_comb),
+        op_size=3,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+        use_pbar=False,
     )
     with (
         rasterio.open(dil_comb) as dds,
@@ -169,11 +185,10 @@ def test_combined_out_and_local_minima(tmp_path):
         str(min_seq),
         sequencial_out=True,
         allow_equal=False,
-        morph_op_file="",
-        use_op_file=False,
         op_size=3,
         gdalformat="GTIFF",
         datatype=rsgispy.TYPE_16UINT,
+        use_pbar=False,
     )
     with rasterio.open(min_seq) as mds:
         m = mds.read(1)
@@ -190,11 +205,10 @@ def test_combined_out_and_local_minima(tmp_path):
         str(min_comb),
         sequencial_out=False,
         allow_equal=False,
-        morph_op_file="",
-        use_op_file=False,
         op_size=3,
         gdalformat="GTIFF",
         datatype=rsgispy.TYPE_8UINT,
+        use_pbar=False,
     )
     with rasterio.open(min_comb) as mcds:
         mc = mcds.read(1)
@@ -217,13 +231,12 @@ def test_opening_closing_and_top_hats(tmp_path):
     rimorph.image_opening(
         str(in_path),
         str(open_out),
-        str(open_tmp),
-        "",
-        use_op_file=False,
         op_size=3,
+        tmp_img=str(open_tmp),
+        niters=1,
         gdalformat="GTIFF",
         datatype=rsgispy.TYPE_8UINT,
-        niters=1,
+        use_pbar=False,
     )
     assert open_tmp.exists()
     with rasterio.open(open_out) as ods:
@@ -235,13 +248,11 @@ def test_opening_closing_and_top_hats(tmp_path):
     rimorph.image_closing(
         str(in_path),
         str(close_out),
-        "",
-        "",
-        use_op_file=False,
         op_size=3,
+        niters=2,
         gdalformat="GTIFF",
         datatype=rsgispy.TYPE_8UINT,
-        niters=2,
+        use_pbar=False,
     )
     with rasterio.open(close_out) as cds:
         closed = cds.read(1)
@@ -253,12 +264,10 @@ def test_opening_closing_and_top_hats(tmp_path):
     rimorph.image_white_top_hat(
         str(in_path),
         str(wth_out),
-        "",
-        "",
-        use_op_file=False,
         op_size=3,
         gdalformat="GTIFF",
         datatype=rsgispy.TYPE_8UINT,
+        use_pbar=False,
     )
     with rasterio.open(wth_out) as wds:
         wth = wds.read(1)
@@ -270,12 +279,10 @@ def test_opening_closing_and_top_hats(tmp_path):
     rimorph.image_black_top_hat(
         str(in_path),
         str(bth_out),
-        "",
-        "",
-        use_op_file=False,
         op_size=3,
         gdalformat="GTIFF",
         datatype=rsgispy.TYPE_8UINT,
+        use_pbar=False,
     )
     with rasterio.open(bth_out) as bds:
         bth = bds.read(1)
@@ -287,21 +294,80 @@ def test_opening_closing_and_top_hats(tmp_path):
         rimorph.image_dilate(
             str(tmp_path / "missing.tif"),
             str(open_out),
-            "",
-            False,
-            3,
-            "GTIFF",
-            rsgispy.TYPE_8UINT,
+            op_size=3,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_8UINT,
+            use_pbar=False,
         )
     with pytest.raises(rsgispy.RSGISPyException):
         rimorph.image_opening(
             str(in_path),
             str(open_out),
-            "",
-            "",
-            False,
-            3,
-            "GTIFF",
-            rsgispy.TYPE_8UINT,
+            op_size=3,
             niters=0,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_8UINT,
+            use_pbar=False,
+        )
+
+
+def test_imagemorphology_v1_signatures_and_defaults(tmp_path):
+    """Verify v1.0 keyword-only tail and default datatype/nodata resolution."""
+    kw_tail = {
+        "gdalformat": "GTIFF",
+        "datatype": None,
+        "no_data_val": None,
+        "calc_stats": True,
+        "use_pbar": True,
+    }
+    raster_fns = [
+        getattr(rimorph, name)
+        for name in rimorph.__all__
+        if name != "create_circular_op"
+    ]
+    assert len(raster_fns) == 12
+    for fn in raster_fns:
+        sig = inspect.signature(fn)
+        params = list(sig.parameters.values())
+        assert params[0].name == "input_img"
+        assert params[1].name == "output_img"
+        for kw_name, kw_default in kw_tail.items():
+            assert kw_name in sig.parameters, f"{fn.__name__} missing {kw_name}"
+            p = sig.parameters[kw_name]
+            assert p.kind == inspect.Parameter.KEYWORD_ONLY, (
+                f"{fn.__name__}.{kw_name} must be keyword-only"
+            )
+            assert p.default == kw_default
+
+    # Default datatype=None preserves input dtype and honours no_data_val
+    arr_f32 = np.full((7, 7), 10.0, dtype=np.float32)
+    arr_f32[3, 3] = 2.0
+    in_f32 = tmp_path / "in_f32.tif"
+    _write_raster(in_f32, arr_f32, dtype="float32")
+
+    out_dil = tmp_path / "dil_default.tif"
+    rimorph.image_dilate(str(in_f32), str(out_dil), no_data_val=-9999.0, use_pbar=False)
+    with rasterio.open(out_dil) as ds:
+        assert ds.dtypes[0] == "float32"
+        assert ds.nodata == -9999.0
+
+    # Local minima datatype=None resolves to uint8 (binary) or uint32 (sequential)
+    out_min_bin = tmp_path / "min_bin.tif"
+    rimorph.image_local_minima(
+        str(in_f32), str(out_min_bin), sequencial_out=False, allow_equal=False, use_pbar=False
+    )
+    with rasterio.open(out_min_bin) as ds:
+        assert ds.dtypes[0] == "uint8"
+
+    out_min_seq = tmp_path / "min_seq_def.tif"
+    rimorph.image_local_minima(
+        str(in_f32), str(out_min_seq), sequencial_out=True, allow_equal=False, use_pbar=False
+    )
+    with rasterio.open(out_min_seq) as ds:
+        assert ds.dtypes[0] == "uint32"
+
+    # Passing gdalformat positionally must raise TypeError
+    with pytest.raises(TypeError):
+        rimorph.image_dilate(
+            str(in_f32), str(tmp_path / "bad_pos.tif"), "", False, 3, "GTIFF"
         )

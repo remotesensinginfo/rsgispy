@@ -6,7 +6,7 @@ masking, and local solar/sensor incidence and exitance angle functions using
 
 from contextlib import ExitStack
 import math
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import rasterio
@@ -25,6 +25,7 @@ from rsgispy.imageprocess import (
     ensure_file_exists,
     open_output_dataset,
 )
+from rsgispy.imageutils.stats import pop_img_stats
 
 __all__ = [
     "hillshade",
@@ -101,7 +102,7 @@ def _calc_ray_angle_block(
     dot = np.clip((pa * ra) + (pb * rb) + (pc * rc), -1.0, 1.0)
     ang_deg = np.degrees(np.arccos(dot))
     invalid = (n_vals <= 1) | np.isnan(ang_deg)
-    return np.where(invalid, fallback_val, ang_deg).astype(np.float32)
+    return np.where(invalid, fallback_val, ang_deg)
 
 
 def hillshade(
@@ -109,17 +110,28 @@ def hillshade(
     output_img: str,
     azimuth: float,
     zenith: float,
-    gdalformat: str,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
-    Calculate a uint8 hillshade layer from an input elevation model.
+    Calculate a hillshade layer from an input elevation model.
 
     :param input_img: Path to the input DEM image file.
     :param output_img: Path to the output hillshade image file.
     :param azimuth: Solar azimuth angle in degrees ``[0, 360]`` (e.g., 315).
     :param zenith: Solar zenith angle in degrees ``[0, 90]`` (e.g., 45).
-    :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type constant
+                     (Default = ``rsgispy.TYPE_8UINT`` when ``None``).
+    :param no_data_val: Optional input DEM no-data value (read from header
+                        when ``None``).
+    :param calc_stats: If ``True``, populate band statistics and overview
+                       pyramids on ``output_img`` (Default = ``True``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
@@ -134,8 +146,9 @@ def hillshade(
             gdalformat="GTIFF",
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments
     _validate_sun_angles(azimuth, zenith)
+    eff_dtype = rsgispy.TYPE_8UINT if datatype is None else int(datatype)
 
     def _block(
         dx: np.ndarray,
@@ -147,7 +160,14 @@ def hillshade(
         return _calc_hillshade_block(dx, dy, n_vals, ew_res, ns_res, azimuth, zenith)
 
     _process_single_dem_3x3(
-        input_img, output_img, gdalformat, "uint8", _block, use_pbar=use_pbar
+        input_img,
+        output_img,
+        gdalformat,
+        eff_dtype,
+        _block,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
     )
 
 
@@ -157,11 +177,15 @@ def hillshade_pxl_res_img(
     output_img: str,
     azimuth: float,
     zenith: float,
-    gdalformat: str,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
-    Calculate a uint8 hillshade layer from a DEM and an external 2-band pixel
+    Calculate a hillshade layer from a DEM and an external 2-band pixel
     resolution image (Band 1: East-West resolution, Band 2: North-South resolution).
 
     :param in_dem_img: Path to the input DEM image file.
@@ -169,7 +193,14 @@ def hillshade_pxl_res_img(
     :param output_img: Path to the output hillshade image file.
     :param azimuth: Solar azimuth angle in degrees ``[0, 360]`` (e.g., 315).
     :param zenith: Solar zenith angle in degrees ``[0, 90]`` (e.g., 45).
-    :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type constant
+                     (Default = ``rsgispy.TYPE_8UINT`` when ``None``).
+    :param no_data_val: Optional input DEM no-data value (read from header
+                        when ``None``).
+    :param calc_stats: If ``True``, populate band statistics and overview
+                       pyramids on ``output_img`` (Default = ``True``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
@@ -185,8 +216,9 @@ def hillshade_pxl_res_img(
             gdalformat="GTIFF",
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments
     _validate_sun_angles(azimuth, zenith)
+    eff_dtype = rsgispy.TYPE_8UINT if datatype is None else int(datatype)
 
     def _block(
         dx: np.ndarray,
@@ -202,8 +234,10 @@ def hillshade_pxl_res_img(
         in_pxl_res_img,
         output_img,
         gdalformat,
-        "uint8",
+        eff_dtype,
         _block,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
 
@@ -214,7 +248,11 @@ def shadow_mask(
     azimuth: float,
     zenith: float,
     max_height: float,
-    gdalformat: str,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -226,7 +264,14 @@ def shadow_mask(
     :param azimuth: Solar azimuth angle in degrees ``[0, 360]``.
     :param zenith: Solar zenith angle in degrees ``[0, 90]``.
     :param max_height: Maximum elevation threshold terminating upward ray tracing.
-    :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type constant
+                     (Default = ``rsgispy.TYPE_8UINT`` when ``None``).
+    :param no_data_val: Optional input DEM no-data value (read from header
+                        when ``None``).
+    :param calc_stats: If ``True``, populate band statistics and overview
+                       pyramids on ``output_img`` (Default = ``True``).
     :param use_pbar: Show a progress bar during ray tracing (Default = ``True``).
 
     .. code:: python
@@ -242,22 +287,24 @@ def shadow_mask(
             gdalformat="GTIFF",
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,too-many-statements
+    # pylint: disable=too-many-arguments,too-many-locals,too-many-statements
     _validate_sun_angles(azimuth, zenith)
     ensure_file_exists(input_img)
+    eff_dtype = rsgispy.TYPE_8UINT if datatype is None else int(datatype)
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
         grid = IntersectionGrid.from_dataset(src)
         ew_res = abs(float(src.transform.a))
         ns_res = abs(float(src.transform.e))
-        no_data_val = src.nodata
+        eff_nd = no_data_val if no_data_val is not None else src.nodata
         dem = src.read(1, out_dtype=np.float64)
 
-        dem_valid = _valid_mask(dem, no_data_val)
+        dem_valid = _valid_mask(dem, eff_nd)
         dem_halo = np.pad(dem, 1, mode="edge")
-        dx, dy, n_vals = _prepare_3x3_horn_diffs(dem_halo, no_data_val)
+        dx, dy, n_vals = _prepare_3x3_horn_diffs(dem_halo, eff_nd)
         slope_rad, aspect_deg, flat_mask = _calc_slope_aspect_from_diffs(
             dx, dy, n_vals, ew_res, ns_res
         )
@@ -265,7 +312,7 @@ def shadow_mask(
         sun_zen_rad = math.radians(zenith)
         sun_az_rad = math.radians(azimuth)
 
-        shadow = np.zeros(dem.shape, dtype=np.uint8)
+        shadow = np.zeros(dem.shape, dtype=out_np_dtype)
         has_slope = dem_valid & (n_vals > 1) & ~flat_mask
         ic = (
             math.cos(sun_zen_rad) * np.cos(slope_rad)
@@ -350,11 +397,20 @@ def shadow_mask(
             stack=stack,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype="uint8",
+            out_rio_dtype=out_rio_dtype,
             grid=grid,
             count=1,
         )
         dst.write(shadow, 1)
+
+    if calc_stats:
+        pop_img_stats(
+            input_img=output_img,
+            no_data_val=None,
+            calc_pyramids=True,
+            ignore_cog=gdalformat.upper().strip() == "COG",
+            use_pbar=use_pbar,
+        )
 
 
 def local_incidence_angle(
@@ -362,7 +418,11 @@ def local_incidence_angle(
     output_img: str,
     azimuth: float,
     zenith: float,
-    gdalformat: str,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -372,7 +432,14 @@ def local_incidence_angle(
     :param output_img: Path to the output incidence angle image file.
     :param azimuth: Solar azimuth angle in degrees.
     :param zenith: Solar zenith angle in degrees.
-    :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type constant
+                     (Default = ``rsgispy.TYPE_32FLOAT`` when ``None``).
+    :param no_data_val: Optional input DEM no-data value (read from header
+                        when ``None``).
+    :param calc_stats: If ``True``, populate band statistics and overview
+                       pyramids on ``output_img`` (Default = ``True``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
@@ -387,8 +454,9 @@ def local_incidence_angle(
             gdalformat="GTIFF",
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments
     _validate_sun_angles(azimuth, zenith)
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
 
     def _block(
         dx: np.ndarray,
@@ -410,7 +478,14 @@ def local_incidence_angle(
         )
 
     _process_single_dem_3x3(
-        input_img, output_img, gdalformat, "float32", _block, use_pbar=use_pbar
+        input_img,
+        output_img,
+        gdalformat,
+        eff_dtype,
+        _block,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
     )
 
 
@@ -419,7 +494,11 @@ def local_exitance_angle(
     output_img: str,
     azimuth: float,
     zenith: float,
-    gdalformat: str,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -430,7 +509,14 @@ def local_exitance_angle(
     :param output_img: Path to the output exitance angle image file.
     :param azimuth: Sensor/view azimuth angle in degrees.
     :param zenith: Sensor/view zenith angle in degrees.
-    :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type constant
+                     (Default = ``rsgispy.TYPE_32FLOAT`` when ``None``).
+    :param no_data_val: Optional input DEM no-data value (read from header
+                        when ``None``).
+    :param calc_stats: If ``True``, populate band statistics and overview
+                       pyramids on ``output_img`` (Default = ``True``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
@@ -445,8 +531,9 @@ def local_exitance_angle(
             gdalformat="GTIFF",
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments
     _validate_sun_angles(azimuth, zenith)
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
 
     def _block(
         dx: np.ndarray,
@@ -468,5 +555,12 @@ def local_exitance_angle(
         )
 
     _process_single_dem_3x3(
-        input_img, output_img, gdalformat, "float32", _block, use_pbar=use_pbar
+        input_img,
+        output_img,
+        gdalformat,
+        eff_dtype,
+        _block,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
     )

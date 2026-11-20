@@ -5,7 +5,7 @@ Shepherd & Dymond local linear band sharpening using ``rasterio`` and ``numpy``.
 
 from contextlib import ExitStack
 import math
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 import numpy as np
 import rasterio
@@ -23,6 +23,11 @@ from rsgispy.imageprocess import (
     read_window_with_halo,
     validate_band_index,
     validate_crs_and_res,
+)
+from rsgispy.imageutils._helpers import (
+    maybe_pop_stats,
+    normalise_creation_options,
+    rsgis_dtype_from_np_dtype,
 )
 
 __all__ = [
@@ -65,10 +70,14 @@ class SharpBandInfo:  # pylint: disable=too-few-public-methods
 def select_img_bands(
     input_img: str,
     output_img: str,
-    gdalformat: str,
-    datatype: int,
     bands: Sequence[int],
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Copy selected 1-based ``bands`` from ``input_img`` into a new raster
@@ -76,11 +85,19 @@ def select_img_bands(
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output image file.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
     :param bands: Sequence of 1-based band indices to extract in order.
+    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``;
+                       Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to matching ``input_img``).
+    :param no_data_val: Optional output no-data value (defaults to ``input_img``
+                        no-data value when ``None``).
+    :param calc_stats: If ``True``, compute image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options (dict or sequence of
+                          ``'KEY=VALUE'``).
 
     .. code:: python
 
@@ -88,7 +105,8 @@ def select_img_bands(
         import rsgispy.imageutils.bands
 
         rsgispy.imageutils.bands.select_img_bands(
-            "in_img.tif", "out_img.tif", "GTIFF", rsgispy.TYPE_16UINT, [1, 3, 5]
+            "in_img.tif", "out_img.tif", [1, 3, 5],
+            gdalformat="GTIFF", datatype=rsgispy.TYPE_16UINT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -98,14 +116,20 @@ def select_img_bands(
             "bands must contain at least one 1-based band index."
         )
     band_list = [int(b) for b in bands]
-
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
+    norm_opts = normalise_creation_options(creation_opts)
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
         for bidx in band_list:
             validate_band_index(bidx, src.count, input_img)
+
+        eff_dtype = (
+            rsgis_dtype_from_np_dtype(src.dtypes[0])
+            if datatype is None
+            else datatype
+        )
+        out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
 
         dst = create_output_from_dataset(
             stack=stack,
@@ -114,9 +138,11 @@ def select_img_bands(
             gdalformat=gdalformat,
             out_rio_dtype=out_rio_dtype,
             count=len(band_list),
+            creation_opts=norm_opts,
         )
-        if src.nodata is not None:
-            dst.nodata = src.nodata
+        eff_nd = no_data_val if no_data_val is not None else src.nodata
+        if eff_nd is not None:
+            dst.nodata = eff_nd
         for out_idx, src_idx in enumerate(band_list, start=1):
             desc = src.descriptions[src_idx - 1]
             if desc:
@@ -136,16 +162,26 @@ def select_img_bands(
                 window=win,
             )
 
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=eff_nd,
+        use_pbar=use_pbar,
+    )
+
 
 def stack_img_bands(
     input_imgs: Sequence[str],
-    band_names: Optional[Sequence[str]],
     output_img: str,
-    skip_value: Optional[float],
-    no_data_val: Optional[float],
-    gdalformat: str,
-    datatype: int,
+    band_names: Optional[Sequence[str]] = None,
+    skip_value: Optional[float] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Stack all bands from ``input_imgs`` over their spatial intersection into a
@@ -156,14 +192,22 @@ def stack_img_bands(
     ``no_data_val``.
 
     :param input_imgs: Sequence of input image file paths.
-    :param band_names: Optional sequence of output band names (or ``None``).
     :param output_img: Path to the output stacked image file.
-    :param skip_value: Optional pixel value treated as invalid across inputs.
-    :param no_data_val: No-data value written where pixels are skipped.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
+    :param band_names: Optional sequence of output band names (Default = ``None``).
+    :param skip_value: Optional pixel value treated as invalid across inputs
+                       (Default = ``None``).
+    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``;
+                       Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to matching the first input image).
+    :param no_data_val: Optional no-data value written where pixels are skipped
+                        and set on the output dataset (Default = ``None``).
+    :param calc_stats: If ``True``, compute image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options (dict or sequence of
+                          ``'KEY=VALUE'``).
 
     .. code:: python
 
@@ -172,25 +216,31 @@ def stack_img_bands(
 
         rsgispy.imageutils.bands.stack_img_bands(
             ["b1.tif", "b2.tif", "b3.tif"],
-            ["Blue", "Green", "Red"],
             "stacked.tif",
-            None,
-            0.0,
-            "GTIFF",
-            rsgispy.TYPE_16UINT,
+            band_names=["Blue", "Green", "Red"],
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_16UINT,
+            no_data_val=0.0,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
     skip_is_nan = skip_value is not None and math.isnan(float(skip_value))
+    norm_opts = normalise_creation_options(creation_opts)
 
     with ExitStack() as stack:
         datasets, paths = open_multi_image_datasets(stack, input_imgs)
         first_ds = datasets[paths[0]]
         validate_crs_and_res(datasets, first_ds)
         grid = compute_spatial_intersection(datasets)
+
+        eff_dtype = (
+            rsgis_dtype_from_np_dtype(first_ds.dtypes[0])
+            if datatype is None
+            else datatype
+        )
+        out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
 
         total_bands = sum(int(datasets[p].count) for p in paths)
         if band_names is not None and len(band_names) != total_bands:
@@ -207,7 +257,10 @@ def stack_img_bands(
             grid=grid,
             count=total_bands,
             output_exists=False,
+            creation_opts=norm_opts,
         )
+        if no_data_val is not None:
+            dst.nodata = no_data_val
         if band_names is not None:
             for idx, bname in enumerate(band_names, start=1):
                 dst.set_band_description(idx, str(bname))
@@ -241,6 +294,13 @@ def stack_img_bands(
                 cast_result_block(stacked, win_h, win_w, out_np_dtype),
                 window=dst_win,
             )
+
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        use_pbar=use_pbar,
+    )
 
 
 def _sharpen_single_high_band(
@@ -383,10 +443,13 @@ def sharpen_low_res_bands(
     output_img: str,
     band_info: Sequence[SharpBandInfo],
     win_size: int = 7,
-    no_data_val: float = 0,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = 0.0,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Sharpen lower-resolution image bands using local linear fitting against
@@ -399,13 +462,17 @@ def sharpen_low_res_bands(
                       role (``SHARP_RES_LOW``, ``SHARP_RES_HIGH``, or
                       ``SHARP_RES_IGNORE``).
     :param win_size: Odd local regression window size in pixels (Default = ``7``).
-    :param no_data_val: No-data value ignored during regression fitting
-                        (Default = ``0``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output image
-                     (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to :data:`rsgispy.TYPE_32FLOAT`).
+    :param no_data_val: No-data value ignored during regression fitting
+                        (Default = ``0.0``; if ``None``, uses input nodata or ``0.0``).
+    :param calc_stats: If ``True``, compute image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options (dict or sequence of
+                          ``'KEY=VALUE'``).
 
     .. code:: python
 
@@ -430,6 +497,9 @@ def sharpen_low_res_bands(
     if not band_info:
         raise rsgispy.RSGISPyException("band_info must not be empty.")
 
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
+    norm_opts = normalise_creation_options(creation_opts)
+
     high_bands: List[int] = []
     low_bands: List[int] = []
     valid_statuses = (
@@ -438,10 +508,16 @@ def sharpen_low_res_bands(
         rsgispy.SHARP_RES_HIGH,
     )
     half = win_size // 2
-    nd_is_nan = math.isnan(float(no_data_val))
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
+        eff_nd = (
+            float(no_data_val)
+            if no_data_val is not None
+            else (float(src.nodata) if src.nodata is not None else 0.0)
+        )
+        nd_is_nan = math.isnan(eff_nd)
+
         for binfo in band_info:
             if binfo.band is None or binfo.status not in valid_statuses:
                 raise rsgispy.RSGISPyException(
@@ -460,21 +536,22 @@ def sharpen_low_res_bands(
             )
 
         low_bounds = _calc_low_band_bounds(
-            src, low_bands, no_data_val, nd_is_nan
+            src, low_bands, eff_nd, nd_is_nan
         )
         dst = create_output_from_dataset(
             stack=stack,
             src=src,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype=rsgispy.get_rasterio_datatype(datatype),
+            out_rio_dtype=rsgispy.get_rasterio_datatype(eff_dtype),
             count=len(band_info),
+            creation_opts=norm_opts,
         )
         for out_idx, binfo in enumerate(band_info, start=1):
             if binfo.name:
                 dst.set_band_description(out_idx, str(binfo.name))
 
-        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
+        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
         for dst_win in iter_dataset_windows(
             src.height, src.width, use_pbar=use_pbar
         ):
@@ -486,7 +563,7 @@ def sharpen_low_res_bands(
             for h_arr in high_halos:
                 high_valid &= np.isfinite(h_arr)
                 if not nd_is_nan:
-                    high_valid &= h_arr != no_data_val
+                    high_valid &= h_arr != eff_nd
 
             out_bands = []
             for binfo in band_info:
@@ -495,7 +572,7 @@ def sharpen_low_res_bands(
                     l_halo = read_window_with_halo(src, src_b, dst_win, half)
                     l_valid = high_valid & np.isfinite(l_halo)
                     if not nd_is_nan:
-                        l_valid &= l_halo != no_data_val
+                        l_valid &= l_halo != eff_nd
                     bmin, bmax = low_bounds[src_b]
                     if len(high_halos) == 1:
                         sharpened = _sharpen_single_high_band(
@@ -503,7 +580,7 @@ def sharpen_low_res_bands(
                             l_halo,
                             l_valid,
                             win_size,
-                            no_data_val,
+                            eff_nd,
                             bmin,
                             bmax,
                         )
@@ -513,7 +590,7 @@ def sharpen_low_res_bands(
                             l_halo,
                             l_valid,
                             win_size,
-                            no_data_val,
+                            eff_nd,
                             bmin,
                             bmax,
                         )
@@ -532,3 +609,10 @@ def sharpen_low_res_bands(
                 ),
                 window=dst_win,
             )
+
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=eff_nd,
+        use_pbar=use_pbar,
+    )

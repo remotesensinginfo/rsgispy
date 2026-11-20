@@ -47,8 +47,8 @@ def test_slope_aspect_categorise_and_pxl_res(tmp_path):
 
     slope_deg_path = tmp_path / "slope_deg.tif"
     slope_rad_path = tmp_path / "slope_rad.tif"
-    elev_terr.slope(str(dem_path), str(slope_deg_path), "GTIFF", "degrees")
-    elev_terr.slope(str(dem_path), str(slope_rad_path), "GTIFF", "radians")
+    elev_terr.slope(str(dem_path), str(slope_deg_path), "degrees", gdalformat="GTIFF")
+    elev_terr.slope(str(dem_path), str(slope_rad_path), "radians", gdalformat="GTIFF")
     with rasterio.open(slope_deg_path) as s_deg, rasterio.open(slope_rad_path) as s_rad:
         assert s_deg.dtypes[0] == "float32"
         # Interior pixel (2, 2) has exact 45-degree slope
@@ -56,7 +56,7 @@ def test_slope_aspect_categorise_and_pxl_res(tmp_path):
         assert s_rad.read(1)[2, 2] == pytest.approx(math.radians(45.0), abs=1e-4)
 
     aspect_path = tmp_path / "aspect.tif"
-    elev_terr.aspect(str(dem_path), str(aspect_path), "GTIFF")
+    elev_terr.aspect(str(dem_path), str(aspect_path), gdalformat="GTIFF")
     with rasterio.open(aspect_path) as asp_ds:
         assert asp_ds.read(1)[2, 2] == pytest.approx(180.0, abs=1e-4)
 
@@ -68,7 +68,7 @@ def test_slope_aspect_categorise_and_pxl_res(tmp_path):
     asp_grid = tmp_path / "asp_grid.tif"
     cat_path = tmp_path / "asp_cat.tif"
     _write_raster(asp_grid, asp_vals)
-    elev_terr.categorise_aspect(str(asp_grid), str(cat_path), "GTIFF")
+    elev_terr.categorise_aspect(str(asp_grid), str(cat_path), gdalformat="GTIFF")
     with rasterio.open(cat_path) as cat_ds:
         assert cat_ds.dtypes[0] == "uint8"
         expected = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 0]], dtype=np.uint8)
@@ -84,18 +84,28 @@ def test_slope_aspect_categorise_and_pxl_res(tmp_path):
     slope_pr_path = tmp_path / "slope_pr.tif"
     asp_pr_path = tmp_path / "asp_pr.tif"
     elev_terr.slope_pxl_res_img(
-        str(dem_path), str(pxl_res_path), str(slope_pr_path), "GTIFF", "degrees"
+        str(dem_path),
+        str(pxl_res_path),
+        str(slope_pr_path),
+        "degrees",
+        gdalformat="GTIFF",
     )
-    elev_terr.aspect_pxl_res_img(str(dem_path), str(pxl_res_path), str(asp_pr_path), "GTIFF")
+    elev_terr.aspect_pxl_res_img(
+        str(dem_path), str(pxl_res_path), str(asp_pr_path), gdalformat="GTIFF"
+    )
     with rasterio.open(slope_pr_path) as spr, rasterio.open(asp_pr_path) as apr:
         assert spr.read(1)[2, 2] == pytest.approx(math.degrees(math.atan(0.5)), abs=1e-4)
         assert apr.read(1)[2, 2] == pytest.approx(180.0, abs=1e-4)
 
     with pytest.raises(rsgispy.RSGISPyException):
-        elev_terr.slope(str(dem_path), str(slope_deg_path), "GTIFF", "percent")
+        elev_terr.slope(str(dem_path), str(slope_deg_path), "percent", gdalformat="GTIFF")
     with pytest.raises(rsgispy.RSGISPyException):
         elev_terr.slope_pxl_res_img(
-            str(dem_path), str(dem_path), str(slope_pr_path), "GTIFF", "degrees"
+            str(dem_path),
+            str(dem_path),
+            str(slope_pr_path),
+            "degrees",
+            gdalformat="GTIFF",
         )
 
 
@@ -248,7 +258,9 @@ def test_filtering_fill_detrend_and_fusion(tmp_path):
     filled_path = tmp_path / "filled.tif"
     _write_raster(pit_path, pit_dem, nodata=-9999)
     _write_raster(vld_path, vld_msk)
-    elev_filt.fill_dem_soille_gratin_1994(str(pit_path), str(vld_path), str(filled_path), "GTIFF")
+    elev_filt.fill_dem_soille_gratin_1994(
+        str(pit_path), str(vld_path), str(filled_path), gdalformat="GTIFF"
+    )
     with rasterio.open(filled_path) as fld_ds:
         assert fld_ds.dtypes[0] == "int16"
         # Lowest rim cell is 4, so pit at (2, 2) must be filled to 4
@@ -260,12 +272,16 @@ def test_filtering_fill_detrend_and_fusion(tmp_path):
     plane_path = tmp_path / "plane.tif"
     plane_out = tmp_path / "plane_fit.tif"
     _write_raster(plane_path, plane, nodata=-9999.0)
-    elev_filt.plane_fit_detrend_dem(str(plane_path), str(plane_out), "GTIFF", win_size=3)
+    elev_filt.plane_fit_detrend_dem(
+        str(plane_path), str(plane_out), win_size=3, gdalformat="GTIFF"
+    )
     with rasterio.open(plane_out) as pds:
         np.testing.assert_allclose(pds.read(1)[1:-1, 1:-1], plane[1:-1, 1:-1], atol=1e-4)
 
     with pytest.raises(rsgispy.RSGISPyException):
-        elev_filt.plane_fit_detrend_dem(str(plane_path), str(plane_out), "GTIFF", win_size=4)
+        elev_filt.plane_fit_detrend_dem(
+            str(plane_path), str(plane_out), win_size=4, gdalformat="GTIFF"
+        )
 
     # 4. fft_dem_fusion
     high_dem = np.full((16, 16), 100.0, dtype=np.float32)

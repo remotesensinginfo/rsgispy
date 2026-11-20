@@ -167,6 +167,21 @@ class RegressionConfig:
         """Return ``True`` when two or more target variables are configured."""
         return len(self.target_cols) > 1
 
+    def to_feature_stack(self, scaler: Optional[Any] = None) -> Any:
+        """
+        Convert this configuration's ``img_band_info`` into a unified
+        :class:`~rsgispy.ml.stack.ImageFeatureStack`.
+
+        :param scaler: Optional :class:`~rsgispy.ml.scaling.FeatureScaler`.
+        :return: :class:`~rsgispy.ml.stack.ImageFeatureStack`.
+        """
+        # pylint: disable=import-outside-toplevel
+        from rsgispy.ml.stack import ImageFeatureStack
+
+        return ImageFeatureStack.from_image_band_infos(
+            self.img_band_info, scaler=scaler
+        )
+
     def get_band_names(self) -> List[str]:
         """
         Resolve and return the ordered list of predictor column names across

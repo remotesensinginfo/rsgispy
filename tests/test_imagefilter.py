@@ -2,6 +2,8 @@
 Tests for :mod:`rsgispy.imagefilter`.
 """
 
+import inspect
+
 import numpy as np
 import pytest
 import rasterio
@@ -255,7 +257,7 @@ def test_imagefilter_submodules_and_sar_filters(tmp_path):
     import rsgispy.imagefilter.texture as if_tex
 
     # Package exports only its submodules, not individual filter functions
-    assert imf.__all__ == ["stats", "smooth", "edge", "sar", "texture"]
+    assert imf.__all__ == ["stats", "smooth", "edge", "sar", "texture", "chained"]
     assert imf.stats is if_stats
     assert imf.smooth is if_smooth
     assert imf.edge is if_edge
@@ -429,3 +431,44 @@ def test_glcm_texture_filters(tmp_path):
         if_tex.apply_glcm_filter(str(nd_in), str(tmp_path / "err2.tif"), filter_size=3, distances=3)
     with pytest.raises(rsgispy.RSGISPyException):
         if_tex.apply_glcm_filter(str(nd_in), str(tmp_path / "err3.tif"), min_val=0.0, max_val=None)
+
+
+def test_imagefilter_v1_signatures(tmp_path):
+    """Verify v1.0 keyword-only tail on all raster-producing imagefilter functions."""
+    kw_tail = {
+        "gdalformat": "GTIFF",
+        "datatype": None,
+        "no_data_val": None,
+        "calc_stats": True,
+        "use_pbar": True,
+    }
+    submodules = [imf.stats, imf.smooth, imf.edge, imf.sar, imf.texture, imf.chained]
+    checked = 0
+    for mod in submodules:
+        for name in mod.__all__:
+            if not name.startswith("apply_"):
+                continue
+            fn = getattr(mod, name)
+            sig = inspect.signature(fn)
+            params = list(sig.parameters.values())
+            assert params[0].name == "input_img"
+            assert params[1].name == "output_img"
+            for kw_name, kw_default in kw_tail.items():
+                assert kw_name in sig.parameters, f"{mod.__name__}.{name} missing {kw_name}"
+                p = sig.parameters[kw_name]
+                assert p.kind == inspect.Parameter.KEYWORD_ONLY, (
+                    f"{mod.__name__}.{name}.{kw_name} must be keyword-only"
+                )
+                assert p.default == kw_default
+            checked += 1
+
+    # 17 stats + 3 smooth + 9 edge + 7 sar + 1 texture + 1 chained = 38 functions
+    assert checked == 38
+
+    # Passing gdalformat positionally must raise TypeError
+    in_p = tmp_path / "sig_in.tif"
+    _write_raster(in_p, np.ones((5, 5), dtype=np.float32))
+    with pytest.raises(TypeError):
+        imf.stats.apply_mean_filter(str(in_p), str(tmp_path / "sig_out.tif"), 3, "GTIFF")
+    with pytest.raises(TypeError):
+        imf.edge.apply_sobel_filter(str(in_p), str(tmp_path / "sig_sob.tif"), "GTIFF")

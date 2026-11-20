@@ -361,10 +361,12 @@ def copy_raster_with_updates(
     datatype: Optional[int] = None,
     new_transform: Optional[Affine] = None,
     gcps: Optional[Tuple[Any, Any]] = None,
+    no_data_val: Optional[float] = None,
 ) -> Optional[float]:
     """
     Stream-copy ``in_path`` to ``out_path`` with optional updated transform,
-    output datatype, or embedded GCPs. Returns the output nodata value.
+    output datatype, nodata value, or embedded GCPs. Returns the output
+    nodata value.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if (
@@ -375,6 +377,8 @@ def copy_raster_with_updates(
     ):
         with rasterio.open(out_path, "r+") as dst:
             dst.gcps = gcps
+            if no_data_val is not None:
+                dst.nodata = no_data_val
             return dst.nodata
 
     out_dir = os.path.dirname(os.path.abspath(out_path))
@@ -393,6 +397,8 @@ def copy_raster_with_updates(
         profile.update(driver=gdalformat, dtype=out_dtype, **creation_opts)
         if new_transform is not None:
             profile["transform"] = new_transform
+        if no_data_val is not None:
+            profile["nodata"] = no_data_val
         if gdalformat.upper() == "GTIFF" and "tiled" not in profile:
             profile["tiled"] = True
         if not profile.get("tiled", False):
@@ -423,4 +429,4 @@ def copy_raster_with_updates(
                 dst.update_tags(**ds_tags)
             if gcps is not None:
                 dst.gcps = gcps
-            return src.nodata
+            return no_data_val if no_data_val is not None else src.nodata

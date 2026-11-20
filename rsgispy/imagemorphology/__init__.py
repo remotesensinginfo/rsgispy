@@ -4,9 +4,7 @@ The imagemorphology module contains functions for performing morphological
 operations on raster images using ``rasterio`` and ``numpy``.
 """
 
-from contextlib import ExitStack
-import os
-import tempfile
+import math
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -14,15 +12,22 @@ from numpy.lib.stride_tricks import sliding_window_view
 import rasterio
 
 import rsgispy
+from rsgispy._io import (
+    DiskSink,
+    HaloBorder,
+    PointwiseOp,
+    RasterSource,
+    TileGraph,
+    TileNode,
+    WindowOp,
+)
 from rsgispy.imageprocess import (
-    IntersectionGrid,
-    cast_result_block,
     ensure_file_exists,
-    iter_dataset_windows,
-    open_output_dataset,
     run_window_halo_blocks,
     validate_odd_window_size,
 )
+from rsgispy.imageutils.metadata import get_img_no_data_value
+from rsgispy.imageutils.stats import pop_img_stats
 
 __all__ = [
     "create_circular_op",
@@ -39,6 +44,49 @@ __all__ = [
     "image_black_top_hat",
     "image_white_top_hat",
 ]
+
+
+def _resolve_morph_datatype(
+    input_img: str,
+    datatype: Optional[int],
+    default_dtype: Optional[int] = None,
+) -> int:
+    """Resolve output RSGIS datatype (inferring from ``input_img`` when ``None``)."""
+    if datatype is not None:
+        return int(datatype)
+    if default_dtype is not None:
+        return int(default_dtype)
+    ensure_file_exists(input_img)
+    with rasterio.open(input_img, "r") as src:
+        return rsgispy.get_rsgis_datatype(src.dtypes[0])
+
+
+def _resolve_morph_nodata(
+    input_img: str,
+    no_data_val: Optional[float],
+    out_np_dtype: np.dtype,
+) -> Optional[float]:
+    """Resolve output nodata value, preserving input header nodata when representable."""
+    eff_nd = (
+        float(no_data_val)
+        if no_data_val is not None
+        else get_img_no_data_value(input_img)
+    )
+    if eff_nd is None or not math.isfinite(float(eff_nd)):
+        return None
+    nd_val = float(eff_nd)
+    if np.issubdtype(out_np_dtype, np.floating):
+        info = np.finfo(out_np_dtype)
+        if float(info.min) <= nd_val <= float(info.max):  # pylint: disable=no-member
+            return nd_val
+        return None
+    if np.issubdtype(out_np_dtype, np.integer):
+        if nd_val.is_integer():
+            info_i = np.iinfo(out_np_dtype)
+            if int(info_i.min) <= int(nd_val) <= int(info_i.max):
+                return nd_val
+        return None
+    return None
 
 
 def _parse_morph_op_file(morph_op_file: str) -> np.ndarray:
@@ -191,12 +239,15 @@ def _run_window_morphology(
     output_img: str,
     op_mask: np.ndarray,
     gdalformat: str,
-    datatype: int,
+    datatype: Optional[int],
     op_kind: str,
     combined: bool = False,
     sequencial_out: bool = False,
     allow_equal: bool = True,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
+    default_dtype: Optional[int] = None,
 ) -> None:
     """Apply a windowed morphological operation across ``input_img`` block-by-block."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -206,8 +257,12 @@ def _run_window_morphology(
             f"Unsupported morphology operation: '{op_kind}'."
         )
 
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
-    out_np_dtype = rsgispy.get_numpy_datatype(datatype)
+    eff_dtype = _resolve_morph_datatype(
+        input_img, datatype, default_dtype=default_dtype
+    )
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    out_nd = _resolve_morph_nodata(input_img, no_data_val, out_np_dtype)
     win_size = int(op_mask.shape[0])
     use_strips = op_kind == "local_minima" and sequencial_out
     with rasterio.open(input_img, "r") as src:
@@ -252,54 +307,54 @@ def _run_window_morphology(
         read_dtype=np.float64,
         pad_mode="constant",
         fill_value=0.0,
+        out_nodata=out_nd,
         clamp_int=True,
         full_width_strips=use_strips,
         use_pbar=use_pbar,
     )
-
-
-def _subtract_images(
-    pos_img: str,
-    neg_img: str,
-    output_img: str,
-    gdalformat: str,
-    datatype: int,
-    use_pbar: bool = True,
-) -> None:
-    """Write ``pos_img - neg_img`` block-by-block to ``output_img``."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
-    out_np_dtype = rsgispy.get_numpy_datatype(datatype)
-
-    with ExitStack() as stack:
-        pos_ds = stack.enter_context(rasterio.open(pos_img, "r"))
-        neg_ds = stack.enter_context(rasterio.open(neg_img, "r"))
-        grid = IntersectionGrid.from_dataset(pos_ds)
-        dst = open_output_dataset(
-            stack=stack,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            out_rio_dtype=out_rio_dtype,
-            grid=grid,
-            count=pos_ds.count,
+    if calc_stats:
+        pop_img_stats(
+            output_img,
+            no_data_val=out_nd,
+            calc_pyramids=True,
+            use_pbar=use_pbar,
         )
 
-        for out_win in iter_dataset_windows(
-            pos_ds.height, pos_ds.width, use_pbar=use_pbar
-        ):
-            diff = pos_ds.read(window=out_win).astype(np.float64) - neg_ds.read(
-                window=out_win
-            ).astype(np.float64)
-            dst.write(
-                cast_result_block(
-                    diff,
-                    int(out_win.height),
-                    int(out_win.width),
-                    out_np_dtype,
-                    clamp_int=True,
-                ),
-                window=out_win,
-            )
+
+def _make_morph_step_node(
+    source: TileNode,
+    op_mask: np.ndarray,
+    op_kind: str,
+    out_np_dtype: np.dtype,
+    name: Optional[str] = None,
+) -> WindowOp:
+    """Build a :class:`WindowOp` node applying a single dilation/erosion step."""
+    win_size = int(op_mask.shape[0])
+    half = win_size // 2
+    is_int = np.issubdtype(out_np_dtype, np.integer)
+    int_info = np.iinfo(out_np_dtype) if is_int else None
+
+    def _step_fn(arr: np.ndarray) -> np.ndarray:
+        win_view = sliding_window_view(arr, (win_size, win_size), axis=(1, 2))
+        active = win_view[:, :, :, op_mask]
+        raw_out = (
+            np.max(active, axis=-1)
+            if op_kind == "dilate"
+            else np.min(active, axis=-1)
+        )
+        if int_info is not None:
+            raw_out = np.clip(
+                raw_out, float(int_info.min), float(int_info.max)
+            ).astype(out_np_dtype).astype(np.float64)
+        return raw_out
+
+    return WindowOp(
+        source=source,
+        radius=(half, half),
+        func=_step_fn,
+        border=HaloBorder(mode="constant", fill_value=0.0),
+        name=name,
+    )
 
 
 def _run_two_step_seq(
@@ -308,16 +363,20 @@ def _run_two_step_seq(
     tmp_img: Optional[str],
     op_mask: np.ndarray,
     gdalformat: str,
-    datatype: int,
+    datatype: Optional[int],
     first_op: str,
     second_op: str,
     niters: int = 1,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
     Execute ``niters`` iterations of ``first_op`` followed by ``niters``
     iterations of ``second_op`` (e.g., ``n`` erosions -> ``n`` dilations for
-    opening, or ``n`` dilations -> ``n`` erosions for closing).
+    opening, or ``n`` dilations -> ``n`` erosions for closing) in a single
+    halo-fused :class:`~rsgispy._io.TileGraph` pass with zero intermediate
+    disk I/O unless ``tmp_img`` is explicitly requested.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
@@ -326,47 +385,57 @@ def _run_two_step_seq(
             f"niters must be >= 1 (got {niters})."
         )
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        use_user_tmp = bool(tmp_img)
-        cur_in = input_img
+    eff_dtype = _resolve_morph_datatype(input_img, datatype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    out_nd = _resolve_morph_nodata(input_img, no_data_val, out_np_dtype)
+    cur_node: TileNode = RasterSource(input_img, dtype=np.float64, name="src")
 
-        for idx in range(niters):
-            is_last_first = idx == (niters - 1)
-            step_out = (
-                str(tmp_img)
-                if (is_last_first and use_user_tmp)
-                else os.path.join(tmp_dir, f"morph_first_{idx}.tif")
-            )
-            step_fmt = gdalformat if (is_last_first and use_user_tmp) else "GTIFF"
-            _run_window_morphology(
-                input_img=cur_in,
-                output_img=step_out,
-                op_mask=op_mask,
-                gdalformat=step_fmt,
-                datatype=datatype,
-                op_kind=first_op,
-                use_pbar=use_pbar,
-            )
-            cur_in = step_out
+    for idx in range(niters):
+        cur_node = _make_morph_step_node(
+            source=cur_node,
+            op_mask=op_mask,
+            op_kind=first_op,
+            out_np_dtype=out_np_dtype,
+            name=f"{first_op}_{idx}",
+        )
+    mid_node = cur_node
 
-        for idx in range(niters):
-            is_last_second = idx == (niters - 1)
-            step_out = (
-                output_img
-                if is_last_second
-                else os.path.join(tmp_dir, f"morph_second_{idx}.tif")
+    for idx in range(niters):
+        cur_node = _make_morph_step_node(
+            source=cur_node,
+            op_mask=op_mask,
+            op_kind=second_op,
+            out_np_dtype=out_np_dtype,
+            name=f"{second_op}_{idx}",
+        )
+
+    sinks: List[DiskSink] = [
+        DiskSink(
+            source=cur_node,
+            output_img=output_img,
+            gdalformat=gdalformat,
+            datatype=eff_dtype,
+            nodata=out_nd,
+            clamp_int=True,
+            calc_stats=calc_stats,
+            name="output",
+        )
+    ]
+    if tmp_img:
+        sinks.append(
+            DiskSink(
+                source=mid_node,
+                output_img=str(tmp_img),
+                gdalformat=gdalformat,
+                datatype=eff_dtype,
+                nodata=out_nd,
+                clamp_int=True,
+                calc_stats=False,
+                name="tmp_mid",
             )
-            out_fmt = gdalformat if is_last_second else "GTIFF"
-            _run_window_morphology(
-                input_img=cur_in,
-                output_img=step_out,
-                op_mask=op_mask,
-                gdalformat=out_fmt,
-                datatype=datatype,
-                op_kind=second_op,
-                use_pbar=use_pbar,
-            )
-            cur_in = step_out
+        )
+
+    TileGraph(sinks).run(use_pbar=use_pbar)
 
 
 def create_circular_op(output_file: str, op_size: int) -> None:
@@ -408,11 +477,14 @@ def create_circular_op(output_file: str, op_size: int) -> None:
 def image_dilate(
     input_img: str,
     output_img: str,
-    morph_op_file: str,
-    use_op_file: bool,
-    op_size: int,
-    gdalformat: str,
-    datatype: int,
+    morph_op_file: str = "",
+    use_op_file: bool = False,
+    op_size: int = 3,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -420,31 +492,34 @@ def image_dilate(
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output dilated image file.
-    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file.
+    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file
+                          (Default = ``''``).
     :param use_op_file: If ``True``, load operator from ``morph_op_file``;
-                        otherwise use a square operator of size ``op_size``.
-    :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
-    :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
-    :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+                        otherwise use a square operator of size ``op_size``
+                        (Default = ``False``).
+    :param op_size: Square operator size used when ``use_op_file`` is ``False``
+                    (Default = ``3``).
+    :param gdalformat: GDAL/rasterio output format (Default = ``'GTIFF'``).
+    :param datatype: RSGIS data type constant (Default = ``None``, matches
+                     ``input_img`` data type).
+    :param no_data_val: Optional output no-data value (Default = ``None``,
+                        inherits ``input_img`` header no-data when representable).
+    :param calc_stats: If ``True``, compute output stats and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
     .. code:: python
 
-        import rsgispy
         import rsgispy.imagemorphology
 
         rsgispy.imagemorphology.image_dilate(
             input_img="mask.tif",
             output_img="mask_dilate.tif",
-            morph_op_file="",
-            use_op_file=False,
             op_size=3,
-            gdalformat="GTIFF",
-            datatype=rsgispy.TYPE_8UINT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
     _run_window_morphology(
         input_img=input_img,
@@ -454,6 +529,8 @@ def image_dilate(
         datatype=datatype,
         op_kind="dilate",
         combined=False,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
 
@@ -461,11 +538,14 @@ def image_dilate(
 def image_erode(
     input_img: str,
     output_img: str,
-    morph_op_file: str,
-    use_op_file: bool,
-    op_size: int,
-    gdalformat: str,
-    datatype: int,
+    morph_op_file: str = "",
+    use_op_file: bool = False,
+    op_size: int = 3,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -473,31 +553,34 @@ def image_erode(
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output eroded image file.
-    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file.
+    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file
+                          (Default = ``''``).
     :param use_op_file: If ``True``, load operator from ``morph_op_file``;
-                        otherwise use a square operator of size ``op_size``.
-    :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
-    :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
-    :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+                        otherwise use a square operator of size ``op_size``
+                        (Default = ``False``).
+    :param op_size: Square operator size used when ``use_op_file`` is ``False``
+                    (Default = ``3``).
+    :param gdalformat: GDAL/rasterio output format (Default = ``'GTIFF'``).
+    :param datatype: RSGIS data type constant (Default = ``None``, matches
+                     ``input_img`` data type).
+    :param no_data_val: Optional output no-data value (Default = ``None``,
+                        inherits ``input_img`` header no-data when representable).
+    :param calc_stats: If ``True``, compute output stats and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
     .. code:: python
 
-        import rsgispy
         import rsgispy.imagemorphology
 
         rsgispy.imagemorphology.image_erode(
             input_img="mask.tif",
             output_img="mask_erode.tif",
-            morph_op_file="",
-            use_op_file=False,
             op_size=3,
-            gdalformat="GTIFF",
-            datatype=rsgispy.TYPE_8UINT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
     _run_window_morphology(
         input_img=input_img,
@@ -507,6 +590,8 @@ def image_erode(
         datatype=datatype,
         op_kind="erode",
         combined=False,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
 
@@ -514,11 +599,14 @@ def image_erode(
 def image_gradient(
     input_img: str,
     output_img: str,
-    morph_op_file: str,
-    use_op_file: bool,
-    op_size: int,
-    gdalformat: str,
-    datatype: int,
+    morph_op_file: str = "",
+    use_op_file: bool = False,
+    op_size: int = 3,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -527,12 +615,20 @@ def image_gradient(
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output morphological gradient image file.
-    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file.
+    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file
+                          (Default = ``''``).
     :param use_op_file: If ``True``, load operator from ``morph_op_file``;
-                        otherwise use a square operator of size ``op_size``.
-    :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
-    :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
-    :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_32FLOAT``).
+                        otherwise use a square operator of size ``op_size``
+                        (Default = ``False``).
+    :param op_size: Square operator size used when ``use_op_file`` is ``False``
+                    (Default = ``3``).
+    :param gdalformat: GDAL/rasterio output format (Default = ``'GTIFF'``).
+    :param datatype: RSGIS data type constant (Default = ``None``, matches
+                     ``input_img`` data type).
+    :param no_data_val: Optional output no-data value (Default = ``None``,
+                        inherits ``input_img`` header no-data when representable).
+    :param calc_stats: If ``True``, compute output stats and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
@@ -544,14 +640,11 @@ def image_gradient(
         rsgispy.imagemorphology.image_gradient(
             input_img="img.tif",
             output_img="img_grad.tif",
-            morph_op_file="",
-            use_op_file=False,
             op_size=3,
-            gdalformat="GTIFF",
             datatype=rsgispy.TYPE_32FLOAT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
     _run_window_morphology(
         input_img=input_img,
@@ -561,6 +654,8 @@ def image_gradient(
         datatype=datatype,
         op_kind="gradient",
         combined=False,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
 
@@ -568,11 +663,14 @@ def image_gradient(
 def image_dilate_combined_out(
     input_img: str,
     output_img: str,
-    morph_op_file: str,
-    use_op_file: bool,
-    op_size: int,
-    gdalformat: str,
-    datatype: int,
+    morph_op_file: str = "",
+    use_op_file: bool = False,
+    op_size: int = 3,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -581,31 +679,34 @@ def image_dilate_combined_out(
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output single-band dilated image file.
-    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file.
+    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file
+                          (Default = ``''``).
     :param use_op_file: If ``True``, load operator from ``morph_op_file``;
-                        otherwise use a square operator of size ``op_size``.
-    :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
-    :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
-    :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+                        otherwise use a square operator of size ``op_size``
+                        (Default = ``False``).
+    :param op_size: Square operator size used when ``use_op_file`` is ``False``
+                    (Default = ``3``).
+    :param gdalformat: GDAL/rasterio output format (Default = ``'GTIFF'``).
+    :param datatype: RSGIS data type constant (Default = ``None``, matches
+                     ``input_img`` data type).
+    :param no_data_val: Optional output no-data value (Default = ``None``,
+                        inherits ``input_img`` header no-data when representable).
+    :param calc_stats: If ``True``, compute output stats and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
     .. code:: python
 
-        import rsgispy
         import rsgispy.imagemorphology
 
         rsgispy.imagemorphology.image_dilate_combined_out(
             input_img="masks.tif",
             output_img="masks_dilate_comb.tif",
-            morph_op_file="",
-            use_op_file=False,
             op_size=3,
-            gdalformat="GTIFF",
-            datatype=rsgispy.TYPE_8UINT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
     _run_window_morphology(
         input_img=input_img,
@@ -615,6 +716,8 @@ def image_dilate_combined_out(
         datatype=datatype,
         op_kind="dilate",
         combined=True,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
 
@@ -622,11 +725,14 @@ def image_dilate_combined_out(
 def image_erode_combined_out(
     input_img: str,
     output_img: str,
-    morph_op_file: str,
-    use_op_file: bool,
-    op_size: int,
-    gdalformat: str,
-    datatype: int,
+    morph_op_file: str = "",
+    use_op_file: bool = False,
+    op_size: int = 3,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -635,31 +741,34 @@ def image_erode_combined_out(
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output single-band eroded image file.
-    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file.
+    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file
+                          (Default = ``''``).
     :param use_op_file: If ``True``, load operator from ``morph_op_file``;
-                        otherwise use a square operator of size ``op_size``.
-    :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
-    :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
-    :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+                        otherwise use a square operator of size ``op_size``
+                        (Default = ``False``).
+    :param op_size: Square operator size used when ``use_op_file`` is ``False``
+                    (Default = ``3``).
+    :param gdalformat: GDAL/rasterio output format (Default = ``'GTIFF'``).
+    :param datatype: RSGIS data type constant (Default = ``None``, matches
+                     ``input_img`` data type).
+    :param no_data_val: Optional output no-data value (Default = ``None``,
+                        inherits ``input_img`` header no-data when representable).
+    :param calc_stats: If ``True``, compute output stats and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
     .. code:: python
 
-        import rsgispy
         import rsgispy.imagemorphology
 
         rsgispy.imagemorphology.image_erode_combined_out(
             input_img="masks.tif",
             output_img="masks_erode_comb.tif",
-            morph_op_file="",
-            use_op_file=False,
             op_size=3,
-            gdalformat="GTIFF",
-            datatype=rsgispy.TYPE_8UINT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
     _run_window_morphology(
         input_img=input_img,
@@ -669,6 +778,8 @@ def image_erode_combined_out(
         datatype=datatype,
         op_kind="erode",
         combined=True,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
 
@@ -676,11 +787,14 @@ def image_erode_combined_out(
 def image_gradient_combined_out(
     input_img: str,
     output_img: str,
-    morph_op_file: str,
-    use_op_file: bool,
-    op_size: int,
-    gdalformat: str,
-    datatype: int,
+    morph_op_file: str = "",
+    use_op_file: bool = False,
+    op_size: int = 3,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -689,12 +803,20 @@ def image_gradient_combined_out(
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output single-band gradient image file.
-    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file.
+    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file
+                          (Default = ``''``).
     :param use_op_file: If ``True``, load operator from ``morph_op_file``;
-                        otherwise use a square operator of size ``op_size``.
-    :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
-    :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
-    :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_32FLOAT``).
+                        otherwise use a square operator of size ``op_size``
+                        (Default = ``False``).
+    :param op_size: Square operator size used when ``use_op_file`` is ``False``
+                    (Default = ``3``).
+    :param gdalformat: GDAL/rasterio output format (Default = ``'GTIFF'``).
+    :param datatype: RSGIS data type constant (Default = ``None``, matches
+                     ``input_img`` data type).
+    :param no_data_val: Optional output no-data value (Default = ``None``,
+                        inherits ``input_img`` header no-data when representable).
+    :param calc_stats: If ``True``, compute output stats and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
@@ -706,14 +828,11 @@ def image_gradient_combined_out(
         rsgispy.imagemorphology.image_gradient_combined_out(
             input_img="img.tif",
             output_img="img_grad_comb.tif",
-            morph_op_file="",
-            use_op_file=False,
             op_size=3,
-            gdalformat="GTIFF",
             datatype=rsgispy.TYPE_32FLOAT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
     _run_window_morphology(
         input_img=input_img,
@@ -723,6 +842,8 @@ def image_gradient_combined_out(
         datatype=datatype,
         op_kind="gradient",
         combined=True,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
 
@@ -730,13 +851,16 @@ def image_gradient_combined_out(
 def image_local_minima(
     input_img: str,
     output_img: str,
-    sequencial_out: bool,
-    allow_equal: bool,
-    morph_op_file: str,
-    use_op_file: bool,
-    op_size: int,
-    gdalformat: str,
-    datatype: int,
+    sequencial_out: bool = False,
+    allow_equal: bool = True,
+    morph_op_file: str = "",
+    use_op_file: bool = False,
+    op_size: int = 3,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -747,21 +871,29 @@ def image_local_minima(
     :param output_img: Path to the output local-minima image file.
     :param sequencial_out: If ``True``, number minima sequentially per band
                            (``1, 2, 3, ...``); if ``False``, write a binary
-                           mask (``1`` / ``0``).
+                           mask (``1`` / ``0``; Default = ``False``).
     :param allow_equal: If ``True``, neighbour pixels equal to the centre pixel
-                        do not disqualify a local minimum.
-    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file.
+                        do not disqualify a local minimum (Default = ``True``).
+    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file
+                          (Default = ``''``).
     :param use_op_file: If ``True``, load operator from ``morph_op_file``;
-                        otherwise use a square operator of size ``op_size``.
-    :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
-    :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
-    :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+                        otherwise use a square operator of size ``op_size``
+                        (Default = ``False``).
+    :param op_size: Square operator size used when ``use_op_file`` is ``False``
+                    (Default = ``3``).
+    :param gdalformat: GDAL/rasterio output format (Default = ``'GTIFF'``).
+    :param datatype: RSGIS data type constant (Default = ``None``, resolves to
+                     :data:`rsgispy.TYPE_32UINT` when ``sequencial_out=True``
+                     else :data:`rsgispy.TYPE_8UINT`).
+    :param no_data_val: Optional output no-data value (Default = ``None``,
+                        inherits ``input_img`` header no-data when representable).
+    :param calc_stats: If ``True``, compute output stats and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
     .. code:: python
 
-        import rsgispy
         import rsgispy.imagemorphology
 
         rsgispy.imagemorphology.image_local_minima(
@@ -769,15 +901,12 @@ def image_local_minima(
             output_img="minima.tif",
             sequencial_out=False,
             allow_equal=True,
-            morph_op_file="",
-            use_op_file=False,
             op_size=3,
-            gdalformat="GTIFF",
-            datatype=rsgispy.TYPE_8UINT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
+    default_dtype = rsgispy.TYPE_32UINT if sequencial_out else rsgispy.TYPE_8UINT
     _run_window_morphology(
         input_img=input_img,
         output_img=output_img,
@@ -788,20 +917,26 @@ def image_local_minima(
         combined=False,
         sequencial_out=sequencial_out,
         allow_equal=allow_equal,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
+        default_dtype=default_dtype,
     )
 
 
 def image_local_minima_combined_out(
     input_img: str,
     output_img: str,
-    sequencial_out: bool,
-    allow_equal: bool,
-    morph_op_file: str,
-    use_op_file: bool,
-    op_size: int,
-    gdalformat: str,
-    datatype: int,
+    sequencial_out: bool = False,
+    allow_equal: bool = True,
+    morph_op_file: str = "",
+    use_op_file: bool = False,
+    op_size: int = 3,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -812,21 +947,30 @@ def image_local_minima_combined_out(
     :param output_img: Path to the output single-band local-minima image file.
     :param sequencial_out: If ``True``, number minima sequentially
                            (``1, 2, 3, ...``); if ``False``, write a binary
-                           mask (``1`` / ``0``).
+                           mask (``1`` / ``0``; Default = ``False``).
     :param allow_equal: If ``True``, neighbour pixels equal to the minimum band
-                        centre value do not disqualify a local minimum.
-    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file.
+                        centre value do not disqualify a local minimum
+                        (Default = ``True``).
+    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file
+                          (Default = ``''``).
     :param use_op_file: If ``True``, load operator from ``morph_op_file``;
-                        otherwise use a square operator of size ``op_size``.
-    :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
-    :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
-    :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+                        otherwise use a square operator of size ``op_size``
+                        (Default = ``False``).
+    :param op_size: Square operator size used when ``use_op_file`` is ``False``
+                    (Default = ``3``).
+    :param gdalformat: GDAL/rasterio output format (Default = ``'GTIFF'``).
+    :param datatype: RSGIS data type constant (Default = ``None``, resolves to
+                     :data:`rsgispy.TYPE_32UINT` when ``sequencial_out=True``
+                     else :data:`rsgispy.TYPE_8UINT`).
+    :param no_data_val: Optional output no-data value (Default = ``None``,
+                        inherits ``input_img`` header no-data when representable).
+    :param calc_stats: If ``True``, compute output stats and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
     .. code:: python
 
-        import rsgispy
         import rsgispy.imagemorphology
 
         rsgispy.imagemorphology.image_local_minima_combined_out(
@@ -834,15 +978,12 @@ def image_local_minima_combined_out(
             output_img="minima_comb.tif",
             sequencial_out=False,
             allow_equal=True,
-            morph_op_file="",
-            use_op_file=False,
             op_size=3,
-            gdalformat="GTIFF",
-            datatype=rsgispy.TYPE_8UINT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
+    default_dtype = rsgispy.TYPE_32UINT if sequencial_out else rsgispy.TYPE_8UINT
     _run_window_morphology(
         input_img=input_img,
         output_img=output_img,
@@ -853,53 +994,66 @@ def image_local_minima_combined_out(
         combined=True,
         sequencial_out=sequencial_out,
         allow_equal=allow_equal,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
+        default_dtype=default_dtype,
     )
 
 
 def image_opening(
     input_img: str,
     output_img: str,
-    tmp_img: Optional[str],
-    morph_op_file: str,
-    use_op_file: bool,
-    op_size: int,
-    gdalformat: str,
-    datatype: int,
+    morph_op_file: str = "",
+    use_op_file: bool = False,
+    op_size: int = 3,
+    tmp_img: Optional[str] = None,
     niters: int = 1,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
     Perform morphological opening (erosion followed by dilation) on ``input_img``.
 
+    Executed in a single halo-fused tile pass in memory with zero intermediate
+    disk I/O unless ``tmp_img`` is explicitly provided.
+
     :param input_img: Path to the input image file.
     :param output_img: Path to the output opened image file.
-    :param tmp_img: Optional path to an intermediate temporary file; if empty
-                    (``''``) or ``None``, a temporary directory is used.
-    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file.
+    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file
+                          (Default = ``''``).
     :param use_op_file: If ``True``, load operator from ``morph_op_file``;
-                        otherwise use a square operator of size ``op_size``.
-    :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
-    :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
-    :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+                        otherwise use a square operator of size ``op_size``
+                        (Default = ``False``).
+    :param op_size: Square operator size used when ``use_op_file`` is ``False``
+                    (Default = ``3``).
+    :param tmp_img: Optional path to also save the intermediate eroded raster;
+                    if empty (``''``) or ``None``, no intermediate file is
+                    written (Default = ``None``).
     :param niters: Number of opening iterations (Default = ``1``).
+    :param gdalformat: GDAL/rasterio output format (Default = ``'GTIFF'``).
+    :param datatype: RSGIS data type constant (Default = ``None``, matches
+                     ``input_img`` data type).
+    :param no_data_val: Optional output no-data value (Default = ``None``,
+                        inherits ``input_img`` header no-data when representable).
+    :param calc_stats: If ``True``, compute output stats and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
     .. code:: python
 
-        import rsgispy
         import rsgispy.imagemorphology
 
         rsgispy.imagemorphology.image_opening(
             input_img="mask.tif",
             output_img="mask_open.tif",
-            tmp_img=None,
-            morph_op_file="",
-            use_op_file=False,
             op_size=3,
-            gdalformat="GTIFF",
-            datatype=rsgispy.TYPE_8UINT,
+            niters=1,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -914,6 +1068,8 @@ def image_opening(
         first_op="erode",
         second_op="dilate",
         niters=niters,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
 
@@ -921,46 +1077,56 @@ def image_opening(
 def image_closing(
     input_img: str,
     output_img: str,
-    tmp_img: Optional[str],
-    morph_op_file: str,
-    use_op_file: bool,
-    op_size: int,
-    gdalformat: str,
-    datatype: int,
+    morph_op_file: str = "",
+    use_op_file: bool = False,
+    op_size: int = 3,
+    tmp_img: Optional[str] = None,
     niters: int = 1,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
     Perform morphological closing (dilation followed by erosion) on ``input_img``.
 
+    Executed in a single halo-fused tile pass in memory with zero intermediate
+    disk I/O unless ``tmp_img`` is explicitly provided.
+
     :param input_img: Path to the input image file.
     :param output_img: Path to the output closed image file.
-    :param tmp_img: Optional path to an intermediate temporary file; if empty
-                    (``''``) or ``None``, a temporary directory is used.
-    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file.
+    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file
+                          (Default = ``''``).
     :param use_op_file: If ``True``, load operator from ``morph_op_file``;
-                        otherwise use a square operator of size ``op_size``.
-    :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
-    :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
-    :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+                        otherwise use a square operator of size ``op_size``
+                        (Default = ``False``).
+    :param op_size: Square operator size used when ``use_op_file`` is ``False``
+                    (Default = ``3``).
+    :param tmp_img: Optional path to also save the intermediate dilated raster;
+                    if empty (``''``) or ``None``, no intermediate file is
+                    written (Default = ``None``).
     :param niters: Number of closing iterations (Default = ``1``).
+    :param gdalformat: GDAL/rasterio output format (Default = ``'GTIFF'``).
+    :param datatype: RSGIS data type constant (Default = ``None``, matches
+                     ``input_img`` data type).
+    :param no_data_val: Optional output no-data value (Default = ``None``,
+                        inherits ``input_img`` header no-data when representable).
+    :param calc_stats: If ``True``, compute output stats and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
     .. code:: python
 
-        import rsgispy
         import rsgispy.imagemorphology
 
         rsgispy.imagemorphology.image_closing(
             input_img="mask.tif",
             output_img="mask_close.tif",
-            tmp_img=None,
-            morph_op_file="",
-            use_op_file=False,
             op_size=3,
-            gdalformat="GTIFF",
-            datatype=rsgispy.TYPE_8UINT,
+            niters=1,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -975,34 +1141,130 @@ def image_closing(
         first_op="dilate",
         second_op="erode",
         niters=niters,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
+
+
+def _run_top_hat(
+    input_img: str,
+    output_img: str,
+    tmp_img: Optional[str],
+    op_mask: np.ndarray,
+    gdalformat: str,
+    datatype: Optional[int],
+    black: bool,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Execute black (``closing - input``) or white (``input - opening``) top-hat
+    transform in a single halo-fused :class:`~rsgispy._io.TileGraph` pass.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    ensure_file_exists(input_img)
+    eff_dtype = _resolve_morph_datatype(input_img, datatype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    out_nd = _resolve_morph_nodata(input_img, no_data_val, out_np_dtype)
+    src_node = RasterSource(input_img, dtype=np.float64, name="src")
+    first_op, second_op = ("dilate", "erode") if black else ("erode", "dilate")
+    step1 = _make_morph_step_node(
+        source=src_node,
+        op_mask=op_mask,
+        op_kind=first_op,
+        out_np_dtype=out_np_dtype,
+        name=first_op,
+    )
+    step2 = _make_morph_step_node(
+        source=step1,
+        op_mask=op_mask,
+        op_kind=second_op,
+        out_np_dtype=out_np_dtype,
+        name=second_op,
+    )
+    if black:
+        diff_node = PointwiseOp(
+            inputs=(step2, src_node),
+            func=lambda closed, orig: closed - orig,
+            name="black_top_hat_diff",
+        )
+    else:
+        diff_node = PointwiseOp(
+            inputs=(src_node, step2),
+            func=lambda orig, opened: orig - opened,
+            name="white_top_hat_diff",
+        )
+
+    sinks: List[DiskSink] = [
+        DiskSink(
+            source=diff_node,
+            output_img=output_img,
+            gdalformat=gdalformat,
+            datatype=eff_dtype,
+            nodata=out_nd,
+            clamp_int=True,
+            calc_stats=calc_stats,
+            name="output",
+        )
+    ]
+    if tmp_img:
+        sinks.append(
+            DiskSink(
+                source=step2,
+                output_img=str(tmp_img),
+                gdalformat=gdalformat,
+                datatype=eff_dtype,
+                nodata=out_nd,
+                clamp_int=True,
+                calc_stats=False,
+                name="tmp_mid",
+            )
+        )
+
+    TileGraph(sinks).run(use_pbar=use_pbar)
 
 
 def image_black_top_hat(
     input_img: str,
     output_img: str,
-    tmp_img: Optional[str],
-    morph_op_file: str,
-    use_op_file: bool,
-    op_size: int,
-    gdalformat: str,
-    datatype: int,
+    morph_op_file: str = "",
+    use_op_file: bool = False,
+    op_size: int = 3,
+    tmp_img: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
     Perform a morphological black top-hat transform (closing minus input image).
 
+    Executed in a single halo-fused tile pass in memory with zero intermediate
+    disk I/O unless ``tmp_img`` is explicitly provided.
+
     :param input_img: Path to the input image file.
     :param output_img: Path to the output black top-hat image file.
-    :param tmp_img: Optional path to an intermediate temporary file; if empty
-                    (``''``) or ``None``, a temporary directory is used.
-    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file.
+    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file
+                          (Default = ``''``).
     :param use_op_file: If ``True``, load operator from ``morph_op_file``;
-                        otherwise use a square operator of size ``op_size``.
-    :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
-    :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
-    :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+                        otherwise use a square operator of size ``op_size``
+                        (Default = ``False``).
+    :param op_size: Square operator size used when ``use_op_file`` is ``False``
+                    (Default = ``3``).
+    :param tmp_img: Optional path to also save the intermediate closed raster;
+                    if empty (``''``) or ``None``, no intermediate file is
+                    written (Default = ``None``).
+    :param gdalformat: GDAL/rasterio output format (Default = ``'GTIFF'``).
+    :param datatype: RSGIS data type constant (Default = ``None``, matches
+                     ``input_img`` data type).
+    :param no_data_val: Optional output no-data value (Default = ``None``,
+                        inherits ``input_img`` header no-data when representable).
+    :param calc_stats: If ``True``, compute output stats and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
@@ -1014,70 +1276,65 @@ def image_black_top_hat(
         rsgispy.imagemorphology.image_black_top_hat(
             input_img="dem.tif",
             output_img="dem_bth.tif",
-            tmp_img=None,
-            morph_op_file="",
-            use_op_file=False,
             op_size=5,
-            gdalformat="GTIFF",
             datatype=rsgispy.TYPE_32FLOAT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    ensure_file_exists(input_img)
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        closed_img = (
-            str(tmp_img)
-            if tmp_img
-            else os.path.join(tmp_dir, "black_top_hat_closed.tif")
-        )
-        closed_fmt = gdalformat if tmp_img else "GTIFF"
-        _run_two_step_seq(
-            input_img=input_img,
-            output_img=closed_img,
-            tmp_img=None,
-            op_mask=op_mask,
-            gdalformat=closed_fmt,
-            datatype=datatype,
-            first_op="dilate",
-            second_op="erode",
-            niters=1,
-            use_pbar=use_pbar,
-        )
-        _subtract_images(
-            pos_img=closed_img,
-            neg_img=input_img,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            datatype=datatype,
-            use_pbar=use_pbar,
-        )
+    _run_top_hat(
+        input_img=input_img,
+        output_img=output_img,
+        tmp_img=tmp_img,
+        op_mask=op_mask,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        black=True,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
+    )
 
 
 def image_white_top_hat(
     input_img: str,
     output_img: str,
-    tmp_img: Optional[str],
-    morph_op_file: str,
-    use_op_file: bool,
-    op_size: int,
-    gdalformat: str,
-    datatype: int,
+    morph_op_file: str = "",
+    use_op_file: bool = False,
+    op_size: int = 3,
+    tmp_img: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
     Perform a morphological white top-hat transform (input image minus opening).
 
+    Executed in a single halo-fused tile pass in memory with zero intermediate
+    disk I/O unless ``tmp_img`` is explicitly provided.
+
     :param input_img: Path to the input image file.
     :param output_img: Path to the output white top-hat image file.
-    :param tmp_img: Optional path to an intermediate temporary file; if empty
-                    (``''``) or ``None``, a temporary directory is used.
-    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file.
+    :param morph_op_file: Path to a ``.gmtxt`` binary structuring-element file
+                          (Default = ``''``).
     :param use_op_file: If ``True``, load operator from ``morph_op_file``;
-                        otherwise use a square operator of size ``op_size``.
-    :param op_size: Square operator size (used when ``use_op_file`` is ``False``).
-    :param gdalformat: GDAL/rasterio output format (e.g., ``'GTIFF'``).
-    :param datatype: RSGIS data type constant (e.g., ``rsgispy.TYPE_8UINT``).
+                        otherwise use a square operator of size ``op_size``
+                        (Default = ``False``).
+    :param op_size: Square operator size used when ``use_op_file`` is ``False``
+                    (Default = ``3``).
+    :param tmp_img: Optional path to also save the intermediate opened raster;
+                    if empty (``''``) or ``None``, no intermediate file is
+                    written (Default = ``None``).
+    :param gdalformat: GDAL/rasterio output format (Default = ``'GTIFF'``).
+    :param datatype: RSGIS data type constant (Default = ``None``, matches
+                     ``input_img`` data type).
+    :param no_data_val: Optional output no-data value (Default = ``None``,
+                        inherits ``input_img`` header no-data when representable).
+    :param calc_stats: If ``True``, compute output stats and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
@@ -1089,41 +1346,21 @@ def image_white_top_hat(
         rsgispy.imagemorphology.image_white_top_hat(
             input_img="dem.tif",
             output_img="dem_wth.tif",
-            tmp_img=None,
-            morph_op_file="",
-            use_op_file=False,
             op_size=5,
-            gdalformat="GTIFF",
             datatype=rsgispy.TYPE_32FLOAT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    ensure_file_exists(input_img)
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        opened_img = (
-            str(tmp_img)
-            if tmp_img
-            else os.path.join(tmp_dir, "white_top_hat_opened.tif")
-        )
-        opened_fmt = gdalformat if tmp_img else "GTIFF"
-        _run_two_step_seq(
-            input_img=input_img,
-            output_img=opened_img,
-            tmp_img=None,
-            op_mask=op_mask,
-            gdalformat=opened_fmt,
-            datatype=datatype,
-            first_op="erode",
-            second_op="dilate",
-            niters=1,
-            use_pbar=use_pbar,
-        )
-        _subtract_images(
-            pos_img=input_img,
-            neg_img=opened_img,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            datatype=datatype,
-            use_pbar=use_pbar,
-        )
+    _run_top_hat(
+        input_img=input_img,
+        output_img=output_img,
+        tmp_img=tmp_img,
+        op_mask=op_mask,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        black=False,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
+    )

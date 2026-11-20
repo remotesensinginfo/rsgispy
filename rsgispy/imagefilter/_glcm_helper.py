@@ -371,7 +371,7 @@ def run_glcm_filter(
     symmetric: bool = True,
     average_angles: bool = True,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -412,8 +412,9 @@ def run_glcm_filter(
     if not offsets:
         raise rsgispy.RSGISPyException("No non-zero GLCM offsets derived.")
 
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
-    out_np_dtype = rsgispy.get_numpy_datatype(datatype)
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = rsgispy.get_numpy_datatype(eff_dtype)
     eff_in_nd = (
         float(no_data_val)
         if no_data_val is not None

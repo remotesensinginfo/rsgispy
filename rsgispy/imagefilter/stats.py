@@ -4,7 +4,6 @@ Statistical, dispersion, and local-difference moving-window raster filters.
 
 from typing import List, Optional
 
-import rsgispy
 from rsgispy.imagefilter._helper import (
     run_window_stat_filter,
     stat_coeff_of_var,
@@ -51,8 +50,9 @@ def apply_median_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -64,7 +64,8 @@ def apply_median_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -96,8 +97,9 @@ def apply_mean_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -109,7 +111,8 @@ def apply_mean_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -138,8 +141,9 @@ def apply_min_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -151,7 +155,8 @@ def apply_min_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -180,8 +185,9 @@ def apply_max_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -193,7 +199,8 @@ def apply_max_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -222,8 +229,9 @@ def apply_mode_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -237,7 +245,8 @@ def apply_mode_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -269,8 +278,9 @@ def apply_stddev_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -282,7 +292,8 @@ def apply_stddev_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -311,8 +322,9 @@ def apply_range_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -324,7 +336,8 @@ def apply_range_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -353,8 +366,9 @@ def apply_total_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -366,7 +380,8 @@ def apply_total_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -395,8 +410,9 @@ def apply_mean_diff_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -408,7 +424,8 @@ def apply_mean_diff_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -439,8 +456,9 @@ def apply_mean_diff_abs_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -452,7 +470,8 @@ def apply_mean_diff_abs_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -483,8 +502,9 @@ def apply_total_diff_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -496,7 +516,8 @@ def apply_total_diff_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -527,8 +548,9 @@ def apply_total_diff_abs_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -540,7 +562,8 @@ def apply_total_diff_abs_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -571,8 +594,9 @@ def apply_coeff_of_var_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -586,7 +610,8 @@ def apply_coeff_of_var_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -617,8 +642,9 @@ def apply_norm_var_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -630,7 +656,8 @@ def apply_norm_var_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -661,8 +688,9 @@ def apply_norm_var_sqrt_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -675,7 +703,8 @@ def apply_norm_var_sqrt_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -706,8 +735,9 @@ def apply_norm_var_ln_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -720,7 +750,8 @@ def apply_norm_var_ln_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -751,8 +782,9 @@ def apply_texture_var_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 3,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -764,7 +796,8 @@ def apply_texture_var_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).

@@ -27,19 +27,19 @@ import rsgispy.imageutils.spatial as iu_spat
 import rsgispy.imageutils.subsetting as iu_sub
 import rsgispy.imageutils.warp as iu_warp
 import rsgispy.tools.checkdatasets as chk
-import rsgispy.vectorattrs.columns as va_cols
-import rsgispy.vectorattrs.io as va_io
-import rsgispy.vectorattrs.spatial as va_spatial
-import rsgispy.vectorgeoms.create as vg_create
-import rsgispy.vectorgeoms.lines as vg_lines
-import rsgispy.vectorgeoms.overlay as vg_overlay
-import rsgispy.vectorgeoms.polygons as vg_polys
-import rsgispy.vectorgeoms.spatial as vg_spatial
+import rsgispy.vector.attrs as va_cols
+import rsgispy.vector.attrs as va_io
+import rsgispy.vector.attrs as va_spatial
+import rsgispy.vector.create as vg_create
+import rsgispy.vector.geoms as vg_lines
+import rsgispy.vector.geoms as vg_overlay
+import rsgispy.vector.geoms as vg_polys
+import rsgispy.vector.geoms as vg_spatial
+import rsgispy.vector.io as vu_io
+import rsgispy.vector.io as vu_meta
+import rsgispy.vector.selection as vu_sel
+import rsgispy.vector.stats as vs_metrics
 import rsgispy.vectorprocess as vp
-import rsgispy.vectorstats.metrics as vs_metrics
-import rsgispy.vectorutils.io as vu_io
-import rsgispy.vectorutils.metadata as vu_meta
-import rsgispy.vectorutils.selection as vu_sel
 import rsgispy.zonalstats.point as zs_pt
 import rsgispy.zonalstats.polygon as zs_poly
 
@@ -420,7 +420,7 @@ def test_vectorgeoms_geoparquet(tmp_path):
 
     # Lines
     lines_pq = str(tmp_path / "lines.parquet")
-    vg_lines.create_lines_vec(
+    vg_create.create_lines_vec(
         lines_pq,
         "lines",
         "PARQUET",
@@ -725,7 +725,14 @@ def test_imageutils_imagecalc_elevation_geoparquet(tmp_path):
         roi_utm_pq,
     )
     sub_tif = str(tmp_path / "sub.tif")
-    iu_sub.subset(t1, roi_utm_pq, None, sub_tif, "GTIFF", rsgispy.TYPE_32FLOAT)
+    iu_sub.subset(
+        t1,
+        roi_utm_pq,
+        None,
+        sub_tif,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+    )
     with rasterio.open(sub_tif) as src:
         assert (src.width, src.height) == (4, 4)
 

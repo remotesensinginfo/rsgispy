@@ -25,9 +25,9 @@ Calculating a Band Product
    rsgispy.imagecalc.maths.band_maths(
        output_img="out.tif",
        exp="b1*b2",
+       band_defs=band_defns,
        gdalformat="GTIFF",
        datatype=rsgispy.TYPE_32FLOAT,
-       band_defs=band_defns,
    )
 
 Conditional (Ternary) Expressions
@@ -46,9 +46,9 @@ Conditional (Ternary) Expressions
    rsgispy.imagecalc.maths.band_maths(
        output_img="out_mask.tif",
        exp="(b1==1) || (b2==1) || (b3==1) ? 1 : 0",
+       band_defs=band_defns,
        gdalformat="GTIFF",
        datatype=rsgispy.TYPE_8UINT,
-       band_defs=band_defns,
    )
 
 Band Mathematics, Spectral Indices & Value Rescaling

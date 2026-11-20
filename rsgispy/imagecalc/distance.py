@@ -154,11 +154,13 @@ def calc_dist_to_img_vals(
     output_img: str,
     pxl_vals: Union[int, float, Sequence[Union[int, float]]],
     img_band: int = 1,
-    gdalformat: str = "GTIFF",
     max_dist: Optional[float] = None,
-    no_data_val: Optional[float] = None,
     out_no_data_val: Optional[float] = None,
     unit_geo: bool = True,
+    *,
+    gdalformat: str = "GTIFF",
+    no_data_val: Optional[float] = None,
+    use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """
@@ -169,16 +171,17 @@ def calc_dist_to_img_vals(
     :param output_img: Path to the output float32 distance image file.
     :param pxl_vals: Target pixel value or sequence of pixel values.
     :param img_band: 1-based band index to inspect (Default = ``1``).
-    :param gdalformat: GDAL/rasterio driver format for the output file
-                       (Default = ``'GTIFF'``).
     :param max_dist: Optional maximum distance threshold; distances greater
                      than ``max_dist`` are set to ``out_no_data_val``.
-    :param no_data_val: Optional input no-data value excluded from calculation
-                        and written as ``out_no_data_val``.
     :param out_no_data_val: Output no-data value (defaults to ``max_dist`` if
                             ``None``).
     :param unit_geo: If ``True``, return distances in CRS map units; if
                      ``False``, return distances in pixel units (Default = True).
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param no_data_val: Optional input no-data value excluded from calculation
+                        and written as ``out_no_data_val``.
+    :param use_pbar: Retained for signature consistency (Default = ``True``).
     :param creation_opts: Optional mapping of GDAL creation options.
 
     .. code:: python
@@ -190,11 +193,12 @@ def calc_dist_to_img_vals(
             output_img="dist_to_water.tif",
             pxl_vals=1,
             img_band=1,
-            gdalformat="GTIFF",
             max_dist=1000.0,
+            gdalformat="GTIFF",
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,unused-argument
     rsgispy.check_optional_dep(HAVE_SCIPY, "calc_dist_to_img_vals", "scipy", "stats")
     ensure_file_exists(input_img)
     target_vals = _normalise_pxl_vals(pxl_vals)
@@ -249,15 +253,16 @@ def calc_dist_to_img_vals_tiled(
     pxl_vals: Union[int, float, Sequence[Union[int, float]]],
     img_band: int = 1,
     max_dist: float = 1000,
-    no_data_val: Optional[float] = None,
     out_no_data_val: Optional[float] = None,
-    gdalformat: str = "GTIFF",
     unit_geo: bool = True,
     tmp_dir: str = "tmp",
     tile_size: int = 2000,
     n_cores: int = -1,
-    creation_opts: Optional[Mapping[str, Any]] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    no_data_val: Optional[float] = None,
     use_pbar: bool = True,
+    creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """
     Calculate Euclidean distance to ``pxl_vals`` across overlapping tiles
@@ -268,11 +273,8 @@ def calc_dist_to_img_vals_tiled(
     :param pxl_vals: Target pixel value or sequence of pixel values.
     :param img_band: 1-based band index to inspect (Default = ``1``).
     :param max_dist: Maximum distance to compute (Default = ``1000``).
-    :param no_data_val: Optional input no-data value (Default = ``None``).
     :param out_no_data_val: Output no-data value (defaults to ``max_dist`` if
                             ``None``).
-    :param gdalformat: GDAL/rasterio driver format for the output file
-                       (Default = ``'GTIFF'``).
     :param unit_geo: If ``True``, distances are in CRS map units; if ``False``,
                      in pixel units (Default = ``True``).
     :param tmp_dir: Retained for API compatibility with ``rsgislib``
@@ -280,9 +282,12 @@ def calc_dist_to_img_vals_tiled(
     :param tile_size: Core tile size in pixels (Default = ``2000``).
     :param n_cores: Number of worker processes; ``<= 0`` uses all CPU cores
                     (Default = ``-1``).
-    :param creation_opts: Optional mapping of GDAL creation options.
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param no_data_val: Optional input no-data value (Default = ``None``).
     :param use_pbar: Show a progress bar during tiled processing
                      (Default = ``True``).
+    :param creation_opts: Optional mapping of GDAL creation options.
 
     .. code:: python
 
@@ -408,10 +413,11 @@ def buffer_img_pxl_vals(
     output_img: str,
     pxl_vals: Union[int, float, Sequence[Union[int, float]]],
     buf_thres: float,
-    tmp_dir: Optional[str] = None,
-    gdalformat: str = "GTIFF",
     img_band: int = 1,
     unit_geo: bool = True,
+    tmp_dir: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """
@@ -423,13 +429,13 @@ def buffer_img_pxl_vals(
     :param pxl_vals: Target pixel value or sequence of pixel values to buffer.
     :param buf_thres: Distance threshold strictly below which pixels are set
                       to ``1`` in the output mask.
+    :param img_band: 1-based band index to buffer (Default = ``1``).
+    :param unit_geo: If ``True``, ``buf_thres`` is in CRS map units; if
+                     ``False``, in pixel units (Default = ``True``).
     :param tmp_dir: Optional directory path checked for existence when
                     provided (retained for API compatibility).
     :param gdalformat: GDAL/rasterio driver format for the output file
                        (Default = ``'GTIFF'``).
-    :param img_band: 1-based band index to buffer (Default = ``1``).
-    :param unit_geo: If ``True``, ``buf_thres`` is in CRS map units; if
-                     ``False``, in pixel units (Default = ``True``).
     :param creation_opts: Optional mapping of GDAL creation options.
 
     .. code:: python

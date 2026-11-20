@@ -4,7 +4,6 @@ SAR backscatter adaptive speckle filters for raster imagery.
 
 from typing import List, Optional
 
-import rsgispy
 from rsgispy.imagefilter._helper import (
     make_lee_stat_fn,
     run_window_stat_filter,
@@ -35,8 +34,9 @@ def apply_lee_filter(
     output_img: str,
     filter_size: int = 3,
     n_looks: float = 1.0,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -53,7 +53,8 @@ def apply_lee_filter(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param n_looks: Equivalent number of looks (> 0; Default = ``1.0``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -87,8 +88,9 @@ def apply_enhanced_lee_filter(
     filter_size: int = 5,
     n_looks: float = 1.0,
     damping: float = 1.0,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -106,7 +108,8 @@ def apply_enhanced_lee_filter(
     :param n_looks: Equivalent number of looks (> 0; Default = ``1.0``).
     :param damping: Exponential damping factor (> 0; Default = ``1.0``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -140,8 +143,9 @@ def apply_frost_filter(
     output_img: str,
     filter_size: int = 5,
     damping: float = 1.0,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -158,7 +162,8 @@ def apply_frost_filter(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``5``).
     :param damping: Exponential damping factor (> 0; Default = ``1.0``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -192,8 +197,9 @@ def apply_enhanced_frost_filter(
     filter_size: int = 5,
     n_looks: float = 1.0,
     damping: float = 1.0,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -210,7 +216,8 @@ def apply_enhanced_frost_filter(
     :param n_looks: Equivalent number of looks (> 0; Default = ``1.0``).
     :param damping: Exponential damping factor (> 0; Default = ``1.0``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -244,8 +251,9 @@ def apply_kuan_filter(
     output_img: str,
     filter_size: int = 5,
     n_looks: float = 1.0,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -261,7 +269,8 @@ def apply_kuan_filter(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``5``).
     :param n_looks: Equivalent number of looks (> 0; Default = ``1.0``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -294,8 +303,9 @@ def apply_gamma_map_filter(
     output_img: str,
     filter_size: int = 5,
     n_looks: float = 1.0,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -312,7 +322,8 @@ def apply_gamma_map_filter(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``5``).
     :param n_looks: Equivalent number of looks (> 0; Default = ``1.0``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -345,8 +356,9 @@ def apply_refined_lee_filter(
     output_img: str,
     filter_size: int = 7,
     n_looks: float = 1.0,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -363,7 +375,8 @@ def apply_refined_lee_filter(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``7``).
     :param n_looks: Equivalent number of looks (> 0; Default = ``1.0``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).

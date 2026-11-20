@@ -135,6 +135,11 @@ Converting ``rsgispy`` data type and interpolation constants:
    rsgis_type = rsgispy.get_rsgis_datatype("int16")
    interp = rsgispy.get_rasterio_interp_type(rsgispy.INTERP_BILINEAR)
 
+   bbox = rsgispy.BBox(500000.0, 510000.0, 5200000.0, 5210000.0, epsg=32630)
+   xmin, xmax, ymin, ymax = bbox          # RSGIS 4-tuple unpacking
+   minx, miny, maxx, maxy = bbox.as_geo() # Shapely / Rasterio order
+   bbox_wgs84 = bbox.reproject(4326)
+
 API Reference
 -------------
 

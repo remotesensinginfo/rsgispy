@@ -62,14 +62,19 @@ def _apply_threshold_mask_raster(
     img_band: int,
     img_val_no_data: Optional[float],
     gdalformat: str,
+    datatype: Optional[int],
+    calc_stats: bool,
     use_pbar: bool,
 ) -> None:
     """
     Classify pixels inside ``in_msk_img == img_mask_val`` as ``1`` (non-outlier)
     or ``2`` (outlier) relative to ``chng_thres`` in windowed blocks and
-    populate thematic metadata and colour table.
+    optionally populate thematic metadata and colour table.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    eff_dtype = rsgispy.TYPE_8UINT if datatype is None else datatype
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(out_rio_dtype)
     nd_is_nan = img_val_no_data is not None and math.isnan(float(img_val_no_data))
 
     with ExitStack() as stack:
@@ -83,7 +88,7 @@ def _apply_threshold_mask_raster(
             stack=stack,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype="uint8",
+            out_rio_dtype=out_rio_dtype,
             grid=grid,
             count=1,
         )
@@ -100,7 +105,7 @@ def _apply_threshold_mask_raster(
             val_arr = img_ds.read(img_band, window=img_win)
             msk_arr = msk_ds.read(1, window=msk_win)
 
-            out_arr = np.zeros(val_arr.shape, dtype=np.uint8)
+            out_arr = np.zeros(val_arr.shape, dtype=out_np_dtype)
             in_msk = msk_arr == img_mask_val
             if img_val_no_data is not None:
                 if nd_is_nan:
@@ -120,25 +125,38 @@ def _apply_threshold_mask_raster(
             out_arr[outlier_msk] = 2
             dst.write(out_arr, 1, window=win)
 
-    pop_thmt_img_stats(
-        output_img,
-        add_clr_tab=True,
-        calc_pyramids=True,
-        ignore_zero=True,
-        use_pbar=use_pbar,
-    )
-    define_colour_table(output_img, _OUTLIER_CLR_LUT)
+    if calc_stats:
+        if out_rio_dtype in ("uint8", "uint16"):
+            pop_thmt_img_stats(
+                output_img,
+                add_clr_tab=True,
+                calc_pyramids=True,
+                ignore_zero=True,
+                use_pbar=use_pbar,
+            )
+            define_colour_table(output_img, _OUTLIER_CLR_LUT)
+        else:
+            pop_img_stats(
+                output_img,
+                no_data_val=0,
+                calc_pyramids=True,
+                use_pbar=use_pbar,
+            )
 
 
 def find_class_pyod_outliers(
-    pyod_obj: Any,
     input_img: str,
     in_msk_img: str,
     output_img: str,
+    pyod_obj: Any,
     out_scores_img: Optional[str] = None,
     img_mask_val: int = 1,
     img_bands: Optional[Sequence[int]] = None,
+    *,
     gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -148,12 +166,12 @@ def find_class_pyod_outliers(
     Output class values are ``0`` (outside mask / no-data), ``1`` (within mask,
     not an outlier), and ``2`` (within mask, outlier).
 
+    :param input_img: Path to the input image file.
+    :param in_msk_img: Path to the mask image defining the class of interest.
+    :param output_img: Path to the output classification image.
     :param pyod_obj: Initialised outlier detector instance implementing
                      ``fit(X)``, ``predict(X)``, and (when ``out_scores_img``
                      is given) ``predict_proba(X, method="unify")``.
-    :param input_img: Path to the input image file.
-    :param in_msk_img: Path to the mask image defining the class of interest.
-    :param output_img: Path to the output ``uint8`` classification image.
     :param out_scores_img: Optional path to a ``float32`` outlier probability
                            image.
     :param img_mask_val: Pixel value in ``in_msk_img`` defining the target class
@@ -161,6 +179,13 @@ def find_class_pyod_outliers(
     :param img_bands: Optional sequence of 1-based band indices to analyse
                       (all bands used when ``None``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type for
+                     ``output_img`` (Default = ``None``, which uses
+                     :data:`rsgispy.TYPE_8UINT`).
+    :param no_data_val: Optional no-data value for ``input_img`` (inferred
+                        from image metadata if ``None``).
+    :param calc_stats: If ``True``, compute output image statistics, pyramids,
+                       and colour table (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
@@ -170,7 +195,7 @@ def find_class_pyod_outliers(
         import rsgispy.changedetect.pxloutlierchng as poc
 
         poc.find_class_pyod_outliers(
-            IForest(), "img.tif", "mask.tif", "outliers.tif"
+            "img.tif", "mask.tif", "outliers.tif", IForest()
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -188,7 +213,13 @@ def find_class_pyod_outliers(
         n_bands = get_img_band_count(input_img)
         sel_bands = list(range(1, n_bands + 1))
 
-    img_val_no_data = get_img_no_data_value(input_img)
+    eff_dtype = rsgispy.TYPE_8UINT if datatype is None else datatype
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(out_rio_dtype)
+
+    img_val_no_data = (
+        get_img_no_data_value(input_img) if no_data_val is None else no_data_val
+    )
     msk_arr_vals = extract_img_pxl_vals_in_msk(
         input_img,
         sel_bands,
@@ -217,7 +248,7 @@ def find_class_pyod_outliers(
             stack=stack,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype="uint8",
+            out_rio_dtype=out_rio_dtype,
             grid=grid,
             count=1,
         )
@@ -246,7 +277,7 @@ def find_class_pyod_outliers(
             msk_win = Window(msk_xoff + col_off, msk_yoff + row_off, win_w, win_h)
 
             msk_flat = msk_ds.read(1, window=msk_win).ravel()
-            out_lbls = np.zeros(n_pxls, dtype=np.uint8)
+            out_lbls = np.zeros(n_pxls, dtype=out_np_dtype)
             out_scores = (
                 np.zeros(n_pxls, dtype=np.float32) if dst_scores is not None else None
             )
@@ -267,7 +298,7 @@ def find_class_pyod_outliers(
                 if np.any(vld):
                     vld_feats = feat_mat[vld]
                     pred_lbls = np.asarray(pyod_obj.predict(vld_feats)) + 1
-                    out_lbls[vld] = pred_lbls.astype(np.uint8, copy=False)
+                    out_lbls[vld] = pred_lbls.astype(out_np_dtype, copy=False)
                     if out_scores is not None:
                         try:
                             pred_probs = pyod_obj.predict_proba(
@@ -283,22 +314,31 @@ def find_class_pyod_outliers(
             if dst_scores is not None and out_scores is not None:
                 dst_scores.write(out_scores.reshape(win_h, win_w), 1, window=win)
 
-    pop_thmt_img_stats(
-        output_img,
-        add_clr_tab=True,
-        calc_pyramids=True,
-        ignore_zero=True,
-        use_pbar=use_pbar,
-    )
-    define_colour_table(output_img, _OUTLIER_CLR_LUT)
+    if calc_stats:
+        if out_rio_dtype in ("uint8", "uint16"):
+            pop_thmt_img_stats(
+                output_img,
+                add_clr_tab=True,
+                calc_pyramids=True,
+                ignore_zero=True,
+                use_pbar=use_pbar,
+            )
+            define_colour_table(output_img, _OUTLIER_CLR_LUT)
+        else:
+            pop_img_stats(
+                output_img,
+                no_data_val=0,
+                calc_pyramids=True,
+                use_pbar=use_pbar,
+            )
 
-    if out_scores_img is not None:
-        pop_img_stats(
-            out_scores_img,
-            no_data_val=0,
-            calc_pyramids=True,
-            use_pbar=use_pbar,
-        )
+        if out_scores_img is not None:
+            pop_img_stats(
+                out_scores_img,
+                no_data_val=0,
+                calc_pyramids=True,
+                use_pbar=use_pbar,
+            )
 
 
 def find_class_otsu_outliers(
@@ -308,9 +348,12 @@ def find_class_otsu_outliers(
     low_thres: bool,
     img_mask_val: int = 1,
     img_band: int = 1,
-    img_val_no_data: Optional[float] = None,
-    gdalformat: str = "GTIFF",
     plot_thres_file: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> float:
     """
@@ -321,17 +364,22 @@ def find_class_otsu_outliers(
 
     :param input_img: Path to the input raster image file.
     :param in_msk_img: Path to the mask image defining the class of interest.
-    :param output_img: Path to the output ``uint8`` thematic image file.
+    :param output_img: Path to the output thematic image file.
     :param low_thres: If ``True``, values below the threshold are outliers; if
                       ``False``, values above the threshold are outliers.
     :param img_mask_val: Pixel value in ``in_msk_img`` defining the target class
                          (Default = ``1``).
     :param img_band: 1-based band index within ``input_img`` (Default = ``1``).
-    :param img_val_no_data: Optional no-data value for ``input_img`` (inferred
-                            from image metadata if ``None``).
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param plot_thres_file: Optional output image path for a histogram plot
                             showing the computed threshold.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type
+                     (Default = ``None``, which uses
+                     :data:`rsgispy.TYPE_8UINT`).
+    :param no_data_val: Optional no-data value for ``input_img`` (inferred
+                        from image metadata if ``None``).
+    :param calc_stats: If ``True``, compute output image statistics, pyramids,
+                       and colour table (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :return: Computed threshold value.
@@ -348,8 +396,11 @@ def find_class_otsu_outliers(
     ensure_file_exists(input_img, "Input image")
     ensure_file_exists(in_msk_img, "Mask image")
 
-    if img_val_no_data is None:
-        img_val_no_data = get_img_no_data_value(input_img, img_band)
+    img_val_no_data = (
+        get_img_no_data_value(input_img, img_band)
+        if no_data_val is None
+        else no_data_val
+    )
 
     msk_arr_vals = extract_img_pxl_vals_in_msk(
         input_img,
@@ -377,6 +428,8 @@ def find_class_otsu_outliers(
         img_band=img_band,
         img_val_no_data=img_val_no_data,
         gdalformat=gdalformat,
+        datatype=datatype,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
 
@@ -395,9 +448,12 @@ def find_class_li_outliers(
     init_thres: Optional[float] = None,
     img_mask_val: int = 1,
     img_band: int = 1,
-    img_val_no_data: Optional[float] = None,
-    gdalformat: str = "GTIFF",
     plot_thres_file: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> float:
     """
@@ -409,7 +465,7 @@ def find_class_li_outliers(
 
     :param input_img: Path to the input raster image file.
     :param in_msk_img: Path to the mask image defining the class of interest.
-    :param output_img: Path to the output ``uint8`` thematic image file.
+    :param output_img: Path to the output thematic image file.
     :param low_thres: If ``True``, values below the threshold are outliers; if
                       ``False``, values above the threshold are outliers.
     :param tolerance: Optional convergence tolerance for Li's iteration.
@@ -417,11 +473,16 @@ def find_class_li_outliers(
     :param img_mask_val: Pixel value in ``in_msk_img`` defining the target class
                          (Default = ``1``).
     :param img_band: 1-based band index within ``input_img`` (Default = ``1``).
-    :param img_val_no_data: Optional no-data value for ``input_img`` (inferred
-                            from image metadata if ``None``).
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param plot_thres_file: Optional output image path for a histogram plot
                             showing the computed threshold.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type
+                     (Default = ``None``, which uses
+                     :data:`rsgispy.TYPE_8UINT`).
+    :param no_data_val: Optional no-data value for ``input_img`` (inferred
+                        from image metadata if ``None``).
+    :param calc_stats: If ``True``, compute output image statistics, pyramids,
+                       and colour table (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :return: Computed threshold value.
@@ -438,8 +499,11 @@ def find_class_li_outliers(
     ensure_file_exists(input_img, "Input image")
     ensure_file_exists(in_msk_img, "Mask image")
 
-    if img_val_no_data is None:
-        img_val_no_data = get_img_no_data_value(input_img, img_band)
+    img_val_no_data = (
+        get_img_no_data_value(input_img, img_band)
+        if no_data_val is None
+        else no_data_val
+    )
 
     msk_arr_vals = extract_img_pxl_vals_in_msk(
         input_img,
@@ -467,6 +531,8 @@ def find_class_li_outliers(
         img_band=img_band,
         img_val_no_data=img_val_no_data,
         gdalformat=gdalformat,
+        datatype=datatype,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
 
@@ -488,9 +554,12 @@ def find_class_kurt_skew_outliers(
     only_kurtosis: bool = False,
     img_mask_val: int = 1,
     img_band: int = 1,
-    img_val_no_data: Optional[float] = None,
-    gdalformat: str = "GTIFF",
     plot_thres_file: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> float:
     """
@@ -502,7 +571,7 @@ def find_class_kurt_skew_outliers(
 
     :param input_img: Path to the input raster image file.
     :param in_msk_img: Path to the mask image defining the class of interest.
-    :param output_img: Path to the output ``uint8`` thematic image file.
+    :param output_img: Path to the output thematic image file.
     :param vld_min: Minimum threshold bound for valid values.
     :param vld_max: Maximum threshold bound for valid values.
     :param init_thres: Initial estimate of the change threshold.
@@ -515,11 +584,16 @@ def find_class_kurt_skew_outliers(
     :param img_mask_val: Pixel value in ``in_msk_img`` defining the target class
                          (Default = ``1``).
     :param img_band: 1-based band index within ``input_img`` (Default = ``1``).
-    :param img_val_no_data: Optional no-data value for ``input_img`` (inferred
-                            from image metadata if ``None``).
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param plot_thres_file: Optional output image path for a histogram plot
                             showing the computed threshold.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type
+                     (Default = ``None``, which uses
+                     :data:`rsgispy.TYPE_8UINT`).
+    :param no_data_val: Optional no-data value for ``input_img`` (inferred
+                        from image metadata if ``None``).
+    :param calc_stats: If ``True``, compute output image statistics, pyramids,
+                       and colour table (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :return: Computed threshold value.
@@ -545,8 +619,11 @@ def find_class_kurt_skew_outliers(
     ensure_file_exists(input_img, "Input image")
     ensure_file_exists(in_msk_img, "Mask image")
 
-    if img_val_no_data is None:
-        img_val_no_data = get_img_no_data_value(input_img, img_band)
+    img_val_no_data = (
+        get_img_no_data_value(input_img, img_band)
+        if no_data_val is None
+        else no_data_val
+    )
 
     msk_arr_vals = extract_img_pxl_vals_in_msk(
         input_img,
@@ -584,6 +661,8 @@ def find_class_kurt_skew_outliers(
         img_band=img_band,
         img_val_no_data=img_val_no_data,
         gdalformat=gdalformat,
+        datatype=datatype,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
 

@@ -25,8 +25,9 @@ __all__ = [
 
 def calc_area_under_curve(
     input_img: str,
-    band_widths: Sequence[float],
     output_img: str,
+    band_widths: Sequence[float],
+    *,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
     use_pbar: bool = True,
@@ -39,9 +40,9 @@ def calc_area_under_curve(
     For each pixel, the output equals ``sum(band_i * band_widths[i])``.
 
     :param input_img: Path to the input image file.
+    :param output_img: Path to the output single-band image file.
     :param band_widths: Sequence of float widths matching the number of bands
                         in ``input_img``.
-    :param output_img: Path to the output single-band image file.
     :param gdalformat: GDAL/rasterio driver format for the output file
                        (Default = ``'GTIFF'``).
     :param datatype: Output data type constant from ``rsgispy.TYPE_*``
@@ -56,8 +57,8 @@ def calc_area_under_curve(
 
         rsgispy.imagespectral.indices.calc_area_under_curve(
             input_img="hyperspectral.tif",
-            band_widths=[10.0, 10.0, 10.0, 10.0],
             output_img="auc.tif",
+            band_widths=[10.0, 10.0, 10.0, 10.0],
             gdalformat="GTIFF",
             datatype=rsgispy.TYPE_32FLOAT,
         )

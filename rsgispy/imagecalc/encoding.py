@@ -30,6 +30,7 @@ def recode_int_raster(
     output_img: str,
     recode_dict: Mapping[int, int],
     keep_vals_not_in_dict: bool = True,
+    *,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32INT,
     use_pbar: bool = True,
@@ -64,7 +65,7 @@ def recode_int_raster(
             datatype=rsgispy.TYPE_32INT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-locals
     if recode_dict is None:
         raise rsgispy.RSGISPyException("recode_dict must not be None.")
     ensure_file_exists(input_img)
@@ -114,6 +115,7 @@ def one_hot_category_encoding(
     input_img: str,
     output_img: str,
     recode_dict: Optional[Mapping[int, int]] = None,
+    *,
     gdalformat: str = "GTIFF",
     no_data_val: Optional[int] = None,
     use_pbar: bool = True,
@@ -148,7 +150,7 @@ def one_hot_category_encoding(
             no_data_val=0,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-locals
     ensure_file_exists(input_img)
 
     lcl_recode_dict: Dict[Any, int] = {}

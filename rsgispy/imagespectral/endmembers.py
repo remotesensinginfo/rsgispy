@@ -889,12 +889,13 @@ def extract_avg_endmembers(
 def calc_ppi(
     input_img: str,
     output_img: str,
-    gdalformat: str = "GTIFF",
     niters: int = 1000,
     lthres: float = 0,
     uthres: float = 0,
     img_gain: float = 1,
     seed: Optional[int] = None,
+    *,
+    gdalformat: str = "GTIFF",
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -904,7 +905,6 @@ def calc_ppi(
 
     :param input_img: Path to the input multi-band raster image file.
     :param output_img: Path to the output ``uint16`` PPI count raster file.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param niters: Number of random skewer projections (Default = ``1000``).
     :param lthres: Lower extreme threshold distance in scaled image units
                    (Default = ``0``).
@@ -913,6 +913,7 @@ def calc_ppi(
     :param img_gain: Positive gain divisor applied to input reflectance values
                      when not equal to ``1`` (Default = ``1``).
     :param seed: Optional random seed for reproducible projections.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, compute statistics and pyramids on
                        ``output_img`` (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during iterations
@@ -925,9 +926,9 @@ def calc_ppi(
         em.calc_ppi(
             "pca_img.tif",
             "ppi_out.tif",
-            gdalformat="GTIFF",
             niters=500,
             seed=42,
+            gdalformat="GTIFF",
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals

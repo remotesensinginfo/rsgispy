@@ -251,11 +251,10 @@ def _run_spectral_similarity_mapper(
 
 def spectral_angle_mapper(
     input_img: str,
-    endmembers: EndmemberInput,
     output_img: str,
+    endmembers: EndmemberInput,
     out_class_img: Optional[str] = None,
     out_min_angle_img: Optional[str] = None,
-    gdalformat: str = "GTIFF",
     img_gain: float = 1,
     endmembers_gain: float = 1,
     file_format: Optional[str] = None,
@@ -263,6 +262,8 @@ def spectral_angle_mapper(
     max_angle: Optional[float] = None,
     valid_msk_img: Optional[str] = None,
     valid_msk_val: int = 1,
+    *,
+    gdalformat: str = "GTIFF",
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -279,18 +280,17 @@ def spectral_angle_mapper(
     ``[0, pi]`` radians (or ``[0, 180]`` degrees when ``degrees=True``).
 
     :param input_img: Path to the input multi-band reflectance/radiance image.
+    :param output_img: Path to the output ``float32`` multi-band spectral angle
+                       raster (one band per endmember class).
     :param endmembers: :class:`pandas.DataFrame` (bands as rows, endmember class
                        names as columns) or path readable by
                        :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
-    :param output_img: Path to the output ``float32`` multi-band spectral angle
-                       raster (one band per endmember class).
     :param out_class_img: Optional output thematic classification raster path
                           assigning each pixel the 1-based index of the
                           smallest spectral angle (``0`` for nodata/zero-norm
                           or when exceeding ``max_angle``).
     :param out_min_angle_img: Optional single-band ``float32`` output raster
                               recording the minimum spectral angle per pixel.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param img_gain: Gain divisor applied to ``input_img`` when ``> 1``
                      (Default = ``1``).
     :param endmembers_gain: Gain divisor applied to ``endmembers`` when ``> 1``
@@ -305,6 +305,7 @@ def spectral_angle_mapper(
     :param valid_msk_img: Optional single-band valid-region mask raster file.
     :param valid_msk_val: Pixel value identifying valid pixels in
                           ``valid_msk_img`` (Default = ``1``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param no_data_val: Explicit input nodata value overriding metadata
                         (Default = ``None``).
     :param calc_stats: If ``True``, compute statistics and pyramids on output
@@ -318,8 +319,8 @@ def spectral_angle_mapper(
 
         sc.spectral_angle_mapper(
             "refl.tif",
-            "endmembers.csv",
             "sam_angles.tif",
+            "endmembers.csv",
             out_class_img="sam_class.tif",
             out_min_angle_img="sam_min_angle.tif",
             degrees=True,
@@ -351,17 +352,18 @@ def spectral_angle_mapper(
 
 def spectral_correlation_mapper(
     input_img: str,
-    endmembers: EndmemberInput,
     output_img: str,
+    endmembers: EndmemberInput,
     out_class_img: Optional[str] = None,
     out_max_corr_img: Optional[str] = None,
-    gdalformat: str = "GTIFF",
     img_gain: float = 1,
     endmembers_gain: float = 1,
     file_format: Optional[str] = None,
     min_corr: Optional[float] = None,
     valid_msk_img: Optional[str] = None,
     valid_msk_val: int = 1,
+    *,
+    gdalformat: str = "GTIFF",
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -381,19 +383,18 @@ def spectral_correlation_mapper(
 
     :param input_img: Path to the input multi-band reflectance/radiance image
                       (requires at least 2 spectral bands).
-    :param endmembers: :class:`pandas.DataFrame` (bands as rows, endmember class
-                       names as columns) or path readable by
-                       :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
     :param output_img: Path to the output ``float32`` multi-band SCM correlation
                        raster (values in ``[-1, 1]``, one band per endmember
                        class).
+    :param endmembers: :class:`pandas.DataFrame` (bands as rows, endmember class
+                       names as columns) or path readable by
+                       :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
     :param out_class_img: Optional output thematic classification raster path
                           assigning each pixel the 1-based index of the
                           highest SCM correlation (``0`` for nodata/zero-variance
                           spectra or when below ``min_corr``).
     :param out_max_corr_img: Optional single-band ``float32`` output raster
                              recording the maximum SCM correlation per pixel.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param img_gain: Gain divisor applied to ``input_img`` when ``> 1``
                      (Default = ``1``).
     :param endmembers_gain: Gain divisor applied to ``endmembers`` when ``> 1``
@@ -407,6 +408,7 @@ def spectral_correlation_mapper(
     :param valid_msk_img: Optional single-band valid-region mask raster file.
     :param valid_msk_val: Pixel value identifying valid pixels in
                           ``valid_msk_img`` (Default = ``1``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param no_data_val: Explicit input nodata value overriding metadata
                         (Default = ``None``).
     :param calc_stats: If ``True``, compute statistics and pyramids on output
@@ -420,8 +422,8 @@ def spectral_correlation_mapper(
 
         sc.spectral_correlation_mapper(
             "refl.tif",
-            "endmembers.csv",
             "scm_corr.tif",
+            "endmembers.csv",
             out_class_img="scm_class.tif",
             out_max_corr_img="scm_max_corr.tif",
             min_corr=0.85,

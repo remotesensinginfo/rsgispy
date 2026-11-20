@@ -46,10 +46,10 @@ from rsgispy.tools._ml_explain import (
 )
 from rsgispy.tools.featureselection import calc_pandas_vif
 import rsgispy.tools.files
-from rsgispy.vectorgeoms.create import create_random_pts_in_bbox
+from rsgispy.vector.create import create_random_pts_in_bbox
+from rsgispy.vector.selection import vec_lyr_random_subset
+from rsgispy.vector.stats import calc_near_dist_to_feats
 from rsgispy.vectorprocess import VectorInput, validate_columns_exist
-from rsgispy.vectorstats.metrics import calc_near_dist_to_feats
-from rsgispy.vectorutils.selection import vec_lyr_random_subset
 from rsgispy.zonalstats.point import ext_point_band_values
 
 __all__ = [

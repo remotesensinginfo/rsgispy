@@ -133,11 +133,12 @@ def _apply_spectral_pixel_func(
 
 def spectral_smoothing(
     input_img: str,
-    valid_msk_img: str,
-    valid_msk_val: int,
     output_img: str,
+    valid_msk_img: str,
+    valid_msk_val: int = 1,
     win_len: int = 5,
     polyorder: int = 3,
+    *,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
     calc_stats: bool = True,
@@ -148,9 +149,9 @@ def spectral_smoothing(
     matching ``valid_msk_val`` in ``valid_msk_img``.
 
     :param input_img: Path to the input multi-band image file.
-    :param valid_msk_img: Path to the valid-region mask image file.
-    :param valid_msk_val: Mask value identifying valid pixels.
     :param output_img: Path to the output smoothed image file.
+    :param valid_msk_img: Path to the valid-region mask image file.
+    :param valid_msk_val: Mask value identifying valid pixels (Default = ``1``).
     :param win_len: Odd Savitzky-Golay window length (Default = ``5``).
     :param polyorder: Polynomial order strictly less than ``win_len``
                       (Default = ``3``).
@@ -168,9 +169,9 @@ def spectral_smoothing(
 
         sp.spectral_smoothing(
             "input_img.tif",
+            "smoothed_img.tif",
             "valid_msk.tif",
             1,
-            "smoothed_img.tif",
             win_len=5,
             polyorder=3,
         )
@@ -210,11 +211,12 @@ def spectral_smoothing(
 
 def mask_outliers_data_values(
     input_img: str,
-    valid_msk_img: str,
-    valid_msk_val: int,
     output_img: str,
+    valid_msk_img: str,
+    valid_msk_val: int = 1,
     lower: float = 5,
     upper: float = 95,
+    *,
     gdalformat: str = "GTIFF",
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -225,9 +227,9 @@ def mask_outliers_data_values(
     float32 output image.
 
     :param input_img: Path to the input multi-band image file.
-    :param valid_msk_img: Path to the valid-region mask image file.
-    :param valid_msk_val: Mask value identifying valid pixels.
     :param output_img: Path to the output float32 image file.
+    :param valid_msk_img: Path to the valid-region mask image file.
+    :param valid_msk_val: Mask value identifying valid pixels (Default = ``1``).
     :param lower: Lower percentile threshold in ``[0, 100]`` (Default = ``5``).
     :param upper: Upper percentile threshold in ``[0, 100]`` (Default = ``95``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
@@ -241,7 +243,7 @@ def mask_outliers_data_values(
         import rsgispy.imagespectral.preprocessing as sp
 
         sp.mask_outliers_data_values(
-            "input_img.tif", "valid_msk.tif", 1, "masked_img.tif"
+            "input_img.tif", "masked_img.tif", "valid_msk.tif", 1
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -273,12 +275,13 @@ def mask_outliers_data_values(
 
 def polyfill_nan_data_values(
     input_img: str,
+    output_img: str,
     band_vals: Sequence[float],
     valid_msk_img: str,
-    valid_msk_val: int,
-    output_img: str,
+    valid_msk_val: int = 1,
     polyorder: int = 3,
     mean_abs_diff: Optional[float] = None,
+    *,
     gdalformat: str = "GTIFF",
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -288,10 +291,10 @@ def polyfill_nan_data_values(
     a polynomial fit against ``band_vals``.
 
     :param input_img: Path to the input multi-band image file.
+    :param output_img: Path to the output float32 image file.
     :param band_vals: Sequence of coordinate values (e.g., wavelengths) for each band.
     :param valid_msk_img: Path to the valid-region mask image file.
-    :param valid_msk_val: Mask value identifying valid pixels.
-    :param output_img: Path to the output float32 image file.
+    :param valid_msk_val: Mask value identifying valid pixels (Default = ``1``).
     :param polyorder: Polynomial degree used for fitting (Default = ``3``).
     :param mean_abs_diff: Optional maximum deviation from the pixel's finite mean;
                           predicted values exceeding this threshold are replaced
@@ -308,10 +311,10 @@ def polyfill_nan_data_values(
 
         sp.polyfill_nan_data_values(
             "input_img.tif",
+            "filled_img.tif",
             [490.0, 560.0, 665.0, 842.0],
             "valid_msk.tif",
             1,
-            "filled_img.tif",
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments

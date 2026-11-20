@@ -12,11 +12,13 @@ import rasterio
 import rsgispy
 from rsgispy.imageprocess import (
     build_valid_mask,
+    cast_result_block,
     create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
     read_window_with_halo,
 )
+from rsgispy.imageutils.stats import pop_img_stats
 
 
 def validate_sun_angles(azimuth: float, zenith: float) -> None:
@@ -110,18 +112,23 @@ def process_single_dem_3x3(
     input_img: str,
     output_img: str,
     gdalformat: str,
-    out_rio_dtype: str,
+    out_datatype: int,
     block_fn: Callable[[np.ndarray, np.ndarray, np.ndarray, float, float], np.ndarray],
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """Run a 3x3 windowed calculation block-by-block over a single DEM raster."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
+    out_rio_dtype = rsgispy.get_rasterio_datatype(out_datatype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(out_datatype))
+
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
         ew_res = abs(float(src.transform.a))
         ns_res = abs(float(src.transform.e))
-        no_data_val = src.nodata
+        eff_nd = no_data_val if no_data_val is not None else src.nodata
 
         dst = create_output_from_dataset(
             stack=stack,
@@ -136,9 +143,23 @@ def process_single_dem_3x3(
             src.height, src.width, use_pbar=use_pbar
         ):
             dem_halo = read_window_with_halo(src, 1, out_win, pad=1)
-            dx, dy, n_vals = prepare_3x3_horn_diffs(dem_halo, no_data_val)
-            out_arr = block_fn(dx, dy, n_vals, ew_res, ns_res)
+            dx, dy, n_vals = prepare_3x3_horn_diffs(dem_halo, eff_nd)
+            out_arr = cast_result_block(
+                block_fn(dx, dy, n_vals, ew_res, ns_res),
+                int(out_win.height),
+                int(out_win.width),
+                out_np_dtype,
+            )
             dst.write(out_arr, 1, window=out_win)
+
+    if calc_stats:
+        pop_img_stats(
+            input_img=output_img,
+            no_data_val=None,
+            calc_pyramids=True,
+            ignore_cog=gdalformat.upper().strip() == "COG",
+            use_pbar=use_pbar,
+        )
 
 
 def process_pxl_res_dem_3x3(
@@ -146,16 +167,20 @@ def process_pxl_res_dem_3x3(
     in_pxl_res_img: str,
     output_img: str,
     gdalformat: str,
-    out_rio_dtype: str,
+    out_datatype: int,
     block_fn: Callable[
         [np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray], np.ndarray
     ],
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """Run a 3x3 windowed calculation using per-pixel E-W/N-S resolution bands."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(in_dem_img, "Input DEM image")
     ensure_file_exists(in_pxl_res_img, "Input pixel resolution image")
+    out_rio_dtype = rsgispy.get_rasterio_datatype(out_datatype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(out_datatype))
 
     with ExitStack() as stack:
         dem_src = stack.enter_context(rasterio.open(in_dem_img, "r"))
@@ -169,7 +194,7 @@ def process_pxl_res_dem_3x3(
                 "Input DEM and pixel resolution images must have matching dimensions."
             )
 
-        no_data_val = dem_src.nodata
+        eff_nd = no_data_val if no_data_val is not None else dem_src.nodata
         dst = create_output_from_dataset(
             stack=stack,
             src=dem_src,
@@ -183,10 +208,24 @@ def process_pxl_res_dem_3x3(
             dem_src.height, dem_src.width, use_pbar=use_pbar
         ):
             dem_halo = read_window_with_halo(dem_src, 1, out_win, pad=1)
-            dx, dy, n_vals = prepare_3x3_horn_diffs(dem_halo, no_data_val)
+            dx, dy, n_vals = prepare_3x3_horn_diffs(dem_halo, eff_nd)
             ew_res = res_src.read(1, window=out_win, out_dtype=np.float64)
             ns_res = np.abs(
                 res_src.read(2, window=out_win, out_dtype=np.float64)
             )
-            out_arr = block_fn(dx, dy, n_vals, ew_res, ns_res)
+            out_arr = cast_result_block(
+                block_fn(dx, dy, n_vals, ew_res, ns_res),
+                int(out_win.height),
+                int(out_win.width),
+                out_np_dtype,
+            )
             dst.write(out_arr, 1, window=out_win)
+
+    if calc_stats:
+        pop_img_stats(
+            input_img=output_img,
+            no_data_val=None,
+            calc_pyramids=True,
+            ignore_cog=gdalformat.upper().strip() == "COG",
+            use_pbar=use_pbar,
+        )

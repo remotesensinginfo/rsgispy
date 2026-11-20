@@ -627,7 +627,7 @@ def _run_halo_filter(
         np.ndarray,
     ],
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -636,8 +636,9 @@ def _run_halo_filter(
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img, "Input image")
     band_names = get_band_names(input_img)
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
-    out_np_dtype = rsgispy.get_numpy_datatype(datatype)
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = rsgispy.get_numpy_datatype(eff_dtype)
 
     eff_in_nd = (
         float(no_data_val)
@@ -694,7 +695,7 @@ def run_window_stat_filter(
     filter_size: int,
     stat_fn: StatFunc,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -721,7 +722,7 @@ def run_kernel_filter(
     kernel: np.ndarray,
     zero_dc: bool = False,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -759,7 +760,7 @@ def run_gradient_magnitude_filter(
     kernel_x: np.ndarray,
     kernel_y: np.ndarray,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -797,4 +798,141 @@ def run_gradient_magnitude_filter(
         no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+    )
+
+
+def _make_tile_stat_op(
+    source: "rsgispy._io.TileNode",
+    win_shape: Tuple[int, int],
+    tile_fn: StatFunc,
+    no_data_val: Optional[float] = None,
+    border: Optional["rsgispy._io.HaloBorder"] = None,
+    name: Optional[str] = None,
+) -> "rsgispy._io.WindowOp":
+    """Build a :class:`rsgispy._io.WindowOp` running ``tile_fn`` band-by-band."""
+    from rsgispy._io import HaloBorder, WindowOp  # pylint: disable=import-outside-toplevel
+
+    kh, kw = win_shape
+    pad_y, pad_x = kh // 2, kw // 2
+
+    def _op_fn(padded_3d: np.ndarray) -> np.ndarray:
+        n_bands, h_in, w_in = padded_3d.shape
+        out_h = h_in - 2 * pad_y
+        out_w = w_in - 2 * pad_x
+        y_end = pad_y + out_h
+        x_end = pad_x + out_w
+        out = np.empty((n_bands, out_h, out_w), dtype=np.float64)
+        for b_idx in range(n_bands):
+            band_halo = padded_3d[b_idx]
+            valid_halo = build_valid_mask(band_halo, no_data_val)
+            centre = band_halo[pad_y:y_end, pad_x:x_end]
+            centre_valid = valid_halo[pad_y:y_end, pad_x:x_end]
+            wins = sliding_window_view(band_halo, (kh, kw))
+            v_wins = sliding_window_view(valid_halo, (kh, kw))
+            res = tile_fn(wins, centre, v_wins, centre_valid)
+            if no_data_val is not None:
+                res = np.where(np.isfinite(res), res, float(no_data_val))
+            out[b_idx] = res
+        return out
+
+    return WindowOp(
+        source=source,
+        radius=(pad_y, pad_x),
+        func=_op_fn,
+        border=border if border is not None else HaloBorder("edge"),
+        name=name,
+    )
+
+
+def window_stat_node(
+    source: "rsgispy._io.TileNode",
+    filter_size: int,
+    stat_fn: StatFunc,
+    no_data_val: Optional[float] = None,
+    border: Optional["rsgispy._io.HaloBorder"] = None,
+    name: Optional[str] = None,
+) -> "rsgispy._io.WindowOp":
+    """Build a composable :class:`~rsgispy._io.WindowOp` for a moving-window statistic."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    size = validate_filter_size(filter_size)
+    return _make_tile_stat_op(
+        source=source,
+        win_shape=(size, size),
+        tile_fn=stat_fn,
+        no_data_val=no_data_val,
+        border=border,
+        name=name,
+    )
+
+
+def kernel_conv_node(
+    source: "rsgispy._io.TileNode",
+    kernel: np.ndarray,
+    zero_dc: bool = False,
+    no_data_val: Optional[float] = None,
+    border: Optional["rsgispy._io.HaloBorder"] = None,
+    name: Optional[str] = None,
+) -> "rsgispy._io.WindowOp":
+    """Build a composable :class:`~rsgispy._io.WindowOp` for a 2D convolution kernel."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    k_arr = validate_kernel(kernel)
+
+    def _tile_conv(
+        wins: np.ndarray,
+        centre: np.ndarray,
+        valid: np.ndarray,
+        centre_valid: np.ndarray,
+    ) -> np.ndarray:
+        return _convolve_tile_with_mask(
+            wins, centre, valid, centre_valid, k_arr, zero_dc=zero_dc
+        )
+
+    return _make_tile_stat_op(
+        source=source,
+        win_shape=(int(k_arr.shape[0]), int(k_arr.shape[1])),
+        tile_fn=_tile_conv,
+        no_data_val=no_data_val,
+        border=border,
+        name=name,
+    )
+
+
+def gradient_magnitude_node(
+    source: "rsgispy._io.TileNode",
+    kernel_x: np.ndarray,
+    kernel_y: np.ndarray,
+    no_data_val: Optional[float] = None,
+    border: Optional["rsgispy._io.HaloBorder"] = None,
+    name: Optional[str] = None,
+) -> "rsgispy._io.WindowOp":
+    """Build a composable :class:`~rsgispy._io.WindowOp` computing ``hypot(Gx, Gy)``."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    kx = validate_kernel(kernel_x)
+    ky = validate_kernel(kernel_y)
+    if kx.shape != ky.shape:
+        raise rsgispy.RSGISPyException(
+            f"kernel_x shape {kx.shape} must match kernel_y shape {ky.shape}."
+        )
+
+    def _tile_grad(
+        wins: np.ndarray,
+        centre: np.ndarray,
+        valid: np.ndarray,
+        centre_valid: np.ndarray,
+    ) -> np.ndarray:
+        gx = _convolve_tile_with_mask(
+            wins, centre, valid, centre_valid, kx, zero_dc=True
+        )
+        gy = _convolve_tile_with_mask(
+            wins, centre, valid, centre_valid, ky, zero_dc=True
+        )
+        return np.hypot(gx, gy)
+
+    return _make_tile_stat_op(
+        source=source,
+        win_shape=(int(kx.shape[0]), int(kx.shape[1])),
+        tile_fn=_tile_grad,
+        no_data_val=no_data_val,
+        border=border,
+        name=name,
     )

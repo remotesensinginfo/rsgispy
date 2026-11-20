@@ -7,7 +7,7 @@ Rasterisation and distance-zone raster generation utilities for
 from contextlib import ExitStack
 import math
 import os
-from typing import Any, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pyproj
@@ -18,7 +18,6 @@ import rasterio.windows
 from shapely.geometry import box
 
 import rsgispy
-import rsgispy.imagecalc.distance as _img_dist
 from rsgispy.imageprocess import (
     _INT_DTYPES,
     IntersectionGrid,
@@ -26,25 +25,27 @@ from rsgispy.imageprocess import (
     iter_dataset_windows,
     open_output_dataset,
 )
-from rsgispy.imageutils._helpers import normalise_creation_options
+from rsgispy.imageutils._helpers import (
+    maybe_pop_stats,
+    normalise_creation_options,
+)
 from rsgispy.imageutils.blank import (
     create_blank_img_from_bbox,
     create_copy_img,
 )
 from rsgispy.imageutils.metadata import get_img_res
-from rsgispy.imageutils.stats import pop_img_stats, pop_thmt_img_stats
 from rsgispy.tools.geometry import find_extent_on_whole_num_grid
-import rsgispy.vectorattrs.columns
+import rsgispy.vector.attrs
+from rsgispy.vector.io import (
+    get_epsg_proj_from_vec,
+    get_vec_lyr_bbox,
+    get_wkt_proj_from_vec,
+)
 from rsgispy.vectorprocess import (
     VectorInput,
     read_vec_gdf,
     resolve_vec_layer,
     validate_columns_exist,
-)
-from rsgispy.vectorutils.metadata import (
-    get_epsg_proj_from_vec,
-    get_vec_lyr_bbox,
-    get_wkt_proj_from_vec,
 )
 
 __all__ = [
@@ -78,6 +79,7 @@ def _create_blank_grid_image(
     datatype: int,
     no_data_val: Optional[float],
     use_pbar: bool,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """Create a blank single-band image when EPSG integer code is unavailable."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -107,7 +109,7 @@ def _create_blank_grid_image(
             grid=grid,
             count=1,
             output_exists=False,
-            creation_opts=normalise_creation_options(None),
+            creation_opts=normalise_creation_options(creation_opts),
         )
         if no_data_val is not None:
             dst.nodata = no_data_val
@@ -128,8 +130,9 @@ def _prepare_rasterise_target(
     gdalformat: str,
     datatype: int,
     use_vec_extent: bool,
-    no_data_val: float,
+    no_data_val: Optional[float],
     use_pbar: bool,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """Create or verify ``output_img`` before rasterising features onto it."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -158,11 +161,13 @@ def _prepare_rasterise_target(
                 out_img_res=out_res,
                 out_img_pxl_val=0.0,
                 out_img_n_bands=1,
+                snap_to_grid=False,
                 gdalformat=gdalformat,
                 datatype=datatype,
-                snap_to_grid=False,
                 no_data_val=no_data_val,
+                calc_stats=False,
                 use_pbar=use_pbar,
+                creation_opts=creation_opts,
             )
             return
 
@@ -189,6 +194,7 @@ def _prepare_rasterise_target(
             datatype=datatype,
             no_data_val=no_data_val,
             use_pbar=use_pbar,
+            creation_opts=creation_opts,
         )
         return
 
@@ -206,7 +212,9 @@ def _prepare_rasterise_target(
             gdalformat=gdalformat,
             datatype=datatype,
             no_data_val=no_data_val,
+            calc_stats=False,
             use_pbar=use_pbar,
+            creation_opts=creation_opts,
         )
     except rsgispy.RSGISPyException:
         with rasterio.open(input_img, "r") as src:
@@ -223,6 +231,7 @@ def _prepare_rasterise_target(
                 datatype=datatype,
                 no_data_val=no_data_val,
                 use_pbar=use_pbar,
+                creation_opts=creation_opts,
             )
 
 
@@ -231,15 +240,17 @@ def rasterise_vec_lyr(
     vec_lyr: Optional[str],
     input_img: Optional[str],
     output_img: str,
-    gdalformat: str = "GTIFF",
     burn_val: int = 1,
-    datatype: int = rsgispy.TYPE_8UINT,
     att_column: Optional[str] = None,
     use_vec_extent: bool = False,
     thematic: bool = True,
-    no_data_val: float = 0.0,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Rasterise a vector layer onto an output raster grid using ``rasterio``.
@@ -251,11 +262,8 @@ def rasterise_vec_lyr(
                       May be ``None`` if ``output_img`` already exists and
                       ``use_vec_extent=False``.
     :param output_img: Output raster image file path.
-    :param gdalformat: Output GDAL/rasterio driver name (Default = ``'GTIFF'``).
     :param burn_val: Constant pixel burn value when ``att_column`` is ``None``
                      (Default = ``1``).
-    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
-                     (Default = ``rsgispy.TYPE_8UINT``).
     :param att_column: Optional vector column name whose values are burned into
                        the raster. If ``'FID'`` and no ``'FID'`` column exists,
                        a 1-based feature ID sequence is generated automatically.
@@ -265,12 +273,17 @@ def rasterise_vec_lyr(
     :param thematic: If ``True`` and ``calc_stats=True``, populate thematic
                      raster statistics and colour table for integer outputs
                      (Default = ``True``).
+    :param gdalformat: Output GDAL/rasterio driver name (Default = ``'GTIFF'``).
+    :param datatype: Optional output data type constant from ``rsgispy.TYPE_*``
+                     (defaults to ``rsgispy.TYPE_8UINT``).
     :param no_data_val: No-data value for continuous statistics/metadata
                         (Default = ``0.0``).
     :param calc_stats: If ``True``, compute raster statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or
+                          ``'KEY=VALUE'`` sequence.
 
     .. code:: python
 
@@ -282,13 +295,14 @@ def rasterise_vec_lyr(
             "crowns",
             "ref_img.tif",
             "crowns_ras.tif",
+            att_column="FID",
             gdalformat="GTIFF",
             datatype=rsgispy.TYPE_8UINT,
-            att_column="FID",
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches
+    eff_dtype = rsgispy.TYPE_8UINT if datatype is None else datatype
     lyr_name = resolve_vec_layer(vec_file, vec_lyr)
     _prepare_rasterise_target(
         vec_file=vec_file,
@@ -296,10 +310,11 @@ def rasterise_vec_lyr(
         input_img=input_img,
         output_img=output_img,
         gdalformat=gdalformat,
-        datatype=datatype,
+        datatype=eff_dtype,
         use_vec_extent=use_vec_extent,
         no_data_val=no_data_val,
         use_pbar=use_pbar,
+        creation_opts=creation_opts,
     )
 
     gdf = read_vec_gdf(vec_file, vec_lyr=lyr_name, copy=False)
@@ -386,36 +401,33 @@ def rasterise_vec_lyr(
     if calc_stats:
         with rasterio.open(output_img, "r") as check_ds:
             dtype_str = check_ds.dtypes[0]
-        if thematic and (dtype_str in _INT_DTYPES):
-            pop_thmt_img_stats(
-                input_img=output_img,
-                add_clr_tab=True,
-                calc_pyramids=True,
-                ignore_zero=True,
-                use_pbar=use_pbar,
-            )
-        else:
-            pop_img_stats(
-                input_img=output_img,
-                no_data_val=no_data_val,
-                calc_pyramids=True,
-                use_pbar=use_pbar,
-            )
+        maybe_pop_stats(
+            output_img=output_img,
+            calc_stats=True,
+            no_data_val=no_data_val,
+            thematic=thematic and (dtype_str in _INT_DTYPES),
+            use_pbar=use_pbar,
+        )
 
 
 def create_vec_range_lut_score_img(
     vec_file: VectorInput,
     vec_lyr: Optional[str],
     vec_col: str,
-    tmp_vec_file: Optional[Union[str, os.PathLike]],
-    tmp_vec_lyr: Optional[str],
-    tmp_vec_col: str,
     input_img: str,
     output_img: str,
     scrs_lut: Dict[int, Tuple[float, float]],
+    tmp_vec_file: Optional[Union[str, os.PathLike]] = None,
+    tmp_vec_lyr: Optional[str] = None,
+    tmp_vec_col: str = "score",
     out_format: str = "GPKG",
+    *,
     gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = 0.0,
+    calc_stats: bool = True,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Recode a numeric vector attribute using a half-open range look-up table
@@ -425,19 +437,27 @@ def create_vec_range_lut_score_img(
                      :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
     :param vec_col: Numeric attribute column name to recode.
-    :param tmp_vec_file: Intermediate vector file path for the recoded column,
-                         or ``None`` to keep the intermediate layer in memory.
-    :param tmp_vec_lyr: Intermediate vector layer name (or ``None`` when
-                        ``tmp_vec_file`` is ``None``).
-    :param tmp_vec_col: Intermediate numeric column name.
     :param input_img: Reference raster image defining output grid and CRS.
     :param output_img: Output raster image file path.
     :param scrs_lut: Dictionary mapping integer output code to ``(low, high)``
                      checked as ``low <= val < high``.
+    :param tmp_vec_file: Intermediate vector file path for the recoded column,
+                         or ``None`` to keep the intermediate layer in memory
+                         (Default = ``None``).
+    :param tmp_vec_lyr: Intermediate vector layer name (or ``None`` when
+                        ``tmp_vec_file`` is ``None``).
+    :param tmp_vec_col: Intermediate numeric column name (Default = ``'score'``).
     :param out_format: Intermediate vector format driver (Default = ``'GPKG'``).
     :param gdalformat: Output raster format driver (Default = ``'GTIFF'``).
+    :param datatype: Optional output data type constant from ``rsgispy.TYPE_*``
+                     (defaults to ``rsgispy.TYPE_8UINT``).
+    :param no_data_val: Output no-data value (Default = ``0.0``).
+    :param calc_stats: If ``True``, compute raster statistics and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during rasterising
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or
+                          ``'KEY=VALUE'`` sequence.
 
     .. code:: python
 
@@ -447,16 +467,13 @@ def create_vec_range_lut_score_img(
             "plots.gpkg",
             "plots",
             "biomass",
-            "tmp_score.gpkg",
-            "plots",
-            "score",
             "ref_img.tif",
             "score.tif",
             scrs_lut={1: (0.0, 50.0), 2: (50.0, 200.0)},
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    scored_gdf = rsgispy.vectorattrs.columns.add_numeric_col_range_lut(
+    scored_gdf = rsgispy.vector.attrs.add_numeric_col_range_lut(
         vec_file=vec_file,
         vec_lyr=vec_lyr,
         vec_col=vec_col,
@@ -474,14 +491,16 @@ def create_vec_range_lut_score_img(
         vec_lyr=tmp_vec_lyr,
         input_img=input_img,
         output_img=output_img,
-        gdalformat=gdalformat,
         burn_val=1,
-        datatype=rsgispy.TYPE_8UINT,
         att_column=tmp_vec_col,
         use_vec_extent=False,
         thematic=True,
-        no_data_val=0.0,
+        gdalformat=gdalformat,
+        datatype=rsgispy.TYPE_8UINT if datatype is None else datatype,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
+        creation_opts=creation_opts,
     )
 
 
@@ -489,15 +508,20 @@ def create_vec_lst_lut_score_img(
     vec_file: VectorInput,
     vec_lyr: Optional[str],
     vec_col: str,
-    tmp_vec_file: Optional[Union[str, os.PathLike]],
-    tmp_vec_lyr: Optional[str],
-    tmp_vec_col: str,
     input_img: str,
     output_img: str,
     scrs_lut: Sequence[Tuple[Union[str, int], int]],
+    tmp_vec_file: Optional[Union[str, os.PathLike]] = None,
+    tmp_vec_lyr: Optional[str] = None,
+    tmp_vec_col: str = "score",
     out_format: str = "GPKG",
+    *,
     gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = 0.0,
+    calc_stats: bool = True,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Recode a categorical vector attribute using a list of ``(value, code)``
@@ -507,18 +531,26 @@ def create_vec_lst_lut_score_img(
                      :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
     :param vec_col: Attribute column name to match against ``scrs_lut``.
-    :param tmp_vec_file: Intermediate vector file path for the recoded column,
-                         or ``None`` to keep the intermediate layer in memory.
-    :param tmp_vec_lyr: Intermediate vector layer name (or ``None`` when
-                        ``tmp_vec_file`` is ``None``).
-    :param tmp_vec_col: Intermediate numeric column name.
     :param input_img: Reference raster image defining output grid and CRS.
     :param output_img: Output raster image file path.
     :param scrs_lut: Sequence of ``(lookup_val, output_int)`` pairs.
+    :param tmp_vec_file: Intermediate vector file path for the recoded column,
+                         or ``None`` to keep the intermediate layer in memory
+                         (Default = ``None``).
+    :param tmp_vec_lyr: Intermediate vector layer name (or ``None`` when
+                        ``tmp_vec_file`` is ``None``).
+    :param tmp_vec_col: Intermediate numeric column name (Default = ``'score'``).
     :param out_format: Intermediate vector format driver (Default = ``'GPKG'``).
     :param gdalformat: Output raster format driver (Default = ``'GTIFF'``).
+    :param datatype: Optional output data type constant from ``rsgispy.TYPE_*``
+                     (defaults to ``rsgispy.TYPE_8UINT``).
+    :param no_data_val: Output no-data value (Default = ``0.0``).
+    :param calc_stats: If ``True``, compute raster statistics and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during rasterising
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or
+                          ``'KEY=VALUE'`` sequence.
 
     .. code:: python
 
@@ -528,16 +560,13 @@ def create_vec_lst_lut_score_img(
             "land.gpkg",
             "land",
             "cover",
-            "tmp_score.gpkg",
-            "land",
-            "score",
             "ref_img.tif",
             "score.tif",
             scrs_lut=[("Forest", 1), ("Water", 2)],
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    scored_gdf = rsgispy.vectorattrs.columns.add_numeric_col_from_lst_lut(
+    scored_gdf = rsgispy.vector.attrs.add_numeric_col_from_lst_lut(
         vec_file=vec_file,
         vec_lyr=vec_lyr,
         ref_col=vec_col,
@@ -555,14 +584,16 @@ def create_vec_lst_lut_score_img(
         vec_lyr=tmp_vec_lyr,
         input_img=input_img,
         output_img=output_img,
-        gdalformat=gdalformat,
         burn_val=1,
-        datatype=rsgispy.TYPE_8UINT,
         att_column=tmp_vec_col,
         use_vec_extent=False,
         thematic=True,
-        no_data_val=0.0,
+        gdalformat=gdalformat,
+        datatype=rsgispy.TYPE_8UINT if datatype is None else datatype,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
+        creation_opts=creation_opts,
     )
 
 
@@ -570,19 +601,24 @@ def create_dist_zones_to_vec_lyr(
     vec_file: VectorInput,
     vec_lyr: Optional[str],
     input_img: str,
-    tmp_vec_img: str,
-    tmp_dist_img: str,
     output_img: str,
-    recode_lut: Sequence[Tuple[int, Tuple[float, float]]],
-    gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_8UINT,
+    recode_lut: Sequence[Tuple[int, Tuple[float, float]]] = (),
     max_dist_thres: Optional[float] = None,
     backgrd_val: int = 0,
+    tmp_vec_img: Optional[str] = None,
+    tmp_dist_img: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Rasterise ``vec_file``, compute Euclidean distance to rasterised features,
-    and recode distances into categorical zones via ``recode_lut``.
+    and recode distances into categorical zones via ``recode_lut`` in memory
+    without requiring intermediate disk rasters.
 
     Each entry in ``recode_lut`` is ``(out_code, (low, high))`` checked as
     ``low <= dist < high``. Use ``math.nan`` (or ``None``) for open lower or
@@ -592,19 +628,26 @@ def create_dist_zones_to_vec_lyr(
                      :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
     :param input_img: Reference raster defining the grid and CRS.
-    :param tmp_vec_img: Intermediate binary rasterised vector image path.
-    :param tmp_dist_img: Intermediate Euclidean distance raster image path.
     :param output_img: Output categorical zone raster image path.
     :param recode_lut: Sequence of ``(zone_val, (low_dist, high_dist))`` rules.
-    :param gdalformat: Output raster format driver (Default = ``'GTIFF'``).
-    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
-                     (Default = ``rsgispy.TYPE_8UINT``).
     :param max_dist_thres: Optional maximum distance threshold beyond which
                            pixels receive ``backgrd_val``.
     :param backgrd_val: Background value for pixels outside all LUT intervals
                         or beyond ``max_dist_thres`` (Default = ``0``).
+    :param tmp_vec_img: Optional path to also save the intermediate binary
+                        rasterised vector image (kept in memory when ``None``).
+    :param tmp_dist_img: Optional path to also save the intermediate Euclidean
+                         distance raster image (kept in memory when ``None``).
+    :param gdalformat: Output raster format driver (Default = ``'GTIFF'``).
+    :param datatype: Optional output data type constant from ``rsgispy.TYPE_*``
+                     (defaults to ``rsgispy.TYPE_8UINT``).
+    :param no_data_val: Optional output no-data value (Default = ``None``).
+    :param calc_stats: If ``True``, populate raster statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or
+                          ``'KEY=VALUE'`` sequence.
 
     .. code:: python
 
@@ -615,56 +658,126 @@ def create_dist_zones_to_vec_lyr(
             "roads.gpkg",
             "roads",
             "ref_img.tif",
-            "tmp_roads.tif",
-            "tmp_dist.tif",
             "road_zones.tif",
             recode_lut=[(1, (0.0, 50.0)), (2, (50.0, math.nan))],
             max_dist_thres=200.0,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    if not hasattr(_img_dist, "calc_dist_to_img_vals"):
+    try:
+        from scipy.ndimage import (  # pylint: disable=import-outside-toplevel
+            distance_transform_edt,
+        )
+    except ImportError as err:
         raise rsgispy.RSGISPyException(
             "scipy is required for create_dist_zones_to_vec_lyr."
-        )
+        ) from err
 
-    rasterise_vec_lyr(
-        vec_file=vec_file,
-        vec_lyr=vec_lyr,
-        input_img=input_img,
-        output_img=tmp_vec_img,
-        gdalformat=gdalformat,
-        burn_val=1,
-        datatype=rsgispy.TYPE_8UINT,
-        calc_stats=False,
-        use_pbar=use_pbar,
-    )
+    if not output_img:
+        raise rsgispy.RSGISPyException("output_img must be specified.")
+    ensure_file_exists(input_img)
 
-    dist_nd_val = -9999.0
-    _img_dist.calc_dist_to_img_vals(
-        input_img=tmp_vec_img,
-        output_img=tmp_dist_img,
-        pxl_vals=[1],
-        img_band=1,
-        gdalformat=gdalformat,
-        max_dist=max_dist_thres,
-        no_data_val=None,
-        out_no_data_val=dist_nd_val,
-        unit_geo=True,
-    )
+    eff_dtype = rsgispy.TYPE_8UINT if datatype is None else datatype
+    norm_opts = normalise_creation_options(creation_opts)
 
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
+    vec_gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, copy=False)
 
-    with ExitStack() as stack:
-        dist_src = stack.enter_context(rasterio.open(tmp_dist_img, "r"))
+    with rasterio.open(input_img, "r") as ref_src:
         grid = IntersectionGrid(
-            crs=dist_src.crs,
-            transform=dist_src.transform,
-            width=dist_src.width,
-            height=dist_src.height,
+            crs=ref_src.crs,
+            transform=ref_src.transform,
+            width=int(ref_src.width),
+            height=int(ref_src.height),
             offsets={},
         )
+        x_res = abs(float(ref_src.transform.a))
+        y_res = abs(float(ref_src.transform.e))
+
+    if vec_gdf.crs is not None and grid.crs is not None and vec_gdf.crs != grid.crs:
+        vec_gdf = vec_gdf.to_crs(grid.crs)
+
+    shapes = [
+        (geom, 1)
+        for geom in vec_gdf.geometry
+        if geom is not None and not geom.is_empty
+    ]
+    if shapes:
+        vec_arr = rasterio.features.rasterize(
+            shapes=shapes,
+            out_shape=(grid.height, grid.width),
+            transform=grid.transform,
+            fill=0,
+            dtype=np.uint8,
+        )
+    else:
+        vec_arr = np.zeros((grid.height, grid.width), dtype=np.uint8)
+
+    if tmp_vec_img:
+        with ExitStack() as stack:
+            vec_dst = open_output_dataset(
+                stack=stack,
+                output_img=tmp_vec_img,
+                gdalformat=gdalformat,
+                out_rio_dtype="uint8",
+                grid=grid,
+                count=1,
+                output_exists=False,
+                creation_opts=norm_opts,
+            )
+            vec_dst.write(vec_arr, 1)
+
+    dist_nd_val = -9999.0
+    if np.any(vec_arr == 1):
+        dist_arr = distance_transform_edt(
+            vec_arr != 1, sampling=(y_res, x_res)
+        ).astype(np.float32)
+        if max_dist_thres is not None:
+            dist_arr = np.where(
+                dist_arr > float(max_dist_thres), dist_nd_val, dist_arr
+            ).astype(np.float32)
+    else:
+        dist_arr = np.full(
+            (grid.height, grid.width), dist_nd_val, dtype=np.float32
+        )
+
+    if tmp_dist_img:
+        with ExitStack() as stack:
+            dist_dst = open_output_dataset(
+                stack=stack,
+                output_img=tmp_dist_img,
+                gdalformat=gdalformat,
+                out_rio_dtype="float32",
+                grid=grid,
+                count=1,
+                output_exists=False,
+                creation_opts=norm_opts,
+            )
+            dist_dst.nodata = dist_nd_val
+            dist_dst.write(dist_arr, 1)
+
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+
+    valid = (dist_arr != dist_nd_val) & np.isfinite(dist_arr)
+    out_arr = np.full(
+        (grid.height, grid.width),
+        backgrd_val,
+        dtype=out_np_dtype,
+    )
+    for cat_val, (low_val, high_val) in recode_lut:
+        has_low = (low_val is not None) and (not math.isnan(low_val))
+        has_high = (high_val is not None) and (not math.isnan(high_val))
+        if has_low and has_high:
+            mask = valid & (dist_arr >= low_val) & (dist_arr < high_val)
+        elif has_low:
+            mask = valid & (dist_arr >= low_val)
+        elif has_high:
+            mask = valid & (dist_arr < high_val)
+        else:
+            mask = valid
+        out_arr[mask] = cat_val
+
+    with ExitStack() as stack:
         dst = open_output_dataset(
             stack=stack,
             output_img=output_img,
@@ -673,31 +786,15 @@ def create_dist_zones_to_vec_lyr(
             grid=grid,
             count=1,
             output_exists=False,
-            creation_opts=normalise_creation_options(None),
+            creation_opts=norm_opts,
         )
+        if no_data_val is not None:
+            dst.nodata = float(no_data_val)
+        dst.write(out_arr, 1)
 
-        for win in iter_dataset_windows(
-            grid.height, grid.width, use_pbar=use_pbar
-        ):
-            dist_arr = dist_src.read(1, window=win)
-            valid = (dist_arr != dist_nd_val) & np.isfinite(dist_arr)
-            out_arr = np.full(
-                (int(win.height), int(win.width)),
-                backgrd_val,
-                dtype=out_np_dtype,
-            )
-
-            for cat_val, (low_val, high_val) in recode_lut:
-                has_low = (low_val is not None) and (not math.isnan(low_val))
-                has_high = (high_val is not None) and (not math.isnan(high_val))
-                if has_low and has_high:
-                    mask = valid & (dist_arr >= low_val) & (dist_arr < high_val)
-                elif has_low:
-                    mask = valid & (dist_arr >= low_val)
-                elif has_high:
-                    mask = valid & (dist_arr < high_val)
-                else:
-                    mask = valid
-                out_arr[mask] = cat_val
-
-            dst.write(out_arr, 1, window=win)
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        use_pbar=use_pbar,
+    )

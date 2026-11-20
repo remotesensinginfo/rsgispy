@@ -10,6 +10,7 @@ organised into thematic submodules:
 * :doc:`imagefilter/edge` — Sobel, Prewitt, Gaussian derivative, and Laplacian edge-detection filters.
 * :doc:`imagefilter/sar` — Lee, Enhanced Lee, Frost, Enhanced Frost, Kuan, Gamma MAP, and Refined Lee SAR speckle filters.
 * :doc:`imagefilter/texture` — Gray-Level Co-occurrence Matrix (GLCM) spatial texture filters.
+* :doc:`imagefilter/chained` — Halo-fused in-memory filter chains (:func:`~rsgispy.imagefilter.chained.apply_filter_chain`) eliminating intermediate GeoTIFF writes.
 
 Example
 -------
@@ -53,3 +54,4 @@ Submodules
    imagefilter/edge
    imagefilter/sar
    imagefilter/texture
+   imagefilter/chained

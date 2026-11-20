@@ -282,10 +282,10 @@ def test_calc_mask_img_pxl_val_prob(tmp_path):
 
     ic_stats.calc_mask_img_pxl_val_prob(
         str(img_p),
-        [1, 2],
         str(msk_p),
-        1,
         str(out_p),
+        [1, 2],
+        1,
         bin_widths=[2.0, 2.0],
         use_no_data=True,
         rescale_probs=True,
@@ -305,7 +305,7 @@ def test_calc_mask_img_pxl_val_prob(tmp_path):
     _write_raster(const_p, np.ones((1, 2, 3), dtype=np.float32), nodata=-9999.0)
     out_const = tmp_path / "prob_const.tif"
     ic_stats.calc_mask_img_pxl_val_prob(
-        str(const_p), [1], str(msk_p), 1, str(out_const), use_pbar=False
+        str(const_p), str(msk_p), str(out_const), [1], 1, use_pbar=False
     )
     with rasterio.open(out_const) as src:
         np.testing.assert_allclose(src.read(1), np.ones((2, 3), dtype=np.float32))
@@ -771,10 +771,10 @@ def test_calc_fill_regions_knn(tmp_path):
 
     ic_fill.calc_fill_regions_knn(
         str(ref_p),
-        -99,
         str(mask_p),
-        1,
         str(out_p),
+        -99,
+        1,
         k=3,
         summary=rsgispy.SUMTYPE_MODE,
         use_pbar=False,
@@ -844,15 +844,15 @@ def test_optional_scipy_sklearn_guards(monkeypatch):
             assert hasattr(dist_fresh, fn_name)
             assert fn_name in dist_fresh.__all__
         with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
-            dist_fresh.calc_dist_to_img_vals("in.tif", [1], "out.tif")
+            dist_fresh.calc_dist_to_img_vals("in.tif", "out.tif", [1])
         with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
-            dist_fresh.buffer_img_pxl_vals("in.tif", [1], "out.tif", 10.0)
+            dist_fresh.buffer_img_pxl_vals("in.tif", "out.tif", [1], 10.0)
 
         assert fill_fresh.HAVE_SCIPY is False
         assert hasattr(fill_fresh, "calc_fill_regions_knn")
         assert "calc_fill_regions_knn" in fill_fresh.__all__
         with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
-            fill_fresh.calc_fill_regions_knn("in.tif", 0, "fill.tif", 1, "out.tif")
+            fill_fresh.calc_fill_regions_knn("in.tif", "fill.tif", "out.tif", 0, 1)
 
 
 def test_calc_img_similarity_metrics(tmp_path):

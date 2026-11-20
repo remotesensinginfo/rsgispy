@@ -102,12 +102,13 @@ def _collect_reference_points(
 
 def calc_fill_regions_knn(
     in_ref_img: str,
-    ref_no_data: Union[int, float],
     in_fill_regions_img: str,
-    fill_region_val: Union[int, float],
     output_img: str,
+    ref_no_data: Union[int, float],
+    fill_region_val: Union[int, float],
     k: int = 5,
     summary: int = rsgispy.SUMTYPE_MODE,
+    *,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32INT,
     use_pbar: bool = True,
@@ -121,10 +122,10 @@ def calc_fill_regions_knn(
     images must share the same CRS/projection.
 
     :param in_ref_img: Path to the reference image (can differ in resolution).
-    :param ref_no_data: No-data value in ``in_ref_img`` excluded from KNN.
     :param in_fill_regions_img: Path to the mask image defining fill regions.
-    :param fill_region_val: Pixel value in ``in_fill_regions_img`` to fill.
     :param output_img: Path to the output image file.
+    :param ref_no_data: No-data value in ``in_ref_img`` excluded from KNN.
+    :param fill_region_val: Pixel value in ``in_fill_regions_img`` to fill.
     :param k: Number of nearest neighbours (Default = ``5``).
     :param summary: Summary method ``rsgispy.SUMTYPE_*`` (Mode, Median, Max,
                     Min, Mean, Sum, or Range; Default = ``SUMTYPE_MODE``).
@@ -142,10 +143,10 @@ def calc_fill_regions_knn(
 
         rsgispy.imagecalc.fill.calc_fill_regions_knn(
             in_ref_img="ref_classes.tif",
-            ref_no_data=0,
             in_fill_regions_img="fill_mask.tif",
-            fill_region_val=1,
             output_img="filled_classes.tif",
+            ref_no_data=0,
+            fill_region_val=1,
             k=5,
             summary=rsgispy.SUMTYPE_MODE,
         )

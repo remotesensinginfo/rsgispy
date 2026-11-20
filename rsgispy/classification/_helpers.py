@@ -57,7 +57,7 @@ from rsgispy.tools._sklearn import (
 )
 from rsgispy.tools.files import ensure_parent_dir
 import rsgispy.tools.strings
-from rsgispy.vectorattrs.io import read_vec_columns
+from rsgispy.vector.attrs import read_vec_columns
 from rsgispy.vectorprocess import VectorInput
 
 if TYPE_CHECKING:

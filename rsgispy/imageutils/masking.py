@@ -20,7 +20,11 @@ from rsgispy.imageprocess import (
     open_output_dataset,
     validate_band_index,
 )
-from rsgispy.imageutils._helpers import normalise_creation_options
+from rsgispy.imageutils._helpers import (
+    maybe_pop_stats,
+    normalise_creation_options,
+    rsgis_dtype_from_np_dtype,
+)
 from rsgispy.imageutils.colourtable import set_img_thematic
 
 __all__ = [
@@ -128,12 +132,15 @@ def mask_img(
     input_img: str,
     in_msk_img: str,
     output_img: str,
-    gdalformat: str,
-    datatype: int,
     out_value: float,
     mask_value: Union[float, int, Sequence[Union[float, int]]],
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Mask ``input_img`` using ``in_msk_img``: wherever band 1 of ``in_msk_img``
@@ -143,13 +150,20 @@ def mask_img(
     :param input_img: Path to the input image file.
     :param in_msk_img: Path to the mask image file (band 1 is used).
     :param output_img: Path to the output masked image file.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
     :param out_value: Value written to masked pixels in the output image.
     :param mask_value: Scalar or sequence of mask values in ``in_msk_img`` to mask.
-    :param options: Optional GDAL creation options mapping.
+    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``;
+                       Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to matching ``input_img``).
+    :param no_data_val: Optional output no-data value (defaults to ``input_img``
+                        no-data value when ``None``).
+    :param calc_stats: If ``True``, compute image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options (dict or sequence of
+                          ``'KEY=VALUE'``).
 
     .. code:: python
 
@@ -157,8 +171,8 @@ def mask_img(
         import rsgispy.imageutils.masking
 
         rsgispy.imageutils.masking.mask_img(
-            "in_img.tif", "msk.tif", "out_img.tif", "GTIFF",
-            rsgispy.TYPE_32FLOAT, 0.0, 0,
+            "in_img.tif", "msk.tif", "out_img.tif", 0.0, 0,
+            gdalformat="GTIFF", datatype=rsgispy.TYPE_32FLOAT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -173,10 +187,7 @@ def mask_img(
 
     has_nan_msk = any(math.isnan(v) for v in mask_vals)
     finite_mask_vals = [v for v in mask_vals if not math.isnan(v)]
-
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
-    creation_opts = normalise_creation_options(options)
+    norm_opts = normalise_creation_options(creation_opts)
 
     with ExitStack() as stack:
         datasets, paths = open_multi_image_datasets(
@@ -188,6 +199,14 @@ def mask_img(
         in_col, in_row = grid.offsets[paths[0]]
         msk_col, msk_row = grid.offsets[paths[1]]
 
+        eff_dtype = (
+            rsgis_dtype_from_np_dtype(in_ds.dtypes[0])
+            if datatype is None
+            else datatype
+        )
+        out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+
         dst = open_output_dataset(
             stack=stack,
             output_img=output_img,
@@ -196,10 +215,11 @@ def mask_img(
             grid=grid,
             count=in_ds.count,
             output_exists=False,
-            creation_opts=creation_opts,
+            creation_opts=norm_opts,
         )
-        if in_ds.nodata is not None:
-            dst.nodata = in_ds.nodata
+        eff_nd = no_data_val if no_data_val is not None else in_ds.nodata
+        if eff_nd is not None:
+            dst.nodata = eff_nd
         for bidx in range(1, in_ds.count + 1):
             desc = in_ds.descriptions[bidx - 1]
             if desc:
@@ -236,24 +256,41 @@ def mask_img(
             out_arr = cast_result_block(data, win_h, win_w, out_np_dtype)
             dst.write(out_arr, window=out_win)
 
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=eff_nd,
+        use_pbar=use_pbar,
+    )
+
 
 def gen_finite_mask(
     input_img: str,
     output_img: str,
+    *,
     gdalformat: str = "GTIFF",
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Generate a binary thematic mask (``1`` where all bands are finite, ``0`` where
     any band contains ``NaN`` or ``+/-Inf``).
 
     :param input_img: Path to the input image file.
-    :param output_img: Path to the output mask image file (8-bit unsigned).
+    :param output_img: Path to the output mask image file (8-bit unsigned by default).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param options: Optional GDAL creation options mapping.
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to :data:`rsgispy.TYPE_8UINT`).
+    :param no_data_val: Optional output no-data value (Default = ``None``).
+    :param calc_stats: If ``True``, compute thematic statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options (dict or sequence of
+                          ``'KEY=VALUE'``).
 
     .. code:: python
 
@@ -261,7 +298,12 @@ def gen_finite_mask(
 
         rsgispy.imageutils.masking.gen_finite_mask("in_img.tif", "finite_msk.tif")
     """
-    creation_opts = normalise_creation_options(options)
+    # pylint: disable=too-many-arguments,too-many-locals
+    eff_dtype = rsgispy.TYPE_8UINT if datatype is None else datatype
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    norm_opts = normalise_creation_options(creation_opts)
+
     with ExitStack() as stack:
         datasets, paths = open_multi_image_datasets(stack, [input_img])
         grid = compute_spatial_intersection(datasets)
@@ -271,42 +313,60 @@ def gen_finite_mask(
             stack=stack,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype="uint8",
+            out_rio_dtype=out_rio_dtype,
             grid=grid,
             count=1,
             output_exists=False,
-            creation_opts=creation_opts,
+            creation_opts=norm_opts,
         )
+        if no_data_val is not None:
+            dst.nodata = no_data_val
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
         ):
             arr = in_ds.read(window=out_win, out_dtype=np.float64)
-            finite_msk = np.all(np.isfinite(arr), axis=0).astype(np.uint8)
+            finite_msk = np.all(np.isfinite(arr), axis=0).astype(out_np_dtype)
             dst.write(finite_msk, 1, window=out_win)
 
     set_img_thematic(output_img)
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        thematic=True,
+        use_pbar=use_pbar,
+    )
 
 
 def gen_valid_mask(
     input_imgs: Union[str, os.PathLike, Sequence[Union[str, os.PathLike]]],
     output_img: str,
+    *,
     gdalformat: str = "GTIFF",
-    no_data_val: float = 0.0,
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = 0.0,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Generate a binary thematic valid-pixel mask (``1`` where all bands across all
-    input images differ from ``no_data_val``, else ``0``).
+    input images are finite and differ from ``no_data_val``, else ``0``).
 
     :param input_imgs: Input image path or sequence of image paths.
-    :param output_img: Path to the output mask image file (8-bit unsigned).
+    :param output_img: Path to the output mask image file (8-bit unsigned by default).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param no_data_val: Value representing no-data (Default = ``0.0``).
-    :param options: Optional GDAL creation options mapping.
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to :data:`rsgispy.TYPE_8UINT`).
+    :param no_data_val: Value representing no-data (Default = ``0.0``; pass ``None``
+                        to check only finiteness).
+    :param calc_stats: If ``True``, compute thematic statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options (dict or sequence of
+                          ``'KEY=VALUE'``).
 
     .. code:: python
 
@@ -322,8 +382,11 @@ def gen_valid_mask(
     else:
         img_list = list(input_imgs)
 
-    nd_is_nan = math.isnan(float(no_data_val))
-    creation_opts = normalise_creation_options(options)
+    eff_dtype = rsgispy.TYPE_8UINT if datatype is None else datatype
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    nd_is_nan = no_data_val is None or math.isnan(float(no_data_val))
+    norm_opts = normalise_creation_options(creation_opts)
 
     with ExitStack() as stack:
         datasets, paths = open_multi_image_datasets(stack, img_list)
@@ -333,11 +396,11 @@ def gen_valid_mask(
             stack=stack,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype="uint8",
+            out_rio_dtype=out_rio_dtype,
             grid=grid,
             count=1,
             output_exists=False,
-            creation_opts=creation_opts,
+            creation_opts=norm_opts,
         )
 
         for out_win in iter_dataset_windows(
@@ -358,38 +421,57 @@ def gen_valid_mask(
                 arr = ds.read(window=in_win, out_dtype=np.float64)
                 valid &= np.all(np.isfinite(arr), axis=0)
                 if not nd_is_nan:
+                    assert no_data_val is not None
                     valid &= np.all(arr != float(no_data_val), axis=0)
-            dst.write(valid.astype(np.uint8), 1, window=out_win)
+            dst.write(valid.astype(out_np_dtype), 1, window=out_win)
 
     set_img_thematic(output_img)
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        thematic=True,
+        use_pbar=use_pbar,
+    )
 
 
 def gen_img_edge_mask(
     input_img: str,
     output_img: str,
-    gdalformat: str,
     n_edge_pxls: int,
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Generate a binary thematic mask highlighting image border pixels (``1`` within
     ``n_edge_pxls`` of any edge of ``input_img``, ``0`` in the interior).
 
     :param input_img: Path to the input reference image.
-    :param output_img: Path to the output mask image file (8-bit unsigned).
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
+    :param output_img: Path to the output mask image file (8-bit unsigned by default).
     :param n_edge_pxls: Number of edge pixels along each side to mark as ``1``.
-    :param options: Optional GDAL creation options mapping.
+    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``;
+                       Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to :data:`rsgispy.TYPE_8UINT`).
+    :param no_data_val: Optional output no-data value (Default = ``None``).
+    :param calc_stats: If ``True``, compute thematic statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options (dict or sequence of
+                          ``'KEY=VALUE'``).
 
     .. code:: python
 
         import rsgispy.imageutils.masking
 
         rsgispy.imageutils.masking.gen_img_edge_mask(
-            "in_img.tif", "edge_msk.tif", "GTIFF", 5
+            "in_img.tif", "edge_msk.tif", 5, gdalformat="GTIFF"
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -399,7 +481,11 @@ def gen_img_edge_mask(
             f"n_edge_pxls must be non-negative, got {n_edge_pxls}."
         )
 
-    creation_opts = normalise_creation_options(options)
+    eff_dtype = rsgispy.TYPE_8UINT if datatype is None else datatype
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    norm_opts = normalise_creation_options(creation_opts)
+
     with ExitStack() as stack:
         datasets, _ = open_multi_image_datasets(stack, [input_img])
         grid = compute_spatial_intersection(datasets)
@@ -408,12 +494,14 @@ def gen_img_edge_mask(
             stack=stack,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype="uint8",
+            out_rio_dtype=out_rio_dtype,
             grid=grid,
             count=1,
             output_exists=False,
-            creation_opts=creation_opts,
+            creation_opts=norm_opts,
         )
+        if no_data_val is not None:
+            dst.nodata = no_data_val
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
@@ -430,18 +518,29 @@ def gen_img_edge_mask(
                 | (cols < edge_px)
                 | (cols >= grid.width - edge_px)
             )
-            dst.write(edge.astype(np.uint8), 1, window=out_win)
+            dst.write(edge.astype(out_np_dtype), 1, window=out_win)
 
     set_img_thematic(output_img)
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        thematic=True,
+        use_pbar=use_pbar,
+    )
 
 
 def mask_all_band_zero_vals(
     input_img: str,
     output_img: str,
-    gdalformat: str,
     out_val: float = 1.0,
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Replace zero/non-positive values in individual bands with ``out_val`` where
@@ -450,29 +549,42 @@ def mask_all_band_zero_vals(
 
     :param input_img: Path to the input multi-band image file.
     :param output_img: Path to the output image file.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param out_val: Replacement value when a pixel has positive band sum but
                     a band value ``<= 0`` (Default = ``1.0``).
-    :param options: Optional GDAL creation options mapping.
+    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``;
+                       Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to matching ``input_img``).
+    :param no_data_val: Optional output no-data value (defaults to ``input_img``
+                        no-data value when ``None``).
+    :param calc_stats: If ``True``, compute image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options (dict or sequence of
+                          ``'KEY=VALUE'``).
 
     .. code:: python
 
         import rsgispy.imageutils.masking
 
         rsgispy.imageutils.masking.mask_all_band_zero_vals(
-            "in_img.tif", "out_img.tif", "GTIFF", out_val=1.0
+            "in_img.tif", "out_img.tif", out_val=1.0, gdalformat="GTIFF"
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    creation_opts = normalise_creation_options(options)
+    norm_opts = normalise_creation_options(creation_opts)
     with ExitStack() as stack:
         datasets, paths = open_multi_image_datasets(stack, [input_img])
         grid = compute_spatial_intersection(datasets)
         in_ds = datasets[paths[0]]
-        out_rio_dtype = in_ds.dtypes[0]
-        out_np_dtype = np.dtype(out_rio_dtype)
+        eff_dtype = (
+            rsgis_dtype_from_np_dtype(in_ds.dtypes[0])
+            if datatype is None
+            else datatype
+        )
+        out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
 
         dst = open_output_dataset(
             stack=stack,
@@ -482,10 +594,11 @@ def mask_all_band_zero_vals(
             grid=grid,
             count=in_ds.count,
             output_exists=False,
-            creation_opts=creation_opts,
+            creation_opts=norm_opts,
         )
-        if in_ds.nodata is not None:
-            dst.nodata = in_ds.nodata
+        eff_nd = no_data_val if no_data_val is not None else in_ds.nodata
+        if eff_nd is not None:
+            dst.nodata = eff_nd
         for bidx in range(1, in_ds.count + 1):
             desc = in_ds.descriptions[bidx - 1]
             if desc:
@@ -503,14 +616,26 @@ def mask_all_band_zero_vals(
             out_arr = cast_result_block(data, win_h, win_w, out_np_dtype)
             dst.write(out_arr, window=out_win)
 
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=eff_nd,
+        use_pbar=use_pbar,
+    )
+
 
 def create_valid_mask(
     img_band_info: Sequence[ImageBandInfo],
-    out_msk_file: Union[str, os.PathLike],
-    gdalformat: str = "GTIFF",
+    output_img: Union[str, os.PathLike],
     tmp_dir: str = "",
-    use_pbar: bool = True,
     default_no_data_val: Optional[float] = 0.0,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
+    use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Create a binary thematic valid-pixel mask (``1`` where all bands of every
@@ -519,17 +644,25 @@ def create_valid_mask(
 
     :param img_band_info: Sequence of :class:`ImageBandInfo` objects describing
                           input images and optional bands to check.
-    :param out_msk_file: Path to the output mask image file.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``;
-                       Default = ``'GTIFF'``).
+    :param output_img: Path to the output mask image file.
     :param tmp_dir: Temporary directory path (accepted for API compatibility).
-    :param use_pbar: If ``True``, display a tqdm progress bar during processing
-                     (Default = ``True``).
     :param default_no_data_val: Fallback no-data value checked when an input
                                 band has no embedded raster no-data value
                                 (``None`` in ``ds.nodatavals``; Default = ``0.0``).
                                 Pass ``None`` to check only finiteness for bands
                                 without embedded no-data metadata.
+    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``;
+                       Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to :data:`rsgispy.TYPE_8UINT`).
+    :param no_data_val: Optional no-data metadata value to set on ``output_img``
+                        (Default = ``None``).
+    :param calc_stats: If ``True``, compute thematic statistics and pyramids
+                       (Default = ``False``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options (dict or sequence of
+                          ``'KEY=VALUE'``).
 
     .. code:: python
 
@@ -541,7 +674,7 @@ def create_valid_mask(
             rsgispy.classification.classdata.ImageBandInfo("img2.tif", "img2"),
         ]
         rsgispy.imageutils.create_valid_mask(
-            img_info, "valid_msk.tif", "GTIFF"
+            img_info, "valid_msk.tif", gdalformat="GTIFF"
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -552,7 +685,12 @@ def create_valid_mask(
         )
     if tmp_dir:
         os.makedirs(tmp_dir, exist_ok=True)
-    out_msk_path = os.fspath(out_msk_file)
+    out_msk_path = os.fspath(output_img)
+
+    eff_dtype = rsgispy.TYPE_8UINT if datatype is None else datatype
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    norm_opts = normalise_creation_options(creation_opts)
 
     img_paths: List[str] = []
     for info in img_band_info:
@@ -586,11 +724,14 @@ def create_valid_mask(
             stack=stack,
             output_img=out_msk_path,
             gdalformat=gdalformat,
-            out_rio_dtype="uint8",
+            out_rio_dtype=out_rio_dtype,
             grid=grid,
             count=1,
             output_exists=False,
+            creation_opts=norm_opts,
         )
+        if no_data_val is not None:
+            dst.nodata = no_data_val
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
@@ -615,6 +756,13 @@ def create_valid_mask(
                     )
                     if eff_nd is not None and not math.isnan(float(eff_nd)):
                         valid &= arr != float(eff_nd)
-            dst.write(valid.astype(np.uint8), 1, window=out_win)
+            dst.write(valid.astype(out_np_dtype), 1, window=out_win)
 
     set_img_thematic(out_msk_path)
+    maybe_pop_stats(
+        output_img=out_msk_path,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        thematic=True,
+        use_pbar=use_pbar,
+    )

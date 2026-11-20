@@ -21,14 +21,14 @@ from shapely.geometry import (
 )
 
 import rsgispy
-import rsgispy.vectorgeoms
-import rsgispy.vectorgeoms.create as vg_create
-import rsgispy.vectorgeoms.lines as vg_lines
-import rsgispy.vectorgeoms.overlay as vg_overlay
-import rsgispy.vectorgeoms.polygons as vg_polys
-import rsgispy.vectorgeoms.spatial as vg_spatial
-import rsgispy.vectorstats.metrics as vs_metrics
-import rsgispy.vectorutils.metadata as vu_meta
+import rsgispy.vector
+import rsgispy.vector.create as vg_create
+import rsgispy.vector.geoms as vg_lines
+import rsgispy.vector.geoms as vg_overlay
+import rsgispy.vector.geoms as vg_polys
+import rsgispy.vector.geoms as vg_spatial
+import rsgispy.vector.io as vu_meta
+import rsgispy.vector.stats as vs_metrics
 
 
 def _can_import(mod_name: str) -> bool:
@@ -340,7 +340,7 @@ def test_vectorgeoms_overlay_and_polygons(tmp_path):
     assert len(gpd.read_file(rm_gpkg, layer="rm")) == 1
 
     bbox_gpkg = str(tmp_path / "bbox.gpkg")
-    vg_polys.create_bbox_vec_lyr(
+    vg_create.create_bbox_vec_lyr(
         a_gpkg, "a", bbox_gpkg, "bbox", whole_num_grid=True, whole_num_base_grid=10.0
     )
     assert gpd.read_file(bbox_gpkg, layer="bbox").area.iloc[0] == pytest.approx(200.0)
@@ -376,8 +376,8 @@ def test_vectorgeoms_overlay_and_polygons(tmp_path):
 def test_vectorgeoms_spatial_and_deduplication(tmp_path):
     """Test point extraction, alpha shape, bboxes, rtree, predicates, and deduplication."""
     # Confirm OGR duplicate functions were removed and package __init__ has no __all__
-    assert not hasattr(rsgispy.vectorgeoms, "__all__")
-    assert not hasattr(rsgispy.vectorgeoms, "clip_vec_lyr")
+    assert rsgispy.vector.__all__ == ["io", "create", "geoms", "attrs", "stats", "selection"]
+    assert not hasattr(rsgispy.vector, "clip_vec_lyr")
     for mod, removed_name in (
         (vg_polys, "convert_polygon_to_polyline"),
         (vg_polys, "convert_multi_geoms_to_single"),
@@ -666,7 +666,7 @@ def test_vectorgeoms_create(tmp_path):
     assert vu_meta.get_vec_feat_count(bbox_pts, "pts") == 12
 
     lines_out = str(tmp_path / "created_lines.gpkg")
-    vg_lines.create_lines_vec(
+    vg_create.create_lines_vec(
         lines_out,
         "lines",
         "GPKG",
@@ -676,7 +676,7 @@ def test_vectorgeoms_create(tmp_path):
     assert vu_meta.get_vec_feat_count(lines_out, "lines") == 2
 
     transects_gpkg = str(tmp_path / "transects.gpkg")
-    vg_lines.create_img_transects(
+    vg_create.create_img_transects(
         cls_tif,
         transects_gpkg,
         "trans",
@@ -839,7 +839,7 @@ def test_vectorgeoms_gdf_in_memory():
     )
     assert len(bbox_pts_gdf) == 8
 
-    created_lines_gdf = vg_lines.create_lines_vec(
+    created_lines_gdf = vg_create.create_lines_vec(
         None, None, "GPKG", 32630,
         [[(0.0, 0.0), (10.0, 10.0)], [(10.0, 0.0), (20.0, 10.0)]],
     )
@@ -910,7 +910,7 @@ def test_vectorgeoms_raster_to_gdf_in_memory(tmp_path):
     assert len(img_gdfs) == 1
     assert isinstance(img_gdfs[0], gpd.GeoDataFrame)
 
-    trans_gdf = vg_lines.create_img_transects(
+    trans_gdf = vg_create.create_img_transects(
         cls_tif, x_intervals=[0.25, 0.75], y_intervals=[0.5]
     )
     assert isinstance(trans_gdf, gpd.GeoDataFrame)

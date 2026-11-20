@@ -120,6 +120,7 @@ def calc_img_difference(
     in_a_img: str,
     in_b_img: str,
     output_img: str,
+    *,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
     use_pbar: bool = True,
@@ -152,7 +153,7 @@ def calc_img_difference(
             datatype=rsgispy.TYPE_32FLOAT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-locals
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
 

@@ -133,6 +133,13 @@ class EnvVarInfo:
         self.norm_mean = float(norm_mean)
         self.norm_std = float(norm_std)
 
+    def to_band_spec(self) -> Any:
+        """Convert this environmental variable into a :class:`~rsgispy.ml.stack.BandSpec`."""
+        # pylint: disable=import-outside-toplevel
+        from rsgispy.ml.stack import BandSpec
+
+        return BandSpec.from_env_var_info(self)
+
     def _format_desc(self) -> str:
         type_str = "Unknown"
         if self.data_type == rsgispy.VAR_TYPE_CONTINUOUS:

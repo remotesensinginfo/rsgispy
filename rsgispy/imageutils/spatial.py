@@ -6,7 +6,7 @@ pixel size/area, and scattered-point gridding functions using ``rasterio``,
 
 from contextlib import ExitStack
 import math
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
@@ -29,6 +29,10 @@ from rsgispy.imageprocess import (
     create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
+)
+from rsgispy.imageutils._helpers import (
+    maybe_pop_stats,
+    normalise_creation_options,
 )
 from rsgispy.imageutils.metadata import get_img_res
 from rsgispy.tools.geometry import degrees_to_metres
@@ -63,8 +67,13 @@ def calc_wgs84_pixel_area(
     input_img: str,
     output_img: str,
     scale: float = 10000,
+    *,
     gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Calculate the area (in square metres scaled by ``scale``) of each pixel
@@ -74,10 +83,16 @@ def calc_wgs84_pixel_area(
     ``1000000`` (sq km), ``4046.856`` (acres).
 
     :param input_img: Path to the input WGS84 raster image file.
-    :param output_img: Path to the output single-band float64 area image.
+    :param output_img: Path to the output single-band area image.
     :param scale: Divisor converting square metres to target units (Default = ``10000``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to :data:`rsgispy.TYPE_64FLOAT`).
+    :param no_data_val: Optional output no-data value.
+    :param calc_stats: Populate image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
@@ -86,12 +101,17 @@ def calc_wgs84_pixel_area(
             "wgs84_img.tif", "pixel_area_ha.tif", scale=10000
         )
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     ensure_file_exists(input_img)
     if float(scale) <= 0.0:
         raise rsgispy.RSGISPyException("scale must be strictly positive.")
 
     x_res, y_res = get_img_res(input_img, abs_vals=True)
     scale_f = float(scale)
+    eff_dtype = rsgispy.TYPE_64FLOAT if datatype is None else datatype
+    out_rio_dt = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dt = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    norm_opts = normalise_creation_options(creation_opts)
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
@@ -100,9 +120,12 @@ def calc_wgs84_pixel_area(
             src=src,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype="float64",
+            out_rio_dtype=out_rio_dt,
             count=1,
+            creation_opts=norm_opts,
         )
+        if no_data_val is not None:
+            dst.nodata = float(no_data_val)
         for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             _, y_grid = _block_centre_coords(
                 src.transform,
@@ -112,23 +135,41 @@ def calc_wgs84_pixel_area(
                 int(win.height),
             )
             x_m, y_m = degrees_to_metres(y_grid, x_res, y_res)
-            dst.write(((x_m * y_m) / scale_f).astype(np.float64), 1, window=win)
+            dst.write(((x_m * y_m) / scale_f).astype(out_np_dt, copy=False), 1, window=win)
+
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        use_pbar=use_pbar,
+    )
 
 
 def calc_wgs84_pixel_size(
     input_img: str,
     output_img: str,
+    *,
     gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Calculate the X (band 1) and Y (band 2) pixel dimensions in metres for a
     WGS84 geographic raster image.
 
     :param input_img: Path to the input WGS84 raster image file.
-    :param output_img: Path to the output 2-band float64 image.
+    :param output_img: Path to the output 2-band image.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to :data:`rsgispy.TYPE_64FLOAT`).
+    :param no_data_val: Optional output no-data value.
+    :param calc_stats: Populate image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
@@ -137,8 +178,13 @@ def calc_wgs84_pixel_size(
             "wgs84_img.tif", "pixel_size_m.tif"
         )
     """
+    # pylint: disable=too-many-arguments
     ensure_file_exists(input_img)
     x_res, y_res = get_img_res(input_img, abs_vals=True)
+    eff_dtype = rsgispy.TYPE_64FLOAT if datatype is None else datatype
+    out_rio_dt = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dt = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    norm_opts = normalise_creation_options(creation_opts)
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
@@ -147,9 +193,12 @@ def calc_wgs84_pixel_size(
             src=src,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype="float64",
+            out_rio_dtype=out_rio_dt,
             count=2,
+            creation_opts=norm_opts,
         )
+        if no_data_val is not None:
+            dst.nodata = float(no_data_val)
         for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             _, y_grid = _block_centre_coords(
                 src.transform,
@@ -162,33 +211,57 @@ def calc_wgs84_pixel_size(
             y_res_arr = np.full_like(y_grid, y_res, dtype=np.float64)
             x_m, y_m = degrees_to_metres(y_grid, x_res_arr, y_res_arr)
             dst.write(
-                np.stack((x_m, y_m), axis=0).astype(np.float64), window=win
+                np.stack((x_m, y_m), axis=0).astype(out_np_dt, copy=False),
+                window=win,
             )
+
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        use_pbar=use_pbar,
+    )
 
 
 def calc_pixel_locations(
     input_img: str,
     output_img: str,
-    gdalformat: str,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
-    Create a 2-band float64 raster storing pixel-centre X (band 1) and Y
+    Create a 2-band raster storing pixel-centre X (band 1) and Y
     (band 2) coordinates in ``input_img``'s coordinate system.
 
     :param input_img: Path to the reference input image file.
     :param output_img: Path to the output 2-band coordinate image file.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to :data:`rsgispy.TYPE_64FLOAT`).
+    :param no_data_val: Optional output no-data value.
+    :param calc_stats: Populate image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
         import rsgispy.imageutils.spatial
         rsgispy.imageutils.spatial.calc_pixel_locations(
-            "input_img.tif", "pxl_coords.tif", "GTIFF"
+            "input_img.tif", "pxl_coords.tif", gdalformat="GTIFF"
         )
     """
+    # pylint: disable=too-many-arguments
     ensure_file_exists(input_img)
+    eff_dtype = rsgispy.TYPE_64FLOAT if datatype is None else datatype
+    out_rio_dt = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dt = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    norm_opts = normalise_creation_options(creation_opts)
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
@@ -197,9 +270,12 @@ def calc_pixel_locations(
             src=src,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype="float64",
+            out_rio_dtype=out_rio_dt,
             count=2,
+            creation_opts=norm_opts,
         )
+        if no_data_val is not None:
+            dst.nodata = float(no_data_val)
         for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             x_grid, y_grid = _block_centre_coords(
                 src.transform,
@@ -209,33 +285,57 @@ def calc_pixel_locations(
                 int(win.height),
             )
             dst.write(
-                np.stack((x_grid, y_grid), axis=0).astype(np.float64), window=win
+                np.stack((x_grid, y_grid), axis=0).astype(out_np_dt, copy=False),
+                window=win,
             )
+
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        use_pbar=use_pbar,
+    )
 
 
 def calc_wgs84_pixel_locations(
     input_img: str,
     output_img: str,
-    gdalformat: str,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = 0.0,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
-    Create a 2-band float32 raster storing WGS84 (EPSG:4326) longitude (band 1)
+    Create a 2-band raster storing WGS84 (EPSG:4326) longitude (band 1)
     and latitude (band 2) coordinates for every pixel centre in ``input_img``.
 
     :param input_img: Path to the reference input image file.
     :param output_img: Path to the output 2-band WGS84 coordinate image file.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to :data:`rsgispy.TYPE_32FLOAT`).
+    :param no_data_val: Output no-data value (Default = ``0.0``).
+    :param calc_stats: Populate image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
         import rsgispy.imageutils.spatial
         rsgispy.imageutils.spatial.calc_wgs84_pixel_locations(
-            "input_img.tif", "wgs84_coords.tif", "GTIFF"
+            "input_img.tif", "wgs84_coords.tif", gdalformat="GTIFF"
         )
     """
+    # pylint: disable=too-many-arguments
     ensure_file_exists(input_img)
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
+    out_rio_dt = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dt = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    norm_opts = normalise_creation_options(creation_opts)
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
@@ -254,10 +354,12 @@ def calc_wgs84_pixel_locations(
             src=src,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype="float32",
+            out_rio_dtype=out_rio_dt,
             count=2,
+            creation_opts=norm_opts,
         )
-        dst.nodata = 0.0
+        if no_data_val is not None:
+            dst.nodata = float(no_data_val)
 
         for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             x_grid, y_grid = _block_centre_coords(
@@ -269,9 +371,18 @@ def calc_wgs84_pixel_locations(
             )
             lon_grid, lat_grid = transformer.transform(x_grid, y_grid)
             dst.write(
-                np.stack((lon_grid, lat_grid), axis=0).astype(np.float32),
+                np.stack((lon_grid, lat_grid), axis=0).astype(
+                    out_np_dt, copy=False
+                ),
                 window=win,
             )
+
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        use_pbar=use_pbar,
+    )
 
 
 def _parse_grid_algorithm(
@@ -496,10 +607,13 @@ def grid_scattered_pts(
     input_img: str,
     output_img: str,
     gdal_grid_alg: Optional[str] = None,
-    no_data_val: float = 0.0,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = 0.0,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Interpolate scattered vector points from ``vec_file`` (attribute column
@@ -518,11 +632,14 @@ def grid_scattered_pts(
                       pixel grid.
     :param output_img: Output raster file path.
     :param gdal_grid_alg: Optional GDAL grid algorithm specification string.
-    :param no_data_val: Output no-data value (Default = ``0.0``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output image
-                     (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to :data:`rsgispy.TYPE_32FLOAT`).
+    :param no_data_val: Output no-data value (Default = ``0.0``).
+    :param calc_stats: Populate image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: Show a progress bar during gridding (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
@@ -554,8 +671,11 @@ def grid_scattered_pts(
             f"Column '{vec_col}' not found in vector layer '{vec_lyr}'."
         )
 
-    alg, params = _parse_grid_algorithm(gdal_grid_alg, no_data_val)
+    eff_nd = 0.0 if no_data_val is None else float(no_data_val)
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
+    alg, params = _parse_grid_algorithm(gdal_grid_alg, eff_nd)
     out_nodata = params["nodata"]
+    norm_opts = normalise_creation_options(creation_opts)
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
@@ -609,12 +729,20 @@ def grid_scattered_pts(
             src=src,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype=rsgispy.get_rasterio_datatype(datatype),
+            out_rio_dtype=rsgispy.get_rasterio_datatype(eff_dtype),
             count=1,
+            creation_opts=norm_opts,
         )
         dst.nodata = out_nodata
-        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
+        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
         dst.write(
             cast_result_block(out_arr, src.height, src.width, out_np_dtype),
             1,
         )
+
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=out_nodata,
+        use_pbar=use_pbar,
+    )

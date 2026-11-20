@@ -61,12 +61,15 @@ def resample_img_to_match(
     in_ref_img: str,
     in_process_img: str,
     output_img: str,
-    gdalformat: str,
     interp_method: Union[int, Resampling] = rsgispy.INTERP_NEAREST_NEIGHBOUR,
+    multicore: bool = False,
+    *,
+    gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    multicore: bool = False,
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    calc_stats: bool = False,
+    use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Resample ``in_process_img`` to match the projection, extent, and pixel size
@@ -75,14 +78,16 @@ def resample_img_to_match(
     :param in_ref_img: Reference image defining the target grid and projection.
     :param in_process_img: Input image to be resampled.
     :param output_img: Path to the output resampled image file.
-    :param gdalformat: Output GDAL format name (e.g., 'GTIFF', 'KEA').
     :param interp_method: Interpolation method ``rsgispy.INTERP_*`` or
                           ``rasterio.enums.Resampling`` (Default = INTERP_NEAREST_NEIGHBOUR).
+    :param multicore: Whether to use multiple CPU threads for warping (Default = False).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
                      (defaults to the data type of ``in_process_img``).
     :param no_data_val: Optional no-data value (defaults to ``in_process_img`` nodata).
-    :param multicore: Whether to use multiple CPU threads for warping (Default = False).
-    :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
+    :param calc_stats: Populate image statistics and pyramids (Default = ``False``).
+    :param use_pbar: Reserved progress-bar flag for uniform API (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
@@ -92,11 +97,11 @@ def resample_img_to_match(
             "ref_img.tif",
             "in_img.tif",
             "resampled_img.tif",
-            "GTIFF",
             interp_method=rsgispy.INTERP_BILINEAR,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    _ = use_pbar
     ensure_file_exists(in_ref_img, label="Reference image")
     ensure_file_exists(in_process_img, label="Input process image")
 
@@ -118,9 +123,10 @@ def resample_img_to_match(
         pxl_val=back_val,
         gdalformat=gdalformat,
         datatype=datatype,
-        options=options,
         no_data_val=no_data_val,
+        calc_stats=False,
         use_pbar=False,
+        creation_opts=creation_opts,
     )
 
     num_threads = (os.cpu_count() or 1) if multicore else 1
@@ -136,6 +142,14 @@ def resample_img_to_match(
             src_nodata=no_data_val,
             dst_nodata=no_data_val,
             num_threads=num_threads,
+        )
+
+    if calc_stats:
+        pop_img_stats(
+            output_img,
+            no_data_val=no_data_val,
+            calc_pyramids=True,
+            use_pbar=False,
         )
 
 
@@ -175,14 +189,18 @@ def reproject_image(
     input_img: str,
     output_img: str,
     out_epsg: int,
-    gdalformat: str = "GTIFF",
     interp_method: Union[int, Resampling] = rsgispy.INTERP_NEAREST_NEIGHBOUR,
     in_epsg: Optional[int] = None,
-    no_data_val: float = 0.0,
     out_pxl_res: Union[float, int, str] = "image",
     snap_to_grid: bool = True,
     multicore: bool = False,
-    gdal_options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = 0.0,
+    calc_stats: bool = False,
+    use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Reproject ``input_img`` to the coordinate system specified by ``out_epsg``
@@ -191,18 +209,22 @@ def reproject_image(
     :param input_img: Path to the input image file.
     :param output_img: Path to the output image file.
     :param out_epsg: EPSG integer code representing the output projection (e.g., 3857).
-    :param gdalformat: Output GDAL format name (Default = 'GTIFF').
     :param interp_method: Interpolation method ``rsgispy.INTERP_*`` or
                           ``rasterio.enums.Resampling`` (Default = INTERP_NEAREST_NEIGHBOUR).
     :param in_epsg: Optional EPSG integer code overriding the input image projection.
-    :param no_data_val: No-data value for the reprojected image (Default = 0.0).
     :param out_pxl_res: Output resolution mode: ``'image'`` (match input resolution),
                         ``'auto'`` (maintain input dimensions), or a numeric value
                         for square pixel resolution (Default = 'image').
     :param snap_to_grid: Whether to snap the top-left pixel to a multiple of the
                          output pixel resolution (Default = True).
     :param multicore: Whether to use multiple CPU threads for warping (Default = False).
-    :param gdal_options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to input image data type).
+    :param no_data_val: No-data value for the reprojected image (Default = ``0.0``).
+    :param calc_stats: Populate image statistics and pyramids (Default = ``False``).
+    :param use_pbar: Reserved progress-bar flag for uniform API (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
@@ -217,6 +239,7 @@ def reproject_image(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-statements
+    _ = use_pbar
     ensure_file_exists(input_img)
 
     resampling_alg = rsgispy.get_rasterio_interp_type(interp_method)
@@ -226,6 +249,7 @@ def reproject_image(
             "An output EPSG code (out_epsg) must be provided."
         )
 
+    eff_nd = 0.0 if no_data_val is None else float(no_data_val)
     with rasterio.open(input_img, "r") as src:
         in_crs = parse_epsg_crs(in_epsg) if in_epsg is not None else src.crs
         if in_crs is None:
@@ -241,7 +265,11 @@ def reproject_image(
         br_x_in = tl_x_in + (x_size * x_pxl_res)
         br_y_in = tl_y_in - (y_size * y_pxl_res)
         num_bands = src.count
-        rsgis_dtype = rsgispy.get_rsgis_datatype(src.dtypes[0])
+        rsgis_dtype = (
+            rsgispy.get_rsgis_datatype(src.dtypes[0])
+            if datatype is None
+            else datatype
+        )
 
     xs_out, ys_out = rio_transform_coords(
         in_crs,
@@ -282,12 +310,14 @@ def reproject_image(
         tl_y=out_tl_y,
         res_x=out_res,
         res_y=-out_res,
-        pxl_val=float(no_data_val),
+        pxl_val=eff_nd,
         epsg_code=int(out_epsg),
         gdalformat=gdalformat,
         datatype=rsgis_dtype,
-        options=gdal_options,
-        no_data_val=float(no_data_val),
+        no_data_val=eff_nd,
+        calc_stats=False,
+        use_pbar=False,
+        creation_opts=creation_opts,
     )
 
     num_threads = (os.cpu_count() or 1) if multicore else 1
@@ -302,9 +332,17 @@ def reproject_image(
             src_crs=in_crs,
             dst_crs=out_crs,
             resampling=resampling_alg,
-            src_nodata=no_data_val,
-            dst_nodata=no_data_val,
+            src_nodata=eff_nd,
+            dst_nodata=eff_nd,
             num_threads=num_threads,
+        )
+
+    if calc_stats:
+        pop_img_stats(
+            output_img,
+            no_data_val=eff_nd,
+            calc_pyramids=True,
+            use_pbar=False,
         )
 
 
@@ -551,10 +589,10 @@ def gdal_warp(
     output_img: Union[str, os.PathLike],
     out_epsg: Optional[Union[int, str, Any]] = None,
     interp_method: Union[int, Resampling, str] = rsgispy.INTERP_NEAREST_NEIGHBOUR,
-    gdalformat: str = "GTIFF",
     use_multi_threaded: bool = True,
     options: Optional[Union[str, Sequence[str], Mapping[str, Any]]] = None,
     *,
+    gdalformat: str = "GTIFF",
     in_format: Optional[str] = None,
     datatype: Optional[Union[int, str]] = None,
     working_datatype: Optional[Union[int, str]] = None,
@@ -1104,10 +1142,10 @@ def _write_translate_metadata(
 def gdal_translate(
     input_img: str,
     output_img: str,
-    gdalformat: str = "GTIFF",
-    datatype: Optional[Union[int, str]] = None,
     options: Union[str, Sequence[str], Mapping[str, Any]] = "",
     *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[Union[int, str]] = None,
     in_format: Optional[str] = None,
     bands: Optional[Sequence[int]] = None,
     src_win: Optional[Sequence[Union[int, float]]] = None,

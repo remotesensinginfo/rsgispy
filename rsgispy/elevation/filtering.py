@@ -6,26 +6,25 @@ and detrending functions using ``rasterio`` and ``numpy``.
 from contextlib import ExitStack
 import heapq
 import math
-import os
 from typing import Optional
 
 import numpy as np
 import rasterio
 from rasterio.transform import Affine
+from rasterio.warp import reproject as rio_reproject
 
 import rsgispy
 from rsgispy.imageprocess import (
     IntersectionGrid,
     build_valid_mask as _valid_mask,
+    cast_result_block,
     create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
     open_output_dataset,
     read_window_with_halo as _read_window_with_halo,
 )
-import rsgispy.imageutils.warp
-import rsgispy.tools.files
-import rsgispy.tools.strings
+from rsgispy.imageutils.stats import pop_img_stats
 
 __all__ = [
     "dtm_aspect_median_filter",
@@ -41,7 +40,11 @@ def dtm_aspect_median_filter(
     output_img: str,
     aspect_range: float,
     win_h_size: int,
-    gdalformat: str,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -56,7 +59,14 @@ def dtm_aspect_median_filter(
     :param output_img: Path to the output filtered DTM image file.
     :param aspect_range: Angular tolerance around the centre pixel aspect (degrees).
     :param win_h_size: Half-window size in pixels (full window is ``2 * win_h_size + 1``).
-    :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type constant
+                     (Default = ``rsgispy.TYPE_32FLOAT`` when ``None``).
+    :param no_data_val: Optional input DTM no-data value (read from header
+                        when ``None``).
+    :param calc_stats: If ``True``, populate band statistics and overview
+                       pyramids on ``output_img`` (Default = ``True``).
     :param use_pbar: Show a progress bar during filtering (Default = ``True``).
 
     .. code:: python
@@ -72,7 +82,7 @@ def dtm_aspect_median_filter(
             gdalformat="GTIFF",
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-locals
     if win_h_size < 1:
         raise rsgispy.RSGISPyException("win_h_size must be at least 1.")
     if aspect_range < 0.0:
@@ -80,6 +90,10 @@ def dtm_aspect_median_filter(
 
     ensure_file_exists(in_dem_img, "Input DEM image")
     ensure_file_exists(in_aspect_img, "Input aspect image")
+
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
 
     win_size = (win_h_size * 2) + 1
     with ExitStack() as stack:
@@ -90,13 +104,13 @@ def dtm_aspect_median_filter(
                 "Input DEM and aspect images must have matching dimensions."
             )
 
-        no_data_val = dem_src.nodata
+        eff_nd = no_data_val if no_data_val is not None else dem_src.nodata
         dst = create_output_from_dataset(
             stack=stack,
             src=dem_src,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype="float32",
+            out_rio_dtype=out_rio_dtype,
             count=1,
         )
 
@@ -124,37 +138,51 @@ def dtm_aspect_median_filter(
                 np.mod((asp_wins - centre_asp) + 180.0, 360.0) - 180.0
             )
             asp_match = np.isfinite(ang_diff) & (ang_diff <= aspect_range)
-            dem_valid = _valid_mask(dem_wins, no_data_val)
+            dem_valid = _valid_mask(dem_wins, eff_nd)
 
             sel_match = dem_valid & asp_match
             has_match = np.any(sel_match, axis=2)
             has_any = np.any(dem_valid, axis=2)
 
-            out_blk = np.full((win_h, win_w), np.nan, dtype=np.float32)
+            out_blk = np.full((win_h, win_w), np.nan, dtype=np.float64)
             if np.any(has_match):
                 matched_vals = np.where(
                     sel_match[has_match], dem_wins[has_match], np.nan
                 )
-                out_blk[has_match] = np.nanmedian(matched_vals, axis=1).astype(
-                    np.float32
-                )
+                out_blk[has_match] = np.nanmedian(matched_vals, axis=1)
             fallback_mask = (~has_match) & has_any
             if np.any(fallback_mask):
                 fb_vals = np.where(
                     dem_valid[fallback_mask], dem_wins[fallback_mask], np.nan
                 )
-                out_blk[fallback_mask] = np.nanmedian(fb_vals, axis=1).astype(
-                    np.float32
-                )
+                out_blk[fallback_mask] = np.nanmedian(fb_vals, axis=1)
 
-            dst.write(out_blk, 1, window=out_win)
+            dst.write(
+                cast_result_block(out_blk, win_h, win_w, out_np_dtype),
+                1,
+                window=out_win,
+            )
+
+    if calc_stats:
+        pop_img_stats(
+            input_img=output_img,
+            no_data_val=None,
+            calc_pyramids=True,
+            ignore_cog=gdalformat.upper().strip() == "COG",
+            use_pbar=use_pbar,
+        )
 
 
 def fill_dem_soille_gratin_1994(
     in_dem_img: str,
     in_vld_img: str,
     output_img: str,
-    gdalformat: str,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
+    use_pbar: bool = True,
 ) -> None:
     """
     Fill local minima/depressions in an integer DEM using the Soille & Gratin
@@ -167,7 +195,15 @@ def fill_dem_soille_gratin_1994(
     :param in_dem_img: Path to the input integer-dtype single-band DEM image.
     :param in_vld_img: Path to a binary mask image specifying valid pixels (``1`` = valid).
     :param output_img: Path to the output filled DEM image file.
-    :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type constant
+                     (preserves ``in_dem_img`` dtype when ``None``).
+    :param no_data_val: Optional DEM no-data value (read from header when ``None``).
+    :param calc_stats: If ``True``, populate band statistics and overview
+                       pyramids on ``output_img`` (Default = ``True``).
+    :param use_pbar: Show a progress bar when computing statistics
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -180,10 +216,11 @@ def fill_dem_soille_gratin_1994(
             gdalformat="GTIFF",
         )
     """
-    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+    # pylint: disable=too-many-arguments,too-many-locals,too-many-branches,too-many-statements
     ensure_file_exists(in_dem_img, "Input DEM image")
     ensure_file_exists(in_vld_img, "Input valid mask image")
 
+    dem_nodata: Optional[float] = None
     with ExitStack() as stack:
         dem_src = stack.enter_context(rasterio.open(in_dem_img, "r"))
         vld_src = stack.enter_context(rasterio.open(in_vld_img, "r"))
@@ -192,12 +229,14 @@ def fill_dem_soille_gratin_1994(
             raise rsgispy.RSGISPyException(
                 "The image to be filled should only have 1 image band."
             )
-        rsgis_dt = rsgispy.get_rsgis_datatype(dem_src.dtypes[0])
-        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(rsgis_dt))
-        if not np.issubdtype(out_np_dtype, np.integer):
+        in_rsgis_dt = rsgispy.get_rsgis_datatype(dem_src.dtypes[0])
+        in_np_dtype = np.dtype(rsgispy.get_numpy_datatype(in_rsgis_dt))
+        if not np.issubdtype(in_np_dtype, np.integer):
             raise rsgispy.RSGISPyException(
                 "Input image must be of an integer data type."
             )
+        out_rsgis_dt = in_rsgis_dt if datatype is None else int(datatype)
+        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(out_rsgis_dt))
         if dem_src.width != vld_src.width or dem_src.height != vld_src.height:
             raise rsgispy.RSGISPyException(
                 "Input DEM and valid area mask images must have matching dimensions."
@@ -205,7 +244,7 @@ def fill_dem_soille_gratin_1994(
 
         dem = dem_src.read(1)
         vld = vld_src.read(1) == 1
-        dem_nodata = dem_src.nodata
+        dem_nodata = no_data_val if no_data_val is not None else dem_src.nodata
 
         stat_mask = vld.copy()
         if dem_nodata is not None:
@@ -268,19 +307,32 @@ def fill_dem_soille_gratin_1994(
             src=dem_src,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype=rsgispy.get_rasterio_datatype(rsgis_dt),
+            out_rio_dtype=rsgispy.get_rasterio_datatype(out_rsgis_dt),
             count=1,
         )
         if dem_nodata is not None:
             dst.nodata = dem_nodata
         dst.write(out.astype(out_np_dtype), 1)
 
+    if calc_stats:
+        pop_img_stats(
+            input_img=output_img,
+            no_data_val=dem_nodata,
+            calc_pyramids=True,
+            ignore_cog=gdalformat.upper().strip() == "COG",
+            use_pbar=use_pbar,
+        )
+
 
 def plane_fit_detrend_dem(
     input_img: str,
     output_img: str,
-    gdalformat: str,
     win_size: int,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -290,8 +342,14 @@ def plane_fit_detrend_dem(
 
     :param input_img: Path to the input DEM image file.
     :param output_img: Path to the output detrended DEM image file.
-    :param gdalformat: GDAL/rasterio driver format for the output file.
     :param win_size: Odd window size in pixels (``>= 3``) for plane fitting.
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type constant
+                     (Default = ``rsgispy.TYPE_32FLOAT`` when ``None``).
+    :param no_data_val: Optional DEM no-data value (read from header when ``None``).
+    :param calc_stats: If ``True``, populate band statistics and overview
+                       pyramids on ``output_img`` (Default = ``True``).
     :param use_pbar: Show a progress bar during filtering (Default = ``True``).
 
     .. code:: python
@@ -301,16 +359,20 @@ def plane_fit_detrend_dem(
         rsgispy.elevation.filtering.plane_fit_detrend_dem(
             input_img="dem.tif",
             output_img="dem_detrend.tif",
-            gdalformat="GTIFF",
             win_size=11,
+            gdalformat="GTIFF",
         )
     """
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-arguments,too-many-locals
     if win_size < 3 or win_size % 2 == 0:
         raise rsgispy.RSGISPyException(
             "win_size must be an odd integer greater than or equal to 3."
         )
     ensure_file_exists(input_img)
+
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
 
     half = win_size // 2
     offs = np.arange(-half, half + 1, dtype=np.float64)
@@ -322,19 +384,20 @@ def plane_fit_detrend_dem(
     flat_xy = flat_x * flat_y
     n_win = float(win_size * win_size)
 
+    eff_nd: Optional[float] = None
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
-        no_data_val = src.nodata
+        eff_nd = no_data_val if no_data_val is not None else src.nodata
         dst = create_output_from_dataset(
             stack=stack,
             src=src,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype="float32",
+            out_rio_dtype=out_rio_dtype,
             count=1,
         )
-        if no_data_val is not None:
-            dst.nodata = no_data_val
+        if eff_nd is not None:
+            dst.nodata = eff_nd
 
         for out_win in iter_dataset_windows(
             src.height, src.width, use_pbar=use_pbar
@@ -346,12 +409,16 @@ def plane_fit_detrend_dem(
                 dem_halo, (win_size, win_size)
             ).reshape(win_h, win_w, -1)
 
-            v_bool = _valid_mask(wins, no_data_val)
+            v_bool = _valid_mask(wins, eff_nd)
             if np.all(v_bool):
                 # When all window pixels are valid, symmetric coordinates sum to 0,
                 # so the plane intercept c at (0, 0) equals the window mean.
                 out_c = wins.sum(axis=2) / n_win
-                dst.write(out_c.astype(np.float32), 1, window=out_win)
+                dst.write(
+                    cast_result_block(out_c, win_h, win_w, out_np_dtype),
+                    1,
+                    window=out_win,
+                )
                 continue
 
             valid = v_bool.astype(np.float64)
@@ -378,26 +445,42 @@ def plane_fit_detrend_dem(
                 + ((s_xy * s_x) - (s_xx * s_y)) * s_yz
                 + ((s_xx * s_yy) - (s_xy * s_xy)) * s_z
             )
-            fill_val = float(no_data_val) if no_data_val is not None else 0.0
+            fill_val = float(eff_nd) if eff_nd is not None else 0.0
             out_c = np.divide(
                 num_c,
                 det,
                 out=np.full_like(det, fill_val, dtype=np.float64),
                 where=(s_n > 0) & (np.abs(det) > 1e-12),
             )
-            dst.write(out_c.astype(np.float32), 1, window=out_win)
+            dst.write(
+                cast_result_block(out_c, win_h, win_w, out_np_dtype),
+                1,
+                window=out_win,
+            )
+
+    if calc_stats:
+        pop_img_stats(
+            input_img=output_img,
+            no_data_val=eff_nd,
+            calc_pyramids=True,
+            ignore_cog=gdalformat.upper().strip() == "COG",
+            use_pbar=use_pbar,
+        )
 
 
 def resampling_detrend_dem(
     input_img: str,
     output_img: str,
     resmp_res: float,
-    gdalformat: str,
-    no_data_val: Optional[float] = None,
-    datatype: Optional[int] = None,
-    tmp_dir: Optional[str] = None,
     low_resmp_mthd: int = rsgispy.INTERP_AVERAGE,
     up_smpl_mthd: int = rsgispy.INTERP_CUBICSPLINE,
+    tmp_dir: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
+    use_pbar: bool = True,
 ) -> None:
     """
     Detrend a DEM by down-sampling to ``resmp_res`` and then up-sampling back to
@@ -406,15 +489,21 @@ def resampling_detrend_dem(
     :param input_img: Input DEM image path (band 1 is used).
     :param output_img: Output detrended DEM image path.
     :param resmp_res: Intermediate coarse pixel resolution (positive spatial units).
-    :param gdalformat: GDAL/rasterio driver format for the output file.
-    :param no_data_val: DEM no-data value (read from ``input_img`` header if ``None``).
-    :param datatype: Output ``rsgispy.TYPE_*`` constant (inferred from ``input_img`` if ``None``).
-    :param tmp_dir: Optional directory for intermediate rasters (temporary directory
-                    created and cleaned up automatically if ``None``).
     :param low_resmp_mthd: Interpolation method for down-sampling
                            (Default = :data:`rsgispy.INTERP_AVERAGE`).
     :param up_smpl_mthd: Interpolation method for up-sampling
                          (Default = :data:`rsgispy.INTERP_CUBICSPLINE`).
+    :param tmp_dir: Optional directory for intermediate rasters (retained for
+                    API compatibility; resampling runs in memory).
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Output ``rsgispy.TYPE_*`` constant (inferred from
+                     ``input_img`` if ``None``).
+    :param no_data_val: DEM no-data value (read from ``input_img`` header if ``None``).
+    :param calc_stats: If ``True``, populate band statistics and overview
+                       pyramids on ``output_img`` (Default = ``True``).
+    :param use_pbar: Show a progress bar when computing statistics
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -445,63 +534,75 @@ def resampling_detrend_dem(
             )
         left, bottom, right, top = src.bounds
         src_crs = src.crs
+        src_transform = src.transform
+        src_height = int(src.height)
+        src_width = int(src.width)
+        src_arr = src.read(1)
 
+    _ = tmp_dir  # retained for signature compatibility; resampling runs in memory
     coord_width = right - left
     coord_height = top - bottom
     img_width = int(math.ceil(coord_width / resmp_res) + 1)
     img_height = int(math.ceil(coord_height / resmp_res) + 1)
 
-    int_base_name = rsgispy.tools.files.get_file_basename(input_img)
-    uid_str = rsgispy.tools.strings.uid_generator()
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
 
-    with rsgispy.tools.files.work_dir_context(tmp_dir) as work_dir:
-        base_img = os.path.join(work_dir, f"{int_base_name}_base_{uid_str}.tif")
-        low_res_img = os.path.join(work_dir, f"{int_base_name}_low_res_{uid_str}.tif")
+    coarse_transform = Affine(
+        float(resmp_res), 0.0, float(left), 0.0, -float(resmp_res), float(top)
+    )
+    low_res_arr = np.full(
+        (img_height, img_width), no_data_val, dtype=out_np_dtype
+    )
+    rio_reproject(
+        source=src_arr.astype(out_np_dtype, copy=False),
+        destination=low_res_arr,
+        src_transform=src_transform,
+        src_crs=src_crs,
+        src_nodata=no_data_val,
+        dst_transform=coarse_transform,
+        dst_crs=src_crs,
+        dst_nodata=no_data_val,
+        resampling=rsgispy.get_rasterio_interp_type(low_resmp_mthd),
+    )
 
-        coarse_transform = Affine(
-            float(resmp_res), 0.0, float(left), 0.0, -float(resmp_res), float(top)
-        )
-        coarse_grid = IntersectionGrid(
-            crs=src_crs,
-            transform=coarse_transform,
-            width=img_width,
-            height=img_height,
-            offsets={},
-        )
-        with ExitStack() as base_stack:
-            base_dst = open_output_dataset(
-                stack=base_stack,
-                output_img=base_img,
-                gdalformat="GTIFF",
-                out_rio_dtype=out_rio_dtype,
-                grid=coarse_grid,
-                count=1,
-            )
-            base_dst.nodata = no_data_val
-            base_dst.write(
-                np.full((img_height, img_width), 0, dtype=out_np_dtype), 1
-            )
+    up_arr = np.full((src_height, src_width), no_data_val, dtype=out_np_dtype)
+    rio_reproject(
+        source=low_res_arr,
+        destination=up_arr,
+        src_transform=coarse_transform,
+        src_crs=src_crs,
+        src_nodata=no_data_val,
+        dst_transform=src_transform,
+        dst_crs=src_crs,
+        dst_nodata=no_data_val,
+        resampling=rsgispy.get_rasterio_interp_type(up_smpl_mthd),
+    )
 
-        rsgispy.imageutils.warp.resample_img_to_match(
-            base_img,
-            input_img,
-            low_res_img,
-            gdalformat="GTIFF",
-            interp_method=low_resmp_mthd,
-            datatype=datatype,
-            no_data_val=no_data_val,
-            multicore=False,
-        )
-
-        rsgispy.imageutils.warp.resample_img_to_match(
-            input_img,
-            low_res_img,
-            output_img,
+    out_grid = IntersectionGrid(
+        crs=src_crs,
+        transform=src_transform,
+        width=src_width,
+        height=src_height,
+        offsets={},
+    )
+    with ExitStack() as out_stack:
+        dst = open_output_dataset(
+            stack=out_stack,
+            output_img=output_img,
             gdalformat=gdalformat,
-            interp_method=up_smpl_mthd,
-            datatype=datatype,
+            out_rio_dtype=out_rio_dtype,
+            grid=out_grid,
+            count=1,
+        )
+        dst.nodata = no_data_val
+        dst.write(up_arr, 1)
+
+    if calc_stats:
+        pop_img_stats(
+            input_img=output_img,
             no_data_val=no_data_val,
-            multicore=False,
+            calc_pyramids=True,
+            ignore_cog=gdalformat.upper().strip() == "COG",
+            use_pbar=use_pbar,
         )
