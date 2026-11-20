@@ -4,6 +4,7 @@ functions using ``rasterio`` and ``numpy``.
 """
 
 from contextlib import ExitStack
+from typing import Optional
 
 import numpy as np
 import rasterio
@@ -11,9 +12,11 @@ import rasterio
 import rsgispy
 from rsgispy.imageprocess import (
     IntersectionGrid,
+    cast_result_block,
     ensure_file_exists,
     open_output_dataset,
 )
+from rsgispy.imageutils.stats import pop_img_stats
 
 __all__ = [
     "fft_dem_fusion",
@@ -25,7 +28,12 @@ def fft_dem_fusion(
     low_res_dem_img: str,
     fused_dem_img: str,
     c_size: int = 20,
+    *,
     gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
+    use_pbar: bool = True,
 ) -> None:
     """
     Merge two DEMs using a 2D Fourier transform where frequency components inside
@@ -43,6 +51,13 @@ def fft_dem_fusion(
                    (Default = 20).
     :param gdalformat: GDAL/rasterio driver format for the output file
                        (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type constant
+                     (Default = ``rsgispy.TYPE_32FLOAT`` when ``None``).
+    :param no_data_val: Output no-data value (Default = ``-9999.0`` when ``None``).
+    :param calc_stats: If ``True``, populate band statistics and overview
+                       pyramids on ``fused_dem_img`` (Default = ``True``).
+    :param use_pbar: Show a progress bar when computing statistics
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -56,11 +71,16 @@ def fft_dem_fusion(
             gdalformat="GTIFF",
         )
     """
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-arguments,too-many-locals
     if c_size < 1:
         raise rsgispy.RSGISPyException("c_size must be at least 1.")
     ensure_file_exists(high_res_dem_img, "High-res DEM image")
     ensure_file_exists(low_res_dem_img, "Low-res DEM image")
+
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    eff_nd = -9999.0 if no_data_val is None else float(no_data_val)
 
     with rasterio.open(high_res_dem_img, "r") as high_src:
         high_arr = high_src.read(1, out_dtype=np.float64)
@@ -86,16 +106,30 @@ def fft_dem_fusion(
     c1 = min(cols, ccol + c_size + 1)
     fshift_low[r0:r1, c0:c1] = fshift_high[r0:r1, c0:c1]
 
-    img_back = np.real(np.fft.ifft2(np.fft.ifftshift(fshift_low))).astype(np.float32)
+    img_back = cast_result_block(
+        np.real(np.fft.ifft2(np.fft.ifftshift(fshift_low))),
+        rows,
+        cols,
+        out_np_dtype,
+    )
 
     with ExitStack() as stack:
         dst = open_output_dataset(
             stack=stack,
             output_img=fused_dem_img,
             gdalformat=gdalformat,
-            out_rio_dtype="float32",
+            out_rio_dtype=out_rio_dtype,
             grid=grid,
             count=1,
         )
-        dst.nodata = -9999.0
+        dst.nodata = eff_nd
         dst.write(img_back, 1)
+
+    if calc_stats:
+        pop_img_stats(
+            input_img=fused_dem_img,
+            no_data_val=eff_nd,
+            calc_pyramids=True,
+            ignore_cog=gdalformat.upper().strip() == "COG",
+            use_pbar=use_pbar,
+        )

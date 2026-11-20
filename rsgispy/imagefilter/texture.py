@@ -4,7 +4,6 @@ Gray-Level Co-occurrence Matrix (GLCM) spatial texture filters for raster images
 
 from typing import List, Optional, Sequence, Union
 
-import rsgispy
 from rsgispy.imagefilter._glcm_helper import (
     GLCM_ALL_PROPERTIES,
     GLCM_ASM,
@@ -48,8 +47,9 @@ def apply_glcm_filter(
     max_val: Optional[float] = None,
     symmetric: bool = True,
     average_angles: bool = True,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -86,8 +86,8 @@ def apply_glcm_filter(
     :param average_angles: If ``True``, average each property over all
                            ``(distance, angle)`` offsets (Default = ``True``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant
-                     (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids
                        (Default = ``True``).

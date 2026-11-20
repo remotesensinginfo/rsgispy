@@ -25,7 +25,7 @@ from rsgispy.imageprocess import (
     read_raster_band,
     validate_band_index,
 )
-from rsgispy.vectorattrs.io import write_vec_column_to_layer
+from rsgispy.vector.attrs import write_vec_column_to_layer
 from rsgispy.vectorprocess import VectorInput, finish_vec_output, read_vec_gdf
 from rsgispy.zonalstats._helpers import (
     open_validated_zonal_inputs,

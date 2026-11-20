@@ -14,11 +14,11 @@ from shapely.geometry import MultiPolygon, Point, Polygon, box
 
 import rsgispy
 import rsgispy.vectorprocess
-import rsgispy.vectorstats.metrics as vs_metrics
-import rsgispy.vectorutils
-import rsgispy.vectorutils.io as vu_io
-import rsgispy.vectorutils.metadata as vu_meta
-import rsgispy.vectorutils.selection as vu_sel
+import rsgispy.vector
+import rsgispy.vector.io as vu_io
+import rsgispy.vector.io as vu_meta
+import rsgispy.vector.selection as vu_sel
+import rsgispy.vector.stats as vs_metrics
 
 
 def _write_test_raster(
@@ -470,7 +470,7 @@ def test_vectorutils_selection(tmp_path):
         assert not hasattr(vu_meta, moved_name)
         assert not hasattr(vu_sel, moved_name)
 
-    assert not hasattr(rsgispy.vectorutils, "__all__")
+    assert rsgispy.vector.__all__ == ["io", "create", "geoms", "attrs", "stats", "selection"]
     assert not hasattr(rsgispy.vectorprocess, "__all__")
     for reexport_name in (
         "get_vec_lyr_bbox",
@@ -478,7 +478,7 @@ def test_vectorutils_selection(tmp_path):
         "spatial_select",
         "VecLayersInfoObj",
     ):
-        assert not hasattr(rsgispy.vectorutils, reexport_name)
+        assert not hasattr(rsgispy.vector, reexport_name)
 
 
 def test_vectorutils_gdf_in_memory():
@@ -810,3 +810,92 @@ def test_convert_gpx_to_vec(tmp_path):
             line_vec_file=same_pq,
             out_format="Parquet",
         )
+
+
+def test_vector_consolidation_bbox_and_uniform_vector_input(tmp_path):
+    """Verify rsgispy.vector consolidation, BBox returns, and uniform VectorInput parity."""
+    import importlib
+    from shapely.geometry import MultiPolygon
+
+    # Legacy top-level packages must be removed (no backwards-compat aliases)
+    for removed_pkg in (
+        "rsgispy.vectorutils",
+        "rsgispy.vectorgeoms",
+        "rsgispy.vectorattrs",
+        "rsgispy.vectorstats",
+    ):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(removed_pkg)
+
+    assert rsgispy.vector.__all__ == [
+        "io",
+        "create",
+        "geoms",
+        "attrs",
+        "stats",
+        "selection",
+    ]
+
+    # BBox returns with EPSG metadata & automatic epsg inference in spatial_select_bbox
+    pts_gdf = gpd.GeoDataFrame(
+        {"id": [1, 2, 3]},
+        geometry=[
+            Point(500010.0, 5600010.0),
+            Point(500050.0, 5600050.0),
+            Point(500090.0, 5600090.0),
+        ],
+        crs="EPSG:32630",
+    )
+    pts_gpkg = str(tmp_path / "pts.gpkg")
+    pts_gdf.to_file(pts_gpkg, layer="pts", driver="GPKG")
+
+    bbox = rsgispy.vector.io.get_vec_lyr_bbox(pts_gpkg, "pts")
+    assert isinstance(bbox, rsgispy.BBox)
+    assert bbox.epsg == 32630
+
+    bbox_wgs = rsgispy.vector.io.get_vec_lyr_bbox_in_proj(pts_gpkg, 4326, "pts")
+    assert isinstance(bbox_wgs, rsgispy.BBox)
+    assert bbox_wgs.epsg == 4326
+
+    # Reproject sub-bbox to WGS84 and pass WITHOUT bbox_epsg -> uses BBox.epsg!
+    sub_utm = rsgispy.BBox(500000.0, 500060.0, 5600000.0, 5600060.0, epsg=32630)
+    sub_wgs = sub_utm.reproject(4326)
+    sel = rsgispy.vector.selection.spatial_select_bbox(pts_gdf, None, sub_wgs)
+    assert list(sel["id"]) == [1, 2]
+
+    feat_bboxes = rsgispy.vector.geoms.get_geoms_as_bboxs(pts_gdf, None)
+    assert all(isinstance(b, rsgispy.BBox) and b.epsg == 32630 for b in feat_bboxes)
+
+    # write_vec_column_to_layer accepts BOTH file path and GeoDataFrame
+    updated_file_gdf = rsgispy.vector.attrs.write_vec_column_to_layer(
+        pts_gpkg, "score", float, [1.5, 2.5, 3.5], vec_lyr="pts"
+    )
+    assert list(updated_file_gdf["score"]) == [1.5, 2.5, 3.5]
+    reloaded = gpd.read_file(pts_gpkg, layer="pts")
+    assert list(reloaded["score"]) == [1.5, 2.5, 3.5]
+
+    # check_polys_wgs84_bounds_geometry accepts BOTH file path and GeoDataFrame
+    wrap_poly = Polygon(
+        [(179.0, 10.0), (-179.0, 10.0), (-179.0, 12.0), (179.0, 12.0)]
+    )
+    wrap_gpkg = str(tmp_path / "wrap.gpkg")
+    gpd.GeoDataFrame({"id": [1]}, geometry=[wrap_poly], crs="EPSG:4326").to_file(
+        wrap_gpkg, layer="wrap", driver="GPKG"
+    )
+    unwrapped = rsgispy.vector.io.check_polys_wgs84_bounds_geometry(
+        wrap_gpkg, vec_lyr="wrap", use_pbar=False
+    )
+    assert isinstance(unwrapped, gpd.GeoDataFrame)
+    assert unwrapped.geometry.iloc[0].bounds[2] - unwrapped.geometry.iloc[0].bounds[0] < 10.0
+
+    # explode_vec_files accepts GeoDataFrame inputs and output_dir=None
+    mp_gdf = gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[MultiPolygon([box(0, 0, 1, 1), box(2, 2, 3, 3)])],
+        crs="EPSG:32630",
+    )
+    exploded_list = rsgispy.vector.geoms.explode_vec_files(
+        [mp_gdf], output_dir=None, use_pbar=False
+    )
+    assert len(exploded_list) == 1
+    assert len(exploded_list[0]) == 2

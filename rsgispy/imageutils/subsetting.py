@@ -30,14 +30,17 @@ __all__ = [
 def subset_bbox(
     input_img: str,
     output_img: str,
-    gdalformat: str,
-    datatype: int,
     min_x: float,
     max_x: float,
     min_y: float,
     max_y: float,
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Subset ``input_img`` to the bounding box ``(min_x, max_x, min_y, max_y)``,
@@ -45,14 +48,18 @@ def subset_bbox(
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output subset image file.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
     :param min_x: Minimum X coordinate in ``input_img`` CRS.
     :param max_x: Maximum X coordinate in ``input_img`` CRS.
     :param min_y: Minimum Y coordinate in ``input_img`` CRS.
     :param max_y: Maximum Y coordinate in ``input_img`` CRS.
-    :param options: Optional GDAL creation options mapping.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to the input image data type).
+    :param no_data_val: Optional output no-data value (defaults to input nodata).
+    :param calc_stats: Populate image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: Show a progress bar during subsetting (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
@@ -61,12 +68,12 @@ def subset_bbox(
         rsgispy.imageutils.subsetting.subset_bbox(
             "input_img.tif",
             "subset_img.tif",
-            "GTIFF",
-            rsgispy.TYPE_32FLOAT,
             500000.0,
             505000.0,
             4000000.0,
             4005000.0,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -120,8 +127,10 @@ def subset_bbox(
         height=out_h,
         gdalformat=gdalformat,
         datatype=datatype,
-        options=options,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
+        creation_opts=creation_opts,
     )
 
 
@@ -129,9 +138,13 @@ def subset_to_img(
     input_img: str,
     in_roi_img: str,
     output_img: str,
-    gdalformat: str,
-    datatype: int,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Subset ``input_img`` to the spatial bounding box of ``in_roi_img``.
@@ -139,9 +152,14 @@ def subset_to_img(
     :param input_img: Path to the input image file to subset.
     :param in_roi_img: Path to the ROI image defining the target extent.
     :param output_img: Path to the output subset image file.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to the input image data type).
+    :param no_data_val: Optional output no-data value (defaults to input nodata).
+    :param calc_stats: Populate image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: Show a progress bar during subsetting (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
@@ -151,8 +169,8 @@ def subset_to_img(
             "input_img.tif",
             "roi_img.tif",
             "subset_img.tif",
-            "GTIFF",
-            rsgispy.TYPE_32FLOAT,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -171,13 +189,16 @@ def subset_to_img(
     subset_bbox(
         input_img=input_img,
         output_img=output_img,
-        gdalformat=gdalformat,
-        datatype=datatype,
         min_x=roi_bbox[0],
         max_x=roi_bbox[1],
         min_y=roi_bbox[2],
         max_y=roi_bbox[3],
+        gdalformat=gdalformat,
+        datatype=datatype,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
+        creation_opts=creation_opts,
     )
 
 
@@ -186,9 +207,13 @@ def subset(
     vec_file: VectorInput,
     vec_lyr: Optional[str],
     output_img: str,
-    gdalformat: str,
-    datatype: int,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Subset ``input_img`` to the bounding box of a vector layer or an in-memory
@@ -199,9 +224,14 @@ def subset(
                      in-memory :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Optional layer name within ``vec_file`` (or ``None`` for default).
     :param output_img: Path to the output subset image file.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to the input image data type).
+    :param no_data_val: Optional output no-data value (defaults to input nodata).
+    :param calc_stats: Populate image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: Show a progress bar during subsetting (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
@@ -212,8 +242,8 @@ def subset(
             "roi.gpkg",
             "roi_layer",
             "subset_img.tif",
-            "GTIFF",
-            rsgispy.TYPE_32FLOAT,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -241,11 +271,14 @@ def subset(
     subset_bbox(
         input_img=input_img,
         output_img=output_img,
-        gdalformat=gdalformat,
-        datatype=datatype,
         min_x=min_x,
         max_x=max_x,
         min_y=min_y,
         max_y=max_y,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
+        creation_opts=creation_opts,
     )

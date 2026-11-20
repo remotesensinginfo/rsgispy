@@ -26,6 +26,7 @@ from rsgispy.imageutils.arrays import (
 )
 from rsgispy.imageutils.checks import check_img_file_comparison
 from rsgispy.imageutils.metadata import get_img_band_count, get_img_size
+from rsgispy.imageutils.stats import pop_img_stats
 from rsgispy.tools.stats import standardise_img_data
 from rsgispy.tools.thresholding import calc_otsu_threshold
 
@@ -222,12 +223,16 @@ def image_difference(
     out_diff_img: str,
     vld_msk_img: Optional[str] = None,
     vld_msk_val: int = 1,
-    gdalformat: str = "GTIFF",
     apply_std: bool = False,
     img_base_bands: Optional[Sequence[int]] = None,
     img_chng_bands: Optional[Sequence[int]] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
     base_img_no_data: float = 0,
     chng_img_no_data: float = 0,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -236,18 +241,24 @@ def image_difference(
 
     :param in_base_img: Path to the input base (reference) image file.
     :param in_chng_img: Path to the input change image file.
-    :param out_diff_img: Path to the output float32 difference image file.
+    :param out_diff_img: Path to the output difference image file.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
     :param vld_msk_val: Pixel value in ``vld_msk_img`` indicating valid pixels
                         (Default = ``1``).
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param apply_std: If ``True``, standardise each band prior to differencing
                       (Default = ``False``).
     :param img_base_bands: Optional sequence of 1-based bands for ``in_base_img``.
     :param img_chng_bands: Optional sequence of 1-based bands for ``in_chng_img``.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type
+                     (Default = ``None``, which uses
+                     :data:`rsgispy.TYPE_32FLOAT`).
+    :param no_data_val: Optional output no-data value (Default = ``None``).
     :param base_img_no_data: No-data value in ``in_base_img`` (Default = ``0``).
     :param chng_img_no_data: No-data value in ``in_chng_img`` (Default = ``0``).
-    :param use_pbar: Reserved progress-bar flag for API consistency
+    :param calc_stats: If ``True``, compute output image statistics and pyramids
+                       (Default = ``True``).
+    :param use_pbar: If ``True``, display a progress bar during processing
                      (Default = ``True``).
 
     .. code:: python
@@ -257,7 +268,7 @@ def image_difference(
         icm.image_difference("t1.tif", "t2.tif", "diff.tif")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    _ = use_pbar
+    out_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
     n_bands, img_x, img_y, n_pxls, pxl_ids, base_flat, chng_flat = (
         _prepare_change_inputs(
             in_base_img=in_base_img,
@@ -272,7 +283,8 @@ def image_difference(
         )
     )
 
-    out_flat = np.zeros((n_bands, n_pxls), dtype=np.float32)
+    fill_val = 0.0 if no_data_val is None else float(no_data_val)
+    out_flat = np.full((n_bands, n_pxls), fill_val, dtype=np.float32)
     out_flat[:, pxl_ids] = (base_flat - chng_flat).astype(np.float32, copy=False)
     diff_img_arr = out_flat.reshape((n_bands, img_y, img_x))
 
@@ -281,9 +293,16 @@ def image_difference(
         output_img=out_diff_img,
         ref_img=in_base_img,
         gdalformat=gdalformat,
-        datatype=rsgispy.TYPE_32FLOAT,
-        no_data_val=None,
+        datatype=out_dtype,
+        no_data_val=no_data_val,
     )
+    if calc_stats:
+        pop_img_stats(
+            out_diff_img,
+            no_data_val=no_data_val,
+            calc_pyramids=True,
+            use_pbar=use_pbar,
+        )
 
 
 def image_ratio(
@@ -292,12 +311,16 @@ def image_ratio(
     out_ratio_img: str,
     vld_msk_img: Optional[str] = None,
     vld_msk_val: int = 1,
-    gdalformat: str = "GTIFF",
     apply_std: bool = False,
     img_base_bands: Optional[Sequence[int]] = None,
     img_chng_bands: Optional[Sequence[int]] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
     base_img_no_data: float = 0,
     chng_img_no_data: float = 0,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -306,18 +329,24 @@ def image_ratio(
 
     :param in_base_img: Path to the input base (reference) image file.
     :param in_chng_img: Path to the input change image file.
-    :param out_ratio_img: Path to the output float32 ratio image file.
+    :param out_ratio_img: Path to the output ratio image file.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
     :param vld_msk_val: Pixel value in ``vld_msk_img`` indicating valid pixels
                         (Default = ``1``).
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param apply_std: If ``True``, standardise each band prior to ratioing
                       (Default = ``False``).
     :param img_base_bands: Optional sequence of 1-based bands for ``in_base_img``.
     :param img_chng_bands: Optional sequence of 1-based bands for ``in_chng_img``.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type
+                     (Default = ``None``, which uses
+                     :data:`rsgispy.TYPE_32FLOAT`).
+    :param no_data_val: Optional output no-data value (Default = ``None``).
     :param base_img_no_data: No-data value in ``in_base_img`` (Default = ``0``).
     :param chng_img_no_data: No-data value in ``in_chng_img`` (Default = ``0``).
-    :param use_pbar: Reserved progress-bar flag for API consistency
+    :param calc_stats: If ``True``, compute output image statistics and pyramids
+                       (Default = ``True``).
+    :param use_pbar: If ``True``, display a progress bar during processing
                      (Default = ``True``).
 
     .. code:: python
@@ -327,7 +356,7 @@ def image_ratio(
         icm.image_ratio("t1.tif", "t2.tif", "ratio.tif")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    _ = use_pbar
+    out_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
     n_bands, img_x, img_y, n_pxls, pxl_ids, base_flat, chng_flat = (
         _prepare_change_inputs(
             in_base_img=in_base_img,
@@ -346,7 +375,8 @@ def image_ratio(
         ratio_vals = base_flat / chng_flat
     np.nan_to_num(ratio_vals, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
-    out_flat = np.zeros((n_bands, n_pxls), dtype=np.float32)
+    fill_val = 0.0 if no_data_val is None else float(no_data_val)
+    out_flat = np.full((n_bands, n_pxls), fill_val, dtype=np.float32)
     out_flat[:, pxl_ids] = ratio_vals.astype(np.float32, copy=False)
     ratio_img_arr = out_flat.reshape((n_bands, img_y, img_x))
 
@@ -355,9 +385,16 @@ def image_ratio(
         output_img=out_ratio_img,
         ref_img=in_base_img,
         gdalformat=gdalformat,
-        datatype=rsgispy.TYPE_32FLOAT,
-        no_data_val=None,
+        datatype=out_dtype,
+        no_data_val=no_data_val,
     )
+    if calc_stats:
+        pop_img_stats(
+            out_ratio_img,
+            no_data_val=no_data_val,
+            calc_pyramids=True,
+            use_pbar=use_pbar,
+        )
 
 
 def change_vector_analysis(
@@ -367,13 +404,17 @@ def change_vector_analysis(
     out_chng_dist_img: str,
     vld_msk_img: Optional[str] = None,
     vld_msk_val: int = 1,
-    gdalformat: str = "GTIFF",
     apply_std: bool = False,
     img_base_bands: Optional[Sequence[int]] = None,
     img_chng_bands: Optional[Sequence[int]] = None,
     use_kmeans: bool = False,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
     base_img_no_data: float = 0,
     chng_img_no_data: float = 0,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -387,21 +428,28 @@ def change_vector_analysis(
     :param in_chng_img: Path to the input change image file.
     :param out_chng_img: Path to the output ``uint8`` binary change image file
                          (``1`` = change, ``0`` = no change).
-    :param out_chng_dist_img: Path to the output ``float32`` threshold-centred
-                              change distance image file.
+    :param out_chng_dist_img: Path to the output threshold-centred change
+                              distance image file.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
     :param vld_msk_val: Pixel value in ``vld_msk_img`` indicating valid pixels
                         (Default = ``1``).
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param apply_std: If ``True``, standardise each band prior to CVA
                       (Default = ``False``).
     :param img_base_bands: Optional sequence of 1-based bands for ``in_base_img``.
     :param img_chng_bands: Optional sequence of 1-based bands for ``in_chng_img``.
     :param use_kmeans: Use K-means clustering instead of Otsu thresholding for
                        the binary change mask (Default = ``False``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type for
+                     ``out_chng_dist_img`` (Default = ``None``, which uses
+                     :data:`rsgispy.TYPE_32FLOAT`).
+    :param no_data_val: Optional output no-data value for ``out_chng_dist_img``
+                        (Default = ``None``).
     :param base_img_no_data: No-data value in ``in_base_img`` (Default = ``0``).
     :param chng_img_no_data: No-data value in ``in_chng_img`` (Default = ``0``).
-    :param use_pbar: Reserved progress-bar flag for API consistency
+    :param calc_stats: If ``True``, compute output image statistics and pyramids
+                       (Default = ``True``).
+    :param use_pbar: If ``True``, display a progress bar during processing
                      (Default = ``True``).
 
     .. code:: python
@@ -413,7 +461,7 @@ def change_vector_analysis(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    _ = use_pbar
+    out_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
     if use_kmeans:
         rsgispy.check_optional_dep(
             HAVE_SKLEARN,
@@ -441,7 +489,8 @@ def change_vector_analysis(
 
     otsu_thres = _safe_otsu_threshold(l2_norm)
 
-    l2_flat_arr = np.zeros(n_pxls, dtype=np.float32)
+    fill_val = 0.0 if no_data_val is None else float(no_data_val)
+    l2_flat_arr = np.full(n_pxls, fill_val, dtype=np.float32)
     l2_flat_arr[pxl_ids] = (l2_norm - otsu_thres).astype(np.float32, copy=False)
     l2_dist_img = l2_flat_arr.reshape((1, img_y, img_x))
 
@@ -450,8 +499,8 @@ def change_vector_analysis(
         output_img=out_chng_dist_img,
         ref_img=in_base_img,
         gdalformat=gdalformat,
-        datatype=rsgispy.TYPE_32FLOAT,
-        no_data_val=None,
+        datatype=out_dtype,
+        no_data_val=no_data_val,
     )
 
     chng_bin_flat = np.zeros(n_pxls, dtype=np.uint8)
@@ -470,6 +519,20 @@ def change_vector_analysis(
         no_data_val=255,
     )
 
+    if calc_stats:
+        pop_img_stats(
+            out_chng_dist_img,
+            no_data_val=no_data_val,
+            calc_pyramids=True,
+            use_pbar=use_pbar,
+        )
+        pop_img_stats(
+            out_chng_img,
+            no_data_val=255,
+            calc_pyramids=True,
+            use_pbar=use_pbar,
+        )
+
 
 def slow_feature_analysis(
     in_base_img: str,
@@ -478,7 +541,6 @@ def slow_feature_analysis(
     out_chng_dist_img: str,
     vld_msk_img: Optional[str] = None,
     vld_msk_val: int = 1,
-    gdalformat: str = "GTIFF",
     apply_std: bool = False,
     img_base_bands: Optional[Sequence[int]] = None,
     img_chng_bands: Optional[Sequence[int]] = None,
@@ -487,8 +549,13 @@ def slow_feature_analysis(
     sfa_norm_trans: bool = False,
     sfa_regular: bool = False,
     use_kmeans: bool = False,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
     base_img_no_data: float = 0,
     chng_img_no_data: float = 0,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -499,12 +566,11 @@ def slow_feature_analysis(
     :param in_base_img: Path to the input base image file.
     :param in_chng_img: Path to the input change image file.
     :param out_chng_img: Path to the output ``uint8`` binary change image.
-    :param out_chng_dist_img: Path to the output ``float32`` threshold-centred
-                              chi-square distance image.
+    :param out_chng_dist_img: Path to the output threshold-centred chi-square
+                              distance image.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
     :param vld_msk_val: Pixel value in ``vld_msk_img`` indicating valid pixels
                         (Default = ``1``).
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param apply_std: If ``True``, standardise each band prior to SFA
                       (Default = ``False``).
     :param img_base_bands: Optional sequence of 1-based bands for ``in_base_img``.
@@ -518,8 +584,16 @@ def slow_feature_analysis(
                         matrix with a smoothness penalty (Default = ``False``).
     :param use_kmeans: Use K-means clustering instead of Otsu thresholding for
                        the binary change mask (Default = ``False``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type for
+                     ``out_chng_dist_img`` (Default = ``None``, which uses
+                     :data:`rsgispy.TYPE_32FLOAT`).
+    :param no_data_val: Optional output no-data value for ``out_chng_dist_img``
+                        (Default = ``None``).
     :param base_img_no_data: No-data value in ``in_base_img`` (Default = ``0``).
     :param chng_img_no_data: No-data value in ``in_chng_img`` (Default = ``0``).
+    :param calc_stats: If ``True``, compute output image statistics and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during
                      iterations (Default = ``True``).
 
@@ -538,6 +612,7 @@ def slow_feature_analysis(
         rsgispy.check_optional_dep(
             HAVE_SKLEARN, "slow_feature_analysis", "scikit-learn", "stats"
         )
+    out_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
 
     n_bands, img_x, img_y, n_pxls, pxl_ids, base_flat, chng_flat = (
         _prepare_change_inputs(
@@ -639,15 +714,16 @@ def slow_feature_analysis(
     np.nan_to_num(sqrt_chi2, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
     otsu_thres = _safe_otsu_threshold(sqrt_chi2)
 
-    dist_flat = np.zeros(n_pxls, dtype=np.float32)
+    fill_val = 0.0 if no_data_val is None else float(no_data_val)
+    dist_flat = np.full(n_pxls, fill_val, dtype=np.float32)
     dist_flat[pxl_ids] = (sqrt_chi2 - otsu_thres).astype(np.float32, copy=False)
     create_img_from_array_ref_img(
         data_arr=dist_flat.reshape((1, img_y, img_x)),
         output_img=out_chng_dist_img,
         ref_img=in_base_img,
         gdalformat=gdalformat,
-        datatype=rsgispy.TYPE_32FLOAT,
-        no_data_val=None,
+        datatype=out_dtype,
+        no_data_val=no_data_val,
     )
 
     bin_flat = np.zeros(n_pxls, dtype=np.uint8)
@@ -664,6 +740,20 @@ def slow_feature_analysis(
         datatype=rsgispy.TYPE_8UINT,
         no_data_val=255,
     )
+
+    if calc_stats:
+        pop_img_stats(
+            out_chng_dist_img,
+            no_data_val=no_data_val,
+            calc_pyramids=True,
+            use_pbar=use_pbar,
+        )
+        pop_img_stats(
+            out_chng_img,
+            no_data_val=255,
+            calc_pyramids=True,
+            use_pbar=use_pbar,
+        )
 
 
 def _covw(
@@ -685,15 +775,19 @@ def multivariate_alteration_detection(
     out_chng_mads_img: str,
     vld_msk_img: Optional[str] = None,
     vld_msk_val: int = 1,
-    gdalformat: str = "GTIFF",
     apply_std: bool = False,
     img_base_bands: Optional[Sequence[int]] = None,
     img_chng_bands: Optional[Sequence[int]] = None,
     mad_max_iter: int = 50,
     mad_epsilon: float = 1e-6,
     use_kmeans: bool = True,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
     base_img_no_data: float = 0,
     chng_img_no_data: float = 0,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -704,14 +798,12 @@ def multivariate_alteration_detection(
     :param in_base_img: Path to the input base image file.
     :param in_chng_img: Path to the input change image file.
     :param out_chng_img: Path to the output ``uint8`` binary change image.
-    :param out_chng_dist_img: Path to the output ``float32`` square-root
-                              chi-square distance image.
-    :param out_chng_mads_img: Path to the output ``float32`` MAD variates
-                              multi-band image.
+    :param out_chng_dist_img: Path to the output square-root chi-square
+                              distance image.
+    :param out_chng_mads_img: Path to the output MAD variates multi-band image.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
     :param vld_msk_val: Pixel value in ``vld_msk_img`` indicating valid pixels
                         (Default = ``1``).
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param apply_std: If ``True``, standardise each band prior to MAD
                       (Default = ``False``).
     :param img_base_bands: Optional sequence of 1-based bands for ``in_base_img``.
@@ -721,8 +813,17 @@ def multivariate_alteration_detection(
                         (Default = ``1e-6``).
     :param use_kmeans: Use K-means clustering instead of Otsu thresholding for
                        the binary change mask (Default = ``True``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type for
+                     ``out_chng_dist_img`` and ``out_chng_mads_img``
+                     (Default = ``None``, which uses
+                     :data:`rsgispy.TYPE_32FLOAT`).
+    :param no_data_val: Optional output no-data value for continuous outputs
+                        (Default = ``None``).
     :param base_img_no_data: No-data value in ``in_base_img`` (Default = ``0``).
     :param chng_img_no_data: No-data value in ``in_chng_img`` (Default = ``0``).
+    :param calc_stats: If ``True``, compute output image statistics and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during
                      iterations (Default = ``True``).
 
@@ -746,6 +847,7 @@ def multivariate_alteration_detection(
             "scikit-learn",
             "stats",
         )
+    out_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
 
     n_bands, img_x, img_y, n_pxls, pxl_ids, base_flat, chng_flat = (
         _prepare_change_inputs(
@@ -827,26 +929,27 @@ def multivariate_alteration_detection(
     sqrt_chi2 = np.sqrt(np.maximum(chi_square_dis, 0.0))
     np.nan_to_num(sqrt_chi2, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
-    dist_flat = np.zeros(n_pxls, dtype=np.float32)
+    fill_val = 0.0 if no_data_val is None else float(no_data_val)
+    dist_flat = np.full(n_pxls, fill_val, dtype=np.float32)
     dist_flat[pxl_ids] = sqrt_chi2.astype(np.float32, copy=False)
     create_img_from_array_ref_img(
         data_arr=dist_flat.reshape((1, img_y, img_x)),
         output_img=out_chng_dist_img,
         ref_img=in_base_img,
         gdalformat=gdalformat,
-        datatype=rsgispy.TYPE_32FLOAT,
-        no_data_val=None,
+        datatype=out_dtype,
+        no_data_val=no_data_val,
     )
 
-    mads_flat = np.zeros((n_bands, n_pxls), dtype=np.float32)
+    mads_flat = np.full((n_bands, n_pxls), fill_val, dtype=np.float32)
     mads_flat[:, pxl_ids] = mad_variates.astype(np.float32, copy=False)
     create_img_from_array_ref_img(
         data_arr=mads_flat.reshape((n_bands, img_y, img_x)),
         output_img=out_chng_mads_img,
         ref_img=in_base_img,
         gdalformat=gdalformat,
-        datatype=rsgispy.TYPE_32FLOAT,
-        no_data_val=None,
+        datatype=out_dtype,
+        no_data_val=no_data_val,
     )
 
     bin_flat = np.zeros(n_pxls, dtype=np.uint8)
@@ -864,3 +967,23 @@ def multivariate_alteration_detection(
         datatype=rsgispy.TYPE_8UINT,
         no_data_val=255,
     )
+
+    if calc_stats:
+        pop_img_stats(
+            out_chng_dist_img,
+            no_data_val=no_data_val,
+            calc_pyramids=True,
+            use_pbar=use_pbar,
+        )
+        pop_img_stats(
+            out_chng_mads_img,
+            no_data_val=no_data_val,
+            calc_pyramids=True,
+            use_pbar=use_pbar,
+        )
+        pop_img_stats(
+            out_chng_img,
+            no_data_val=255,
+            calc_pyramids=True,
+            use_pbar=use_pbar,
+        )

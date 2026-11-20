@@ -26,7 +26,11 @@ from rsgispy.imageprocess import (
     validate_band_index,
     validate_crs_and_res,
 )
-from rsgispy.imageutils._helpers import normalise_creation_options
+from rsgispy.imageutils._helpers import (
+    maybe_pop_stats,
+    normalise_creation_options,
+    rsgis_dtype_from_np_dtype,
+)
 from rsgispy.imageutils.colourtable import set_img_thematic
 from rsgispy.tools.jsonio import write_dict_to_json
 from rsgispy.tools.maths import create_var_list
@@ -43,30 +47,43 @@ __all__ = [
 def create_img_mosaic(
     input_imgs: Sequence[str],
     output_img: str,
-    background_val: float,
-    skip_val: float,
-    skip_band: int,
-    overlap_behaviour: int,
-    gdalformat: str,
-    datatype: int,
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    background_val: float = 0.0,
+    skip_val: float = 0.0,
+    skip_band: int = 1,
+    overlap_behaviour: int = 0,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Mosaic a list of images sharing a CRS, pixel resolution, and band count.
 
     :param input_imgs: Sequence of input image paths.
     :param output_img: Path to the output mosaic image file.
-    :param background_val: Initial background fill value for areas without data.
-    :param skip_val: Pixel value in ``skip_band`` treated as no-data / skipped.
-    :param skip_band: 1-based band index inspected for ``skip_val`` and overlap rules.
+    :param background_val: Initial background fill value for areas without data
+                           (Default = ``0.0``).
+    :param skip_val: Pixel value in ``skip_band`` treated as no-data / skipped
+                     (Default = ``0.0``).
+    :param skip_band: 1-based band index inspected for ``skip_val`` and overlap
+                      rules (Default = ``1``).
     :param overlap_behaviour: Overlap rule: ``0`` = overwrite, ``1`` = minimum of
-                              ``skip_band``, ``2`` = maximum of ``skip_band``.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
-    :param options: Optional GDAL creation options mapping.
+                              ``skip_band``, ``2`` = maximum of ``skip_band``
+                              (Default = ``0``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to the data type of the first input image).
+    :param no_data_val: Optional output no-data value (defaults to
+                        ``background_val``).
+    :param calc_stats: If ``True``, populate raster statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or
+                          ``'KEY=VALUE'`` sequence.
 
     .. code:: python
 
@@ -75,12 +92,12 @@ def create_img_mosaic(
         rsgispy.imageutils.mosaic.create_img_mosaic(
             ["tile1.tif", "tile2.tif"],
             "mosaic.tif",
-            0.0,
-            0.0,
-            1,
-            0,
-            "GTIFF",
-            rsgispy.TYPE_16UINT,
+            background_val=0.0,
+            skip_val=0.0,
+            skip_band=1,
+            overlap_behaviour=0,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_16UINT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -90,17 +107,24 @@ def create_img_mosaic(
             f"overlap_behaviour must be 0, 1, or 2, got {overlap_behaviour}."
         )
 
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
-    creation_opts = normalise_creation_options(options)
+    norm_opts = normalise_creation_options(creation_opts)
     skip_idx = int(skip_band) - 1
     skip_is_nan = math.isnan(float(skip_val))
     bg_is_nan = math.isnan(float(background_val))
+    eff_nd = float(no_data_val) if no_data_val is not None else float(background_val)
 
     with ExitStack() as stack:
         datasets, paths = open_multi_image_datasets(stack, input_imgs)
         first_ds = datasets[paths[0]]
         validate_crs_and_res(datasets, first_ds)
+
+        eff_dtype = (
+            rsgis_dtype_from_np_dtype(first_ds.dtypes[0])
+            if datatype is None
+            else datatype
+        )
+        out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
 
         n_bands = int(first_ds.count)
         if skip_idx < 0 or skip_idx >= n_bands:
@@ -141,9 +165,9 @@ def create_img_mosaic(
                 grid=grid,
                 count=n_bands,
                 output_exists=False,
-                creation_opts=creation_opts,
+                creation_opts=norm_opts,
             )
-            dst_init.nodata = float(background_val)
+            dst_init.nodata = eff_nd
             for bidx in range(1, n_bands + 1):
                 desc = first_ds.descriptions[bidx - 1]
                 if desc:
@@ -208,6 +232,13 @@ def create_img_mosaic(
                     )
                     out_block[:, take_in] = cast_in[:, take_in]
                     dst.write(out_block, window=dst_win)
+
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=eff_nd,
+        use_pbar=use_pbar,
+    )
 
 
 def include_imgs(
@@ -421,11 +452,13 @@ def include_imgs_with_overlap(
 def combine_imgs_to_band(
     input_imgs: Sequence[str],
     output_img: str,
-    gdalformat: str,
-    datatype: int,
-    no_data_val: float = 0.0,
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = 0.0,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Combine all bands across ``input_imgs`` into a single-band output image by
@@ -434,12 +467,16 @@ def combine_imgs_to_band(
 
     :param input_imgs: Sequence of input image paths.
     :param output_img: Path to the single-band output image file.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
-    :param no_data_val: No-data value ignored during combination (Default = ``0.0``).
-    :param options: Optional GDAL creation options mapping.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to the first input image's data type).
+    :param no_data_val: No-data value ignored during combination
+                        (Default = ``0.0``).
+    :param calc_stats: Populate image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
@@ -448,18 +485,24 @@ def combine_imgs_to_band(
         rsgispy.imageutils.mosaic.combine_imgs_to_band(
             ["band1.tif", "band2.tif"],
             "combined.tif",
-            "GTIFF",
-            rsgispy.TYPE_8UINT,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_8UINT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
-    creation_opts = normalise_creation_options(options)
-    nd_is_nan = math.isnan(float(no_data_val))
+    norm_opts = normalise_creation_options(creation_opts)
+    eff_nd = 0.0 if no_data_val is None else float(no_data_val)
+    nd_is_nan = math.isnan(eff_nd)
 
     with ExitStack() as stack:
         datasets, paths = open_multi_image_datasets(stack, input_imgs)
+        eff_dtype = (
+            rsgis_dtype_from_np_dtype(datasets[paths[0]].dtypes[0])
+            if datatype is None
+            else datatype
+        )
+        out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
         grid = compute_spatial_intersection(datasets)
 
         dst = open_output_dataset(
@@ -470,9 +513,9 @@ def combine_imgs_to_band(
             grid=grid,
             count=1,
             output_exists=False,
-            creation_opts=creation_opts,
+            creation_opts=norm_opts,
         )
-        dst.nodata = float(no_data_val)
+        dst.nodata = eff_nd
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
@@ -481,9 +524,7 @@ def combine_imgs_to_band(
             row_off = int(out_win.row_off)
             win_w = int(out_win.width)
             win_h = int(out_win.height)
-            out_arr = np.full(
-                (win_h, win_w), float(no_data_val), dtype=np.float64
-            )
+            out_arr = np.full((win_h, win_w), eff_nd, dtype=np.float64)
 
             for path in paths:
                 ds = datasets[path]
@@ -496,9 +537,7 @@ def combine_imgs_to_band(
                         b_idx, window=in_win, out_dtype=np.float64
                     )
                     valid = (
-                        ~np.isnan(arr)
-                        if nd_is_nan
-                        else (arr != float(no_data_val))
+                        ~np.isnan(arr) if nd_is_nan else (arr != eff_nd)
                     )
                     out_arr[valid] = arr[valid]
 
@@ -508,13 +547,25 @@ def combine_imgs_to_band(
                 window=out_win,
             )
 
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=eff_nd,
+        use_pbar=use_pbar,
+    )
+
 
 def combine_binary_masks(
     msk_imgs_dict: Mapping[str, str],
     output_img: str,
     out_lut_file: str,
+    *,
     gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Combine up to 8 binary masks (where value ``1`` indicates presence) into a
@@ -526,8 +577,14 @@ def combine_binary_masks(
     :param output_img: Path to the 8-bit unsigned bit-packed output image.
     :param out_lut_file: Path to the output JSON lookup table file.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to :data:`rsgispy.TYPE_8UINT`).
+    :param no_data_val: Optional no-data value written to output raster metadata.
+    :param calc_stats: Populate thematic statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
@@ -538,7 +595,7 @@ def combine_binary_masks(
             "mask_lut.json",
         )
     """
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not msk_imgs_dict:
         raise rsgispy.RSGISPyException(
             "msk_imgs_dict must contain between 1 and 8 mask entries."
@@ -548,6 +605,10 @@ def combine_binary_masks(
             f"combine_binary_masks supports at most 8 binary masks, got {len(msk_imgs_dict)}."
         )
 
+    eff_dtype = rsgispy.TYPE_8UINT if datatype is None else datatype
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    norm_opts = normalise_creation_options(creation_opts)
     keys: List[str] = list(msk_imgs_dict.keys())
     img_paths: List[str] = [os.fspath(msk_imgs_dict[k]) for k in keys]
 
@@ -559,11 +620,14 @@ def combine_binary_masks(
             stack=stack,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype="uint8",
+            out_rio_dtype=out_rio_dtype,
             grid=grid,
             count=1,
             output_exists=False,
+            creation_opts=norm_opts,
         )
+        if no_data_val is not None:
+            dst.nodata = float(no_data_val)
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
@@ -582,10 +646,19 @@ def combine_binary_masks(
                 arr = ds.read(1, window=in_win)
                 bits[:, :, idx] = (arr == 1).astype(np.uint8)
 
-            packed = np.packbits(bits, axis=-1)[:, :, 0]
+            packed = np.packbits(bits, axis=-1)[:, :, 0].astype(
+                out_np_dtype, copy=False
+            )
             dst.write(packed, 1, window=out_win)
 
     set_img_thematic(output_img)
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        thematic=True,
+        use_pbar=use_pbar,
+    )
 
     uniq_vals = set(int(v) for v in get_unique_values(output_img, img_band=1))
     lut_vars = {key: [0, 1] for key in keys}

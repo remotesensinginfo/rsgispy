@@ -5,7 +5,7 @@ and extraction functions using ``rasterio`` and ``numpy``.
 
 from contextlib import ExitStack
 import math
-from typing import List, Optional, Sequence, Union
+from typing import Any, List, Mapping, Optional, Sequence, Union
 
 import numpy as np
 import rasterio
@@ -20,6 +20,11 @@ from rsgispy.imageprocess import (
     iter_single_image_band_blocks,
     open_multi_image_datasets,
     validate_band_index,
+)
+from rsgispy.imageutils._helpers import (
+    maybe_pop_stats,
+    normalise_creation_options,
+    rsgis_dtype_from_np_dtype,
 )
 from rsgispy.imageutils.arrays import set_img_pxl_values
 from rsgispy.imageutils.blank import create_copy_img
@@ -37,10 +42,16 @@ __all__ = [
 def perform_random_pxl_sample_in_mask(
     input_img: str,
     output_img: str,
-    gdalformat: str,
     mask_vals: Union[int, Sequence[int]],
     n_samples: int,
     rnd_seed: Optional[int] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
+    use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Randomly sample ``n_samples`` pixels for each value in ``mask_vals`` from
@@ -49,19 +60,28 @@ def perform_random_pxl_sample_in_mask(
 
     :param input_img: Path to the input integer mask image file.
     :param output_img: Path to the output sampled mask image file.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param mask_vals: Single mask value or sequence of mask values to sample.
     :param n_samples: Number of pixels to randomly sample per mask value.
     :param rnd_seed: Optional random seed for reproducibility (Default = ``None``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to the input image data type).
+    :param no_data_val: Optional output no-data value.
+    :param calc_stats: Populate image statistics and pyramids
+                       (Default = ``False``).
+    :param use_pbar: Reserved progress-bar flag for uniform API
+                     (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
         import rsgispy.imageutils.sampling
         rsgispy.imageutils.sampling.perform_random_pxl_sample_in_mask(
-            "mask_img.tif", "sampled_mask.tif", "GTIFF", [1, 2], 100, rnd_seed=42
+            "mask_img.tif", "sampled_mask.tif", [1, 2], 100, rnd_seed=42
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    _ = use_pbar
     ensure_file_exists(input_img)
     if n_samples < 1:
         raise rsgispy.RSGISPyException("n_samples must be at least 1.")
@@ -76,10 +96,18 @@ def perform_random_pxl_sample_in_mask(
         )
 
     rng = np.random.default_rng(rnd_seed)
+    norm_opts = normalise_creation_options(creation_opts)
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
         msk = src.read(1)
-        out = np.zeros(msk.shape, dtype=msk.dtype)
+        eff_dtype = (
+            rsgis_dtype_from_np_dtype(msk.dtype)
+            if datatype is None
+            else datatype
+        )
+        out_rio_dt = rsgispy.get_rasterio_datatype(eff_dtype)
+        out_np_dt = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+        out = np.zeros(msk.shape, dtype=out_np_dt)
 
         for mval in vals_list:
             rows, cols = np.where(msk == mval)
@@ -94,10 +122,20 @@ def perform_random_pxl_sample_in_mask(
             src=src,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype=str(msk.dtype),
+            out_rio_dtype=out_rio_dt,
             count=1,
+            creation_opts=norm_opts,
         )
+        if no_data_val is not None:
+            dst.nodata = float(no_data_val)
         dst.write(out, 1)
+
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        use_pbar=False,
+    )
 
 
 def extract_img_pxl_sample(
@@ -254,11 +292,16 @@ def assign_random_pxls(
     output_img: str,
     n_pts: int,
     img_band: int = 1,
-    gdalformat: str = "GTIFF",
     edge_pxl: int = 0,
     use_no_data: bool = True,
     rnd_seed: Optional[int] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Create a single-band ``uint8`` binary mask with ``n_pts`` randomly located
@@ -269,13 +312,19 @@ def assign_random_pxls(
     :param output_img: Output binary mask image path.
     :param n_pts: Number of random pixels to select.
     :param img_band: 1-based band index inspected for no-data values (Default = ``1``).
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param edge_pxl: Edge buffer in pixels excluded from sampling (Default = ``0``).
     :param use_no_data: If ``True``, avoid pixels equal to the band no-data value
                         (Default = ``True``).
     :param rnd_seed: Optional random seed for reproducibility (Default = ``None``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to :data:`rsgispy.TYPE_8UINT`).
+    :param no_data_val: Optional no-data value assigned in output metadata.
+    :param calc_stats: Populate image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
@@ -303,21 +352,21 @@ def assign_random_pxls(
         )
 
     rng = np.random.default_rng(rnd_seed)
-    no_data_val = (
+    src_nd = (
         get_img_no_data_value(input_img, img_band) if use_no_data else None
     )
 
-    if no_data_val is not None:
+    if src_nd is not None:
         with rasterio.open(input_img, "r") as src:
             validate_band_index(img_band, src.count, input_img)
             interior = src.read(
                 img_band,
                 window=Window(x_min, y_min, x_max - x_min, y_max - y_min),
             )
-        if math.isnan(float(no_data_val)):
+        if math.isnan(float(src_nd)):
             valid_r, valid_c = np.where(~np.isnan(interior))
         else:
-            valid_r, valid_c = np.where(interior != no_data_val)
+            valid_r, valid_c = np.where(interior != src_nd)
         if valid_r.size < n_pts:
             raise rsgispy.RSGISPyException(
                 f"Requested {n_pts} random pixels, but only {valid_r.size} "
@@ -339,26 +388,41 @@ def assign_random_pxls(
         out_y_coords = (flat_sel // int_w) + y_min
         out_x_coords = (flat_sel % int_w) + x_min
 
+    eff_dtype = rsgispy.TYPE_8UINT if datatype is None else datatype
     create_copy_img(
-        input_img,
-        output_img,
-        1,
-        0,
-        gdalformat,
-        rsgispy.TYPE_8UINT,
+        input_img=input_img,
+        output_img=output_img,
+        n_bands=1,
+        pxl_val=0,
+        gdalformat=gdalformat,
+        datatype=eff_dtype,
+        no_data_val=no_data_val,
+        calc_stats=False,
         use_pbar=use_pbar,
+        creation_opts=creation_opts,
     )
     set_img_pxl_values(output_img, 1, out_x_coords, out_y_coords, 1)
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        use_pbar=use_pbar,
+    )
 
 
 def generate_random_pxl_vals_img(
     input_img: str,
     output_img: str,
-    gdalformat: str,
     low_val: int,
     up_val: int,
     rnd_seed: Optional[int] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Create a single-band ``int32`` raster matching ``input_img`` populated with
@@ -366,18 +430,24 @@ def generate_random_pxl_vals_img(
 
     :param input_img: Reference input image path.
     :param output_img: Output image path.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
     :param low_val: Lower inclusive integer bound.
     :param up_val: Upper exclusive integer bound.
     :param rnd_seed: Optional random seed for reproducibility (Default = ``None``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to :data:`rsgispy.TYPE_32INT`).
+    :param no_data_val: Optional no-data value assigned in output metadata.
+    :param calc_stats: Populate image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
         import rsgispy.imageutils.sampling
         rsgispy.imageutils.sampling.generate_random_pxl_vals_img(
-            "input_img.tif", "rand_vals.tif", "GTIFF", 1, 10, rnd_seed=42
+            "input_img.tif", "rand_vals.tif", 1, 10, rnd_seed=42
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -387,6 +457,10 @@ def generate_random_pxl_vals_img(
             f"low_val ({low_val}) must be strictly less than up_val ({up_val})."
         )
 
+    eff_dtype = rsgispy.TYPE_32INT if datatype is None else datatype
+    out_rio_dt = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dt = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    norm_opts = normalise_creation_options(creation_opts)
     rng = np.random.default_rng(rnd_seed)
 
     with ExitStack() as stack:
@@ -396,9 +470,12 @@ def generate_random_pxl_vals_img(
             src=src,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype="int32",
+            out_rio_dtype=out_rio_dt,
             count=1,
+            creation_opts=norm_opts,
         )
+        if no_data_val is not None:
+            dst.nodata = float(no_data_val)
         for win in iter_dataset_windows(
             src.height, src.width, use_pbar=use_pbar
         ):
@@ -406,6 +483,13 @@ def generate_random_pxl_vals_img(
                 int(low_val),
                 int(up_val),
                 size=(int(win.height), int(win.width)),
-                dtype=np.int32,
-            )
+                dtype=np.int64,
+            ).astype(out_np_dt, copy=False)
             dst.write(blk, 1, window=win)
+
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        use_pbar=use_pbar,
+    )

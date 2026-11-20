@@ -55,14 +55,14 @@ def reproj_bbox(
     bbox: Tuple[float, float, float, float],
     in_crs: CRSLike,
     out_crs: CRSLike,
-) -> Tuple[float, float, float, float]:
+) -> rsgispy.BBox:
     """
     Reproject a bounding box from ``in_crs`` to ``out_crs`` using ``pyproj``.
 
     :param bbox: Input bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :param in_crs: Input CRS (``pyproj.CRS``, EPSG int, or CRS string/WKT).
     :param out_crs: Output CRS (``pyproj.CRS``, EPSG int, or CRS string/WKT).
-    :return: Reprojected bounding box ``(MinX, MaxX, MinY, MaxY)``.
+    :return: Reprojected :class:`rsgispy.BBox` ``(MinX, MaxX, MinY, MaxY)``.
 
     .. code:: python
 
@@ -80,21 +80,24 @@ def reproj_bbox(
     min_x, min_y, max_x, max_y = transformer.transform_bounds(
         bbox[0], bbox[2], bbox[1], bbox[3]
     )
-    return (float(min_x), float(max_x), float(min_y), float(max_y))
+    out_epsg = out_crs_obj.to_epsg()
+    return rsgispy.BBox(
+        float(min_x), float(max_x), float(min_y), float(max_y), epsg=out_epsg
+    )
 
 
 def reproj_bbox_epsg(
     bbox: Tuple[float, float, float, float],
     in_epsg: int,
     out_epsg: int,
-) -> Tuple[float, float, float, float]:
+) -> rsgispy.BBox:
     """
     Reproject a bounding box between EPSG codes using ``pyproj``.
 
     :param bbox: Input bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :param in_epsg: Input projection EPSG integer code.
     :param out_epsg: Output projection EPSG integer code.
-    :return: Reprojected bounding box ``(MinX, MaxX, MinY, MaxY)``.
+    :return: Reprojected :class:`rsgispy.BBox` ``(MinX, MaxX, MinY, MaxY)``.
 
     .. code:: python
 
@@ -212,13 +215,13 @@ def bbox_equal(
 def bbox_intersection(
     bbox1: Tuple[float, float, float, float],
     bbox2: Tuple[float, float, float, float],
-) -> Tuple[float, float, float, float]:
+) -> rsgispy.BBox:
     """
     Calculate the intersection of two bounding boxes ``(MinX, MaxX, MinY, MaxY)``.
 
     :param bbox1: First bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :param bbox2: Second bounding box ``(MinX, MaxX, MinY, MaxY)``.
-    :return: Intersecting bounding box ``(MinX, MaxX, MinY, MaxY)``.
+    :return: Intersecting :class:`rsgispy.BBox` ``(MinX, MaxX, MinY, MaxY)``.
 
     .. code:: python
 
@@ -231,22 +234,26 @@ def bbox_intersection(
     if not do_bboxes_intersect(bbox1, bbox2):
         raise rsgispy.RSGISPyException("Bounding Boxes do not intersect.")
 
-    return (
+    epsg = bbox1.epsg if isinstance(bbox1, rsgispy.BBox) else None
+    if epsg is None and isinstance(bbox2, rsgispy.BBox):
+        epsg = bbox2.epsg
+    return rsgispy.BBox(
         max(bbox1[0], bbox2[0]),
         min(bbox1[1], bbox2[1]),
         max(bbox1[2], bbox2[2]),
         min(bbox1[3], bbox2[3]),
+        epsg=epsg,
     )
 
 
 def bboxes_intersection(
     bboxes: Sequence[Tuple[float, float, float, float]],
-) -> Tuple[float, float, float, float]:
+) -> rsgispy.BBox:
     """
     Find the common intersection across a sequence of bounding boxes.
 
     :param bboxes: Non-empty sequence of bounding boxes ``(MinX, MaxX, MinY, MaxY)``.
-    :return: Intersecting bounding box ``(MinX, MaxX, MinY, MaxY)``.
+    :return: Intersecting :class:`rsgispy.BBox` ``(MinX, MaxX, MinY, MaxY)``.
 
     .. code:: python
 
@@ -259,13 +266,7 @@ def bboxes_intersection(
     if not bboxes:
         raise rsgispy.RSGISPyException("bboxes must contain at least one bbox.")
 
-    inter_bbox = tuple(float(v) for v in bboxes[0])
-    inter: Tuple[float, float, float, float] = (
-        inter_bbox[0],
-        inter_bbox[1],
-        inter_bbox[2],
-        inter_bbox[3],
-    )
+    inter = rsgispy.BBox.from_rsgis(bboxes[0])
     for bbox in bboxes[1:]:
         inter = bbox_intersection(inter, bbox)
     return inter
@@ -273,35 +274,37 @@ def bboxes_intersection(
 
 def buffer_bbox(
     bbox: Tuple[float, float, float, float], buf: float
-) -> Tuple[float, float, float, float]:
+) -> rsgispy.BBox:
     """
     Buffer a bounding box by ``buf`` in all four directions.
 
     :param bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)``.
     :param buf: Buffer distance added outward on each side.
-    :return: Buffered bounding box ``(MinX, MaxX, MinY, MaxY)``.
+    :return: Buffered :class:`rsgispy.BBox` ``(MinX, MaxX, MinY, MaxY)``.
 
     .. code:: python
 
         import rsgispy.tools.geometry
         buf_bbox = rsgispy.tools.geometry.buffer_bbox((10.0, 20.0, 10.0, 20.0), buf=5.0)
     """
-    return (
+    epsg = bbox.epsg if isinstance(bbox, rsgispy.BBox) else None
+    return rsgispy.BBox(
         bbox[0] - buf,
         bbox[1] + buf,
         bbox[2] - buf,
         bbox[3] + buf,
+        epsg=epsg,
     )
 
 
 def find_bbox_union(
     bboxes: Sequence[Tuple[float, float, float, float]],
-) -> Optional[Tuple[float, float, float, float]]:
+) -> Optional[rsgispy.BBox]:
     """
     Find the union bounding box enclosing all bounding boxes in ``bboxes``.
 
     :param bboxes: Sequence of bounding boxes ``(MinX, MaxX, MinY, MaxY)``.
-    :return: Union bounding box ``(MinX, MaxX, MinY, MaxY)``, or ``None`` if empty.
+    :return: Union :class:`rsgispy.BBox` ``(MinX, MaxX, MinY, MaxY)``, or ``None`` if empty.
 
     .. code:: python
 
@@ -317,7 +320,11 @@ def find_bbox_union(
     max_x = max(b[1] for b in bboxes)
     min_y = min(b[2] for b in bboxes)
     max_y = max(b[3] for b in bboxes)
-    return (min_x, max_x, min_y, max_y)
+    epsg = next(
+        (b.epsg for b in bboxes if isinstance(b, rsgispy.BBox) and b.epsg is not None),
+        None,
+    )
+    return rsgispy.BBox(min_x, max_x, min_y, max_y, epsg=epsg)
 
 
 def unwrap_wgs84_bbox(

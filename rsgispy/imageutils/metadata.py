@@ -183,12 +183,12 @@ def get_img_band_count(input_img: str) -> int:
         return int(src.count)
 
 
-def get_img_bbox(input_img: str) -> Tuple[float, float, float, float]:
+def get_img_bbox(input_img: str) -> rsgispy.BBox:
     """
     Retrieve the bounding box of ``input_img`` in its spatial coordinate system.
 
     :param input_img: Path to the input image file.
-    :return: Bounding box ``(MinX, MaxX, MinY, MaxY)``.
+    :return: :class:`rsgispy.BBox` ``(MinX, MaxX, MinY, MaxY)`` with ``epsg`` if available.
 
     .. code:: python
 
@@ -200,15 +200,13 @@ def get_img_bbox(input_img: str) -> Tuple[float, float, float, float]:
         return bbox_from_dataset(src)
 
 
-def get_img_bbox_in_proj(
-    input_img: str, out_epsg: int
-) -> Tuple[float, float, float, float]:
+def get_img_bbox_in_proj(input_img: str, out_epsg: int) -> rsgispy.BBox:
     """
     Retrieve the bounding box of ``input_img`` reprojected into ``out_epsg``.
 
     :param input_img: Path to the input image file.
     :param out_epsg: Target projection EPSG integer code.
-    :return: Reprojected bounding box ``(MinX, MaxX, MinY, MaxY)``.
+    :return: Reprojected :class:`rsgispy.BBox` ``(MinX, MaxX, MinY, MaxY)``.
 
     .. code:: python
 
@@ -221,11 +219,12 @@ def get_img_bbox_in_proj(
             f"Image '{input_img}' does not have a CRS/projection defined."
         )
     img_bbox = get_img_bbox(input_img)
-    return reproj_bbox(
+    reproj = reproj_bbox(
         img_bbox,
         pyproj.CRS.from_wkt(in_wkt),
         pyproj.CRS.from_epsg(int(out_epsg)),
     )
+    return rsgispy.BBox.from_rsgis(reproj, epsg=int(out_epsg))
 
 
 def get_img_subset_pxl_bbox(

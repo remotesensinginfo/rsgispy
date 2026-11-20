@@ -454,10 +454,12 @@ def read_vec_gdf(
 
         gdf = rsgispy.vectorprocess.read_vec_gdf("polys.gpkg", "polys")
     """
+    geo_bbox = bbox.as_geo() if isinstance(bbox, rsgispy.BBox) else bbox
+
     if isinstance(vec_file, gpd.GeoDataFrame):
         gdf = vec_file.copy() if copy else vec_file
-        if bbox is not None:
-            bbox_geom = shapely.geometry.box(*bbox)
+        if geo_bbox is not None:
+            bbox_geom = shapely.geometry.box(*geo_bbox)
             gdf = gdf[gdf.intersects(bbox_geom)].copy()
         if epsg is not None:
             gdf = gdf.set_crs(epsg=int(epsg), allow_override=True)
@@ -469,12 +471,12 @@ def read_vec_gdf(
         if vec_lyr is not None:
             resolve_vec_layer(vec_path, vec_lyr)
         try:
-            if bbox is not None:
+            if geo_bbox is not None:
                 try:
-                    gdf = gpd.read_parquet(vec_path, bbox=bbox)
+                    gdf = gpd.read_parquet(vec_path, bbox=geo_bbox)
                 except ValueError:
                     gdf = gpd.read_parquet(vec_path)
-                    bbox_geom = shapely.geometry.box(*bbox)
+                    bbox_geom = shapely.geometry.box(*geo_bbox)
                     gdf = gdf[gdf.intersects(bbox_geom)].copy()
             else:
                 gdf = gpd.read_parquet(vec_path)
@@ -486,8 +488,8 @@ def read_vec_gdf(
         read_kw: Dict[str, Any] = {}
         if vec_lyr is not None:
             read_kw["layer"] = vec_lyr
-        if bbox is not None:
-            read_kw["bbox"] = bbox
+        if geo_bbox is not None:
+            read_kw["bbox"] = geo_bbox
         try:
             gdf = gpd.read_file(vec_path, **read_kw)
         except Exception as err:
@@ -643,13 +645,17 @@ def validate_columns_exist(
 
 def bbox_to_rsgis(
     bounds: Sequence[float],
-) -> Tuple[float, float, float, float]:
+    epsg: Optional[int] = None,
+) -> rsgispy.BBox:
     """
-    Convert a Shapely/GeoPandas ``(minx, miny, maxx, maxy)`` bounds tuple to an
-    ``rsgispy`` ``(MinX, MaxX, MinY, MaxY)`` bounding box.
+    Convert a Shapely/GeoPandas ``(minx, miny, maxx, maxy)`` bounds tuple (or
+    existing :class:`rsgispy.BBox`) to an :class:`rsgispy.BBox` in RSGIS
+    ``(MinX, MaxX, MinY, MaxY)`` order.
 
-    :param bounds: Four-element bounds ``(minx, miny, maxx, maxy)``.
-    :return: Bounding box ``(MinX, MaxX, MinY, MaxY)``.
+    :param bounds: Four-element bounds ``(minx, miny, maxx, maxy)`` or a
+                   :class:`rsgispy.BBox`.
+    :param epsg: Optional EPSG integer code.
+    :return: :class:`rsgispy.BBox` ``(MinX, MaxX, MinY, MaxY)``.
 
     .. code:: python
 
@@ -657,23 +663,18 @@ def bbox_to_rsgis(
 
         bbox = rsgispy.vectorprocess.bbox_to_rsgis([0.0, 10.0, 50.0, 60.0])
     """
-    return (
-        float(bounds[0]),
-        float(bounds[2]),
-        float(bounds[1]),
-        float(bounds[3]),
-    )
+    return rsgispy.BBox.from_geo(bounds, epsg=epsg)
 
 
 def get_gdf_bbox(
     vec_gdf: gpd.GeoDataFrame,
-) -> Tuple[float, float, float, float]:
+) -> rsgispy.BBox:
     """
-    Return ``(MinX, MaxX, MinY, MaxY)`` bounding box for a non-empty
+    Return :class:`rsgispy.BBox` ``(MinX, MaxX, MinY, MaxY)`` for a non-empty
     :class:`geopandas.GeoDataFrame`.
 
     :param vec_gdf: Input GeoDataFrame.
-    :return: Bounding box ``(MinX, MaxX, MinY, MaxY)``.
+    :return: :class:`rsgispy.BBox` ``(MinX, MaxX, MinY, MaxY)`` with ``epsg`` if available.
 
     .. code:: python
 
@@ -690,7 +691,8 @@ def get_gdf_bbox(
         raise rsgispy.RSGISPyException(
             "Could not compute valid bounding box for the vector layer."
         )
-    return bbox_to_rsgis((min_x, min_y, max_x, max_y))
+    epsg = vec_gdf.crs.to_epsg() if vec_gdf.crs is not None else None
+    return bbox_to_rsgis((min_x, min_y, max_x, max_y), epsg=epsg)
 
 
 def parse_crs_input(crs_val: CRSLike) -> pyproj.CRS:

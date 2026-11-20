@@ -9,11 +9,12 @@ filter type:
 * :mod:`rsgispy.imagefilter.sar` — Lee, Enhanced Lee, Frost, Enhanced Frost, Kuan, Gamma MAP,
   and Refined Lee SAR speckle filters.
 * :mod:`rsgispy.imagefilter.texture` — Gray-Level Co-occurrence Matrix (GLCM) texture filters.
+* :mod:`rsgispy.imagefilter.chained` — In-memory halo-fused multi-step filter & band-math pipelines.
 """
 
 from typing import List
 
-from rsgispy.imagefilter import edge, sar, smooth, stats, texture
+from rsgispy.imagefilter import chained, edge, sar, smooth, stats, texture
 
 __all__: List[str] = [
     "stats",
@@ -21,4 +22,5 @@ __all__: List[str] = [
     "edge",
     "sar",
     "texture",
+    "chained",
 ]

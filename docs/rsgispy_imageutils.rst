@@ -26,9 +26,9 @@ Configuring Output Creation Options
    rsgispy.imagecalc.maths.band_maths(
        output_img="out.tif",
        exp="b1*b2",
+       band_defs=band_defns,
        gdalformat="GTIFF",
        datatype=rsgispy.TYPE_32FLOAT,
-       band_defs=band_defns,
    )
 
 Populating Image Statistics and Pyramids

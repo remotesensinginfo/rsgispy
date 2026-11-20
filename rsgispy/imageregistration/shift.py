@@ -216,12 +216,15 @@ def find_image_offset(
 def apply_offset_to_image(
     input_img: str,
     output_img: str,
-    gdalformat: str = "GTIFF",
-    datatype: Optional[int] = None,
     x_offset: float = 0.0,
     y_offset: float = 0.0,
     in_pxl_units: bool = False,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
     calc_stats: bool = True,
+    use_pbar: bool = True,
 ) -> None:
     """
     Apply a linear X, Y translation offset to the image geotransform header
@@ -229,17 +232,21 @@ def apply_offset_to_image(
 
     :param input_img: Path to the input raster image.
     :param output_img: Path to the output shifted raster image.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Optional ``rsgispy.TYPE_*`` output data type (``None``
-                     preserves input pixel dtype).
     :param x_offset: X offset to add to the image origin (in map units by
                      default, or pixels if ``in_pxl_units=True``).
     :param y_offset: Y offset to add to the image origin (in map units by
                      default, or pixels if ``in_pxl_units=True``).
     :param in_pxl_units: If ``True``, interpret ``(x_offset, y_offset)`` as
                          pixel offsets rather than map units (Default = ``False``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type (``None``
+                     preserves input pixel dtype).
+    :param no_data_val: Optional output no-data value (``None`` preserves input
+                        no-data value).
     :param calc_stats: If ``True``, compute output image statistics and pyramids
                        (Default = ``True``).
+    :param use_pbar: If ``True``, display a progress bar when computing statistics
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -249,10 +256,10 @@ def apply_offset_to_image(
         imreg_shift.apply_offset_to_image(
             input_img="float.tif",
             output_img="shifted.tif",
-            gdalformat="GTIFF",
-            datatype=rsgispy.TYPE_32FLOAT,
             x_offset=-20.0,
             y_offset=30.0,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -276,6 +283,7 @@ def apply_offset_to_image(
         gdalformat=gdalformat,
         datatype=datatype,
         new_transform=new_transform,
+        no_data_val=no_data_val,
     )
 
     if calc_stats:
@@ -283,5 +291,5 @@ def apply_offset_to_image(
             out_path,
             no_data_val=None if nodata_val is None else float(nodata_val),
             calc_pyramids=True,
-            use_pbar=False,
+            use_pbar=use_pbar,
         )

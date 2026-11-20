@@ -1520,13 +1520,9 @@ def _format_output_band(
 
 def calc_indices(
     input_img: str,
+    output_img: str,
     band_names: Mapping[int, str],
     indices: Sequence[str],
-    output_img: str,
-    gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
-    in_no_data_val: Optional[float] = None,
-    out_no_data_val: Optional[float] = None,
     in_gain: Optional[
         Union[float, Sequence[float], Mapping[Union[int, str], float]]
     ] = 1.0,
@@ -1539,10 +1535,15 @@ def calc_indices(
     out_offset: Optional[
         Union[float, Sequence[float], Mapping[str, float]]
     ] = 0.0,
+    index_params: Optional[Mapping[str, Mapping[str, float]]] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: int = rsgispy.TYPE_32FLOAT,
+    in_no_data_val: Optional[float] = None,
+    out_no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
-    index_params: Optional[Mapping[str, Mapping[str, float]]] = None,
 ) -> None:
     """
     Calculate multiple spectral indices in a single pass and write them to a
@@ -1579,20 +1580,11 @@ def calc_indices(
     :func:`get_index_equation`.
 
     :param input_img: Path to the input multi-band raster image file.
+    :param output_img: Path to the output multi-band raster image file.
     :param band_names: Mapping from 1-based band index to band name
                        (e.g., ``{1: "blue", 2: "green", 3: "red", 4: "nir", 5: "swir1"}``).
     :param indices: Sequence of spectral index names to calculate and stack
                     into ``output_img`` in the specified order.
-    :param output_img: Path to the output multi-band raster image file.
-    :param gdalformat: GDAL/rasterio driver format for the output file
-                       (Default = ``'GTIFF'``).
-    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
-                     (Default = ``rsgispy.TYPE_32FLOAT``).
-    :param in_no_data_val: Optional input no-data value. If ``None``, reads the
-                           no-data value(s) from the input image header.
-    :param out_no_data_val: Optional output no-data value. If ``None``, uses
-                            ``-999.0`` for signed/floating-point types (or
-                            ``0`` / type minimum for narrow integer types).
     :param in_gain: Scalar, per-band sequence (length matching input band count),
                     or mapping (keyed by band index or band name) used to unscale
                     input values via ``(dn - in_offset) / in_gain``
@@ -1605,13 +1597,22 @@ def calc_indices(
                      to support integerisation (Default = ``1.0``).
     :param out_offset: Optional scalar, per-index sequence, or mapping added
                        after multiplying by ``out_gain`` (Default = ``0.0``).
+    :param index_params: Optional mapping of per-index parameter overrides
+                         (e.g., ``{"SAVI": {"l": 0.5}, "WDVI": {"s": 1.2}}``).
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
+                     (Default = ``rsgispy.TYPE_32FLOAT``).
+    :param in_no_data_val: Optional input no-data value. If ``None``, reads the
+                           no-data value(s) from the input image header.
+    :param out_no_data_val: Optional output no-data value. If ``None``, uses
+                            ``-999.0`` for signed/floating-point types (or
+                            ``0`` / type minimum for narrow integer types).
     :param calc_stats: If ``True``, populate band statistics, histograms, and
                        overview pyramids on ``output_img`` (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional mapping of GDAL creation options.
-    :param index_params: Optional mapping of per-index parameter overrides
-                         (e.g., ``{"SAVI": {"l": 0.5}, "WDVI": {"s": 1.2}}``).
 
     .. code:: python
 
@@ -1620,16 +1621,16 @@ def calc_indices(
 
         band_names = {1: "blue", 2: "green", 3: "red", 4: "nir", 5: "swir1"}
         rsgispy.imagecalc.calcindices.calc_indices(
-            input_img="s2_refl.tif",
+            "s2_refl.tif",
+            "indices_int16.tif",
             band_names=band_names,
             indices=["NDVI", "NDWI_McFeeters", "MNDWI", "EVI"],
-            output_img="indices_int16.tif",
-            gdalformat="GTIFF",
-            datatype=rsgispy.TYPE_16INT,
             in_gain=10000.0,
             in_offset=0.0,
             out_gain=1000.0,
             out_offset=0.0,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_16INT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments

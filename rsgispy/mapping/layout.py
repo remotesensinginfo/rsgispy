@@ -150,11 +150,12 @@ def get_overview_info(
 
     c_pt_x = roi_proj_bbox[0] + ((roi_proj_bbox[1] - roi_proj_bbox[0]) / 2.0)
     c_pt_y = roi_proj_bbox[2] + ((roi_proj_bbox[3] - roi_proj_bbox[2]) / 2.0)
-    over_bbox: Tuple[float, float, float, float] = (
+    over_bbox = rsgispy.BBox(
         c_pt_x - overview_buf,
         c_pt_x + overview_buf,
         c_pt_y - overview_buf,
         c_pt_y + overview_buf,
+        epsg=int(out_epsg),
     )
     return over_bbox, (c_pt_x, c_pt_y)
 

@@ -73,6 +73,52 @@ def get_epsg_from_dataset(src: Any, input_img: str) -> int:
     return int(epsg_code)
 
 
+def rsgis_dtype_from_np_dtype(
+    dtype_obj: Any, fallback: int = rsgispy.TYPE_32FLOAT
+) -> int:
+    """Resolve an ``rsgispy.TYPE_*`` constant from a NumPy/rasterio dtype."""
+    dtype_str = str(np.dtype(dtype_obj))
+    try:
+        return rsgispy.get_rsgis_datatype(dtype_str)
+    except rsgispy.RSGISPyException:
+        if dtype_str == "bool":
+            return rsgispy.TYPE_8UINT
+        return fallback
+
+
+def maybe_pop_stats(
+    output_img: str,
+    calc_stats: bool,
+    no_data_val: Optional[float] = None,
+    thematic: bool = False,
+    use_pbar: bool = True,
+) -> None:
+    """Populate continuous or thematic image statistics if ``calc_stats`` is True."""
+    if not calc_stats:
+        return
+    # Lazy import avoids circular dependencies with stats -> imagecalc.
+    from rsgispy.imageutils.stats import (  # pylint: disable=import-outside-toplevel
+        pop_img_stats,
+        pop_thmt_img_stats,
+    )
+
+    if thematic:
+        pop_thmt_img_stats(
+            input_img=output_img,
+            add_clr_tab=True,
+            calc_pyramids=True,
+            ignore_zero=True,
+            use_pbar=use_pbar,
+        )
+    else:
+        pop_img_stats(
+            input_img=output_img,
+            no_data_val=no_data_val,
+            calc_pyramids=True,
+            use_pbar=use_pbar,
+        )
+
+
 def copy_raster_window(
     input_img: str,
     output_img: str,
@@ -80,19 +126,27 @@ def copy_raster_window(
     row_off: int,
     width: int,
     height: int,
-    gdalformat: str,
-    datatype: int,
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """Copy a pixel window ``(col_off, row_off, width, height)`` to ``output_img``."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
-    creation_opts = normalise_creation_options(options)
+    norm_opts = normalise_creation_options(creation_opts)
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
+        eff_dtype = (
+            rsgis_dtype_from_np_dtype(src.dtypes[0])
+            if datatype is None
+            else datatype
+        )
+        out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+
         roi_win = Window(col_off, row_off, width, height)
         out_transform = window_transform(roi_win, src.transform)
         grid = IntersectionGrid(
@@ -110,10 +164,11 @@ def copy_raster_window(
             grid=grid,
             count=src.count,
             output_exists=False,
-            creation_opts=creation_opts,
+            creation_opts=norm_opts,
         )
-        if src.nodata is not None:
-            dst.nodata = src.nodata
+        eff_nd = no_data_val if no_data_val is not None else src.nodata
+        if eff_nd is not None:
+            dst.nodata = eff_nd
         for bidx in range(1, src.count + 1):
             desc = src.descriptions[bidx - 1]
             if desc:
@@ -131,3 +186,10 @@ def copy_raster_window(
                 data, int(dst_win.height), int(dst_win.width), out_np_dtype
             )
             dst.write(out_arr, window=dst_win)
+
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=eff_nd,
+        use_pbar=use_pbar,
+    )

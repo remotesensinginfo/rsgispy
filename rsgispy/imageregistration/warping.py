@@ -60,39 +60,51 @@ def _copy_raster_with_gcps(
     gcp_crs: Any,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
-) -> None:
+    no_data_val: Optional[float] = None,
+) -> Optional[float]:
     """Copy ``in_path`` to ``out_path`` attaching ``gcps`` and ``gcp_crs``."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    copy_raster_with_updates(
+    return copy_raster_with_updates(
         in_path,
         out_path,
         gdalformat=gdalformat,
         datatype=datatype,
         gcps=(gcps, gcp_crs),
+        no_data_val=no_data_val,
     )
 
 
 def gcp_to_gdal(
     input_img: str,
-    in_gcp_file: Union[str, os.PathLike, pd.DataFrame],
     output_img: str,
+    in_gcp_file: Union[str, os.PathLike, pd.DataFrame],
+    gcp_epsg: Optional[int] = None,
+    *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
-    gcp_epsg: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
+    use_pbar: bool = True,
 ) -> None:
     """
     Attach tie points from a GCP file or :class:`pandas.DataFrame` as raster
     Ground Control Points (GCPs) in ``output_img``.
 
     :param input_img: Path to the input raster image.
+    :param output_img: Path to the output image containing embedded GCPs.
     :param in_gcp_file: Tie-point file path (RSGIS/ENVI GCP text, CSV, Parquet,
                         or vector file) or a :class:`pandas.DataFrame`.
-    :param output_img: Path to the output image containing embedded GCPs.
+    :param gcp_epsg: Optional EPSG code for GCP coordinates (defaults to
+                     ``input_img`` CRS).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type (``None``
                      preserves input pixel dtype).
-    :param gcp_epsg: Optional EPSG code for GCP coordinates (defaults to
-                     ``input_img`` CRS).
+    :param no_data_val: Optional output no-data value (``None`` preserves input
+                        no-data value).
+    :param calc_stats: If ``True``, compute output image statistics and pyramids
+                       (Default = ``True``).
+    :param use_pbar: If ``True``, display a progress bar when computing statistics
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -100,8 +112,8 @@ def gcp_to_gdal(
 
         imreg_warp.gcp_to_gdal(
             input_img="float.tif",
-            in_gcp_file="tie_points.txt",
             output_img="float_gcps.tif",
+            in_gcp_file="tie_points.txt",
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -119,14 +131,23 @@ def gcp_to_gdal(
             else src.crs
         )
 
-    _copy_raster_with_gcps(
+    nd_val = _copy_raster_with_gcps(
         in_path,
         out_path,
         gcps=gcps,
         gcp_crs=gcp_crs,
         gdalformat=gdalformat,
         datatype=datatype,
+        no_data_val=no_data_val,
     )
+
+    if calc_stats:
+        pop_img_stats(
+            out_path,
+            no_data_val=None if nd_val is None else float(nd_val),
+            calc_pyramids=True,
+            use_pbar=use_pbar,
+        )
 
 
 def add_vec_pts_as_gcps_to_img(
@@ -138,6 +159,12 @@ def add_vec_pts_as_gcps_to_img(
     gcp_y_col: str = "y_match",
     gcp_z_col: Optional[str] = None,
     gcp_epsg: Optional[int] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
+    use_pbar: bool = True,
 ) -> None:
     """
     Embed Ground Control Points (GCPs) into ``output_img`` from a point vector
@@ -157,6 +184,15 @@ def add_vec_pts_as_gcps_to_img(
     :param gcp_z_col: Optional attribute column for GCP Z elevation.
     :param gcp_epsg: Optional EPSG code for the target GCP coordinates
                      (defaults to ``input_img`` CRS).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type (``None``
+                     preserves input pixel dtype).
+    :param no_data_val: Optional output no-data value (``None`` preserves input
+                        no-data value).
+    :param calc_stats: If ``True``, compute output image statistics and pyramids
+                       (Default = ``True``).
+    :param use_pbar: If ``True``, display a progress bar when computing statistics
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -228,28 +264,41 @@ def add_vec_pts_as_gcps_to_img(
     if not gcps:
         raise rsgispy.RSGISPyException("No valid point geometries found for GCPs.")
 
-    _copy_raster_with_gcps(
+    nd_val = _copy_raster_with_gcps(
         in_path,
         out_path,
         gcps=gcps,
         gcp_crs=gcp_crs,
-        gdalformat="GTIFF",
-        datatype=None,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        no_data_val=no_data_val,
     )
+
+    if calc_stats:
+        pop_img_stats(
+            out_path,
+            no_data_val=None if nd_val is None else float(nd_val),
+            calc_pyramids=True,
+            use_pbar=use_pbar,
+        )
 
 
 def warp_with_gcps(
     in_ref_img: str,
     in_process_img: str,
     output_img: str,
-    gdalformat: str = "GTIFF",
     interp_method: int = rsgispy.INTERP_BILINEAR,
     use_tps: bool = False,
     use_poly: bool = True,
     poly_order: int = 3,
     use_multi_thread: bool = True,
     refine_gcps: Optional[Union[float, Tuple[float, Optional[int]]]] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
     calc_stats: bool = True,
+    use_pbar: bool = True,
 ) -> None:
     """
     Warp ``in_process_img`` using its embedded GCPs onto the exact CRS, extent,
@@ -258,7 +307,6 @@ def warp_with_gcps(
     :param in_ref_img: Reference raster image defining output extent and grid.
     :param in_process_img: Floating raster image containing embedded GCPs.
     :param output_img: Path to the output warped image.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param interp_method: Resampling method ``rsgispy.INTERP_*`` (Default =
                           :data:`rsgispy.INTERP_BILINEAR`).
     :param use_tps: Use thin-plate spline transformation (Default = ``False``).
@@ -268,7 +316,13 @@ def warp_with_gcps(
     :param use_multi_thread: Enable multi-threaded warping (Default = ``True``).
     :param refine_gcps: Optional ``tolerance`` or ``(tolerance, min_gcps)`` to
                         prune outlier GCPs during warping.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type (``None``
+                     preserves input pixel dtype).
+    :param no_data_val: Optional output no-data value.
     :param calc_stats: Compute output image statistics and pyramids (Default = ``True``).
+    :param use_pbar: If ``True``, display a progress bar during processing
+                     (Default = ``True``).
 
     .. code:: python
 
@@ -279,9 +333,9 @@ def warp_with_gcps(
             in_ref_img="ref.tif",
             in_process_img="float_gcps.tif",
             output_img="registered.tif",
-            gdalformat="GTIFF",
             interp_method=rsgispy.INTERP_BILINEAR,
             poly_order=1,
+            gdalformat="GTIFF",
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -324,11 +378,13 @@ def warp_with_gcps(
         target_size=ref_size,
         interp_method=interp_method,
         gdalformat=gdalformat,
+        datatype=datatype,
+        dst_nodata=no_data_val,
         use_multi_threaded=use_multi_thread,
         tps=use_tps,
         order=order_val,
         refine_gcps=refine_gcps,
-        use_pbar=False,
+        use_pbar=use_pbar,
     )
 
     if calc_stats:
@@ -338,17 +394,15 @@ def warp_with_gcps(
             out_path,
             no_data_val=None if nd_val is None else float(nd_val),
             calc_pyramids=True,
-            use_pbar=False,
+            use_pbar=use_pbar,
         )
 
 
 def warp_with_tie_points(
     in_ref_img: str,
     in_float_img: str,
-    tie_points: Union[pd.DataFrame, gpd.GeoDataFrame, str, os.PathLike],
     output_img: str,
-    gdalformat: str = "GTIFF",
-    datatype: Optional[int] = None,
+    tie_points: Union[pd.DataFrame, gpd.GeoDataFrame, str, os.PathLike],
     interp_method: int = rsgispy.INTERP_BILINEAR,
     transform_type: str = TRANSFORM_AFFINE,
     poly_order: int = 1,
@@ -356,7 +410,12 @@ def warp_with_tie_points(
     match_ref_grid: bool = True,
     refine_gcps: Optional[Union[float, Tuple[float, Optional[int]]]] = None,
     use_multi_thread: bool = True,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
     calc_stats: bool = True,
+    use_pbar: bool = True,
 ) -> Dict[str, Any]:
     """
     Warp ``in_float_img`` using tie points onto ``in_ref_img`` via linear shift,
@@ -364,11 +423,9 @@ def warp_with_tie_points(
 
     :param in_ref_img: Path to the reference raster image.
     :param in_float_img: Path to the floating raster image.
+    :param output_img: Path to the output warped raster image.
     :param tie_points: Tie-point :class:`pandas.DataFrame`,
                        :class:`geopandas.GeoDataFrame`, or file path.
-    :param output_img: Path to the output warped raster image.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Optional ``rsgispy.TYPE_*`` output data type.
     :param interp_method: Resampling method ``rsgispy.INTERP_*`` (Default =
                           :data:`rsgispy.INTERP_BILINEAR`).
     :param transform_type: Transformation type constant ``TRANSFORM_*``
@@ -388,7 +445,13 @@ def warp_with_tie_points(
                            geotransform header without resampling.
     :param refine_gcps: Optional GCP outlier tolerance passed to ``gdal_warp``.
     :param use_multi_thread: Enable multi-threaded warping (Default = ``True``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type (``None``
+                     preserves input pixel dtype).
+    :param no_data_val: Optional output no-data value.
     :param calc_stats: Compute output image statistics and pyramids (Default = ``True``).
+    :param use_pbar: If ``True``, display a progress bar during processing
+                     (Default = ``True``).
     :return: Dictionary containing transformation summary and fit RMSE.
 
     .. code:: python
@@ -399,8 +462,8 @@ def warp_with_tie_points(
         summary = imreg_warp.warp_with_tie_points(
             in_ref_img="ref.tif",
             in_float_img="float.tif",
-            tie_points=inliers_df,
             output_img="registered.tif",
+            tie_points=inliers_df,
             transform_type=imreg.TRANSFORM_AFFINE,
         )
     """
@@ -503,12 +566,14 @@ def warp_with_tie_points(
             apply_offset_to_image(
                 flt_path,
                 out_path,
-                gdalformat=gdalformat,
-                datatype=datatype,
                 x_offset=tx,
                 y_offset=ty,
                 in_pxl_units=False,
+                gdalformat=gdalformat,
+                datatype=datatype,
+                no_data_val=no_data_val,
                 calc_stats=calc_stats,
+                use_pbar=use_pbar,
             )
         else:
             with tempfile.TemporaryDirectory() as tmp_dir:
@@ -516,12 +581,13 @@ def warp_with_tie_points(
                 apply_offset_to_image(
                     flt_path,
                     shifted_tmp,
-                    gdalformat="GTIFF",
-                    datatype=datatype,
                     x_offset=tx,
                     y_offset=ty,
                     in_pxl_units=False,
+                    gdalformat="GTIFF",
+                    datatype=datatype,
                     calc_stats=False,
+                    use_pbar=False,
                 )
                 rsgispy.imageutils.warp.gdal_warp(
                     input_img=shifted_tmp,
@@ -532,8 +598,9 @@ def warp_with_tie_points(
                     interp_method=interp_method,
                     gdalformat=gdalformat,
                     datatype=datatype,
+                    dst_nodata=no_data_val,
                     use_multi_threaded=use_multi_thread,
-                    use_pbar=False,
+                    use_pbar=use_pbar,
                 )
             if calc_stats:
                 with rasterio.open(out_path, "r") as out_src:
@@ -542,7 +609,7 @@ def warp_with_tie_points(
                     out_path,
                     no_data_val=None if nd_val is None else float(nd_val),
                     calc_pyramids=True,
-                    use_pbar=False,
+                    use_pbar=use_pbar,
                 )
         return {
             "transform_type": TRANSFORM_SHIFT,
@@ -579,24 +646,29 @@ def warp_with_tie_points(
         gcp_tmp = os.path.join(tmp_dir, "with_gcps.tif")
         gcp_to_gdal(
             flt_path,
-            gcp_df,
             gcp_tmp,
+            gcp_df,
             gdalformat="GTIFF",
             datatype=datatype,
+            calc_stats=False,
+            use_pbar=False,
         )
         if match_ref_grid:
             warp_with_gcps(
                 in_ref_img=ref_path,
                 in_process_img=gcp_tmp,
                 output_img=out_path,
-                gdalformat=gdalformat,
                 interp_method=interp_method,
                 use_tps=eff_tps,
                 use_poly=not eff_tps,
                 poly_order=eff_order,
                 use_multi_thread=use_multi_thread,
                 refine_gcps=refine_gcps,
+                gdalformat=gdalformat,
+                datatype=datatype,
+                no_data_val=no_data_val,
                 calc_stats=calc_stats,
+                use_pbar=use_pbar,
             )
         else:
             rsgispy.imageutils.warp.gdal_warp(
@@ -606,11 +678,12 @@ def warp_with_tie_points(
                 interp_method=interp_method,
                 gdalformat=gdalformat,
                 datatype=datatype,
+                dst_nodata=no_data_val,
                 use_multi_threaded=use_multi_thread,
                 tps=eff_tps,
                 order=None if eff_tps else eff_order,
                 refine_gcps=refine_gcps,
-                use_pbar=False,
+                use_pbar=use_pbar,
             )
             if calc_stats:
                 with rasterio.open(out_path, "r") as out_src:
@@ -619,7 +692,7 @@ def warp_with_tie_points(
                     out_path,
                     no_data_val=None if nd_val is None else float(nd_val),
                     calc_pyramids=True,
-                    use_pbar=False,
+                    use_pbar=use_pbar,
                 )
 
     out_type = (
@@ -653,11 +726,15 @@ def coregister_images(
     sub_pxl_res: int = 4,
     metric_type: Union[int, str] = rsgispy.METRIC_CORRELATION,
     residual_thres: float = 2.0,
-    gdalformat: str = "GTIFF",
     interp_method: int = rsgispy.INTERP_BILINEAR,
     match_ref_grid: bool = True,
     out_gcp_file: Optional[Union[str, os.PathLike]] = None,
     random_state: Optional[int] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> Dict[str, Any]:
     """
@@ -695,11 +772,15 @@ def coregister_images(
     :param metric_type: Similarity metric for :data:`TIE_METHOD_TEMPLATE_MATCH`
                         (Default = :data:`rsgispy.METRIC_CORRELATION`).
     :param residual_thres: Maximum map-unit residual for inlier tie points.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param interp_method: Resampling method ``rsgispy.INTERP_*``.
     :param match_ref_grid: Resample onto ``in_ref_img`` grid (Default = ``True``).
     :param out_gcp_file: Optional path to save filtered inlier tie points.
     :param random_state: Optional RNG seed for reproducible RANSAC sampling.
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type (``None``
+                     preserves input pixel dtype).
+    :param no_data_val: Optional output no-data value.
+    :param calc_stats: Compute output image statistics and pyramids (Default = ``True``).
     :param use_pbar: Display tqdm progress bar (Default = ``True``).
     :return: Dictionary containing tie-point counts, RMSE, and output info.
 
@@ -766,12 +847,16 @@ def coregister_images(
     warp_info = warp_with_tie_points(
         in_ref_img=in_ref_img,
         in_float_img=in_float_img,
-        tie_points=inliers_df,
         output_img=output_img,
-        gdalformat=gdalformat,
+        tie_points=inliers_df,
         interp_method=interp_method,
         transform_type=transform_type,
         match_ref_grid=match_ref_grid,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
     )
 
     return {

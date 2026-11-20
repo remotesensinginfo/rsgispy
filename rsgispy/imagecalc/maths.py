@@ -79,11 +79,12 @@ def _create_parser(exp: str, band_names: Sequence[str]) -> pymu_eval.Parser:
 def band_maths(
     output_img: str,
     exp: str,
-    gdalformat: str,
-    datatype: int,
     band_defs: Sequence[BandDefn],
     exp_band_name: bool = False,
     output_exists: bool = False,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: int = rsgispy.TYPE_32FLOAT,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
@@ -95,14 +96,16 @@ def band_maths(
 
     :param output_img: Path to the output image file.
     :param exp: String containing the muParser expression to evaluate over the bands.
-    :param gdalformat: GDAL/rasterio driver format for the output file (e.g., 'GTIFF', 'KEA').
-    :param datatype: Output data type constant from ``rsgispy.TYPE_*`` (or ``rsgislib.TYPE_*``).
     :param band_defs: Sequence of :class:`rsgispy.imagecalc.maths.BandDefn`
                       objects defining the inputs.
     :param exp_band_name: Optional bool specifying whether the output band description
                           should be set to the expression string (Default = False).
     :param output_exists: Optional bool specifying whether the output image already exists
                           and should be updated in place rather than overwritten (Default = False).
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
+                     (Default = ``rsgispy.TYPE_32FLOAT``).
     :param use_pbar: Optional bool specifying whether to display a tqdm progress bar
                      during processing (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options (e.g.,
@@ -121,12 +124,12 @@ def band_maths(
         rsgispy.imagecalc.maths.band_maths(
             output_img='out.tif',
             exp='b1*b2',
+            band_defs=band_defns,
             gdalformat='GTIFF',
             datatype=rsgispy.TYPE_32FLOAT,
-            band_defs=band_defns,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-locals
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
     norm_defs = normalise_band_defs(band_defs)
@@ -164,10 +167,11 @@ def image_math(
     input_img: str,
     output_img: str,
     exp: str,
-    gdalformat: str,
-    datatype: int,
     exp_band_name: bool = False,
     output_exists: bool = False,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: int = rsgispy.TYPE_32FLOAT,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
@@ -181,10 +185,11 @@ def image_math(
     :param input_img: Path to the input image file.
     :param output_img: Path to the output image file.
     :param exp: muParser mathematical expression referencing ``b1``.
-    :param gdalformat: GDAL/rasterio driver format for the output file (e.g., ``'GTIFF'``).
-    :param datatype: Output data type constant from ``rsgispy.TYPE_*``.
     :param exp_band_name: If True, set each output band description to ``exp`` (Default = False).
     :param output_exists: If True and ``output_img`` exists, update it in place (Default = False).
+    :param gdalformat: GDAL/rasterio driver format for the output file (Default = ``'GTIFF'``).
+    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
+                     (Default = ``rsgispy.TYPE_32FLOAT``).
     :param use_pbar: If True, display a tqdm progress bar during processing (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
 
@@ -201,7 +206,7 @@ def image_math(
             datatype=rsgispy.TYPE_32FLOAT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-locals
     ensure_file_exists(input_img)
 
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
@@ -255,10 +260,11 @@ def image_band_math(
     input_img: str,
     output_img: str,
     exp: str,
-    gdalformat: str,
-    datatype: int,
     exp_band_name: bool = False,
     output_exists: bool = False,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: int = rsgispy.TYPE_32FLOAT,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
@@ -271,10 +277,11 @@ def image_band_math(
     :param input_img: Path to the input image file.
     :param output_img: Path to the output image file.
     :param exp: muParser expression referencing input bands as ``b1``, ``b2``, etc.
-    :param gdalformat: GDAL/rasterio driver format for the output file (e.g., ``'GTIFF'``).
-    :param datatype: Output data type constant from ``rsgispy.TYPE_*``.
     :param exp_band_name: If True, set the output band description to ``exp`` (Default = False).
     :param output_exists: If True and ``output_img`` exists, update it in place (Default = False).
+    :param gdalformat: GDAL/rasterio driver format for the output file (Default = ``'GTIFF'``).
+    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
+                     (Default = ``rsgispy.TYPE_32FLOAT``).
     :param use_pbar: If True, display a tqdm progress bar during processing (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
 
@@ -291,7 +298,7 @@ def image_band_math(
             datatype=rsgispy.TYPE_32FLOAT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments
     ensure_file_exists(input_img)
 
     try:
@@ -309,11 +316,11 @@ def image_band_math(
     band_maths(
         output_img=output_img,
         exp=exp,
-        gdalformat=gdalformat,
-        datatype=datatype,
         band_defs=band_defs,
         exp_band_name=exp_band_name,
         output_exists=output_exists,
+        gdalformat=gdalformat,
+        datatype=datatype,
         use_pbar=use_pbar,
         creation_opts=creation_opts,
     )

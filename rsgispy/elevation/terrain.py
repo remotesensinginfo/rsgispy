@@ -4,6 +4,7 @@ functions for digital elevation models (DEMs) using ``rasterio`` and ``numpy``.
 """
 
 from contextlib import ExitStack
+from typing import Optional
 
 import numpy as np
 import rasterio
@@ -16,10 +17,12 @@ from rsgispy.elevation._helpers import (
     validate_slope_unit as _validate_slope_unit,
 )
 from rsgispy.imageprocess import (
+    cast_result_block,
     create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
 )
+from rsgispy.imageutils.stats import pop_img_stats
 
 __all__ = [
     "slope",
@@ -33,8 +36,12 @@ __all__ = [
 def slope(
     input_img: str,
     output_img: str,
-    gdalformat: str,
     unit: str = "degrees",
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -42,8 +49,16 @@ def slope(
 
     :param input_img: Path to the input DEM image file.
     :param output_img: Path to the output slope image file.
-    :param gdalformat: GDAL/rasterio driver format for the output file.
-    :param unit: Output angular unit, either ``'degrees'`` or ``'radians'``.
+    :param unit: Output angular unit, either ``'degrees'`` or ``'radians'``
+                 (Default = ``'degrees'``).
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type constant
+                     (Default = ``rsgispy.TYPE_32FLOAT`` when ``None``).
+    :param no_data_val: Optional input DEM no-data value (read from header
+                        when ``None``).
+    :param calc_stats: If ``True``, populate band statistics and overview
+                       pyramids on ``output_img`` (Default = ``True``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
@@ -53,11 +68,13 @@ def slope(
         rsgispy.elevation.terrain.slope(
             input_img="dem.tif",
             output_img="slope.tif",
-            gdalformat="GTIFF",
             unit="degrees",
+            gdalformat="GTIFF",
         )
     """
+    # pylint: disable=too-many-arguments
     unit_norm = _validate_slope_unit(unit)
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
 
     def _block(
         dx: np.ndarray,
@@ -68,11 +85,18 @@ def slope(
     ) -> np.ndarray:
         slope_rad, _, _ = _calc_slope_aspect_from_diffs(dx, dy, n_vals, ew_res, ns_res)
         if unit_norm == "degrees":
-            return np.degrees(slope_rad).astype(np.float32)
-        return slope_rad.astype(np.float32)
+            return np.degrees(slope_rad)
+        return slope_rad
 
     _process_single_dem_3x3(
-        input_img, output_img, gdalformat, "float32", _block, use_pbar=use_pbar
+        input_img,
+        output_img,
+        gdalformat,
+        eff_dtype,
+        _block,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
     )
 
 
@@ -80,8 +104,12 @@ def slope_pxl_res_img(
     in_dem_img: str,
     in_pxl_res_img: str,
     output_img: str,
-    gdalformat: str,
     unit: str = "degrees",
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -94,8 +122,16 @@ def slope_pxl_res_img(
     :param in_dem_img: Path to the input DEM image file.
     :param in_pxl_res_img: Path to the 2-band pixel resolution image file.
     :param output_img: Path to the output slope image file.
-    :param gdalformat: GDAL/rasterio driver format for the output file.
-    :param unit: Output angular unit, either ``'degrees'`` or ``'radians'``.
+    :param unit: Output angular unit, either ``'degrees'`` or ``'radians'``
+                 (Default = ``'degrees'``).
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type constant
+                     (Default = ``rsgispy.TYPE_32FLOAT`` when ``None``).
+    :param no_data_val: Optional input DEM no-data value (read from header
+                        when ``None``).
+    :param calc_stats: If ``True``, populate band statistics and overview
+                       pyramids on ``output_img`` (Default = ``True``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
@@ -106,12 +142,13 @@ def slope_pxl_res_img(
             in_dem_img="dem.tif",
             in_pxl_res_img="pxl_res.tif",
             output_img="slope.tif",
-            gdalformat="GTIFF",
             unit="degrees",
+            gdalformat="GTIFF",
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments
     unit_norm = _validate_slope_unit(unit)
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
 
     def _block(
         dx: np.ndarray,
@@ -122,16 +159,18 @@ def slope_pxl_res_img(
     ) -> np.ndarray:
         slope_rad, _, _ = _calc_slope_aspect_from_diffs(dx, dy, n_vals, ew_res, ns_res)
         if unit_norm == "degrees":
-            return np.degrees(slope_rad).astype(np.float32)
-        return slope_rad.astype(np.float32)
+            return np.degrees(slope_rad)
+        return slope_rad
 
     _process_pxl_res_dem_3x3(
         in_dem_img,
         in_pxl_res_img,
         output_img,
         gdalformat,
-        "float32",
+        eff_dtype,
         _block,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
 
@@ -139,7 +178,11 @@ def slope_pxl_res_img(
 def aspect(
     input_img: str,
     output_img: str,
-    gdalformat: str,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -148,7 +191,14 @@ def aspect(
 
     :param input_img: Path to the input DEM image file.
     :param output_img: Path to the output aspect image file.
-    :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type constant
+                     (Default = ``rsgispy.TYPE_32FLOAT`` when ``None``).
+    :param no_data_val: Optional input DEM no-data value (read from header
+                        when ``None``).
+    :param calc_stats: If ``True``, populate band statistics and overview
+                       pyramids on ``output_img`` (Default = ``True``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
@@ -161,6 +211,8 @@ def aspect(
             gdalformat="GTIFF",
         )
     """
+    # pylint: disable=too-many-arguments
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
 
     def _block(
         dx: np.ndarray,
@@ -170,10 +222,17 @@ def aspect(
         ns_res: float,
     ) -> np.ndarray:
         _, aspect_deg, _ = _calc_slope_aspect_from_diffs(dx, dy, n_vals, ew_res, ns_res)
-        return aspect_deg.astype(np.float32)
+        return aspect_deg
 
     _process_single_dem_3x3(
-        input_img, output_img, gdalformat, "float32", _block, use_pbar=use_pbar
+        input_img,
+        output_img,
+        gdalformat,
+        eff_dtype,
+        _block,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
     )
 
 
@@ -181,7 +240,11 @@ def aspect_pxl_res_img(
     in_dem_img: str,
     in_pxl_res_img: str,
     output_img: str,
-    gdalformat: str,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -191,7 +254,14 @@ def aspect_pxl_res_img(
     :param in_dem_img: Path to the input DEM image file.
     :param in_pxl_res_img: Path to the 2-band pixel resolution image file.
     :param output_img: Path to the output aspect image file.
-    :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type constant
+                     (Default = ``rsgispy.TYPE_32FLOAT`` when ``None``).
+    :param no_data_val: Optional input DEM no-data value (read from header
+                        when ``None``).
+    :param calc_stats: If ``True``, populate band statistics and overview
+                       pyramids on ``output_img`` (Default = ``True``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
@@ -205,6 +275,8 @@ def aspect_pxl_res_img(
             gdalformat="GTIFF",
         )
     """
+    # pylint: disable=too-many-arguments
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
 
     def _block(
         dx: np.ndarray,
@@ -214,15 +286,17 @@ def aspect_pxl_res_img(
         ns_res: np.ndarray,
     ) -> np.ndarray:
         _, aspect_deg, _ = _calc_slope_aspect_from_diffs(dx, dy, n_vals, ew_res, ns_res)
-        return aspect_deg.astype(np.float32)
+        return aspect_deg
 
     _process_pxl_res_dem_3x3(
         in_dem_img,
         in_pxl_res_img,
         output_img,
         gdalformat,
-        "float32",
+        eff_dtype,
         _block,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
 
@@ -230,7 +304,11 @@ def aspect_pxl_res_img(
 def categorise_aspect(
     input_img: str,
     output_img: str,
-    gdalformat: str,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -238,8 +316,15 @@ def categorise_aspect(
     bins: 0-45, 45-90, ..., 315-360) and ``0`` for ``NaN``/flat pixels.
 
     :param input_img: Path to the input aspect image file (in degrees).
-    :param output_img: Path to the output categorised uint8 image file.
-    :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param output_img: Path to the output categorised image file.
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type constant
+                     (Default = ``rsgispy.TYPE_8UINT`` when ``None``).
+    :param no_data_val: Optional input aspect no-data value treated as
+                        invalid/flat (read from header when ``None``).
+    :param calc_stats: If ``True``, populate band statistics and overview
+                       pyramids on ``output_img`` (Default = ``True``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
 
     .. code:: python
@@ -252,16 +337,21 @@ def categorise_aspect(
             gdalformat="GTIFF",
         )
     """
+    # pylint: disable=too-many-arguments,too-many-locals
     ensure_file_exists(input_img)
+    eff_dtype = rsgispy.TYPE_8UINT if datatype is None else int(datatype)
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
+        eff_nd = no_data_val if no_data_val is not None else src.nodata
         dst = create_output_from_dataset(
             stack=stack,
             src=src,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype="uint8",
+            out_rio_dtype=out_rio_dtype,
             count=1,
         )
 
@@ -269,16 +359,32 @@ def categorise_aspect(
             src.height, src.width, use_pbar=use_pbar
         ):
             arr = src.read(1, window=out_win, out_dtype=np.float64)
-            nan_mask = np.isnan(arr)
-            finite_vals = arr[~nan_mask]
-            if np.any(finite_vals < 0.0):
+            invalid_mask = np.isnan(arr)
+            if eff_nd is not None and not np.isnan(eff_nd):
+                invalid_mask |= arr == eff_nd
+            valid = ~invalid_mask
+            if np.any(arr[valid] < 0.0):
                 raise rsgispy.RSGISPyException(
                     "The input image pixel values must be between 0 and 360 degrees."
                 )
 
             norm = np.where(arr > 360.0, np.mod(arr, 360.0), arr)
-            out_cls = np.zeros(arr.shape, dtype=np.uint8)
-            valid = ~nan_mask
+            out_cls = np.zeros(arr.shape, dtype=out_np_dtype)
             bins = np.clip((norm[valid] // 45.0).astype(np.int64) + 1, 1, 8)
-            out_cls[valid] = bins.astype(np.uint8)
-            dst.write(out_cls, 1, window=out_win)
+            out_cls[valid] = bins.astype(out_np_dtype)
+            dst.write(
+                cast_result_block(
+                    out_cls, int(out_win.height), int(out_win.width), out_np_dtype
+                ),
+                1,
+                window=out_win,
+            )
+
+    if calc_stats:
+        pop_img_stats(
+            input_img=output_img,
+            no_data_val=None,
+            calc_pyramids=True,
+            ignore_cog=gdalformat.upper().strip() == "COG",
+            use_pbar=use_pbar,
+        )

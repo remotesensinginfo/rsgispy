@@ -6,7 +6,7 @@ tiles using ``rasterio``.
 import math
 import multiprocessing
 import os
-from typing import List, Tuple
+from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union
 
 import rasterio
 
@@ -24,10 +24,48 @@ __all__ = [
 
 
 def _extract_tile_worker(
-    task: Tuple[str, str, int, int, int, int, str, int]
+    task: Tuple[
+        str,
+        str,
+        int,
+        int,
+        int,
+        int,
+        str,
+        Optional[int],
+        Optional[float],
+        bool,
+        Optional[Union[Sequence[str], Mapping[str, Any]]],
+    ]
 ) -> None:
     """Top-level picklable worker for :func:`create_tiles_multi_core`."""
-    copy_raster_window(*task, use_pbar=False)
+    (
+        input_img,
+        output_img,
+        col_off,
+        row_off,
+        width,
+        height,
+        gdalformat,
+        datatype,
+        no_data_val,
+        calc_stats,
+        creation_opts,
+    ) = task
+    copy_raster_window(
+        input_img=input_img,
+        output_img=output_img,
+        col_off=col_off,
+        row_off=row_off,
+        width=width,
+        height=height,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
+        use_pbar=False,
+        creation_opts=creation_opts,
+    )
 
 
 def _compute_axis_slices(
@@ -58,12 +96,16 @@ def create_tiles(
     out_img_base: str,
     tile_width: int,
     tile_height: int,
-    tile_overlap: int,
-    offset_tiles: bool,
-    gdalformat: str,
-    datatype: int,
-    out_img_ext: str,
+    tile_overlap: int = 0,
+    offset_tiles: bool = False,
+    out_img_ext: str = "tif",
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> List[str]:
     """
     Split ``input_img`` into a grid of overlapping/non-overlapping tile files.
@@ -72,12 +114,18 @@ def create_tiles(
     :param out_img_base: Base path and filename prefix for output tiles.
     :param tile_width: Core tile width in pixels.
     :param tile_height: Core tile height in pixels.
-    :param tile_overlap: Overlap in pixels around each tile edge.
-    :param offset_tiles: If ``True``, offset the tile grid by half a tile size.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output tiles.
-    :param out_img_ext: Output file extension (e.g., ``'tif'`` or ``'kea'``).
+    :param tile_overlap: Overlap in pixels around each tile edge (Default = ``0``).
+    :param offset_tiles: If ``True``, offset the tile grid by half a tile size
+                         (Default = ``False``).
+    :param out_img_ext: Output file extension (Default = ``'tif'``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output tiles
+                     (defaults to the input image data type).
+    :param no_data_val: Optional output no-data value (defaults to input nodata).
+    :param calc_stats: Populate image statistics and pyramids for each tile
+                       (Default = ``False``).
     :param use_pbar: Show a progress bar over tile generation (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
     :return: List of created tile file paths.
 
     .. code:: python
@@ -91,9 +139,9 @@ def create_tiles(
             1000,
             50,
             False,
-            "GTIFF",
-            rsgispy.TYPE_16UINT,
             "tif",
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_16UINT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -141,7 +189,10 @@ def create_tiles(
             height=r1 - r0,
             gdalformat=gdalformat,
             datatype=datatype,
+            no_data_val=no_data_val,
+            calc_stats=calc_stats,
             use_pbar=False,
+            creation_opts=creation_opts,
         )
         out_files.append(out_file)
 
@@ -153,11 +204,15 @@ def create_tiles_multi_core(
     out_img_base: str,
     width: int,
     height: int,
-    gdalformat: str,
-    datatype: int,
-    out_img_ext: str,
+    out_img_ext: str = "tif",
     n_cores: int = 1,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Create non-overlapping raster tiles using single or multiple CPU cores, named
@@ -167,11 +222,16 @@ def create_tiles_multi_core(
     :param out_img_base: Base path and filename prefix for output tiles.
     :param width: Tile width in pixels.
     :param height: Tile height in pixels.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output tiles.
-    :param out_img_ext: Output file extension (e.g., ``'tif'`` or ``'kea'``).
+    :param out_img_ext: Output file extension (Default = ``'tif'``).
     :param n_cores: Number of worker processes (Default = ``1``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output tiles
+                     (defaults to the input image data type).
+    :param no_data_val: Optional output no-data value (defaults to input nodata).
+    :param calc_stats: Populate image statistics and pyramids for each tile
+                       (Default = ``False``).
     :param use_pbar: Show a progress bar over tile generation (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
@@ -182,10 +242,10 @@ def create_tiles_multi_core(
             "tiles/img",
             1000,
             1000,
-            "GTIFF",
-            rsgispy.TYPE_16UINT,
             "tif",
             n_cores=4,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_16UINT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -210,7 +270,21 @@ def create_tiles_multi_core(
     n_x = math.ceil(img_w / tile_w)
     n_y = math.ceil(img_h / tile_h)
 
-    tasks: List[Tuple[str, str, int, int, int, int, str, int]] = []
+    tasks: List[
+        Tuple[
+            str,
+            str,
+            int,
+            int,
+            int,
+            int,
+            str,
+            Optional[int],
+            Optional[float],
+            bool,
+            Optional[Union[Sequence[str], Mapping[str, Any]]],
+        ]
+    ] = []
     for iy in range(n_y):
         row_off = iy * tile_h
         cur_h = min(tile_h, img_h - row_off)
@@ -228,6 +302,9 @@ def create_tiles_multi_core(
                     cur_h,
                     gdalformat,
                     datatype,
+                    no_data_val,
+                    calc_stats,
+                    creation_opts,
                 )
             )
 
@@ -259,11 +336,15 @@ def create_raster_tiles_bbox(
     out_tile_dir: str,
     out_tile_name: str = "base_tile_{}",
     out_img_ext: str = "kea",
-    gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_8UINT,
     out_img_pxl_val: float = 0.0,
     out_img_n_bands: int = 1,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Create a regular grid of blank raster tiles covering ``bbox``.
@@ -277,11 +358,16 @@ def create_raster_tiles_bbox(
     :param out_tile_name: Format template containing ``{}`` for tile ``x_y``
                           index (Default = ``'base_tile_{}'``).
     :param out_img_ext: Output file extension (Default = ``'kea'``).
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` constant (Default = ``rsgispy.TYPE_8UINT``).
     :param out_img_pxl_val: Initial pixel value (Default = ``0.0``).
     :param out_img_n_bands: Number of bands in each tile (Default = ``1``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant
+                     (defaults to :data:`rsgispy.TYPE_8UINT`).
+    :param no_data_val: Optional output no-data value.
+    :param calc_stats: Populate image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: Show a progress bar over tile generation (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options mapping or list.
 
     .. code:: python
 
@@ -312,6 +398,7 @@ def create_raster_tiles_bbox(
             f"Output tile directory does not exist: '{out_tile_dir}'."
         )
 
+    eff_dtype = rsgispy.TYPE_8UINT if datatype is None else datatype
     ext = out_img_ext.lstrip(".")
     n_x_tiles = max(1, math.ceil(bbox_width / float(tile_x_size)))
     n_y_tiles = max(1, math.ceil(bbox_height / float(tile_y_size)))
@@ -340,8 +427,11 @@ def create_raster_tiles_bbox(
             out_img_res=out_img_res,
             out_img_pxl_val=out_img_pxl_val,
             out_img_n_bands=out_img_n_bands,
-            gdalformat=gdalformat,
-            datatype=datatype,
             snap_to_grid=False,
+            gdalformat=gdalformat,
+            datatype=eff_dtype,
+            no_data_val=no_data_val,
+            calc_stats=calc_stats,
             use_pbar=False,
+            creation_opts=creation_opts,
         )

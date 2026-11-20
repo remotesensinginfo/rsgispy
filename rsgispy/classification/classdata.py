@@ -464,6 +464,21 @@ class ClassificationConfig:
             out_lut[key] = [obj.red, obj.green, obj.blue, 255]
         return out_lut
 
+    def to_feature_stack(self, scaler: Optional[Any] = None) -> Any:
+        """
+        Convert this configuration's ``img_band_info`` into a unified
+        :class:`~rsgispy.ml.stack.ImageFeatureStack`.
+
+        :param scaler: Optional :class:`~rsgispy.ml.scaling.FeatureScaler`.
+        :return: :class:`~rsgispy.ml.stack.ImageFeatureStack`.
+        """
+        # pylint: disable=import-outside-toplevel
+        from rsgispy.ml.stack import ImageFeatureStack
+
+        return ImageFeatureStack.from_image_band_infos(
+            self.img_band_info, scaler=scaler
+        )
+
     def get_band_names(self) -> List[str]:
         """
         Resolve and return the ordered list of feature column names across all
@@ -1281,11 +1296,12 @@ def recode_cls_img_to_out_ids(
     input_img: Union[str, os.PathLike],
     output_img: Union[str, os.PathLike],
     class_info: Union[ClassificationConfig, Mapping[str, ClassInfoObj]],
+    set_thematic: bool = True,
+    apply_colour_table: bool = True,
+    *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[int] = None,
-    set_thematic: bool = True,
-    apply_colour_table: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
@@ -1299,15 +1315,15 @@ def recode_cls_img_to_out_ids(
     :param output_img: Path to the recoded output classified raster.
     :param class_info: A :class:`ClassificationConfig` or mapping of
                        ``{class_name: ClassInfoObj}``.
+    :param set_thematic: If ``True`` (default), mark output bands as thematic.
+    :param apply_colour_table: If ``True`` (default), write the class RGB colour
+                               table when output dtype is ``uint8`` or
+                               ``uint16`` and all output IDs are ``>= 0``.
     :param gdalformat: Output GDAL/rasterio driver format (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` integer output datatype. When
                      ``None``, automatically selects the smallest integer type
                      that fits all output class IDs and ``no_data_val``.
     :param no_data_val: Optional nodata value to preserve/assign on output.
-    :param set_thematic: If ``True`` (default), mark output bands as thematic.
-    :param apply_colour_table: If ``True`` (default), write the class RGB colour
-                               table when output dtype is ``uint8`` or
-                               ``uint16`` and all output IDs are ``>= 0``.
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
     :param creation_opts: Optional mapping of GDAL creation options.
 

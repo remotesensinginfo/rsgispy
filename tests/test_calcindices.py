@@ -446,25 +446,25 @@ def test_calc_indices_validation_errors(tmp_path):
     with pytest.raises(rsgispy.RSGISPyException):
         ic_idx.calc_indices(
             str(tmp_path / "missing.tif"),
+            str(tmp_path / "o.tif"),
             bmap,
             ["NDVI"],
-            str(tmp_path / "o.tif"),
             use_pbar=False,
         )
 
     # Missing required band (swir1) for MNDWI
     with pytest.raises(rsgispy.RSGISPyException, match="swir1"):
         ic_idx.calc_indices(
-            str(in_path), bmap, ["MNDWI"], str(tmp_path / "o.tif"), use_pbar=False
+            str(in_path), str(tmp_path / "o.tif"), bmap, ["MNDWI"], use_pbar=False
         )
 
     # Out-of-range band index
     with pytest.raises(rsgispy.RSGISPyException):
         ic_idx.calc_indices(
             str(in_path),
+            str(tmp_path / "o.tif"),
             {1: "red", 9: "nir"},
             ["NDVI"],
-            str(tmp_path / "o.tif"),
             use_pbar=False,
         )
 
@@ -472,34 +472,34 @@ def test_calc_indices_validation_errors(tmp_path):
     with pytest.raises(rsgispy.RSGISPyException, match="Duplicate"):
         ic_idx.calc_indices(
             str(in_path),
+            str(tmp_path / "o.tif"),
             {1: "swir", 2: "swir1", 3: "red", 4: "nir"},
             ["NDVI"],
-            str(tmp_path / "o.tif"),
             use_pbar=False,
         )
 
     # Unknown index name
     with pytest.raises(rsgispy.RSGISPyException, match="Unknown"):
         ic_idx.calc_indices(
-            str(in_path), bmap, ["BADIDX"], str(tmp_path / "o.tif"), use_pbar=False
+            str(in_path), str(tmp_path / "o.tif"), bmap, ["BADIDX"], use_pbar=False
         )
 
     # Zero gain
     with pytest.raises(rsgispy.RSGISPyException, match="zero"):
         ic_idx.calc_indices(
             str(in_path),
+            str(tmp_path / "o.tif"),
             bmap,
             ["NDVI"],
-            str(tmp_path / "o.tif"),
             in_gain=0.0,
             use_pbar=False,
         )
     with pytest.raises(rsgispy.RSGISPyException, match="zero"):
         ic_idx.calc_indices(
             str(in_path),
+            str(tmp_path / "o.tif"),
             bmap,
             ["NDVI"],
-            str(tmp_path / "o.tif"),
             out_gain=0.0,
             use_pbar=False,
         )
@@ -508,9 +508,9 @@ def test_calc_indices_validation_errors(tmp_path):
     with pytest.raises(rsgispy.RSGISPyException, match="outside"):
         ic_idx.calc_indices(
             str(in_path),
+            str(tmp_path / "o.tif"),
             bmap,
             ["NDVI"],
-            str(tmp_path / "o.tif"),
             datatype=rsgispy.TYPE_16UINT,
             out_no_data_val=-999,
             use_pbar=False,
@@ -520,18 +520,18 @@ def test_calc_indices_validation_errors(tmp_path):
     with pytest.raises(rsgispy.RSGISPyException):
         ic_idx.calc_indices(
             str(in_path),
+            str(tmp_path / "o.tif"),
             bmap,
             ["NDVI"],
-            str(tmp_path / "o.tif"),
             in_gain=[1.0, 1.0],
             use_pbar=False,
         )
     with pytest.raises(rsgispy.RSGISPyException):
         ic_idx.calc_indices(
             str(in_path),
+            str(tmp_path / "o.tif"),
             bmap,
             ["NDVI", "WBI_BlueNIR"],
-            str(tmp_path / "o.tif"),
             out_gain=[1000.0],
             use_pbar=False,
         )

@@ -108,11 +108,14 @@ def _compute_vrt_grid(
         )
 
     if vrt_extent is not None:
-        if len(vrt_extent) < 4:
-            raise rsgispy.RSGISPyException(
-                "vrt_extent must contain 4 values: (min_x, min_y, max_x, max_y)."
-            )
-        min_x, min_y, max_x, max_y = (float(v) for v in vrt_extent[:4])
+        if isinstance(vrt_extent, rsgispy.BBox):
+            min_x, min_y, max_x, max_y = vrt_extent.as_geo()
+        else:
+            if len(vrt_extent) < 4:
+                raise rsgispy.RSGISPyException(
+                    "vrt_extent must contain 4 values: (min_x, min_y, max_x, max_y)."
+                )
+            min_x, min_y, max_x, max_y = (float(v) for v in vrt_extent[:4])
     else:
         min_x = min(ds.bounds.left for ds in datasets)
         min_y = min(ds.bounds.bottom for ds in datasets)
@@ -637,8 +640,8 @@ def create_mosaic_images_vrt(
 
 def create_vrt_band_subset(
     input_img: str,
-    img_bands: Sequence[int],
     out_vrt_img: str,
+    img_bands: Sequence[int],
     vrt_extent: Optional[Tuple[float, float, float, float]] = None,
     vrt_out_res_x: Optional[float] = None,
     vrt_out_res_y: Optional[float] = None,
@@ -657,9 +660,9 @@ def create_vrt_band_subset(
     ``img_bands`` (in the order provided), using ``rasterio`` to inspect image metadata.
 
     :param input_img: Path to the input image file.
+    :param out_vrt_img: Path to the output VRT file.
     :param img_bands: Sequence of 1-based band numbers in the order they should appear
                       in the output VRT.
-    :param out_vrt_img: Path to the output VRT file.
     :param vrt_extent: Optional extent ``(minX, minY, maxX, maxY)`` for the VRT image.
     :param vrt_out_res_x: Optional X resolution of the output VRT.
     :param vrt_out_res_y: Optional Y resolution of the output VRT.
@@ -681,7 +684,7 @@ def create_vrt_band_subset(
 
         import rsgispy.imageutils.vrt
         rsgispy.imageutils.vrt.create_vrt_band_subset(
-            "multi_band.tif", [3, 2, 1], "rgb_subset.vrt"
+            "multi_band.tif", "rgb_subset.vrt", [3, 2, 1]
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals

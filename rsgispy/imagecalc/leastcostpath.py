@@ -130,8 +130,9 @@ def perform_least_cost_path_calc(
     output_img: str,
     start_coord: Sequence[float],
     stop_coord: Sequence[float],
-    gdalformat: str = "GTIFF",
     cost_img_band: int = 1,
+    *,
+    gdalformat: str = "GTIFF",
 ) -> None:
     """
     Calculate the least-cost path across a raster cost surface from
@@ -146,9 +147,9 @@ def perform_least_cost_path_calc(
                        ``0`` elsewhere).
     :param start_coord: Start coordinate ``(x, y)`` in the image CRS.
     :param stop_coord: Stop coordinate ``(x, y)`` in the image CRS.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param cost_img_band: 1-based band index within ``cost_surface_img`` to use
                           as the cost surface (Default = ``1``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
 
     .. code:: python
 
@@ -162,7 +163,7 @@ def perform_least_cost_path_calc(
             gdalformat="GTIFF",
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-locals
     ensure_file_exists(cost_surface_img, "Cost surface image")
 
     with ExitStack() as stack:

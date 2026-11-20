@@ -179,8 +179,8 @@ def test_arrays_and_pixel_access(tmp_path):
     out2 = tmp_path / "from_ref.tif"
     iu_arr.create_img_from_array_ref_img(
         arr[0],
-        str(out2),
         str(out1),
+        str(out2),
         gdalformat="GTIFF",
         datatype=rsgispy.TYPE_32FLOAT,
     )
@@ -225,7 +225,12 @@ def test_sampling_functions(tmp_path):
 
     sampled_msk = tmp_path / "sampled_msk.tif"
     iu_samp.perform_random_pxl_sample_in_mask(
-        str(msk_path), str(sampled_msk), "GTIFF", [1, 2], 4, rnd_seed=42
+        str(msk_path),
+        str(sampled_msk),
+        [1, 2],
+        4,
+        gdalformat="GTIFF",
+        rnd_seed=42,
     )
     with rasterio.open(sampled_msk) as src:
         s_arr = src.read(1)
@@ -265,7 +270,12 @@ def test_sampling_functions(tmp_path):
 
     rnd_img = tmp_path / "rnd_vals.tif"
     iu_samp.generate_random_pxl_vals_img(
-        str(img_path), str(rnd_img), "GTIFF", low_val=5, up_val=15, rnd_seed=7
+        str(img_path),
+        str(rnd_img),
+        low_val=5,
+        up_val=15,
+        gdalformat="GTIFF",
+        rnd_seed=7,
     )
     with rasterio.open(rnd_img) as src:
         ri = src.read(1)
@@ -285,8 +295,8 @@ def test_bands_stack_select_and_translate(tmp_path):
     stk_p = tmp_path / "stacked.tif"
     iu_bands.stack_img_bands(
         [str(b1_p), str(b2_p)],
-        ["B1", "B2"],
         str(stk_p),
+        ["B1", "B2"],
         skip_value=-99.0,
         no_data_val=-999.0,
         gdalformat="GTIFF",
@@ -301,7 +311,11 @@ def test_bands_stack_select_and_translate(tmp_path):
 
     sel_p = tmp_path / "selected.tif"
     iu_bands.select_img_bands(
-        str(stk_p), str(sel_p), "GTIFF", rsgispy.TYPE_32INT, [2]
+        str(stk_p),
+        str(sel_p),
+        [2],
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32INT,
     )
     with rasterio.open(sel_p) as src:
         assert src.count == 1
@@ -1131,40 +1145,40 @@ def test_progress_bar_defaults_and_suppression(tmp_path, monkeypatch):
         str(in_p),
         str(in_p),
         str(tmp_path / "m_on.tif"),
-        "GTIFF",
-        rsgispy.TYPE_32FLOAT,
         1,
         0.0,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
     )
     iu_sub.subset_bbox(
         str(in_p),
         str(tmp_path / "s_on.tif"),
-        "GTIFF",
-        rsgispy.TYPE_32FLOAT,
         500000.0,
         500040.0,
         5199960.0,
         5200000.0,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
     )
     iu_spatial.calc_pixel_locations(
-        str(in_p), str(tmp_path / "loc_on.tif"), "GTIFF"
+        str(in_p), str(tmp_path / "loc_on.tif"), gdalformat="GTIFF"
     )
     ic_maths.band_maths(
         str(tmp_path / "bm_on.tif"),
         "b1 * 2.0",
-        "GTIFF",
-        rsgispy.TYPE_32FLOAT,
         bdef,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
     )
-    el_terrain.slope(str(in_p), str(tmp_path / "sl_on.tif"), "GTIFF")
+    el_terrain.slope(str(in_p), str(tmp_path / "sl_on.tif"), gdalformat="GTIFF")
     imorph.image_dilate(
         str(in_p),
         str(tmp_path / "dil_on.tif"),
         "",
         False,
         3,
-        "GTIFF",
-        rsgispy.TYPE_32FLOAT,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
     )
     zs_point.ext_point_band_values(
         pts_gdf.copy(), str(in_p), 1, 0.0, 100.0, -999.0, "val"
@@ -1177,43 +1191,45 @@ def test_progress_bar_defaults_and_suppression(tmp_path, monkeypatch):
         str(in_p),
         str(in_p),
         str(tmp_path / "m_off.tif"),
-        "GTIFF",
-        rsgispy.TYPE_32FLOAT,
         1,
         0.0,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
         use_pbar=False,
     )
     iu_sub.subset_bbox(
         str(in_p),
         str(tmp_path / "s_off.tif"),
-        "GTIFF",
-        rsgispy.TYPE_32FLOAT,
         500000.0,
         500040.0,
         5199960.0,
         5200000.0,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
         use_pbar=False,
     )
     iu_spatial.calc_pixel_locations(
-        str(in_p), str(tmp_path / "loc_off.tif"), "GTIFF", use_pbar=False
+        str(in_p), str(tmp_path / "loc_off.tif"), gdalformat="GTIFF", use_pbar=False
     )
     ic_maths.band_maths(
         str(tmp_path / "bm_off.tif"),
         "b1 * 2.0",
-        "GTIFF",
-        rsgispy.TYPE_32FLOAT,
         bdef,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
         use_pbar=False,
     )
-    el_terrain.slope(str(in_p), str(tmp_path / "sl_off.tif"), "GTIFF", use_pbar=False)
+    el_terrain.slope(
+        str(in_p), str(tmp_path / "sl_off.tif"), gdalformat="GTIFF", use_pbar=False
+    )
     imorph.image_dilate(
         str(in_p),
         str(tmp_path / "dil_off.tif"),
         "",
         False,
         3,
-        "GTIFF",
-        rsgispy.TYPE_32FLOAT,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
         use_pbar=False,
     )
     zs_point.ext_point_band_values(
@@ -1281,12 +1297,12 @@ def test_imageutils_rasterise(tmp_path):
         vec_file,
         "polys",
         "val",
-        str(tmp_path / "tmp_range.gpkg"),
-        "polys",
-        "score",
         ref_img,
         range_img,
         scrs_lut={1: (0.0, 50.0), 2: (50.0, 100.0)},
+        tmp_vec_file=str(tmp_path / "tmp_range.gpkg"),
+        tmp_vec_lyr="polys",
+        tmp_vec_col="score",
         use_pbar=False,
     )
     with rasterio.open(range_img) as src:
@@ -1297,12 +1313,12 @@ def test_imageutils_rasterise(tmp_path):
         vec_file,
         "polys",
         "cls",
-        str(tmp_path / "tmp_lst.gpkg"),
-        "polys",
-        "score",
         ref_img,
         lst_img,
         scrs_lut=[("Low", 3), ("High", 7)],
+        tmp_vec_file=str(tmp_path / "tmp_lst.gpkg"),
+        tmp_vec_lyr="polys",
+        tmp_vec_col="score",
         use_pbar=False,
     )
     with rasterio.open(lst_img) as src:
@@ -1313,12 +1329,12 @@ def test_imageutils_rasterise(tmp_path):
         vec_file,
         "polys",
         ref_img,
-        str(tmp_path / "tmp_v.tif"),
-        str(tmp_path / "tmp_d.tif"),
         dist_zones,
         recode_lut=[(1, (math.nan, 15.0)), (2, (15.0, math.nan))],
         max_dist_thres=40.0,
         backgrd_val=0,
+        tmp_vec_img=str(tmp_path / "tmp_v.tif"),
+        tmp_dist_img=str(tmp_path / "tmp_d.tif"),
         use_pbar=False,
     )
     with rasterio.open(dist_zones) as src:
@@ -1373,8 +1389,8 @@ def test_imageutils_gdf_in_memory(tmp_path):
         polys_gdf,
         None,
         sub_out,
-        "GTIFF",
-        rsgispy.TYPE_32FLOAT,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
     )
     with rasterio.open(sub_out) as s_src:
         assert s_src.width > 0 and s_src.height > 0
@@ -1398,12 +1414,12 @@ def test_imageutils_gdf_in_memory(tmp_path):
         polys_gdf,
         None,
         "val",
-        None,
-        None,
-        "score",
         ref_img,
         range_img,
         scrs_lut={1: (0.0, 50.0), 2: (50.0, 100.0)},
+        tmp_vec_file=None,
+        tmp_vec_lyr=None,
+        tmp_vec_col="score",
         use_pbar=False,
     )
     with rasterio.open(range_img) as src:
@@ -1414,12 +1430,12 @@ def test_imageutils_gdf_in_memory(tmp_path):
         polys_gdf,
         None,
         "cls",
-        None,
-        None,
-        "score",
         ref_img,
         lst_img,
         scrs_lut=[("Low", 3), ("High", 7)],
+        tmp_vec_file=None,
+        tmp_vec_lyr=None,
+        tmp_vec_col="score",
         use_pbar=False,
     )
     with rasterio.open(lst_img) as src:
@@ -1430,12 +1446,12 @@ def test_imageutils_gdf_in_memory(tmp_path):
         polys_gdf,
         None,
         ref_img,
-        str(tmp_path / "tmp_v2.tif"),
-        str(tmp_path / "tmp_d2.tif"),
         dist_zones,
         recode_lut=[(1, (math.nan, 15.0)), (2, (15.0, math.nan))],
         max_dist_thres=40.0,
         backgrd_val=0,
+        tmp_vec_img=str(tmp_path / "tmp_v2.tif"),
+        tmp_dist_img=str(tmp_path / "tmp_d2.tif"),
         use_pbar=False,
     )
     with rasterio.open(dist_zones) as src:

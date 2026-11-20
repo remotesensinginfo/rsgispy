@@ -304,8 +304,8 @@ def test_generate_tie_points_and_formats(tmp_path):
     shift_info = imreg_warp.warp_with_tie_points(
         ref_img,
         flt_img,
-        rsgis_txt,
         shift_from_txt,
+        rsgis_txt,
         transform_type=imreg.TRANSFORM_SHIFT,
         match_ref_grid=True,
         calc_stats=True,
@@ -485,8 +485,8 @@ def test_gcp_embedding_and_coregister_images(tmp_path):
     shift_info = imreg_warp.warp_with_tie_points(
         ref_img,
         flt_img,
-        gcp_out,
         shift_hdr,
+        gcp_out,
         transform_type=imreg.TRANSFORM_SHIFT,
         match_ref_grid=False,
         calc_stats=True,
@@ -501,8 +501,8 @@ def test_gcp_embedding_and_coregister_images(tmp_path):
     sim_info = imreg_warp.warp_with_tie_points(
         ref_img,
         flt_img,
-        gcp_out,
         sim_out,
+        gcp_out,
         transform_type=imreg.TRANSFORM_SIMILARITY,
         calc_stats=False,
     )
@@ -513,8 +513,8 @@ def test_gcp_embedding_and_coregister_images(tmp_path):
     tps_info = imreg_warp.warp_with_tie_points(
         ref_img,
         flt_img,
-        gcp_out,
         tps_out,
+        gcp_out,
         transform_type=imreg.TRANSFORM_TPS,
         calc_stats=False,
     )

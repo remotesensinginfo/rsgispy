@@ -341,8 +341,8 @@ def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
 
     su.predict_refl_linear_unmixing(
         str(exact_coef_path),
-        em_df,
         str(pred_path),
+        em_df,
         calc_stats=False,
         use_pbar=False,
     )
@@ -354,8 +354,8 @@ def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
     su.calc_unmixing_rmse_residual_err(
         str(img_path),
         str(exact_coef_path),
-        str(em_path),
         str(err_path),
+        str(em_path),
         calc_stats=True,
         use_pbar=False,
     )
@@ -416,9 +416,9 @@ def test_summarise_multi_endmember_linear_unmixing(tmp_path):
 
     su.summarise_multi_endmember_linear_unmixing(
         str(refl_path),
-        [info_a, info_b],
         str(out_unmix),
         str(out_ref),
+        [info_a, info_b],
         tmp_dir=str(tmp_path / "tmp"),
         calc_stats=True,
         use_pbar=False,
@@ -461,10 +461,10 @@ def test_pysptools_unmixers(tmp_path):
     out_ucls = tmp_path / "ucls.tif"
     su.spec_unmix_spts_ucls(
         str(img_path),
-        str(msk_path),
-        1,
         str(out_ucls),
         str(em_path),
+        str(msk_path),
+        1,
         calc_stats=False,
         use_pbar=False,
     )
@@ -475,10 +475,10 @@ def test_pysptools_unmixers(tmp_path):
     out_nnls = tmp_path / "nnls.tif"
     su.spec_unmix_spts_nnls(
         str(img_path),
-        str(msk_path),
-        1,
         str(out_nnls),
         em_df,
+        str(msk_path),
+        1,
         weight=10.0,
         calc_stats=False,
         use_pbar=False,
@@ -490,10 +490,10 @@ def test_pysptools_unmixers(tmp_path):
         out_fcls = tmp_path / "fcls.tif"
         su.spec_unmix_spts_fcls(
             str(img_path),
-            str(msk_path),
-            1,
             str(out_fcls),
             str(em_path),
+            str(msk_path),
+            1,
             calc_stats=False,
             use_pbar=False,
         )
@@ -526,10 +526,10 @@ def test_pymcr_unmixers(tmp_path):
     out_nnls = tmp_path / "pymcr_nnls.tif"
     su.spec_unmix_pymcr_nnls(
         str(img_path),
-        str(msk_path),
-        1,
         str(out_nnls),
         str(em_path),
+        str(msk_path),
+        1,
         calc_stats=False,
         use_pbar=False,
     )
@@ -540,10 +540,10 @@ def test_pymcr_unmixers(tmp_path):
     out_fcls = tmp_path / "pymcr_fcls.tif"
     su.spec_unmix_pymcr_fcls(
         str(img_path),
-        str(msk_path),
-        1,
         str(out_fcls),
         em_df,
+        str(msk_path),
+        1,
         calc_stats=False,
         use_pbar=False,
     )
@@ -576,10 +576,10 @@ def test_recommended_numpy_ucls_unmixer(tmp_path):
     out_masked = tmp_path / "numpy_ucls.tif"
     su.spec_unmix_ucls(
         str(img_path),
-        str(msk_path),
-        1,
         str(out_masked),
         str(em_path),
+        str(msk_path),
+        1,
         calc_stats=False,
         use_pbar=False,
     )
@@ -594,10 +594,10 @@ def test_recommended_numpy_ucls_unmixer(tmp_path):
     out_nomask = tmp_path / "numpy_ucls_nomask.tif"
     su.spec_unmix_ucls(
         str(img_path),
-        None,
-        1,
         str(out_nomask),
         em_df,
+        None,
+        1,
         weight=10.0,
         calc_stats=False,
         use_pbar=False,
@@ -635,10 +635,10 @@ def test_recommended_scipy_nnls_fcls_unmixers(tmp_path):
     out_nnls = tmp_path / "scipy_nnls.tif"
     su.spec_unmix_nnls(
         str(img_path),
-        str(msk_path),
-        1,
         str(out_nnls),
         str(em_path),
+        str(msk_path),
+        1,
         calc_stats=False,
         use_pbar=False,
     )
@@ -652,10 +652,10 @@ def test_recommended_scipy_nnls_fcls_unmixers(tmp_path):
     out_fcls = tmp_path / "scipy_fcls.tif"
     su.spec_unmix_fcls(
         str(img_path),
-        str(msk_path),
-        1,
         str(out_fcls),
         em_df,
+        str(msk_path),
+        1,
         calc_stats=False,
         use_pbar=False,
     )
@@ -677,10 +677,10 @@ def test_recommended_scipy_nnls_fcls_unmixers(tmp_path):
     out_fcls_scaled = tmp_path / "scipy_fcls_scaled.tif"
     su.spec_unmix_fcls(
         str(scaled_img),
-        None,
-        1,
         str(out_fcls_scaled),
         str(scaled_em),
+        None,
+        1,
         calc_stats=False,
         use_pbar=False,
     )
@@ -756,9 +756,9 @@ def test_optional_dependency_friendly_errors(monkeypatch, tmp_path):
             for flag, val in flags.items():
                 mp.setattr(su, flag, val)
             with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
-                fn(dummy_in, None, 1, dummy_out, em_df)
+                fn(dummy_in, dummy_out, em_df)
             with pytest.raises(rsgispy.RSGISPyException, match=pkg):
-                fn(dummy_in, None, 1, dummy_out, em_df)
+                fn(dummy_in, dummy_out, em_df)
 
 
 def test_spectral_angle_mapper(tmp_path):
@@ -789,8 +789,8 @@ def test_spectral_angle_mapper(tmp_path):
 
     sc.spectral_angle_mapper(
         str(img_path),
-        str(em_csv),
         str(out_ang),
+        str(em_csv),
         out_class_img=str(out_cls),
         out_min_angle_img=str(out_min),
         degrees=True,
@@ -829,14 +829,14 @@ def test_spectral_angle_mapper(tmp_path):
     with pytest.raises(rsgispy.RSGISPyException):
         sc.spectral_angle_mapper(
             str(img_path),
-            pd.DataFrame({"A": [1.0, 2.0]}),
             str(tmp_path / "bad_bands.tif"),
+            pd.DataFrame({"A": [1.0, 2.0]}),
         )
     with pytest.raises(rsgispy.RSGISPyException):
         sc.spectral_angle_mapper(
             str(img_path),
-            pd.DataFrame({"Zero": [0.0, 0.0, 0.0]}),
             str(tmp_path / "bad_zero.tif"),
+            pd.DataFrame({"Zero": [0.0, 0.0, 0.0]}),
         )
 
 
@@ -866,8 +866,8 @@ def test_spectral_correlation_mapper(tmp_path):
 
     sc.spectral_correlation_mapper(
         str(img_path),
-        em_df,
         str(out_corr),
+        em_df,
         out_class_img=str(out_cls),
         out_max_corr_img=str(out_max),
         min_corr=0.8,
@@ -905,14 +905,14 @@ def test_spectral_correlation_mapper(tmp_path):
     with pytest.raises(rsgispy.RSGISPyException):
         sc.spectral_correlation_mapper(
             str(img_path),
-            pd.DataFrame({"Const": [2.0, 2.0, 2.0, 2.0]}),
             str(tmp_path / "bad_const.tif"),
+            pd.DataFrame({"Const": [2.0, 2.0, 2.0, 2.0]}),
         )
     with pytest.raises(rsgispy.RSGISPyException):
         sc.spectral_correlation_mapper(
             str(img_path),
-            em_df,
             str(tmp_path / "bad_thresh.tif"),
+            em_df,
             out_class_img=str(tmp_path / "bad_thresh_cls.tif"),
             min_corr=1.5,
         )
@@ -921,8 +921,8 @@ def test_spectral_correlation_mapper(tmp_path):
     with pytest.raises(rsgispy.RSGISPyException):
         sc.spectral_correlation_mapper(
             str(single_img),
-            pd.DataFrame({"A": [1.0]}),
             str(tmp_path / "bad_1band.tif"),
+            pd.DataFrame({"A": [1.0]}),
         )
 
 
@@ -947,9 +947,9 @@ def test_spectral_smoothing_and_outlier_mask(tmp_path):
     smooth_out = tmp_path / "smooth.tif"
     sp.spectral_smoothing(
         str(in_img),
+        str(smooth_out),
         str(msk_img),
         1,
-        str(smooth_out),
         win_len=5,
         polyorder=2,
         gdalformat="GTIFF",
@@ -968,9 +968,9 @@ def test_spectral_smoothing_and_outlier_mask(tmp_path):
     _write_raster(outl_in, outl_arr)
     sp.mask_outliers_data_values(
         str(outl_in),
+        str(outl_out),
         str(msk_img),
         1,
-        str(outl_out),
         lower=5,
         upper=85,
         gdalformat="GTIFF",
@@ -999,10 +999,10 @@ def test_polyfill_nan_data_values(tmp_path):
 
     sp.polyfill_nan_data_values(
         str(nan_in),
+        str(poly_out),
         wavelengths.tolist(),
         str(msk_img),
         1,
-        str(poly_out),
         polyorder=2,
         gdalformat="GTIFF",
         calc_stats=False,
@@ -1024,7 +1024,7 @@ def test_whiten_image(tmp_path):
     _write_raster(w_in, w_in_arr)
     _write_raster(w_msk, np.ones((12, 12), dtype=np.uint8))
 
-    st.whiten_image(str(w_in), str(w_msk), 1, str(w_out), gdalformat="GTIFF")
+    st.whiten_image(str(w_in), str(w_out), str(w_msk), 1, gdalformat="GTIFF")
     with rasterio.open(w_out) as src:
         cov = np.cov(src.read().reshape(3, -1))
         assert np.allclose(cov, np.eye(3), atol=1e-2)
@@ -1247,7 +1247,7 @@ def test_spectral_tasseled_cap_and_histogram_matching(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sp, "HAVE_SCIPY", False)
     with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
-        sp.spectral_smoothing(tct_in, tct_in, 1, str(tmp_path / "no_scipy.tif"))
+        sp.spectral_smoothing(tct_in, str(tmp_path / "no_scipy.tif"), tct_in, 1)
 
 
 def test_calc_area_under_curve(tmp_path):
@@ -1265,7 +1265,7 @@ def test_calc_area_under_curve(tmp_path):
     _write_raster(in_p, arr)
 
     si.calc_area_under_curve(
-        str(in_p), [0.5, 2.0], str(out_p), use_pbar=False
+        str(in_p), str(out_p), [0.5, 2.0], use_pbar=False
     )
     with rasterio.open(out_p) as src:
         np.testing.assert_allclose(
@@ -1273,6 +1273,6 @@ def test_calc_area_under_curve(tmp_path):
         )
 
     with pytest.raises(rsgispy.RSGISPyException):
-        si.calc_area_under_curve(str(in_p), None, str(out_p), use_pbar=False)
+        si.calc_area_under_curve(str(in_p), str(out_p), None, use_pbar=False)
     with pytest.raises(rsgispy.RSGISPyException):
-        si.calc_area_under_curve(str(in_p), [1.0], str(out_p), use_pbar=False)
+        si.calc_area_under_curve(str(in_p), str(out_p), [1.0], use_pbar=False)

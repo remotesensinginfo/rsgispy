@@ -285,10 +285,10 @@ def test_pxloutlierchng_methods(tmp_path):
     out_scores = tmp_path / "pyod_scores.tif"
     det = _DummyPyODDetector(threshold=0.5)
     poc.find_class_pyod_outliers(
-        det,
         str(img_path),
         str(msk_path),
         str(out_pyod),
+        det,
         out_scores_img=str(out_scores),
         use_pbar=False,
     )

@@ -98,14 +98,15 @@ class ImageBandRescale:
 def calc_img_rescale(
     input_imgs: Union[str, Sequence[str]],
     output_img: str,
-    gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
     c_no_data_val: float = 0.0,
     c_offset: float = 0.0,
     c_gain: float = 1.0,
     n_no_data_val: float = 0.0,
     n_offset: float = 0.0,
     n_gain: float = 1.0,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: int = rsgispy.TYPE_32FLOAT,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
@@ -119,16 +120,16 @@ def calc_img_rescale(
 
     :param input_imgs: Single input image path or sequence of image paths to stack.
     :param output_img: Path to the output stacked image file.
-    :param gdalformat: GDAL/rasterio driver format for the output file
-                       (Default = ``'GTIFF'``).
-    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
-                     (Default = ``rsgispy.TYPE_32FLOAT``).
     :param c_no_data_val: Current no-data value in the input imagery.
     :param c_offset: Current offset value.
     :param c_gain: Current gain value (must be non-zero).
     :param n_no_data_val: New no-data value written to the output image.
     :param n_offset: New offset value.
     :param n_gain: New gain value.
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
+                     (Default = ``rsgispy.TYPE_32FLOAT``).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
 
@@ -140,14 +141,14 @@ def calc_img_rescale(
         rsgispy.imagecalc.rescale.calc_img_rescale(
             input_imgs=["img_b1.tif", "img_b2.tif"],
             output_img="rescaled.tif",
-            gdalformat="GTIFF",
-            datatype=rsgispy.TYPE_32FLOAT,
             c_no_data_val=0.0,
             c_offset=0.0,
             c_gain=10000.0,
             n_no_data_val=-9999.0,
             n_offset=0.0,
             n_gain=1.0,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -213,10 +214,11 @@ def calc_img_rescale(
 def rescale_img_pxl_vals(
     input_img: str,
     output_img: str,
-    gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
     band_rescale_objs: Sequence[ImageBandRescale] = (),
     trim_to_limits: bool = True,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: int = rsgispy.TYPE_32FLOAT,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
@@ -226,14 +228,14 @@ def rescale_img_pxl_vals(
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output image file.
-    :param gdalformat: GDAL/rasterio driver format for the output file
-                       (Default = ``'GTIFF'``).
-    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
-                     (Default = ``rsgispy.TYPE_32FLOAT``).
     :param band_rescale_objs: Sequence of :class:`ImageBandRescale` objects
                               defining per-band input/output ranges.
     :param trim_to_limits: If ``True``, clamp non-nodata outputs to the
                            ``[out_min, out_max]`` interval (Default = ``True``).
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
+                     (Default = ``rsgispy.TYPE_32FLOAT``).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
 
@@ -256,12 +258,12 @@ def rescale_img_pxl_vals(
         rsgispy.imagecalc.rescale.rescale_img_pxl_vals(
             input_img="img.tif",
             output_img="rescaled.tif",
+            band_rescale_objs=rescale_objs,
             gdalformat="GTIFF",
             datatype=rsgispy.TYPE_32FLOAT,
-            band_rescale_objs=rescale_objs,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-locals
     if not band_rescale_objs:
         raise rsgispy.RSGISPyException(
             "band_rescale_objs must contain at least one ImageBandRescale."
@@ -529,12 +531,13 @@ def apply_img_norm_params(
     output_img: Union[str, os.PathLike],
     norm_params: Optional[Mapping[str, Any]] = None,
     stats_file: Optional[Union[str, os.PathLike]] = None,
-    gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
     out_min: Optional[float] = None,
     out_max: Optional[float] = None,
     out_no_data_val: Optional[float] = None,
     trim_to_limits: Optional[bool] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: int = rsgispy.TYPE_32FLOAT,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
@@ -549,16 +552,16 @@ def apply_img_norm_params(
                         :func:`calc_img_norm_params`.
     :param stats_file: Path to a JSON statistics file written by
                        :func:`calc_img_norm_params`.
-    :param gdalformat: GDAL/rasterio driver format for output
-                       (Default = ``'GTIFF'``).
-    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
-                     (Default = ``rsgispy.TYPE_32FLOAT``).
     :param out_min: Optional override for output minimum value.
     :param out_max: Optional override for output maximum value.
     :param out_no_data_val: Optional explicit output no-data value.
     :param trim_to_limits: Clamp transformed values to ``[out_min, out_max]``.
                            Defaults to ``True`` for ``'stdev'``, ``'cumulative'``,
                            and ``'user'`` stretches, and ``False`` otherwise.
+    :param gdalformat: GDAL/rasterio driver format for output
+                       (Default = ``'GTIFF'``).
+    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
+                     (Default = ``rsgispy.TYPE_32FLOAT``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
     :param creation_opts: Optional mapping of GDAL creation options.
 
@@ -711,9 +714,6 @@ def normalise_img_pxl_vals(
     input_img: Union[str, os.PathLike],
     output_img: Union[str, os.PathLike],
     method: Union[str, int] = "linear",
-    gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
-    no_data_val: Optional[float] = None,
     out_min: Optional[float] = None,
     out_max: Optional[float] = None,
     out_no_data_val: Optional[float] = None,
@@ -729,6 +729,10 @@ def normalise_img_pxl_vals(
     trim_to_limits: Optional[bool] = None,
     max_samples: Optional[int] = None,
     rnd_seed: Optional[int] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: int = rsgispy.TYPE_32FLOAT,
+    no_data_val: Optional[float] = None,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -750,11 +754,6 @@ def normalise_img_pxl_vals(
     :param output_img: Path to the output normalised raster image file.
     :param method: Normalisation algorithm name or ``IMG_STRETCH_*`` constant
                    (Default = ``'linear'``).
-    :param gdalformat: GDAL/rasterio driver format for output
-                       (Default = ``'GTIFF'``).
-    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
-                     (Default = ``rsgispy.TYPE_32FLOAT``).
-    :param no_data_val: Optional explicit input no-data value overriding metadata.
     :param out_min: Optional target output minimum value.
     :param out_max: Optional target output maximum value.
     :param out_no_data_val: Optional explicit output no-data value.
@@ -768,6 +767,11 @@ def normalise_img_pxl_vals(
     :param trim_to_limits: Clamp normalised pixels to ``[out_min, out_max]``.
     :param max_samples: Optional maximum samples per band when fitting params.
     :param rnd_seed: Optional random seed for subsampling / ``QuantileTransformer``.
+    :param gdalformat: GDAL/rasterio driver format for output
+                       (Default = ``'GTIFF'``).
+    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
+                     (Default = ``rsgispy.TYPE_32FLOAT``).
+    :param no_data_val: Optional explicit input no-data value overriding metadata.
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
     :param creation_opts: Optional mapping of GDAL creation options.
     :return: Dictionary of calculated normalisation parameters.

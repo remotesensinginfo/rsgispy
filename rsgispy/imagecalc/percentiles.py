@@ -200,9 +200,10 @@ def calc_band_percentile_msk(
 
 def calc_imgs_pxl_percentiles(
     input_imgs: Sequence[str],
-    percentiles: Sequence[float],
     output_img: str,
-    gdalformat: str,
+    percentiles: Sequence[float],
+    *,
+    gdalformat: str = "GTIFF",
     no_data_val: float = 0.0,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
@@ -214,9 +215,10 @@ def calc_imgs_pxl_percentiles(
     intersection and data type of the first input image.
 
     :param input_imgs: Sequence of input image paths (all bands are stacked).
-    :param percentiles: Sequence of percentiles in ``[0, 100]``.
     :param output_img: Path to the output image file.
-    :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param percentiles: Sequence of percentiles in ``[0, 100]``.
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
     :param no_data_val: No-data value to ignore during percentile calculation (Default = 0).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
@@ -227,13 +229,13 @@ def calc_imgs_pxl_percentiles(
 
         rsgispy.imagecalc.percentiles.calc_imgs_pxl_percentiles(
             input_imgs=["img1.tif", "img2.tif", "img3.tif"],
-            percentiles=[10.0, 50.0, 90.0],
             output_img="pxl_pcts.tif",
+            percentiles=[10.0, 50.0, 90.0],
             gdalformat="GTIFF",
             no_data_val=0.0,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-locals
     validate_percentiles_0_100(percentiles)
 
     with ExitStack() as stack:
@@ -269,9 +271,10 @@ def calc_imgs_pxl_percentiles(
 
 def calc_img_band_pxl_percentiles(
     input_imgs: Sequence[str],
-    percentiles: Sequence[float],
     output_img: str,
-    gdalformat: str,
+    percentiles: Sequence[float],
+    *,
+    gdalformat: str = "GTIFF",
     no_data_val: float = 0.0,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
@@ -284,9 +287,10 @@ def calc_img_band_pxl_percentiles(
     percentiles, band 2 percentiles, ..., band ``n`` percentiles.
 
     :param input_imgs: Sequence of input image paths with identical band counts.
-    :param percentiles: Sequence of percentiles in ``[0, 100]``.
     :param output_img: Path to the output image file.
-    :param gdalformat: GDAL/rasterio driver format for the output file.
+    :param percentiles: Sequence of percentiles in ``[0, 100]``.
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
     :param no_data_val: No-data value to ignore during percentile calculation (Default = 0).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
@@ -297,13 +301,13 @@ def calc_img_band_pxl_percentiles(
 
         rsgispy.imagecalc.percentiles.calc_img_band_pxl_percentiles(
             input_imgs=["img1.tif", "img2.tif", "img3.tif"],
-            percentiles=[10.0, 50.0, 90.0],
             output_img="band_pxl_pcts.tif",
+            percentiles=[10.0, 50.0, 90.0],
             gdalformat="GTIFF",
             no_data_val=0.0,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-locals
     validate_percentiles_0_100(percentiles)
 
     with ExitStack() as stack:

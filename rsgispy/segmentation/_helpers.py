@@ -27,6 +27,7 @@ from rsgispy.imageprocess import (
     iter_dataset_windows,
     open_output_dataset,
 )
+from rsgispy.imageutils.stats import pop_img_stats
 
 try:
     from scipy.sparse import coo_matrix  # pylint: disable=import-error
@@ -275,12 +276,13 @@ def _run_in_memory(
     output_img: str,
     gdalformat: str,
     no_data_val: Optional[float],
+    out_rio_dtype: str = "uint32",
 ) -> None:
     """
     Execute single-pass vectorized 4-connected clumping in memory, streaming
     bands into adjacency masks one band at a time to minimise peak RAM.
     """
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     full_win = Window(0, 0, grid.width, grid.height)
     shape = (grid.height, grid.width)
 
@@ -318,13 +320,16 @@ def _run_in_memory(
     out_img, _, _ = label_4connected(
         valid, horiz_eq, vert_eq, return_first_flat=False
     )
+    out_np_dtype = np.dtype(out_rio_dtype)
+    if out_img.dtype != out_np_dtype:
+        out_img = out_img.astype(out_np_dtype)
 
     with ExitStack() as out_stack:
         dst = open_output_dataset(
             stack=out_stack,
             output_img=output_img,
             gdalformat=gdalformat,
-            out_rio_dtype="uint32",
+            out_rio_dtype=out_rio_dtype,
             grid=grid,
             count=1,
         )
@@ -339,6 +344,7 @@ def _run_tiled(
     no_data_val: Optional[float],
     block_size: int,
     use_pbar: bool,
+    out_rio_dtype: str = "uint32",
 ) -> None:
     """
     Execute memory-bounded two-pass tiled 4-connected clumping.
@@ -352,6 +358,7 @@ def _run_tiled(
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     # pylint: disable=too-many-branches,too-many-statements
     n_bands = len(band_sources)
+    out_np_dtype = np.dtype(out_rio_dtype)
 
     with tempfile.TemporaryDirectory(prefix="rsgispy_clump_") as tmp_dir:
         tmp_raw_img = os.path.join(tmp_dir, "raw_clumps.tif")
@@ -469,7 +476,7 @@ def _run_tiled(
                     stack=out_stack,
                     output_img=output_img,
                     gdalformat=gdalformat,
-                    out_rio_dtype="uint32",
+                    out_rio_dtype=out_rio_dtype,
                     grid=grid,
                     count=1,
                 )
@@ -481,7 +488,7 @@ def _run_tiled(
                 ):
                     zeros = np.zeros(
                         (int(out_win.height), int(out_win.width)),
-                        dtype=np.uint32,
+                        dtype=out_np_dtype,
                     )
                     dst.write(zeros, 1, window=out_win)
             return
@@ -507,6 +514,8 @@ def _run_tiled(
 
         lut = np.zeros(total_raw + 1, dtype=np.uint32)
         lut[1:] = canon_comp[raw_comp_labels]
+        if lut.dtype != out_np_dtype:
+            lut = lut.astype(out_np_dtype)
 
         # Pass 2: Remap raw tile IDs through global LUT into final output raster.
         with ExitStack() as pass2_stack:
@@ -517,7 +526,7 @@ def _run_tiled(
                 stack=pass2_stack,
                 output_img=output_img,
                 gdalformat=gdalformat,
-                out_rio_dtype="uint32",
+                out_rio_dtype=out_rio_dtype,
                 grid=grid,
                 count=1,
             )
@@ -539,6 +548,8 @@ def run_clump_pipeline(
     in_memory: Optional[bool],
     no_data_val: Optional[float],
     block_size: Optional[int] = None,
+    datatype: Optional[int] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -558,6 +569,9 @@ def run_clump_pipeline(
             f"block_size must be a positive integer, got {block_size}."
         )
 
+    eff_dtype = rsgispy.TYPE_32UINT if datatype is None else datatype
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+
     fits_single_tile = grid.width <= blk_sz and grid.height <= blk_sz
     if in_memory is None:
         use_in_mem = (
@@ -574,6 +588,7 @@ def run_clump_pipeline(
             output_img=output_img,
             gdalformat=gdalformat,
             no_data_val=no_data_val,
+            out_rio_dtype=out_rio_dtype,
         )
     else:
         _run_tiled(
@@ -583,5 +598,14 @@ def run_clump_pipeline(
             gdalformat=gdalformat,
             no_data_val=no_data_val,
             block_size=blk_sz,
+            use_pbar=use_pbar,
+            out_rio_dtype=out_rio_dtype,
+        )
+
+    if calc_stats:
+        pop_img_stats(
+            output_img,
+            no_data_val=0,
+            calc_pyramids=True,
             use_pbar=use_pbar,
         )

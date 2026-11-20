@@ -20,8 +20,10 @@ from rsgispy.imageprocess import (
 )
 from rsgispy.imageutils._helpers import (
     get_epsg_from_dataset,
+    maybe_pop_stats,
     normalise_creation_options,
     parse_epsg_crs,
+    rsgis_dtype_from_np_dtype,
 )
 
 __all__ = [
@@ -72,19 +74,21 @@ def create_blank_img(
     res_y: float,
     pxl_val: float,
     epsg_code: int,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Create a new blank raster image with the specified dimensions, resolution,
     EPSG coordinate system, and initial pixel value using ``rasterio``.
 
-    If ``options`` is ``None`` or empty, any format creation options configured via
-    environment variables (e.g., :func:`set_env_vars_deflate_gtiff_outs`) are
-    automatically applied.
+    If ``creation_opts`` is ``None`` or empty, any format creation options
+    configured via environment variables (e.g.,
+    :func:`set_env_vars_deflate_gtiff_outs`) are automatically applied.
 
     :param output_img: Path to the output image file.
     :param n_bands: Number of image bands in the output image.
@@ -96,12 +100,17 @@ def create_blank_img(
     :param res_y: Pixel resolution along the Y axis (positive or negative).
     :param pxl_val: Initial pixel value for all bands.
     :param epsg_code: EPSG integer code defining the output projection (e.g., 32630).
-    :param gdalformat: Output GDAL format name (e.g., 'GTIFF', 'KEA').
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
-    :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
+    :param gdalformat: Output GDAL format name (e.g., ``'GTIFF'``, ``'KEA'``;
+                       Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional no-data value to set on the output dataset.
+    :param calc_stats: If ``True``, compute image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options (dict or list of
+                          ``'KEY=VALUE'``).
 
     .. code:: python
 
@@ -110,7 +119,7 @@ def create_blank_img(
 
         rsgispy.imageutils.blank.create_blank_img(
             "blank.tif", 1, 100, 100, 500000.0, 5600000.0, 10.0, -10.0,
-            0.0, 32630, "GTIFF", rsgispy.TYPE_32FLOAT,
+            0.0, 32630, gdalformat="GTIFF", datatype=rsgispy.TYPE_32FLOAT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -119,8 +128,9 @@ def create_blank_img(
             "n_bands, width, and height must all be >= 1."
         )
 
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
     crs_obj = parse_epsg_crs(epsg_code)
     transform = Affine(
         abs(float(res_x)),
@@ -137,7 +147,7 @@ def create_blank_img(
         height=int(height),
         offsets={},
     )
-    creation_opts = normalise_creation_options(options)
+    norm_opts = normalise_creation_options(creation_opts)
 
     with ExitStack() as stack:
         dst = open_output_dataset(
@@ -148,7 +158,7 @@ def create_blank_img(
             grid,
             int(n_bands),
             False,
-            creation_opts,
+            norm_opts,
         )
         if no_data_val is not None:
             dst.nodata = no_data_val
@@ -163,17 +173,26 @@ def create_blank_img(
             )
             dst.write(block, window=win)
 
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        use_pbar=use_pbar,
+    )
+
 
 def create_copy_img(
     input_img: str,
     output_img: str,
-    n_bands: int,
-    pxl_val: float,
-    gdalformat: str,
-    datatype: int,
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    n_bands: int = 1,
+    pxl_val: float = 0.0,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Create a new blank raster image matching the spatial extent, resolution,
@@ -181,14 +200,19 @@ def create_copy_img(
 
     :param input_img: Path to the reference input image.
     :param output_img: Path to the output image file.
-    :param n_bands: Number of image bands in the output image.
-    :param pxl_val: Initial pixel value for all bands.
-    :param gdalformat: Output GDAL format name (e.g., 'GTIFF', 'KEA').
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
-    :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
+    :param n_bands: Number of image bands in the output image (Default = ``1``).
+    :param pxl_val: Initial pixel value for all bands (Default = ``0.0``).
+    :param gdalformat: Output GDAL format name (e.g., ``'GTIFF'``, ``'KEA'``;
+                       Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to matching ``input_img``).
     :param no_data_val: Optional no-data value to set on the output dataset.
+    :param calc_stats: If ``True``, compute image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options (dict or list of
+                          ``'KEY=VALUE'``).
 
     .. code:: python
 
@@ -196,7 +220,8 @@ def create_copy_img(
         import rsgispy.imageutils.blank
 
         rsgispy.imageutils.blank.create_copy_img(
-            "in_img.tif", "out_img.tif", 1, 0, "GTIFF", rsgispy.TYPE_8UINT
+            "in_img.tif", "out_img.tif", 1, 0,
+            gdalformat="GTIFF", datatype=rsgispy.TYPE_8UINT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -210,6 +235,11 @@ def create_copy_img(
         res_x = src.transform.a
         res_y = src.transform.e
         epsg_code = get_epsg_from_dataset(src, input_img)
+        eff_dtype = (
+            rsgis_dtype_from_np_dtype(src.dtypes[0])
+            if datatype is None
+            else datatype
+        )
 
     create_blank_img(
         output_img=output_img,
@@ -223,23 +253,26 @@ def create_copy_img(
         pxl_val=pxl_val,
         epsg_code=epsg_code,
         gdalformat=gdalformat,
-        datatype=datatype,
-        options=options,
+        datatype=eff_dtype,
         no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
+        creation_opts=creation_opts,
     )
 
 
 def create_blank_buf_img_from_ref_img(
     input_img: str,
     output_img: str,
-    gdalformat: str,
-    datatype: int,
     buf_pxl_ext: Optional[int] = None,
     buf_spt_ext: Optional[float] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Create a new blank image based on ``input_img`` buffered on all sides by
@@ -247,15 +280,20 @@ def create_blank_buf_img_from_ref_img(
 
     :param input_img: Path to the reference input image.
     :param output_img: Path to the output image file.
-    :param gdalformat: Output GDAL format name (e.g., 'GTIFF', 'KEA').
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
     :param buf_pxl_ext: Buffer amount in pixels (mutually exclusive with ``buf_spt_ext``).
     :param buf_spt_ext: Buffer amount in spatial projection units (mutually exclusive
                         with ``buf_pxl_ext``).
+    :param gdalformat: Output GDAL format name (e.g., ``'GTIFF'``, ``'KEA'``;
+                       Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to matching ``input_img``).
     :param no_data_val: Optional no-data value. If ``None``, read from ``input_img``.
-    :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
+    :param calc_stats: If ``True``, compute image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options (dict or list of
+                          ``'KEY=VALUE'``).
 
     .. code:: python
 
@@ -263,8 +301,8 @@ def create_blank_buf_img_from_ref_img(
         import rsgispy.imageutils.blank
 
         rsgispy.imageutils.blank.create_blank_buf_img_from_ref_img(
-            "in_img.tif", "buf_img.tif", "GTIFF", rsgispy.TYPE_32FLOAT,
-            buf_pxl_ext=10, no_data_val=0.0,
+            "in_img.tif", "buf_img.tif", buf_pxl_ext=10,
+            gdalformat="GTIFF", datatype=rsgispy.TYPE_32FLOAT, no_data_val=0.0,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -295,6 +333,11 @@ def create_blank_buf_img_from_ref_img(
         bounds = src.bounds
         n_bands = src.count
         epsg_code = get_epsg_from_dataset(src, input_img)
+        eff_dtype = (
+            rsgis_dtype_from_np_dtype(src.dtypes[0])
+            if datatype is None
+            else datatype
+        )
 
     if buf_spt_ext is not None:
         buf_pxl_x = math.ceil(buf_spt_ext / x_res_abs)
@@ -316,10 +359,11 @@ def create_blank_buf_img_from_ref_img(
         pxl_val=float(no_data_val),
         epsg_code=epsg_code,
         gdalformat=gdalformat,
-        datatype=datatype,
-        options=options,
+        datatype=eff_dtype,
         no_data_val=float(no_data_val),
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
+        creation_opts=creation_opts,
     )
 
 
@@ -328,14 +372,16 @@ def create_blank_img_from_bbox(
     epsg_code: int,
     output_img: str,
     out_img_res: float,
-    out_img_pxl_val: float,
-    out_img_n_bands: int,
-    gdalformat: str,
-    datatype: int,
+    out_img_pxl_val: float = 0.0,
+    out_img_n_bands: int = 1,
     snap_to_grid: bool = False,
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
     use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Create a new blank image file from a bounding box ``(xMin, xMax, yMin, yMax)``
@@ -345,16 +391,21 @@ def create_blank_img_from_bbox(
     :param epsg_code: EPSG integer code defining the output projection (e.g., 32630).
     :param output_img: Path to the output image file.
     :param out_img_res: Output pixel resolution (square pixels).
-    :param out_img_pxl_val: Initial pixel value for all bands.
-    :param out_img_n_bands: Number of image bands in the output image.
-    :param gdalformat: Output GDAL format name (e.g., 'GTIFF', 'KEA').
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
+    :param out_img_pxl_val: Initial pixel value for all bands (Default = ``0.0``).
+    :param out_img_n_bands: Number of image bands in the output image (Default = ``1``).
     :param snap_to_grid: Whether to snap the bounding box onto a grid of
-                         whole multiples of ``out_img_res`` (Default = False).
-    :param options: Optional GDAL creation options (dict or list of ``'KEY=VALUE'``).
+                         whole multiples of ``out_img_res`` (Default = ``False``).
+    :param gdalformat: Output GDAL format name (e.g., ``'GTIFF'``, ``'KEA'``;
+                       Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional no-data value to set on the output dataset.
+    :param calc_stats: If ``True``, compute image statistics and pyramids
+                       (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options (dict or list of
+                          ``'KEY=VALUE'``).
 
     .. code:: python
 
@@ -363,7 +414,8 @@ def create_blank_img_from_bbox(
 
         rsgispy.imageutils.blank.create_blank_img_from_bbox(
             (500000.0, 501000.0, 5599000.0, 5600000.0),
-            32630, "blank_bbox.tif", 10.0, 0.0, 1, "GTIFF", rsgispy.TYPE_8UINT,
+            32630, "blank_bbox.tif", 10.0, 0.0, 1,
+            gdalformat="GTIFF", datatype=rsgispy.TYPE_8UINT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -405,7 +457,8 @@ def create_blank_img_from_bbox(
         epsg_code=epsg_code,
         gdalformat=gdalformat,
         datatype=datatype,
-        options=options,
         no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
+        creation_opts=creation_opts,
     )

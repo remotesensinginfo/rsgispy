@@ -328,9 +328,10 @@ def validate_odd_window_size(
     return int(size)
 
 
-def bbox_from_dataset(src: DatasetReader) -> Tuple[float, float, float, float]:
+def bbox_from_dataset(src: DatasetReader) -> rsgispy.BBox:
     """
-    Return ``(MinX, MaxX, MinY, MaxY)`` from an opened rasterio dataset.
+    Return a :class:`rsgispy.BBox` ``(MinX, MaxX, MinY, MaxY)`` with optional
+    ``epsg`` metadata from an opened rasterio dataset.
 
     .. code:: python
 
@@ -341,11 +342,13 @@ def bbox_from_dataset(src: DatasetReader) -> Tuple[float, float, float, float]:
             bbox = rsgispy.imageprocess.bbox_from_dataset(src)
     """
     bounds = src.bounds
-    return (
+    epsg = src.crs.to_epsg() if src.crs is not None else None
+    return rsgispy.BBox(
         float(bounds.left),
         float(bounds.right),
         float(bounds.bottom),
         float(bounds.top),
+        epsg=epsg,
     )
 
 
@@ -1631,3 +1634,19 @@ def run_window_halo_blocks(
                     dst.write(out_blk, 1, window=out_win)
                 else:
                     dst.write(out_blk, window=out_win)
+
+
+from rsgispy._io import (  # noqa: E402,F401  # pylint: disable=wrong-import-position,unused-import
+    ArraySource,
+    BandMathOp,
+    DiskSink,
+    HaloBorder,
+    MemorySink,
+    PointwiseOp,
+    RasterSource,
+    TileContext,
+    TileGraph,
+    TileNode,
+    WindowOp,
+    run_tile_graph,
+)

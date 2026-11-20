@@ -109,7 +109,12 @@ def _scan_present_values(
     present: set = set()
     with rasterio.open(input_img, "r") as src:
         if bbox is not None:
-            win = src.window(*bbox)
+            geo_bounds = (
+                bbox.as_geo()
+                if isinstance(bbox, rsgispy.BBox)
+                else (bbox[0], bbox[2], bbox[1], bbox[3])
+            )
+            win = src.window(*geo_bounds)
             arr = src.read(band, window=win)
             present.update(int(v) for v in np.unique(arr) if np.isfinite(v))
         else:

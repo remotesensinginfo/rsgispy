@@ -16,6 +16,15 @@ from rasterio.enums import Resampling
 from rasterio.transform import Affine
 
 import rsgispy
+from rsgispy._io import (
+    DiskSink,
+    HaloBorder,
+    MemorySink,
+    RasterSource,
+    TileGraph,
+    TileNode,
+    WindowOp,
+)
 from rsgispy.imagefilter._helper import (
     _apply_tile_nd,
     _resolve_out_nodata,
@@ -593,26 +602,23 @@ def _fill_nodata_value(meta: PostprocessMeta) -> float:
     return 0
 
 
-def _run_sieve_in_memory(
-    in_path: str,
+def _sieve_array_to_disk(
+    arr: np.ndarray,
+    grid: IntersectionGrid,
     out_path: str,
-    img_band: int,
     size_threshold: int,
     connectivity: int,
     gdalformat: str,
     meta: PostprocessMeta,
+    eff_in_nd: Optional[float],
     creation_opts: Optional[Dict[str, str]],
 ) -> None:
-    """Single-pass exact in-memory sieve filtering."""
+    """Sieve an in-memory 2D classification array and write it to ``out_path``."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    clump_img, n_clumps, rep_flat = _label_connected_2d(
+        arr, eff_in_nd, connectivity
+    )
     with ExitStack() as stack:
-        src = stack.enter_context(rasterio.open(in_path, "r"))
-        arr = src.read(img_band)
-        grid = IntersectionGrid.from_dataset(src)
-
-        clump_img, n_clumps, rep_flat = _label_connected_2d(
-            arr, meta.eff_in_nd, connectivity
-        )
         dst = open_output_dataset(
             stack=stack,
             output_img=out_path,
@@ -673,6 +679,35 @@ def _run_sieve_in_memory(
             cast_result_block(out_arr, meta.height, meta.width, meta.out_np_dtype),
             1,
         )
+
+
+def _run_sieve_in_memory(
+    in_path: str,
+    out_path: str,
+    img_band: int,
+    size_threshold: int,
+    connectivity: int,
+    gdalformat: str,
+    meta: PostprocessMeta,
+    creation_opts: Optional[Dict[str, str]],
+) -> None:
+    """Single-pass exact in-memory sieve filtering."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    with rasterio.open(in_path, "r") as src:
+        arr = src.read(img_band)
+        grid = IntersectionGrid.from_dataset(src)
+
+    _sieve_array_to_disk(
+        arr=arr,
+        grid=grid,
+        out_path=out_path,
+        size_threshold=size_threshold,
+        connectivity=connectivity,
+        gdalformat=gdalformat,
+        meta=meta,
+        eff_in_nd=meta.eff_in_nd,
+        creation_opts=creation_opts,
+    )
 
 
 def _record_seam_merges(
@@ -1223,6 +1258,270 @@ def run_sieve_filter(
             creation_opts=norm_opts,
             use_pbar=use_pbar,
         )
+
+    finalise_postprocess_output(
+        out_path=out_path,
+        meta=meta,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
+    )
+
+
+def _make_majority_window_node(
+    source: TileNode,
+    size: int,
+    eff_nd: Optional[float],
+    out_nd: Optional[float],
+    out_np_dtype: np.dtype,
+    keep_centre_on_tie: bool,
+    name: str,
+) -> WindowOp:
+    """Build a :class:`WindowOp` applying modal majority voting on band 0."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    pad = size // 2
+    keep_tie = bool(keep_centre_on_tie)
+
+    def _tile_fn(arr: np.ndarray) -> np.ndarray:
+        halo = arr[0]
+        win_h = halo.shape[0] - 2 * pad
+        win_w = halo.shape[1] - 2 * pad
+        y_end = pad + win_h
+        x_end = pad + win_w
+
+        valid_halo = build_valid_mask(halo, eff_nd)
+        centre = halo[pad:y_end, pad:x_end]
+        centre_valid = valid_halo[pad:y_end, pad:x_end]
+        wins = sliding_window_view(halo, (size, size))
+        v_wins = sliding_window_view(valid_halo, (size, size))
+
+        res = stat_mode(wins, centre, v_wins, centre_valid)
+        if keep_tie:
+            diff_mask = centre_valid & np.isfinite(res) & (res != centre)
+            if np.any(diff_mask):
+                w_sub = wins[diff_mask]
+                v_sub = v_wins[diff_mask]
+                m_cnt = np.sum(
+                    v_sub & (w_sub == res[diff_mask][:, None, None]),
+                    axis=(1, 2),
+                )
+                c_cnt = np.sum(
+                    v_sub & (w_sub == centre[diff_mask][:, None, None]),
+                    axis=(1, 2),
+                )
+                tied_with_centre = c_cnt >= m_cnt
+                if np.any(tied_with_centre):
+                    upd = res[diff_mask]
+                    upd[tied_with_centre] = centre[diff_mask][tied_with_centre]
+                    res[diff_mask] = upd
+
+        out_2d = _apply_tile_nd(res, out_nd, out_np_dtype)
+        return out_2d[np.newaxis, :, :].astype(np.float64, copy=False)
+
+    return WindowOp(
+        source=source,
+        radius=(pad, pad),
+        func=_tile_fn,
+        border=HaloBorder(mode="constant", fill_value=np.nan),
+        name=name,
+    )
+
+
+def run_postprocess_pipeline(
+    in_path: str,
+    out_path: str,
+    majority_sizes: Sequence[int],
+    sieve_size_threshold: Optional[int],
+    sieve_connectivity: int,
+    keep_centre_on_tie: bool,
+    img_band: int,
+    in_memory: Optional[bool],
+    block_size: Optional[int],
+    copy_colour_table: bool,
+    gdalformat: str,
+    datatype: Optional[int],
+    no_data_val: Optional[float],
+    calc_stats: bool,
+    use_pbar: bool,
+    creation_opts: Optional[Mapping[str, Any]],
+) -> None:
+    """
+    Execute a halo-fused sequence of majority filter passes optionally followed
+    by connected-component sieving with zero intermediate disk I/O (in memory).
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-branches
+    maj_sizes = [validate_filter_size(s) for s in majority_sizes]
+    if not maj_sizes and sieve_size_threshold is None:
+        raise rsgispy.RSGISPyException(
+            "At least one majority_sizes entry or sieve_size_threshold "
+            "must be specified."
+        )
+
+    if not maj_sizes and sieve_size_threshold is not None:
+        run_sieve_filter(
+            in_path=in_path,
+            out_path=out_path,
+            size_threshold=sieve_size_threshold,
+            connectivity=sieve_connectivity,
+            img_band=img_band,
+            datatype=datatype,
+            no_data_val=no_data_val,
+            gdalformat=gdalformat,
+            in_memory=in_memory,
+            block_size=block_size,
+            calc_stats=calc_stats,
+            copy_colour_table=copy_colour_table,
+            creation_opts=creation_opts,
+            use_pbar=use_pbar,
+        )
+        return
+
+    thresh: Optional[int] = None
+    conn = int(sieve_connectivity)
+    if sieve_size_threshold is not None:
+        if isinstance(sieve_size_threshold, bool) or not isinstance(
+            sieve_size_threshold, (int, np.integer)
+        ):
+            raise rsgispy.RSGISPyException(
+                "sieve_size_threshold must be an integer >= 1, "
+                f"got {sieve_size_threshold!r}."
+            )
+        thresh = int(sieve_size_threshold)
+        if thresh < 1:
+            raise rsgispy.RSGISPyException(
+                f"sieve_size_threshold must be >= 1, got {thresh}."
+            )
+        if isinstance(sieve_connectivity, bool) or conn not in (4, 8):
+            raise rsgispy.RSGISPyException(
+                f"sieve_connectivity must be 4 or 8, got {sieve_connectivity!r}."
+            )
+
+    blk_sz = (
+        get_default_block_size() if block_size is None else int(block_size)
+    )
+    if blk_sz <= 0:
+        raise rsgispy.RSGISPyException(
+            f"block_size must be a positive integer, got {block_size}."
+        )
+
+    meta = resolve_postprocess_io_meta(
+        in_path=in_path,
+        img_band=img_band,
+        datatype=datatype,
+        no_data_val=no_data_val,
+        copy_colour_table=copy_colour_table,
+    )
+    ensure_parent_dir(out_path)
+    norm_opts = normalise_creation_options(creation_opts)
+    out_rsgis_dt = (
+        int(datatype)
+        if datatype is not None
+        else rsgispy.get_rsgis_datatype(meta.out_rio_dtype)
+    )
+
+    cur_node: TileNode = RasterSource(
+        in_path, bands=(int(img_band),), dtype=np.float64, name="src"
+    )
+    for idx, size in enumerate(maj_sizes):
+        stage_nd = meta.eff_in_nd if idx == 0 else meta.out_nd
+        cur_node = _make_majority_window_node(
+            source=cur_node,
+            size=size,
+            eff_nd=stage_nd,
+            out_nd=meta.out_nd,
+            out_np_dtype=meta.out_np_dtype,
+            keep_centre_on_tie=keep_centre_on_tie,
+            name=f"majority_{idx}_{size}x{size}",
+        )
+
+    if thresh is None:
+        sink = DiskSink(
+            source=cur_node,
+            output_img=out_path,
+            gdalformat=gdalformat,
+            datatype=out_rsgis_dt,
+            nodata=meta.out_nd,
+            clamp_int=True,
+            creation_opts=norm_opts,
+            name="output",
+        )
+        TileGraph(sink, block_size=blk_sz).run(use_pbar=use_pbar)
+    else:
+        if in_memory is None:
+            fits_single_tile = meta.width <= blk_sz and meta.height <= blk_sz
+            use_in_mem = (
+                fits_single_tile
+                or (meta.width * meta.height) <= _AUTO_IN_MEM_MAX_PXLS
+            )
+        else:
+            use_in_mem = bool(in_memory)
+
+        if use_in_mem:
+            mem_sink = MemorySink(
+                source=cur_node,
+                dtype=meta.out_np_dtype,
+                clamp_int=True,
+                name="maj_out",
+            )
+            TileGraph(mem_sink, block_size=blk_sz).run(use_pbar=use_pbar)
+            assert mem_sink.result is not None
+            arr_2d = mem_sink.result[0]
+            grid = IntersectionGrid(
+                crs=meta.crs,
+                transform=meta.transform,
+                width=meta.width,
+                height=meta.height,
+                offsets={},
+            )
+            _sieve_array_to_disk(
+                arr=arr_2d,
+                grid=grid,
+                out_path=out_path,
+                size_threshold=thresh,
+                connectivity=conn,
+                gdalformat=gdalformat,
+                meta=meta,
+                eff_in_nd=meta.out_nd,
+                creation_opts=norm_opts,
+            )
+        else:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_maj = os.path.join(tmp_dir, "fused_majority.tif")
+                tmp_sink = DiskSink(
+                    source=cur_node,
+                    output_img=tmp_maj,
+                    gdalformat="GTIFF",
+                    datatype=out_rsgis_dt,
+                    nodata=meta.out_nd,
+                    clamp_int=True,
+                    name="tmp_maj",
+                )
+                TileGraph(tmp_sink, block_size=blk_sz).run(use_pbar=use_pbar)
+                sieve_meta = PostprocessMeta(
+                    width=meta.width,
+                    height=meta.height,
+                    src_count=1,
+                    crs=meta.crs,
+                    transform=meta.transform,
+                    out_rio_dtype=meta.out_rio_dtype,
+                    out_np_dtype=meta.out_np_dtype,
+                    eff_in_nd=meta.out_nd,
+                    out_nd=meta.out_nd,
+                    band_desc=meta.band_desc,
+                    clr_lut=meta.clr_lut,
+                )
+                _run_sieve_tiled(
+                    in_path=tmp_maj,
+                    out_path=out_path,
+                    img_band=1,
+                    size_threshold=thresh,
+                    connectivity=conn,
+                    gdalformat=gdalformat,
+                    meta=sieve_meta,
+                    block_size=blk_sz,
+                    creation_opts=norm_opts,
+                    use_pbar=use_pbar,
+                )
 
     finalise_postprocess_output(
         out_path=out_path,

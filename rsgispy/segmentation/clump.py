@@ -29,15 +29,18 @@ __all__ = [
 def clump(
     input_img: Union[str, os.PathLike],
     output_img: Union[str, os.PathLike],
-    gdalformat: str = "GTIFF",
     in_memory: bool = False,
-    no_data_val: Optional[float] = None,
     block_size: Optional[int] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
     Clump an input image (band 1) into 4-connected regions of identical pixel
-    values, assigning unique sequential ``uint32`` clump IDs (``1 .. N``).
+    values, assigning unique sequential clump IDs (``1 .. N``).
 
     Uses a vectorized horizontal run-length-encoded (RLE) graph solver
     (``scipy.sparse.csgraph`` when installed, with a pure-Python/NumPy RLE
@@ -45,17 +48,22 @@ def clump(
     memory-bounded two-pass tiled streaming mode.
 
     :param input_img: Path to the input raster file.
-    :param output_img: Path to the output ``uint32`` clump raster file.
-    :param gdalformat: GDAL/rasterio driver format for ``output_img``
-                       (Default = ``'GTIFF'``).
+    :param output_img: Path to the output clump raster file.
     :param in_memory: If ``True``, process the full image in a single in-memory
                       pass. If ``False`` (Default), use memory-bounded two-pass
                       tiled streaming when the image exceeds ``block_size``.
+    :param block_size: Optional tile size in pixels for tiled mode. Defaults to
+                       :func:`rsgispy.imageprocess.get_default_block_size`.
+    :param gdalformat: GDAL/rasterio driver format for ``output_img``
+                       (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type
+                     (Default = ``None``, which uses
+                     :data:`rsgispy.TYPE_32UINT`).
     :param no_data_val: Optional input pixel value treated as no-data and
                         assigned clump ID ``0`` in ``output_img``
                         (Default = ``None``).
-    :param block_size: Optional tile size in pixels for tiled mode. Defaults to
-                       :func:`rsgispy.imageprocess.get_default_block_size`.
+    :param calc_stats: If ``True``, compute output image statistics and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a ``tqdm`` progress bar during tiled
                      processing (Default = ``True``).
 
@@ -66,8 +74,8 @@ def clump(
         rsgispy.segmentation.clump.clump(
             input_img="classified.tif",
             output_img="clumps.tif",
-            gdalformat="GTIFF",
             in_memory=True,
+            gdalformat="GTIFF",
             no_data_val=0.0,
         )
     """
@@ -90,6 +98,8 @@ def clump(
             in_memory=in_memory,
             no_data_val=no_data_val,
             block_size=block_size,
+            datatype=datatype,
+            calc_stats=calc_stats,
             use_pbar=use_pbar,
         )
 
@@ -97,10 +107,13 @@ def clump(
 def union_of_clumps(
     input_imgs: Sequence[Union[str, os.PathLike]],
     output_img: Union[str, os.PathLike],
-    gdalformat: str = "GTIFF",
-    no_data_val: Optional[float] = None,
     in_memory: Optional[bool] = None,
     block_size: Optional[int] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -113,17 +126,22 @@ def union_of_clumps(
     ``no_data_val`` are assigned output ID ``0``.
 
     :param input_imgs: Non-empty sequence of input raster file paths.
-    :param output_img: Path to the output ``uint32`` union-clumps raster file.
-    :param gdalformat: GDAL/rasterio driver format for ``output_img``
-                       (Default = ``'GTIFF'``).
-    :param no_data_val: Optional no-data value across all input bands
-                        (Default = ``None``).
+    :param output_img: Path to the output union-clumps raster file.
     :param in_memory: Optional override for single-pass in-memory execution
                       (``True``) vs two-pass tiled streaming (``False``). When
                       ``None`` (Default), selects in-memory for moderate grids
                       and tiled streaming for large grids automatically.
     :param block_size: Optional tile size in pixels for tiled mode. Defaults to
                        :func:`rsgispy.imageprocess.get_default_block_size`.
+    :param gdalformat: GDAL/rasterio driver format for ``output_img``
+                       (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` output data type
+                     (Default = ``None``, which uses
+                     :data:`rsgispy.TYPE_32UINT`).
+    :param no_data_val: Optional no-data value across all input bands
+                        (Default = ``None``).
+    :param calc_stats: If ``True``, compute output image statistics and pyramids
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a ``tqdm`` progress bar during tiled
                      processing (Default = ``True``).
 
@@ -162,5 +180,7 @@ def union_of_clumps(
             in_memory=in_memory,
             no_data_val=no_data_val,
             block_size=block_size,
+            datatype=datatype,
+            calc_stats=calc_stats,
             use_pbar=use_pbar,
         )

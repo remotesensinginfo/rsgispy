@@ -400,14 +400,19 @@ def _apply_warp_kwargs_part1(cfg: WarpConfig, kwargs: Mapping[str, Any]) -> None
 
     te = kwargs.get("target_extent")
     if te is not None:
-        if len(te) != 4:
-            raise rsgispy.RSGISPyException("target_extent must have 4 elements.")
-        cfg.target_extent = (
-            float(te[0]),
-            float(te[1]),
-            float(te[2]),
-            float(te[3]),
-        )
+        if isinstance(te, rsgispy.BBox):
+            cfg.target_extent = te.as_geo()
+            if te.epsg is not None and cfg.target_extent_srs is None:
+                cfg.target_extent_srs = te.epsg
+        else:
+            if len(te) != 4:
+                raise rsgispy.RSGISPyException("target_extent must have 4 elements.")
+            cfg.target_extent = (
+                float(te[0]),
+                float(te[1]),
+                float(te[2]),
+                float(te[3]),
+            )
     if kwargs.get("target_extent_srs") is not None:
         cfg.target_extent_srs = kwargs["target_extent_srs"]
     if kwargs.get("tap"):
@@ -768,9 +773,18 @@ def resolve_warp_grid(
 
     bounds_override: Optional[Tuple[float, float, float, float]] = None
     if cfg.target_extent is not None:
-        xmin, ymin, xmax, ymax = cfg.target_extent
-        if cfg.target_extent_srs is not None and dst_crs is not None:
-            te_crs = _parse_crs_input(cfg.target_extent_srs)
+        if isinstance(cfg.target_extent, rsgispy.BBox):
+            xmin, ymin, xmax, ymax = cfg.target_extent.as_geo()
+            te_srs_spec = (
+                cfg.target_extent_srs
+                if cfg.target_extent_srs is not None
+                else cfg.target_extent.epsg
+            )
+        else:
+            xmin, ymin, xmax, ymax = cfg.target_extent
+            te_srs_spec = cfg.target_extent_srs
+        if te_srs_spec is not None and dst_crs is not None:
+            te_crs = _parse_crs_input(te_srs_spec)
             if te_crs is not None and te_crs != dst_crs:
                 xmin, ymin, xmax, ymax = transform_bounds(
                     te_crs, dst_crs, xmin, ymin, xmax, ymax

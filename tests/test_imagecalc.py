@@ -243,7 +243,7 @@ def test_band_maths_validation_errors(tmp_path):
     # Empty band_defs
     with pytest.raises(rsgispy.RSGISPyException):
         rsgispy.imagecalc.maths.band_maths(
-            str(out_img), "b1", "GTIFF", rsgispy.TYPE_32FLOAT, []
+            str(out_img), "b1", [], gdalformat="GTIFF", datatype=rsgispy.TYPE_32FLOAT
         )
 
     # Non-existent file
@@ -251,9 +251,9 @@ def test_band_maths_validation_errors(tmp_path):
         rsgispy.imagecalc.maths.band_maths(
             str(out_img),
             "b1",
-            "GTIFF",
-            rsgispy.TYPE_32FLOAT,
             [rsgispy.imagecalc.maths.BandDefn("b1", str(tmp_path / "missing.tif"), 1)],
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
         )
 
     # Out-of-range band index
@@ -261,9 +261,9 @@ def test_band_maths_validation_errors(tmp_path):
         rsgispy.imagecalc.maths.band_maths(
             str(out_img),
             "b1",
-            "GTIFF",
-            rsgispy.TYPE_32FLOAT,
             [rsgispy.imagecalc.maths.BandDefn("b1", str(in_img), 5)],
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
         )
 
     # Invalid expression / undefined variable
@@ -271,9 +271,9 @@ def test_band_maths_validation_errors(tmp_path):
         rsgispy.imagecalc.maths.band_maths(
             str(out_img),
             "b1 + unknown_var",
-            "GTIFF",
-            rsgispy.TYPE_32FLOAT,
             [rsgispy.imagecalc.maths.BandDefn("b1", str(in_img), 1)],
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
         )
 
     # Non-overlapping rasters
@@ -281,12 +281,12 @@ def test_band_maths_validation_errors(tmp_path):
         rsgispy.imagecalc.maths.band_maths(
             str(out_img),
             "b1 + b2",
-            "GTIFF",
-            rsgispy.TYPE_32FLOAT,
             [
                 rsgispy.imagecalc.maths.BandDefn("b1", str(in_img), 1),
                 rsgispy.imagecalc.maths.BandDefn("b2", str(no_overlap_img), 1),
             ],
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
         )
 
     # Different pixel resolutions
@@ -294,12 +294,12 @@ def test_band_maths_validation_errors(tmp_path):
         rsgispy.imagecalc.maths.band_maths(
             str(out_img),
             "b1 + b2",
-            "GTIFF",
-            rsgispy.TYPE_32FLOAT,
             [
                 rsgispy.imagecalc.maths.BandDefn("b1", str(in_img), 1),
                 rsgispy.imagecalc.maths.BandDefn("b2", str(diff_res_img), 1),
             ],
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
         )
 
 
@@ -407,11 +407,19 @@ def test_image_math_and_image_band_math(tmp_path):
 
     with pytest.raises(rsgispy.RSGISPyException):
         rsgispy.imagecalc.maths.image_math(
-            str(tmp_path / "missing.tif"), str(out_im), "b1", "GTIFF", rsgispy.TYPE_32FLOAT
+            str(tmp_path / "missing.tif"),
+            str(out_im),
+            "b1",
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
         )
     with pytest.raises(rsgispy.RSGISPyException):
         rsgispy.imagecalc.maths.image_band_math(
-            str(tmp_path / "missing.tif"), str(out_ibm), "b1", "GTIFF", rsgispy.TYPE_32FLOAT
+            str(tmp_path / "missing.tif"),
+            str(out_ibm),
+            "b1",
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
         )
 
 
@@ -515,11 +523,19 @@ def test_imgs_and_band_pxl_percentiles(tmp_path):
 
     with pytest.raises(rsgispy.RSGISPyException):
         rsgispy.imagecalc.percentiles.calc_img_band_pxl_percentiles(
-            [str(img1), str(img_diff_bands)], [50.0], str(out_per_band), "GTIFF", use_pbar=False
+            [str(img1), str(img_diff_bands)],
+            str(out_per_band),
+            [50.0],
+            gdalformat="GTIFF",
+            use_pbar=False,
         )
     with pytest.raises(rsgispy.RSGISPyException):
         rsgispy.imagecalc.percentiles.calc_imgs_pxl_percentiles(
-            [str(img1), str(img2)], [-1.0], str(out_all), "GTIFF", use_pbar=False
+            [str(img1), str(img2)],
+            str(out_all),
+            [-1.0],
+            gdalformat="GTIFF",
+            use_pbar=False,
         )
 
 

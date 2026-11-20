@@ -370,10 +370,11 @@ def image_pixel_column_summary(
     input_img: str,
     output_img: str,
     sum_stats: StatsSummary,
+    use_no_data: bool = True,
+    *,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
     no_data_val: float = 0.0,
-    use_no_data: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
@@ -388,12 +389,12 @@ def image_pixel_column_summary(
     :param input_img: Path to the input multi-band image file.
     :param output_img: Path to the output summary image file.
     :param sum_stats: :class:`StatsSummary` specifying statistics to compute.
+    :param use_no_data: If True, exclude ``no_data_val`` from statistics.
     :param gdalformat: GDAL/rasterio driver format for the output file
                        (Default = ``'GTIFF'``).
     :param datatype: Output data type constant from ``rsgispy.TYPE_*``
                      (Default = ``rsgispy.TYPE_32FLOAT``).
     :param no_data_val: Value treated as no-data when ``use_no_data`` is True.
-    :param use_no_data: If True, exclude ``no_data_val`` from statistics.
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
 
@@ -413,7 +414,7 @@ def image_pixel_column_summary(
             datatype=rsgispy.TYPE_32FLOAT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-locals
     if sum_stats is None:
         raise rsgispy.RSGISPyException("sum_stats must not be None.")
 
@@ -484,10 +485,11 @@ def calc_multi_img_band_stats(
     input_imgs: Sequence[str],
     output_img: str,
     summary_stat: int,
+    use_no_data: bool = False,
+    *,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
     no_data_val: Optional[float] = None,
-    use_no_data: bool = False,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
@@ -501,6 +503,7 @@ def calc_multi_img_band_stats(
     :param input_imgs: Sequence of input image paths with identical band counts.
     :param output_img: Path to the output image file.
     :param summary_stat: Summary statistic constant ``rsgispy.SUMTYPE_*``.
+    :param use_no_data: If True, exclude ``no_data_val`` pixels (Default = False).
     :param gdalformat: GDAL/rasterio driver format for the output file
                        (Default = ``'GTIFF'``).
     :param datatype: Output data type constant from ``rsgispy.TYPE_*``
@@ -508,7 +511,6 @@ def calc_multi_img_band_stats(
     :param no_data_val: Optional no-data value across all input images. If
                         ``None`` and ``use_no_data`` is True, read from the
                         first image header.
-    :param use_no_data: If True, exclude ``no_data_val`` pixels (Default = False).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
 
@@ -525,7 +527,7 @@ def calc_multi_img_band_stats(
             datatype=rsgispy.TYPE_32FLOAT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-locals
     valid_stats = (
         rsgispy.SUMTYPE_MIN,
         rsgispy.SUMTYPE_MAX,
@@ -605,13 +607,14 @@ def get_img_sum_stats_in_pxl(
     in_ref_img: str,
     in_stats_img: str,
     output_img: str,
-    gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
     sum_stats: Sequence[int] = (rsgispy.SUMTYPE_MEAN,),
     stats_img_band: int = 1,
     use_no_data: bool = True,
     io_grid_x: int = 16,
     io_grid_y: int = 16,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: int = rsgispy.TYPE_32FLOAT,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
@@ -627,10 +630,6 @@ def get_img_sum_stats_in_pxl(
                        output grid, extent, and resolution.
     :param in_stats_img: Path to the higher-resolution image to summarise.
     :param output_img: Path to the output image file.
-    :param gdalformat: GDAL/rasterio driver format for the output file
-                       (Default = ``'GTIFF'``).
-    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
-                     (Default = ``rsgispy.TYPE_32FLOAT``).
     :param sum_stats: Sequence of ``rsgispy.SUMTYPE_*`` statistics to compute
                       (one band per statistic).
     :param stats_img_band: 1-based band index in ``in_stats_img`` (Default = 1).
@@ -638,6 +637,10 @@ def get_img_sum_stats_in_pxl(
                         (Default = True).
     :param io_grid_x: Block width in reference pixels (Default = 16).
     :param io_grid_y: Block height in reference pixels (Default = 16).
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
+                     (Default = ``rsgispy.TYPE_32FLOAT``).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
 
@@ -650,9 +653,9 @@ def get_img_sum_stats_in_pxl(
             in_ref_img="coarse_grid.tif",
             in_stats_img="fine_res.tif",
             output_img="zonal_stats.tif",
+            sum_stats=[rsgispy.SUMTYPE_MEAN, rsgispy.SUMTYPE_STDDEV],
             gdalformat="GTIFF",
             datatype=rsgispy.TYPE_32FLOAT,
-            sum_stats=[rsgispy.SUMTYPE_MEAN, rsgispy.SUMTYPE_STDDEV],
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -781,14 +784,15 @@ def _estimate_bin_width(vals: np.ndarray, b_min: float, b_max: float) -> float:
 
 def calc_mask_img_pxl_val_prob(
     input_img: str,
-    img_bands: Sequence[int],
     in_msk_img: str,
-    msk_val: int,
     output_img: str,
-    gdalformat: str = "GTIFF",
+    img_bands: Sequence[int],
+    msk_val: int,
     bin_widths: Optional[Sequence[float]] = None,
     use_no_data: bool = True,
     rescale_probs: bool = True,
+    *,
+    gdalformat: str = "GTIFF",
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
@@ -799,17 +803,17 @@ def calc_mask_img_pxl_val_prob(
     The output image is a single-band ``float32`` image.
 
     :param input_img: Path to the input image file.
-    :param img_bands: Sequence of 1-based band indices in ``input_img``.
     :param in_msk_img: Path to the mask image file (band 1 compared to ``msk_val``).
-    :param msk_val: Pixel value in ``in_msk_img`` defining the sample mask.
     :param output_img: Path to the output single-band probability image.
-    :param gdalformat: GDAL/rasterio driver format for the output file
-                       (Default = ``'GTIFF'``).
+    :param img_bands: Sequence of 1-based band indices in ``input_img``.
+    :param msk_val: Pixel value in ``in_msk_img`` defining the sample mask.
     :param bin_widths: Optional sequence of histogram bin widths (one per band).
                        Values ``<= 0`` or ``None`` trigger automatic estimation.
     :param use_no_data: If True, exclude band header no-data values (Default = True).
     :param rescale_probs: If True, rescale probabilities so the maximum is ``1.0``
                           (Default = True).
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
 
@@ -819,10 +823,10 @@ def calc_mask_img_pxl_val_prob(
 
         rsgispy.imagecalc.stats.calc_mask_img_pxl_val_prob(
             input_img="multispec.tif",
-            img_bands=[1, 2, 3],
             in_msk_img="training_mask.tif",
-            msk_val=1,
             output_img="pxl_prob.tif",
+            img_bands=[1, 2, 3],
+            msk_val=1,
             gdalformat="GTIFF",
         )
     """

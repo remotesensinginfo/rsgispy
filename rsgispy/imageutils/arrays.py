@@ -20,7 +20,11 @@ from rsgispy.imageprocess import (
     open_output_dataset,
     validate_band_index,
 )
-from rsgispy.imageutils._helpers import normalise_creation_options
+from rsgispy.imageutils._helpers import (
+    maybe_pop_stats,
+    normalise_creation_options,
+    rsgis_dtype_from_np_dtype,
+)
 from rsgispy.imageutils.metadata import (
     get_img_bbox,
     get_img_res,
@@ -49,11 +53,14 @@ def create_img_from_array(
     tl_y: float,
     out_img_res_x: float,
     out_img_res_y: float,
-    wkt_string: Optional[str],
-    gdalformat: str,
-    datatype: int,
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    wkt_string: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
+    use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Create a raster image from a 2D ``(height, width)`` or 3D
@@ -67,10 +74,17 @@ def create_img_from_array(
     :param out_img_res_x: Output pixel resolution in the X axis.
     :param out_img_res_y: Output pixel resolution in the Y axis (negative for north-up).
     :param wkt_string: WKT projection string (or ``None`` / empty string).
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
-    :param options: Optional GDAL creation options (dict or sequence of ``'KEY=VALUE'``).
-    :param no_data_val: Optional output no-data value.
+    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``;
+                       Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to matching ``data_arr.dtype``).
+    :param no_data_val: Optional output no-data value (Default = ``None``).
+    :param calc_stats: If ``True``, compute image statistics and pyramids
+                       (Default = ``False``).
+    :param use_pbar: If ``True``, display a tqdm progress bar when computing
+                     statistics (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options (dict or sequence of
+                          ``'KEY=VALUE'``).
 
     .. code:: python
 
@@ -81,7 +95,7 @@ def create_img_from_array(
         data = np.zeros((3, 100, 100), dtype=np.float32)
         rsgispy.imageutils.arrays.create_img_from_array(
             data, "out.tif", 500000.0, 5600000.0, 10.0, -10.0, None,
-            "GTIFF", rsgispy.TYPE_32FLOAT,
+            gdalformat="GTIFF", datatype=rsgispy.TYPE_32FLOAT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -95,9 +109,14 @@ def create_img_from_array(
         )
 
     n_bands, height, width = arr.shape
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
-    creation_opts = normalise_creation_options(options)
+    eff_dtype = (
+        rsgis_dtype_from_np_dtype(arr.dtype)
+        if datatype is None
+        else datatype
+    )
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    norm_opts = normalise_creation_options(creation_opts)
 
     crs_obj = (
         rasterio.crs.CRS.from_wkt(wkt_string.strip())
@@ -129,21 +148,31 @@ def create_img_from_array(
             grid=grid,
             count=n_bands,
             output_exists=False,
-            creation_opts=creation_opts,
+            creation_opts=norm_opts,
         )
         if no_data_val is not None:
             dst.nodata = no_data_val
         dst.write(arr.astype(out_np_dtype, copy=False))
 
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        use_pbar=use_pbar,
+    )
+
 
 def create_img_from_array_ref_img(
     data_arr: np.ndarray,
-    output_img: str,
     ref_img: str,
-    gdalformat: str,
-    datatype: int,
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+    output_img: str,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
+    use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
     """
     Create a raster image from a NumPy array using spatial header information
@@ -151,12 +180,19 @@ def create_img_from_array_ref_img(
 
     :param data_arr: Input NumPy array of shape ``(bands, height, width)`` or
                      ``(height, width)``.
-    :param output_img: Path to the output image file.
     :param ref_img: Reference image file path with matching width and height.
-    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` constant for the output image.
-    :param options: Optional GDAL creation options (dict or sequence of ``'KEY=VALUE'``).
-    :param no_data_val: Optional output no-data value.
+    :param output_img: Path to the output image file.
+    :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``;
+                       Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
+                     (defaults to matching ``data_arr.dtype``).
+    :param no_data_val: Optional output no-data value (Default = ``None``).
+    :param calc_stats: If ``True``, compute image statistics and pyramids
+                       (Default = ``False``).
+    :param use_pbar: If ``True``, display a tqdm progress bar when computing
+                     statistics (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options (dict or sequence of
+                          ``'KEY=VALUE'``).
 
     .. code:: python
 
@@ -166,7 +202,8 @@ def create_img_from_array_ref_img(
 
         data = np.ones((100, 100), dtype=np.uint8)
         rsgispy.imageutils.arrays.create_img_from_array_ref_img(
-            data, "out.tif", "ref.tif", "GTIFF", rsgispy.TYPE_8UINT
+            data, "ref.tif", "out.tif",
+            gdalformat="GTIFF", datatype=rsgispy.TYPE_8UINT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -196,8 +233,10 @@ def create_img_from_array_ref_img(
         wkt_string=get_wkt_proj_from_img(ref_img),
         gdalformat=gdalformat,
         datatype=datatype,
-        options=options,
         no_data_val=no_data_val,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
+        creation_opts=creation_opts,
     )
 
 

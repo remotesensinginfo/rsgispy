@@ -380,7 +380,10 @@ def test_create_blank_and_copy_and_bbox_and_buf_imgs(tmp_path, monkeypatch):
 
     with pytest.raises(rsgispy.RSGISPyException):
         rsgispy.imageutils.blank.create_blank_buf_img_from_ref_img(
-            str(blank_img), str(buf_pxl_img), "GTIFF", rsgispy.TYPE_32FLOAT
+            str(blank_img),
+            str(buf_pxl_img),
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
         )
 
     # 4. create_blank_img_from_bbox
@@ -484,7 +487,7 @@ def test_resample_img_to_match_and_reproject_image(tmp_path, monkeypatch):
         assert src.compression == Compression.deflate
         assert src.profile["tiled"] is True
 
-    # 3. reproject_image with explicit gdal_options overriding env vars
+    # 3. reproject_image with explicit creation_opts overriding env vars
     rsgispy.imageutils.warp.reproject_image(
         input_img=str(proc_img),
         output_img=str(reproj_img),
@@ -494,7 +497,7 @@ def test_resample_img_to_match_and_reproject_image(tmp_path, monkeypatch):
         no_data_val=-999.0,
         out_pxl_res="auto",
         snap_to_grid=True,
-        gdal_options=["COMPRESS=LZW", "TILED=YES"],
+        creation_opts=["COMPRESS=LZW", "TILED=YES"],
     )
 
     with rasterio.open(reproj_img) as src:
@@ -1336,10 +1339,10 @@ def test_masking_functions(tmp_path):
         str(in_img),
         str(msk_img),
         str(masked_out),
-        "GTIFF",
-        rsgispy.TYPE_32FLOAT,
         out_value=-999.0,
         mask_value=[1, 2],
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
     )
     with rasterio.open(masked_out) as src:
         res = src.read()
@@ -1498,12 +1501,12 @@ def test_subset_functions(tmp_path):
     rsgispy.imageutils.subsetting.subset_bbox(
         str(in_img),
         str(out_bbox),
-        "GTIFF",
-        rsgispy.TYPE_32FLOAT,
         min_x=500020.0,
         max_x=500050.0,
         min_y=5199930.0,
         max_y=5199970.0,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
     )
     with rasterio.open(out_bbox) as src:
         assert (src.width, src.height) == (3, 4)
@@ -1521,7 +1524,11 @@ def test_subset_functions(tmp_path):
         dtype="uint8",
     )
     rsgispy.imageutils.subsetting.subset_to_img(
-        str(in_img), str(roi_img), str(out_img), "GTIFF", rsgispy.TYPE_32FLOAT
+        str(in_img),
+        str(roi_img),
+        str(out_img),
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
     )
     with rasterio.open(out_img) as src:
         assert (src.width, src.height) == (2, 2)
@@ -1540,8 +1547,8 @@ def test_subset_functions(tmp_path):
         str(vec_file),
         "roi",
         str(out_vec),
-        "GTIFF",
-        rsgispy.TYPE_32FLOAT,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
     )
     with rasterio.open(out_vec) as src:
         assert (src.width, src.height) == (5, 4)

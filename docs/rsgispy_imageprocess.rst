@@ -44,6 +44,33 @@ You can pass any Python callable ``block_func(block_vars)`` to :func:`rsgispy.im
            out_np_dtype=np.dtype(np.float32),
        )
 
+Composable In-Memory Tile-Graph Pipelines
+-----------------------------------------
+
+:class:`rsgispy.imageprocess.TileGraph` chains multiple windowed
+(:class:`~rsgispy.imageprocess.WindowOp`) and point-wise
+(:class:`~rsgispy.imageprocess.PointwiseOp`, :class:`~rsgispy.imageprocess.BandMathOp`)
+operations in memory per tile with automatic cumulative halo propagation,
+avoiding intermediate disk writes:
+
+.. code-block:: python
+
+   import rsgispy
+   from rsgispy.imageprocess import (
+       BandMathOp,
+       DiskSink,
+       RasterSource,
+       TileGraph,
+   )
+   from rsgispy.imagefilter._helper import window_stat_node
+
+   src = RasterSource("input.tif")
+   med = window_stat_node(src, stat="median", filter_size=3)
+   smooth = window_stat_node(med, stat="mean", filter_size=5)
+   diff = BandMathOp({"smooth": smooth, "orig": src}, "smooth - orig")
+   sink = DiskSink(diff, "highpass.tif", datatype=rsgispy.TYPE_32FLOAT)
+   TileGraph(sink).run()
+
 API Reference
 -------------
 

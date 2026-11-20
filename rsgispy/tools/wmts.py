@@ -165,10 +165,11 @@ def get_wmts_as_img(
     bbox: Sequence[float],
     bbox_epsg: int,
     output_img: str,
-    gdalformat: str = "GTIFF",
     zoom_level: Optional[Union[int, str]] = None,
     tmp_dir: Optional[str] = None,
     wmts_epsg: Optional[int] = None,
+    *,
+    gdalformat: str = "GTIFF",
 ) -> None:
     """
     Download and mosaic WMTS tiles covering ``bbox`` to an output raster image.
@@ -178,10 +179,10 @@ def get_wmts_as_img(
     :param bbox: Bounding box ``[MinX, MaxX, MinY, MaxY]`` in ``bbox_epsg``.
     :param bbox_epsg: EPSG code of ``bbox`` and the output image.
     :param output_img: Output raster file path.
-    :param gdalformat: Output GDAL/rasterio driver format (Default = ``'GTIFF'``).
     :param zoom_level: Optional TileMatrix identifier or zero-based zoom index.
     :param tmp_dir: Optional temporary directory for intermediate files.
     :param wmts_epsg: Optional EPSG code override for the WMTS layer.
+    :param gdalformat: Output GDAL/rasterio driver format (Default = ``'GTIFF'``).
 
     .. code:: python
 

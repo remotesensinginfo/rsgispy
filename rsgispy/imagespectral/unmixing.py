@@ -153,13 +153,14 @@ def _build_simplex_weights(n_endmembers: int, step_res: float) -> np.ndarray:
 def exhcon_linear_spec_unmix(
     input_img: str,
     output_img: str,
-    gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
     endmembers: Optional[EndmemberInput] = None,
     step_res: float = 0.1,
     gain: float = 1.0,
     offset: float = 0.0,
     file_format: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: int = rsgispy.TYPE_32FLOAT,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -173,9 +174,6 @@ def exhcon_linear_spec_unmix(
 
     :param input_img: Path to the input multi-band raster image file.
     :param output_img: Path to the output unmixed raster image file.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` output data type constant
-                     (Default = ``rsgispy.TYPE_32FLOAT``).
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
                        :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
@@ -185,6 +183,9 @@ def exhcon_linear_spec_unmix(
     :param offset: Additive offset applied to output values (Default = ``0.0``).
     :param file_format: Optional format override when ``endmembers`` is a file
                         path (Default = ``None``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: ``rsgispy.TYPE_*`` output data type constant
+                     (Default = ``rsgispy.TYPE_32FLOAT``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
@@ -196,10 +197,10 @@ def exhcon_linear_spec_unmix(
         su.exhcon_linear_spec_unmix(
             input_img="s2_refl.tif",
             output_img="unmixed.tif",
-            gdalformat="GTIFF",
-            datatype=rsgispy.TYPE_32FLOAT,
             endmembers="endmembers.csv",
             step_res=0.1,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -426,14 +427,15 @@ def _numpy_ucls_solver(
 
 def spec_unmix_ucls(
     input_img: str,
-    valid_msk_img: Optional[str],
-    valid_msk_val: int,
     output_img: str,
     endmembers: EndmemberInput,
-    gdalformat: str = "GTIFF",
+    valid_msk_img: Optional[str] = None,
+    valid_msk_val: int = 1,
     gain: float = 1,
     weight: Optional[float] = None,
     file_format: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -444,19 +446,20 @@ def spec_unmix_ucls(
     Requires only core ``numpy`` (no optional unmixing packages needed).
 
     :param input_img: Path to the input image file.
-    :param valid_msk_img: Optional path to the valid pixel mask image file
-                          (if ``None``, all finite positive pixels are unmixed).
-    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels.
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
                        :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param valid_msk_img: Optional path to the valid pixel mask image file
+                          (if ``None``, all finite positive pixels are unmixed).
+    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels
+                          (Default = ``1``).
     :param gain: Gain divisor applied to image and endmember spectra when
                  greater than ``1`` (Default = ``1``).
     :param weight: Optional Scarth et al. (2010) sum-to-one weight.
     :param file_format: Optional format override when ``endmembers`` is a file
                         path (Default = ``None``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -467,7 +470,7 @@ def spec_unmix_ucls(
         import rsgispy.imagespectral.unmixing as su
 
         su.spec_unmix_ucls(
-            "img.tif", "mask.tif", 1, "unmix_ucls.tif", "endmembers.csv"
+            "img.tif", "unmix_ucls.tif", "endmembers.csv", "mask.tif", 1
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -794,14 +797,15 @@ def _scipy_fcls_solver(
 
 def spec_unmix_nnls(
     input_img: str,
-    valid_msk_img: Optional[str],
-    valid_msk_val: int,
     output_img: str,
     endmembers: EndmemberInput,
-    gdalformat: str = "GTIFF",
+    valid_msk_img: Optional[str] = None,
+    valid_msk_val: int = 1,
     gain: float = 1,
     weight: Optional[float] = None,
     file_format: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -819,21 +823,21 @@ def spec_unmix_nnls(
        ``scipy`` (no ``pysptools`` or ``pyMCR``).
 
     :param input_img: Path to the input image file.
-    :param valid_msk_img: Optional path to the valid pixel mask image file
-                          (if ``None``, all finite positive pixels are
-                          unmixed).
-    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid
-                          pixels.
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
                        :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param valid_msk_img: Optional path to the valid pixel mask image file
+                          (if ``None``, all finite positive pixels are
+                          unmixed).
+    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid
+                          pixels (Default = ``1``).
     :param gain: Gain divisor applied to image and endmember spectra when
                  greater than ``1`` (Default = ``1``).
     :param weight: Optional Scarth et al. (2010) sum-to-one weight.
     :param file_format: Optional format override when ``endmembers`` is a
                         file path (Default = ``None``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during
@@ -844,7 +848,7 @@ def spec_unmix_nnls(
         import rsgispy.imagespectral.unmixing as su
 
         su.spec_unmix_nnls(
-            "img.tif", "mask.tif", 1, "unmix_nnls.tif", "endmembers.csv"
+            "img.tif", "unmix_nnls.tif", "endmembers.csv", "mask.tif", 1
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -867,13 +871,14 @@ def spec_unmix_nnls(
 
 def spec_unmix_fcls(
     input_img: str,
-    valid_msk_img: Optional[str],
-    valid_msk_val: int,
     output_img: str,
     endmembers: EndmemberInput,
-    gdalformat: str = "GTIFF",
+    valid_msk_img: Optional[str] = None,
+    valid_msk_val: int = 1,
     gain: float = 1,
     file_format: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -891,20 +896,20 @@ def spec_unmix_fcls(
        accuracy and substantially faster runtime.
 
     :param input_img: Path to the input image file.
-    :param valid_msk_img: Optional path to the valid pixel mask image file
-                          (if ``None``, all finite positive pixels are
-                          unmixed).
-    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid
-                          pixels.
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
                        :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param valid_msk_img: Optional path to the valid pixel mask image file
+                          (if ``None``, all finite positive pixels are
+                          unmixed).
+    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid
+                          pixels (Default = ``1``).
     :param gain: Gain divisor applied to image and endmember spectra when
                  greater than ``1`` (Default = ``1``).
     :param file_format: Optional format override when ``endmembers`` is a
                         file path (Default = ``None``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during
@@ -915,7 +920,7 @@ def spec_unmix_fcls(
         import rsgispy.imagespectral.unmixing as su
 
         su.spec_unmix_fcls(
-            "img.tif", "mask.tif", 1, "unmix_fcls.tif", "endmembers.csv"
+            "img.tif", "unmix_fcls.tif", "endmembers.csv", "mask.tif", 1
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -938,14 +943,15 @@ def spec_unmix_fcls(
 
 def spec_unmix_spts_ucls(
     input_img: str,
-    valid_msk_img: Optional[str],
-    valid_msk_val: int,
     output_img: str,
     endmembers: EndmemberInput,
-    gdalformat: str = "GTIFF",
+    valid_msk_img: Optional[str] = None,
+    valid_msk_val: int = 1,
     gain: float = 1,
     weight: Optional[float] = None,
     file_format: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -960,18 +966,19 @@ def spec_unmix_spts_ucls(
        compatibility.
 
     :param input_img: Path to the input image file.
-    :param valid_msk_img: Optional path to the valid pixel mask image file.
-    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels.
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
                        :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param valid_msk_img: Optional path to the valid pixel mask image file.
+    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels
+                          (Default = ``1``).
     :param gain: Gain divisor applied to image and endmember spectra when
                  greater than ``1`` (Default = ``1``).
     :param weight: Optional Scarth et al. (2010) sum-to-one weight.
     :param file_format: Optional format override when ``endmembers`` is a
                         file path (Default = ``None``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -982,7 +989,7 @@ def spec_unmix_spts_ucls(
         import rsgispy.imagespectral.unmixing as su
 
         su.spec_unmix_spts_ucls(
-            "img.tif", "mask.tif", 1, "unmix_ucls.tif", "endmembers.csv"
+            "img.tif", "unmix_ucls.tif", "endmembers.csv", "mask.tif", 1
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -1007,14 +1014,15 @@ def spec_unmix_spts_ucls(
 
 def spec_unmix_spts_nnls(
     input_img: str,
-    valid_msk_img: Optional[str],
-    valid_msk_val: int,
     output_img: str,
     endmembers: EndmemberInput,
-    gdalformat: str = "GTIFF",
+    valid_msk_img: Optional[str] = None,
+    valid_msk_val: int = 1,
     gain: float = 1,
     weight: Optional[float] = None,
     file_format: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -1029,18 +1037,19 @@ def spec_unmix_spts_nnls(
        problem without squaring normal equations.
 
     :param input_img: Path to the input image file.
-    :param valid_msk_img: Optional path to the valid pixel mask image file.
-    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels.
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
                        :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param valid_msk_img: Optional path to the valid pixel mask image file.
+    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels
+                          (Default = ``1``).
     :param gain: Gain divisor applied to image and endmember spectra when
                  greater than ``1`` (Default = ``1``).
     :param weight: Optional Scarth et al. (2010) sum-to-one weight.
     :param file_format: Optional format override when ``endmembers`` is a
                         file path (Default = ``None``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -1051,7 +1060,7 @@ def spec_unmix_spts_nnls(
         import rsgispy.imagespectral.unmixing as su
 
         su.spec_unmix_spts_nnls(
-            "img.tif", "mask.tif", 1, "unmix_nnls.tif", "endmembers.csv"
+            "img.tif", "unmix_nnls.tif", "endmembers.csv", "mask.tif", 1
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -1076,13 +1085,14 @@ def spec_unmix_spts_nnls(
 
 def spec_unmix_spts_fcls(
     input_img: str,
-    valid_msk_img: Optional[str],
-    valid_msk_val: int,
     output_img: str,
     endmembers: EndmemberInput,
-    gdalformat: str = "GTIFF",
+    valid_msk_img: Optional[str] = None,
+    valid_msk_val: int = 1,
     gain: float = 1,
     file_format: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -1097,18 +1107,18 @@ def spec_unmix_spts_fcls(
        ``pysptools`` and runs substantially faster.
 
     :param input_img: Path to the input image file.
-    :param valid_msk_img: Optional path to the valid pixel mask image file.
-    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid
-                          pixels.
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
                        :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param valid_msk_img: Optional path to the valid pixel mask image file.
+    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid
+                          pixels (Default = ``1``).
     :param gain: Gain divisor applied to image and endmember spectra when
                  greater than ``1`` (Default = ``1``).
     :param file_format: Optional format override when ``endmembers`` is
                         a file path (Default = ``None``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, populate image statistics and
                        pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during
@@ -1119,7 +1129,11 @@ def spec_unmix_spts_fcls(
         import rsgispy.imagespectral.unmixing as su
 
         su.spec_unmix_spts_fcls(
-            "img.tif", "mask.tif", 1, "unmix_fcls.tif", "endmembers.csv"
+            "img.tif",
+            "unmix_fcls.tif",
+            "endmembers.csv",
+            valid_msk_img="mask.tif",
+            valid_msk_val=1,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -1175,14 +1189,15 @@ def _pymcr_fcls_solver(
 
 def spec_unmix_pymcr_nnls(
     input_img: str,
-    valid_msk_img: Optional[str],
-    valid_msk_val: int,
     output_img: str,
     endmembers: EndmemberInput,
-    gdalformat: str = "GTIFF",
+    valid_msk_img: Optional[str] = None,
+    valid_msk_val: int = 1,
     gain: float = 1,
     weight: Optional[float] = None,
     file_format: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -1196,18 +1211,19 @@ def spec_unmix_pymcr_nnls(
        general workflows.
 
     :param input_img: Path to the input image file.
-    :param valid_msk_img: Optional path to the valid pixel mask image file.
-    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels.
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
                        :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param valid_msk_img: Optional path to the valid pixel mask image file.
+    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels
+                          (Default = ``1``).
     :param gain: Gain divisor applied to image and endmember spectra when
                  greater than ``1`` (Default = ``1``).
     :param weight: Optional Scarth et al. (2010) sum-to-one weight.
     :param file_format: Optional format override when ``endmembers`` is a
                         file path (Default = ``None``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -1218,7 +1234,11 @@ def spec_unmix_pymcr_nnls(
         import rsgispy.imagespectral.unmixing as su
 
         su.spec_unmix_pymcr_nnls(
-            "img.tif", "mask.tif", 1, "unmix_pymcr_nnls.tif", "endmembers.csv"
+            "img.tif",
+            "unmix_pymcr_nnls.tif",
+            "endmembers.csv",
+            valid_msk_img="mask.tif",
+            valid_msk_val=1,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -1243,13 +1263,14 @@ def spec_unmix_pymcr_nnls(
 
 def spec_unmix_pymcr_fcls(
     input_img: str,
-    valid_msk_img: Optional[str],
-    valid_msk_val: int,
     output_img: str,
     endmembers: EndmemberInput,
-    gdalformat: str = "GTIFF",
+    valid_msk_img: Optional[str] = None,
+    valid_msk_val: int = 1,
     gain: float = 1,
     file_format: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -1263,17 +1284,18 @@ def spec_unmix_pymcr_fcls(
        general workflows.
 
     :param input_img: Path to the input image file.
-    :param valid_msk_img: Optional path to the valid pixel mask image file.
-    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels.
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
                        :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param valid_msk_img: Optional path to the valid pixel mask image file.
+    :param valid_msk_val: Pixel value in ``valid_msk_img`` marking valid pixels
+                          (Default = ``1``).
     :param gain: Gain divisor applied to image and endmember spectra when
                  greater than ``1`` (Default = ``1``).
     :param file_format: Optional format override when ``endmembers`` is a
                         file path (Default = ``None``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -1284,7 +1306,11 @@ def spec_unmix_pymcr_fcls(
         import rsgispy.imagespectral.unmixing as su
 
         su.spec_unmix_pymcr_fcls(
-            "img.tif", "mask.tif", 1, "unmix_pymcr_fcls.tif", "endmembers.csv"
+            "img.tif",
+            "unmix_pymcr_fcls.tif",
+            "endmembers.csv",
+            valid_msk_img="mask.tif",
+            valid_msk_val=1,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -1310,6 +1336,7 @@ def spec_unmix_pymcr_fcls(
 def rescale_unmixing_results(
     input_img: str,
     output_img: str,
+    *,
     gdalformat: str = "GTIFF",
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -1368,10 +1395,11 @@ def rescale_unmixing_results(
 
 def predict_refl_linear_unmixing(
     in_unmix_coefs_img: str,
-    endmembers: EndmemberInput,
     output_img: str,
-    gdalformat: str = "GTIFF",
+    endmembers: EndmemberInput,
     file_format: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -1380,13 +1408,13 @@ def predict_refl_linear_unmixing(
     an endmembers :class:`pandas.DataFrame` (or file path).
 
     :param in_unmix_coefs_img: Path to the input abundance coefficients image.
+    :param output_img: Path to the output predicted reflectance image.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
                        :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
-    :param output_img: Path to the output predicted reflectance image.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param file_format: Optional format override when ``endmembers`` is a file
                         path (Default = ``None``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -1397,7 +1425,7 @@ def predict_refl_linear_unmixing(
         import rsgispy.imagespectral.unmixing as su
 
         su.predict_refl_linear_unmixing(
-            "unmix.tif", "endmembers.csv", "pred_refl.tif"
+            "unmix.tif", "pred_refl.tif", "endmembers.csv"
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -1453,10 +1481,11 @@ def predict_refl_linear_unmixing(
 def calc_unmixing_rmse_residual_err(
     input_img: str,
     input_unmix_img: str,
-    endmembers: EndmemberInput,
     output_img: str,
-    gdalformat: str = "GTIFF",
+    endmembers: EndmemberInput,
     file_format: Optional[str] = None,
+    *,
+    gdalformat: str = "GTIFF",
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -1469,13 +1498,13 @@ def calc_unmixing_rmse_residual_err(
 
     :param input_img: Path to the original reference reflectance image file.
     :param input_unmix_img: Path to the unmixed abundance coefficients image.
+    :param output_img: Path to the 3-band output error image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
                        :func:`rsgispy.imagespectral.endmembers.read_endmembers_df`.
-    :param output_img: Path to the 3-band output error image file.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param file_format: Optional format override when ``endmembers`` is a file
                         path (Default = ``None``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, assign band names and calculate image
                        statistics and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -1486,7 +1515,7 @@ def calc_unmixing_rmse_residual_err(
         import rsgispy.imagespectral.unmixing as su
 
         su.calc_unmixing_rmse_residual_err(
-            "s2_refl.tif", "unmix.tif", "endmembers.csv", "unmix_err.tif"
+            "s2_refl.tif", "unmix.tif", "unmix_err.tif", "endmembers.csv"
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -1595,10 +1624,11 @@ def calc_unmixing_rmse_residual_err(
 
 def summarise_multi_endmember_linear_unmixing(
     input_img: str,
-    in_unmixed_datasets: Sequence[ImageEndmemberInfo],
     out_unmix_img: str,
     out_ref_img: str,
+    in_unmixed_datasets: Sequence[ImageEndmemberInfo],
     tmp_dir: str = "tmp",
+    *,
     gdalformat: str = "GTIFF",
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -1608,13 +1638,13 @@ def summarise_multi_endmember_linear_unmixing(
     the lowest Root Mean Square Percentage Error (RMSPE) at each pixel.
 
     :param input_img: Path to the original input reflectance image file.
-    :param in_unmixed_datasets: Sequence of
-                                :class:`rsgispy.imagespectral.endmembers.ImageEndmemberInfo`
-                                objects describing each candidate unmixing run.
     :param out_unmix_img: Path to the combined output abundance image file.
     :param out_ref_img: Path to the 1-based reference index image indicating
                         which candidate dataset achieved the lowest RMSPE per
                         pixel (``0`` for invalid pixels).
+    :param in_unmixed_datasets: Sequence of
+                                :class:`rsgispy.imagespectral.endmembers.ImageEndmemberInfo`
+                                objects describing each candidate unmixing run.
     :param tmp_dir: Retained for API compatibility (Default = ``'tmp'``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, set band names and compute statistics and
@@ -1631,9 +1661,9 @@ def summarise_multi_endmember_linear_unmixing(
         info_b = em.ImageEndmemberInfo("unmix_b.tif", "em_b.csv")
         su.summarise_multi_endmember_linear_unmixing(
             "s2_refl.tif",
-            [info_a, info_b],
             "unmix_best.tif",
             "unmix_ref.tif",
+            [info_a, info_b],
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments

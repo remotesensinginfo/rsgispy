@@ -141,9 +141,9 @@ Evaluating a mathematical expression across image bands with
    rsgispy.imagecalc.maths.band_maths(
        output_img="out.tif",
        exp="b1*b2",
+       band_defs=band_defns,
        gdalformat="GTIFF",
        datatype=rsgispy.TYPE_32FLOAT,
-       band_defs=band_defns,
    )
 
 Package Overview
@@ -163,15 +163,13 @@ Package Overview
 * :doc:`rsgispy_imagespectral` — Spectral classification (SAM, SCM), linear unmixing, endmembers, PPI, PCA, MNF, Tasseled Cap, histogram matching, whitening, and smoothing.
 * :doc:`rsgispy_imageutils` — Raster creation, rasterisation, metadata, masking, mosaicking, tiling, VRT, and warping.
 * :doc:`rsgispy_mapping` — Cartographic map composition, scale bars, north arrows, raster/vector/basemap layers, and categorical legends.
+* :doc:`rsgispy_ml` — Unified machine-learning core: :class:`~rsgispy.ml.stack.ImageFeatureStack`, :class:`~rsgispy.ml.scaling.FeatureScaler`, tiled raster inference, spatial cross-validation, and Optuna tuning.
 * :doc:`rsgispy_modelling` — Environmental and species distribution modelling with ``scikit-learn`` and :mod:`rsgispy.imageprocess`.
 * :doc:`rsgispy_regression` — Continuous univariate and multivariate image regression with ``scikit-learn``, XGBoost, LightGBM, and CatBoost, response curves, feature selection, and accuracy metrics.
 * :doc:`rsgispy_segmentation` — Connected-component clumping (:func:`~rsgispy.segmentation.clump.clump`) and union of clumps (:func:`~rsgispy.segmentation.clump.union_of_clumps`).
 * :doc:`rsgispy_tools` — General geospatial, geometry, projection, plotting, and file utilities.
-* :doc:`rsgispy_vectorattrs` — Vector attribute table, column, and spatial join utilities.
-* :doc:`rsgispy_vectorgeoms` — Vector geometry creation, grids, polygonisation, manipulation, overlay, clipping, transects, and spatial predicates.
+* :doc:`rsgispy_vector` — Consolidated vector I/O, geometry creation, geometric operations, attribute tables, spatial statistics, and selection (accepting file paths or GeoDataFrames).
 * :doc:`rsgispy_vectorprocess` — Shared low-level vector I/O, CRS, bounding-box, and attribute helpers.
-* :doc:`rsgispy_vectorstats` — Spatial metrics, area/length/distance calculations, attribute counts, and empirical semi-variograms for vector datasets.
-* :doc:`rsgispy_vectorutils` — Vector metadata, translation, reprojection, merging, splitting, and selection utilities.
 * :doc:`rsgispy_zonalstats` — Polygon and point zonal statistics extraction.
 
 .. toctree::
@@ -192,15 +190,13 @@ Package Overview
    rsgispy_imagespectral
    rsgispy_imageutils
    rsgispy_mapping
+   rsgispy_ml
    rsgispy_modelling
    rsgispy_regression
    rsgispy_segmentation
    rsgispy_tools
-   rsgispy_vectorattrs
-   rsgispy_vectorgeoms
+   rsgispy_vector
    rsgispy_vectorprocess
-   rsgispy_vectorstats
-   rsgispy_vectorutils
    rsgispy_zonalstats
 
 Indices and tables

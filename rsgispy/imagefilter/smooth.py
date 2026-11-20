@@ -25,8 +25,9 @@ def apply_kuwahara_filter(
     input_img: str,
     output_img: str,
     filter_size: int = 5,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -42,7 +43,8 @@ def apply_kuwahara_filter(
     :param output_img: Path to the output filtered image.
     :param filter_size: Odd filter window width/height >= 3 (Default = ``5``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -55,7 +57,7 @@ def apply_kuwahara_filter(
             "in.tif", "out_kuwahara5.tif", filter_size=5
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments
     run_window_stat_filter(
         input_img=input_img,
         output_img=output_img,
@@ -76,8 +78,9 @@ def apply_gaussian_smooth_filter(
     stddev_x: float = 1.0,
     stddev_y: float = 1.0,
     filter_angle: float = 0.0,
+    *,
     gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -92,7 +95,8 @@ def apply_gaussian_smooth_filter(
     :param stddev_y: Standard deviation along the orthogonal axis (Default = ``1.0``).
     :param filter_angle: Orientation angle in degrees (Default = ``0.0``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -126,9 +130,10 @@ def apply_kernel_filter(
     input_img: str,
     output_img: str,
     kernel: Union[np.ndarray, Sequence[Sequence[float]]],
-    gdalformat: str = "GTIFF",
-    datatype: int = rsgispy.TYPE_32FLOAT,
     normalise: bool = False,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -139,10 +144,11 @@ def apply_kernel_filter(
     :param input_img: Path to the input raster image.
     :param output_img: Path to the output convolved image.
     :param kernel: 2D array-like kernel with odd dimensions >= 3.
-    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
-    :param datatype: Output pixel data type constant (Default = :data:`rsgispy.TYPE_32FLOAT`).
     :param normalise: If ``True``, divide kernel weights by their sum before
                       convolution (raises if sum is ``0``; Default = ``False``).
+    :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param datatype: Output pixel data type constant (Default = ``None``,
+                     resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -155,7 +161,7 @@ def apply_kernel_filter(
         sharpen = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=float)
         rsgispy.imagefilter.smooth.apply_kernel_filter("in.tif", "out_sharp.tif", sharpen)
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments
     k_arr = np.asarray(kernel, dtype=np.float64)
     if normalise:
         k_sum = float(np.sum(k_arr))

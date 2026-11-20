@@ -56,24 +56,26 @@ If you use `rsgispy` or build on concepts from RSGISLib in academic work, please
 
 | Module / Subpackage | Purpose |
 | --- | --- |
-| `rsgispy` | Core `TYPE_*` / `INTERP_*` constants, `RSGISPyException`, datatype helpers, and progress bars |
+| `rsgispy` | Core `TYPE_*` / `INTERP_*` constants, typed `BBox`, `RSGISPyException`, datatype helpers, and progress bars |
 | `rsgispy.changedetect` | Image differencing, ratioing, CVA, ISFA, IR-MAD, and per-class outlier change detection (`pxloutlierchng`) |
-| `rsgispy.imageprocess` | Windowed raster block-processing engine, spatial intersection, and dataset validation |
+| `rsgispy.imageprocess` | Windowed raster block-processing & composable tile-graph engine, spatial intersection, and dataset validation |
 | `rsgispy.imageutils` | Raster creation, rasterisation, metadata, masking, mosaicking, tiling, VRTs, warping, and spatial helpers |
 | `rsgispy.imagecalc` | Band/image maths (`pymu-eval`), spectral index stacks (`calcindices`), least-cost paths (`leastcostpath`), statistics, percentiles, comparison, encoding, distance, KNN fill, rescaling, and windowed sampling |
 | `rsgispy.imagespectral` | Spectral classification (SAM, SCM), linear spectral unmixing, endmembers & PPI, spectral curve summaries (`indices`), spectral pre-processing (smoothing, outlier masking, polyfill), and transforms (whitening, PCA, MNF, Tasseled Cap, histogram matching) |
-| `rsgispy.imagefilter` | Spatial moving-window filters (mean, median, min/max/mode, stddev, variance, difference, Kuwahara, Lee SAR, Sobel, Prewitt, Gaussian, Laplacian, and custom convolution kernels) |
-| `rsgispy.imagemorphology` | Morphological raster filtering (dilation, erosion, opening, closing) |
+| `rsgispy.imagefilter` | Spatial moving-window filters (`stats`, `smooth`, `edge`, `sar`, `texture`, and in-memory `chained` filter graphs) |
+| `rsgispy.imagemorphology` | Morphological raster filtering (dilation, erosion, opening, closing, top-hat transforms) |
 | `rsgispy.elevation` | Terrain derivatives, solar illumination, DEM filtering, fusion, and surface roughness |
 | `rsgispy.vectorprocess` | Shared low-level vector I/O (including compressed GeoParquet), CRS, bounding-box, and attribute helpers |
-| `rsgispy.vectorutils` | Vector metadata, format translation, reprojection, merging, splitting, and selection |
-| `rsgispy.vectorattrs` | Attribute table I/O (CSV/Excel/Parquet), column operations, and spatial joins |
-| `rsgispy.vectorgeoms` | Geometry creation, grids (rectangular/H3), polygonisation, line/polygon manipulation, overlays, and spatial predicates |
-| `rsgispy.vectorstats` | Spatial metrics, area/length/distance calculations, attribute summaries, and semi-variograms |
+| `rsgispy.vector` | Consolidated vector suite (`io`, `create`, `geoms`, `attrs`, `stats`, `selection`) accepting file paths or `GeoDataFrame`s |
 | `rsgispy.zonalstats` | Polygon and point zonal statistics extraction |
 | `rsgispy.dataaccess` | API clients for Copernicus OData, NASA CMR, OpenStreetMap, Planet, and USGS M2M |
 | `rsgispy.droneutils` | Drone photo organisation, EXIF metadata handling, and flightline vector generation |
 | `rsgispy.mapping` | Cartographic map composition (layout, scale bars, north arrows, raster/vector/basemap layers, and categorical legends) |
+| `rsgispy.ml` | Unified ML core (`stack`, `scaling`, `predict`, `cv`, `tune`): `ImageFeatureStack`, `FeatureScaler`, tiled raster inference, spatial CV, and Optuna tuning |
+| `rsgispy.classification` | Supervised image classification, accuracy assessment, and in-memory post-classification majority/sieve pipelines |
+| `rsgispy.regression` | Continuous univariate and multivariate image regression with scikit-learn and GBDTs, response curves, and feature selection |
+| `rsgispy.modelling` | Environmental and species distribution modelling with SHAP explanations and Sobol sensitivity analysis |
+| `rsgispy.segmentation` | Connected-component clumping and union of clumps |
 | `rsgispy.tools` | General geospatial, geometry, projection, plotting, WMTS, archiving, file/system, accuracy/feature selection, and HTTP/FTP utilities |
 
 ## Installation
@@ -123,15 +125,15 @@ import rsgispy.imagecalc.calcindices
 band_names = {1: "blue", 2: "green", 3: "red", 4: "nir", 5: "swir1"}
 rsgispy.imagecalc.calcindices.calc_indices(
     input_img="s2_refl.tif",
+    output_img="indices_int16.tif",
     band_names=band_names,
     indices=["NDVI", "NDWI_McFeeters", "MNDWI", "EVI"],
-    output_img="indices_int16.tif",
-    gdalformat="GTIFF",
-    datatype=rsgispy.TYPE_16INT,
     in_gain=10000.0,
     in_offset=0.0,
     out_gain=1000.0,
     out_offset=0.0,
+    gdalformat="GTIFF",
+    datatype=rsgispy.TYPE_16INT,
 )
 ```
 
