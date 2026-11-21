@@ -347,13 +347,25 @@ def run_check_gdal_image_file(
     :param timeout: Per-file timeout in seconds (Default: ``4``).
     :return: ``True`` if the file passed all checks, ``False`` otherwise.
 
+    .. note::
+
+        Because this function spawns a ``multiprocessing`` worker pool to
+        isolate crashes and enforce ``timeout``, calls from a Python script
+        must be placed inside an ``if __name__ == "__main__":`` guard. On
+        macOS, Windows, and Python 3.14+ on Linux, ``multiprocessing`` uses
+        ``spawn`` (or ``forkserver``), which re-imports the calling script in
+        every worker process; without the guard, each worker re-executes the
+        top-level call and fails during process bootstrapping with a
+        ``RuntimeError``.
+
     .. code:: python
 
         import rsgispy.tools.checkdatasets
 
-        file_ok = rsgispy.tools.checkdatasets.run_check_gdal_image_file(
-            "img.tif", chk_proj=True, epsg_code=32630, timeout=10
-        )
+        if __name__ == "__main__":
+            file_ok = rsgispy.tools.checkdatasets.run_check_gdal_image_file(
+                "img.tif", chk_proj=True, epsg_code=32630, timeout=10
+            )
     """
     return _run_checks_in_pool(
         [input_img],
@@ -404,13 +416,25 @@ def run_check_gdal_image_files(
     :param timeout: Per-file timeout in seconds (Default: ``4``).
     :return: ``True`` if all files passed checks, ``False`` otherwise.
 
+    .. note::
+
+        Because this function spawns a ``multiprocessing`` worker pool to
+        isolate crashes and enforce ``timeout``, calls from a Python script
+        must be placed inside an ``if __name__ == "__main__":`` guard. On
+        macOS, Windows, and Python 3.14+ on Linux, ``multiprocessing`` uses
+        ``spawn`` (or ``forkserver``), which re-imports the calling script in
+        every worker process; without the guard, each worker re-executes the
+        top-level call and fails during process bootstrapping with a
+        ``RuntimeError``.
+
     .. code:: python
 
         import rsgispy.tools.checkdatasets
 
-        all_ok = rsgispy.tools.checkdatasets.run_check_gdal_image_files(
-            ["img1.tif", "img2.tif"], chk_proj=True, epsg_code=32630
-        )
+        if __name__ == "__main__":
+            all_ok = rsgispy.tools.checkdatasets.run_check_gdal_image_files(
+                ["img1.tif", "img2.tif"], chk_proj=True, epsg_code=32630
+            )
     """
     return _run_checks_in_pool(
         input_imgs,
@@ -542,13 +566,25 @@ def run_check_gdal_vector_file(
     :param timeout: Timeout in seconds (Default: ``4``).
     :return: ``True`` if the vector file is valid, ``False`` otherwise.
 
+    .. note::
+
+        Because this function spawns a ``multiprocessing`` worker pool to
+        isolate crashes and enforce ``timeout``, calls from a Python script
+        must be placed inside an ``if __name__ == "__main__":`` guard. On
+        macOS, Windows, and Python 3.14+ on Linux, ``multiprocessing`` uses
+        ``spawn`` (or ``forkserver``), which re-imports the calling script in
+        every worker process; without the guard, each worker re-executes the
+        top-level call and fails during process bootstrapping with a
+        ``RuntimeError``.
+
     .. code:: python
 
         import rsgispy.tools.checkdatasets
 
-        file_ok = rsgispy.tools.checkdatasets.run_check_gdal_vector_file(
-            "polys.gpkg", chk_proj=True, epsg_code=4326, timeout=10
-        )
+        if __name__ == "__main__":
+            file_ok = rsgispy.tools.checkdatasets.run_check_gdal_vector_file(
+                "polys.gpkg", chk_proj=True, epsg_code=4326, timeout=10
+            )
     """
     return _run_checks_in_pool(
         [vec_file],
@@ -586,13 +622,25 @@ def run_check_gdal_vector_files(
     :param vec_files: List of input vector file paths.
     :return: ``True`` if all files are valid, ``False`` otherwise.
 
+    .. note::
+
+        Because this function spawns a ``multiprocessing`` worker pool to
+        isolate crashes and enforce ``timeout``, calls from a Python script
+        must be placed inside an ``if __name__ == "__main__":`` guard. On
+        macOS, Windows, and Python 3.14+ on Linux, ``multiprocessing`` uses
+        ``spawn`` (or ``forkserver``), which re-imports the calling script in
+        every worker process; without the guard, each worker re-executes the
+        top-level call and fails during process bootstrapping with a
+        ``RuntimeError``.
+
     .. code:: python
 
         import rsgispy.tools.checkdatasets
 
-        all_ok = rsgispy.tools.checkdatasets.run_check_gdal_vector_files(
-            ["polys1.gpkg", "polys2.gpkg"], chk_proj=True, epsg_code=4326
-        )
+        if __name__ == "__main__":
+            all_ok = rsgispy.tools.checkdatasets.run_check_gdal_vector_files(
+                ["polys1.gpkg", "polys2.gpkg"], chk_proj=True, epsg_code=4326
+            )
     """
     return _run_checks_in_pool(
         vec_files,
@@ -690,13 +738,25 @@ def run_check_hdf5_file(
     :param timeout: Timeout in seconds (Default: ``4``).
     :return: ``True`` if the file passed checks, ``False`` otherwise.
 
+    .. note::
+
+        Because this function spawns a ``multiprocessing`` worker pool to
+        isolate crashes and enforce ``timeout``, calls from a Python script
+        must be placed inside an ``if __name__ == "__main__":`` guard. On
+        macOS, Windows, and Python 3.14+ on Linux, ``multiprocessing`` uses
+        ``spawn`` (or ``forkserver``), which re-imports the calling script in
+        every worker process; without the guard, each worker re-executes the
+        top-level call and fails during process bootstrapping with a
+        ``RuntimeError``.
+
     .. code:: python
 
         import rsgispy.tools.checkdatasets
 
-        file_ok = rsgispy.tools.checkdatasets.run_check_hdf5_file(
-            "img.kea", timeout=10
-        )
+        if __name__ == "__main__":
+            file_ok = rsgispy.tools.checkdatasets.run_check_hdf5_file(
+                "img.kea", timeout=10
+            )
     """
     rsgispy.check_optional_dep(HAVE_H5PY, "run_check_hdf5_file", "h5py", "imaging")
     return _run_checks_in_pool(
@@ -725,13 +785,25 @@ def run_check_hdf5_files(
     :param timeout: Per-file timeout in seconds (Default: ``4``).
     :return: ``True`` if all files passed checks, ``False`` otherwise.
 
+    .. note::
+
+        Because this function spawns a ``multiprocessing`` worker pool to
+        isolate crashes and enforce ``timeout``, calls from a Python script
+        must be placed inside an ``if __name__ == "__main__":`` guard. On
+        macOS, Windows, and Python 3.14+ on Linux, ``multiprocessing`` uses
+        ``spawn`` (or ``forkserver``), which re-imports the calling script in
+        every worker process; without the guard, each worker re-executes the
+        top-level call and fails during process bootstrapping with a
+        ``RuntimeError``.
+
     .. code:: python
 
         import rsgispy.tools.checkdatasets
 
-        all_ok = rsgispy.tools.checkdatasets.run_check_hdf5_files(
-            ["img1.kea", "img2.kea"], timeout=10
-        )
+        if __name__ == "__main__":
+            all_ok = rsgispy.tools.checkdatasets.run_check_hdf5_files(
+                ["img1.kea", "img2.kea"], timeout=10
+            )
     """
     rsgispy.check_optional_dep(HAVE_H5PY, "run_check_hdf5_files", "h5py", "imaging")
     return _run_checks_in_pool(

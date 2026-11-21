@@ -1426,17 +1426,29 @@ def region_growing_fill_tiled(
     :param creation_opts: Optional GDAL creation options as a mapping or sequence
                           of ``'KEY=VALUE'`` strings.
 
+    .. note::
+
+        When calling this function from a Python script with multiple cores
+        (``n_cores > 1`` or ``n_cores <= 0``), wrap the call inside an
+        ``if __name__ == "__main__":`` guard. On macOS, Windows, and Python
+        3.14+ on Linux, Python's ``multiprocessing`` uses ``spawn`` (or
+        ``forkserver``), which re-imports the calling script in every spawned
+        worker process. Without the guard, each worker re-executes the
+        top-level call and fails during process bootstrapping with a
+        ``RuntimeError``.
+
     .. code:: python
 
         import rsgispy.imagecalc.fill
 
-        rsgispy.imagecalc.fill.region_growing_fill_tiled(
-            in_regions_imgs=["tileA_rgn.tif", "tileB_rgn.tif"],
-            in_fill_regions_imgs=["tileA_ext.tif", "tileB_ext.tif"],
-            output_imgs=["tileA_out.tif", "tileB_out.tif"],
-            n_cores=4,
-            creation_opts={"TILED": "YES", "COMPRESS": "DEFLATE"},
-        )
+        if __name__ == "__main__":
+            rsgispy.imagecalc.fill.region_growing_fill_tiled(
+                in_regions_imgs=["tileA_rgn.tif", "tileB_rgn.tif"],
+                in_fill_regions_imgs=["tileA_ext.tif", "tileB_ext.tif"],
+                output_imgs=["tileA_out.tif", "tileB_out.tif"],
+                n_cores=4,
+                creation_opts={"TILED": "YES", "COMPRESS": "DEFLATE"},
+            )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements

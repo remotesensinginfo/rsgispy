@@ -289,18 +289,30 @@ def calc_dist_to_img_vals_tiled(
                      (Default = ``True``).
     :param creation_opts: Optional mapping of GDAL creation options.
 
+    .. note::
+
+        When calling this function from a Python script with multiple cores
+        (``n_cores > 1`` or ``n_cores <= 0``, which is the default), wrap the
+        call inside an ``if __name__ == "__main__":`` guard. On macOS,
+        Windows, and Python 3.14+ on Linux, Python's ``multiprocessing`` uses
+        ``spawn`` (or ``forkserver``), which re-imports the calling script in
+        every spawned worker process. Without the guard, each worker
+        re-executes the top-level call and fails during process bootstrapping
+        with a ``RuntimeError``.
+
     .. code:: python
 
         import rsgispy.imagecalc.distance
 
-        rsgispy.imagecalc.distance.calc_dist_to_img_vals_tiled(
-            input_img="classes.tif",
-            output_img="dist_tiled.tif",
-            pxl_vals=[1, 2],
-            max_dist=1000.0,
-            tile_size=2000,
-            n_cores=4,
-        )
+        if __name__ == "__main__":
+            rsgispy.imagecalc.distance.calc_dist_to_img_vals_tiled(
+                input_img="classes.tif",
+                output_img="dist_tiled.tif",
+                pxl_vals=[1, 2],
+                max_dist=1000.0,
+                tile_size=2000,
+                n_cores=4,
+            )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,unused-argument
