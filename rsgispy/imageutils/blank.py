@@ -5,9 +5,12 @@ buffered, and bbox-defined raster datasets using ``rasterio``.
 
 from contextlib import ExitStack
 import math
-from typing import Any, Mapping, Optional, Sequence, Tuple, Union
+import os
+from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union
 
+import geopandas as gpd
 import numpy as np
+import pandas as pd
 import rasterio
 from rasterio.transform import Affine
 
@@ -25,42 +28,64 @@ from rsgispy.imageutils._helpers import (
     parse_epsg_crs,
     rsgis_dtype_from_np_dtype,
 )
+from rsgispy.imageutils.metadata import get_file_img_extension
+from rsgispy.tools.geometry import find_extent_on_whole_num_grid
+from rsgispy.vectorprocess import (
+    VectorInput,
+    read_vec_gdf,
+    validate_columns_exist,
+)
 
 __all__ = [
     "create_blank_img",
     "create_copy_img",
     "create_blank_buf_img_from_ref_img",
     "create_blank_img_from_bbox",
+    "create_blank_ref_imgs",
 ]
 
 
-def _find_extent_on_grid(
-    base_extent: Tuple[float, float, float, float],
-    base_grid: float,
-    full_contain: bool = True,
-) -> Tuple[float, float, float, float]:
+def _bbox_to_grid_params(
+    bbox: Tuple[float, float, float, float],
+    out_img_res: float,
+    snap_to_grid: bool = False,
+) -> Tuple[int, int, float, float]:
     """
-    Snap ``base_extent`` ``(x_min, x_max, y_min, y_max)`` onto a grid of
-    resolution ``base_grid``.
+    Convert ``bbox`` ``(x_min, x_max, y_min, y_max)`` and ``out_img_res`` into
+    ``(width, height, tl_x, tl_y)``.
     """
-    # pylint: disable=too-many-locals
-    x_min, x_max, y_min, y_max = (float(v) for v in base_extent[:4])
-    x_min_floor = int(math.floor(x_min))
-    y_max_ceil = int(math.ceil(y_max))
-    n_x_cells = math.floor((x_min - x_min_floor) / base_grid)
-    n_y_cells = math.floor((y_max_ceil - y_max) / base_grid)
-    x_min_out = x_min_floor + (n_x_cells * base_grid)
-    y_max_out = y_max_ceil - (n_y_cells * base_grid)
+    res_val = float(out_img_res)
+    if not math.isfinite(res_val) or res_val <= 0.0:
+        raise rsgispy.RSGISPyException(
+            f"out_img_res must be a positive finite number, got {out_img_res!r}."
+        )
+    if snap_to_grid:
+        bbox = find_extent_on_whole_num_grid(bbox, res_val, full_contain=True)
 
-    round_fn = math.ceil if full_contain else math.floor
-    n_pxl_x = round_fn((x_max - x_min_out) / base_grid)
-    n_pxl_y = round_fn(abs(y_max_out - y_min) / base_grid)
-    return (
-        x_min_out,
-        x_min_out + (n_pxl_x * base_grid),
-        y_max_out - (n_pxl_y * base_grid),
-        y_max_out,
+    x_min, x_max, y_min, y_max = (float(v) for v in bbox[:4])
+    width_coord = x_max - x_min
+    height_coord = y_max - y_min
+    if width_coord <= 0.0 or height_coord <= 0.0:
+        raise rsgispy.RSGISPyException(
+            f"Invalid bounding box {bbox!r}: width and height must be positive."
+        )
+
+    width_rem = abs(width_coord / res_val - math.floor(width_coord / res_val))
+    height_rem = abs(
+        height_coord / res_val - math.floor(height_coord / res_val)
     )
+
+    width = (
+        int(math.floor(width_coord / res_val))
+        if width_rem < 0.0001
+        else int(math.ceil(width_coord / res_val))
+    )
+    height = (
+        int(math.floor(height_coord / res_val))
+        if height_rem < 0.0001
+        else int(math.ceil(height_coord / res_val))
+    )
+    return max(1, width), max(1, height), x_min, y_max
 
 
 def create_blank_img(
@@ -419,29 +444,8 @@ def create_blank_img_from_bbox(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    if snap_to_grid:
-        bbox = _find_extent_on_grid(bbox, out_img_res, full_contain=True)
-
-    x_min, x_max, y_min, y_max = (float(v) for v in bbox[:4])
-    width_coord = x_max - x_min
-    height_coord = y_max - y_min
-
-    width_rem = abs(
-        width_coord / out_img_res - math.floor(width_coord / out_img_res)
-    )
-    height_rem = abs(
-        height_coord / out_img_res - math.floor(height_coord / out_img_res)
-    )
-
-    width = (
-        int(math.floor(width_coord / out_img_res))
-        if width_rem < 0.0001
-        else int(math.ceil(width_coord / out_img_res))
-    )
-    height = (
-        int(math.floor(height_coord / out_img_res))
-        if height_rem < 0.0001
-        else int(math.ceil(height_coord / out_img_res))
+    width, height, tl_x, tl_y = _bbox_to_grid_params(
+        bbox=bbox, out_img_res=out_img_res, snap_to_grid=snap_to_grid
     )
 
     create_blank_img(
@@ -449,8 +453,8 @@ def create_blank_img_from_bbox(
         n_bands=out_img_n_bands,
         width=width,
         height=height,
-        tl_x=x_min,
-        tl_y=y_max,
+        tl_x=tl_x,
+        tl_y=tl_y,
         res_x=out_img_res,
         res_y=-out_img_res,
         pxl_val=out_img_pxl_val,
@@ -462,3 +466,260 @@ def create_blank_img_from_bbox(
         use_pbar=use_pbar,
         creation_opts=creation_opts,
     )
+
+
+def _resolve_vec_epsg(
+    gdf: gpd.GeoDataFrame, epsg_code: Optional[int]
+) -> Tuple[gpd.GeoDataFrame, int]:
+    """Resolve target EPSG code and reproject ``gdf`` when ``epsg_code`` differs."""
+    if epsg_code is not None:
+        eff_epsg = int(epsg_code)
+        if gdf.crs is not None:
+            vec_epsg = gdf.crs.to_epsg()
+            if vec_epsg is None or int(vec_epsg) != eff_epsg:
+                gdf = gdf.to_crs(epsg=eff_epsg)
+        return gdf, eff_epsg
+
+    if gdf.crs is None:
+        raise rsgispy.RSGISPyException(
+            "Input vector layer does not have a CRS defined; specify epsg_code."
+        )
+    vec_epsg = gdf.crs.to_epsg()
+    if vec_epsg is None:
+        raise rsgispy.RSGISPyException(
+            "Could not determine an EPSG code from the vector layer CRS; "
+            "specify epsg_code."
+        )
+    return gdf, int(vec_epsg)
+
+
+def _format_unique_name_val(val: Any, col_name: str) -> str:
+    """Validate and convert an attribute value into a safe filename stem."""
+    if pd.isna(val):
+        raise rsgispy.RSGISPyException(
+            f"Column '{col_name}' contains null/missing values; all output "
+            "image name values must be non-null and unique."
+        )
+    if isinstance(val, (int, np.integer)) and not isinstance(val, bool):
+        val_str = str(int(val))
+    else:
+        val_str = str(val).strip()
+    if not val_str:
+        raise rsgispy.RSGISPyException(
+            f"Column '{col_name}' contains empty values; all output image "
+            "name values must be non-empty and unique."
+        )
+    if "/" in val_str or "\\" in val_str or val_str in (".", ".."):
+        raise rsgispy.RSGISPyException(
+            f"Column '{col_name}' contains an invalid filename value: '{val_str}'."
+        )
+    return val_str
+
+
+def _prepare_blank_ref_tasks(
+    gdf: gpd.GeoDataFrame,
+    out_img_col: str,
+    out_dir_str: str,
+    out_img_res: float,
+    out_img_prefix: str,
+    ext: str,
+    snap_to_grid: bool,
+) -> List[Tuple[str, int, int, float, float]]:
+    """Validate polygon geometries and unique names, returning blank-image tasks."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if gdf[out_img_col].duplicated().any():
+        dup_val = gdf.loc[gdf[out_img_col].duplicated(), out_img_col].iloc[0]
+        raise rsgispy.RSGISPyException(
+            f"Values in column '{out_img_col}' must be unique; duplicate found: "
+            f"{dup_val!r}."
+        )
+
+    tasks: List[Tuple[str, int, int, float, float]] = []
+    seen_paths = set()
+    for name_val, geom in zip(gdf[out_img_col], gdf.geometry):
+        val_str = _format_unique_name_val(name_val, out_img_col)
+        if geom is None or geom.is_empty:
+            raise rsgispy.RSGISPyException(
+                f"Feature '{val_str}' has a null or empty geometry."
+            )
+        if geom.geom_type not in ("Polygon", "MultiPolygon"):
+            raise rsgispy.RSGISPyException(
+                f"All features must be Polygon or MultiPolygon geometries; "
+                f"found '{geom.geom_type}' for '{val_str}'."
+            )
+
+        min_x, min_y, max_x, max_y = (float(v) for v in geom.bounds)
+        if not all(
+            math.isfinite(val) for val in (min_x, max_x, min_y, max_y)
+        ):
+            raise rsgispy.RSGISPyException(
+                f"Feature '{val_str}' has non-finite bounding box coordinates."
+            )
+
+        width, height, tl_x, tl_y = _bbox_to_grid_params(
+            bbox=(min_x, max_x, min_y, max_y),
+            out_img_res=out_img_res,
+            snap_to_grid=snap_to_grid,
+        )
+
+        base_name = f"{out_img_prefix}{val_str}"
+        if ext and not base_name.lower().endswith(f".{ext.lower()}"):
+            file_name = f"{base_name}.{ext}"
+        else:
+            file_name = base_name
+        out_path = os.path.join(out_dir_str, file_name)
+        if out_path in seen_paths:
+            raise rsgispy.RSGISPyException(
+                f"Values in column '{out_img_col}' must produce unique output "
+                f"filenames; duplicate output path '{out_path}'."
+            )
+        seen_paths.add(out_path)
+        tasks.append((out_path, width, height, tl_x, tl_y))
+
+    return tasks
+
+
+def create_blank_ref_imgs(
+    vec_file: VectorInput,
+    vec_lyr: Optional[str],
+    out_img_col: str,
+    out_img_dir: Union[str, os.PathLike],
+    out_img_res: float,
+    out_img_prefix: str = "",
+    out_img_ext: Optional[str] = None,
+    out_img_pxl_val: float = 0.0,
+    out_img_n_bands: int = 1,
+    snap_to_grid: bool = False,
+    epsg_code: Optional[int] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
+    use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+) -> List[str]:
+    """
+    Create a blank reference raster image using :func:`create_blank_img` for the
+    bounding box of each polygon in ``vec_file``, named from unique values in
+    ``out_img_col``.
+
+    :param vec_file: Input vector file path or in-memory
+                     :class:`geopandas.GeoDataFrame`.
+    :param vec_lyr: Optional vector layer name within ``vec_file`` (or ``None``
+                    for the default layer / in-memory ``GeoDataFrame``).
+    :param out_img_col: Name of the attribute column containing unique, non-null
+                        values used for the output image filenames.
+    :param out_img_dir: Directory where output blank reference images will be
+                        written (created if it does not already exist).
+    :param out_img_res: Output pixel resolution (square pixels, positive).
+    :param out_img_prefix: Optional filename prefix prepended to each value from
+                           ``out_img_col`` (Default = ``''``).
+    :param out_img_ext: Optional output file extension (without leading dot).
+                        When ``None``, inferred from ``gdalformat``.
+    :param out_img_pxl_val: Initial pixel value for all bands (Default = ``0.0``).
+    :param out_img_n_bands: Number of image bands in each output image
+                            (Default = ``1``).
+    :param snap_to_grid: If ``True``, snap each polygon bounding box onto whole
+                         multiples of ``out_img_res`` (Default = ``False``).
+    :param epsg_code: Optional EPSG integer code. When ``None``, derived from
+                      ``vec_file``; when provided with a CRS-defined vector
+                      layer in a different CRS, geometries are reprojected to
+                      ``epsg_code``.
+    :param gdalformat: Output GDAL format name (e.g., ``'GTIFF'``, ``'KEA'``;
+                       Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output images
+                     (defaults to :data:`rsgispy.TYPE_32FLOAT`).
+    :param no_data_val: Optional no-data value to set on the output datasets.
+    :param calc_stats: If ``True``, compute image statistics and pyramids
+                       (Default = ``False``).
+    :param use_pbar: If ``True``, display a tqdm progress bar across polygons
+                     (Default = ``True``).
+    :param creation_opts: Optional GDAL creation options (dict or list of
+                          ``'KEY=VALUE'``).
+    :return: List of created output image file paths.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imageutils
+
+        out_imgs = rsgispy.imageutils.create_blank_ref_imgs(
+            "tiles.gpkg",
+            "tiles",
+            "tile_name",
+            "blank_tiles",
+            out_img_res=10.0,
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_8UINT,
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if int(out_img_n_bands) < 1:
+        raise rsgispy.RSGISPyException("out_img_n_bands must be >= 1.")
+    if not math.isfinite(float(out_img_res)) or float(out_img_res) <= 0.0:
+        raise rsgispy.RSGISPyException(
+            f"out_img_res must be a positive finite number, got {out_img_res!r}."
+        )
+
+    out_dir_str = os.fspath(out_img_dir)
+    if os.path.exists(out_dir_str) and not os.path.isdir(out_dir_str):
+        raise rsgispy.RSGISPyException(
+            f"out_img_dir exists and is not a directory: '{out_dir_str}'."
+        )
+
+    if out_img_ext is None:
+        ext = get_file_img_extension(gdalformat)
+    else:
+        ext = out_img_ext.lstrip(".")
+        if not ext:
+            raise rsgispy.RSGISPyException("out_img_ext cannot be empty.")
+
+    gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, copy=False)
+    if gdf.empty:
+        raise rsgispy.RSGISPyException(
+            "The inputted vector layer contains no features."
+        )
+    validate_columns_exist(gdf, [out_img_col])
+    gdf, eff_epsg = _resolve_vec_epsg(gdf, epsg_code)
+
+    tasks = _prepare_blank_ref_tasks(
+        gdf=gdf,
+        out_img_col=out_img_col,
+        out_dir_str=out_dir_str,
+        out_img_res=float(out_img_res),
+        out_img_prefix=out_img_prefix,
+        ext=ext,
+        snap_to_grid=snap_to_grid,
+    )
+
+    os.makedirs(out_dir_str, exist_ok=True)
+    tqdm_cls = rsgispy.get_tqdm()
+    out_files: List[str] = []
+    for out_path, width, height, tl_x, tl_y in tqdm_cls(
+        tasks,
+        desc="Creating blank reference images",
+        unit="img",
+        disable=not use_pbar,
+    ):
+        create_blank_img(
+            output_img=out_path,
+            n_bands=out_img_n_bands,
+            width=width,
+            height=height,
+            tl_x=tl_x,
+            tl_y=tl_y,
+            res_x=float(out_img_res),
+            res_y=-float(out_img_res),
+            pxl_val=out_img_pxl_val,
+            epsg_code=eff_epsg,
+            gdalformat=gdalformat,
+            datatype=datatype,
+            no_data_val=no_data_val,
+            calc_stats=calc_stats,
+            use_pbar=False,
+            creation_opts=creation_opts,
+        )
+        out_files.append(out_path)
+
+    return out_files

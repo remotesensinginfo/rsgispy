@@ -233,20 +233,32 @@ def create_tiles_multi_core(
     :param use_pbar: Show a progress bar over tile generation (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
 
+    .. note::
+
+        When calling this function from a Python script with ``n_cores > 1``,
+        wrap the call inside an ``if __name__ == "__main__":`` guard. On macOS,
+        Windows, and Python 3.14+ on Linux, Python's ``multiprocessing`` uses
+        ``spawn`` (or ``forkserver``), which re-imports the calling script in
+        every spawned worker process. Without the guard, each worker
+        re-executes the top-level call and fails during process bootstrapping
+        with a ``RuntimeError``.
+
     .. code:: python
 
         import rsgispy
         import rsgispy.imageutils.tiling
-        rsgispy.imageutils.tiling.create_tiles_multi_core(
-            "input_img.tif",
-            "tiles/img",
-            1000,
-            1000,
-            "tif",
-            n_cores=4,
-            gdalformat="GTIFF",
-            datatype=rsgispy.TYPE_16UINT,
-        )
+
+        if __name__ == "__main__":
+            rsgispy.imageutils.tiling.create_tiles_multi_core(
+                "input_img.tif",
+                "tiles/img",
+                1000,
+                1000,
+                "tif",
+                n_cores=4,
+                gdalformat="GTIFF",
+                datatype=rsgispy.TYPE_16UINT,
+            )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)

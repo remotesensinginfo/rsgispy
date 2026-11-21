@@ -137,17 +137,28 @@ def build_img_pyramids_multi_core(
     :param use_pbar: Display a tqdm progress bar per overview scale
                      (Default = ``True``).
 
+    .. note::
+
+        When calling this function from a Python script with ``n_cores > 1``,
+        wrap the call inside an ``if __name__ == "__main__":`` guard. On macOS,
+        Windows, and Python 3.14+ on Linux, Python's ``multiprocessing`` uses
+        ``spawn`` (or ``forkserver``), which re-imports the calling script in
+        every spawned worker process. Without the guard, each worker
+        re-executes the top-level call and fails during process bootstrapping
+        with a ``RuntimeError``.
+
     .. code:: python
 
         from rasterio.enums import Resampling
         import rsgispy.imageutils.stats as rstats
 
-        rstats.build_img_pyramids_multi_core(
-            "large_mosaic.tif",
-            resampling_method=Resampling.average,
-            tile_size=1024,
-            n_cores=8,
-        )
+        if __name__ == "__main__":
+            rstats.build_img_pyramids_multi_core(
+                "large_mosaic.tif",
+                resampling_method=Resampling.average,
+                tile_size=1024,
+                n_cores=8,
+            )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
@@ -502,10 +513,28 @@ def pop_thmt_img_stats(
     :param tile_size: Overview tile width and height in pixels at each scale
                       when ``use_multi_core_pyramids=True`` (Default = ``1024``).
 
+    .. note::
+
+        When calling this function from a Python script with
+        ``calc_pyramids=True``, ``use_multi_core_pyramids=True``, and
+        ``n_cores > 1``, wrap the call inside an
+        ``if __name__ == "__main__":`` guard. On macOS, Windows, and Python
+        3.14+ on Linux, Python's ``multiprocessing`` uses ``spawn`` (or
+        ``forkserver``), which re-imports the calling script in every spawned
+        worker process. Without the guard, each worker re-executes the
+        top-level call and fails during process bootstrapping with a
+        ``RuntimeError``.
+
     .. code:: python
 
         import rsgispy.imageutils.stats
-        rsgispy.imageutils.stats.pop_thmt_img_stats("land_cover_cls_img.tif")
+
+        if __name__ == "__main__":
+            rsgispy.imageutils.stats.pop_thmt_img_stats(
+                "land_cover_cls_img.tif",
+                use_multi_core_pyramids=True,
+                n_cores=4,
+            )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not os.path.exists(input_img):
@@ -673,10 +702,29 @@ def pop_img_stats(
     :param tile_size: Overview tile width and height in pixels at each scale
                       when ``use_multi_core_pyramids=True`` (Default = ``1024``).
 
+    .. note::
+
+        When calling this function from a Python script with
+        ``calc_pyramids=True``, ``use_multi_core_pyramids=True``, and
+        ``n_cores > 1``, wrap the call inside an
+        ``if __name__ == "__main__":`` guard. On macOS, Windows, and Python
+        3.14+ on Linux, Python's ``multiprocessing`` uses ``spawn`` (or
+        ``forkserver``), which re-imports the calling script in every spawned
+        worker process. Without the guard, each worker re-executes the
+        top-level call and fails during process bootstrapping with a
+        ``RuntimeError``.
+
     .. code:: python
 
         import rsgispy.imageutils.stats
-        rsgispy.imageutils.stats.pop_img_stats("input_img.tif", no_data_val=0.0)
+
+        if __name__ == "__main__":
+            rsgispy.imageutils.stats.pop_img_stats(
+                "input_img.tif",
+                no_data_val=0.0,
+                use_multi_core_pyramids=True,
+                n_cores=4,
+            )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     eff_no_data = no_data_val
