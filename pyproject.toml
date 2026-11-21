@@ -150,6 +150,30 @@ dev = [
     "rsgispy[all,test,docs]",
 ]
 
+[project.scripts]
+rsgisbatchconvert2cog = "rsgispy.cli.batchconvert2cog:cli_main"
+"rsgisbatchconvert2cog.py" = "rsgispy.cli.batchconvert2cog:cli_main"
+rsgisbuildimglut = "rsgispy.cli.buildimglut:cli_main"
+"rsgisbuildimglut.py" = "rsgispy.cli.buildimglut:cli_main"
+rsgiscalcimgstats = "rsgispy.cli.calcimgstats:cli_main"
+"rsgiscalcimgstats.py" = "rsgispy.cli.calcimgstats:cli_main"
+rsgischkgdalfile = "rsgispy.cli.chkgdalfile:cli_main"
+"rsgischkgdalfile.py" = "rsgispy.cli.chkgdalfile:cli_main"
+rsgiscopybandnames = "rsgispy.cli.copybandnames:cli_main"
+"rsgiscopybandnames.py" = "rsgispy.cli.copybandnames:cli_main"
+rsgisfilehash = "rsgispy.cli.filehash:cli_main"
+"rsgisfilehash.py" = "rsgispy.cli.filehash:cli_main"
+rsgisimginfo = "rsgispy.cli.imginfo:cli_main"
+"rsgisimginfo.py" = "rsgispy.cli.imginfo:cli_main"
+rsgisproj = "rsgispy.cli.proj:cli_main"
+"rsgisproj.py" = "rsgispy.cli.proj:cli_main"
+rsgisuserpassfile = "rsgispy.cli.userpassfile:cli_main"
+"rsgisuserpassfile.py" = "rsgispy.cli.userpassfile:cli_main"
+rsgisvectools = "rsgispy.cli.vectools:cli_main"
+"rsgisvectools.py" = "rsgispy.cli.vectools:cli_main"
+rsgiswgs84imgres = "rsgispy.cli.wgs84imgres:cli_main"
+"rsgiswgs84imgres.py" = "rsgispy.cli.wgs84imgres:cli_main"
+
 [project.urls]
 Homepage = "https://github.com/remotesensinginfo/rsgispy"
 Repository = "https://github.com/remotesensinginfo/rsgispy"
