@@ -152,6 +152,7 @@ Package Overview
 * :doc:`rsgispy` — Core data type constants, exception class, and interpolation mappings.
 * :doc:`rsgispy_changedetect` — Multi-temporal change detection (CVA, ISFA, IR-MAD) and class outlier detection.
 * :doc:`rsgispy_classification` — Reference point sampling, accuracy point population, and area-weighted / point-only accuracy statistics with bootstrap confidence intervals.
+* :doc:`rsgispy_cli` — Standardised command-line tools for raster/vector inspection, statistics, COG conversion, LUT creation, dataset validation, hashing, and CRS conversion.
 * :doc:`rsgispy_dataaccess` — Clients for Copernicus OData, NASA CMR, OSM, Planet, and USGS M2M.
 * :doc:`rsgispy_droneutils` — Drone photo organisation and metadata utilities.
 * :doc:`rsgispy_elevation` — Terrain derivatives, illumination, DEM filtering, fusion, and roughness.
@@ -179,6 +180,7 @@ Package Overview
    rsgispy
    rsgispy_changedetect
    rsgispy_classification
+   rsgispy_cli
    rsgispy_dataaccess
    rsgispy_droneutils
    rsgispy_elevation

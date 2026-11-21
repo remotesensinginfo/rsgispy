@@ -57,6 +57,7 @@ If you use `rsgispy` or build on concepts from RSGISLib in academic work, please
 | Module / Subpackage | Purpose |
 | --- | --- |
 | `rsgispy` | Core `TYPE_*` / `INTERP_*` constants, typed `BBox`, `RSGISPyException`, datatype helpers, and progress bars |
+| `rsgispy.cli` | Standardised command-line tools (`rsgisimginfo`, `rsgiscalcimgstats`, `rsgisvectools`, `rsgisbatchconvert2cog`, `rsgisbuildimglut`, `rsgischkgdalfile`, `rsgisfilehash`, `rsgisproj`, `rsgisuserpassfile`, `rsgiswgs84imgres`, `rsgiscopybandnames`) |
 | `rsgispy.changedetect` | Image differencing, ratioing, CVA, ISFA, IR-MAD, and per-class outlier change detection (`pxloutlierchng`) |
 | `rsgispy.imageprocess` | Windowed raster block-processing & composable tile-graph engine, spatial intersection, and dataset validation |
 | `rsgispy.imageutils` | Raster creation, rasterisation, metadata, masking, mosaicking, tiling, VRTs, warping, and spatial helpers |
