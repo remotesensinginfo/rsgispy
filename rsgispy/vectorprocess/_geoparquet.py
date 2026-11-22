@@ -3,6 +3,7 @@ Internal GeoParquet metadata parsing helpers for :mod:`rsgispy.vectorprocess`.
 """
 
 import json
+import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -18,7 +19,46 @@ except ImportError:
 
 import rsgispy
 from rsgispy.imageprocess import ensure_file_exists
-import rsgispy.tools.files
+
+_GEOPARQUET_EXTS: Tuple[str, ...] = (".geoparquet", ".parquet", ".pq")
+_PARQUET_COMP_SUFFIXES: Tuple[str, ...] = (
+    "gzip",
+    "gz",
+    "snappy",
+    "sz",
+    "zstd",
+    "zst",
+    "brotli",
+    "br",
+    "lz4",
+)
+
+
+def _strip_geom_dims(geom_type: str) -> str:
+    """Strip trailing GeoParquet dimension suffixes (``Z``, ``M``, ``ZM``)."""
+    gtype = str(geom_type).strip()
+    for suffix in (" ZM", " Z", " M"):
+        if gtype.endswith(suffix):
+            return gtype[: -len(suffix)]
+    return gtype
+
+
+def _geoparquet_layer_name(vec_file: str) -> str:
+    """
+    Derive a GeoParquet layer name by stripping only known GeoParquet
+    (and optional compression) suffixes so internal dots are preserved.
+    """
+    base = os.path.basename(os.fspath(vec_file))
+    lower = base.lower()
+    for ext in _GEOPARQUET_EXTS:
+        for comp in _PARQUET_COMP_SUFFIXES:
+            full_suffix = f"{ext}.{comp}"
+            if lower.endswith(full_suffix):
+                return base[: -len(full_suffix)]
+    for ext in _GEOPARQUET_EXTS:
+        if lower.endswith(ext):
+            return base[: -len(ext)]
+    return os.path.splitext(base)[0]
 
 
 def geoparquet_geom_type_name(geom_types: Sequence[str]) -> str:
@@ -28,9 +68,9 @@ def geoparquet_geom_type_name(geom_types: Sequence[str]) -> str:
     """
     if not geom_types:
         return "Unknown"
-    if len(geom_types) == 1:
-        return str(geom_types[0])
-    gset = set(geom_types)
+    gset = {_strip_geom_dims(g) for g in geom_types}
+    if len(gset) == 1:
+        return next(iter(gset))
     if gset.issubset({"Point", "MultiPoint"}):
         return "MultiPoint"
     if gset.issubset({"LineString", "MultiLineString"}):
@@ -99,7 +139,7 @@ def read_geoparquet_info(
     dictionary matching ``pyogrio.read_info``.
     """
     ensure_file_exists(vec_file, label="Vector file")
-    lyr_name = rsgispy.tools.files.get_file_basename(vec_file, rm_n_exts=0)
+    lyr_name = _geoparquet_layer_name(vec_file)
     if vec_lyr is not None and vec_lyr != lyr_name:
         raise rsgispy.RSGISPyException(
             f"Could not find vector layer '{vec_lyr}' in '{vec_file}'."
@@ -111,14 +151,14 @@ def read_geoparquet_info(
         )
 
     try:
-        schema = pq.read_schema(vec_file)
         pq_meta = pq.read_metadata(vec_file)
+        schema = pq_meta.schema.to_arrow_schema()
     except Exception as err:
         raise rsgispy.RSGISPyException(
             f"Could not open GeoParquet file '{vec_file}': {err}"
         ) from err
 
-    meta = schema.metadata or {}
+    meta = schema.metadata or pq_meta.metadata or {}
     if b"geo" not in meta:
         raise rsgispy.RSGISPyException(
             f"Parquet file '{vec_file}' does not contain GeoParquet ('geo') metadata."

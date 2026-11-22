@@ -26,6 +26,12 @@ from rsgispy.cli._common import (
 )
 from rsgispy.vector.io import get_wkt_proj_from_vec
 
+__all__ = [
+    "build_proj_parser",
+    "main",
+    "cli_main",
+]
+
 _UTM_RE = re.compile(r"^(\d{1,2})([NSns])$")
 _OUTPUT_FORMATS = ("epsg", "wkt", "wkt2", "wkt-pretty", "proj4", "json")
 
@@ -107,24 +113,34 @@ def _load_crs(args: argparse.Namespace) -> pyproj.CRS:
 
 def _format_crs(crs: pyproj.CRS, fmt: str) -> str:
     """Format a ``pyproj.CRS`` into the requested output representation."""
-    if fmt == "epsg":
-        epsg = crs.to_epsg()
-        if epsg is None:
-            auth = crs.to_authority()
-            return f"{auth[0]}:{auth[1]}" if auth else "None"
-        return f"EPSG:{epsg}"
-    if fmt == "wkt":
-        return crs.to_wkt(version="WKT1_GDAL")
-    if fmt == "wkt2":
-        return crs.to_wkt(version="WKT2_2019")
-    if fmt == "wkt-pretty":
-        return crs.to_wkt(pretty=True)
-    if fmt == "proj4":
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            return crs.to_proj4()
-    if fmt == "json":
-        return json.dumps(crs.to_json_dict(), indent=2)
+    try:
+        if fmt == "epsg":
+            epsg = crs.to_epsg()
+            if epsg is None:
+                auth = crs.to_authority()
+                return f"{auth[0]}:{auth[1]}" if auth else "None"
+            return f"EPSG:{epsg}"
+        if fmt == "wkt":
+            return crs.to_wkt(version="WKT1_GDAL")
+        if fmt == "wkt2":
+            return crs.to_wkt(version="WKT2_2019")
+        if fmt == "wkt-pretty":
+            return crs.to_wkt(pretty=True)
+        if fmt == "proj4":
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                proj4_str = crs.to_proj4()
+            if not proj4_str:
+                raise RSGISPyException(
+                    f"CRS '{crs.name}' cannot be represented as a PROJ4 string."
+                )
+            return proj4_str
+        if fmt == "json":
+            return json.dumps(crs.to_json_dict(), indent=2)
+    except pyproj.exceptions.CRSError as err:
+        raise RSGISPyException(
+            f"Could not format CRS as '{fmt}': {err}"
+        ) from err
     raise RSGISPyException(f"Unsupported output format: '{fmt}'")
 
 

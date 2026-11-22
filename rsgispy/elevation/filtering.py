@@ -6,12 +6,15 @@ and detrending functions using ``rasterio`` and ``numpy``.
 from contextlib import ExitStack
 import heapq
 import math
+import os
+import tempfile
 from typing import Optional
 
 import numpy as np
 import rasterio
+from rasterio.io import MemoryFile
 from rasterio.transform import Affine
-from rasterio.warp import reproject as rio_reproject
+from rasterio.vrt import WarpedVRT
 
 import rsgispy
 from rsgispy.imageprocess import (
@@ -246,45 +249,32 @@ def fill_dem_soille_gratin_1994(
         vld = vld_src.read(1) == 1
         dem_nodata = no_data_val if no_data_val is not None else dem_src.nodata
 
-        stat_mask = vld.copy()
         if dem_nodata is not None:
-            stat_mask &= dem != dem_nodata
-        valid_vals = dem[stat_mask]
+            vld = vld & (dem != dem_nodata)
+        valid_vals = dem[vld]
         if valid_vals.size == 0:
             raise rsgispy.RSGISPyException(
                 "No valid DEM pixels found within the valid area mask."
             )
 
-        min_val = int(valid_vals.min())
-        max_val = int(valid_vals.max())
-        border_val = min_val
-
         fill_nodata = int(dem_nodata) if dem_nodata is not None else 0
         out = np.full(dem.shape, fill_nodata, dtype=np.int64)
-        out[vld] = max_val
+        visited = ~vld
 
-        # Identify invalid pixels adjacent (8-connected) to valid region
+        # Seed valid raster-edge pixels and valid pixels 8-adjacent to ~vld
+        # at their true elevations dem[r, c]. Padding with False guarantees
+        # all raster-edge valid pixels have at least one False neighbour.
         vld_pad = np.pad(vld, 1, mode="constant", constant_values=False)
         vld_nbr_wins = np.lib.stride_tricks.sliding_window_view(vld_pad, (3, 3))
-        boundary = (~vld) & np.any(vld_nbr_wins, axis=(2, 3))
+        seed_mask = vld & np.any(~vld_nbr_wins, axis=(2, 3))
 
         heap: list = []
-        bnd_r, bnd_c = np.where(boundary)
-        if bnd_r.size > 0:
-            out[bnd_r, bnd_c] = border_val
-            for r_idx, c_idx in zip(bnd_r.tolist(), bnd_c.tolist()):
-                heap.append((border_val, r_idx, c_idx))
-        else:
-            height, width = dem.shape
-            edge_coords = (
-                [(0, c) for c in range(width)]
-                + [(height - 1, c) for c in range(width)]
-                + [(r, 0) for r in range(height)]
-                + [(r, width - 1) for r in range(height)]
-            )
-            for r_idx, c_idx in set(edge_coords):
-                out[r_idx, c_idx] = border_val
-                heap.append((border_val, r_idx, c_idx))
+        seed_r, seed_c = np.where(seed_mask)
+        for r_idx, c_idx in zip(seed_r.tolist(), seed_c.tolist()):
+            elev = int(dem[r_idx, c_idx])
+            out[r_idx, c_idx] = elev
+            visited[r_idx, c_idx] = True
+            heap.append((elev, r_idx, c_idx))
 
         heapq.heapify(heap)
         height, width = dem.shape
@@ -296,11 +286,13 @@ def fill_dem_soille_gratin_1994(
             c_max = min(width, c_cur + 2)
             for nr in range(r_min, r_max):
                 for nc in range(c_min, c_max):
-                    if (nr != r_cur or nc != c_cur) and vld[nr, nc] and out[nr, nc] == max_val:
+                    if not visited[nr, nc]:
+                        visited[nr, nc] = True
                         new_val = max(h_cur, int(dem[nr, nc]))
                         out[nr, nc] = new_val
-                        if new_val < max_val:
-                            heapq.heappush(heap, (new_val, nr, nc))
+                        heapq.heappush(heap, (new_val, nr, nc))
+
+        out[~vld] = fill_nodata
 
         dst = create_output_from_dataset(
             stack=stack,
@@ -522,7 +514,8 @@ def resampling_detrend_dem(
         raise rsgispy.RSGISPyException("resmp_res must be greater than 0.")
     ensure_file_exists(input_img)
 
-    with rasterio.open(input_img, "r") as src:
+    with ExitStack() as stack:
+        src = stack.enter_context(rasterio.open(input_img, "r"))
         if datatype is None:
             datatype = rsgispy.get_rsgis_datatype(src.dtypes[0])
         if no_data_val is None:
@@ -537,58 +530,93 @@ def resampling_detrend_dem(
         src_transform = src.transform
         src_height = int(src.height)
         src_width = int(src.width)
-        src_arr = src.read(1)
 
-    _ = tmp_dir  # retained for signature compatibility; resampling runs in memory
-    coord_width = right - left
-    coord_height = top - bottom
-    img_width = int(math.ceil(coord_width / resmp_res) + 1)
-    img_height = int(math.ceil(coord_height / resmp_res) + 1)
+        coord_width = right - left
+        coord_height = top - bottom
+        img_width = int(math.ceil(coord_width / resmp_res) + 1)
+        img_height = int(math.ceil(coord_height / resmp_res) + 1)
 
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
+        out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
+        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
 
-    coarse_transform = Affine(
-        float(resmp_res), 0.0, float(left), 0.0, -float(resmp_res), float(top)
-    )
-    low_res_arr = np.full(
-        (img_height, img_width), no_data_val, dtype=out_np_dtype
-    )
-    rio_reproject(
-        source=src_arr.astype(out_np_dtype, copy=False),
-        destination=low_res_arr,
-        src_transform=src_transform,
-        src_crs=src_crs,
-        src_nodata=no_data_val,
-        dst_transform=coarse_transform,
-        dst_crs=src_crs,
-        dst_nodata=no_data_val,
-        resampling=rsgispy.get_rasterio_interp_type(low_resmp_mthd),
-    )
+        coarse_transform = Affine(
+            float(resmp_res), 0.0, float(left), 0.0, -float(resmp_res), float(top)
+        )
+        coarse_profile = {
+            "driver": "GTiff",
+            "width": img_width,
+            "height": img_height,
+            "count": 1,
+            "dtype": out_rio_dtype,
+            "crs": src_crs,
+            "transform": coarse_transform,
+            "nodata": no_data_val,
+        }
 
-    up_arr = np.full((src_height, src_width), no_data_val, dtype=out_np_dtype)
-    rio_reproject(
-        source=low_res_arr,
-        destination=up_arr,
-        src_transform=coarse_transform,
-        src_crs=src_crs,
-        src_nodata=no_data_val,
-        dst_transform=src_transform,
-        dst_crs=src_crs,
-        dst_nodata=no_data_val,
-        resampling=rsgispy.get_rasterio_interp_type(up_smpl_mthd),
-    )
+        low_vrt = stack.enter_context(
+            WarpedVRT(
+                src,
+                crs=src_crs,
+                transform=coarse_transform,
+                width=img_width,
+                height=img_height,
+                resampling=rsgispy.get_rasterio_interp_type(low_resmp_mthd),
+                src_nodata=no_data_val,
+                nodata=no_data_val,
+                dtype=out_rio_dtype,
+            )
+        )
 
-    out_grid = IntersectionGrid(
-        crs=src_crs,
-        transform=src_transform,
-        width=src_width,
-        height=src_height,
-        offsets={},
-    )
-    with ExitStack() as out_stack:
+        if tmp_dir is not None:
+            os.makedirs(tmp_dir, exist_ok=True)
+            tmp_ctx = stack.enter_context(
+                tempfile.TemporaryDirectory(dir=tmp_dir)
+            )
+            coarse_path = os.path.join(tmp_ctx, "coarse_dem.tif")
+            with rasterio.open(coarse_path, "w", **coarse_profile) as coarse_dst:
+                for cwin in iter_dataset_windows(
+                    img_height, img_width, use_pbar=False
+                ):
+                    cblk = low_vrt.read(1, window=cwin).astype(
+                        out_np_dtype, copy=False
+                    )
+                    coarse_dst.write(cblk, 1, window=cwin)
+            coarse_src = stack.enter_context(rasterio.open(coarse_path, "r"))
+        else:
+            mem_file = stack.enter_context(MemoryFile())
+            with mem_file.open(**coarse_profile) as coarse_dst:
+                for cwin in iter_dataset_windows(
+                    img_height, img_width, use_pbar=False
+                ):
+                    cblk = low_vrt.read(1, window=cwin).astype(
+                        out_np_dtype, copy=False
+                    )
+                    coarse_dst.write(cblk, 1, window=cwin)
+            coarse_src = stack.enter_context(mem_file.open())
+
+        up_vrt = stack.enter_context(
+            WarpedVRT(
+                coarse_src,
+                crs=src_crs,
+                transform=src_transform,
+                width=src_width,
+                height=src_height,
+                resampling=rsgispy.get_rasterio_interp_type(up_smpl_mthd),
+                src_nodata=no_data_val,
+                nodata=no_data_val,
+                dtype=out_rio_dtype,
+            )
+        )
+
+        out_grid = IntersectionGrid(
+            crs=src_crs,
+            transform=src_transform,
+            width=src_width,
+            height=src_height,
+            offsets={},
+        )
         dst = open_output_dataset(
-            stack=out_stack,
+            stack=stack,
             output_img=output_img,
             gdalformat=gdalformat,
             out_rio_dtype=out_rio_dtype,
@@ -596,7 +624,13 @@ def resampling_detrend_dem(
             count=1,
         )
         dst.nodata = no_data_val
-        dst.write(up_arr, 1)
+        for out_win in iter_dataset_windows(
+            src_height, src_width, use_pbar=use_pbar
+        ):
+            ublk = up_vrt.read(1, window=out_win).astype(
+                out_np_dtype, copy=False
+            )
+            dst.write(ublk, 1, window=out_win)
 
     if calc_stats:
         pop_img_stats(

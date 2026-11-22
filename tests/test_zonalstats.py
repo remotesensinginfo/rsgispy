@@ -114,9 +114,9 @@ def test_calc_zonal_band_stats_and_file(tmp_path):
     assert out_gdf.loc[0, "modeval"] == pytest.approx(2.0)
     assert out_gdf.loc[0, "medval"] == pytest.approx(np.median(expected_vals))
 
-    # Poly 2 has only 999.0 which is > max_thres=100.0 -> out_no_data_val
+    # Poly 2 has only 999.0 which is > max_thres=100.0 -> out_no_data_val for stats, 0 for count
     assert out_gdf.loc[1, "meanval"] == pytest.approx(-1.0)
-    assert out_gdf.loc[1, "countval"] == pytest.approx(-1.0)
+    assert out_gdf.loc[1, "countval"] == pytest.approx(0.0)
 
     # File-based GPKG test
     gpkg_path = str(tmp_path / "polys.gpkg")

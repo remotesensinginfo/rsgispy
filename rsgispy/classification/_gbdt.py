@@ -42,6 +42,7 @@ from rsgispy.tools._gbdt_common import (
 )
 from rsgispy.tools._ml_tune import (
     HAVE_OPTUNA,
+    optuna,
     run_optuna_study,
     save_search_outputs,
     suggest_optuna_params,
@@ -388,8 +389,13 @@ def optimise_gbdt_classifier(
         use_pbar=use_pbar,
     )
 
-    best_trial_params = dict(study.best_trial.params)
-    if not callable(trial_space):
+    if callable(trial_space):
+        fixed_trial = optuna.trial.FixedTrial(study.best_trial.params)
+        best_trial_params = dict(
+            suggest_optuna_params(fixed_trial, trial_space)
+        )
+    else:
+        best_trial_params = dict(study.best_trial.params)
         for p_name, spec in trial_space.items():
             if not isinstance(spec, (Mapping, tuple, list)):
                 best_trial_params[p_name] = spec

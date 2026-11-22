@@ -10,6 +10,7 @@ installed.
 import json
 import os
 import subprocess
+import tempfile
 from typing import Any, Dict, Optional, Tuple
 
 import rsgispy
@@ -126,7 +127,7 @@ def check_http_response(response: Any, url: str) -> bool:
                             if isinstance(msg_obj, dict) and "value" in msg_obj
                             else str(msg_obj)
                         )
-            except Exception:  # pylint: disable=broad-exception-caught
+            except (ValueError, TypeError, KeyError, AttributeError):
                 pass
         api_error = RSGISPyResponseException(excpt_msg, response)
         api_error.__cause__ = None
@@ -183,7 +184,7 @@ def send_http_json_request(
             raise rsgispy.RSGISPyException("404 Not Found")
         if http_status_code == 401:
             raise rsgispy.RSGISPyException("401 Unauthorized")
-        if http_status_code == 400:
+        if http_status_code >= 400:
             raise rsgispy.RSGISPyException(f"Error Code: {http_status_code}")
 
         output = json.loads(response.text)
@@ -279,6 +280,7 @@ def wget_download_file(
     try_number: int = 10,
     time_out: int = 60,
     input_url_md5: Optional[str] = None,
+    verify_ssl: bool = True,
 ) -> Tuple[bool, str]:
     """
     Download a file using the ``wget`` CLI tool with optional MD5 verification.
@@ -290,6 +292,8 @@ def wget_download_file(
     :param try_number: Retry count (Default = ``10``).
     :param time_out: Timeout in seconds (Default = ``60``).
     :param input_url_md5: Optional expected MD5 hex digest.
+    :param verify_ssl: Verify TLS/SSL certificates when ``True`` (Default = ``True``).
+                       Pass ``False`` to include ``--no-check-certificate``.
     :return: Tuple ``(success, message)``.
 
     .. code:: python
@@ -299,7 +303,7 @@ def wget_download_file(
             "https://example.com/data.zip", "data.zip"
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     success = False
     out_message = ""
     command = [
@@ -311,17 +315,44 @@ def wget_download_file(
         str(try_number),
         "-T",
         str(time_out),
-        "--no-check-certificate",
     ]
-    if (username is not None) and (password is not None):
-        command.extend(["--user", username, "--password", password])
-    command.append(input_url)
+    if not verify_ssl:
+        command.append("--no-check-certificate")
 
+    tmp_cfg_path: Optional[str] = None
     download_state = -1
     try:
+        if (username is not None) and (password is not None):
+            if any(ch in username for ch in ("\n", "\r")) or any(
+                ch in password for ch in ("\n", "\r")
+            ):
+                raise rsgispy.RSGISPyException(
+                    "Username and password must not contain newline characters."
+                )
+            fd, tmp_cfg_path = tempfile.mkstemp(
+                prefix="rsgispy_wget_", suffix=".cfg"
+            )
+            try:
+                os.chmod(tmp_cfg_path, 0o600)
+            except OSError:
+                pass
+            with os.fdopen(fd, "w", encoding="utf-8") as cfg_fp:
+                cfg_fp.write(f"user = {username}\n")
+                cfg_fp.write(f"password = {password}\n")
+            command.append(f"--config={tmp_cfg_path}")
+
+        command.append(input_url)
         download_state = subprocess.call(command)
+    except rsgispy.RSGISPyException:
+        raise
     except Exception as err:  # pylint: disable=broad-exception-caught
         out_message = f"Download of file ({out_file_path}) failed.: Exception:\n{err}"
+    finally:
+        if tmp_cfg_path is not None:
+            try:
+                os.unlink(tmp_cfg_path)
+            except OSError:
+                pass
 
     if download_state == 0:
         if input_url_md5 is not None:

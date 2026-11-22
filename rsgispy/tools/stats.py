@@ -118,7 +118,18 @@ def calc_semivariogram(
     # pylint: disable=too-many-positional-arguments,too-many-locals
     import matplotlib.pyplot as plt
     import pandas as pd
-    import skgstat  # pylint: disable=import-error
+
+    try:
+        import skgstat  # pylint: disable=import-error
+    except ImportError as exc:
+        rsgispy.check_optional_dep(
+            False,
+            "calc_semivariogram",
+            "scikit-gstat",
+            "stats",
+            error_detail=str(exc),
+        )
+        raise
 
     if pts_coords.shape[1] != 2:
         raise rsgispy.RSGISPyException(
@@ -277,7 +288,13 @@ def normalise_img_data(img_data: np.ndarray) -> np.ndarray:
     max_value = np.max(img_data_reshp, axis=1, keepdims=True)
     min_value = np.min(img_data_reshp, axis=1, keepdims=True)
     diff_value = max_value - min_value
-    nm_img = (img_data_reshp - min_value) / diff_value
+    shifted = img_data_reshp - min_value
+    nm_img = np.divide(
+        shifted,
+        diff_value,
+        out=np.zeros_like(shifted, dtype=np.float64),
+        where=diff_value > 0,
+    )
     if len(img_data.shape) == 3:
         nm_img = np.reshape(nm_img, (img_bands, img_height, img_width))
 

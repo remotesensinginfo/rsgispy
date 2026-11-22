@@ -27,7 +27,11 @@ from rasterio.windows import Window
 import rasterio.windows
 
 import rsgispy
-from rsgispy.imageprocess import create_output_from_dataset, ensure_file_exists
+from rsgispy.imageprocess import (
+    create_output_from_dataset,
+    ensure_file_exists,
+    iter_dataset_windows,
+)
 from rsgispy.imageutils.stats import pop_img_stats
 from rsgispy.tools.geometry import do_bboxes_intersect, reproj_bbox
 from rsgispy.tools.tables import resolve_table_format
@@ -886,6 +890,42 @@ def extract_avg_endmembers(
     return em_df
 
 
+def _ppi_valid_block(
+    blk: np.ndarray,
+    nodatavals: Sequence[Optional[float]],
+    img_gain: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Extract valid finite non-nodata pixel mask and scaled ``(n_valid, n_bands)`` matrix."""
+    n_bands = blk.shape[0]
+    flat = np.moveaxis(blk, 0, -1).reshape(-1, n_bands)
+    vld = np.all(np.isfinite(flat), axis=1)
+    for b_idx in range(n_bands):
+        nd = nodatavals[b_idx]
+        if nd is not None and not (isinstance(nd, float) and math.isnan(nd)):
+            vld &= flat[:, b_idx] != float(nd)
+    if not np.any(vld):
+        return vld, np.empty((0, n_bands), dtype=np.float64)
+    vld_pxls = flat[vld]
+    if img_gain != 1.0:
+        vld_pxls = vld_pxls / float(img_gain)
+    return vld, vld_pxls
+
+
+def _iter_ppi_skewer_batches(
+    eff_seed: int,
+    n_bands: int,
+    niters: int,
+    batch_size: int = 256,
+):
+    """Yield deterministic ``(b_start, b_end, skewers)`` batches of shape
+    ``(n_bands, cur_batch)``."""
+    rng = np.random.default_rng(eff_seed)
+    for b_start in range(0, niters, batch_size):
+        cur_batch = min(batch_size, niters - b_start)
+        skewers = rng.random((cur_batch, n_bands)).T - 0.5
+        yield b_start, b_start + cur_batch, skewers
+
+
 def calc_ppi(
     input_img: str,
     output_img: str,
@@ -901,7 +941,8 @@ def calc_ppi(
 ) -> None:
     """
     Calculate the Pixel Purity Index (PPI) using random linear projections of
-    mean-centred spectral bands (Boardman et al., 1995).
+    spectral bands in two memory-bounded tiled streaming passes
+    (Boardman et al., 1995).
 
     :param input_img: Path to the input multi-band raster image file.
     :param output_img: Path to the output ``uint16`` PPI count raster file.
@@ -916,7 +957,7 @@ def calc_ppi(
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, compute statistics and pyramids on
                        ``output_img`` (Default = ``True``).
-    :param use_pbar: If ``True``, display a tqdm progress bar during iterations
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
     .. code:: python
@@ -931,83 +972,88 @@ def calc_ppi(
             gdalformat="GTIFF",
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     ensure_file_exists(input_img, "Input image")
     if niters < 1:
         raise rsgispy.RSGISPyException("niters must be at least 1.")
     if img_gain <= 0:
         raise rsgispy.RSGISPyException("img_gain must be positive.")
 
-    pbar_cls = rsgispy.get_tqdm()
+    eff_seed = (
+        int(seed)
+        if seed is not None
+        else int(np.random.default_rng().integers(0, 2**63 - 1))
+    )
+    u16_max = np.uint32(np.iinfo(np.uint16).max)
+
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
         n_bands = src.count
         height = src.height
         width = src.width
-        n_pxls = height * width
         nodatavals = src.nodatavals
 
-        img_data = np.zeros((n_bands, n_pxls), dtype=np.float32)
-        img_msk = np.ones(n_pxls, dtype=bool)
+        global_min = np.full(niters, np.inf, dtype=np.float64)
+        global_max = np.full(niters, -np.inf, dtype=np.float64)
+        min_pxl_row = np.full(niters, -1, dtype=np.int64)
+        min_pxl_col = np.full(niters, -1, dtype=np.int64)
+        max_pxl_row = np.full(niters, -1, dtype=np.int64)
+        max_pxl_col = np.full(niters, -1, dtype=np.int64)
+        anchor: Optional[np.ndarray] = None
+        has_valid = False
 
-        for b_idx in pbar_cls(
-            range(n_bands), desc="Importing bands", disable=not use_pbar
-        ):
-            band_arr = src.read(b_idx + 1).ravel().astype(np.float32, copy=False)
-            nd = nodatavals[b_idx]
-            b_vld = np.isfinite(band_arr)
-            if nd is not None and not (
-                isinstance(nd, float) and math.isnan(nd)
+        # Pass 1: Stream windows to find global per-skewer extrema.
+        for win in iter_dataset_windows(height, width, use_pbar=use_pbar):
+            blk = src.read(window=win).astype(np.float64, copy=False)
+            vld_flat, vld_pxls = _ppi_valid_block(blk, nodatavals, img_gain)
+            if vld_pxls.shape[0] == 0:
+                continue
+            has_valid = True
+            if anchor is None:
+                anchor = vld_pxls[0].copy()
+            shifted = vld_pxls - anchor
+            vld_idx = np.flatnonzero(vld_flat)
+            win_w = int(win.width)
+            row_off = int(win.row_off)
+            col_off = int(win.col_off)
+
+            for b_start, b_end, skewers in _iter_ppi_skewer_batches(
+                eff_seed, n_bands, niters
             ):
-                b_vld &= band_arr != nd
-            img_msk &= b_vld
+                proj = shifted @ skewers
+                cur_batch = b_end - b_start
+                cols_range = np.arange(cur_batch)
 
-            if img_gain != 1.0:
-                band_arr = band_arr / float(img_gain)
-            band_tmp = np.where(b_vld, band_arr, np.nan)
-            band_mean = float(np.nanmean(band_tmp)) if np.any(b_vld) else 0.0
-            img_data[b_idx] = band_arr - band_mean
-
-        vld_data = np.ascontiguousarray(img_data[:, img_msk].T)
-        counts = np.zeros(vld_data.shape[0], dtype=np.uint16)
-
-        if vld_data.shape[0] > 0:
-            rng = np.random.default_rng(seed)
-            batch_size = 256
-            batch_starts = range(0, niters, batch_size)
-            for b_start in pbar_cls(
-                batch_starts, desc="Calculating PPI", disable=not use_pbar
-            ):
-                cur_batch = min(batch_size, niters - b_start)
-                skewers = (
-                    rng.random((cur_batch, n_bands)).T.astype(
-                        np.float32, copy=False
+                t_min_idx = np.argmin(proj, axis=0)
+                t_min_val = proj[t_min_idx, cols_range]
+                g_min_slice = global_min[b_start:b_end]
+                better_min = t_min_val < g_min_slice
+                if np.any(better_min):
+                    g_min_slice[better_min] = t_min_val[better_min]
+                    hit_flat = vld_idx[t_min_idx[better_min]]
+                    min_pxl_row[b_start:b_end][better_min] = row_off + (
+                        hit_flat // win_w
                     )
-                    - np.float32(0.5)
-                )
-                proj = vld_data @ skewers  # (n_valid, cur_batch)
-                if lthres == 0:
-                    min_idx = np.argmin(proj, axis=0)
-                    np.add.at(counts, min_idx, 1)
-                else:
-                    s_min = np.min(proj, axis=0, keepdims=True)
-                    counts += np.sum(
-                        proj <= (s_min + lthres), axis=1
-                    ).astype(np.uint16)
+                    min_pxl_col[b_start:b_end][better_min] = col_off + (
+                        hit_flat % win_w
+                    )
 
-                if uthres == 0:
-                    max_idx = np.argmax(proj, axis=0)
-                    np.add.at(counts, max_idx, 1)
-                else:
-                    s_max = np.max(proj, axis=0, keepdims=True)
-                    counts += np.sum(
-                        proj >= (s_max - uthres), axis=1
-                    ).astype(np.uint16)
+                t_max_idx = np.argmax(proj, axis=0)
+                t_max_val = proj[t_max_idx, cols_range]
+                g_max_slice = global_max[b_start:b_end]
+                better_max = t_max_val > g_max_slice
+                if np.any(better_max):
+                    g_max_slice[better_max] = t_max_val[better_max]
+                    hit_flat = vld_idx[t_max_idx[better_max]]
+                    max_pxl_row[b_start:b_end][better_max] = row_off + (
+                        hit_flat // win_w
+                    )
+                    max_pxl_col[b_start:b_end][better_max] = col_off + (
+                        hit_flat % win_w
+                    )
 
-        out_full = np.zeros(n_pxls, dtype=np.uint16)
-        out_full[img_msk] = counts
-        out_img_arr = out_full.reshape((height, width))
-
+        # Pass 2: Accumulate per-tile counts in uint32 and clamp before uint16 write.
         dst = create_output_from_dataset(
             stack=stack,
             src=src,
@@ -1016,7 +1062,84 @@ def calc_ppi(
             out_rio_dtype="uint16",
             count=1,
         )
-        dst.write(out_img_arr, 1)
+        need_thresh_pass = (lthres != 0) or (uthres != 0)
+
+        for win in iter_dataset_windows(height, width, use_pbar=use_pbar):
+            win_h = int(win.height)
+            win_w = int(win.width)
+            row_off = int(win.row_off)
+            col_off = int(win.col_off)
+            tile_counts = np.zeros((win_h, win_w), dtype=np.uint32)
+
+            if has_valid:
+                if lthres == 0:
+                    in_win = (
+                        (min_pxl_row >= row_off)
+                        & (min_pxl_row < row_off + win_h)
+                        & (min_pxl_col >= col_off)
+                        & (min_pxl_col < col_off + win_w)
+                    )
+                    if np.any(in_win):
+                        np.add.at(
+                            tile_counts,
+                            (
+                                min_pxl_row[in_win] - row_off,
+                                min_pxl_col[in_win] - col_off,
+                            ),
+                            np.uint32(1),
+                        )
+                if uthres == 0:
+                    in_win = (
+                        (max_pxl_row >= row_off)
+                        & (max_pxl_row < row_off + win_h)
+                        & (max_pxl_col >= col_off)
+                        & (max_pxl_col < col_off + win_w)
+                    )
+                    if np.any(in_win):
+                        np.add.at(
+                            tile_counts,
+                            (
+                                max_pxl_row[in_win] - row_off,
+                                max_pxl_col[in_win] - col_off,
+                            ),
+                            np.uint32(1),
+                        )
+                if need_thresh_pass and anchor is not None:
+                    blk = src.read(window=win).astype(np.float64, copy=False)
+                    vld_flat, vld_pxls = _ppi_valid_block(
+                        blk, nodatavals, img_gain
+                    )
+                    if vld_pxls.shape[0] > 0:
+                        shifted = vld_pxls - anchor
+                        vld_counts = np.zeros(
+                            vld_pxls.shape[0], dtype=np.uint32
+                        )
+                        for b_start, b_end, skewers in _iter_ppi_skewer_batches(
+                            eff_seed, n_bands, niters
+                        ):
+                            proj = shifted @ skewers
+                            if lthres != 0:
+                                g_min = global_min[b_start:b_end][
+                                    np.newaxis, :
+                                ]
+                                vld_counts += np.sum(
+                                    proj <= (g_min + lthres),
+                                    axis=1,
+                                    dtype=np.uint32,
+                                )
+                            if uthres != 0:
+                                g_max = global_max[b_start:b_end][
+                                    np.newaxis, :
+                                ]
+                                vld_counts += np.sum(
+                                    proj >= (g_max - uthres),
+                                    axis=1,
+                                    dtype=np.uint32,
+                                )
+                        tile_counts.ravel()[vld_flat] += vld_counts
+
+            tile_out = np.minimum(tile_counts, u16_max).astype(np.uint16)
+            dst.write(tile_out, 1, window=win)
 
     if calc_stats:
         pop_img_stats(

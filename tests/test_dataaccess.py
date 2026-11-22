@@ -277,7 +277,16 @@ def test_openstreetmap(tmp_path, monkeypatch):
         clip_to_roi=True,
     )
     assert len(gdf) == 1
-    assert list(gdf.columns) == ["addr:street", "geometry"]
+    assert list(gdf.columns) == ["addr:street", "other", "geometry"]
+
+    gdf_filtered = openstreetmap.get_osm_gdf(
+        bbox=(-4.1, -4.07, 52.4, 52.43),
+        osm_tags={"building": True},
+        rsgis_geom_type=rsgispy.GEOM_POLY,
+        clip_to_roi=True,
+        col_filter_regex="addr:|geometry",
+    )
+    assert list(gdf_filtered.columns) == ["addr:street", "geometry"]
 
     out_gpkg = str(tmp_path / "osm.gpkg")
     openstreetmap.get_osm_to_file(

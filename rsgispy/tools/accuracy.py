@@ -8,6 +8,7 @@ installed.
 """
 
 from typing import Any, List, Sequence, Tuple, Union
+import warnings
 
 import numpy as np
 
@@ -35,6 +36,36 @@ __all__ = [
     "accuracy_scores_binary",
     "bin_accuracy_scores_prob",
 ]
+
+
+def _validate_binary_labels(
+    arr: np.ndarray,
+    label_desc: str,
+    require_both_classes: bool = False,
+) -> np.ndarray:
+    """Validate that a 1D array strictly contains ``{0, 1}`` values before uint8 cast."""
+    if arr.size == 0:
+        raise rsgispy.RSGISPyException(
+            f"ERROR: the {label_desc} array is empty."
+        )
+    if np.issubdtype(arr.dtype, np.bool_):
+        out = arr.astype("uint8")
+    else:
+        if not np.issubdtype(arr.dtype, np.number):
+            raise rsgispy.RSGISPyException(
+                f"ERROR: the {label_desc} are not binary (zero or one values)."
+            )
+        if not np.all(np.isfinite(arr)) or not np.all((arr == 0) | (arr == 1)):
+            raise rsgispy.RSGISPyException(
+                f"ERROR: the {label_desc} are not binary (zero or one values)."
+            )
+        out = arr.astype("uint8")
+
+    if require_both_classes and (np.min(out) != 0 or np.max(out) != 1):
+        raise rsgispy.RSGISPyException(
+            f"ERROR: the {label_desc} are not binary (zero or one values)."
+        )
+    return out
 
 
 def bin_accuracy_scores_prob(
@@ -78,11 +109,9 @@ def bin_accuracy_scores_prob(
             "ERROR: unequal number of binary labels and probabilities."
         )
 
-    y_true_u8 = y_true_arr.astype("uint8")
-    if np.min(y_true_u8) != 0 or np.max(y_true_u8) != 1:
-        raise rsgispy.RSGISPyException(
-            "ERROR: the true labels are not binary (zero or one values)."
-        )
+    y_true_u8 = _validate_binary_labels(
+        y_true_arr, "true labels", require_both_classes=True
+    )
 
     roc_auc = sklearn.metrics.roc_auc_score(y_true_u8, y_prob_arr)
     average_precision = sklearn.metrics.average_precision_score(
@@ -142,16 +171,12 @@ def accuracy_scores_binary(
             "ERROR: unequal number of binary labels."
         )
 
-    y_true_u8 = y_true_arr.astype("uint8")
-    y_pred_u8 = y_pred_arr.astype("uint8")
-    if np.min(y_true_u8) != 0 or np.max(y_true_u8) != 1:
-        raise rsgispy.RSGISPyException(
-            "ERROR: the true labels are not binary (zero or one values)."
-        )
-    if np.min(y_pred_u8) != 0 or np.max(y_pred_u8) != 1:
-        raise rsgispy.RSGISPyException(
-            "ERROR: the predicted labels are not binary (zero or one values)."
-        )
+    y_true_u8 = _validate_binary_labels(
+        y_true_arr, "true labels", require_both_classes=False
+    )
+    y_pred_u8 = _validate_binary_labels(
+        y_pred_arr, "predicted labels", require_both_classes=False
+    )
 
     metrics = np.array(
         [
@@ -174,66 +199,80 @@ def accuracy_scores_binary(
         ]
     )
 
-    try:
-        n_presence = np.where(y_true_u8 == 1)[0].size
-        n_absence = np.where(y_true_u8 == 0)[0].size
+    n_total = y_true_u8.size
+    n_presence = int(np.count_nonzero(y_true_u8 == 1))
+    n_absence = int(np.count_nonzero(y_true_u8 == 0))
 
-        tp_cnt = np.where((y_true_u8 == 1) & (y_pred_u8 == 1))[0].size
-        ta_cnt = np.where((y_true_u8 == 0) & (y_pred_u8 == 0))[0].size
-        fp_cnt = np.where((y_true_u8 == 0) & (y_pred_u8 == 1))[0].size
-        fa_cnt = np.where((y_true_u8 == 1) & (y_pred_u8 == 0))[0].size
+    tp_cnt = int(np.count_nonzero((y_true_u8 == 1) & (y_pred_u8 == 1)))
+    ta_cnt = int(np.count_nonzero((y_true_u8 == 0) & (y_pred_u8 == 0)))
+    fp_cnt = int(np.count_nonzero((y_true_u8 == 0) & (y_pred_u8 == 1)))
+    fa_cnt = int(np.count_nonzero((y_true_u8 == 1) & (y_pred_u8 == 0)))
 
-        prevalence = n_presence / y_true_u8.size
-        odp = 1.0 - prevalence
-        ccr = (tp_cnt + ta_cnt) / y_true_u8.size
-        mr_val = (fp_cnt + fa_cnt) / y_true_u8.size
+    prevalence = n_presence / n_total
+    odp = 1.0 - prevalence
+    ccr = (tp_cnt + ta_cnt) / n_total
+    mr_val = (fp_cnt + fa_cnt) / n_total
 
-        sensitivity = tp_cnt / n_presence
-        ppp = tp_cnt / (tp_cnt + fp_cnt)
-        app = ta_cnt / (ta_cnt + fa_cnt)
-        specificity = ta_cnt / n_absence
+    sensitivity = tp_cnt / n_presence if n_presence > 0 else 0.0
+    ppp = tp_cnt / (tp_cnt + fp_cnt) if (tp_cnt + fp_cnt) > 0 else 0.0
+    app = ta_cnt / (ta_cnt + fa_cnt) if (ta_cnt + fa_cnt) > 0 else 0.0
+    specificity = ta_cnt / n_absence if n_absence > 0 else 0.0
 
-        accuracy = (tp_cnt + ta_cnt) / (n_presence + n_absence)
-        balanced_accuracy = ((tp_cnt / n_presence) + (ta_cnt / n_absence)) / 2.0
-        precision = tp_cnt / (tp_cnt + fp_cnt)
-        f1_val = 2.0 * tp_cnt / ((2.0 * tp_cnt) + fp_cnt + fa_cnt)
-        mcc = ((tp_cnt * ta_cnt) - (fp_cnt * fa_cnt)) / (
-            (
-                (tp_cnt + fp_cnt)
-                * (tp_cnt + fa_cnt)
-                * (ta_cnt + fp_cnt)
-                * (ta_cnt + fa_cnt)
-            )
-            ** 0.5
-        )
+    accuracy = (tp_cnt + ta_cnt) / n_total
+    if n_presence > 0 and n_absence > 0:
+        balanced_accuracy = (sensitivity + specificity) / 2.0
         tss = sensitivity + specificity - 1.0
-        nmi_val = sklearn.metrics.normalized_mutual_info_score(
-            y_true_u8, y_pred_u8
+    else:
+        balanced_accuracy = sensitivity if n_presence > 0 else specificity
+        tss = 0.0
+    precision = ppp
+    f1_denom = (2.0 * tp_cnt) + fp_cnt + fa_cnt
+    f1_val = (2.0 * tp_cnt) / f1_denom if f1_denom > 0 else 0.0
+    mcc_denom = (
+        (tp_cnt + fp_cnt)
+        * (tp_cnt + fa_cnt)
+        * (ta_cnt + fp_cnt)
+        * (ta_cnt + fa_cnt)
+    ) ** 0.5
+    mcc = (
+        ((tp_cnt * ta_cnt) - (fp_cnt * fa_cnt)) / mcc_denom
+        if mcc_denom > 0.0
+        else 0.0
+    )
+    nmi_val = float(
+        sklearn.metrics.normalized_mutual_info_score(y_true_u8, y_pred_u8)
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        kappa_val = float(
+            sklearn.metrics.cohen_kappa_score(
+                y_true_u8, y_pred_u8, labels=[0, 1]
+            )
         )
-        kappa_val = sklearn.metrics.cohen_kappa_score(y_true_u8, y_pred_u8)
+    if not np.isfinite(kappa_val):
+        kappa_val = 1.0 if np.array_equal(y_true_u8, y_pred_u8) else 0.0
 
-        scores = np.array(
-            [
-                prevalence,
-                odp,
-                ccr,
-                mr_val,
-                ppp,
-                app,
-                accuracy,
-                balanced_accuracy,
-                sensitivity,
-                specificity,
-                precision,
-                f1_val,
-                mcc,
-                kappa_val,
-                nmi_val,
-                tss,
-            ]
-        ).round(decimals=6)
-    except Exception:  # pylint: disable=broad-exception-caught
-        scores = np.zeros(len(metrics))
+    scores = np.array(
+        [
+            prevalence,
+            odp,
+            ccr,
+            mr_val,
+            ppp,
+            app,
+            accuracy,
+            balanced_accuracy,
+            sensitivity,
+            specificity,
+            precision,
+            f1_val,
+            mcc,
+            kappa_val,
+            nmi_val,
+            tss,
+        ],
+        dtype=np.float64,
+    ).round(decimals=6)
 
     if metrics.size != scores.size:
         raise rsgispy.RSGISPyException(
@@ -260,15 +299,18 @@ def bias_score(
             [1.0, 2.0, 3.0], [1.1, 2.2, 2.9]
         )
     """
-    y_true_arr = np.asarray(y_true)
-    y_pred_arr = np.asarray(y_pred)
+    y_true_arr = np.asarray(y_true, dtype=np.float64)
+    y_pred_arr = np.asarray(y_pred, dtype=np.float64)
     if y_true_arr.ndim != y_pred_arr.ndim:
         raise rsgispy.RSGISPyException("Error: y_true dimensions != y_pred.")
-    if y_true_arr.size != y_pred_arr.size:
+    if y_true_arr.shape != y_pred_arr.shape:
         raise rsgispy.RSGISPyException("Error: y_true size != y_pred.")
 
     bias = np.mean(y_pred_arr - y_true_arr, axis=0)
-    norm_bias = (bias / np.mean(y_true_arr, axis=0)) * 100.0
+    mean_true = np.mean(y_true_arr, axis=0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        norm_bias = (bias / mean_true) * 100.0
     return bias, norm_bias
 
 
@@ -277,7 +319,14 @@ def decompose_bias_variance(
     y_pred: Union[np.ndarray, Sequence[float]],
 ) -> Tuple[Any, Any, Any, Any]:
     """
-    Decompose MSE into ``Bias^2 + Variance + Irreducible Error``.
+    Decompose empirical MSE of paired residuals ``e = y_pred - y_true`` into
+    ``Bias^2 + Error Variance + Residual``.
+
+    For a single set of paired predictions ``(y_true, y_pred)``, the identity
+    ``MSE = E[e]^2 + Var(e)`` holds identically (up to floating-point rounding),
+    where ``bias_squared = E[y_pred - y_true]^2`` is squared mean bias,
+    ``variance = Var(y_pred - y_true)`` is the variance of the prediction errors,
+    and ``noise`` is the non-negative numerical residual ``max(0, MSE - (Bias^2 + Var))``.
 
     :param y_true: Array of true target values.
     :param y_pred: Array of predicted target values.
@@ -290,19 +339,20 @@ def decompose_bias_variance(
             [1.0, 2.0, 3.0], [1.1, 2.2, 2.9]
         )
     """
-    y_true_arr = np.asarray(y_true)
-    y_pred_arr = np.asarray(y_pred)
+    y_true_arr = np.asarray(y_true, dtype=np.float64)
+    y_pred_arr = np.asarray(y_pred, dtype=np.float64)
     if y_true_arr.ndim != y_pred_arr.ndim:
         raise rsgispy.RSGISPyException("Error: y_true dimensions != y_pred.")
-    if y_true_arr.size != y_pred_arr.size:
+    if y_true_arr.shape != y_pred_arr.shape:
         raise rsgispy.RSGISPyException("Error: y_true size != y_pred.")
 
-    mse = np.mean((y_pred_arr - y_true_arr) ** 2, axis=0)
-    bias_squared = np.mean(y_pred_arr - y_true_arr, axis=0) ** 2
-    variance = np.var(y_pred_arr - y_true_arr, axis=0)
+    errors = y_pred_arr - y_true_arr
+    mse = np.mean(errors**2, axis=0)
+    bias_squared = np.mean(errors, axis=0) ** 2
+    variance = np.var(errors, axis=0)
     noise = mse - (bias_squared + variance)
     if isinstance(noise, np.ndarray):
-        noise[noise < 0] = 0
+        noise[noise < 0] = 0.0
     elif noise < 0:
-        noise = 0
+        noise = 0.0
     return mse, bias_squared, variance, noise

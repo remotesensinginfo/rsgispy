@@ -10,7 +10,7 @@ from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union
 import matplotlib.axes
 import matplotlib.legend
 
-from rsgispy.mapping._common import _LOC_ALIASES, resolve_mpl_location
+from rsgispy.mapping._common import resolve_mpl_location
 from rsgispy.mapping._legend import (
     _measure_axis_inches,
     _style_legend,
@@ -258,7 +258,7 @@ def add_categorical_legend(
         eff_loc = "center"
         eff_anchor: Optional[Tuple[float, ...]] = (0.5, 0.5)
     else:
-        eff_loc = _LOC_ALIASES.get(loc.strip().lower(), loc)
+        eff_loc = resolve_mpl_location(loc)
         eff_anchor = bbox_to_anchor
 
     return _style_legend(

@@ -368,7 +368,7 @@ def _sharpen_multi_high_bands(
     band_min: float,
     band_max: float,
 ) -> np.ndarray:
-    """Local least-squares sharpening when multiple high-res bands are given."""
+    """Vectorised local least-squares sharpening for multiple high-res bands."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     half = win_size // 2
     win_h = low_halo.shape[0] - (2 * half)
@@ -399,19 +399,46 @@ def _sharpen_multi_high_bands(
     ).reshape(win_h, win_w, -1)
 
     out = np.where(v_centre, l_centre, float(no_data_val))
-    rows, cols = np.where(v_centre)
-    for r_idx, c_idx in zip(rows.tolist(), cols.tolist()):
-        vmask = v_wins[r_idx, c_idx]
-        if int(vmask.sum()) < n_high + 2:
-            continue
-        x_mat = h_wins[r_idx, c_idx][vmask]
-        x_design = np.column_stack(
-            [np.ones(x_mat.shape[0], dtype=np.float64), x_mat]
+    n_valid = v_wins.sum(axis=2)
+    fit_mask = v_centre & (n_valid >= n_high + 2)
+    fit_r, fit_c = np.where(fit_mask)
+    n_fit = fit_r.size
+    if n_fit == 0:
+        return out
+
+    chunk_size = 8192
+    for start in range(0, n_fit, chunk_size):
+        end = min(start + chunk_size, n_fit)
+        rr = fit_r[start:end]
+        cc = fit_c[start:end]
+        vm = v_wins[rr, cc]  # (C, K)
+        cnt = vm.sum(axis=1, dtype=np.float64)  # (C,)
+        hv = np.where(vm[..., None], h_wins[rr, cc], 0.0)  # (C, K, M)
+        lv = np.where(vm, l_wins[rr, cc], 0.0)  # (C, K)
+
+        mean_h = hv.sum(axis=1) / cnt[:, None]  # (C, M)
+        mean_l = lv.sum(axis=1) / cnt  # (C,)
+
+        dh = np.where(vm[..., None], hv - mean_h[:, None, :], 0.0)
+        dl = np.where(vm, lv - mean_l[:, None], 0.0)
+
+        gram = np.einsum("nki,nkj->nij", dh, dh)
+        rhs = np.einsum("nki,nk->ni", dh, dl)
+
+        eigvals, eigvecs = np.linalg.eigh(gram)
+        tol = np.maximum(eigvals[:, -1:] * 1e-12, 1e-12)
+        valid_ev = eigvals > tol
+        safe_ev = np.where(valid_ev, eigvals, 1.0)
+        inv_ev = np.where(valid_ev, 1.0 / safe_ev, 0.0)
+
+        vt_rhs = np.einsum("nji,nj->ni", eigvecs, rhs)
+        coefs = np.einsum("nij,nj->ni", eigvecs, inv_ev * vt_rhs)
+
+        pred = mean_l + np.einsum(
+            "ni,ni->n", coefs, h_centres[rr, cc] - mean_h
         )
-        y_vec = l_wins[r_idx, c_idx][vmask]
-        coefs, _, _, _ = np.linalg.lstsq(x_design, y_vec, rcond=None)
-        val = float(coefs[0] + np.dot(coefs[1:], h_centres[r_idx, c_idx]))
-        out[r_idx, c_idx] = min(max(val, band_min), band_max)
+        out[rr, cc] = np.clip(pred, band_min, band_max)
+
     return out
 
 
@@ -547,6 +574,7 @@ def sharpen_low_res_bands(
             count=len(band_info),
             creation_opts=norm_opts,
         )
+        dst.nodata = eff_nd
         for out_idx, binfo in enumerate(band_info, start=1):
             if binfo.name:
                 dst.set_band_description(out_idx, str(binfo.name))

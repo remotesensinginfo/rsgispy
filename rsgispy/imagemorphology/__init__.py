@@ -61,17 +61,23 @@ def _resolve_morph_datatype(
         return rsgispy.get_rsgis_datatype(src.dtypes[0])
 
 
+def _resolve_input_nodata(
+    input_img: str, no_data_val: Optional[float]
+) -> Optional[float]:
+    """Resolve effective input nodata value for masking invalid pixels."""
+    if no_data_val is not None:
+        return float(no_data_val)
+    hdr_nd = get_img_no_data_value(input_img)
+    return float(hdr_nd) if hdr_nd is not None else None
+
+
 def _resolve_morph_nodata(
     input_img: str,
     no_data_val: Optional[float],
     out_np_dtype: np.dtype,
 ) -> Optional[float]:
     """Resolve output nodata value, preserving input header nodata when representable."""
-    eff_nd = (
-        float(no_data_val)
-        if no_data_val is not None
-        else get_img_no_data_value(input_img)
-    )
+    eff_nd = _resolve_input_nodata(input_img, no_data_val)
     if eff_nd is None or not math.isfinite(float(eff_nd)):
         return None
     nd_val = float(eff_nd)
@@ -87,6 +93,27 @@ def _resolve_morph_nodata(
                 return nd_val
         return None
     return None
+
+
+def _resolve_fill_nodata(
+    out_nd: Optional[float], out_np_dtype: np.dtype
+) -> float:
+    """Resolve numeric fill value written at invalid/nodata output pixels."""
+    if out_nd is not None:
+        return float(out_nd)
+    if np.issubdtype(out_np_dtype, np.floating):
+        return float(np.nan)
+    return 0.0
+
+
+def _valid_morph_mask(
+    arr: np.ndarray, in_nd: Optional[float]
+) -> np.ndarray:
+    """Return boolean mask of finite, non-nodata pixels in ``arr``."""
+    valid = np.isfinite(arr)
+    if in_nd is not None and math.isfinite(float(in_nd)):
+        valid &= arr != float(in_nd)
+    return valid
 
 
 def _parse_morph_op_file(morph_op_file: str) -> np.ndarray:
@@ -184,8 +211,9 @@ def _compute_local_minima_block(
     allow_equal: bool,
     sequencial_out: bool,
     seq_counters: np.ndarray,
+    in_nd: Optional[float] = None,
 ) -> np.ndarray:
-    """Evaluate local minima on a zero-padded block of shape ``(bands, H+2h, W+2h)``."""
+    """Evaluate local minima on an edge-padded block of shape ``(bands, H+2h, W+2h)``."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     win_size = op_mask.shape[0]
     half = win_size // 2
@@ -197,21 +225,26 @@ def _compute_local_minima_block(
     nbr_mask = op_mask & ((ii != half) | (jj != half))
     has_nbrs = bool(np.any(nbr_mask))
 
+    valid_pad = _valid_morph_mask(padded, in_nd)
     centres = padded[:, half:half + out_h, half:half + out_w]
+    centre_valid = valid_pad[:, half:half + out_h, half:half + out_w]
     windows = sliding_window_view(padded, (win_size, win_size), axis=(1, 2))
+    valid_wins = sliding_window_view(valid_pad, (win_size, win_size), axis=(1, 2))
     nbr_vals = windows[:, :, :, nbr_mask] if has_nbrs else None
+    nbr_valid = valid_wins[:, :, :, nbr_mask] if has_nbrs else None
 
     if combined:
-        centre_min = np.min(centres, axis=0)
-        if nbr_vals is not None:
+        any_centre_valid = np.any(centre_valid, axis=0)
+        centre_min = np.min(np.where(centre_valid, centres, np.inf), axis=0)
+        if nbr_vals is not None and nbr_valid is not None:
             cmp_mask = (
-                nbr_vals < centre_min[None, :, :, None]
+                nbr_valid & (nbr_vals < centre_min[None, :, :, None])
                 if allow_equal
-                else nbr_vals <= centre_min[None, :, :, None]
+                else nbr_valid & (nbr_vals <= centre_min[None, :, :, None])
             )
-            is_minima = ~np.any(cmp_mask, axis=(0, 3))
+            is_minima = any_centre_valid & ~np.any(cmp_mask, axis=(0, 3))
         else:
-            is_minima = np.ones((out_h, out_w), dtype=bool)
+            is_minima = any_centre_valid
 
         out = np.zeros((1, out_h, out_w), dtype=np.float64)
         _fill_minima_band(out[0], is_minima, sequencial_out, seq_counters, 0)
@@ -219,19 +252,64 @@ def _compute_local_minima_block(
 
     out = np.zeros((n_bands, out_h, out_w), dtype=np.float64)
     for b_idx in range(n_bands):
-        if nbr_vals is not None:
+        if nbr_vals is not None and nbr_valid is not None:
             band_nbrs = nbr_vals[b_idx]
+            band_nbr_valid = nbr_valid[b_idx]
             cmp_mask = (
-                band_nbrs < centres[b_idx, :, :, None]
+                band_nbr_valid & (band_nbrs < centres[b_idx, :, :, None])
                 if allow_equal
-                else band_nbrs <= centres[b_idx, :, :, None]
+                else band_nbr_valid & (band_nbrs <= centres[b_idx, :, :, None])
             )
-            is_minima = ~np.any(cmp_mask, axis=-1)
+            is_minima = centre_valid[b_idx] & ~np.any(cmp_mask, axis=-1)
         else:
-            is_minima = np.ones((out_h, out_w), dtype=bool)
+            is_minima = centre_valid[b_idx]
 
         _fill_minima_band(out[b_idx], is_minima, sequencial_out, seq_counters, b_idx)
     return out
+
+
+def _morph_reduce_block(
+    padded: np.ndarray,
+    op_mask: np.ndarray,
+    op_kind: str,
+    combined: bool,
+    in_nd: Optional[float],
+    fill_nd: float,
+) -> np.ndarray:
+    """Compute nodata-aware dilate/erode/gradient over an edge-padded block."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    win_size = int(op_mask.shape[0])
+    half = win_size // 2
+    out_h = padded.shape[1] - (2 * half)
+    out_w = padded.shape[2] - (2 * half)
+    reduce_axes: Tuple[int, ...] = (0, -1) if combined else (-1,)
+
+    valid_pad = _valid_morph_mask(padded, in_nd)
+    centre_valid = valid_pad[:, half:half + out_h, half:half + out_w]
+    if combined:
+        centre_keep = np.any(centre_valid, axis=0)
+    else:
+        centre_keep = centre_valid
+
+    win_view = sliding_window_view(padded, (win_size, win_size), axis=(1, 2))
+    valid_view = sliding_window_view(valid_pad, (win_size, win_size), axis=(1, 2))
+    active = win_view[:, :, :, op_mask]
+    active_valid = valid_view[:, :, :, op_mask]
+    keep = centre_keep & np.any(active_valid, axis=reduce_axes)
+
+    if op_kind == "dilate":
+        raw_out = np.max(np.where(active_valid, active, -np.inf), axis=reduce_axes)
+    elif op_kind == "erode":
+        raw_out = np.min(np.where(active_valid, active, np.inf), axis=reduce_axes)
+    else:
+        max_v = np.max(np.where(active_valid, active, -np.inf), axis=reduce_axes)
+        min_v = np.min(np.where(active_valid, active, np.inf), axis=reduce_axes)
+        raw_out = max_v - min_v
+
+    raw_out = np.where(keep, raw_out, fill_nd)
+    if combined:
+        raw_out = raw_out[np.newaxis, :, :]
+    return raw_out
 
 
 def _run_window_morphology(
@@ -262,13 +340,14 @@ def _run_window_morphology(
     )
     out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    in_nd = _resolve_input_nodata(input_img, no_data_val)
     out_nd = _resolve_morph_nodata(input_img, no_data_val, out_np_dtype)
+    fill_nd = _resolve_fill_nodata(out_nd, out_np_dtype)
     win_size = int(op_mask.shape[0])
     use_strips = op_kind == "local_minima" and sequencial_out
     with rasterio.open(input_img, "r") as src:
         out_count = 1 if combined else int(src.count)
     seq_counters = np.ones(out_count, dtype=np.int64)
-    reduce_axes: Tuple[int, ...] = (0, -1) if combined else (-1,)
 
     def _morph_block(padded: np.ndarray) -> np.ndarray:
         if op_kind == "local_minima":
@@ -279,20 +358,16 @@ def _run_window_morphology(
                 allow_equal=allow_equal,
                 sequencial_out=sequencial_out,
                 seq_counters=seq_counters,
+                in_nd=in_nd,
             )
-        win_view = sliding_window_view(padded, (win_size, win_size), axis=(1, 2))
-        active = win_view[:, :, :, op_mask]
-        if op_kind == "dilate":
-            raw_out = np.max(active, axis=reduce_axes)
-        elif op_kind == "erode":
-            raw_out = np.min(active, axis=reduce_axes)
-        else:
-            raw_out = np.max(active, axis=reduce_axes) - np.min(
-                active, axis=reduce_axes
-            )
-        if combined:
-            raw_out = raw_out[np.newaxis, :, :]
-        return raw_out
+        return _morph_reduce_block(
+            padded=padded,
+            op_mask=op_mask,
+            op_kind=op_kind,
+            combined=combined,
+            in_nd=in_nd,
+            fill_nd=fill_nd,
+        )
 
     run_window_halo_blocks(
         input_img=input_img,
@@ -305,8 +380,7 @@ def _run_window_morphology(
         out_count=out_count,
         per_band=False,
         read_dtype=np.float64,
-        pad_mode="constant",
-        fill_value=0.0,
+        pad_mode="edge",
         out_nodata=out_nd,
         clamp_int=True,
         full_width_strips=use_strips,
@@ -326,21 +400,25 @@ def _make_morph_step_node(
     op_mask: np.ndarray,
     op_kind: str,
     out_np_dtype: np.dtype,
+    in_nd: Optional[float] = None,
+    fill_nd: float = 0.0,
     name: Optional[str] = None,
 ) -> WindowOp:
     """Build a :class:`WindowOp` node applying a single dilation/erosion step."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     win_size = int(op_mask.shape[0])
     half = win_size // 2
     is_int = np.issubdtype(out_np_dtype, np.integer)
     int_info = np.iinfo(out_np_dtype) if is_int else None
 
     def _step_fn(arr: np.ndarray) -> np.ndarray:
-        win_view = sliding_window_view(arr, (win_size, win_size), axis=(1, 2))
-        active = win_view[:, :, :, op_mask]
-        raw_out = (
-            np.max(active, axis=-1)
-            if op_kind == "dilate"
-            else np.min(active, axis=-1)
+        raw_out = _morph_reduce_block(
+            padded=arr,
+            op_mask=op_mask,
+            op_kind=op_kind,
+            combined=False,
+            in_nd=in_nd,
+            fill_nd=fill_nd,
         )
         if int_info is not None:
             raw_out = np.clip(
@@ -352,7 +430,7 @@ def _make_morph_step_node(
         source=source,
         radius=(half, half),
         func=_step_fn,
-        border=HaloBorder(mode="constant", fill_value=0.0),
+        border=HaloBorder(mode="edge"),
         name=name,
     )
 
@@ -387,15 +465,20 @@ def _run_two_step_seq(
 
     eff_dtype = _resolve_morph_datatype(input_img, datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    in_nd = _resolve_input_nodata(input_img, no_data_val)
     out_nd = _resolve_morph_nodata(input_img, no_data_val, out_np_dtype)
+    fill_nd = _resolve_fill_nodata(out_nd, out_np_dtype)
     cur_node: TileNode = RasterSource(input_img, dtype=np.float64, name="src")
 
     for idx in range(niters):
+        step_nd = in_nd if idx == 0 else out_nd
         cur_node = _make_morph_step_node(
             source=cur_node,
             op_mask=op_mask,
             op_kind=first_op,
             out_np_dtype=out_np_dtype,
+            in_nd=step_nd,
+            fill_nd=fill_nd,
             name=f"{first_op}_{idx}",
         )
     mid_node = cur_node
@@ -406,6 +489,8 @@ def _run_two_step_seq(
             op_mask=op_mask,
             op_kind=second_op,
             out_np_dtype=out_np_dtype,
+            in_nd=out_nd,
+            fill_nd=fill_nd,
             name=f"{second_op}_{idx}",
         )
 
@@ -1167,7 +1252,9 @@ def _run_top_hat(
     ensure_file_exists(input_img)
     eff_dtype = _resolve_morph_datatype(input_img, datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    in_nd = _resolve_input_nodata(input_img, no_data_val)
     out_nd = _resolve_morph_nodata(input_img, no_data_val, out_np_dtype)
+    fill_nd = _resolve_fill_nodata(out_nd, out_np_dtype)
     src_node = RasterSource(input_img, dtype=np.float64, name="src")
     first_op, second_op = ("dilate", "erode") if black else ("erode", "dilate")
     step1 = _make_morph_step_node(
@@ -1175,6 +1262,8 @@ def _run_top_hat(
         op_mask=op_mask,
         op_kind=first_op,
         out_np_dtype=out_np_dtype,
+        in_nd=in_nd,
+        fill_nd=fill_nd,
         name=first_op,
     )
     step2 = _make_morph_step_node(
@@ -1182,18 +1271,28 @@ def _run_top_hat(
         op_mask=op_mask,
         op_kind=second_op,
         out_np_dtype=out_np_dtype,
+        in_nd=out_nd,
+        fill_nd=fill_nd,
         name=second_op,
     )
+
+    def _top_hat_diff(first_arr: np.ndarray, second_arr: np.ndarray) -> np.ndarray:
+        orig_arr = second_arr if black else first_arr
+        orig_valid = _valid_morph_mask(orig_arr, in_nd)
+        other_arr = first_arr if black else second_arr
+        other_valid = _valid_morph_mask(other_arr, out_nd)
+        return np.where(orig_valid & other_valid, first_arr - second_arr, fill_nd)
+
     if black:
         diff_node = PointwiseOp(
             inputs=(step2, src_node),
-            func=lambda closed, orig: closed - orig,
+            func=_top_hat_diff,
             name="black_top_hat_diff",
         )
     else:
         diff_node = PointwiseOp(
             inputs=(src_node, step2),
-            func=lambda orig, opened: orig - opened,
+            func=_top_hat_diff,
             name="white_top_hat_diff",
         )
 

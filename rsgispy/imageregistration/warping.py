@@ -80,6 +80,7 @@ def gcp_to_gdal(
     in_gcp_file: Union[str, os.PathLike, pd.DataFrame],
     gcp_epsg: Optional[int] = None,
     *,
+    gcp_crs: Optional[Any] = None,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
@@ -96,6 +97,9 @@ def gcp_to_gdal(
                         or vector file) or a :class:`pandas.DataFrame`.
     :param gcp_epsg: Optional EPSG code for GCP coordinates (defaults to
                      ``input_img`` CRS).
+    :param gcp_crs: Optional full CRS (``rasterio.crs.CRS``, ``pyproj.CRS``,
+                    WKT, or PROJ string) for GCP coordinates; takes precedence
+                    over ``gcp_epsg`` when provided.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type (``None``
                      preserves input pixel dtype).
@@ -125,17 +129,18 @@ def gcp_to_gdal(
     gcps = df_to_gcps(tie_df)
 
     with rasterio.open(in_path, "r") as src:
-        gcp_crs = (
-            rasterio.crs.CRS.from_epsg(gcp_epsg)
-            if gcp_epsg is not None
-            else src.crs
-        )
+        if gcp_crs is not None:
+            eff_gcp_crs = rasterio.crs.CRS.from_user_input(gcp_crs)
+        elif gcp_epsg is not None:
+            eff_gcp_crs = rasterio.crs.CRS.from_epsg(gcp_epsg)
+        else:
+            eff_gcp_crs = src.crs
 
     nd_val = _copy_raster_with_gcps(
         in_path,
         out_path,
         gcps=gcps,
-        gcp_crs=gcp_crs,
+        gcp_crs=eff_gcp_crs,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -481,6 +486,7 @@ def warp_with_tie_points(
         flt_path, "r"
     ) as flt_src:
         ref_crs = ref_src.crs
+        flt_crs = flt_src.crs
         b = ref_src.bounds
         ref_extent = (float(b.left), float(b.bottom), float(b.right), float(b.top))
         ref_size = (ref_src.width, ref_src.height)
@@ -522,6 +528,23 @@ def warp_with_tie_points(
         )
 
     eff_tps = use_tps or t_key == TRANSFORM_TPS
+    same_crs = True
+    if ref_crs is not None and flt_crs is not None:
+        same_crs = pyproj.CRS.from_user_input(
+            ref_crs
+        ) == pyproj.CRS.from_user_input(flt_crs)
+    if (
+        not same_crs
+        and not eff_tps
+        and t_key in (TRANSFORM_SHIFT, "translation", TRANSFORM_SIMILARITY)
+    ):
+        raise rsgispy.RSGISPyException(
+            f"transform_type='{transform_type}' requires matching reference "
+            f"and floating image CRSs (got ref={ref_crs} vs float={flt_crs}). "
+            "Reproject the floating image first or use an affine, polynomial, "
+            "or TPS transform."
+        )
+
     if t_key in (TRANSFORM_AFFINE, TRANSFORM_POLY1):
         eff_order = 1
         fit_key = TRANSFORM_AFFINE
@@ -631,7 +654,7 @@ def warp_with_tie_points(
                 [0.0, 0.0, float(flt_src.height), float(flt_src.height)],
                 dtype=np.float64,
             )
-            c_flt_x, c_flt_y = flt_src.transform * (c_px_x, c_px_y)
+            c_flt_x, c_flt_y = flt_src.transform @ (c_px_x, c_px_y)
         c_ref_x, c_ref_y = evaluate_geometric_model(fitted_model, c_flt_x, c_flt_y)
         gcp_df = pd.DataFrame(
             {
@@ -648,6 +671,7 @@ def warp_with_tie_points(
             flt_path,
             gcp_tmp,
             gcp_df,
+            gcp_crs=ref_crs,
             gdalformat="GTIFF",
             datatype=datatype,
             calc_stats=False,

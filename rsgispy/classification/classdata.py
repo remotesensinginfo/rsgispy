@@ -1004,11 +1004,14 @@ def split_class_samples(
     valid_idx: List[int] = []
 
     has_cls_name = class_name_col in samples_df.columns
-    for cls_key, grp in samples_df.groupby(stratify_col, sort=False):
-        cls_pos = grp.index.to_numpy().copy()
+    grouped_pos = samples_df.groupby(stratify_col, sort=False).indices
+    for cls_key, raw_pos in grouped_pos.items():
+        cls_pos = np.asarray(raw_pos, dtype=np.intp).copy()
         rng.shuffle(cls_pos)
         cls_name = (
-            str(grp[class_name_col].iloc[0]) if has_cls_name else None
+            str(samples_df[class_name_col].iloc[int(cls_pos[0])])
+            if has_cls_name and len(cls_pos) > 0
+            else None
         )
 
         max_cap = _resolve_count_for_class(
@@ -1037,9 +1040,9 @@ def split_class_samples(
         test_idx.extend(cls_pos[n_tr_c:test_end].tolist())
         valid_idx.extend(cls_pos[test_end:valid_end].tolist())
 
-    train_df = samples_df.loc[train_idx].reset_index(drop=True)
-    test_df = samples_df.loc[test_idx].reset_index(drop=True)
-    valid_df = samples_df.loc[valid_idx].reset_index(drop=True)
+    train_df = samples_df.iloc[train_idx].reset_index(drop=True)
+    test_df = samples_df.iloc[test_idx].reset_index(drop=True)
+    valid_df = samples_df.iloc[valid_idx].reset_index(drop=True)
 
     for df_part, out_path in (
         (train_df, out_train_file),

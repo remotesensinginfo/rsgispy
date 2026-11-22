@@ -453,7 +453,10 @@ def select_features_corr(
         label="samples_data",
         require_target=True,
     )
-    assert y_arr is not None
+    if y_arr is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared target array is unexpectedly empty."
+        )
     return run_corr_cluster_selection(
         x_df=x_df,
         y_arr=y_arr,
@@ -581,9 +584,15 @@ def select_features_univariate(
         label="train_data",
         require_target=True,
     )
-    assert y_arr is not None
+    if y_arr is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared target array is unexpectedly empty."
+        )
     _, _, eff_y = _resolve_single_target(eff_targets, y_arr, target_var)
-    assert eff_y is not None
+    if eff_y is None:
+        raise rsgispy.RSGISPyException(
+            "Resolved target array is unexpectedly empty."
+        )
 
     method_key = score_func.strip().lower()
     if method_key in {"f_regression", "f", "f_reg"}:
@@ -713,9 +722,15 @@ def select_features_rfe(
         label="train_data",
         require_target=True,
     )
-    assert y_arr is not None
+    if y_arr is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared target array is unexpectedly empty."
+        )
     _, _, eff_y = _resolve_single_target(eff_targets, y_arr, target_var)
-    assert eff_y is not None
+    if eff_y is None:
+        raise rsgispy.RSGISPyException(
+            "Resolved target array is unexpectedly empty."
+        )
     return run_rfe_selection(
         sk_estimator=sk_regressor,
         x_df=x_df,
@@ -800,9 +815,15 @@ def select_features_from_model(
         label="train_data",
         require_target=True,
     )
-    assert y_arr is not None
+    if y_arr is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared target array is unexpectedly empty."
+        )
     _, _, eff_y = _resolve_single_target(eff_targets, y_arr, target_var)
-    assert eff_y is not None
+    if eff_y is None:
+        raise rsgispy.RSGISPyException(
+            "Resolved target array is unexpectedly empty."
+        )
     return run_from_model_selection(
         sk_estimator=sk_regressor,
         x_df=x_df,
@@ -922,9 +943,15 @@ def select_features_boruta_shap(
         label="train_data",
         require_target=True,
     )
-    assert y_arr is not None
+    if y_arr is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared target array is unexpectedly empty."
+        )
     _, _, eff_y = _resolve_single_target(eff_targets, y_arr, target_var)
-    assert eff_y is not None
+    if eff_y is None:
+        raise rsgispy.RSGISPyException(
+            "Resolved target array is unexpectedly empty."
+        )
 
     selected, scores_df = run_boruta_shap_selection(
         train_x=x_df,
@@ -1023,7 +1050,10 @@ def calc_feature_importance(
         label="eval_data",
         require_target=True,
     )
-    assert y_arr is not None
+    if y_arr is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared target array is unexpectedly empty."
+        )
 
     eff_scoring = scoring
     eff_y = y_arr
@@ -1164,12 +1194,18 @@ def calc_jackknife_feature_importance(
         label="test_data",
         require_target=True,
     )
-    assert train_y is not None and test_y is not None
+    if train_y is None or test_y is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared training or testing target arrays are unexpectedly empty."
+        )
     _, run_targets, eff_train_y = _resolve_single_target(
         eff_targets, train_y, target_var
     )
     _, _, eff_test_y = _resolve_single_target(eff_targets, test_y, target_var)
-    assert eff_train_y is not None and eff_test_y is not None
+    if eff_train_y is None or eff_test_y is None:
+        raise rsgispy.RSGISPyException(
+            "Resolved training or testing target arrays are unexpectedly empty."
+        )
 
     def _eval_subset(sub_vars: List[str]) -> Dict[str, float]:
         tr_sub = train_x_all[sub_vars]

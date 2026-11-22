@@ -1008,8 +1008,10 @@ def open_input_datasets(
     """
     datasets: Dict[str, DatasetReader] = {}
     for b_def in norm_defs:
-        assert b_def.input_img is not None
-        assert b_def.img_band is not None
+        if b_def.input_img is None or b_def.img_band is None:
+            raise rsgispy.RSGISPyException(
+                "BandDefn must define both input_img and img_band."
+            )
         if b_def.input_img not in datasets:
             try:
                 datasets[b_def.input_img] = stack.enter_context(
@@ -1302,8 +1304,10 @@ def iter_image_blocks(
 
         block_vars: Dict[str, np.ndarray] = {}
         for b_def in norm_defs:
-            assert b_def.input_img is not None
-            assert b_def.band_name is not None
+            if b_def.input_img is None or b_def.band_name is None:
+                raise rsgispy.RSGISPyException(
+                    "BandDefn must define both input_img and band_name."
+                )
             base_col, base_row = grid.offsets[b_def.input_img]
             in_win = Window(base_col + col_off, base_row + row_off, win_w, win_h)
             block_vars[b_def.band_name] = datasets[b_def.input_img].read(

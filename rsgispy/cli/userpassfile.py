@@ -15,6 +15,12 @@ from rsgispy import RSGISPyException
 from rsgispy.cli._common import add_output_arg, build_parser, run_cli
 from rsgispy.tools.credentials import create_username_password_file
 
+__all__ = [
+    "build_userpassfile_parser",
+    "main",
+    "cli_main",
+]
+
 
 def build_userpassfile_parser() -> argparse.ArgumentParser:
     """Construct the argument parser for ``rsgisuserpassfile``."""

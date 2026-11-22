@@ -172,21 +172,44 @@ def perform_least_cost_path_calc(
 
         start_rc = _coord_to_pixel(src, start_coord, "start_coord")
         stop_rc = _coord_to_pixel(src, stop_coord, "stop_coord")
-        cost_arr = src.read(cost_img_band).astype(np.float64, copy=False)
+        cost_arr = src.read(cost_img_band).astype(np.float64, copy=True)
+        invalid_cost = ~np.isfinite(cost_arr)
+        if src.nodata is not None:
+            nd_val = float(src.nodata)
+            if math.isfinite(nd_val):
+                invalid_cost |= cost_arr == nd_val
+        if np.any(invalid_cost):
+            cost_arr[invalid_cost] = np.inf
 
         if np.any(cost_arr < 0):
             raise rsgispy.RSGISPyException(
                 "Cost surface contains negative values, which are unsupported."
             )
+        if not (
+            math.isfinite(float(cost_arr[start_rc]))
+            and math.isfinite(float(cost_arr[stop_rc]))
+        ):
+            raise rsgispy.RSGISPyException(
+                "Start or stop coordinate falls on an invalid or no-data cost cell."
+            )
 
         if HAVE_SKIMAGE:
-            indices, _ = skimage.graph.route_through_array(
-                cost_arr,
-                start_rc,
-                stop_rc,
-                geometric=True,
-                fully_connected=True,
-            )
+            try:
+                indices, total_cost = skimage.graph.route_through_array(
+                    cost_arr,
+                    start_rc,
+                    stop_rc,
+                    geometric=True,
+                    fully_connected=True,
+                )
+            except ValueError as err:
+                raise rsgispy.RSGISPyException(
+                    "No valid least-cost path found between start_coord and stop_coord."
+                ) from err
+            if not math.isfinite(float(total_cost)):
+                raise rsgispy.RSGISPyException(
+                    "No valid least-cost path found between start_coord and stop_coord."
+                )
             idx_arr = np.asarray(indices, dtype=np.int64)
             path_arr = np.zeros(cost_arr.shape, dtype=np.uint8)
             path_arr[idx_arr[:, 0], idx_arr[:, 1]] = 1

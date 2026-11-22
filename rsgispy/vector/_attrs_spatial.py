@@ -109,6 +109,7 @@ def pop_bbox_cols(
         vec_file,  # type: ignore[arg-type]
         out_vec_lyr if out_vec_lyr is not None else vec_lyr,
         out_format=out_format,
+        replace_layer=True,
         out_compress=out_compress,
     )
     return None

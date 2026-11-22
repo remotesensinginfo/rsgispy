@@ -20,10 +20,10 @@ from matplotlib.text import Text
 from matplotlib.transforms import Affine2D
 import numpy as np
 import pyproj
+import pyproj.exceptions
 
 import rsgispy
 from rsgispy.mapping._common import resolve_mpl_location
-import rsgispy.tools.projection
 
 #: Scale bar style: solid horizontal bar (default).
 SCALEBAR_STYLE_SOLID = "solid"
@@ -121,28 +121,47 @@ def _compute_metres_per_map_unit(
     epsg_code: Optional[int],
     bbox: Tuple[float, float, float, float],
 ) -> float:
-    """Compute metres per x-axis map unit from EPSG code and bounding box."""
+    """
+    Compute geodesic ground metres per x-axis map unit at the ``bbox`` midpoint.
+    """
     if epsg_code is None:
         return 1.0
-    if int(epsg_code) == 4326:
-        lat_mid = max(-89.9, min(89.9, 0.5 * (bbox[2] + bbox[3])))
-        return rsgispy.tools.projection.great_circle_distance(
-            wgs84_p1=(0.0, lat_mid),
-            wgs84_p2=(1.0, lat_mid),
-        )
     try:
         crs = pyproj.CRS.from_epsg(int(epsg_code))
+        x_mid = 0.5 * (float(bbox[0]) + float(bbox[1]))
+        y_mid = 0.5 * (float(bbox[2]) + float(bbox[3]))
+        span_x = abs(float(bbox[1]) - float(bbox[0]))
+
         if crs.is_geographic:
-            lat_mid = max(-89.9, min(89.9, 0.5 * (bbox[2] + bbox[3])))
-            return rsgispy.tools.projection.great_circle_distance(
-                wgs84_p1=(0.0, lat_mid),
-                wgs84_p2=(1.0, lat_mid),
+            geod = crs.get_geod() or pyproj.Geod(ellps="WGS84")
+            lat_mid = max(-89.9, min(89.9, y_mid))
+            delta = min(0.5, max(span_x * 0.01, 1e-5))
+            _, _, dist_m = geod.inv(
+                x_mid - 0.5 * delta, lat_mid, x_mid + 0.5 * delta, lat_mid
             )
+            if math.isfinite(dist_m) and dist_m > 0.0:
+                return float(dist_m / delta)
+
+        geog_crs = crs.geodetic_crs or pyproj.CRS.from_epsg(4326)
+        geod = geog_crs.get_geod() or pyproj.Geod(ellps="WGS84")
+        transformer = pyproj.Transformer.from_crs(crs, geog_crs, always_xy=True)
+        delta = max(span_x * 0.01, 1e-3) if span_x > 0.0 else 1.0
+        lon1, lat1 = transformer.transform(x_mid - 0.5 * delta, y_mid)
+        lon2, lat2 = transformer.transform(x_mid + 0.5 * delta, y_mid)
+        if (
+            all(math.isfinite(v) for v in (lon1, lat1, lon2, lat2))
+            and abs(lat1) <= 90.0
+            and abs(lat2) <= 90.0
+        ):
+            _, _, dist_m = geod.inv(lon1, lat1, lon2, lat2)
+            if math.isfinite(dist_m) and dist_m > 0.0:
+                return float(dist_m / delta)
+
         if crs.axis_info:
             factor = crs.axis_info[0].unit_conversion_factor
             if factor is not None and factor > 0:
                 return float(factor)
-    except Exception:  # pylint: disable=broad-exception-caught
+    except (pyproj.exceptions.CRSError, ValueError):
         pass
     return 1.0
 
@@ -1043,12 +1062,11 @@ def add_axis_label(
         elements.add_axis_label(ax, lbl_text="(a)")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    xmin, _ = ax.get_xlim()
-    _, ymax = ax.get_ylim()
     ax.text(
-        xmin,
-        ymax,
+        0.0,
+        1.0,
         lbl_text,
+        transform=ax.transAxes,
         color=lbl_font_clr,
         weight=lbl_font_weight,
         fontsize=lbl_font_size,

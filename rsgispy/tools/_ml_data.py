@@ -104,7 +104,10 @@ def resolve_img_band_info(
     seen_lower_names: set = set()
 
     for img_idx, info in enumerate(norm_list):
-        assert info.file_name is not None
+        if info.file_name is None:
+            raise rsgispy.RSGISPyException(
+                f"ImageBandInfo at index {img_idx} is missing a file_name."
+            )
         ensure_file_exists(info.file_name)
         with rasterio.open(info.file_name, "r") as src:
             n_bands = int(src.count)
@@ -429,7 +432,9 @@ def read_feature_block(
             arr = src_ds.read(band_idx, window=in_win, out_dtype=np.float64)
         else:
             if win_xfm is None:
-                base_ref_col, base_ref_row = grid.offsets[ref_path]
+                base_ref_col, base_ref_row = grid.offsets.get(
+                    ref_path, (0, 0)
+                )
                 ref_win = Window(
                     base_ref_col + col_off,
                     base_ref_row + row_off,
@@ -540,7 +545,10 @@ def extract_points_samples(
             use_pbar=use_pbar,
             out_vec_file=None,
         )
-        assert updated is not None
+        if updated is None:
+            raise rsgispy.RSGISPyException(
+                f"Point pixel extraction returned no data for '{img_path}'."
+            )
         work_gdf = updated
 
     data: Dict[str, Any] = {}
@@ -625,7 +633,10 @@ def extract_polygons_samples(
         vec_def_epsg=vec_def_epsg,
         use_pbar=use_pbar,
     )
-    assert base_df is not None
+    if base_df is None:
+        raise rsgispy.RSGISPyException(
+            f"Polygon pixel extraction returned no data for '{first_img_path}'."
+        )
 
     all_feature_cols = list(first_cols)
     if multi_img and len(base_df) > 0:
@@ -648,7 +659,10 @@ def extract_polygons_samples(
                     vec_def_epsg=vec_def_epsg,
                     use_pbar=use_pbar,
                 )
-                assert other_df is not None
+                if other_df is None:
+                    raise rsgispy.RSGISPyException(
+                        f"Polygon pixel extraction returned no data for '{img_path}'."
+                    )
                 base_df["__xk__"] = np.round(base_df["x"].to_numpy(), 6)
                 base_df["__yk__"] = np.round(base_df["y"].to_numpy(), 6)
                 other_df["__xk__"] = np.round(other_df["x"].to_numpy(), 6)

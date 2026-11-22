@@ -65,7 +65,16 @@ def add_contextily_basemap(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,import-outside-toplevel
-    import contextily
+    try:
+        import contextily
+
+        have_contextily = True
+    except ImportError:
+        contextily = None
+        have_contextily = False
+    rsgispy.check_optional_dep(
+        have_contextily, "add_contextily_basemap", "contextily", "mapping"
+    )
 
     if cx_zoom_lvl is None:
         cx_zoom_lvl = "auto"
@@ -112,9 +121,10 @@ def _update_wmts_xml(
         tag.text = f"{val}"
 
     if wmts_zoom_level is not None:
-        zoom_lvl_tag = ET.Element("ZoomLevel")
+        zoom_lvl_tag = gdal_wmts_tag.find("ZoomLevel")
+        if zoom_lvl_tag is None:
+            zoom_lvl_tag = ET.SubElement(gdal_wmts_tag, "ZoomLevel")
         zoom_lvl_tag.text = f"{wmts_zoom_level}"
-        gdal_wmts_tag.append(zoom_lvl_tag)
 
     ET.indent(tree, space="    ", level=0)
     tree.write(out_xml_path)
@@ -236,15 +246,28 @@ def create_wmts_img_map(
                 out_sub_xml, wmts_tmp_img, driver="GTiff"
             )
 
+        with rasterio.open(wmts_tmp_img, "r") as wmts_src:
+            wmts_band_count = wmts_src.count
+        if wmts_band_count >= 3:
+            wmts_bands = [1, 2, 3]
+            imshow_cmap: Optional[str] = None
+        elif wmts_band_count >= 1:
+            wmts_bands = [1]
+            imshow_cmap = "gray"
+        else:
+            raise rsgispy.RSGISPyException(
+                f"WMTS image '{wmts_tmp_img}' contains no raster bands."
+            )
+
         img_data, img_coords = rsgispy.tools.plotting.get_raster_mpl_imshow(
-            wmts_tmp_img, bands=[1, 2, 3]
+            wmts_tmp_img, bands=wmts_bands
         )
 
         for tmp_path in (out_tmp_xml, out_sub_xml, wmts_tmp_img):
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
-    ax.imshow(img_data, extent=img_coords)
+    ax.imshow(img_data, extent=img_coords, cmap=imshow_cmap)
     ax.set_xlim([bbox[0], bbox[1]])
     ax.set_ylim([bbox[2], bbox[3]])
     _finalize_map_axis(

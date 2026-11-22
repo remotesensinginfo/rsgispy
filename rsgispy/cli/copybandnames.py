@@ -21,6 +21,12 @@ from rsgispy.cli._common import (
 )
 from rsgispy.imageutils.metadata import get_band_names, set_band_names
 
+__all__ = [
+    "build_copybandnames_parser",
+    "main",
+    "cli_main",
+]
+
 
 def build_copybandnames_parser() -> argparse.ArgumentParser:
     """Construct the argument parser for ``rsgiscopybandnames``."""

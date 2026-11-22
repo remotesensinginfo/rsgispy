@@ -29,7 +29,16 @@ from rsgispy.cli._common import (
 )
 from rsgispy.tools.projection import degrees_to_metres
 
+__all__ = [
+    "collect_img_info",
+    "format_img_info",
+    "build_imginfo_parser",
+    "main",
+    "cli_main",
+]
+
 _HISTO_TAG_KEYS = frozenset({"STATISTICS_HISTOBINVALUES"})
+_TILED_DRIVERS = frozenset({"COG", "KEA", "JP2OpenJPEG", "JP2KAK", "JP2ECW"})
 
 
 def _fmt_num(val: Optional[float], sig: int = 5) -> str:
@@ -125,12 +134,12 @@ def _compute_wgs84_bbox(
             py_crs, pyproj.CRS.from_epsg(4326), always_xy=True
         )
         left, bottom, right, top = bounds
-        xs = [left, right, right, left, (left + right) / 2.0]
-        ys = [bottom, bottom, top, top, (bottom + top) / 2.0]
-        lons, lats = transformer.transform(xs, ys)
-        if not all(math.isfinite(v) for v in (*lons, *lats)):
+        west, south, east, north = transformer.transform_bounds(
+            left, bottom, right, top, densify_pts=21
+        )
+        if not all(math.isfinite(v) for v in (west, east, south, north)):
             return None
-        return [float(min(lons)), float(max(lons)), float(min(lats)), float(max(lats))]
+        return [float(west), float(east), float(south), float(north)]
     except Exception:  # pylint: disable=broad-exception-caught
         return None
 
@@ -166,12 +175,49 @@ def _compute_band_stats(
     bidx: int,
     nodata: Optional[float],
 ) -> Dict[str, Optional[float]]:
-    """Compute basic min/max/mean/std statistics for ``bidx`` from pixel values."""
-    arr = ds.read(bidx, masked=False).astype(np.float64, copy=False)
-    valid = np.isfinite(arr)
-    if nodata is not None and not (isinstance(nodata, float) and math.isnan(nodata)):
-        valid &= arr != nodata
-    if not np.any(valid):
+    """Stream blocks of ``bidx`` with running min/max and Chan/Welford mean/std."""
+    nodata_is_finite = nodata is not None and not (
+        isinstance(nodata, float) and math.isnan(nodata)
+    )
+    count = 0
+    min_val = math.inf
+    max_val = -math.inf
+    mean_val = 0.0
+    m2_val = 0.0
+
+    for _, window in ds.block_windows(bidx):
+        block = ds.read(bidx, window=window, masked=False).astype(
+            np.float64, copy=False
+        )
+        valid = np.isfinite(block)
+        if nodata_is_finite:
+            valid &= block != nodata
+        if not np.any(valid):
+            continue
+
+        vals = block[valid]
+        n_block = int(vals.size)
+        blk_min = float(np.min(vals))
+        blk_max = float(np.max(vals))
+        blk_mean = float(np.mean(vals))
+        blk_m2 = float(np.sum((vals - blk_mean) ** 2))
+
+        if count == 0:
+            min_val = blk_min
+            max_val = blk_max
+            mean_val = blk_mean
+            m2_val = blk_m2
+            count = n_block
+        else:
+            min_val = min(min_val, blk_min)
+            max_val = max(max_val, blk_max)
+            new_count = count + n_block
+            delta = blk_mean - mean_val
+            mean_val += delta * (n_block / new_count)
+            m2_val += blk_m2 + (delta ** 2) * (count * n_block / new_count)
+            count = new_count
+
+    if count == 0:
         return {
             "min": None,
             "max": None,
@@ -181,17 +227,36 @@ def _compute_band_stats(
             "mode": None,
             "valid_percent": 0.0,
         }
-    vals = arr[valid]
-    valid_pct = 100.0 * float(vals.size) / float(arr.size) if arr.size > 0 else 0.0
+
+    total_px = ds.width * ds.height
+    valid_pct = 100.0 * float(count) / float(total_px) if total_px > 0 else 0.0
     return {
-        "min": float(np.min(vals)),
-        "max": float(np.max(vals)),
-        "mean": float(np.mean(vals)),
-        "std": float(np.std(vals)),
+        "min": min_val,
+        "max": max_val,
+        "mean": mean_val,
+        "std": math.sqrt(max(0.0, m2_val / count)),
         "median": None,
         "mode": None,
         "valid_percent": valid_pct,
     }
+
+
+def _detect_is_tiled(
+    ds: rasterio.DatasetReader,
+    block_shape: Optional[List[int]],
+    is_cog: bool,
+) -> bool:
+    """Detect tiled raster storage without calling deprecated ``ds.is_tiled``."""
+    if is_cog or ds.driver in _TILED_DRIVERS:
+        return True
+    if block_shape is None or len(block_shape) != 2:
+        return False
+    blk_h, blk_w = block_shape
+    if blk_w != ds.width:
+        return True
+    if blk_h == blk_w and blk_h >= 128 and (blk_h & (blk_h - 1)) == 0:
+        return True
+    return False
 
 
 def _collect_band_info(
@@ -333,10 +398,7 @@ def collect_img_info(
 
             block_shape = list(ds.block_shapes[0]) if ds.block_shapes else None
             is_cog = (layout or "").upper() == "COG"
-            is_tiled = bool(
-                block_shape is not None
-                and (block_shape[1] != ds.width or is_cog)
-            )
+            is_tiled = _detect_is_tiled(ds, block_shape, is_cog)
 
             info: Dict[str, Any] = {
                 "path": os.path.abspath(input_img),

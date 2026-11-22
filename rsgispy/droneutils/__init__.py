@@ -15,8 +15,6 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import geopandas as gpd
 import pandas as pd
 import shapely.geometry
-from PIL import Image
-from PIL.ExifTags import TAGS
 
 import rsgispy
 import rsgispy.tools.files
@@ -25,6 +23,16 @@ from rsgispy.vectorprocess import (
     is_geoparquet_format,
     write_vec_gdf,
 )
+
+try:
+    from PIL import Image  # pylint: disable=import-error
+    from PIL.ExifTags import TAGS  # pylint: disable=import-error
+
+    HAVE_PIL = True
+except ImportError:
+    Image = None  # type: ignore[assignment]
+    TAGS = {}
+    HAVE_PIL = False
 
 try:
     import exiftool  # pylint: disable=import-error
@@ -172,6 +180,36 @@ def _merge_overlapping_clusters(
                 break
 
 
+def _extract_exif_datetime_str(pil_exif_data: Any, date_time_tag: str) -> Optional[str]:
+    """Extract and sanitize a datetime string from IFD0 or Exif SubIFD (0x8769)."""
+    ifd_sources = [pil_exif_data]
+    if hasattr(pil_exif_data, "get_ifd"):
+        try:
+            exif_subifd = pil_exif_data.get_ifd(0x8769)
+            if exif_subifd:
+                ifd_sources.append(exif_subifd)
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+
+    for ifd_data in ifd_sources:
+        for tag_id in ifd_data:
+            tag = TAGS.get(tag_id, tag_id)
+            if tag != date_time_tag:
+                continue
+            try:
+                data = ifd_data.get(tag_id)
+                if isinstance(data, bytes):
+                    data = data.decode("utf-8", errors="ignore")
+                if data is None:
+                    continue
+                cleaned = str(data).rstrip("\x00").strip()
+                if cleaned:
+                    return cleaned
+            except Exception:  # pylint: disable=broad-exception-caught
+                continue
+    return None
+
+
 # pylint: disable=too-many-arguments,too-many-positional-arguments
 def split_photos_by_time(
     input_imgs: Sequence[str],
@@ -212,25 +250,21 @@ def split_photos_by_time(
             time_split_secs=60,
         )
     """
+    rsgispy.check_optional_dep(HAVE_PIL, "split_photos_by_time", "pillow", "imaging")
     img_dt_lut: Dict[str, str] = {}
     for img_file in input_imgs:
         with Image.open(img_file) as pil_image:
             pil_exif_data = pil_image.getexif()
-            for tag_id in pil_exif_data:
-                tag = TAGS.get(tag_id, tag_id)
-                try:
-                    data = pil_exif_data.get(tag_id)
-                    if isinstance(data, bytes):
-                        data = data.decode()
-                    if tag == date_time_tag:
-                        img_dt_lut[img_file] = data
-                except Exception:  # pylint: disable=broad-exception-caught
-                    continue
+            dt_str = _extract_exif_datetime_str(pil_exif_data, date_time_tag)
+            if dt_str is not None:
+                img_dt_lut[img_file] = dt_str
 
     img_clusters: List[ImageTimeCluster] = []
     next_cluster_id = 0
     for img_file, dt_str in img_dt_lut.items():
-        date_time_obj = datetime.datetime.strptime(dt_str, date_time_format)
+        date_time_obj = datetime.datetime.strptime(
+            dt_str.rstrip("\x00").strip(), date_time_format
+        )
 
         matched = False
         for img_cluster in img_clusters:
@@ -302,11 +336,33 @@ def _init_img_info_table(include_relative_alt: bool) -> Dict[str, List[Any]]:
 
 
 def _opt_float(val: Any) -> Optional[float]:
-    return None if val is None else float(val)
+    if val is None or val == "":
+        return None
+    fval = float(val)
+    return None if pd.isna(fval) else fval
 
 
 def _opt_int(val: Any) -> Optional[int]:
-    return None if val is None else int(val)
+    return None if val is None or val == "" else int(val)
+
+
+def _parse_signed_gps_coord(
+    val: Any,
+    ref: Any,
+    neg_prefix: str,
+    pos_prefix: str,
+) -> Optional[float]:
+    """Parse a GPS coordinate and apply hemisphere reference sign (S/W negative)."""
+    fval = _opt_float(val)
+    if fval is None:
+        return None
+    if ref not in (None, ""):
+        ref_str = str(ref).strip().upper()
+        if ref_str.startswith(neg_prefix):
+            return -abs(fval)
+        if ref_str.startswith(pos_prefix):
+            return abs(fval)
+    return fval
 
 
 def _append_common_exif_fields(
@@ -358,9 +414,8 @@ def _append_common_exif_fields(
     img_info["max_aperture_value"].append(img_exif.get("EXIF:MaxApertureValue"))
     img_info["datetime_original"].append(img_exif.get("EXIF:DateTimeOriginal"))
     img_info["sensor_model_data"].append(img_exif.get("EXIF:Model"))
-    img_info["sensor_index"].append(
-        str(_first_valid(img_exif, ("XMP:RigCameraIndex", "XMP:SensorIndex")))
-    )
+    sensor_idx = _first_valid(img_exif, ("XMP:RigCameraIndex", "XMP:SensorIndex"))
+    img_info["sensor_index"].append(None if sensor_idx is None else str(sensor_idx))
 
 
 def _write_vector_layer(
@@ -468,7 +523,25 @@ def _write_flightline_outputs(
 
 
 def _parse_exif_datetime(date_str: str) -> datetime.datetime:
-    return datetime.datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S")
+    cleaned = str(date_str).rstrip("\x00").strip()
+    return datetime.datetime.strptime(cleaned[:19], "%Y:%m:%d %H:%M:%S")
+
+
+def _exif_sort_key(img_exif: Dict[str, Any]) -> Tuple[int, datetime.datetime]:
+    """Return a deterministic sort key from EXIF datetime tags without failing if missing."""
+    for key in (
+        "EXIF:DateTimeOriginal",
+        "EXIF:CreateDate",
+        "EXIF:ModifyDate",
+        "EXIF:DateTime",
+    ):
+        val = img_exif.get(key)
+        if val not in (None, ""):
+            try:
+                return (0, _parse_exif_datetime(str(val)))
+            except ValueError:
+                continue
+    return (1, datetime.datetime.max)
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -528,35 +601,50 @@ def create_flightline_vec(
     with exiftool.ExifToolHelper() as et:
         for img in sorted_imgs:
             exif_entries.append((img, et.get_metadata(img)[0]))
-    exif_entries.sort(
-        key=lambda item: _parse_exif_datetime(item[1]["EXIF:DateTimeOriginal"])
-    )
+    exif_entries.sort(key=lambda item: _exif_sort_key(item[1]))
 
     img_info = _init_img_info_table(include_relative_alt=True)
     for img, img_exif in exif_entries:
-        img_info["lat"].append(
-            float(_first_valid(img_exif, ("Composite:GPSLatitude", "EXIF:GPSLatitude")))
+        lat_val = _parse_signed_gps_coord(
+            _first_valid(img_exif, ("Composite:GPSLatitude", "EXIF:GPSLatitude")),
+            _first_valid(
+                img_exif, ("Composite:GPSLatitudeRef", "EXIF:GPSLatitudeRef")
+            ),
+            neg_prefix="S",
+            pos_prefix="N",
         )
-        img_info["lon"].append(
-            float(
-                _first_valid(img_exif, ("Composite:GPSLongitude", "EXIF:GPSLongitude"))
-            )
+        lon_val = _parse_signed_gps_coord(
+            _first_valid(img_exif, ("Composite:GPSLongitude", "EXIF:GPSLongitude")),
+            _first_valid(
+                img_exif, ("Composite:GPSLongitudeRef", "EXIF:GPSLongitudeRef")
+            ),
+            neg_prefix="W",
+            pos_prefix="E",
         )
+        if lat_val is None or lon_val is None:
+            continue
+
+        img_info["lat"].append(lat_val)
+        img_info["lon"].append(lon_val)
         img_info["relative_altitude"].append(
-            float(
-                _first_valid(img_exif, ("XMP:RelativeAltitude", "Composite:GPSAltitude"))
+            _opt_float(
+                _first_valid(
+                    img_exif, ("XMP:RelativeAltitude", "Composite:GPSAltitude")
+                )
             )
         )
         img_info["absolute_altitude"].append(
-            float(
-                _first_valid(img_exif, ("XMP:AbsoluteAltitude", "Composite:GPSAltitude"))
+            _opt_float(
+                _first_valid(
+                    img_exif, ("XMP:AbsoluteAltitude", "Composite:GPSAltitude")
+                )
             )
         )
 
         _append_common_exif_fields(img_info, img, img_exif)
 
         img_info["flight_pitch_degree"].append(
-            float(
+            _opt_float(
                 _first_valid(
                     img_exif,
                     ("XMP:FlightPitchDegree", "MakerNotes:Pitch"),
@@ -565,7 +653,7 @@ def create_flightline_vec(
             )
         )
         img_info["flight_roll_degree"].append(
-            float(
+            _opt_float(
                 _first_valid(
                     img_exif,
                     ("XMP:FlightRollDegree", "MakerNotes:Roll"),
@@ -574,7 +662,7 @@ def create_flightline_vec(
             )
         )
         img_info["flight_yaw_degree"].append(
-            float(
+            _opt_float(
                 _first_valid(
                     img_exif,
                     ("XMP:FlightYawDegree", "MakerNotes:Yaw"),
@@ -655,6 +743,12 @@ def create_flightline_extern_gps_vec(
                 gps_data = {
                     "lat": row["lat"],
                     "lon": row["lon"],
+                    "lat_ref": _first_valid(
+                        row, ("lat_ref", "GPSLatitudeRef", "EXIF:GPSLatitudeRef")
+                    ),
+                    "lon_ref": _first_valid(
+                        row, ("lon_ref", "GPSLongitudeRef", "EXIF:GPSLongitudeRef")
+                    ),
                     "alt": row["alt"],
                     "roll": row["roll"],
                     "pitch": row["pitch"],
@@ -662,21 +756,43 @@ def create_flightline_extern_gps_vec(
                 }
                 exif_entries.append((input_img, gps_data, et.get_metadata(input_img)[0]))
 
-    exif_entries.sort(
-        key=lambda item: _parse_exif_datetime(item[2]["EXIF:DateTimeOriginal"])
-    )
+    exif_entries.sort(key=lambda item: _exif_sort_key(item[2]))
     print(f"There were {len(exif_entries)} images found matching the GPS data.")
 
     img_info = _init_img_info_table(include_relative_alt=False)
     for img, img_gps_data, img_exif in exif_entries:
-        img_info["lat"].append(float(img_gps_data["lat"]))
-        img_info["lon"].append(float(img_gps_data["lon"]))
-        img_info["absolute_altitude"].append(float(img_gps_data["alt"]))
+        raw_lat = _opt_float(img_gps_data["lat"])
+        raw_lon = _opt_float(img_gps_data["lon"])
+        if raw_lat is None or raw_lon is None:
+            continue
+
+        lat_ref = img_gps_data.get("lat_ref")
+        if (lat_ref is None or pd.isna(lat_ref)) and raw_lat >= 0:
+            lat_ref = _first_valid(
+                img_exif, ("Composite:GPSLatitudeRef", "EXIF:GPSLatitudeRef")
+            )
+        lon_ref = img_gps_data.get("lon_ref")
+        if (lon_ref is None or pd.isna(lon_ref)) and raw_lon >= 0:
+            lon_ref = _first_valid(
+                img_exif, ("Composite:GPSLongitudeRef", "EXIF:GPSLongitudeRef")
+            )
+        lat_val = _parse_signed_gps_coord(
+            raw_lat, lat_ref, neg_prefix="S", pos_prefix="N"
+        )
+        lon_val = _parse_signed_gps_coord(
+            raw_lon, lon_ref, neg_prefix="W", pos_prefix="E"
+        )
+        if lat_val is None or lon_val is None:
+            continue
+
+        img_info["lat"].append(lat_val)
+        img_info["lon"].append(lon_val)
+        img_info["absolute_altitude"].append(_opt_float(img_gps_data["alt"]))
 
         _append_common_exif_fields(img_info, img, img_exif, gimbal_default=0.0)
 
         img_info["flight_pitch_degree"].append(
-            float(
+            _opt_float(
                 _first_valid(
                     img_exif,
                     ("XMP:FlightPitchDegree", "MakerNotes:Pitch"),
@@ -685,7 +801,7 @@ def create_flightline_extern_gps_vec(
             )
         )
         img_info["flight_roll_degree"].append(
-            float(
+            _opt_float(
                 _first_valid(
                     img_exif,
                     ("XMP:FlightRollDegree", "MakerNotes:Roll"),
@@ -694,7 +810,7 @@ def create_flightline_extern_gps_vec(
             )
         )
         img_info["flight_yaw_degree"].append(
-            float(
+            _opt_float(
                 _first_valid(
                     img_exif,
                     ("XMP:FlightYawDegree", "MakerNotes:Yaw"),

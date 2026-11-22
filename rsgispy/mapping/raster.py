@@ -12,7 +12,7 @@ import numpy as np
 import rasterio
 
 import rsgispy
-import rsgispy.imageutils.metadata
+from rsgispy.imageprocess import bbox_from_dataset
 from rsgispy.mapping._legend import create_companion_legend_axis
 from rsgispy.mapping.elements import (
     NORTH_ARROW_STYLE_TRIANGLE,
@@ -30,6 +30,23 @@ __all__ = [
     "create_thematic_raster_map",
     "create_raster_cmap_img_map",
 ]
+
+
+def _read_raster_map_meta(
+    input_img: str,
+    band: Optional[int] = None,
+) -> Tuple[Tuple[float, float, float, float], Optional[int], Optional[float]]:
+    """Open ``input_img`` once and return ``(bbox, epsg_code, nodata)``."""
+    with rasterio.open(input_img, "r") as src:
+        img_bbox = bbox_from_dataset(src)
+        epsg_code: Optional[int] = None
+        if src.crs is not None:
+            epsg_code = src.crs.to_epsg()
+        if band is not None and 1 <= band <= src.count:
+            nodata_val = src.nodatavals[band - 1]
+        else:
+            nodata_val = src.nodata
+    return img_bbox, epsg_code, nodata_val
 
 
 def create_raster_img_map(
@@ -101,12 +118,11 @@ def create_raster_img_map(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    img_bbox, img_epsg, src_nodata = _read_raster_map_meta(input_img)
     if bbox is None:
-        bbox = rsgispy.imageutils.metadata.get_img_bbox(input_img)
-
+        bbox = img_bbox
     if img_no_data_val is None:
-        with rasterio.open(input_img, "r") as src:
-            img_no_data_val = src.nodata
+        img_no_data_val = src_nodata
 
     img_data, img_coords = rsgispy.tools.plotting.get_raster_mpl_imshow(
         input_img, bands=img_bands, bbox=bbox
@@ -161,7 +177,7 @@ def create_raster_img_map(
 
     _finalize_map_axis(
         ax=ax,
-        epsg_code=rsgispy.imageutils.metadata.get_epsg_proj_from_img(input_img),
+        epsg_code=img_epsg,
         bbox=bbox,
         show_scale_bar=show_scale_bar,
         use_grid=use_grid,
@@ -282,8 +298,9 @@ def create_thematic_raster_map(
     else:
         zorder_list = [plot_zorders] * len(input_imgs)
 
+    img_bbox, img_epsg, _ = _read_raster_map_meta(input_imgs[0])
     if bbox is None:
-        bbox = rsgispy.imageutils.metadata.get_img_bbox(input_imgs[0])
+        bbox = img_bbox
 
     img_data_arr_scns = []
     img_coords_scns = []
@@ -311,7 +328,7 @@ def create_thematic_raster_map(
 
     _finalize_map_axis(
         ax=ax,
-        epsg_code=rsgispy.imageutils.metadata.get_epsg_proj_from_img(input_imgs[0]),
+        epsg_code=img_epsg,
         bbox=bbox,
         show_scale_bar=show_scale_bar,
         use_grid=use_grid,
@@ -435,23 +452,38 @@ def create_raster_cmap_img_map(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    img_bbox, img_epsg, band_nodata = _read_raster_map_meta(
+        input_img, band=img_band
+    )
     if bbox is None:
-        bbox = rsgispy.imageutils.metadata.get_img_bbox(input_img)
+        bbox = img_bbox
 
     img_data, img_coords = rsgispy.tools.plotting.get_raster_mpl_imshow(
         input_img, bands=[img_band], bbox=bbox
     )
+    if band_nodata is not None and not np.isnan(band_nodata):
+        img_data = img_data.astype(np.float64, copy=True)
+        img_data[img_data == band_nodata] = np.nan
 
     c_cmap = plt.get_cmap(cmap_name).copy()
+    if vals_under_white:
+        c_cmap = c_cmap.with_extremes(under="white")
+
     c_norm: Optional[matplotlib.colors.Normalize] = None
     if norm_img_vals:
+        finite_mask = np.isfinite(img_data)
         if norm_vmin is None:
-            norm_vmin = float(np.nanmin(img_data))
+            norm_vmin = (
+                float(np.min(img_data[finite_mask]))
+                if np.any(finite_mask)
+                else 0.0
+            )
         if norm_vmax is None:
-            norm_vmax = float(np.nanmax(img_data))
-
-        if vals_under_white:
-            c_cmap = c_cmap.with_extremes(under="white")
+            norm_vmax = (
+                float(np.max(img_data[finite_mask]))
+                if np.any(finite_mask)
+                else 1.0
+            )
 
         if use_log_norm:
             c_norm = matplotlib.colors.LogNorm(vmin=norm_vmin, vmax=norm_vmax)
@@ -468,7 +500,7 @@ def create_raster_cmap_img_map(
 
     _finalize_map_axis(
         ax=ax,
-        epsg_code=rsgispy.imageutils.metadata.get_epsg_proj_from_img(input_img),
+        epsg_code=img_epsg,
         bbox=bbox,
         show_scale_bar=show_scale_bar,
         use_grid=use_grid,

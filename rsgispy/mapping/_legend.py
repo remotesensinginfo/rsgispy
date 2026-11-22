@@ -58,13 +58,14 @@ class LegendEntry:
 
 def _normalise_rgba(
     clr: Any,
+    scale_255: bool = False,
 ) -> Tuple[float, float, float, float]:
     """Normalise hex string, named colour, or RGB/RGBA tuple to 0..1 RGBA."""
     if isinstance(clr, str):
         return matplotlib.colors.to_rgba(clr)
     if isinstance(clr, (tuple, list, np.ndarray)) and len(clr) in (3, 4):
         vals = [float(v) for v in clr]
-        if any(v > 1.0 for v in vals):
+        if scale_255 or any(v > 1.0 for v in vals):
             vals = [v / 255.0 for v in vals]
         if len(vals) == 3:
             vals.append(1.0)
@@ -96,7 +97,9 @@ def _read_raster_colormap(
             return {}
         if not cmap:
             return {}
-        return {int(k): _normalise_rgba(v) for k, v in cmap.items()}
+        return {
+            int(k): _normalise_rgba(v, scale_255=True) for k, v in cmap.items()
+        }
 
 
 def _scan_present_values(
@@ -114,9 +117,25 @@ def _scan_present_values(
                 if isinstance(bbox, rsgispy.BBox)
                 else (bbox[0], bbox[2], bbox[1], bbox[3])
             )
-            win = src.window(*geo_bounds)
-            arr = src.read(band, window=win)
-            present.update(int(v) for v in np.unique(arr) if np.isfinite(v))
+            raw_win = src.window(*geo_bounds).round_offsets().round_lengths()
+            full_win = rasterio.windows.Window(0, 0, src.width, src.height)
+            try:
+                clip_win = raw_win.intersection(full_win)
+            except rasterio.errors.WindowError:
+                return present
+            if clip_win.width <= 0 or clip_win.height <= 0:
+                return present
+            for sub_win in iter_dataset_windows(
+                int(clip_win.height), int(clip_win.width), use_pbar=False
+            ):
+                tile_win = rasterio.windows.Window(
+                    int(clip_win.col_off) + int(sub_win.col_off),
+                    int(clip_win.row_off) + int(sub_win.row_off),
+                    int(sub_win.width),
+                    int(sub_win.height),
+                )
+                arr = src.read(band, window=tile_win)
+                present.update(int(v) for v in np.unique(arr) if np.isfinite(v))
         else:
             for win in iter_dataset_windows(src.height, src.width, use_pbar=False):
                 arr = src.read(band, window=win)

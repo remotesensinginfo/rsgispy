@@ -24,7 +24,7 @@ extensions = [
     "sphinx.ext.intersphinx",
 ]
 
-templates_path = ["_templates"]
+templates_path = []
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 autodoc_member_order = "bysource"

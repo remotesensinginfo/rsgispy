@@ -23,6 +23,12 @@ from rsgispy.tools.checkdatasets import (
 )
 from rsgispy.tools.files import get_files_mod_time
 
+__all__ = [
+    "build_chkgdalfile_parser",
+    "main",
+    "cli_main",
+]
+
 
 def _parse_mod_date(date_str: str) -> datetime.datetime:
     """Parse a ``YYYY-MM-DD`` date string into a ``datetime`` at midnight."""

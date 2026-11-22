@@ -52,6 +52,22 @@ except ImportError:
     qrcode = None  # type: ignore[assignment]
     HAVE_QRCODE = False
 
+try:
+    from PIL import Image as pil_image_mod  # pylint: disable=import-error
+    from PIL.ExifTags import (  # pylint: disable=import-error
+        GPSTAGS as PIL_GPSTAGS,
+        IFD as PIL_IFD,
+        TAGS as PIL_TAGS,
+    )
+
+    HAVE_PIL = True
+except ImportError:
+    pil_image_mod = None  # type: ignore[assignment]
+    PIL_GPSTAGS = {}
+    PIL_IFD = ()  # type: ignore[assignment]
+    PIL_TAGS = {}
+    HAVE_PIL = False
+
 __all__ = [
     "list_exif_info_pil",
     "animate_img_set",
@@ -96,15 +112,15 @@ def animate_img_set(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,import-outside-toplevel
+    # pylint: disable=too-many-locals
     rsgispy.check_optional_dep(HAVE_IMAGEIO, "animate_img_set", "imageio", "imaging")
+    if resize:
+        rsgispy.check_optional_dep(HAVE_PIL, "animate_img_set", "pillow", "imaging")
     tqdm_cls = rsgispy.get_tqdm()
     uid_str = rsgispy.tools.strings.uid_generator()
     lcl_tmp_dir = os.path.join(tmp_dir, f"tmp_{uid_str}")
 
     if resize:
-        from PIL import Image
-
         os.makedirs(lcl_tmp_dir, exist_ok=True)
         ani_input_imgs: List[str] = []
         for in_img in tqdm_cls(
@@ -112,7 +128,7 @@ def animate_img_set(
         ):
             basename = rsgispy.tools.files.get_file_basename(in_img)
             out_resize_img = os.path.join(lcl_tmp_dir, f"{basename}_resize.png")
-            with Image.open(in_img) as lcl_img_obj:
+            with pil_image_mod.open(in_img) as lcl_img_obj:
                 target_y = out_y_size
                 if target_y is None:
                     in_x_size, in_y_size = lcl_img_obj.size
@@ -148,17 +164,15 @@ def list_exif_info_pil(input_img: str) -> None:
         import rsgispy.tools.imaging
         rsgispy.tools.imaging.list_exif_info_pil("photo.jpg")
     """
-    # pylint: disable=import-outside-toplevel
-    from PIL import Image
-    from PIL.ExifTags import GPSTAGS, IFD, TAGS
+    rsgispy.check_optional_dep(HAVE_PIL, "list_exif_info_pil", "pillow", "imaging")
 
-    with Image.open(input_img) as pil_image:
+    with pil_image_mod.open(input_img) as pil_image:
         pil_exif_data = pil_image.getexif()
-        for ifd_id in IFD:
+        for ifd_id in PIL_IFD:
             print(">>>>>>>>>", ifd_id.name, "<<<<<<<<<<")
             try:
                 ifd = pil_exif_data.get_ifd(ifd_id)
-                resolve = GPSTAGS if ifd_id == IFD.GPSInfo else TAGS
+                resolve = PIL_GPSTAGS if ifd_id == PIL_IFD.GPSInfo else PIL_TAGS
                 for key, val in ifd.items():
                     tag = resolve.get(key, key)
                     if tag not in ("UserComment", "PrintImageMatching", "MakerNote"):

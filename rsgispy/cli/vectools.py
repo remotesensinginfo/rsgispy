@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from typing import Any, Dict, List, Optional, Sequence
@@ -33,6 +34,36 @@ from rsgispy.vector.io import (
     get_vec_lyrs_lst,
     get_wkt_proj_from_vec,
 )
+from rsgispy.vectorprocess import bbox_to_rsgis, read_vec_info
+
+__all__ = [
+    "build_vectools_parser",
+    "main",
+    "cli_main",
+]
+
+_GEOM_LABEL_MAP: Dict[str, str] = {
+    "point": "Point",
+    "linestring": "Line",
+    "polygon": "Polygon",
+    "multipoint": "Multi-Point",
+    "multilinestring": "Multi-Line",
+    "multipolygon": "Multi-Polygon",
+}
+
+
+def _geom_label_from_info(raw_geom_type: Optional[str]) -> str:
+    """Normalise a ``read_vec_info`` geometry type string for display."""
+    if not raw_geom_type:
+        return "Unknown"
+    norm = str(raw_geom_type).strip()
+    if norm.startswith("3D "):
+        norm = norm[3:].strip()
+    for suffix in (" ZM", " Z", " M", "25D"):
+        if norm.endswith(suffix):
+            norm = norm[: -len(suffix)].strip()
+            break
+    return _GEOM_LABEL_MAP.get(norm.lower(), norm)
 
 
 def _crs_label_from_wkt(wkt_str: str) -> str:
@@ -130,11 +161,42 @@ def _print_summary(
     """Collect and display a compact all-in-one vector summary."""
     lyrs = get_vec_lyrs_lst(vec_file)
     active_lyr = vec_lyr or (lyrs[0] if lyrs else None)
-    cols = get_vec_lyr_cols(vec_file, active_lyr)
-    n_feats = get_vec_feat_count(vec_file, active_lyr)
-    geom_type = get_geom_type_name(get_vec_lyr_geom_type(vec_file, active_lyr))
-    bbox = list(get_vec_lyr_bbox(vec_file, active_lyr))
-    wkt = get_wkt_proj_from_vec(vec_file, active_lyr)
+    info = read_vec_info(vec_file, active_lyr)
+
+    raw_fields = info.get("fields")
+    cols = [] if raw_fields is None else [str(col) for col in raw_fields]
+
+    raw_feats = info.get("features")
+    if raw_feats is not None and int(raw_feats) >= 0:
+        n_feats = int(raw_feats)
+    else:
+        n_feats = int(get_vec_feat_count(vec_file, active_lyr))
+
+    geom_type = _geom_label_from_info(info.get("geometry_type"))
+
+    bbox: Optional[List[float]] = None
+    raw_bounds = info.get("total_bounds")
+    if (
+        raw_bounds is not None
+        and len(raw_bounds) == 4
+        and all(math.isfinite(float(v)) for v in raw_bounds)
+    ):
+        bbox = [float(v) for v in bbox_to_rsgis(raw_bounds)]
+    elif n_feats > 0:
+        try:
+            bbox = [float(v) for v in get_vec_lyr_bbox(vec_file, active_lyr)]
+        except RSGISPyException:
+            bbox = None
+
+    crs_val = info.get("crs")
+    if crs_val:
+        try:
+            wkt = pyproj.CRS.from_user_input(crs_val).to_wkt()
+        except (pyproj.exceptions.CRSError, ValueError):
+            wkt = str(crs_val)
+    else:
+        wkt = ""
+
     size_bytes = os.path.getsize(vec_file)
 
     summary: Dict[str, Any] = {
@@ -143,23 +205,26 @@ def _print_summary(
         "layers": lyrs,
         "layer": active_lyr,
         "geometry_type": geom_type,
-        "n_features": int(n_feats),
-        "bbox": [float(v) for v in bbox],
+        "n_features": n_feats,
+        "bbox": bbox,
         "crs": _crs_label_from_wkt(wkt),
         "columns": cols,
     }
     if as_json:
-        print(json.dumps(summary, indent=2))
+        print(json.dumps(summary, indent=2, default=str))
         return
 
     print(f"=== {os.path.basename(vec_file)} ===")
     print(f"File      : {summary['path']} ({format_bytes(size_bytes)})")
     print(f"Layers    : {', '.join(lyrs) if lyrs else '-'} (active: {active_lyr or '-'})")
     print(f"Geometry  : {geom_type} | Features: {n_feats}")
-    print(
-        f"Extent    : X [{bbox[0]:.6g}, {bbox[1]:.6g}]  "
-        f"Y [{bbox[2]:.6g}, {bbox[3]:.6g}]"
-    )
+    if bbox is not None:
+        print(
+            f"Extent    : X [{bbox[0]:.6g}, {bbox[1]:.6g}]  "
+            f"Y [{bbox[2]:.6g}, {bbox[3]:.6g}]"
+        )
+    else:
+        print("Extent    : -")
     print(f"CRS       : {summary['crs']}")
     print(f"Columns ({len(cols)}): {', '.join(cols) if cols else '-'}")
 
@@ -231,7 +296,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         output_lines.extend(str(v) for v in unq)
 
     if args.json:
-        print(json.dumps(results, indent=2))
+        print(json.dumps(results, indent=2, default=str))
     else:
         for line in output_lines:
             print(line)

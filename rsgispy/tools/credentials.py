@@ -4,6 +4,7 @@ username/password credential file utilities.
 """
 
 import base64
+import os
 from typing import Tuple
 
 import rsgispy
@@ -53,7 +54,8 @@ def create_username_password_file(
     out_file: str,
 ) -> None:
     """
-    Write a two-line base64-obfuscated username/password file.
+    Write a two-line base64-obfuscated username/password file with restrictive
+    owner-only permissions (``0o600``).
 
     :param username: Username string.
     :param password: Password string.
@@ -67,7 +69,14 @@ def create_username_password_file(
         )
     """
     out_data = [encode_base64_text(username), encode_base64_text(password)]
-    rsgispy.tools.textio.write_list_to_file(out_data, out_file)
+    fd = os.open(out_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as out_fp:
+        for line in out_data:
+            out_fp.write(f"{line}\n")
+    try:
+        os.chmod(out_file, 0o600)
+    except OSError:
+        pass
 
 
 def get_username_password(input_file: str) -> Tuple[str, str]:

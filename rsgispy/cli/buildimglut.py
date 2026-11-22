@@ -22,6 +22,12 @@ from rsgispy.cli._common import (
 )
 from rsgispy.imageutils.imagelut import create_img_extent_lut
 
+__all__ = [
+    "build_buildimglut_parser",
+    "main",
+    "cli_main",
+]
+
 
 def build_buildimglut_parser() -> argparse.ArgumentParser:
     """Construct the argument parser for ``rsgisbuildimglut``."""

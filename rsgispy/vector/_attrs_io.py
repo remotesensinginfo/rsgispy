@@ -9,6 +9,16 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
+import pyogrio
+
+try:
+    import pyarrow.parquet as pq
+
+    HAVE_PYARROW = True
+except ImportError:
+    pq = None
+    HAVE_PYARROW = False
 
 import rsgispy
 import rsgispy.tools.stats
@@ -16,7 +26,9 @@ from rsgispy.vectorprocess import (
     VectorInput,
     cast_col_data,
     infer_parquet_compression,
+    is_geoparquet_file,
     read_vec_gdf,
+    read_vec_info,
     to_python_scalar,
     validate_columns_exist,
     write_vec_gdf,
@@ -36,6 +48,62 @@ __all__ = [
     "export_vec_attrs_to_excel",
     "export_vec_attrs_to_parquet",
 ]
+
+
+def _read_vec_attrs_df(
+    vec_file: VectorInput,
+    vec_lyr: Optional[str],
+    columns: Optional[Sequence[str]] = None,
+) -> pd.DataFrame:
+    """
+    Read attribute columns from a vector file or GeoDataFrame without loading
+    geometries for file inputs.
+    """
+    if isinstance(vec_file, gpd.GeoDataFrame):
+        if columns is not None:
+            req_cols = list(columns)
+            validate_columns_exist(vec_file, req_cols)
+            return pd.DataFrame(vec_file[req_cols])
+        geom_col = vec_file.geometry.name
+        if geom_col in vec_file.columns:
+            return pd.DataFrame(vec_file.drop(columns=[geom_col]))
+        return pd.DataFrame(vec_file.copy())
+
+    if not isinstance(vec_file, (str, os.PathLike)):
+        raise rsgispy.RSGISPyException(
+            "Input must be a geopandas.GeoDataFrame or a vector file path."
+        )
+
+    vec_path = os.fspath(vec_file)
+    info = read_vec_info(vec_path, vec_lyr)
+    raw_fields = info.get("fields")
+    avail_cols = [] if raw_fields is None else [str(col) for col in raw_fields]
+
+    if columns is not None:
+        req_cols = list(columns)
+        missing = [col for col in req_cols if col not in avail_cols]
+        if missing:
+            raise rsgispy.RSGISPyException(
+                f"Column(s) not found in vector layer: {missing}"
+            )
+    else:
+        req_cols = avail_cols
+
+    if is_geoparquet_file(vec_path):
+        if not HAVE_PYARROW or pq is None:
+            raise rsgispy.RSGISPyException(
+                "Reading GeoParquet attributes requires 'pyarrow'."
+            )
+        if not req_cols:
+            return pd.DataFrame(index=pd.RangeIndex(int(info.get("features", 0))))
+        return pq.read_table(vec_path, columns=req_cols).to_pandas()
+
+    return pyogrio.read_dataframe(
+        vec_path,
+        layer=info["layer_name"],
+        read_geometry=False,
+        columns=req_cols,
+    )
 
 
 def write_vec_column_to_layer(
@@ -110,6 +178,7 @@ def write_vec_column_to_layer(
             out_vec_lyr=vec_lyr,
             out_format=out_format,
             overwrite=False,
+            replace_layer=True,
             out_compress=out_compress,
         )
     return gdf
@@ -181,6 +250,7 @@ def write_vec_column(
         out_vec_file,  # type: ignore[arg-type]
         out_vec_lyr,
         out_format=out_format,
+        replace_layer=True,
         out_compress=out_compress,
     )
     return None
@@ -208,13 +278,8 @@ def read_vec_column(
             "polys.gpkg", "polys", "class_name"
         )
     """
-    gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
-    if att_column not in gdf.columns:
-        raise rsgispy.RSGISPyException(
-            f"The specified column '{att_column}' does not exist in the input "
-            "layer; check case as drivers may be case-sensitive."
-        )
-    return [to_python_scalar(v) for v in gdf[att_column].tolist()]
+    df = _read_vec_attrs_df(vec_file, vec_lyr, columns=[att_column])
+    return [to_python_scalar(v) for v in df[att_column].tolist()]
 
 
 def read_vec_columns(
@@ -239,10 +304,7 @@ def read_vec_columns(
             "polys.gpkg", "polys", ["id", "class_name"]
         )
     """
-    gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
-    validate_columns_exist(gdf, att_columns)
-
-    sub_df = gdf[list(att_columns)]
+    sub_df = _read_vec_attrs_df(vec_file, vec_lyr, columns=att_columns)
     records: List[Dict[str, Any]] = []
     for row in sub_df.to_dict(orient="records"):
         records.append({str(k): to_python_scalar(v) for k, v in row.items()})
@@ -451,9 +513,8 @@ def get_unq_col_values(
             "polys.gpkg", "polys", "landcover"
         )
     """
-    gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
-    validate_columns_exist(gdf, [col_name])
-    return np.asarray(gdf[col_name].unique())
+    df = _read_vec_attrs_df(vec_file, vec_lyr, columns=[col_name])
+    return np.asarray(df[col_name].unique())
 
 
 def get_vec_cols_as_array(
@@ -483,9 +544,8 @@ def get_vec_cols_as_array(
             "samples.gpkg", "samples", ["b1", "b2"], lower_limit=0.0
         )
     """
-    gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
-    validate_columns_exist(gdf, cols)
-    out_arr = gdf.loc[:, list(cols)].to_numpy(dtype=float)
+    df = _read_vec_attrs_df(vec_file, vec_lyr, columns=cols)
+    out_arr = df.loc[:, list(cols)].to_numpy(dtype=float)
     return rsgispy.tools.stats.mask_data_to_valid(
         out_arr, lower_limit=lower_limit, upper_limit=upper_limit
     )
@@ -511,9 +571,7 @@ def export_vec_attrs_to_csv(
             "polys.gpkg", "polys", "attrs.csv"
         )
     """
-    data_df = read_vec_gdf(vec_file, vec_lyr)
-    if "geometry" in data_df.columns:
-        data_df = data_df.drop(columns=["geometry"])
+    data_df = _read_vec_attrs_df(vec_file, vec_lyr)
     data_df.to_csv(os.fspath(output_file))
 
 
@@ -541,9 +599,7 @@ def export_vec_attrs_to_excel(
         )
     """
     out_path = os.fspath(output_file)
-    data_df = read_vec_gdf(vec_file, vec_lyr)
-    if "geometry" in data_df.columns:
-        data_df = data_df.drop(columns=["geometry"])
+    data_df = _read_vec_attrs_df(vec_file, vec_lyr)
     try:
         data_df.to_excel(
             out_path, sheet_name=out_sheet_name, engine="xlsxwriter"
@@ -590,9 +646,7 @@ def export_vec_attrs_to_parquet(
         )
     """
     out_path = os.fspath(output_file)
-    data_df = read_vec_gdf(vec_file, vec_lyr)
-    if "geometry" in data_df.columns:
-        data_df = data_df.drop(columns=["geometry"])
+    data_df = _read_vec_attrs_df(vec_file, vec_lyr)
     if out_compress is not None:
         comp = infer_parquet_compression(out_path, out_compress=out_compress)
     elif gzip_output:

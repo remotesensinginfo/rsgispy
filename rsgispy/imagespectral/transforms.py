@@ -30,7 +30,6 @@ from rsgispy.imagespectral._helpers import (
     resolve_selected_bands,
     valid_cube_mask,
 )
-from rsgispy.imageutils.blank import create_copy_img
 from rsgispy.imageutils.metadata import get_img_no_data_value, set_band_names
 from rsgispy.imageutils.stats import pop_img_stats
 
@@ -135,9 +134,10 @@ def whiten_image(
     use_pbar: bool = True,
 ) -> None:
     """
-    Apply ZCA noise whitening to ``input_img`` over pixels matching
-    ``valid_msk_val`` in ``valid_msk_img`` so valid spectra have unit variance
-    and zero band-to-band correlation.
+    Apply ZCA noise whitening to ``input_img`` over finite, non-nodata pixels
+    matching ``valid_msk_val`` in ``valid_msk_img`` in two memory-bounded
+    streaming passes so valid spectra have unit variance and zero band-to-band
+    correlation.
 
     :param input_img: Path to the input multi-band image file.
     :param output_img: Path to the output float32 whitened image file.
@@ -169,7 +169,6 @@ def whiten_image(
                 "Valid mask only expected to have a single band."
             )
         x_msk_size, y_msk_size = msk_src.width, msk_src.height
-        vld_flat = msk_src.read(1).ravel()
 
     with rasterio.open(input_img, "r") as img_src:
         n_bands = img_src.count
@@ -178,41 +177,72 @@ def whiten_image(
             raise rsgispy.RSGISPyException(
                 "Mask and input image dimensions do not match."
             )
-        img_arr = img_src.read(out_dtype=np.float32)
 
-    valid_mask = vld_flat == valid_msk_val
-    n_valid = int(valid_mask.sum())
-    if n_valid < 2:
+    eff_in_nd = get_img_no_data_value(input_img)
+    band_indices = list(range(1, n_bands + 1))
+
+    n_valid = 0
+    mean_vec: Optional[np.ndarray] = None
+    m2_mat: Optional[np.ndarray] = None
+
+    with ExitStack() as stack:
+        img_ds, msk_ds, grid, img_off, msk_off = open_spectral_inputs(
+            stack, input_img, valid_msk_img
+        )
+        for dst_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
+            col_off, row_off = int(dst_win.col_off), int(dst_win.row_off)
+            win_w, win_h = int(dst_win.width), int(dst_win.height)
+            img_win = Window(
+                img_off[0] + col_off, img_off[1] + row_off, win_w, win_h
+            )
+            blk = img_ds.read(
+                band_indices, window=img_win, out_dtype=np.float64
+            )
+            msk_blk: Optional[np.ndarray] = None
+            if msk_ds is not None and msk_off is not None:
+                msk_win = Window(
+                    msk_off[0] + col_off, msk_off[1] + row_off, win_w, win_h
+                )
+                msk_blk = msk_ds.read(1, window=msk_win)
+
+            valid = valid_cube_mask(blk, eff_in_nd, msk_blk, valid_msk_val)
+            valid_flat = valid.ravel()
+            if np.any(valid_flat):
+                batch = np.moveaxis(blk, 0, 2).reshape(-1, n_bands)[valid_flat]
+                n_valid, mean_vec, m2_mat = _update_streaming_moments(
+                    n_valid, mean_vec, m2_mat, batch
+                )
+
+    if n_valid < 2 or mean_vec is None or m2_mat is None:
         raise rsgispy.RSGISPyException(
             "At least 2 valid pixels are required to compute the covariance matrix."
         )
 
-    img_flat = np.moveaxis(img_arr, 0, 2).reshape(-1, n_bands)
-    valid_data = img_flat[valid_mask].astype(np.float64)
-    centred = valid_data - valid_data.mean(axis=0, keepdims=True)
-    cov = (centred.T @ centred) / (n_valid - 1)
+    cov = 0.5 * ((m2_mat + m2_mat.T) / float(n_valid - 1))
     _, s_vals, vh_mat = np.linalg.svd(cov)
     safe_s = np.where(s_vals > 1e-12, s_vals, 1.0)
     inv_sqrt = np.where(s_vals > 1e-12, safe_s**-0.5, 0.0)
     whiten_mat = vh_mat.T @ np.diag(inv_sqrt) @ vh_mat
-    whitened = (centred @ whiten_mat).astype(np.float32)
 
-    create_copy_img(
-        input_img,
-        output_img,
-        n_bands,
-        0,
+    _stream_linear_projection(
+        input_img=input_img,
+        output_img=output_img,
+        band_indices=band_indices,
+        proj_matrix=whiten_mat,
+        mean_vec=mean_vec,
+        scale_vec=None,
+        out_band_names=None,
+        eff_in_nd=eff_in_nd,
+        eff_out_nd=0.0,
+        valid_msk_img=valid_msk_img,
+        valid_msk_val=valid_msk_val,
         gdalformat=gdalformat,
         datatype=rsgispy.TYPE_32FLOAT,
+        calc_stats=False,
         use_pbar=use_pbar,
     )
-    out_flat = np.zeros((vld_flat.shape[0], n_bands), dtype=np.float32)
-    out_flat[valid_mask] = whitened
-    out_cube = np.moveaxis(
-        out_flat.reshape((y_size, x_size, n_bands)), 2, 0
-    )
-    with rasterio.open(output_img, "r+") as dst:
-        dst.write(out_cube)
 
 
 def _update_streaming_moments(
@@ -258,7 +288,7 @@ def _stream_linear_projection(
     proj_matrix: np.ndarray,
     mean_vec: Optional[np.ndarray],
     scale_vec: Optional[np.ndarray],
-    out_band_names: Sequence[str],
+    out_band_names: Optional[Sequence[str]],
     eff_in_nd: Optional[float],
     eff_out_nd: float,
     valid_msk_img: Optional[str],
@@ -331,7 +361,8 @@ def _stream_linear_projection(
                 window=dst_win,
             )
 
-    set_band_names(output_img, list(out_band_names), feedback=False)
+    if out_band_names is not None:
+        set_band_names(output_img, list(out_band_names), feedback=False)
     if calc_stats:
         pop_img_stats(
             output_img,

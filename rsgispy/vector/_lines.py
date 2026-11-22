@@ -191,6 +191,8 @@ def create_orthg_lines(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if pt_step <= 0:
+        raise rsgispy.RSGISPyException("pt_step must be strictly positive (> 0).")
     out_path = prepare_optional_out_vec(out_vec_file, del_exist_vec=del_exist_vec)
     out_lyr = resolve_out_lyr_name(out_path, out_vec_lyr)
 
@@ -324,6 +326,8 @@ def split_lines_to_reg_pts(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if pt_step <= 0:
+        raise rsgispy.RSGISPyException("pt_step must be strictly positive (> 0).")
     out_path = prepare_optional_out_vec(out_vec_file, del_exist_vec=del_exist_vec)
     out_lyr = resolve_out_lyr_name(out_path, out_vec_lyr)
 
@@ -353,6 +357,7 @@ def split_lines_to_reg_pts(
                 while ((seg_len + step_c_dist) - (pt_step * n_step)) > pt_step:
                     pt_at_dist = ((pt_step * n_step) + pt_step) - step_c_dist
                     ptx, pty = get_pt_on_line(p_pt, c_pt, pt_at_dist)
+                    line_dist += pt_step
                     records.append(
                         {
                             "uid": pt_uid,
@@ -365,7 +370,6 @@ def split_lines_to_reg_pts(
                     )
                     pt_uid += 1
                     n_step += 1
-                    line_dist += pt_step
                 if n_step == 0:
                     c_dist = c_dist + seg_len
                 else:
@@ -451,7 +455,7 @@ def _calc_line_boundary_intersections(
         x_idx = line_gdf.columns.get_loc(start_x_field)
         y_idx = line_gdf.columns.get_loc(start_y_field)
         uid_idx = line_gdf.columns.get_loc(uid_field)
-        geom_idx = line_gdf.columns.get_loc("geometry")
+        geom_idx = line_gdf.columns.get_loc(line_gdf.geometry.name)
 
         for row in rows_iter:
             line_geom = row[geom_idx]
@@ -887,6 +891,8 @@ def create_angle_lines_from_points(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if angle <= 0:
+        raise rsgispy.RSGISPyException("angle must be strictly positive (> 0).")
     line_angles = np.arange(0, 360, angle)
     pts_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     pbar_cls = rsgispy.get_tqdm()
@@ -899,6 +905,8 @@ def create_angle_lines_from_points(
         total=len(pts_gdf),
         disable=not use_pbar,
     ):
+        if pt is None or pt.is_empty:
+            continue
         for line_angle in line_angles:
             line_angle_rad = math.radians(float(line_angle))
             end_x = pt.x + (line_len * math.cos(line_angle_rad))
@@ -1000,45 +1008,59 @@ def estimate_future_coastline(
     curr_data_gdf = read_vec_gdf(curr_vec_file, curr_vec_lyr, copy=False)
     trans_data_gdf = read_vec_gdf(trans_vec_file, trans_vec_lyr, copy=False)
     validate_columns_exist(trans_data_gdf, [trans_rate_col])
+    if (
+        curr_data_gdf.crs is not None
+        and trans_data_gdf.crs is not None
+        and curr_data_gdf.crs != trans_data_gdf.crs
+    ):
+        curr_data_gdf = curr_data_gdf.to_crs(trans_data_gdf.crs)
+
+    curr_geoms = curr_data_gdf.geometry[
+        curr_data_gdf.geometry.notna() & (~curr_data_gdf.geometry.is_empty)
+    ]
+    curr_sindex = curr_geoms.sindex if len(curr_geoms) > 0 else None
+    curr_arr = curr_geoms.to_numpy()
 
     pbar_cls = rsgispy.get_tqdm()
     pt_geoms: List[shapely.geometry.Point] = []
 
-    for trans_idx, trans_row in pbar_cls(
-        trans_data_gdf.iterrows(),
-        total=len(trans_data_gdf),
-        disable=not use_pbar,
-    ):
-        trans_geom = trans_row["geometry"]
-        trans_geom_coords = list(trans_geom.coords)
-        if len(trans_geom_coords) < 2:
-            continue
-
-        if trans_pt_order_land_first:
-            pt1 = trans_geom_coords[-1]
-            pt2 = trans_geom_coords[0]
-        else:
-            pt1 = trans_geom_coords[0]
-            pt2 = trans_geom_coords[-1]
-
-        dy = pt2[1] - pt1[1]
-        dx = pt2[0] - pt1[0]
-        theta = math.atan2(dy, dx)
-
-        rate_of_chng = float(trans_row[trans_rate_col])
-        new_coast_dist = pred_period_years * rate_of_chng
-        x_add = math.cos(theta) * new_coast_dist
-        y_add = math.sin(theta) * new_coast_dist
-
-        for _, curr_row in curr_data_gdf.iterrows():
-            intersect = trans_geom.intersection(curr_row["geometry"])
-            if intersect.is_empty or intersect.geom_type != "Point":
+    if curr_sindex is not None:
+        for trans_geom, rate_val in pbar_cls(
+            zip(trans_data_gdf.geometry, trans_data_gdf[trans_rate_col]),
+            total=len(trans_data_gdf),
+            disable=not use_pbar,
+        ):
+            if trans_geom is None or trans_geom.is_empty:
                 continue
-            st_pt = (intersect.x, intersect.y)
-            pt_geoms.append(
-                shapely.geometry.Point(st_pt[0] + x_add, st_pt[1] + y_add)
-            )
-            _ = trans_idx
+            rate_of_chng = float(rate_val)
+            new_coast_dist = pred_period_years * rate_of_chng
+            for line_part in _iter_line_parts(trans_geom):
+                trans_geom_coords = list(line_part.coords)
+                if len(trans_geom_coords) < 2:
+                    continue
+                if trans_pt_order_land_first:
+                    pt1 = trans_geom_coords[-1]
+                    pt2 = trans_geom_coords[0]
+                else:
+                    pt1 = trans_geom_coords[0]
+                    pt2 = trans_geom_coords[-1]
+
+                dy = pt2[1] - pt1[1]
+                dx = pt2[0] - pt1[0]
+                theta = math.atan2(dy, dx)
+                x_add = math.cos(theta) * new_coast_dist
+                y_add = math.sin(theta) * new_coast_dist
+
+                cand_idxs = curr_sindex.query(line_part, predicate="intersects")
+                for cidx in cand_idxs:
+                    intersect = line_part.intersection(curr_arr[cidx])
+                    if intersect.is_empty or intersect.geom_type != "Point":
+                        continue
+                    pt_geoms.append(
+                        shapely.geometry.Point(
+                            intersect.x + x_add, intersect.y + y_add
+                        )
+                    )
 
     if len(pt_geoms) < 2:
         raise rsgispy.RSGISPyException(

@@ -25,6 +25,12 @@ from rsgispy.cli._common import (
 )
 from rsgispy.tools.projection import degrees_to_metres
 
+__all__ = [
+    "build_wgs84imgres_parser",
+    "main",
+    "cli_main",
+]
+
 
 def _calc_img_res_metres(img_path: str) -> Dict[str, Any]:
     """Read image bounds/resolution once and convert degree resolution to metres."""

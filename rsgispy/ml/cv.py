@@ -673,6 +673,13 @@ def nested_spatial_cv(
         dtype=np.float64 if task_norm == "regression" else y_arr.dtype,
     )
     oof_probs: Optional[np.ndarray] = None
+    global_classes: Optional[np.ndarray] = None
+    cls_to_col: Dict[Any, int] = {}
+    if task_norm == "classification":
+        global_classes = np.unique(y_arr)
+        cls_to_col = {
+            cls_val: idx for idx, cls_val in enumerate(global_classes)
+        }
     covered = np.zeros(n_samples, dtype=bool)
     fold_scores: List[float] = []
     fold_metrics: List[Dict[str, float]] = []
@@ -750,12 +757,26 @@ def nested_spatial_cv(
 
         if task_norm == "classification" and hasattr(est, "predict_proba"):
             probs = np.asarray(est.predict_proba(x_val_fit), dtype=np.float64)
-            if oof_probs is None:
+            if probs.ndim == 1:
+                probs = probs[:, None]
+            if oof_probs is None and global_classes is not None:
                 oof_probs = np.full(
-                    (n_samples, probs.shape[1]), np.nan, dtype=np.float64
+                    (n_samples, global_classes.size), np.nan, dtype=np.float64
                 )
-            if probs.shape[1] == oof_probs.shape[1]:
-                oof_probs[val_idx] = probs
+            if oof_probs is not None:
+                est_classes = getattr(est, "classes_", None)
+                if est_classes is not None:
+                    oof_probs[val_idx] = 0.0
+                    for local_col, cls_val in enumerate(est_classes):
+                        if (
+                            cls_val in cls_to_col
+                            and local_col < probs.shape[1]
+                        ):
+                            oof_probs[val_idx, cls_to_col[cls_val]] = probs[
+                                :, local_col
+                            ]
+                elif probs.shape[1] == oof_probs.shape[1]:
+                    oof_probs[val_idx] = probs
 
         fold_scores.append(_evaluate_score(y_val, preds, task_norm, scoring))
         fold_metrics.append(_compute_task_metrics(y_val, preds, task_norm))

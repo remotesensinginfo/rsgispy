@@ -897,9 +897,20 @@ def apply_cutline_to_dataset(
                 res = arr.astype(np.float64) * weights
             else:
                 bg = float(fill_values[min(b_idx - 1, len(fill_values) - 1)])
-                res = (arr.astype(np.float64) * weights) + (
-                    bg * (1.0 - weights)
-                )
+                arr_f = arr.astype(np.float64)
+                res = np.empty_like(arr_f)
+                full_in = weights >= 1.0
+                full_out = weights <= 0.0
+                mid = (~full_in) & (~full_out)
+                res[full_in] = arr_f[full_in]
+                res[full_out] = bg
+                if np.any(mid):
+                    if math.isnan(bg):
+                        res[mid] = arr_f[mid]
+                    else:
+                        res[mid] = (arr_f[mid] * weights[mid]) + (
+                            bg * (1.0 - weights[mid])
+                        )
             if np.issubdtype(out_dtype, np.integer):
                 res = np.rint(res)
             dst.write(res.astype(out_dtype), b_idx)

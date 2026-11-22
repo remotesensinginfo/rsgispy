@@ -488,7 +488,10 @@ def calc_vif_multicollinearity(
         label="samples_data",
         require_target=False,
     )
-    assert x_df is not None
+    if x_df is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared feature matrix is unexpectedly empty."
+        )
     vif_scores = calc_pandas_vif(x_df, cols=feat_cols)
     if out_vif_file is not None:
         vif_scores.to_csv(ensure_parent_dir(out_vif_file), index=True)
@@ -540,7 +543,10 @@ def select_features_cqv(
         label="samples_data",
         require_target=False,
     )
-    assert x_df is not None
+    if x_df is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared feature matrix is unexpectedly empty."
+        )
     return cqv_threshold(
         x_df,
         cols=feat_cols,
@@ -600,7 +606,10 @@ def select_features_corr(
             require_target=True,
         )
     )
-    assert x_df is not None and y_arr is not None
+    if x_df is None or y_arr is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared features or target array is unexpectedly empty."
+        )
     target_col = eff_int_col if (use_internal_id and eff_int_col in df.columns) else eff_out_col
     return run_corr_cluster_selection(
         x_df=x_df,
@@ -658,7 +667,10 @@ def select_features_vif(
         label="samples_data",
         require_target=False,
     )
-    assert x_df is not None
+    if x_df is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared feature matrix is unexpectedly empty."
+        )
     return run_iterative_vif_selection(
         x_df=x_df,
         feat_cols=feat_cols,
@@ -727,7 +739,10 @@ def select_features_univariate(
         label="train_data",
         require_target=True,
     )
-    assert x_df is not None and y_arr is not None
+    if x_df is None or y_arr is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared features or target array is unexpectedly empty."
+        )
 
     method_key = score_func.strip().lower()
     if method_key in {"f_classif", "anova", "f"}:
@@ -839,7 +854,10 @@ def select_features_rfe(
         label="train_data",
         require_target=True,
     )
-    assert x_df is not None and y_arr is not None
+    if x_df is None or y_arr is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared features or target array is unexpectedly empty."
+        )
     return run_rfe_selection(
         sk_estimator=sk_classifier,
         x_df=x_df,
@@ -927,7 +945,10 @@ def select_features_from_model(
         label="train_data",
         require_target=True,
     )
-    assert x_df is not None and y_arr is not None
+    if x_df is None or y_arr is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared features or target array is unexpectedly empty."
+        )
     return run_from_model_selection(
         sk_estimator=sk_classifier,
         x_df=x_df,
@@ -1083,7 +1104,10 @@ def select_features_boruta_shap(
         label="train_data",
         require_target=True,
     )
-    assert x_df is not None and y_arr is not None
+    if x_df is None or y_arr is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared features or target array is unexpectedly empty."
+        )
 
     target_idx: Optional[int] = None
     if target_class is not None:
@@ -1230,7 +1254,10 @@ def calc_feature_importance(
         label="eval_data",
         require_target=True,
     )
-    assert x_df is not None and y_arr is not None
+    if x_df is None or y_arr is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared features or target array is unexpectedly empty."
+        )
     return run_feature_importance(
         sk_estimator=sk_classifier,
         x_df=x_df,
@@ -1327,8 +1354,15 @@ def calc_jackknife_feature_importance(
         label="test_data",
         require_target=True,
     )
-    assert train_x_all is not None and train_y is not None
-    assert test_x_all is not None and test_y is not None
+    if (
+        train_x_all is None
+        or train_y is None
+        or test_x_all is None
+        or test_y is None
+    ):
+        raise rsgispy.RSGISPyException(
+            "Prepared training or testing features/targets are unexpectedly empty."
+        )
 
     def _eval_subset(sub_vars: List[str]) -> Dict[str, float]:
         tr_sub = train_x_all[sub_vars]
@@ -1484,7 +1518,10 @@ def calc_feature_response_curves(
         label="train_data",
         require_target=False,
     )
-    assert x_df is not None
+    if x_df is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared feature matrix is unexpectedly empty."
+        )
 
     est_classes, est_labels = _resolve_estimator_class_labels(
         sk_classifier, class_info, use_internal_id
@@ -1599,7 +1636,10 @@ def calc_shap_feature_contributions(
         label="samples_data",
         require_target=False,
     )
-    assert x_df is not None
+    if x_df is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared feature matrix is unexpectedly empty."
+        )
 
     _, class_labels = _resolve_estimator_class_labels(
         sk_classifier, class_info, use_internal_id
@@ -1701,7 +1741,10 @@ def calc_salib_feature_sensitivity(
         label="samples_data",
         require_target=False,
     )
-    assert x_df is not None
+    if x_df is None:
+        raise rsgispy.RSGISPyException(
+            "Prepared feature matrix is unexpectedly empty."
+        )
 
     est_classes, _ = _resolve_estimator_class_labels(
         sk_classifier, class_info, use_internal_id

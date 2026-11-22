@@ -22,7 +22,6 @@ from rsgispy.imageprocess import (
     open_output_dataset,
 )
 from rsgispy.imageutils._helpers import (
-    get_epsg_from_dataset,
     maybe_pop_stats,
     normalise_creation_options,
     parse_epsg_crs,
@@ -43,6 +42,72 @@ __all__ = [
     "create_blank_img_from_bbox",
     "create_blank_ref_imgs",
 ]
+
+
+def _write_blank_grid_img(
+    output_img: str,
+    n_bands: int,
+    width: int,
+    height: int,
+    transform: Affine,
+    crs_obj: Any,
+    pxl_val: float,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
+    use_pbar: bool = True,
+    creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
+) -> None:
+    """Create a blank raster on an arbitrary CRS and Affine transform."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if n_bands < 1 or width < 1 or height < 1:
+        raise rsgispy.RSGISPyException(
+            "n_bands, width, and height must all be >= 1."
+        )
+
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    grid = IntersectionGrid(
+        crs=crs_obj,
+        transform=transform,
+        width=int(width),
+        height=int(height),
+        offsets={},
+    )
+    norm_opts = normalise_creation_options(creation_opts)
+
+    with ExitStack() as stack:
+        dst = open_output_dataset(
+            stack,
+            output_img,
+            gdalformat,
+            out_rio_dtype,
+            grid,
+            int(n_bands),
+            False,
+            norm_opts,
+        )
+        if no_data_val is not None:
+            dst.nodata = no_data_val
+
+        for win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
+            block = np.full(
+                (int(n_bands), int(win.height), int(win.width)),
+                pxl_val,
+                dtype=out_np_dtype,
+            )
+            dst.write(block, window=win)
+
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        use_pbar=use_pbar,
+    )
 
 
 def _bbox_to_grid_params(
@@ -147,15 +212,7 @@ def create_blank_img(
             0.0, 32630, gdalformat="GTIFF", datatype=rsgispy.TYPE_32FLOAT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    if n_bands < 1 or width < 1 or height < 1:
-        raise rsgispy.RSGISPyException(
-            "n_bands, width, and height must all be >= 1."
-        )
-
-    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
-    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     crs_obj = parse_epsg_crs(epsg_code)
     transform = Affine(
         abs(float(res_x)),
@@ -165,44 +222,20 @@ def create_blank_img(
         -abs(float(res_y)),
         float(tl_y),
     )
-    grid = IntersectionGrid(
-        crs=crs_obj,
-        transform=transform,
-        width=int(width),
-        height=int(height),
-        offsets={},
-    )
-    norm_opts = normalise_creation_options(creation_opts)
-
-    with ExitStack() as stack:
-        dst = open_output_dataset(
-            stack,
-            output_img,
-            gdalformat,
-            out_rio_dtype,
-            grid,
-            int(n_bands),
-            False,
-            norm_opts,
-        )
-        if no_data_val is not None:
-            dst.nodata = no_data_val
-
-        for win in iter_dataset_windows(
-            grid.height, grid.width, use_pbar=use_pbar
-        ):
-            block = np.full(
-                (int(n_bands), int(win.height), int(win.width)),
-                pxl_val,
-                dtype=out_np_dtype,
-            )
-            dst.write(block, window=win)
-
-    maybe_pop_stats(
+    _write_blank_grid_img(
         output_img=output_img,
-        calc_stats=calc_stats,
+        n_bands=n_bands,
+        width=width,
+        height=height,
+        transform=transform,
+        crs_obj=crs_obj,
+        pxl_val=pxl_val,
+        gdalformat=gdalformat,
+        datatype=datatype,
         no_data_val=no_data_val,
+        calc_stats=calc_stats,
         use_pbar=use_pbar,
+        creation_opts=creation_opts,
     )
 
 
@@ -221,7 +254,7 @@ def create_copy_img(
 ) -> None:
     """
     Create a new blank raster image matching the spatial extent, resolution,
-    dimensions, and EPSG projection of ``input_img``.
+    dimensions, transform, and CRS of ``input_img``.
 
     :param input_img: Path to the reference input image.
     :param output_img: Path to the output image file.
@@ -255,28 +288,22 @@ def create_copy_img(
     with rasterio.open(input_img, "r") as src:
         width = src.width
         height = src.height
-        tl_x = src.transform.c
-        tl_y = src.transform.f
-        res_x = src.transform.a
-        res_y = src.transform.e
-        epsg_code = get_epsg_from_dataset(src, input_img)
+        transform = src.transform
+        crs_obj = src.crs
         eff_dtype = (
             rsgis_dtype_from_np_dtype(src.dtypes[0])
             if datatype is None
             else datatype
         )
 
-    create_blank_img(
+    _write_blank_grid_img(
         output_img=output_img,
         n_bands=n_bands,
         width=width,
         height=height,
-        tl_x=tl_x,
-        tl_y=tl_y,
-        res_x=res_x,
-        res_y=res_y,
+        transform=transform,
+        crs_obj=crs_obj,
         pxl_val=pxl_val,
-        epsg_code=epsg_code,
         gdalformat=gdalformat,
         datatype=eff_dtype,
         no_data_val=no_data_val,
@@ -349,15 +376,13 @@ def create_blank_buf_img_from_ref_img(
                     "You must specify a no data value"
                 )
 
-        x_res = src.transform.a
-        y_res = src.transform.e
-        x_res_abs = abs(x_res)
-        y_res_abs = abs(y_res)
+        src_transform = src.transform
+        x_res_abs = math.hypot(src_transform.a, src_transform.d)
+        y_res_abs = math.hypot(src_transform.b, src_transform.e)
         x_in_size = src.width
         y_in_size = src.height
-        bounds = src.bounds
         n_bands = src.count
-        epsg_code = get_epsg_from_dataset(src, input_img)
+        crs_obj = src.crs
         eff_dtype = (
             rsgis_dtype_from_np_dtype(src.dtypes[0])
             if datatype is None
@@ -367,22 +392,24 @@ def create_blank_buf_img_from_ref_img(
     if buf_spt_ext is not None:
         buf_pxl_x = math.ceil(buf_spt_ext / x_res_abs)
         buf_pxl_y = math.ceil(buf_spt_ext / y_res_abs)
-    else:
-        assert buf_pxl_ext is not None
+    elif buf_pxl_ext is not None:
         buf_pxl_x = int(buf_pxl_ext)
         buf_pxl_y = int(buf_pxl_ext)
+    else:
+        raise rsgispy.RSGISPyException(
+            "You must specify either the buf_pxl_ext or buf_spt_ext value."
+        )
 
-    create_blank_img(
+    buf_transform = src_transform @ Affine.translation(-buf_pxl_x, -buf_pxl_y)
+
+    _write_blank_grid_img(
         output_img=output_img,
         n_bands=n_bands,
         width=x_in_size + (2 * buf_pxl_x),
         height=y_in_size + (2 * buf_pxl_y),
-        tl_x=bounds.left - (buf_pxl_x * x_res_abs),
-        tl_y=bounds.top + (buf_pxl_y * y_res_abs),
-        res_x=x_res,
-        res_y=y_res,
+        transform=buf_transform,
+        crs_obj=crs_obj,
         pxl_val=float(no_data_val),
-        epsg_code=epsg_code,
         gdalformat=gdalformat,
         datatype=eff_dtype,
         no_data_val=float(no_data_val),

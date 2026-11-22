@@ -411,112 +411,249 @@ def _parse_grid_algorithm(
     return alg_name, params
 
 
-def _ellipse_distances(
-    px: float,
-    py: float,
-    pts_x: np.ndarray,
-    pts_y: np.ndarray,
-    radius1: float,
-    radius2: float,
-    angle_deg: float,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Return Euclidean distances and boolean ellipse mask for one grid cell."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    dx = pts_x - px
-    dy = pts_y - py
-    dist = np.hypot(dx, dy)
-    if radius1 <= 0.0 and radius2 <= 0.0:
-        return dist, np.ones(pts_x.shape[0], dtype=bool)
-
-    r1 = radius1 if radius1 > 0.0 else radius2
-    r2 = radius2 if radius2 > 0.0 else radius1
-    if angle_deg != 0.0:
-        theta = math.radians(angle_deg)
-        cos_t = math.cos(theta)
-        sin_t = math.sin(theta)
-        rx = dx * cos_t + dy * sin_t
-        ry = -dx * sin_t + dy * cos_t
-    else:
-        rx, ry = dx, dy
-    mask = ((rx / r1) ** 2 + (ry / r2) ** 2) <= 1.0
-    return dist, mask
+_SUPPORTED_GRID_ALGS = frozenset(
+    {
+        "invdist",
+        "invdistnn",
+        "nearest",
+        "linear",
+        "average",
+        "minimum",
+        "maximum",
+        "range",
+        "count",
+        "average_distance",
+        "average_distance_pts",
+    }
+)
 
 
-def _eval_grid_cell(
+def _eval_grid_block_vec(
     alg: str,
     params: Dict[str, float],
-    px: float,
-    py: float,
+    qx: np.ndarray,
+    qy: np.ndarray,
     pts_x: np.ndarray,
     pts_y: np.ndarray,
     pts_z: np.ndarray,
-) -> float:
-    """Evaluate a point-neighbourhood grid metric at coordinate ``(px, py)``."""
+) -> np.ndarray:
+    """Vectorised evaluation of point-neighbourhood metrics on a chunk of cells."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,too-many-return-statements,too-many-branches
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     nodata = params["nodata"]
     min_pts = int(params.get("min_points", 0))
     max_pts = int(params.get("max_points", 0))
+    radius1 = params.get("radius1", 0.0)
+    radius2 = params.get("radius2", 0.0)
+    angle_deg = params.get("angle", 0.0)
+    n_cells = qx.shape[0]
+    n_pts = pts_z.shape[0]
 
-    dists, in_mask = _ellipse_distances(
-        px,
-        py,
-        pts_x,
-        pts_y,
-        params.get("radius1", 0.0),
-        params.get("radius2", 0.0),
-        params.get("angle", 0.0),
-    )
-    sel_dists = dists[in_mask]
-    sel_z = pts_z[in_mask]
+    if n_pts == 0:
+        return np.full(n_cells, nodata, dtype=np.float64)
 
-    if sel_z.size == 0 or sel_z.size < min_pts:
-        return nodata
+    dx = pts_x[None, :] - qx[:, None]
+    dy = pts_y[None, :] - qy[:, None]
+    dist = np.hypot(dx, dy)
 
-    order: Optional[np.ndarray] = None
-    if 0 < max_pts < sel_z.size:
-        order = np.argpartition(sel_dists, max_pts)[:max_pts]
-        sel_dists = sel_dists[order]
-        sel_z = sel_z[order]
+    if radius1 <= 0.0 and radius2 <= 0.0:
+        in_mask = np.ones((n_cells, n_pts), dtype=bool)
+    else:
+        r1 = radius1 if radius1 > 0.0 else radius2
+        r2 = radius2 if radius2 > 0.0 else radius1
+        if angle_deg != 0.0:
+            theta = math.radians(angle_deg)
+            cos_t = math.cos(theta)
+            sin_t = math.sin(theta)
+            rx = dx * cos_t + dy * sin_t
+            ry = -dx * sin_t + dy * cos_t
+        else:
+            rx, ry = dx, dy
+        in_mask = ((rx / r1) ** 2 + (ry / r2) ** 2) <= 1.0
+
+    need_xy = alg == "average_distance_pts"
+    if 0 < max_pts < n_pts:
+        eff_dist = np.where(in_mask, dist, np.inf)
+        top_idx = np.argpartition(eff_dist, max_pts, axis=1)[:, :max_pts]
+        dist = np.take_along_axis(eff_dist, top_idx, axis=1)
+        in_mask = np.isfinite(dist)
+        z_mat = pts_z[top_idx]
+        x_mat = pts_x[top_idx] if need_xy else None
+        y_mat = pts_y[top_idx] if need_xy else None
+    else:
+        z_mat = np.broadcast_to(pts_z[None, :], (n_cells, n_pts))
+        x_mat = np.broadcast_to(pts_x[None, :], (n_cells, n_pts)) if need_xy else None
+        y_mat = np.broadcast_to(pts_y[None, :], (n_cells, n_pts)) if need_xy else None
+
+    cnt = in_mask.sum(axis=1)
+    ok = (cnt > 0) & (cnt >= min_pts)
+    res = np.full(n_cells, nodata, dtype=np.float64)
+    if not np.any(ok):
+        return res
 
     if alg == "invdist":
         power = params.get("power", 2.0)
         smoothing = params.get("smoothing", 0.0)
+        has_exact = np.zeros(n_cells, dtype=bool)
         if smoothing == 0.0:
-            exact = sel_dists == 0.0
-            if np.any(exact):
-                return float(sel_z[exact].mean())
-        weights = 1.0 / np.power(np.hypot(sel_dists, smoothing), power)
-        return float(np.sum(weights * sel_z) / np.sum(weights))
+            exact = in_mask & (dist == 0.0)
+            has_exact = exact.any(axis=1) & ok
+            if np.any(has_exact):
+                ex_m = exact[has_exact]
+                res[has_exact] = np.where(ex_m, z_mat[has_exact], 0.0).sum(
+                    axis=1
+                ) / ex_m.sum(axis=1)
+        need_w = ok & (~has_exact)
+        if np.any(need_w):
+            vm = in_mask[need_w]
+            d_sub = dist[need_w]
+            eff_d = (
+                np.hypot(d_sub, smoothing) if smoothing != 0.0 else d_sub
+            )
+            safe_d = np.where(vm, eff_d, 1.0)
+            weights = np.where(vm, 1.0 / np.power(safe_d, power), 0.0)
+            z_sub = np.where(vm, z_mat[need_w], 0.0)
+            res[need_w] = (weights * z_sub).sum(axis=1) / weights.sum(axis=1)
+        return res
+
     if alg == "nearest":
-        return float(sel_z[int(np.argmin(sel_dists))])
+        eff_d = np.where(in_mask, dist, np.inf)
+        min_idx = np.argmin(eff_d, axis=1)
+        res[ok] = z_mat[ok, min_idx[ok]]
+        return res
+
     if alg == "average":
-        return float(sel_z.mean())
+        z_sum = np.where(in_mask, z_mat, 0.0).sum(axis=1)
+        res[ok] = z_sum[ok] / cnt[ok]
+        return res
+
     if alg == "minimum":
-        return float(sel_z.min())
+        res[ok] = np.where(in_mask[ok], z_mat[ok], np.inf).min(axis=1)
+        return res
+
     if alg == "maximum":
-        return float(sel_z.max())
+        res[ok] = np.where(in_mask[ok], z_mat[ok], -np.inf).max(axis=1)
+        return res
+
     if alg == "range":
-        return float(sel_z.max() - sel_z.min())
+        z_ok = z_mat[ok]
+        m_ok = in_mask[ok]
+        res[ok] = np.where(m_ok, z_ok, -np.inf).max(axis=1) - np.where(
+            m_ok, z_ok, np.inf
+        ).min(axis=1)
+        return res
+
     if alg == "count":
-        return float(sel_z.size)
+        res[ok] = cnt[ok].astype(np.float64)
+        return res
+
     if alg == "average_distance":
-        return float(sel_dists.mean())
+        d_sum = np.where(in_mask, dist, 0.0).sum(axis=1)
+        res[ok] = d_sum[ok] / cnt[ok]
+        return res
+
     if alg == "average_distance_pts":
-        if sel_z.size < 2:
-            return nodata
-        sx = pts_x[in_mask]
-        sy = pts_y[in_mask]
-        if order is not None:
-            sx = sx[order]
-            sy = sy[order]
-        pair_dists = np.hypot(
-            sx[:, None] - sx[None, :], sy[:, None] - sy[None, :]
-        )
-        tri = pair_dists[np.triu_indices(sx.size, k=1)]
-        return float(tri.mean()) if tri.size > 0 else nodata
+        valid_pair = ok & (cnt >= 2)
+        if np.any(valid_pair) and x_mat is not None and y_mat is not None:
+            vp_idxs = np.nonzero(valid_pair)[0]
+            k_cols = x_mat.shape[1]
+            sub_chunk = max(1, 1_000_000 // max(1, k_cols * k_cols))
+            for s_off in range(0, vp_idxs.size, sub_chunk):
+                s_idx = vp_idxs[s_off : s_off + sub_chunk]
+                xm = x_mat[s_idx]
+                ym = y_mat[s_idx]
+                mm = in_mask[s_idx]
+                c_cnt = cnt[s_idx].astype(np.float64)
+                p_mask = mm[:, :, None] & mm[:, None, :]
+                p_d = np.where(
+                    p_mask,
+                    np.hypot(
+                        xm[:, :, None] - xm[:, None, :],
+                        ym[:, :, None] - ym[:, None, :],
+                    ),
+                    0.0,
+                )
+                res[s_idx] = p_d.sum(axis=(1, 2)) / (c_cnt * (c_cnt - 1.0))
+        return res
 
     raise rsgispy.RSGISPyException(f"Unsupported gridding algorithm: '{alg}'.")
+
+
+def _grid_general_block(
+    alg: str,
+    params: Dict[str, float],
+    x_grid: np.ndarray,
+    y_grid: np.ndarray,
+    pts_x: np.ndarray,
+    pts_y: np.ndarray,
+    pts_z: np.ndarray,
+    kd_tree: Optional[Any] = None,
+) -> np.ndarray:
+    """Vectorised grid evaluation for a 2D window using cKDTree / NumPy chunks."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    nodata = params["nodata"]
+    radius1 = params.get("radius1", 0.0)
+    radius2 = params.get("radius2", 0.0)
+    min_pts = int(params.get("min_points", 0))
+
+    # Fast path: unrestricted or circular nearest-neighbour via cKDTree
+    if (
+        alg == "nearest"
+        and kd_tree is not None
+        and min_pts <= 1
+        and (
+            (radius1 <= 0.0 and radius2 <= 0.0)
+            or (
+                params.get("angle", 0.0) == 0.0
+                and (radius1 <= 0.0 or radius2 <= 0.0 or radius1 == radius2)
+            )
+        )
+    ):
+        q_pts = np.column_stack((x_grid.ravel(), y_grid.ravel()))
+        if radius1 <= 0.0 and radius2 <= 0.0:
+            _, idxs = kd_tree.query(q_pts, k=1)
+            return pts_z[idxs].reshape(x_grid.shape)
+        eff_r = radius1 if radius1 > 0.0 else radius2
+        dists, idxs = kd_tree.query(
+            q_pts, k=1, distance_upper_bound=eff_r * (1.0 + 1e-12)
+        )
+        valid = np.isfinite(dists) & (idxs < pts_z.size) & (dists <= eff_r)
+        safe_idx = np.where(valid, idxs, 0)
+        return np.where(valid, pts_z[safe_idx], nodata).reshape(x_grid.shape)
+
+    # Pre-filter candidate points to block bounding box expanded by max radius
+    sub_x, sub_y, sub_z = pts_x, pts_y, pts_z
+    if radius1 > 0.0 or radius2 > 0.0:
+        r_max = max(radius1, radius2)
+        in_box = (
+            (pts_x >= float(x_grid.min()) - r_max)
+            & (pts_x <= float(x_grid.max()) + r_max)
+            & (pts_y >= float(y_grid.min()) - r_max)
+            & (pts_y <= float(y_grid.max()) + r_max)
+        )
+        if not np.any(in_box):
+            return np.full(x_grid.shape, nodata, dtype=np.float64)
+        sub_x = pts_x[in_box]
+        sub_y = pts_y[in_box]
+        sub_z = pts_z[in_box]
+
+    qx_flat = x_grid.ravel()
+    qy_flat = y_grid.ravel()
+    n_cells = qx_flat.size
+    chunk_cells = max(1, min(n_cells, 2_000_000 // max(1, sub_z.size)))
+    out_flat = np.empty(n_cells, dtype=np.float64)
+    for start in range(0, n_cells, chunk_cells):
+        end = min(start + chunk_cells, n_cells)
+        out_flat[start:end] = _eval_grid_block_vec(
+            alg=alg,
+            params=params,
+            qx=qx_flat[start:end],
+            qy=qy_flat[start:end],
+            pts_x=sub_x,
+            pts_y=sub_y,
+            pts_z=sub_z,
+        )
+    return out_flat.reshape(x_grid.shape)
 
 
 def _grid_invdistnn(
@@ -526,6 +663,7 @@ def _grid_invdistnn(
     pts_x: np.ndarray,
     pts_y: np.ndarray,
     pts_z: np.ndarray,
+    kd_tree: Optional[Any] = None,
 ) -> np.ndarray:
     """Evaluate k-nearest inverse distance weighting across the target grid."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -537,7 +675,11 @@ def _grid_invdistnn(
     min_pts = int(params.get("min_points", 0))
     k_query = min(max_pts, pts_z.size)
 
-    tree = cKDTree(np.column_stack((pts_x, pts_y)))
+    tree = (
+        kd_tree
+        if kd_tree is not None
+        else cKDTree(np.column_stack((pts_x, pts_y)))
+    )
     q_pts = np.column_stack((x_grid.ravel(), y_grid.ravel()))
     dists, idxs = tree.query(
         q_pts,
@@ -583,18 +725,28 @@ def _grid_linear(
     pts_x: np.ndarray,
     pts_y: np.ndarray,
     pts_z: np.ndarray,
+    interp: Optional[Any] = None,
+    kd_tree: Optional[Any] = None,
 ) -> np.ndarray:
     """Evaluate Delaunay linear interpolation across the target grid."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     rsgispy.check_optional_dep(HAVE_SCIPY, "grid_scattered_pts", "scipy", "stats")
     out_nodata = params["nodata"]
     radius = params.get("radius", -1.0)
-    interp = LinearNDInterpolator(
-        np.column_stack((pts_x, pts_y)), pts_z, fill_value=np.nan
+    lin_interp = (
+        interp
+        if interp is not None
+        else LinearNDInterpolator(
+            np.column_stack((pts_x, pts_y)), pts_z, fill_value=np.nan
+        )
     )
-    vals = interp(x_grid, y_grid)
+    vals = lin_interp(x_grid, y_grid)
     if radius >= 0.0:
-        tree = cKDTree(np.column_stack((pts_x, pts_y)))
+        tree = (
+            kd_tree
+            if kd_tree is not None
+            else cKDTree(np.column_stack((pts_x, pts_y)))
+        )
         dists, _ = tree.query(np.column_stack((x_grid.ravel(), y_grid.ravel())))
         vals[dists.reshape(x_grid.shape) > radius] = np.nan
     return np.where(np.isfinite(vals), vals, out_nodata)
@@ -653,7 +805,8 @@ def grid_scattered_pts(
             gdal_grid_alg="invdist:power=2.0",
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches
     ensure_file_exists(input_img)
 
     gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr)
@@ -674,6 +827,10 @@ def grid_scattered_pts(
     eff_nd = 0.0 if no_data_val is None else float(no_data_val)
     eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
     alg, params = _parse_grid_algorithm(gdal_grid_alg, eff_nd)
+    if alg not in _SUPPORTED_GRID_ALGS:
+        raise rsgispy.RSGISPyException(
+            f"Unsupported gridding algorithm: '{alg}'."
+        )
     out_nodata = params["nodata"]
     norm_opts = normalise_creation_options(creation_opts)
 
@@ -693,36 +850,23 @@ def grid_scattered_pts(
                 f"No valid point values found in column '{vec_col}'."
             )
 
-        x_grid, y_grid = _block_centre_coords(
-            src.transform, 0, 0, src.width, src.height
-        )
+        kd_tree: Optional[Any] = None
+        lin_interp: Optional[Any] = None
         if alg == "invdistnn":
-            out_arr = _grid_invdistnn(
-                params, x_grid, y_grid, pts_x, pts_y, pts_z
+            rsgispy.check_optional_dep(
+                HAVE_SCIPY, "grid_scattered_pts", "scipy", "stats"
             )
+            kd_tree = cKDTree(np.column_stack((pts_x, pts_y)))
         elif alg == "linear":
-            out_arr = _grid_linear(params, x_grid, y_grid, pts_x, pts_y, pts_z)
-        else:
-            out_arr = np.full(
-                (src.height, src.width), out_nodata, dtype=np.float64
+            rsgispy.check_optional_dep(
+                HAVE_SCIPY, "grid_scattered_pts", "scipy", "stats"
             )
-            tqdm_cls = rsgispy.get_tqdm()
-            for r_idx in tqdm_cls(
-                range(src.height),
-                desc="Gridding",
-                unit="row",
-                disable=not use_pbar,
-            ):
-                for c_idx in range(src.width):
-                    out_arr[r_idx, c_idx] = _eval_grid_cell(
-                        alg,
-                        params,
-                        float(x_grid[r_idx, c_idx]),
-                        float(y_grid[r_idx, c_idx]),
-                        pts_x,
-                        pts_y,
-                        pts_z,
-                    )
+            pts_xy = np.column_stack((pts_x, pts_y))
+            lin_interp = LinearNDInterpolator(pts_xy, pts_z, fill_value=np.nan)
+            if params.get("radius", -1.0) >= 0.0:
+                kd_tree = cKDTree(pts_xy)
+        elif alg == "nearest" and HAVE_SCIPY:
+            kd_tree = cKDTree(np.column_stack((pts_x, pts_y)))
 
         dst = create_output_from_dataset(
             stack=stack,
@@ -735,10 +879,50 @@ def grid_scattered_pts(
         )
         dst.nodata = out_nodata
         out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
-        dst.write(
-            cast_result_block(out_arr, src.height, src.width, out_np_dtype),
-            1,
-        )
+
+        for win in iter_dataset_windows(
+            src.height, src.width, use_pbar=use_pbar
+        ):
+            win_w = int(win.width)
+            win_h = int(win.height)
+            x_grid, y_grid = _block_centre_coords(
+                src.transform,
+                int(win.col_off),
+                int(win.row_off),
+                win_w,
+                win_h,
+            )
+            if alg == "invdistnn":
+                blk = _grid_invdistnn(
+                    params, x_grid, y_grid, pts_x, pts_y, pts_z, kd_tree=kd_tree
+                )
+            elif alg == "linear":
+                blk = _grid_linear(
+                    params,
+                    x_grid,
+                    y_grid,
+                    pts_x,
+                    pts_y,
+                    pts_z,
+                    interp=lin_interp,
+                    kd_tree=kd_tree,
+                )
+            else:
+                blk = _grid_general_block(
+                    alg,
+                    params,
+                    x_grid,
+                    y_grid,
+                    pts_x,
+                    pts_y,
+                    pts_z,
+                    kd_tree=kd_tree,
+                )
+            dst.write(
+                cast_result_block(blk, win_h, win_w, out_np_dtype),
+                1,
+                window=win,
+            )
 
     maybe_pop_stats(
         output_img=output_img,

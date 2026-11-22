@@ -13,7 +13,7 @@ Minimal Installation
 ~~~~~~~~~~~~~~~~~~~~
 
 Install ``rsgispy`` with only its core dependencies (``geopandas``,
-``matplotlib``, ``numpy``, ``pandas``, ``pymu-eval``,
+``matplotlib``, ``numpy``, ``pandas``, ``pymu-eval``, ``pyogrio``,
 ``pyproj``, ``rasterio``, ``shapely``, and ``tqdm``) using ``pip``:
 
 .. code-block:: bash
@@ -49,7 +49,7 @@ Additional functionality uses optional third-party packages defined under
      - Gradient-boosted decision tree classifiers and regressors (also
        installable individually as ``xgboost``, ``lightgbm``, or ``catboost``).
    * - ``modelling``
-     - ``imbalanced-learn``, ``SALib``, ``scikit-learn``, ``scipy``, ``shap``
+     - ``SALib``, ``scikit-learn``, ``scipy``, ``shap``
      - Species distribution modelling, SHAP model explanations, and SALib
        Sobol global sensitivity analysis.
    * - ``stats``
@@ -151,7 +151,7 @@ Package Overview
 
 * :doc:`rsgispy` — Core data type constants, exception class, and interpolation mappings.
 * :doc:`rsgispy_changedetect` — Multi-temporal change detection (CVA, ISFA, IR-MAD) and class outlier detection.
-* :doc:`rsgispy_classification` — Reference point sampling, accuracy point population, and area-weighted / point-only accuracy statistics with bootstrap confidence intervals.
+* :doc:`rsgispy_classification` — Supervised classification (``scikit-learn``, XGBoost, LightGBM, CatBoost), clustering, feature selection, reference point sampling, accuracy statistics, and post-classification majority/sieve filtering.
 * :doc:`rsgispy_cli` — Standardised command-line tools for raster/vector inspection, statistics, COG conversion, LUT creation, dataset validation, hashing, and CRS conversion.
 * :doc:`rsgispy_dataaccess` — Clients for Copernicus OData, NASA CMR, OSM, Planet, and USGS M2M.
 * :doc:`rsgispy_droneutils` — Drone photo organisation and metadata utilities.

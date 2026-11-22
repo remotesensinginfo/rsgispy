@@ -34,6 +34,20 @@ __all__ = [
 ]
 
 
+def _align_secondary_crs(
+    primary_gdf: gpd.GeoDataFrame,
+    secondary_gdf: gpd.GeoDataFrame,
+) -> gpd.GeoDataFrame:
+    """Reproject ``secondary_gdf`` to ``primary_gdf.crs`` when both are defined and differ."""
+    if (
+        primary_gdf.crs is not None
+        and secondary_gdf.crs is not None
+        and primary_gdf.crs != secondary_gdf.crs
+    ):
+        return secondary_gdf.to_crs(primary_gdf.crs)
+    return secondary_gdf
+
+
 def _overlay_vec_lyrs(
     vec_file: VectorInput,
     vec_lyr: Optional[str],
@@ -53,6 +67,7 @@ def _overlay_vec_lyrs(
 
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     over_data_gdf = read_vec_gdf(vec_over_file, vec_over_lyr)
+    over_data_gdf = _align_secondary_crs(data_gdf, over_data_gdf)
     res_gdf = gpd.overlay(data_gdf, over_data_gdf, how=how)
 
     if out_path is None:
@@ -367,6 +382,7 @@ def clip_vec_lyr(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     base_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     roi_gdf = read_vec_gdf(vec_roi_file, vec_roi_lyr, copy=False)
+    roi_gdf = _align_secondary_crs(base_gdf, roi_gdf)
     clipped_gdf = gpd.clip(base_gdf, roi_gdf, keep_geom_type=True)
     if out_vec_file is None:
         return clipped_gdf
@@ -431,8 +447,9 @@ def clip_and_merge_with_roi(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     roi_gdf = read_vec_gdf(vec_roi_file, vec_roi_lyr)
-    roi_gdf[ref_col_name] = roi_rgn_val
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
+    roi_gdf = _align_secondary_crs(data_gdf, roi_gdf)
+    roi_gdf[ref_col_name] = roi_rgn_val
     data_gdf[ref_col_name] = data_rgn_val
 
     clipped_data_gdf = data_gdf.clip(roi_gdf, keep_geom_type=True)
@@ -442,9 +459,14 @@ def clip_and_merge_with_roi(
         clipped_data_gdf[ref_col_name] = data_rgn_val
 
     roi_diff_gdf = gpd.overlay(roi_gdf, clipped_data_gdf, how="difference")
+    geom_col = clipped_data_gdf.geometry.name
+    if roi_diff_gdf.geometry.name != geom_col:
+        roi_diff_gdf = roi_diff_gdf.rename_geometry(geom_col)
+    out_crs = data_gdf.crs if data_gdf.crs is not None else roi_gdf.crs
     out_data_gdf = gpd.GeoDataFrame(
         pd.concat([clipped_data_gdf, roi_diff_gdf], ignore_index=True),
-        crs=roi_gdf.crs,
+        geometry=geom_col,
+        crs=out_crs,
     )
 
     if explode_rslt_lyr:
@@ -518,6 +540,7 @@ def clip_vec_into_sets(
 
     data_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     roi_gdf = read_vec_gdf(vec_roi_file, vec_roi_lyr, copy=False)
+    roi_gdf = _align_secondary_crs(data_gdf, roi_gdf)
 
     validate_columns_exist(roi_gdf, [roi_att_col])
     unq_roi_vals = roi_gdf[roi_att_col].unique()
@@ -525,14 +548,22 @@ def clip_vec_into_sets(
     pre = f"{out_vec_base_pre}_" if out_vec_base_pre != "" else ""
     post = f"_{out_vec_base_post}" if out_vec_base_post != "" else ""
 
+    used_names: set = set()
     pbar_cls = rsgispy.get_tqdm()
     for roi_val in pbar_cls(
         unq_roi_vals, total=len(unq_roi_vals), disable=not use_pbar
     ):
-        roi_sub_gdf = roi_gdf[roi_gdf[roi_att_col] == roi_val]
+        is_na = pd.isna(roi_val)
+        if is_na:
+            roi_sub_gdf = roi_gdf[roi_gdf[roi_att_col].isna()]
+            val_label = "null"
+        else:
+            roi_sub_gdf = roi_gdf[roi_gdf[roi_att_col] == roi_val]
+            val_label = str(roi_val)
+
         roi_data_gdf = data_gdf.clip(roi_sub_gdf, keep_geom_type=True)
 
-        out_vec_lyr = f"{pre}{roi_val}{post}"
+        out_vec_lyr = f"{pre}{val_label}{post}"
         out_vec_lyr = rsgispy.tools.strings.check_str(
             out_vec_lyr,
             rm_non_ascii=True,
@@ -542,6 +573,14 @@ def clip_vec_into_sets(
         )
         if out_name_lower:
             out_vec_lyr = out_vec_lyr.lower()
+        if not out_vec_lyr:
+            out_vec_lyr = "group"
+        base_lyr = out_vec_lyr
+        suffix_idx = 1
+        while out_vec_lyr in used_names:
+            out_vec_lyr = f"{base_lyr}_{suffix_idx}"
+            suffix_idx += 1
+        used_names.add(out_vec_lyr)
 
         out_vec_file = os.path.join(out_dir, f"{out_vec_lyr}.{out_vec_ext}")
         write_vec_gdf(

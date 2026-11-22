@@ -1464,7 +1464,10 @@ def run_postprocess_pipeline(
                 name="maj_out",
             )
             TileGraph(mem_sink, block_size=blk_sz).run(use_pbar=use_pbar)
-            assert mem_sink.result is not None
+            if mem_sink.result is None:
+                raise rsgispy.RSGISPyException(
+                    "In-memory majority filter pipeline produced no output."
+                )
             arr_2d = mem_sink.result[0]
             grid = IntersectionGrid(
                 crs=meta.crs,

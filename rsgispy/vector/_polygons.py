@@ -107,9 +107,9 @@ def convert_polys_to_lines_gp(
                 raise rsgispy.RSGISPyException(
                     f"Expected Polygon or MultiPolygon geometry, got '{geom.geom_type}'."
                 )
-        out_gdf["geometry"] = ext_geoms
+        out_gdf = out_gdf.set_geometry(ext_geoms)
     else:
-        out_gdf["geometry"] = data_gdf.geometry.boundary
+        out_gdf = out_gdf.set_geometry(data_gdf.geometry.boundary)
 
     if out_path is None:
         return out_gdf
@@ -159,7 +159,7 @@ def calc_poly_centroids(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     in_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     out_gdf = in_gdf.copy()
-    out_gdf["geometry"] = in_gdf.geometry.centroid
+    out_gdf = out_gdf.set_geometry(in_gdf.geometry.centroid)
     if out_vec_file is None:
         return out_gdf
     write_vec_gdf(
@@ -369,7 +369,9 @@ def simplify_geometries(
     out_path = prepare_optional_out_vec(out_vec_file, del_exist_vec=del_exist_vec)
     in_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     out_gdf = in_gdf.copy()
-    out_gdf["geometry"] = in_gdf.geometry.simplify(tolerance, preserve_topology=True)
+    out_gdf = out_gdf.set_geometry(
+        in_gdf.geometry.simplify(tolerance, preserve_topology=True)
+    )
     if out_path is None:
         return out_gdf
     write_vec_gdf(
@@ -468,7 +470,7 @@ def delete_polygon_holes(
             )
 
     out_gdf = in_gdf.copy()
-    out_gdf["geometry"] = out_geoms
+    out_gdf = out_gdf.set_geometry(out_geoms)
     if out_path is None:
         return out_gdf
     write_vec_gdf(
@@ -547,12 +549,14 @@ def buffer_vec_layer_gp(
     out_lyr = resolve_out_lyr_name(out_path, out_vec_lyr)
 
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
-    data_gdf["geometry"] = data_gdf["geometry"].buffer(
-        distance=buf_dist,
-        resolution=buf_res,
-        single_sided=buf_sgl_sided,
-        cap_style=cap_style,
-        join_style=join_style,
+    data_gdf = data_gdf.set_geometry(
+        data_gdf.geometry.buffer(
+            distance=buf_dist,
+            resolution=buf_res,
+            single_sided=buf_sgl_sided,
+            cap_style=cap_style,
+            join_style=join_style,
+        )
     )
     if out_path is None:
         return data_gdf
@@ -786,20 +790,34 @@ def thin_vector_geoms(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     pts_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
-    grid_gdf = read_vec_gdf(grid_vec_file, grid_vec_lyr)
-    grid_gdf["unq_id"] = np.arange(1, len(grid_gdf) + 1, 1, dtype=int)
+    grid_gdf = read_vec_gdf(grid_vec_file, grid_vec_lyr, copy=False)
+    if (
+        pts_gdf.crs is not None
+        and grid_gdf.crs is not None
+        and pts_gdf.crs != grid_gdf.crs
+    ):
+        grid_gdf = grid_gdf.to_crs(pts_gdf.crs)
 
-    pts_join_gdf = gpd.sjoin(
-        pts_gdf, grid_gdf, how="inner", predicate="intersects"
+    pts_only = gpd.GeoDataFrame(
+        geometry=pts_gdf.geometry.values,
+        index=np.arange(len(pts_gdf)),
+        crs=pts_gdf.crs,
     )
-    pts_join_gdf.drop_duplicates(
-        subset="unq_id", keep="first", inplace=True, ignore_index=False
+    grid_only = gpd.GeoDataFrame(
+        geometry=grid_gdf.geometry.values,
+        index=np.arange(len(grid_gdf)),
+        crs=grid_gdf.crs,
     )
+    joined = gpd.sjoin(pts_only, grid_only, how="inner", predicate="intersects")
+    joined = joined.drop_duplicates(subset="index_right", keep="first")
+    kept_pos = joined.index.drop_duplicates(keep="first")
+    pts_thin_gdf = pts_gdf.iloc[kept_pos].copy()
+
     if out_vec_file is None:
-        return pts_join_gdf
-    if len(pts_join_gdf) > 0:
+        return pts_thin_gdf
+    if len(pts_thin_gdf) > 0:
         write_vec_gdf(
-            pts_join_gdf,
+            pts_thin_gdf,
             out_vec_file,
             out_vec_lyr,
             out_format=out_format,
@@ -849,8 +867,8 @@ def shiftxy_vec_lyr(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     base_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     shifted_gdf = base_gdf.copy()
-    shifted_gdf["geometry"] = base_gdf.geometry.translate(
-        xoff=x_shift, yoff=y_shift
+    shifted_gdf = shifted_gdf.set_geometry(
+        base_gdf.geometry.translate(xoff=x_shift, yoff=y_shift)
     )
     if out_vec_file is None:
         return shifted_gdf

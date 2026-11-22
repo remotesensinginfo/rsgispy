@@ -232,9 +232,7 @@ def calc_fill_regions_knn(
             win_h = int(out_win.height)
             win_w = int(out_win.width)
             in_block = fill_src.read(1, window=out_win)
-            out_arr = np.zeros((win_h, win_w), dtype=out_np_dtype)
-
-            fill_mask = in_block == fill_region_val
+            fill_mask = _fill_mask_from_arr(in_block, fill_region_val)
             if np.any(fill_mask):
                 loc_rows, loc_cols = np.nonzero(fill_mask)
                 abs_rows = loc_rows + int(out_win.row_off)
@@ -245,15 +243,15 @@ def calc_fill_regions_knn(
                 _, idxs = kd_tree.query(query_pts, k=k_eff)
                 nbr_vals = ref_vals[idxs].reshape(loc_rows.size, k_eff)
                 fill_vals = _summarise_neighbours(nbr_vals, summary)
-                out_arr[loc_rows, loc_cols] = fill_vals.astype(
-                    out_np_dtype, copy=False
+                out_f = np.zeros((win_h, win_w), dtype=np.float64)
+                out_f[loc_rows, loc_cols] = fill_vals
+                out_arr = cast_result_block(
+                    out_f, win_h, win_w, out_np_dtype, clamp_int=True
                 )
+            else:
+                out_arr = np.zeros((win_h, win_w), dtype=out_np_dtype)
 
-            dst.write(
-                cast_result_block(out_arr, win_h, win_w, out_np_dtype),
-                1,
-                window=out_win,
-            )
+            dst.write(out_arr, 1, window=out_win)
 
 
 def _valid_seed_mask(
@@ -292,8 +290,10 @@ def _fill_mask_from_arr(
     mask_arr: np.ndarray, fill_region_val: Union[int, float]
 ) -> np.ndarray:
     """Return boolean mask of fillable pixels equal to ``fill_region_val``."""
-    if np.issubdtype(mask_arr.dtype, np.floating) and np.isnan(fill_region_val):
-        return np.isnan(mask_arr)
+    if math.isnan(float(fill_region_val)):
+        if np.issubdtype(mask_arr.dtype, np.floating):
+            return np.isnan(mask_arr)
+        return np.zeros(mask_arr.shape, dtype=bool)
     return mask_arr == fill_region_val
 
 
@@ -1101,7 +1101,10 @@ def _inspect_tile_inputs(
                 )
                 r0, c0 = 0, 0
             else:
-                assert base_transform is not None
+                if base_transform is None:
+                    raise rsgispy.RSGISPyException(
+                        "Failed to determine base transform from tile 0."
+                    )
                 if (grid.crs is None) != (base_crs is None) or (
                     grid.crs is not None and grid.crs != base_crs
                 ):

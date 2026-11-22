@@ -73,7 +73,12 @@ def _resolve_estimator_df_cols(
 
 def _apply_lut_1d(vals: np.ndarray, lut: Mapping[Any, Any]) -> np.ndarray:
     """Map predicted integer/label values via ``lut``."""
-    out = np.empty_like(vals)
+    if lut:
+        target_arr = np.asarray(list(lut.values()))
+        out_dtype = np.result_type(vals.dtype, target_arr.dtype)
+    else:
+        out_dtype = vals.dtype
+    out = np.empty(vals.shape, dtype=out_dtype)
     for idx, val in enumerate(vals):
         key = int(val) if isinstance(val, (int, np.integer)) else val
         out[idx] = lut.get(key, val)
@@ -197,6 +202,33 @@ def predict_raster(
     with ExitStack() as stack:
         dst = None
         out_count = 1
+        empty_windows: List[Any] = []
+        last_grid: Optional[Any] = None
+
+        def _write_nodata_windows(target_dst: Any, n_bands: int) -> None:
+            for e_win in empty_windows:
+                ew_h = int(e_win.height)
+                ew_w = int(e_win.width)
+                if n_bands == 1:
+                    eblk = cast_result_block(
+                        np.full((ew_h, ew_w), eff_nd, dtype=np.float64),
+                        ew_h,
+                        ew_w,
+                        out_np_dt,
+                    )
+                    target_dst.write(eblk, 1, window=e_win)
+                else:
+                    eblk_m = cast_result_block(
+                        np.full(
+                            (n_bands, ew_h, ew_w), eff_nd, dtype=np.float64
+                        ),
+                        ew_h,
+                        ew_w,
+                        out_np_dt,
+                    )
+                    target_dst.write(eblk_m, window=e_win)
+            empty_windows.clear()
+
         for out_win, grid, valid_idx, x_valid in stack_obj.iter_blocks(
             in_msk_img=in_msk_img,
             img_msk_val=img_msk_val,
@@ -206,21 +238,30 @@ def predict_raster(
             as_dataframe=False,
             use_pbar=use_pbar,
         ):
+            last_grid = grid
             win_h = int(out_win.height)
             win_w = int(out_win.width)
+            if valid_idx.size == 0 and dst is None:
+                empty_windows.append(out_win)
+                continue
+
             preds: Optional[np.ndarray] = None
             if valid_idx.size > 0:
                 x_in: Any = (
                     pd.DataFrame(x_valid, columns=df_cols) if use_df else x_valid
                 )
                 if threshold is not None:
-                    probs = np.asarray(estimator.predict_proba(x_in), dtype=np.float64)
+                    probs = np.asarray(
+                        estimator.predict_proba(x_in), dtype=np.float64
+                    )
                     pos_prob = probs[:, -1] if probs.ndim == 2 else probs
                     preds = (pos_prob >= float(threshold)).astype(np.int64)
                 else:
                     preds = np.asarray(estimator.predict(x_in))
                 if lut is not None:
-                    preds = _apply_lut_1d(preds.ravel(), lut).reshape(preds.shape)
+                    preds = _apply_lut_1d(preds.ravel(), lut).reshape(
+                        preds.shape
+                    )
 
             if dst is None:
                 out_count = (
@@ -238,11 +279,14 @@ def predict_raster(
                     creation_opts=norm_opts,
                 )
                 dst.nodata = eff_nd
+                _write_nodata_windows(dst, out_count)
 
             if out_count == 1:
                 flat = np.full(win_h * win_w, eff_nd, dtype=np.float64)
                 if preds is not None:
-                    flat[valid_idx] = preds.ravel().astype(np.float64, copy=False)
+                    flat[valid_idx] = preds.ravel().astype(
+                        np.float64, copy=False
+                    )
                 blk = cast_result_block(
                     flat.reshape(win_h, win_w), win_h, win_w, out_np_dt
                 )
@@ -252,7 +296,9 @@ def predict_raster(
                     (out_count, win_h * win_w), eff_nd, dtype=np.float64
                 )
                 if preds is not None:
-                    flat_m[:, valid_idx] = preds.T.astype(np.float64, copy=False)
+                    flat_m[:, valid_idx] = preds.T.astype(
+                        np.float64, copy=False
+                    )
                 blk_m = cast_result_block(
                     flat_m.reshape(out_count, win_h, win_w),
                     win_h,
@@ -260,6 +306,26 @@ def predict_raster(
                     out_np_dt,
                 )
                 dst.write(blk_m, window=out_win)
+
+        if dst is None and last_grid is not None:
+            n_out_attr = getattr(estimator, "n_outputs_", None)
+            if band_names:
+                out_count = len(band_names)
+            elif isinstance(n_out_attr, (int, np.integer)) and int(n_out_attr) > 0:
+                out_count = int(n_out_attr)
+            else:
+                out_count = 1
+            dst = open_output_dataset(
+                stack=stack,
+                output_img=out_path,
+                gdalformat=gdalformat,
+                out_rio_dtype=out_rio_dt,
+                grid=last_grid,
+                count=out_count,
+                creation_opts=norm_opts,
+            )
+            dst.nodata = eff_nd
+            _write_nodata_windows(dst, out_count)
 
     _finalise_raster_output(
         out_path=out_path,
@@ -583,6 +649,10 @@ def predict_quantiles_raster(
     is_conformal = conformal_residuals is not None
     q_hat = 0.0
     if is_mapping:
+        if not estimators_or_model:
+            raise rsgispy.RSGISPyException(
+                "estimators_or_model mapping must not be empty."
+            )
         q_keys = sorted(float(k) for k in estimators_or_model.keys())
         q_models = [estimators_or_model[k] for k in sorted(estimators_or_model.keys())]
         band_names = [f"q{int(round(q * 100)):02d}" for q in q_keys]
@@ -609,6 +679,21 @@ def predict_quantiles_raster(
         ]
         ref_est = estimators_or_model
     elif hasattr(estimators_or_model, "estimators_"):
+        sub_ests = estimators_or_model.estimators_
+        is_boosted = (
+            isinstance(sub_ests, np.ndarray)
+            or hasattr(estimators_or_model, "init_")
+            or hasattr(estimators_or_model, "learning_rate")
+            or hasattr(estimators_or_model, "estimator_weights_")
+        )
+        if is_boosted or not sub_ests or not all(hasattr(e, "predict") for e in sub_ests):
+            raise rsgispy.RSGISPyException(
+                "Empirical quantile prediction via .estimators_ is only supported "
+                "for independent bagging/forest ensembles (e.g., RandomForestRegressor, "
+                "ExtraTreesRegressor), not boosted ensembles such as "
+                f"{type(estimators_or_model).__name__}. Pass a {{quantile: model}} "
+                "mapping or conformal_residuals instead."
+            )
         q_list = [float(q) for q in quantiles]
         if not q_list or any(q <= 0.0 or q >= 1.0 for q in q_list):
             raise rsgispy.RSGISPyException(

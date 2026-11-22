@@ -9,9 +9,15 @@ from typing import Optional
 import numpy as np
 import rasterio
 
+try:
+    from scipy.ndimage import distance_transform_edt as _distance_transform_edt
+except ImportError:
+    _distance_transform_edt = None
+
 import rsgispy
 from rsgispy.imageprocess import (
     IntersectionGrid,
+    build_valid_mask,
     cast_result_block,
     ensure_file_exists,
     open_output_dataset,
@@ -21,6 +27,21 @@ from rsgispy.imageutils.stats import pop_img_stats
 __all__ = [
     "fft_dem_fusion",
 ]
+
+
+def _fill_invalid_for_fft(arr: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    """Replace invalid/non-finite cells via nearest valid pixel before FFT."""
+    if np.all(valid):
+        return arr
+    if not np.any(valid):
+        return np.zeros_like(arr, dtype=np.float64)
+    if _distance_transform_edt is not None:
+        indices = _distance_transform_edt(
+            ~valid, return_distances=False, return_indices=True
+        )
+        return arr[tuple(indices)].astype(np.float64, copy=False)
+    mean_val = float(np.mean(arr[valid]))
+    return np.where(valid, arr, mean_val)
 
 
 def fft_dem_fusion(
@@ -84,10 +105,12 @@ def fft_dem_fusion(
 
     with rasterio.open(high_res_dem_img, "r") as high_src:
         high_arr = high_src.read(1, out_dtype=np.float64)
+        high_nd = high_src.nodata if high_src.nodata is not None else no_data_val
         grid = IntersectionGrid.from_dataset(high_src)
 
     with rasterio.open(low_res_dem_img, "r") as low_src:
         low_arr = low_src.read(1, out_dtype=np.float64)
+        low_nd = low_src.nodata if low_src.nodata is not None else no_data_val
 
     if high_arr.shape != low_arr.shape:
         raise rsgispy.RSGISPyException(
@@ -95,8 +118,15 @@ def fft_dem_fusion(
             f"{high_arr.shape} != {low_arr.shape}."
         )
 
-    fshift_high = np.fft.fftshift(np.fft.fft2(high_arr))
-    fshift_low = np.fft.fftshift(np.fft.fft2(low_arr))
+    high_valid = build_valid_mask(high_arr, high_nd)
+    low_valid = build_valid_mask(low_arr, low_nd)
+    combined_valid = high_valid & low_valid
+
+    high_clean = _fill_invalid_for_fft(high_arr, high_valid)
+    low_clean = _fill_invalid_for_fft(low_arr, low_valid)
+
+    fshift_high = np.fft.fftshift(np.fft.fft2(high_clean))
+    fshift_low = np.fft.fftshift(np.fft.fft2(low_clean))
 
     rows, cols = low_arr.shape
     crow, ccol = rows // 2, cols // 2
@@ -106,12 +136,11 @@ def fft_dem_fusion(
     c1 = min(cols, ccol + c_size + 1)
     fshift_low[r0:r1, c0:c1] = fshift_high[r0:r1, c0:c1]
 
-    img_back = cast_result_block(
-        np.real(np.fft.ifft2(np.fft.ifftshift(fshift_low))),
-        rows,
-        cols,
-        out_np_dtype,
-    )
+    fused_float = np.real(np.fft.ifft2(np.fft.ifftshift(fshift_low)))
+    if not np.all(combined_valid):
+        fused_float = np.where(combined_valid, fused_float, eff_nd)
+
+    img_back = cast_result_block(fused_float, rows, cols, out_np_dtype)
 
     with ExitStack() as stack:
         dst = open_output_dataset(

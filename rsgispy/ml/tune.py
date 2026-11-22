@@ -279,50 +279,55 @@ def tune_estimator(
     if not splits:
         raise rsgispy.RSGISPyException("cv produced zero valid splits.")
 
+    prev_verbosity = optuna.logging.get_verbosity()
     optuna.logging.set_verbosity(optuna.logging.WARNING)
-    eff_sampler = (
-        sampler
-        if sampler is not None
-        else optuna.samplers.TPESampler(seed=random_state)
-    )
-    study = optuna.create_study(
-        direction=direction,
-        sampler=eff_sampler,
-        pruner=pruner,
-    )
+    try:
+        eff_sampler = (
+            sampler
+            if sampler is not None
+            else optuna.samplers.TPESampler(seed=random_state)
+        )
+        study = optuna.create_study(
+            direction=direction,
+            sampler=eff_sampler,
+            pruner=pruner,
+        )
 
-    def _objective(trial: Any) -> float:
-        params = suggest_params_from_space(trial, param_space)
-        scores: List[float] = []
-        for step_idx, (tr_idx, val_idx) in enumerate(splits):
-            x_tr = _index_rows(X, tr_idx)
-            y_tr = y_arr[tr_idx]
-            x_val = _index_rows(X, val_idx)
-            y_val = y_arr[val_idx]
+        def _objective(trial: Any) -> float:
+            params = suggest_params_from_space(trial, param_space)
+            scores: List[float] = []
+            for step_idx, (tr_idx, val_idx) in enumerate(splits):
+                x_tr = _index_rows(X, tr_idx)
+                y_tr = y_arr[tr_idx]
+                x_val = _index_rows(X, val_idx)
+                y_val = y_arr[val_idx]
 
-            if scaler is not None:
-                fold_scaler = scaler.clone_unfitted()
-                x_tr = fold_scaler.fit_transform(x_tr)
-                x_val = fold_scaler.transform(x_val)
+                if scaler is not None:
+                    fold_scaler = scaler.clone_unfitted()
+                    x_tr = fold_scaler.fit_transform(x_tr)
+                    x_val = fold_scaler.transform(x_val)
 
-            est = estimator_factory(params)
-            est.fit(x_tr, y_tr)
-            preds = np.asarray(est.predict(x_val)).ravel()
-            sc = _evaluate_score(y_val, preds, task_norm, scoring)
-            scores.append(sc)
-            trial.report(float(np.mean(scores)), step=step_idx)
-            if trial.should_prune():
-                raise optuna.TrialPruned()
-        return float(np.mean(scores))
+                est = estimator_factory(params)
+                est.fit(x_tr, y_tr)
+                preds = np.asarray(est.predict(x_val)).ravel()
+                sc = _evaluate_score(y_val, preds, task_norm, scoring)
+                scores.append(sc)
+                trial.report(float(np.mean(scores)), step=step_idx)
+                if trial.should_prune():
+                    raise optuna.TrialPruned()
+            return float(np.mean(scores))
 
-    study.optimize(
-        _objective,
-        n_trials=int(n_trials),
-        timeout=timeout,
-        show_progress_bar=bool(show_progress),
-    )
+        study.optimize(
+            _objective,
+            n_trials=int(n_trials),
+            timeout=timeout,
+            show_progress_bar=bool(show_progress),
+        )
+    finally:
+        optuna.logging.set_verbosity(prev_verbosity)
 
-    best_params = dict(study.best_params)
+    fixed_trial = optuna.trial.FixedTrial(study.best_trial.params)
+    best_params = dict(suggest_params_from_space(fixed_trial, param_space))
     best_score = float(study.best_value)
 
     best_est: Optional[Any] = None

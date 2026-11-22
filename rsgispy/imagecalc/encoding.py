@@ -4,6 +4,7 @@ encoding utilities for raster images using ``rasterio``.
 """
 
 from contextlib import ExitStack
+import math
 from typing import Any, Dict, Mapping, Optional
 
 import numpy as np
@@ -23,6 +24,40 @@ __all__ = [
     "recode_int_raster",
     "one_hot_category_encoding",
 ]
+
+
+def _resolve_recoded_nodata(
+    src_nodata: Optional[float],
+    recode_dict: Mapping[int, int],
+    keep_vals_not_in_dict: bool,
+    out_np_dtype: np.dtype,
+) -> Optional[float]:
+    """Validate and optionally remap ``src_nodata`` against ``out_np_dtype`` range."""
+    if src_nodata is None:
+        return None
+    cand = float(src_nodata)
+    if math.isfinite(cand) and cand.is_integer():
+        src_nd_int = int(cand)
+        if src_nd_int in recode_dict:
+            cand = float(recode_dict[src_nd_int])
+        elif not keep_vals_not_in_dict:
+            cand = 0.0
+    if np.issubdtype(out_np_dtype, np.integer):
+        if not math.isfinite(cand) or not cand.is_integer():
+            return None
+        info_i = np.iinfo(out_np_dtype)
+        cand_int = int(cand)
+        if int(info_i.min) <= cand_int <= int(info_i.max):
+            return float(cand_int)
+        return None
+    if np.issubdtype(out_np_dtype, np.floating):
+        if not math.isfinite(cand):
+            return cand
+        info_f = np.finfo(out_np_dtype)
+        if float(info_f.min) <= cand <= float(info_f.max):  # pylint: disable=no-member
+            return cand
+        return None
+    return None
 
 
 def recode_int_raster(
@@ -91,8 +126,11 @@ def recode_int_raster(
             count=1,
             creation_opts=creation_opts,
         )
-        if src.nodata is not None:
-            dst.nodata = src.nodata
+        dst_nodata = _resolve_recoded_nodata(
+            src.nodata, recode_dict, keep_vals_not_in_dict, out_np_dtype
+        )
+        if dst_nodata is not None:
+            dst.nodata = dst_nodata
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar

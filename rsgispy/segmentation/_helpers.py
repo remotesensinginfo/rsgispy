@@ -270,6 +270,17 @@ def _read_source_window(
     return band_src.dataset.read(band_src.band_idx, window=in_win)
 
 
+def _check_clump_id_overflow(n_clumps: int, out_np_dtype: np.dtype) -> None:
+    """Raise if ``n_clumps`` exceeds the maximum value representable in ``out_np_dtype``."""
+    if np.issubdtype(out_np_dtype, np.integer):
+        max_id = int(np.iinfo(out_np_dtype).max)
+        if n_clumps > max_id:
+            raise rsgispy.RSGISPyException(
+                f"Clump count ({n_clumps}) exceeds maximum representable value "
+                f"({max_id}) for output datatype '{out_np_dtype}'."
+            )
+
+
 def _run_in_memory(
     band_sources: Sequence[BandSource],
     grid: IntersectionGrid,
@@ -317,10 +328,11 @@ def _run_in_memory(
     else:
         valid = np.ones(shape, dtype=bool)
 
-    out_img, _, _ = label_4connected(
+    out_img, n_clumps, _ = label_4connected(
         valid, horiz_eq, vert_eq, return_first_flat=False
     )
     out_np_dtype = np.dtype(out_rio_dtype)
+    _check_clump_id_overflow(n_clumps, out_np_dtype)
     if out_img.dtype != out_np_dtype:
         out_img = out_img.astype(out_np_dtype)
 
@@ -359,6 +371,7 @@ def _run_tiled(
     # pylint: disable=too-many-branches,too-many-statements
     n_bands = len(band_sources)
     out_np_dtype = np.dtype(out_rio_dtype)
+    u32_max = int(np.iinfo(np.uint32).max)
 
     with tempfile.TemporaryDirectory(prefix="rsgispy_clump_") as tmp_dir:
         tmp_raw_img = os.path.join(tmp_dir, "raw_clumps.tif")
@@ -419,6 +432,11 @@ def _run_tiled(
                 )
 
                 if k_clumps > 0:
+                    if total_raw + k_clumps > u32_max:
+                        raise rsgispy.RSGISPyException(
+                            f"Intermediate tiled clump count ({total_raw + k_clumps}) "
+                            f"exceeds maximum uint32 value ({u32_max})."
+                        )
                     global_out = np.where(
                         local_out > 0, local_out + total_raw, np.uint32(0)
                     )
@@ -439,7 +457,11 @@ def _run_tiled(
                     seam = (top_ids > 0) & (above_ids > 0)
                     for b_i, arr in enumerate(tile_bands):
                         p_row = prev_row_vals[b_i]
-                        assert p_row is not None
+                        if p_row is None:
+                            raise rsgispy.RSGISPyException(
+                                f"Missing previous-row buffer for band {b_i} "
+                                "during tiled clumping."
+                            )
                         seam &= arr[0, :] == p_row[col_off:col_end]
                     if np.any(seam):
                         merge_u_chunks.append(above_ids[seam].astype(np.int64))
@@ -504,6 +526,7 @@ def _run_tiled(
         n_comp, raw_comp_labels = _solve_graph_components(
             total_raw, u_all, v_all
         )
+        _check_clump_id_overflow(n_comp, out_np_dtype)
         raw_order = np.argsort(raw_first_pos, kind="mergesort")
         comp_rep_raw = np.empty(n_comp, dtype=np.int64)
         comp_rep_raw[raw_comp_labels[raw_order[::-1]]] = raw_order[::-1]

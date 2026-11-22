@@ -388,8 +388,10 @@ class FeatureScaler:
                 "FeatureScaler must be fitted before calling transform()."
             )
         arr, col_names, df_index = _normalise_array_input(x_data)
-        assert self.n_features_in_ is not None
-        assert self.canonical_method_ is not None
+        if self.n_features_in_ is None or self.canonical_method_ is None:
+            raise rsgispy.RSGISPyException(
+                "FeatureScaler internal fitted state is incomplete."
+            )
         if arr.shape[1] != self.n_features_in_:
             raise rsgispy.RSGISPyException(
                 f"FeatureScaler expected {self.n_features_in_} features, "
@@ -427,7 +429,10 @@ class FeatureScaler:
                         normed = np.clip(normed, lo, hi)
                 out[finite_rows] = normed
         else:
-            assert self.band_params_ is not None
+            if self.band_params_ is None:
+                raise rsgispy.RSGISPyException(
+                    "FeatureScaler band parameters were not initialised during fit()."
+                )
             for col_idx in range(self.n_features_in_):
                 col = arr[:, col_idx]
                 fin = np.isfinite(col)

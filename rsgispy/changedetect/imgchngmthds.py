@@ -14,12 +14,20 @@ Functions requiring ``scipy`` (:func:`slow_feature_analysis`,
 if ``scipy`` is not installed.
 """
 
+from contextlib import ExitStack
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
+import rasterio
 
 import rsgispy
-from rsgispy.imageprocess import ensure_file_exists, validate_band_index
+from rsgispy.imageprocess import (
+    cast_result_block,
+    create_output_from_dataset,
+    ensure_file_exists,
+    iter_dataset_windows,
+    validate_band_index,
+)
 from rsgispy.imageutils.arrays import (
     create_img_from_array_ref_img,
     get_img_data_as_arr,
@@ -56,6 +64,71 @@ __all__: List[str] = [
 ]
 
 
+def _validate_change_inputs(
+    in_base_img: str,
+    in_chng_img: str,
+    vld_msk_img: Optional[str],
+    img_base_bands: Optional[Sequence[int]],
+    img_chng_bands: Optional[Sequence[int]],
+) -> Tuple[List[int], List[int], int, int]:
+    """Validate base/change/mask files and resolve 1-based band index lists."""
+    ensure_file_exists(in_base_img, "Base image")
+    ensure_file_exists(in_chng_img, "Change image")
+
+    imgs_match = check_img_file_comparison(
+        in_base_img,
+        in_chng_img,
+        test_n_bands=False,
+        test_eql_bbox=True,
+        print_errors=True,
+    )
+    if not imgs_match:
+        raise rsgispy.RSGISPyException(
+            "Input base and change images do not match."
+        )
+
+    base_count = get_img_band_count(in_base_img)
+    chng_count = get_img_band_count(in_chng_img)
+
+    if img_base_bands is not None:
+        if img_chng_bands is None:
+            raise rsgispy.RSGISPyException(
+                "img_base_bands is not None but img_chng_bands is None."
+            )
+        base_bands = [int(bidx) for bidx in img_base_bands]
+        for bidx in base_bands:
+            validate_band_index(bidx, base_count, in_base_img)
+    else:
+        base_bands = list(range(1, base_count + 1))
+
+    if img_chng_bands is not None:
+        if img_base_bands is None:
+            raise rsgispy.RSGISPyException(
+                "img_chng_bands is not None but img_base_bands is None."
+            )
+        chng_bands = [int(bidx) for bidx in img_chng_bands]
+        for bidx in chng_bands:
+            validate_band_index(bidx, chng_count, in_chng_img)
+    else:
+        chng_bands = list(range(1, chng_count + 1))
+
+    if len(base_bands) != len(chng_bands):
+        raise rsgispy.RSGISPyException(
+            "The number of bands specified for the two images do not match."
+        )
+
+    img_size_x, img_size_y = get_img_size(in_base_img)
+    if vld_msk_img is not None:
+        ensure_file_exists(vld_msk_img, "Valid mask image")
+        msk_size_x, msk_size_y = get_img_size(vld_msk_img)
+        if (msk_size_x, msk_size_y) != (img_size_x, img_size_y):
+            raise rsgispy.RSGISPyException(
+                "Valid mask image dimensions do not match input images."
+            )
+
+    return base_bands, chng_bands, img_size_x, img_size_y
+
+
 def _prepare_change_inputs(
     in_base_img: str,
     in_chng_img: str,
@@ -76,59 +149,21 @@ def _prepare_change_inputs(
     where ``base_flat`` and ``chng_flat`` have shape ``(n_bands, n_valid)``.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,too-many-branches
-    ensure_file_exists(in_base_img, "Base image")
-    ensure_file_exists(in_chng_img, "Change image")
-
-    imgs_match = check_img_file_comparison(
-        in_base_img,
-        in_chng_img,
-        test_n_bands=False,
-        test_eql_bbox=True,
-        print_errors=True,
+    # pylint: disable=too-many-locals
+    base_bands, chng_bands, img_size_x, img_size_y = _validate_change_inputs(
+        in_base_img=in_base_img,
+        in_chng_img=in_chng_img,
+        vld_msk_img=vld_msk_img,
+        img_base_bands=img_base_bands,
+        img_chng_bands=img_chng_bands,
     )
-    if not imgs_match:
-        raise rsgispy.RSGISPyException(
-            "Input base and change images do not match."
-        )
-
-    if img_base_bands is not None:
-        if img_chng_bands is None:
-            raise rsgispy.RSGISPyException(
-                "img_base_bands is not None but img_chng_bands is None."
-            )
-        base_count = get_img_band_count(in_base_img)
-        for bidx in img_base_bands:
-            validate_band_index(int(bidx), base_count, in_base_img)
-        n_base_bands = len(img_base_bands)
-    else:
-        n_base_bands = get_img_band_count(in_base_img)
-
-    if img_chng_bands is not None:
-        if img_base_bands is None:
-            raise rsgispy.RSGISPyException(
-                "img_chng_bands is not None but img_base_bands is None."
-            )
-        chng_count = get_img_band_count(in_chng_img)
-        for bidx in img_chng_bands:
-            validate_band_index(int(bidx), chng_count, in_chng_img)
-        n_chng_bands = len(img_chng_bands)
-    else:
-        n_chng_bands = get_img_band_count(in_chng_img)
-
-    if n_base_bands != n_chng_bands:
-        raise rsgispy.RSGISPyException(
-            "The number of bands specified for the two images do not match."
-        )
-    n_bands = n_base_bands
-
-    img_size_x, img_size_y = get_img_size(in_base_img)
+    n_bands = len(base_bands)
     n_pxls = img_size_x * img_size_y
 
-    base_arr = get_img_data_as_arr(in_base_img, img_bands=img_base_bands).astype(
+    base_arr = get_img_data_as_arr(in_base_img, img_bands=base_bands).astype(
         np.float64, copy=False
     )
-    chng_arr = get_img_data_as_arr(in_chng_img, img_bands=img_chng_bands).astype(
+    chng_arr = get_img_data_as_arr(in_chng_img, img_bands=chng_bands).astype(
         np.float64, copy=False
     )
 
@@ -148,12 +183,6 @@ def _prepare_change_inputs(
     )
 
     if vld_msk_img is not None:
-        ensure_file_exists(vld_msk_img, "Valid mask image")
-        msk_size_x, msk_size_y = get_img_size(vld_msk_img)
-        if (msk_size_x, msk_size_y) != (img_size_x, img_size_y):
-            raise rsgispy.RSGISPyException(
-                "Valid mask image dimensions do not match input images."
-            )
         vld_msk_arr = get_img_data_as_arr(vld_msk_img, img_bands=[1])[0]
     else:
         base_vld = np.any(
@@ -183,6 +212,216 @@ def _prepare_change_inputs(
         )
 
     return n_bands, img_size_x, img_size_y, n_pxls, pxl_ids, base_flat, chng_flat
+
+
+def _update_band_stats_1d(
+    count_a: int,
+    mean_a: np.ndarray,
+    m2_a: np.ndarray,
+    batch: np.ndarray,
+) -> Tuple[int, np.ndarray, np.ndarray]:
+    """Update per-band running mean and sum-of-squares for ``(n_bands, n_valid)``."""
+    n_b = int(batch.shape[1])
+    if n_b == 0:
+        return count_a, mean_a, m2_a
+    mean_b = np.mean(batch, axis=1)
+    m2_b = np.sum((batch - mean_b[:, np.newaxis]) ** 2, axis=1)
+    if count_a == 0:
+        return n_b, mean_b, m2_b
+    n_tot = count_a + n_b
+    delta = mean_b - mean_a
+    mean_new = mean_a + delta * (float(n_b) / float(n_tot))
+    m2_new = m2_a + m2_b + (delta * delta) * (
+        float(count_a) * float(n_b) / float(n_tot)
+    )
+    return n_tot, mean_new, m2_new
+
+
+def _read_change_window(
+    base_src: rasterio.DatasetReader,
+    chng_src: rasterio.DatasetReader,
+    msk_src: Optional[rasterio.DatasetReader],
+    base_bands: Sequence[int],
+    chng_bands: Sequence[int],
+    win: rasterio.windows.Window,
+    vld_msk_val: int,
+    base_img_no_data: float,
+    chng_img_no_data: float,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Read and sanitise one window of base/change bands and its 2D valid mask."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    base_blk = np.nan_to_num(
+        base_src.read(base_bands, window=win, out_dtype=np.float64),
+        copy=True,
+        nan=base_img_no_data,
+        posinf=base_img_no_data,
+        neginf=base_img_no_data,
+    )
+    chng_blk = np.nan_to_num(
+        chng_src.read(chng_bands, window=win, out_dtype=np.float64),
+        copy=True,
+        nan=chng_img_no_data,
+        posinf=chng_img_no_data,
+        neginf=chng_img_no_data,
+    )
+    if msk_src is not None:
+        vld_2d = msk_src.read(1, window=win) == vld_msk_val
+    else:
+        base_vld = np.any(
+            (base_blk != base_img_no_data) & np.isfinite(base_blk), axis=0
+        )
+        chng_vld = np.any(
+            (chng_blk != chng_img_no_data) & np.isfinite(chng_blk), axis=0
+        )
+        vld_2d = base_vld | chng_vld
+    return base_blk, chng_blk, vld_2d
+
+
+def _stream_band_change_op(
+    in_base_img: str,
+    in_chng_img: str,
+    out_img: str,
+    op_kind: str,
+    vld_msk_img: Optional[str],
+    vld_msk_val: int,
+    apply_std: bool,
+    img_base_bands: Optional[Sequence[int]],
+    img_chng_bands: Optional[Sequence[int]],
+    gdalformat: str,
+    datatype: Optional[int],
+    no_data_val: Optional[float],
+    base_img_no_data: float,
+    chng_img_no_data: float,
+    calc_stats: bool,
+    use_pbar: bool,
+) -> None:
+    """Stream per-band difference or ratio block-by-block with bounded RAM."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches
+    out_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
+    out_rio_dtype = rsgispy.get_rasterio_datatype(out_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(out_dtype))
+
+    base_bands, chng_bands, img_x, img_y = _validate_change_inputs(
+        in_base_img=in_base_img,
+        in_chng_img=in_chng_img,
+        vld_msk_img=vld_msk_img,
+        img_base_bands=img_base_bands,
+        img_chng_bands=img_chng_bands,
+    )
+    n_bands = len(base_bands)
+    fill_val = 0.0 if no_data_val is None else float(no_data_val)
+
+    with ExitStack() as stack:
+        base_src = stack.enter_context(rasterio.open(in_base_img, "r"))
+        chng_src = stack.enter_context(rasterio.open(in_chng_img, "r"))
+        msk_src = (
+            stack.enter_context(rasterio.open(vld_msk_img, "r"))
+            if vld_msk_img is not None
+            else None
+        )
+
+        mean_b = np.zeros(n_bands, dtype=np.float64)
+        std_b = np.ones(n_bands, dtype=np.float64)
+        mean_c = np.zeros(n_bands, dtype=np.float64)
+        std_c = np.ones(n_bands, dtype=np.float64)
+
+        if apply_std:
+            n_vld = 0
+            m2_b = np.zeros(n_bands, dtype=np.float64)
+            m2_c = np.zeros(n_bands, dtype=np.float64)
+            for win in iter_dataset_windows(img_y, img_x, use_pbar=use_pbar):
+                b_blk, c_blk, vld_2d = _read_change_window(
+                    base_src,
+                    chng_src,
+                    msk_src,
+                    base_bands,
+                    chng_bands,
+                    win,
+                    vld_msk_val,
+                    base_img_no_data,
+                    chng_img_no_data,
+                )
+                if np.any(vld_2d):
+                    b_v = b_blk[:, vld_2d]
+                    c_v = c_blk[:, vld_2d]
+                    n_next, mean_b, m2_b = _update_band_stats_1d(
+                        n_vld, mean_b, m2_b, b_v
+                    )
+                    _, mean_c, m2_c = _update_band_stats_1d(
+                        n_vld, mean_c, m2_c, c_v
+                    )
+                    n_vld = n_next
+            if n_vld > 0:
+                std_b = np.sqrt(np.maximum(m2_b / float(n_vld), 0.0))
+                std_c = np.sqrt(np.maximum(m2_c / float(n_vld), 0.0))
+
+        dst = create_output_from_dataset(
+            stack=stack,
+            src=base_src,
+            output_img=out_img,
+            gdalformat=gdalformat,
+            out_rio_dtype=out_rio_dtype,
+            count=n_bands,
+        )
+        if no_data_val is not None:
+            dst.nodata = no_data_val
+
+        for win in iter_dataset_windows(img_y, img_x, use_pbar=use_pbar):
+            win_h = int(win.height)
+            win_w = int(win.width)
+            b_blk, c_blk, vld_2d = _read_change_window(
+                base_src,
+                chng_src,
+                msk_src,
+                base_bands,
+                chng_bands,
+                win,
+                vld_msk_val,
+                base_img_no_data,
+                chng_img_no_data,
+            )
+            out_blk = np.full((n_bands, win_h, win_w), fill_val, dtype=np.float64)
+            if np.any(vld_2d):
+                b_v = b_blk[:, vld_2d]
+                c_v = c_blk[:, vld_2d]
+                if apply_std:
+                    b_v = np.divide(
+                        b_v - mean_b[:, np.newaxis],
+                        std_b[:, np.newaxis],
+                        out=np.zeros_like(b_v),
+                        where=std_b[:, np.newaxis] != 0.0,
+                    )
+                    c_v = np.divide(
+                        c_v - mean_c[:, np.newaxis],
+                        std_c[:, np.newaxis],
+                        out=np.zeros_like(c_v),
+                        where=std_c[:, np.newaxis] != 0.0,
+                    )
+                if op_kind == "diff":
+                    res = b_v - c_v
+                else:
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        res = b_v / c_v
+                    np.nan_to_num(
+                        res, copy=False, nan=0.0, posinf=0.0, neginf=0.0
+                    )
+                out_blk[:, vld_2d] = res
+
+            dst.write(
+                cast_result_block(
+                    out_blk, win_h, win_w, out_np_dtype, clamp_int=False
+                ),
+                window=win,
+            )
+
+    if calc_stats:
+        pop_img_stats(
+            out_img,
+            no_data_val=no_data_val,
+            calc_pyramids=True,
+            use_pbar=use_pbar,
+        )
 
 
 def _safe_otsu_threshold(values: np.ndarray) -> float:
@@ -237,7 +476,7 @@ def image_difference(
 ) -> None:
     """
     Calculate the per-band difference (``base - change``) between two co-registered
-    images of matching dimensions and spatial extent.
+    images of matching dimensions and spatial extent using tiled streaming.
 
     :param in_base_img: Path to the input base (reference) image file.
     :param in_chng_img: Path to the input change image file.
@@ -267,42 +506,25 @@ def image_difference(
 
         icm.image_difference("t1.tif", "t2.tif", "diff.tif")
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    out_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
-    n_bands, img_x, img_y, n_pxls, pxl_ids, base_flat, chng_flat = (
-        _prepare_change_inputs(
-            in_base_img=in_base_img,
-            in_chng_img=in_chng_img,
-            vld_msk_img=vld_msk_img,
-            vld_msk_val=vld_msk_val,
-            img_base_bands=img_base_bands,
-            img_chng_bands=img_chng_bands,
-            base_img_no_data=base_img_no_data,
-            chng_img_no_data=chng_img_no_data,
-            apply_std=apply_std,
-        )
-    )
-
-    fill_val = 0.0 if no_data_val is None else float(no_data_val)
-    out_flat = np.full((n_bands, n_pxls), fill_val, dtype=np.float32)
-    out_flat[:, pxl_ids] = (base_flat - chng_flat).astype(np.float32, copy=False)
-    diff_img_arr = out_flat.reshape((n_bands, img_y, img_x))
-
-    create_img_from_array_ref_img(
-        data_arr=diff_img_arr,
-        output_img=out_diff_img,
-        ref_img=in_base_img,
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    _stream_band_change_op(
+        in_base_img=in_base_img,
+        in_chng_img=in_chng_img,
+        out_img=out_diff_img,
+        op_kind="diff",
+        vld_msk_img=vld_msk_img,
+        vld_msk_val=vld_msk_val,
+        apply_std=apply_std,
+        img_base_bands=img_base_bands,
+        img_chng_bands=img_chng_bands,
         gdalformat=gdalformat,
-        datatype=out_dtype,
+        datatype=datatype,
         no_data_val=no_data_val,
+        base_img_no_data=base_img_no_data,
+        chng_img_no_data=chng_img_no_data,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
     )
-    if calc_stats:
-        pop_img_stats(
-            out_diff_img,
-            no_data_val=no_data_val,
-            calc_pyramids=True,
-            use_pbar=use_pbar,
-        )
 
 
 def image_ratio(
@@ -325,7 +547,7 @@ def image_ratio(
 ) -> None:
     """
     Calculate the per-band ratio (``base / change``) between two co-registered
-    images of matching dimensions and spatial extent.
+    images of matching dimensions and spatial extent using tiled streaming.
 
     :param in_base_img: Path to the input base (reference) image file.
     :param in_chng_img: Path to the input change image file.
@@ -355,46 +577,25 @@ def image_ratio(
 
         icm.image_ratio("t1.tif", "t2.tif", "ratio.tif")
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    out_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
-    n_bands, img_x, img_y, n_pxls, pxl_ids, base_flat, chng_flat = (
-        _prepare_change_inputs(
-            in_base_img=in_base_img,
-            in_chng_img=in_chng_img,
-            vld_msk_img=vld_msk_img,
-            vld_msk_val=vld_msk_val,
-            img_base_bands=img_base_bands,
-            img_chng_bands=img_chng_bands,
-            base_img_no_data=base_img_no_data,
-            chng_img_no_data=chng_img_no_data,
-            apply_std=apply_std,
-        )
-    )
-
-    with np.errstate(divide="ignore", invalid="ignore"):
-        ratio_vals = base_flat / chng_flat
-    np.nan_to_num(ratio_vals, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-
-    fill_val = 0.0 if no_data_val is None else float(no_data_val)
-    out_flat = np.full((n_bands, n_pxls), fill_val, dtype=np.float32)
-    out_flat[:, pxl_ids] = ratio_vals.astype(np.float32, copy=False)
-    ratio_img_arr = out_flat.reshape((n_bands, img_y, img_x))
-
-    create_img_from_array_ref_img(
-        data_arr=ratio_img_arr,
-        output_img=out_ratio_img,
-        ref_img=in_base_img,
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    _stream_band_change_op(
+        in_base_img=in_base_img,
+        in_chng_img=in_chng_img,
+        out_img=out_ratio_img,
+        op_kind="ratio",
+        vld_msk_img=vld_msk_img,
+        vld_msk_val=vld_msk_val,
+        apply_std=apply_std,
+        img_base_bands=img_base_bands,
+        img_chng_bands=img_chng_bands,
         gdalformat=gdalformat,
-        datatype=out_dtype,
+        datatype=datatype,
         no_data_val=no_data_val,
+        base_img_no_data=base_img_no_data,
+        chng_img_no_data=chng_img_no_data,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
     )
-    if calc_stats:
-        pop_img_stats(
-            out_ratio_img,
-            no_data_val=no_data_val,
-            calc_pyramids=True,
-            use_pbar=use_pbar,
-        )
 
 
 def change_vector_analysis(
@@ -503,7 +704,7 @@ def change_vector_analysis(
         no_data_val=no_data_val,
     )
 
-    chng_bin_flat = np.zeros(n_pxls, dtype=np.uint8)
+    chng_bin_flat = np.full(n_pxls, 255, dtype=np.uint8)
     if use_kmeans:
         chng_bin_flat[pxl_ids] = _get_binary_change_map(l2_norm)
     else:
@@ -726,7 +927,7 @@ def slow_feature_analysis(
         no_data_val=no_data_val,
     )
 
-    bin_flat = np.zeros(n_pxls, dtype=np.uint8)
+    bin_flat = np.full(n_pxls, 255, dtype=np.uint8)
     if use_kmeans:
         bin_flat[pxl_ids] = _get_binary_change_map(sqrt_chi2)
     else:
@@ -952,7 +1153,7 @@ def multivariate_alteration_detection(
         no_data_val=no_data_val,
     )
 
-    bin_flat = np.zeros(n_pxls, dtype=np.uint8)
+    bin_flat = np.full(n_pxls, 255, dtype=np.uint8)
     if use_kmeans:
         bin_flat[pxl_ids] = _get_binary_change_map(sqrt_chi2)
     else:

@@ -142,11 +142,11 @@ def _compute_stats_dict(
     if field_map.get("max") is not None:
         stats_out["max"] = float(vals.max())
     if field_map.get("mean") is not None:
-        stats_out["mean"] = float(vals.mean())
+        stats_out["mean"] = float(vals.mean(dtype=np.float64))
     if field_map.get("stddev") is not None:
-        stats_out["stddev"] = float(vals.std())
+        stats_out["stddev"] = float(vals.std(dtype=np.float64))
     if field_map.get("sum") is not None:
-        stats_out["sum"] = float(vals.sum())
+        stats_out["sum"] = float(vals.sum(dtype=np.float64))
     if field_map.get("count") is not None:
         stats_out["count"] = float(vals.shape[0])
     if field_map.get("mode") is not None:
@@ -259,7 +259,10 @@ def _calc_zonal_stats_core(
                         key: (0.0 if key == "count" else c_val) for key in results
                     }
             else:
-                feat_stats = {key: float(out_no_data_val) for key in results}
+                feat_stats = {
+                    key: (0.0 if key == "count" else float(out_no_data_val))
+                    for key in results
+                }
 
             for key, stat_vals in results.items():
                 stat_vals.append(feat_stats[key])
@@ -386,6 +389,7 @@ def calc_zonal_band_stats_file(
         vec_gdf,
         vec_file,  # type: ignore[arg-type]
         out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+        replace_layer=True,
         out_compress=out_compress,
     )
     return None
@@ -561,6 +565,7 @@ def calc_zonal_poly_pts_band_stats_file(
         vec_gdf,
         vec_file,  # type: ignore[arg-type]
         out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+        replace_layer=True,
         out_compress=out_compress,
     )
     return None
@@ -761,6 +766,7 @@ def calc_zonal_band_stats_test_poly_pts_file(
         vec_gdf,
         vec_file,  # type: ignore[arg-type]
         out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+        replace_layer=True,
         out_compress=out_compress,
     )
     return None
@@ -947,6 +953,7 @@ def calc_zonal_band_pxl_counts_file(
         vec_gdf,
         vec_file,  # type: ignore[arg-type]
         out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+        replace_layer=True,
         out_compress=out_compress,
     )
     return None
@@ -1072,7 +1079,7 @@ def _resolve_poly_pxl_columns(
             raise rsgispy.RSGISPyException(
                 f"Attribute column(s) not found in vector layer: {missing}."
             )
-        if "geometry" in attr_col_names:
+        if vec_gdf.geometry.name in attr_col_names:
             raise rsgispy.RSGISPyException(
                 "Geometry column cannot be included in attr_cols."
             )
@@ -1271,12 +1278,15 @@ def export_poly_pxls_to_df(
         band_col_names, attr_col_names = _resolve_poly_pxl_columns(
             vec_gdf, bands_list, band_names, attr_cols, include_coords
         )
+        attr_arrays = {
+            col: vec_gdf[col].to_numpy() for col in attr_col_names
+        }
         tqdm_cls = rsgispy.get_tqdm()
         for poly_fid, geom in enumerate(
             tqdm_cls(geom_series, total=len(vec_gdf), disable=not use_pbar)
         ):
             attr_values = {
-                col: vec_gdf.iloc[poly_fid][col] for col in attr_col_names
+                col: attr_arrays[col][poly_fid] for col in attr_col_names
             }
             chunk_df = _extract_poly_pxl_chunk(
                 src=src,

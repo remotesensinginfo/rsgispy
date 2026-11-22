@@ -457,7 +457,7 @@ def img_pixel_cluster(
             _open_cluster_datasets(stack, band_specs, in_msk_img)
         )
         n_total_pxls = int(grid.height) * int(grid.width)
-        valid_mask_flat = np.zeros(n_total_pxls, dtype=bool)
+        flat_idx_chunks: List[np.ndarray] = []
         pxl_chunks: List[np.ndarray] = []
 
         for out_win in iter_dataset_windows(
@@ -488,7 +488,7 @@ def img_pixel_cluster(
             if valid_idx.size > 0:
                 rows = (valid_idx // win_w) + row_off
                 cols = (valid_idx % win_w) + col_off
-                valid_mask_flat[rows * int(grid.width) + cols] = True
+                flat_idx_chunks.append(rows * int(grid.width) + cols)
                 pxl_chunks.append(valid_feats)
 
         if not pxl_chunks:
@@ -540,7 +540,7 @@ def img_pixel_cluster(
         )
 
         out_full_flat = np.full(n_total_pxls, eff_nodata, dtype=out_np_dtype)
-        out_full_flat[valid_mask_flat] = _map_labels_to_output(
+        out_full_flat[np.concatenate(flat_idx_chunks)] = _map_labels_to_output(
             raw_labels, out_id_offset, eff_nodata, out_np_dtype
         )
         out_full_2d = out_full_flat.reshape((int(grid.height), int(grid.width)))

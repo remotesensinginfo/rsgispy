@@ -248,17 +248,26 @@ def write_dataframe_table(
 def read_dataframe_table(
     in_file: Union[str, os.PathLike],
     in_format: Optional[str] = None,
+    allow_pickle: bool = True,
 ) -> pd.DataFrame:
     """
     Read a :class:`pandas.DataFrame` from ``in_file`` in Parquet (including
     compressed files such as Snappy, Gzip, Zstd) or another common tabular
     format.
 
+    .. warning::
+        Loading ``pickle`` files can execute arbitrary code. Only read pickle
+        files from trusted sources, or pass ``allow_pickle=False`` to reject
+        pickle inputs.
+
     :param in_file: Input table file path.
     :param in_format: Optional input table format overriding extension
                       detection (e.g., ``'parquet'``, ``'csv'``, ``'tsv'``,
                       ``'feather'``, ``'excel'``, ``'json'``, ``'pickle'``,
                       ``'hdf'``).
+    :param allow_pickle: If ``False``, raise :class:`rsgispy.RSGISPyException`
+                         when ``in_file`` resolves to the ``'pickle'`` format
+                         (Default = ``True`` for backward compatibility).
     :return: Loaded :class:`pandas.DataFrame`.
 
     .. code:: python
@@ -274,6 +283,12 @@ def read_dataframe_table(
         )
 
     fmt = resolve_table_format(path_str, out_format=in_format)
+    if fmt == "pickle" and not allow_pickle:
+        raise rsgispy.RSGISPyException(
+            "Reading pickle files is disabled (allow_pickle=False). "
+            "Pass allow_pickle=True only when loading trusted pickle files."
+        )
+
     readers = {
         "parquet": (pd.read_parquet, "pyarrow' or 'fastparquet"),
         "csv": (pd.read_csv, None),
