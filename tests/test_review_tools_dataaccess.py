@@ -56,8 +56,12 @@ def test_http_json_5xx_and_wget_security(tmp_path, monkeypatch):
         def close(self):
             pass
 
+    monkeypatch.setattr(http_tools, "HAVE_REQUESTS", True)
     monkeypatch.setattr(
-        http_tools.requests, "post", lambda *args, **kwargs: _Resp500()
+        http_tools,
+        "requests",
+        types.SimpleNamespace(post=lambda *args, **kwargs: _Resp500()),
+        raising=False,
     )
     with pytest.raises(rsgispy.RSGISPyException, match="500"):
         http_tools.send_http_json_request("https://example.com/api", {"a": 1})
@@ -400,6 +404,7 @@ def test_imaging_optional_pil_guard(tmp_path, monkeypatch):
     monkeypatch.setattr(imaging, "HAVE_PIL", False)
     with pytest.raises(rsgispy.RSGISPyException, match="pillow"):
         imaging.list_exif_info_pil(str(tmp_path / "x.jpg"))
+    monkeypatch.setattr(imaging, "HAVE_IMAGEIO", True)
     with pytest.raises(rsgispy.RSGISPyException, match="pillow"):
         imaging.animate_img_set(
             [str(tmp_path / "x.png")],
@@ -516,7 +521,20 @@ def test_accuracy_binary_validation_and_constant_arrays():
 
 def test_nasa_cmr_redirect_auth_find_granules_and_versions(monkeypatch):
     """Check strict HTTPS host auth forwarding, +start_date, time-of-day, and versions."""
-    sess = nasa_cmr.SessionWithHeaderNASARedirection("u", "p")
+    if nasa_cmr.HAVE_REQUESTS:
+        sess = nasa_cmr.SessionWithHeaderNASARedirection("u", "p")
+    else:
+        with pytest.raises(rsgispy.RSGISPyException, match="requests"):
+            nasa_cmr.SessionWithHeaderNASARedirection("u", "p")
+        sess = types.SimpleNamespace(
+            AUTH_HOST=nasa_cmr.SessionWithHeaderNASARedirection.AUTH_HOST
+        )
+        sess.rebuild_auth = (
+            nasa_cmr.SessionWithHeaderNASARedirection.rebuild_auth.__get__(
+                sess, type(sess)
+            )
+        )
+
     orig_req = types.SimpleNamespace(url="https://urs.earthdata.nasa.gov/orig")
     resp = types.SimpleNamespace(request=orig_req)
 
@@ -554,6 +572,7 @@ def test_nasa_cmr_redirect_auth_find_granules_and_versions(monkeypatch):
         captured_params.update(data or {})
         return {"feed": {"entry": []}}
 
+    monkeypatch.setattr(nasa_cmr, "HAVE_REQUESTS", True)
     monkeypatch.setattr(rsgispy.tools.http, "send_http_json_request", _fake_send)
 
     nasa_cmr.find_granules(
@@ -655,7 +674,21 @@ def test_copernicus_odata_escaping_and_download_hardening(tmp_path, monkeypatch)
         captured_urls.append(url)
         return _FakeResp(json_data={"value": [{"Name": "O'Scene"}]})
 
-    monkeypatch.setattr(copernicus_odata.requests, "get", _fake_get)
+    if not http_tools.HAVE_REQUESTS:
+        monkeypatch.setattr(http_tools, "HAVE_REQUESTS", True)
+        monkeypatch.setattr(
+            http_tools,
+            "requests",
+            types.SimpleNamespace(HTTPError=OSError),
+            raising=False,
+        )
+    monkeypatch.setattr(copernicus_odata, "HAVE_REQUESTS", True)
+    monkeypatch.setattr(
+        copernicus_odata,
+        "requests",
+        types.SimpleNamespace(get=_fake_get),
+        raising=False,
+    )
     scn = copernicus_odata.query_scn("S2_O'Brien.SAFE")
     assert scn == {"Name": "O'Scene"}
     assert "Name eq 'S2_O''Brien.SAFE'" in captured_urls[0]
@@ -696,7 +729,12 @@ def test_copernicus_odata_escaping_and_download_hardening(tmp_path, monkeypatch)
         ],
     }
     monkeypatch.setattr(
-        copernicus_odata.requests, "Session", lambda: _FakeSession(payload)
+        copernicus_odata,
+        "requests",
+        types.SimpleNamespace(
+            get=_fake_get, Session=lambda: _FakeSession(payload)
+        ),
+        raising=False,
     )
     copernicus_odata.download_scn("tok", scn_info, str(out_dir), use_pbar=False)
     assert lifecycle["ses_entered"] is True

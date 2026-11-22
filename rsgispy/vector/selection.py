@@ -13,8 +13,15 @@ import pandas as pd
 import rasterio
 import rasterio.features
 import rasterio.windows
-from scipy.spatial import cKDTree
 from shapely.geometry import box
+
+try:
+    from scipy.spatial import cKDTree  # pylint: disable=import-error
+
+    HAVE_SCIPY = True
+except ImportError:
+    cKDTree = None  # type: ignore[assignment,misc]
+    HAVE_SCIPY = False
 
 import rsgispy
 from rsgispy.imageprocess import (
@@ -999,14 +1006,31 @@ def match_closest_vec_pts(
     match_xs = match_gdf.geometry.x.to_numpy(dtype=float)
     match_ys = match_gdf.geometry.y.to_numpy(dtype=float)
 
-    tree = cKDTree(np.column_stack((match_xs, match_ys)))
-    dists, best_idxs = tree.query(np.column_stack((base_xs, base_ys)), k=1)
-    best_idxs = np.asarray(best_idxs, dtype=np.intp)
+    if HAVE_SCIPY and cKDTree is not None:
+        tree = cKDTree(np.column_stack((match_xs, match_ys)))
+        dists, best_idxs = tree.query(np.column_stack((base_xs, base_ys)), k=1)
+        best_idxs = np.asarray(best_idxs, dtype=np.intp)
+        dists = np.asarray(dists, dtype=float)
+    else:
+        n_base = base_xs.shape[0]
+        best_idxs = np.empty(n_base, dtype=np.intp)
+        dists = np.empty(n_base, dtype=float)
+        chunk_size = 1024
+        for start in range(0, n_base, chunk_size):
+            end = min(start + chunk_size, n_base)
+            dx = base_xs[start:end, np.newaxis] - match_xs[np.newaxis, :]
+            dy = base_ys[start:end, np.newaxis] - match_ys[np.newaxis, :]
+            sq_dists = dx * dx + dy * dy
+            chunk_best = np.argmin(sq_dists, axis=1)
+            best_idxs[start:end] = chunk_best
+            dists[start:end] = np.sqrt(
+                sq_dists[np.arange(end - start), chunk_best]
+            )
 
     out_gdf = base_gdf.copy()
     out_gdf[out_x_col] = match_xs[best_idxs]
     out_gdf[out_y_col] = match_ys[best_idxs]
-    out_gdf[out_dist_col] = np.asarray(dists, dtype=float)
+    out_gdf[out_dist_col] = dists
     if cp_match_atts:
         match_geom_col = match_gdf.geometry.name
         match_cols = [c for c in match_gdf.columns if c != match_geom_col]

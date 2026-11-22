@@ -297,7 +297,9 @@ class TestVectorFixes:
         assert len(fut) == 1
         assert not fut.geometry.iloc[0].is_empty
 
-    def test_selection_fixes_crs_ckdtree_iloc_na_regex_and_empty_roi(self, tmp_path):
+    def test_selection_fixes_crs_ckdtree_iloc_na_regex_and_empty_roi(
+        self, tmp_path, monkeypatch
+    ):
         """Test selection deduplication, CRS alignment, cKDTree, iloc, NA/regex, empty ROI."""
         # Deduplication when a left feature overlaps multiple right features
         left_gdf = gpd.GeoDataFrame(
@@ -340,6 +342,23 @@ class TestVectorFixes:
         assert len(matched) == 1
         assert matched["match_ref_id"].iloc[0] == "near"
         assert matched["dist_match"].iloc[0] == pytest.approx(5.0, abs=0.5)
+
+        monkeypatch.setattr(vec_sel, "HAVE_SCIPY", False)
+        matched_np = vec_sel.match_closest_vec_pts(
+            pts_utm,
+            None,
+            ref_wgs84,
+            None,
+            out_vec_file=None,
+            cp_match_atts=True,
+            use_pbar=False,
+        )
+        assert len(matched_np) == 1
+        assert matched_np["match_ref_id"].iloc[0] == "near"
+        assert matched_np["dist_match"].iloc[0] == pytest.approx(
+            matched["dist_match"].iloc[0]
+        )
+        monkeypatch.undo()
 
         # Positional .iloc splitting with non-contiguous index
         idx_gdf = gpd.GeoDataFrame(
