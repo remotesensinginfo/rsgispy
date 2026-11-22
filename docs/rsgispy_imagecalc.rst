@@ -51,6 +51,60 @@ Conditional (Ternary) Expressions
        datatype=rsgispy.TYPE_8UINT,
    )
 
+Multi-Output Expressions (Multiple Output Bands)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``pymu-eval`` supports comma-separated sub-expressions (``expr1, expr2, ...``)
+that evaluate to multiple outputs in a single pass. In
+:func:`~rsgispy.imagecalc.maths.band_maths` and
+:func:`~rsgispy.imagecalc.maths.image_band_math`, each top-level comma-separated
+sub-expression is written to its corresponding 1-based output band. Commas
+inside function calls (such as ``min(b1, b2, b3)``) stay function argument
+separators, and expressions may span multiple lines, include ternary
+conditionals, or re-assign an input variable for reuse in later sub-expressions:
+
+.. code-block:: python
+
+   import rsgispy
+   import rsgispy.imagecalc.maths
+
+   band_defns = [
+       rsgispy.imagecalc.maths.BandDefn(band_name="green", input_img="s2.tif", img_band=2),
+       rsgispy.imagecalc.maths.BandDefn(band_name="red", input_img="s2.tif", img_band=3),
+       rsgispy.imagecalc.maths.BandDefn(band_name="nir", input_img="s2.tif", img_band=4),
+   ]
+
+   # Compute NDVI (band 1) and NDWI (band 2) in one pass with zero-division guards
+   indices_exp = """
+       (nir + red) != 0 ? (nir - red) / (nir + red) : -9999,
+       (green + nir) != 0 ? (green - nir) / (green + nir) : -9999
+   """
+   rsgispy.imagecalc.maths.band_maths(
+       output_img="indices.tif",
+       exp=indices_exp,
+       band_defs=band_defns,
+       band_names=["NDVI", "NDWI"],
+       gdalformat="GTIFF",
+       datatype=rsgispy.TYPE_32FLOAT,
+   )
+
+   # Per-pixel min, max, and mean across bands (inner commas are function args;
+   # top-level commas separate the three output bands)
+   rsgispy.imagecalc.maths.band_maths(
+       output_img="band_summary.tif",
+       exp="min(green, red, nir), max(green, red, nir), avg(green, red, nir)",
+       band_defs=band_defns,
+       band_names=["min_refl", "max_refl", "mean_refl"],
+   )
+
+   # Rescale inputs in-place and reuse the scaled values in a third output band
+   rsgispy.imagecalc.maths.band_maths(
+       output_img="scaled_and_ndvi.tif",
+       exp="nir = nir * 0.0001, red = red * 0.0001, (nir - red) / (nir + red)",
+       band_defs=band_defns[1:],
+       band_names=["nir_refl", "red_refl", "NDVI"],
+   )
+
 Band Mathematics, Spectral Indices & Value Rescaling
 ----------------------------------------------------
 

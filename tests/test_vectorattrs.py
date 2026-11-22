@@ -551,3 +551,265 @@ def test_vectorattrs_gdf_in_memory(tmp_path):
             vario_pts_gdf, None, "z", n_lags=2
         )
     assert len(vario_df) == 2
+
+
+def test_vector_maths(tmp_path):
+    """Test vector_maths with pymu-eval expressions, mappings, dtypes, and file output."""
+    gdf = gpd.GeoDataFrame(
+        {
+            "nir": [0.8, 0.6, 0.0, np.nan],
+            "red": [0.2, 0.2, 0.0, 0.4],
+            "cls": ["Forest", "Grass", "Bare", "Water"],
+            "flag": pd.Series([True, False, True, False], dtype="boolean"),
+            "nullable_i": pd.Series([2, pd.NA, 4, 6], dtype="Int64"),
+            "Band 1": [10.0, 20.0, 30.0, 40.0],
+        },
+        geometry=[Point(i, i) for i in range(4)],
+        crs="EPSG:32630",
+    )
+    orig_cols = list(gdf.columns)
+
+    # 1. Auto-discovered numeric columns + ternary conditional (in-memory, no mutation)
+    ndvi_gdf = va_cols.vector_maths(
+        gdf,
+        None,
+        out_col="ndvi",
+        exp="(nir + red) != 0 ? (nir - red) / (nir + red) : -9999",
+    )
+    assert list(gdf.columns) == orig_cols
+    assert ndvi_gdf is not None
+    assert ndvi_gdf["ndvi"].iloc[0] == pytest.approx(0.6)
+    assert ndvi_gdf["ndvi"].iloc[1] == pytest.approx(0.5)
+    assert ndvi_gdf["ndvi"].iloc[2] == pytest.approx(-9999.0)
+    assert np.isnan(ndvi_gdf["ndvi"].iloc[3])
+
+    # 2. Aliased mapping for non-identifier column names + pi constant
+    alias_gdf = va_cols.vector_maths(
+        gdf,
+        None,
+        out_col="scaled",
+        exp="b1 * 2 + flag + pi",
+        vec_cols={"b1": "Band 1", "flag": "flag"},
+    )
+    assert alias_gdf["scaled"].iloc[0] == pytest.approx(20.0 + 1.0 + np.pi)
+    assert alias_gdf["scaled"].iloc[1] == pytest.approx(40.0 + 0.0 + np.pi)
+
+    # 3. Explicit column sequence + constant scalar expression broadcast + out_dtype
+    const_gdf = va_cols.vector_maths(
+        gdf,
+        None,
+        out_col="const_int",
+        exp="rint(2 * pi)",
+        vec_cols=["nir"],
+        out_dtype=int,
+    )
+    assert list(const_gdf["const_int"]) == [6, 6, 6, 6]
+    assert np.issubdtype(const_gdf["const_int"].dtype, np.integer)
+
+    f32_gdf = va_cols.vector_maths(
+        gdf,
+        None,
+        out_col="nir",
+        exp="nullable_i * 1.5",
+        out_dtype=np.float32,
+    )
+    assert f32_gdf["nir"].dtype == np.float32
+    assert f32_gdf["nir"].iloc[0] == pytest.approx(3.0)
+    assert np.isnan(f32_gdf["nir"].iloc[1])
+
+    nan_int_gdf = va_cols.vector_maths(
+        gdf,
+        None,
+        out_col="int_with_na",
+        exp="nullable_i + 1",
+        out_dtype=int,
+    )
+    assert nan_int_gdf["int_with_na"].iloc[0] == 3
+    assert pd.isna(nan_int_gdf["int_with_na"].iloc[1])
+
+    # 4. File input/output (GPKG) & del_exist_vec=True
+    in_gpkg = str(tmp_path / "in.gpkg")
+    out_gpkg = str(tmp_path / "out.gpkg")
+    gdf.to_file(in_gpkg, layer="pts", driver="GPKG")
+
+    ret = va_cols.vector_maths(
+        in_gpkg,
+        "pts",
+        out_col="sum_nr",
+        exp="nir + red",
+        out_vec_file=out_gpkg,
+        out_vec_lyr="pts",
+    )
+    assert ret is None
+    assert va_io.read_vec_column(out_gpkg, "pts", "sum_nr")[:3] == pytest.approx(
+        [1.0, 0.8, 0.0]
+    )
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        va_cols.vector_maths(
+            in_gpkg,
+            "pts",
+            out_col="sum_nr",
+            exp="nir + red",
+            out_vec_file=out_gpkg,
+            out_vec_lyr="pts",
+            del_exist_vec=False,
+        )
+    va_cols.vector_maths(
+        in_gpkg,
+        "pts",
+        out_col="sum_nr",
+        exp="nir - red",
+        out_vec_file=out_gpkg,
+        out_vec_lyr="pts",
+        del_exist_vec=True,
+    )
+    assert va_io.read_vec_column(out_gpkg, "pts", "sum_nr")[:3] == pytest.approx(
+        [0.6, 0.4, 0.0]
+    )
+
+    # 5. Empty GeoDataFrame
+    empty_gdf = gdf.iloc[0:0].copy()
+    empty_out = va_cols.vector_maths(
+        empty_gdf, None, out_col="calc", exp="nir + red"
+    )
+    assert len(empty_out) == 0
+    assert "calc" in empty_out.columns
+
+    # 6. Validation errors
+    with pytest.raises(rsgispy.RSGISPyException, match="out_col"):
+        va_cols.vector_maths(gdf, None, out_col="", exp="nir + red")
+    with pytest.raises(rsgispy.RSGISPyException, match="exp"):
+        va_cols.vector_maths(gdf, None, out_col="x", exp="   ")
+    with pytest.raises(rsgispy.RSGISPyException, match="geometry"):
+        va_cols.vector_maths(gdf, None, out_col="geometry", exp="nir + red")
+    with pytest.raises(rsgispy.RSGISPyException, match="not numeric"):
+        va_cols.vector_maths(
+            gdf, None, out_col="x", exp="cls * 2", vec_cols=["cls"]
+        )
+    with pytest.raises(rsgispy.RSGISPyException, match="could not be bound"):
+        va_cols.vector_maths(gdf, None, out_col="x", exp="cls * 2")
+    with pytest.raises(rsgispy.RSGISPyException, match="out_dtype"):
+        va_cols.vector_maths(
+            gdf, None, out_col="x", exp="nir + red", out_dtype="complex128"
+        )
+
+
+def test_vector_maths_multi_output(tmp_path):
+    """Test multi-output comma-separated pymu-eval expressions in vector_maths."""
+    gdf = gpd.GeoDataFrame(
+        {
+            "blue": [0.1, 0.2, 0.0, 0.3],
+            "green": [0.2, 0.3, 0.0, 0.2],
+            "red": [0.2, 0.2, 0.0, 0.4],
+            "nir": [0.8, 0.6, 0.0, 0.2],
+            "Band 4": [8000.0, 6000.0, 4000.0, 2000.0],
+            "Band 3": [2000.0, 2000.0, 2000.0, 2000.0],
+        },
+        geometry=[Point(i, i) for i in range(4)],
+        crs="EPSG:32630",
+    )
+
+    # 1. Multi-line multi-output with conditionals, multi-arg functions, constant,
+    #    and per-column out_dtype sequence
+    multi_exp = """
+        (nir + red) != 0 ? (nir - red) / (nir + red) : -9999,
+        min(blue, green, red),
+        avg(blue, green, red),
+        (nir > red) ? 1 : 0,
+        2 * pi
+    """
+    out_gdf = va_cols.vector_maths(
+        gdf,
+        None,
+        out_col=["ndvi", "vis_min", "vis_avg", "is_veg", "two_pi"],
+        exp=multi_exp,
+        out_dtype=[np.float32, np.float32, float, int, None],
+    )
+    assert out_gdf is not None
+    assert out_gdf["ndvi"].dtype == np.float32
+    assert out_gdf["vis_min"].dtype == np.float32
+    assert out_gdf["vis_avg"].dtype == np.float64
+    assert np.issubdtype(out_gdf["is_veg"].dtype, np.integer)
+    assert out_gdf["ndvi"].tolist() == pytest.approx([0.6, 0.5, -9999.0, -1.0 / 3.0], rel=1e-5)
+    assert out_gdf["vis_min"].tolist() == pytest.approx([0.1, 0.2, 0.0, 0.2], rel=1e-5)
+    assert out_gdf["vis_avg"].tolist() == pytest.approx(
+        [0.5 / 3.0, 0.7 / 3.0, 0.0, 0.3], rel=1e-5
+    )
+    assert out_gdf["is_veg"].tolist() == [1, 1, 0, 0]
+    assert out_gdf["two_pi"].tolist() == pytest.approx([2.0 * np.pi] * 4)
+
+    # 2. Aliased columns + in-expression variable re-assignment + out_dtype mapping
+    reassigned = va_cols.vector_maths(
+        gdf,
+        None,
+        out_col=["nir_refl", "red_refl", "ndvi_scaled"],
+        exp="nir = nir * 0.0001, red = red * 0.0001, (nir - red) / (nir + red)",
+        vec_cols={"nir": "Band 4", "red": "Band 3"},
+        out_dtype={"ndvi_scaled": np.float32},
+    )
+    assert reassigned["nir_refl"].tolist() == pytest.approx([0.8, 0.6, 0.4, 0.2])
+    assert reassigned["red_refl"].tolist() == pytest.approx([0.2, 0.2, 0.2, 0.2])
+    assert reassigned["ndvi_scaled"].dtype == np.float32
+    assert reassigned["ndvi_scaled"].tolist() == pytest.approx(
+        [0.6, 0.5, 1.0 / 3.0, 0.0], rel=1e-5
+    )
+
+    # 3. Single scalar out_dtype applied across multiple outputs + GPKG file write
+    out_gpkg = str(tmp_path / "multi_cols.gpkg")
+    ret = va_cols.vector_maths(
+        gdf,
+        None,
+        out_col=["sum_nr", "diff_nr"],
+        exp="nir + red, nir - red",
+        out_vec_file=out_gpkg,
+        out_vec_lyr="pts",
+        out_dtype=np.float32,
+    )
+    assert ret is None
+    assert va_io.read_vec_column(out_gpkg, "pts", "sum_nr") == pytest.approx(
+        [1.0, 0.8, 0.0, 0.6], rel=1e-5
+    )
+    assert va_io.read_vec_column(out_gpkg, "pts", "diff_nr") == pytest.approx(
+        [0.6, 0.4, 0.0, -0.2], rel=1e-5
+    )
+
+    # 4. Empty GeoDataFrame with multiple outputs
+    empty_out = va_cols.vector_maths(
+        gdf.iloc[0:0].copy(),
+        None,
+        out_col=["c1", "c2"],
+        exp="nir + red, 42",
+    )
+    assert len(empty_out) == 0
+    assert "c1" in empty_out.columns and "c2" in empty_out.columns
+
+    # 5. Validation errors for multi-output configuration
+    with pytest.raises(rsgispy.RSGISPyException, match="produced 2 output"):
+        va_cols.vector_maths(gdf, None, out_col="only_one", exp="nir + red, nir - red")
+    with pytest.raises(rsgispy.RSGISPyException, match="produced 1 output"):
+        va_cols.vector_maths(gdf, None, out_col=["c1", "c2"], exp="nir + red")
+    with pytest.raises(rsgispy.RSGISPyException, match="Duplicate"):
+        va_cols.vector_maths(gdf, None, out_col=["c1", "c1"], exp="nir + red, nir - red")
+    with pytest.raises(rsgispy.RSGISPyException, match="out_col"):
+        va_cols.vector_maths(gdf, None, out_col=[], exp="nir + red")
+    with pytest.raises(rsgispy.RSGISPyException, match="geometry"):
+        va_cols.vector_maths(
+            gdf, None, out_col=["ok", "geometry"], exp="nir + red, nir - red"
+        )
+    with pytest.raises(rsgispy.RSGISPyException, match="Length of out_dtype"):
+        va_cols.vector_maths(
+            gdf,
+            None,
+            out_col=["c1", "c2"],
+            exp="nir + red, nir - red",
+            out_dtype=[float],
+        )
+    with pytest.raises(rsgispy.RSGISPyException, match="Unknown column name"):
+        va_cols.vector_maths(
+            gdf,
+            None,
+            out_col=["c1", "c2"],
+            exp="nir + red, nir - red",
+            out_dtype={"missing": float},
+        )

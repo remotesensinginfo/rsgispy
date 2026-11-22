@@ -23,6 +23,18 @@ import numpy as np
 import rasterio
 
 import rsgispy
+from rsgispy.imagecalc import _optical_indices_ext as _ext_opt
+from rsgispy.imagecalc._sar_indices import (
+    _SAR_BAND_ALIASES,
+    _SARIndexSpec,
+    convert_sar_block_units,
+    get_available_sar_indices,
+    get_sar_index_equation,
+    get_sar_index_req_bands,
+    get_sar_index_units,
+    lookup_sar_index_spec,
+    normalise_sar_units,
+)
 from rsgispy.imageprocess import (
     build_valid_mask,
     compute_spatial_intersection,
@@ -38,6 +50,11 @@ __all__ = [
     "get_available_indices",
     "get_index_req_bands",
     "get_index_equation",
+    "calc_sar_indices",
+    "get_available_sar_indices",
+    "get_sar_index_req_bands",
+    "get_sar_index_equation",
+    "get_sar_index_units",
 ]
 
 _BAND_ALIASES: Dict[str, str] = {
@@ -45,6 +62,17 @@ _BAND_ALIASES: Dict[str, str] = {
     "green": "green",
     "red": "red",
     "nir": "nir",
+    "nir_narrow": "nir_narrow",
+    "nir-narrow": "nir_narrow",
+    "narrow_nir": "nir_narrow",
+    "narrow-nir": "nir_narrow",
+    "nir8a": "nir_narrow",
+    "re4": "nir_narrow",
+    "re_4": "nir_narrow",
+    "re-4": "nir_narrow",
+    "red_edge_4": "nir_narrow",
+    "red-edge-4": "nir_narrow",
+    "rededge4": "nir_narrow",
     "swir": "swir1",
     "swir1": "swir1",
     "swir_1": "swir1",
@@ -57,6 +85,27 @@ _BAND_ALIASES: Dict[str, str] = {
     "red_edge": "red_edge",
     "red-edge": "red_edge",
     "red edge": "red_edge",
+    "re1": "re1",
+    "re_1": "re1",
+    "re-1": "re1",
+    "red_edge_1": "re1",
+    "red-edge-1": "re1",
+    "rededge1": "re1",
+    "red edge 1": "re1",
+    "re2": "re2",
+    "re_2": "re2",
+    "re-2": "re2",
+    "red_edge_2": "re2",
+    "red-edge-2": "re2",
+    "rededge2": "re2",
+    "red edge 2": "re2",
+    "re3": "re3",
+    "re_3": "re3",
+    "re-3": "re3",
+    "red_edge_3": "re3",
+    "red-edge-3": "re3",
+    "rededge3": "re3",
+    "red edge 3": "re3",
 }
 
 
@@ -616,12 +665,12 @@ def _calc_exg_block(
 def _calc_remi_block(
     bands: Dict[str, np.ndarray], _params: Mapping[str, float]
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Calculate Red-Edge Mangrove Index (``(red_edge - red) / (swir1 + green)``)."""
+    """Calculate Red-Edge Mangrove Index (``(red_edge - red) / (swir1 - green)``)."""
     green = bands["green"]
     red = bands["red"]
     red_edge = bands["red_edge"]
     swir1 = bands["swir1"]
-    denom = swir1 + green
+    denom = swir1 - green
     valid = denom != 0.0
     out = np.zeros_like(denom, dtype=np.float64)
     np.divide(red_edge - red, denom, out=out, where=valid)
@@ -881,17 +930,23 @@ _INDEX_REGISTRY: Dict[str, _IndexSpec] = {
         "((nir - red) / (nir + red)) * nir",
         _calc_nirv_block,
     ),
-    "ndre": _IndexSpec(
-        "NDRE",
-        ("red_edge", "nir"),
-        "(nir - red_edge) / (nir + red_edge)",
-        _calc_ndre_block,
+    "pvi": _IndexSpec(
+        "PVI",
+        ("red", "nir"),
+        "(nir - a * red - b) / sqrt(1 + a^2)",
+        _ext_opt.calc_pvi_block,
     ),
-    "cire": _IndexSpec(
-        "CIre", ("red_edge", "nir"), "(nir / red_edge) - 1", _calc_cire_block
+    "wdrvi": _IndexSpec(
+        "WDRVI",
+        ("red", "nir"),
+        "(a * nir - red) / (a * nir + red)",
+        _ext_opt.calc_wdrvi_block,
     ),
     "cigreen": _IndexSpec(
         "CIgreen", ("green", "nir"), "(nir / green) - 1", _calc_cigreen_block
+    ),
+    "gcvi": _IndexSpec(
+        "GCVI", ("green", "nir"), "(nir / green) - 1", _calc_cigreen_block
     ),
     "npcri": _IndexSpec(
         "NPCRI",
@@ -899,18 +954,65 @@ _INDEX_REGISTRY: Dict[str, _IndexSpec] = {
         "(red - blue) / (red + blue)",
         _calc_npcri_block,
     ),
-    "remi": _IndexSpec(
-        "REMI",
-        ("green", "red", "red_edge", "swir1"),
-        "(red_edge - red) / (swir1 + green)",
-        _calc_remi_block,
+    # Red-Edge Vegetation & Stress
+    "ndre": _IndexSpec(
+        "NDRE",
+        ("red_edge", "nir"),
+        "(nir - red_edge) / (nir + red_edge)",
+        _calc_ndre_block,
     ),
-    "mvi": _IndexSpec(
-        "MVI",
-        ("green", "nir", "swir1"),
-        "(nir - green) / (swir1 - green)",
-        _calc_mvi_block,
+    "ndre_re": _IndexSpec(
+        "NDRE_RE",
+        ("re1", "re2"),
+        "(re2 - re1) / (re2 + re1)",
+        _ext_opt.calc_ndre_re_block,
     ),
+    "cire": _IndexSpec(
+        "CIre", ("red_edge", "nir"), "(nir / red_edge) - 1", _calc_cire_block
+    ),
+    "ci_red_edge": _IndexSpec(
+        "CI_red_edge",
+        ("red_edge", "nir"),
+        "(nir / red_edge) - 1",
+        _calc_cire_block,
+    ),
+    "mtci": _IndexSpec(
+        "MTCI",
+        ("red", "re1", "re2"),
+        "(re2 - re1) / (re1 - red)",
+        _ext_opt.calc_mtci_block,
+    ),
+    "mcari": _IndexSpec(
+        "MCARI",
+        ("green", "red", "re1"),
+        "((re1 - red) - 0.2 * (re1 - green)) * (re1 / red)",
+        _ext_opt.calc_mcari_block,
+    ),
+    "ireci": _IndexSpec(
+        "IRECI",
+        ("red", "re1", "re2", "re3"),
+        "(re3 - red) / (re1 / re2)",
+        _ext_opt.calc_ireci_block,
+    ),
+    "s2rep": _IndexSpec(
+        "S2REP",
+        ("red", "re1", "re2", "re3"),
+        "705 + 35 * (((re3 + red) / 2) - re1) / (re2 - re1)",
+        _ext_opt.calc_s2rep_block,
+    ),
+    "psri": _IndexSpec(
+        "PSRI",
+        ("blue", "red", "re2"),
+        "(red - blue) / re2",
+        _ext_opt.calc_psri_block,
+    ),
+    "psri_green": _IndexSpec(
+        "PSRI_Green",
+        ("green", "red", "red_edge"),
+        "(red - green) / red_edge",
+        _ext_opt.calc_psri_green_block,
+    ),
+    # Visible-Band / UAV Vegetation
     "vari": _IndexSpec(
         "VARI",
         ("blue", "green", "red"),
@@ -929,7 +1031,146 @@ _INDEX_REGISTRY: Dict[str, _IndexSpec] = {
         "2 * green - red - blue",
         _calc_exg_block,
     ),
-    # Water, Snow & Moisture
+    "ngrdi": _IndexSpec(
+        "NGRDI",
+        ("green", "red"),
+        "(green - red) / (green + red)",
+        _calc_ndgi_block,
+    ),
+    # Mangrove & Wetland Forest
+    "cmri": _IndexSpec(
+        "CMRI",
+        ("green", "red", "nir"),
+        "((nir - red) / (nir + red)) - ((green - nir) / (green + nir))",
+        _ext_opt.calc_cmri_block,
+    ),
+    "emi": _IndexSpec(
+        "EMI",
+        ("green", "nir", "swir1"),
+        "(nir - swir1) / (green + nir)",
+        _ext_opt.calc_emi_block,
+    ),
+    "ndmai": _IndexSpec(
+        "NDMaI",
+        ("green", "swir2"),
+        "(swir2 - green) / (swir2 + green)",
+        _ext_opt.calc_ndmai_block,
+    ),
+    "ndwvi": _IndexSpec(
+        "NDWVI",
+        ("green", "swir2"),
+        "(swir2 - green) / (swir2 + green)",
+        _ext_opt.calc_ndmai_block,
+    ),
+    "mvi": _IndexSpec(
+        "MVI",
+        ("green", "nir", "swir1"),
+        "(nir - green) / (swir1 - green)",
+        _calc_mvi_block,
+    ),
+    "mvi_abs": _IndexSpec(
+        "MVI_Abs",
+        ("green", "nir", "swir1"),
+        "|nir - green| / |swir1 - green|",
+        _ext_opt.calc_mvi_abs_block,
+    ),
+    "mi": _IndexSpec(
+        "MI",
+        ("nir", "swir1"),
+        "((nir - swir1) / (nir * swir1)) * 10000",
+        _ext_opt.calc_mi_block,
+    ),
+    "ammi": _IndexSpec(
+        "AMMI",
+        ("red", "nir", "swir1"),
+        "((nir - red) / (red + swir1)) * ((nir - swir1) / (swir1 - 0.65 * red))",
+        _ext_opt.calc_ammi_block,
+    ),
+    "imfi": _IndexSpec(
+        "IMFI",
+        ("blue", "green", "nir"),
+        "(blue + green - 2 * nir) / (blue + green + 2 * nir)",
+        _ext_opt.calc_imfi_block,
+    ),
+    "mdi1": _IndexSpec(
+        "MDI1",
+        ("nir", "swir1"),
+        "(nir - swir1) / swir1",
+        _ext_opt.calc_mdi1_block,
+    ),
+    "mdi2": _IndexSpec(
+        "MDI2",
+        ("nir", "swir2"),
+        "(nir - swir2) / swir2",
+        _ext_opt.calc_mdi2_block,
+    ),
+    "wfi": _IndexSpec(
+        "WFI",
+        ("red", "nir", "swir2"),
+        "(nir - red) / swir2",
+        _ext_opt.calc_wfi_block,
+    ),
+    "fdi": _IndexSpec(
+        "FDI",
+        ("green", "red", "nir"),
+        "nir - (red + green)",
+        _ext_opt.calc_fdi_block,
+    ),
+    "dnvi": _IndexSpec(
+        "DNVI",
+        ("swir1", "swir2"),
+        "(swir1 - swir2)^2 / (swir1 + swir2)",
+        _ext_opt.calc_dnvi_block,
+    ),
+    "mmri": _IndexSpec(
+        "MMRI",
+        ("green", "red", "nir", "swir1"),
+        "(|MNDWI| - |NDVI|) / (|MNDWI| + |NDVI|)",
+        _ext_opt.calc_mmri_block,
+    ),
+    "mfi": _IndexSpec(
+        "MFI",
+        ("red", "re1", "re2", "re3", "nir_narrow", "swir2"),
+        "0.25 * sum_i(rho_i - (swir2 + (red - swir2) * (2190 - lambda_i) / 1525))",
+        _ext_opt.calc_mfi_block,
+    ),
+    "nimi": _IndexSpec(
+        "NIMI",
+        ("red", "re2", "re3", "nir"),
+        "(3 * red - (re2 + re3 + nir)) / (3 * red + re2 + re3 + nir)",
+        _ext_opt.calc_nimi_block,
+    ),
+    "emvi": _IndexSpec(
+        "EMVI",
+        ("green", "swir1", "swir2"),
+        "(green - swir2) / (swir1 - green)",
+        _ext_opt.calc_emvi_block,
+    ),
+    "gcmi": _IndexSpec(
+        "GCMI",
+        ("blue", "green", "red", "nir", "swir1"),
+        "(A * EVI + B * GNDVI) / (C * LSWI + D * RNDWI)",
+        _ext_opt.calc_gcmi_block,
+    ),
+    "remi": _IndexSpec(
+        "REMI",
+        ("green", "red", "red_edge", "swir1"),
+        "(red_edge - red) / (swir1 - green)",
+        _calc_remi_block,
+    ),
+    "imi": _IndexSpec(
+        "IMI",
+        ("green", "red", "nir", "swir1"),
+        "(nir - red) / (swir1 + green)",
+        _ext_opt.calc_imi_block,
+    ),
+    "remch": _IndexSpec(
+        "REMCH",
+        ("re1", "nir", "swir1", "swir2"),
+        "(nir / swir1) - ((nir / swir2) / (nir / re1)) + (nir / re1)",
+        _ext_opt.calc_remch_block,
+    ),
+    # Water, Intertidal, Snow & Moisture
     "ndwi_mcfeeters": _IndexSpec(
         "NDWI_McFeeters",
         ("green", "nir"),
@@ -956,6 +1197,18 @@ _INDEX_REGISTRY: Dict[str, _IndexSpec] = {
     ),
     "ndmi": _IndexSpec(
         "NDMI",
+        ("nir", "swir1"),
+        "(nir - swir1) / (nir + swir1)",
+        _calc_ndwi_gao_block,
+    ),
+    "ndii": _IndexSpec(
+        "NDII",
+        ("nir", "swir1"),
+        "(nir - swir1) / (nir + swir1)",
+        _calc_ndwi_gao_block,
+    ),
+    "lswi": _IndexSpec(
+        "LSWI",
         ("nir", "swir1"),
         "(nir - swir1) / (nir + swir1)",
         _calc_ndwi_gao_block,
@@ -1010,6 +1263,18 @@ _INDEX_REGISTRY: Dict[str, _IndexSpec] = {
     ),
     "wbi": _IndexSpec(
         "WBI", ("blue", "nir"), "blue / nir", _calc_wbi_bluenir_block
+    ),
+    "wri": _IndexSpec(
+        "WRI",
+        ("green", "red", "nir", "swir1"),
+        "(green + red) / (nir + swir1)",
+        _ext_opt.calc_wri_block,
+    ),
+    "rndwi": _IndexSpec(
+        "RNDWI",
+        ("red", "swir1"),
+        "(red - swir1) / (red + swir1)",
+        _ext_opt.calc_rndwi_block,
     ),
     # Burn, Soil, Built-up, Cloud & Minerals
     "nbr": _IndexSpec(
@@ -1156,7 +1421,10 @@ def get_index_equation(index_name: str) -> str:
 
 
 def _normalise_band_names(
-    band_names: Mapping[int, str], n_bands: int, input_img: str
+    band_names: Mapping[int, str],
+    n_bands: int,
+    input_img: str,
+    band_aliases: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, int]:
     """
     Validate and normalise ``{band_idx: band_name}`` into
@@ -1168,6 +1436,7 @@ def _normalise_band_names(
             "to band name (e.g., {1: 'blue', 2: 'green', 5: 'swir1'})."
         )
 
+    aliases = _BAND_ALIASES if band_aliases is None else band_aliases
     canonical_to_idx: Dict[str, int] = {}
     for raw_idx, raw_name in band_names.items():
         if isinstance(raw_idx, bool) or not isinstance(raw_idx, (int, np.integer)):
@@ -1182,7 +1451,7 @@ def _normalise_band_names(
                 f"Band name for band {band_idx} must be a non-empty string."
             )
         norm_name = raw_name.strip().lower()
-        canonical_name = _BAND_ALIASES.get(norm_name, norm_name)
+        canonical_name = aliases.get(norm_name, norm_name)
         if canonical_name in canonical_to_idx:
             raise rsgispy.RSGISPyException(
                 f"Duplicate band name '{canonical_name}' mapped to bands "
@@ -1233,6 +1502,7 @@ def _resolve_in_scaling(
     n_bands: int,
     label: str,
     check_nonzero: bool = False,
+    band_aliases: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, float]:
     """Resolve scalar, per-image-band sequence, or mapping into per-band values."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-branches
@@ -1245,12 +1515,13 @@ def _resolve_in_scaling(
             raise rsgispy.RSGISPyException(f"{label} must not be zero.")
         return {b: f_val for b in req_bands}
 
+    aliases = _BAND_ALIASES if band_aliases is None else band_aliases
     if isinstance(val, Mapping):
         lower_map: Dict[Union[int, str], float] = {}
         for k, v in val.items():
             if isinstance(k, str):
                 k_norm = k.strip().lower()
-                lower_map[_BAND_ALIASES.get(k_norm, k_norm)] = float(v)
+                lower_map[aliases.get(k_norm, k_norm)] = float(v)
             elif isinstance(k, (int, np.integer)) and not isinstance(k, bool):
                 lower_map[int(k)] = float(v)
             else:
@@ -1301,7 +1572,7 @@ def _resolve_in_scaling(
 def _resolve_out_scaling(
     val: Optional[Union[float, Sequence[float], Mapping[str, float]]],
     default: float,
-    resolved_indices: Sequence[Tuple[str, _IndexSpec]],
+    resolved_indices: Sequence[Tuple[str, Union[_IndexSpec, _SARIndexSpec]]],
     label: str,
     check_nonzero: bool = False,
 ) -> List[float]:
@@ -1556,15 +1827,20 @@ def calc_indices(
     ``datatype`` is used (e.g., ``rsgispy.TYPE_16INT``), valid values are
     rounded to the nearest integer and clamped to the target data type range.
 
-    Water-index disambiguation:
+    Index naming disambiguation:
 
     * ``NDWI_McFeeters`` (also ``NDWI`` and ``GNDWI``):
       ``(green - nir) / (green + nir)`` (McFeeters 1996).
-    * ``NDWI_Gao`` (also ``NDMI``):
-      ``(nir - swir1) / (nir + swir1)`` (Gao 1996; note ``rsgislib.calc_ndwi``
-      used this formula).
+    * ``NDWI_Gao`` (also ``NDMI``, ``NDII``, and ``LSWI``):
+      ``(nir - swir1) / (nir + swir1)`` (Gao 1996; Hardisky et al. 1983;
+      Xiao et al. 2002; note ``rsgislib.calc_ndwi`` used this formula).
+    * ``NDMaI`` (also ``NDWVI``):
+      ``(swir2 - green) / (swir2 + green)`` (Normalised Difference Mangrove
+      Index, Shi et al. 2016; disambiguated from moisture ``NDMI``).
     * ``MNDWI`` (also ``GMNDWI`` and ``NDSI``):
       ``(green - swir1) / (green + swir1)`` (Xu 2006 / Salomonson & Appel 2004).
+    * ``MVI`` computes ``(nir - green) / (swir1 - green)``, whereas ``MVI_Abs``
+      computes ``|nir - green| / |swir1 - green|`` (Baloloy et al. 2020).
     * ``WBI_BlueNIR`` (also ``WBI``):
       ``blue / nir`` (multispectral RSGISLib ratio, distinct from narrowband
       ``R900 / R970``).
@@ -1572,12 +1848,14 @@ def calc_indices(
       ``RVI_Red_NIR`` computes ``red / nir``.
 
     Canonical band names accepted in ``band_names``: ``'blue'``, ``'green'``,
-    ``'red'``, ``'red_edge'`` (alias ``'re'``), ``'nir'``, ``'swir1'``
-    (alias ``'swir'``), and ``'swir2'``.
+    ``'red'``, ``'red_edge'`` (alias ``'re'``), ``'re1'`` (~705 nm),
+    ``'re2'`` (~740 nm), ``'re3'`` (~783 nm), ``'nir'``, ``'nir_narrow'``
+    (aliases ``'re4'``, ``'nir8a'``, ~865 nm), ``'swir1'`` (alias ``'swir'``),
+    and ``'swir2'``.
 
-    Full equations for all supported indices are documented in
-    :doc:`imagecalc/calcindices <../imagecalc/calcindices>` and inspectable via
-    :func:`get_index_equation`.
+    Full equations and categorised tables for all supported indices are
+    documented in :doc:`imagecalc/calcindices <../imagecalc/calcindices>` and
+    inspectable via :func:`get_index_equation`.
 
     :param input_img: Path to the input multi-band raster image file.
     :param output_img: Path to the output multi-band raster image file.
@@ -1598,7 +1876,8 @@ def calc_indices(
     :param out_offset: Optional scalar, per-index sequence, or mapping added
                        after multiplying by ``out_gain`` (Default = ``0.0``).
     :param index_params: Optional mapping of per-index parameter overrides
-                         (e.g., ``{"SAVI": {"l": 0.5}, "WDVI": {"s": 1.2}}``).
+                         (e.g., ``{"SAVI": {"l": 0.5}, "WDRVI": {"a": 0.1},
+                         "GCMI": {"a": 3.4, "b": 2.9, "c": 4.3, "d": 1.1}}``).
     :param gdalformat: GDAL/rasterio driver format for the output file
                        (Default = ``'GTIFF'``).
     :param datatype: Output data type constant from ``rsgispy.TYPE_*``
@@ -1755,6 +2034,375 @@ def calc_indices(
                 )
                 with np.errstate(divide="ignore", invalid="ignore"):
                     raw_idx, expr_valid = spec.calc_fn(scaled_bands, per_idx_params)
+
+                full_valid = (~req_invalid) & expr_valid & np.isfinite(raw_idx)
+                out_bands.append(
+                    _format_output_band(
+                        index_arr=raw_idx,
+                        valid_mask=full_valid,
+                        out_g=out_gain_list[idx_pos],
+                        out_o=out_offset_list[idx_pos],
+                        out_nd=out_nd,
+                        out_np_dtype=out_np_dtype,
+                    )
+                )
+
+            dst.write(np.stack(out_bands, axis=0), window=out_win)
+
+    if calc_stats:
+        pop_img_stats(
+            input_img=output_img,
+            no_data_val=out_nd,
+            calc_pyramids=True,
+            ignore_cog=gdalformat.upper().strip() == "COG",
+            use_pbar=use_pbar,
+        )
+
+
+def _resolve_requested_sar_indices(
+    indices: Sequence[str], canonical_to_idx: Mapping[str, int]
+) -> List[Tuple[str, _SARIndexSpec]]:
+    """Validate requested SAR index names and verify required polarisations exist."""
+    if (
+        isinstance(indices, (str, bytes))
+        or not isinstance(indices, Sequence)
+        or not indices
+    ):
+        raise rsgispy.RSGISPyException(
+            "indices must be a non-empty sequence of SAR index names."
+        )
+
+    resolved: List[Tuple[str, _SARIndexSpec]] = []
+    for raw_idx_name in indices:
+        if not isinstance(raw_idx_name, str) or not raw_idx_name.strip():
+            raise rsgispy.RSGISPyException(
+                "Each entry in indices must be a non-empty string."
+            )
+        out_band_name = raw_idx_name.strip()
+        spec = lookup_sar_index_spec(out_band_name)
+        missing = [b for b in spec.req_bands if b not in canonical_to_idx]
+        if missing:
+            raise rsgispy.RSGISPyException(
+                f"SAR index '{spec.canonical_name}' requires polarisation(s) "
+                f"{', '.join(missing)}, which were not provided in band_names."
+            )
+        resolved.append((out_band_name, spec))
+
+    return resolved
+
+
+def _calc_sar_vv_max(
+    src: rasterio.io.DatasetReader,
+    canonical_to_idx: Mapping[str, int],
+    in_nodata_map: Mapping[str, Optional[float]],
+    in_gain_map: Mapping[str, float],
+    in_offset_map: Mapping[str, float],
+    in_units: str,
+    use_pbar: bool,
+) -> float:
+    """Compute the scene-wide maximum linear-power VV backscatter for ``DPSVI``."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    vv_max = -math.inf
+    for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
+        phys_bands, invalid_masks = _read_scaled_bands(
+            src,
+            win,
+            ("vv",),
+            canonical_to_idx,
+            in_nodata_map,
+            in_gain_map,
+            in_offset_map,
+        )
+        pwr_bands, pwr_invalid, _, _ = convert_sar_block_units(
+            phys_bands, invalid_masks, in_units, need_power=True, need_db=False
+        )
+        valid_mask = ~pwr_invalid["vv"]
+        if np.any(valid_mask):
+            vv_max = max(vv_max, float(np.max(pwr_bands["vv"][valid_mask])))
+    return vv_max if math.isfinite(vv_max) else math.nan
+
+
+def calc_sar_indices(
+    input_img: str,
+    output_img: str,
+    band_names: Mapping[int, str],
+    indices: Sequence[str],
+    in_units: str,
+    in_gain: Optional[
+        Union[float, Sequence[float], Mapping[Union[int, str], float]]
+    ] = 1.0,
+    in_offset: Optional[
+        Union[float, Sequence[float], Mapping[Union[int, str], float]]
+    ] = 0.0,
+    out_gain: Optional[
+        Union[float, Sequence[float], Mapping[str, float]]
+    ] = 1.0,
+    out_offset: Optional[
+        Union[float, Sequence[float], Mapping[str, float]]
+    ] = 0.0,
+    index_params: Optional[Mapping[str, Mapping[str, float]]] = None,
+    *,
+    gdalformat: str = "GTIFF",
+    datatype: int = rsgispy.TYPE_32FLOAT,
+    in_no_data_val: Optional[float] = None,
+    out_no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
+    use_pbar: bool = True,
+    creation_opts: Optional[Mapping[str, Any]] = None,
+) -> None:
+    """
+    Calculate multiple SAR polarimetric backscatter indices in a single pass
+    and write them to a multi-band output image with each band named after its
+    index.
+
+    Input pixel values are first converted to physical backscatter units via
+    ``physical = (dn - in_offset) / in_gain``. Depending on ``in_units``
+    (``'dB'`` or ``'power'``) and the physical domain required by each
+    requested index, values are automatically converted between decibels and
+    linear power as needed:
+
+    * **dB to linear power**: ``power = 10 ** (dB / 10)`` (required by
+      linear-domain indices such as ``RVI``, ``RVI_VV_VH``, ``RVI_HH_HV``,
+      ``DpRVIc_VV_VH``, ``DPSVI``, ``DPSVIm``, ``VDDPI``, ``RFDI``,
+      ``NDI_VH_VV``, ``BMI``, ``CSI``, ``VSI``, ``SDWI``, ``Span_*``, and
+      linear ratios ``CR_*`` / ``PR_*``).
+    * **Linear power to dB**: ``dB = 10 * log10(power)`` for ``power > 0``
+      (required by dB-domain indices such as ``CR_VH_VV_dB``, ``CR_HV_HH_dB``,
+      ``PR_HH_VV_dB``, and ``Mean_VV_VH_dB``; pixels with ``power <= 0`` are
+      masked as ``out_no_data_val``).
+
+    Computed index values are scaled to output pixel values via
+    ``output = (index_val * out_gain) + out_offset``. When an integer
+    ``datatype`` is used (e.g., ``rsgispy.TYPE_16INT``), valid values are
+    rounded to the nearest integer and clamped to the target data type range.
+
+    Canonical polarisation band names accepted in ``band_names``: ``'vv'``,
+    ``'vh'``, ``'hh'``, and ``'hv'`` (case-insensitive; prefixes such as
+    ``sigma0_vv``, ``gamma0_vh``, or ``beta0_hh`` are also recognised).
+
+    Full equations, working domains, and literature references for all
+    supported SAR indices are documented in
+    :doc:`imagecalc/calcindices <../imagecalc/calcindices>` and inspectable via
+    :func:`get_available_sar_indices`, :func:`get_sar_index_req_bands`,
+    :func:`get_sar_index_equation`, and :func:`get_sar_index_units`.
+
+    :param input_img: Path to the input multi-band SAR raster image file.
+    :param output_img: Path to the output multi-band raster image file.
+    :param band_names: Mapping from 1-based band index to polarisation name
+                       (e.g., ``{1: "VV", 2: "VH"}`` or
+                       ``{1: "HH", 2: "HV", 3: "VV"}``).
+    :param indices: Sequence of SAR index names to calculate and stack into
+                    ``output_img`` in the specified order.
+    :param in_units: Units of the physical input backscatter values (after
+                     applying ``in_gain`` and ``in_offset``). Must be
+                     ``'dB'`` (decibels; aliases ``'decibel'``, ``'decibels'``)
+                     or ``'power'`` (linear intensity; aliases ``'linear'``,
+                     ``'lin'``).
+    :param in_gain: Scalar, per-band sequence (length matching input band count),
+                    or mapping (keyed by band index or polarisation name) used
+                    to unscale input values via ``(dn - in_offset) / in_gain``
+                    (Default = ``1.0``).
+    :param in_offset: Scalar, per-band sequence, or mapping subtracted from
+                      input values prior to dividing by ``in_gain``
+                      (Default = ``0.0``).
+    :param out_gain: Optional scalar, per-index sequence, or mapping applied to
+                     output index values via ``(index_val * out_gain) + out_offset``
+                     to support integerisation (Default = ``1.0``).
+    :param out_offset: Optional scalar, per-index sequence, or mapping added
+                       after multiplying by ``out_gain`` (Default = ``0.0``).
+    :param index_params: Optional mapping of per-index parameter overrides
+                         (e.g., ``{"DPSVI": {"vv_max": 1.25}}`` to supply an
+                         explicit linear-power ``vv_max`` rather than computing
+                         the scene maximum).
+    :param gdalformat: GDAL/rasterio driver format for the output file
+                       (Default = ``'GTIFF'``).
+    :param datatype: Output data type constant from ``rsgispy.TYPE_*``
+                     (Default = ``rsgispy.TYPE_32FLOAT``).
+    :param in_no_data_val: Optional input no-data value. If ``None``, reads the
+                           no-data value(s) from the input image header.
+    :param out_no_data_val: Optional output no-data value. If ``None``, uses
+                            ``-999.0`` for signed/floating-point types (or
+                            ``0`` / type minimum for narrow integer types).
+    :param calc_stats: If ``True``, populate band statistics, histograms, and
+                       overview pyramids on ``output_img`` (Default = ``True``).
+    :param use_pbar: If ``True``, display a tqdm progress bar during processing
+                     (Default = ``True``).
+    :param creation_opts: Optional mapping of GDAL creation options.
+
+    .. code:: python
+
+        import rsgispy
+        import rsgispy.imagecalc.calcindices
+
+        # Sentinel-1 VV/VH input in dB — automatically converts to linear power
+        # for RVI_VV_VH, DpRVIc_VV_VH, and SDWI while keeping dB for CR_VH_VV_dB
+        rsgispy.imagecalc.calcindices.calc_sar_indices(
+            "s1_vv_vh_db.tif",
+            "s1_indices.tif",
+            band_names={1: "VV", 2: "VH"},
+            indices=["RVI_VV_VH", "DpRVIc_VV_VH", "SDWI", "CR_VH_VV_dB"],
+            in_units="dB",
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
+        )
+
+        # ALOS PALSAR HH/HV input in linear power
+        rsgispy.imagecalc.calcindices.calc_sar_indices(
+            "palsar_hh_hv_power.tif",
+            "palsar_indices.tif",
+            band_names={1: "HH", 2: "HV"},
+            indices=["RFDI", "RVI_HH_HV", "CR_HV_HH_dB", "Span_HH_HV_dB"],
+            in_units="power",
+            gdalformat="GTIFF",
+            datatype=rsgispy.TYPE_32FLOAT,
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches
+    ensure_file_exists(input_img)
+    norm_units = normalise_sar_units(in_units)
+    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
+    out_nd = _resolve_out_nodata(out_no_data_val, out_np_dtype)
+    parsed_idx_params = _resolve_index_params(index_params)
+
+    with ExitStack() as stack:
+        try:
+            src = stack.enter_context(rasterio.open(input_img, "r"))
+        except Exception as err:
+            raise rsgispy.RSGISPyException(
+                f"Could not open input image '{input_img}': {err}"
+            ) from err
+
+        canonical_to_idx = _normalise_band_names(
+            band_names, src.count, input_img, band_aliases=_SAR_BAND_ALIASES
+        )
+        resolved_indices = _resolve_requested_sar_indices(
+            indices, canonical_to_idx
+        )
+
+        req_band_set: List[str] = []
+        seen_bands = set()
+        for _, spec in resolved_indices:
+            for b_name in spec.req_bands:
+                if b_name not in seen_bands:
+                    seen_bands.add(b_name)
+                    req_band_set.append(b_name)
+
+        in_gain_map = _resolve_in_scaling(
+            in_gain,
+            1.0,
+            req_band_set,
+            canonical_to_idx,
+            src.count,
+            "in_gain",
+            check_nonzero=True,
+            band_aliases=_SAR_BAND_ALIASES,
+        )
+        in_offset_map = _resolve_in_scaling(
+            in_offset,
+            0.0,
+            req_band_set,
+            canonical_to_idx,
+            src.count,
+            "in_offset",
+            check_nonzero=False,
+            band_aliases=_SAR_BAND_ALIASES,
+        )
+        out_gain_list = _resolve_out_scaling(
+            out_gain, 1.0, resolved_indices, "out_gain", check_nonzero=True
+        )
+        out_offset_list = _resolve_out_scaling(
+            out_offset, 0.0, resolved_indices, "out_offset", check_nonzero=False
+        )
+
+        in_nodata_map: Dict[str, Optional[float]] = {}
+        for b_name in req_band_set:
+            if in_no_data_val is not None:
+                in_nodata_map[b_name] = float(in_no_data_val)
+            else:
+                b_idx = canonical_to_idx[b_name]
+                in_nodata_map[b_name] = src.nodatavals[b_idx - 1]
+
+        need_power = any(spec.units == "power" for _, spec in resolved_indices)
+        need_db = any(spec.units == "dB" for _, spec in resolved_indices)
+
+        needs_vv_max = any(
+            spec.requires_vv_max for _, spec in resolved_indices
+        )
+        if needs_vv_max:
+            dpsvi_params = parsed_idx_params.get("dpsvi", {})
+            if "vv_max" not in dpsvi_params:
+                vv_max = _calc_sar_vv_max(
+                    src=src,
+                    canonical_to_idx=canonical_to_idx,
+                    in_nodata_map=in_nodata_map,
+                    in_gain_map=in_gain_map,
+                    in_offset_map=in_offset_map,
+                    in_units=norm_units,
+                    use_pbar=use_pbar,
+                )
+                parsed_idx_params["dpsvi"] = {
+                    **dpsvi_params,
+                    "vv_max": vv_max,
+                }
+
+        grid = compute_spatial_intersection({input_img: src})
+        dst = create_output_from_dataset(
+            stack=stack,
+            src=src,
+            output_img=output_img,
+            gdalformat=gdalformat,
+            out_rio_dtype=out_rio_dtype,
+            count=len(resolved_indices),
+            creation_opts=creation_opts,
+        )
+        dst.nodata = out_nd
+        for band_pos, (out_name, _) in enumerate(resolved_indices, start=1):
+            dst.set_band_description(band_pos, out_name)
+
+        for out_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
+            phys_bands, base_invalid = _read_scaled_bands(
+                src,
+                out_win,
+                req_band_set,
+                canonical_to_idx,
+                in_nodata_map,
+                in_gain_map,
+                in_offset_map,
+            )
+            pwr_bands, pwr_invalid, db_bands, db_invalid = (
+                convert_sar_block_units(
+                    phys_bands,
+                    base_invalid,
+                    norm_units,
+                    need_power=need_power,
+                    need_db=need_db,
+                )
+            )
+
+            out_bands: List[np.ndarray] = []
+            for idx_pos, (out_name, spec) in enumerate(resolved_indices):
+                domain_bands = pwr_bands if spec.units == "power" else db_bands
+                domain_invalid = (
+                    pwr_invalid if spec.units == "power" else db_invalid
+                )
+                req_invalid = np.zeros(
+                    (int(out_win.height), int(out_win.width)), dtype=bool
+                )
+                for b_name in spec.req_bands:
+                    req_invalid = req_invalid | domain_invalid[b_name]
+
+                per_idx_params = parsed_idx_params.get(
+                    out_name.lower(),
+                    parsed_idx_params.get(spec.canonical_name.lower(), {}),
+                )
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    raw_idx, expr_valid = spec.calc_fn(
+                        domain_bands, per_idx_params
+                    )
 
                 full_valid = (~req_invalid) & expr_valid & np.isfinite(raw_idx)
                 out_bands.append(

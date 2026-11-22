@@ -5,16 +5,21 @@ categorise columns in vector attribute tables using ``geopandas``.
 
 import datetime
 import os
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+import re
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
+import pymu_eval
 
 import rsgispy
 import rsgispy.tools.jsonio
 import rsgispy.tools.strings
 from rsgispy.vectorprocess import (
     VectorInput,
+    _resolve_cast_kind,
+    cast_col_data,
     read_vec_gdf,
     to_python_scalar,
     validate_columns_exist,
@@ -37,6 +42,7 @@ __all__ = [
     "find_replace_str_vec_lyr",
     "create_angle_sets",
     "create_orthogonal_angle_sets",
+    "vector_maths",
 ]
 
 
@@ -1168,6 +1174,414 @@ def create_orthogonal_angle_sets(
         out_vec_file,
         out_vec_lyr,
         out_format=out_format,
+        out_compress=out_compress,
+    )
+    return None
+
+
+_MUPARSER_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_MUPARSER_RESERVED_CONSTS = {"_pi", "_e"}
+
+
+def _series_to_float64(series: pd.Series, *, strict: bool) -> Optional[np.ndarray]:
+    """Convert a pandas Series to a float64 NumPy array, or ``None`` if skipped."""
+    if pd.api.types.is_numeric_dtype(series.dtype) or pd.api.types.is_bool_dtype(
+        series.dtype
+    ):
+        return series.to_numpy(dtype=np.float64, na_value=np.nan)
+
+    if pd.api.types.is_object_dtype(series.dtype):
+        non_na = series.dropna()
+        if all(
+            isinstance(val, (int, float, np.number, bool, np.bool_))
+            for val in non_na
+        ):
+            return series.to_numpy(dtype=np.float64, na_value=np.nan)
+
+    if strict:
+        try:
+            numeric = pd.to_numeric(series, errors="raise")
+            return numeric.to_numpy(dtype=np.float64, na_value=np.nan)
+        except (TypeError, ValueError) as err:
+            raise rsgispy.RSGISPyException(
+                f"Column '{series.name}' is not numeric and cannot be used "
+                f"in vector_maths: {err}"
+            ) from err
+    return None
+
+
+def _collect_vector_maths_vars(
+    base_gdf: gpd.GeoDataFrame,
+    vec_cols: Optional[Union[Sequence[str], Mapping[str, str]]],
+) -> Tuple[Dict[str, np.ndarray], List[str]]:
+    """Collect ``{var_name: float64_array}`` bindings and skipped column names."""
+    geom_col = base_gdf.geometry.name
+    var_arrays: Dict[str, np.ndarray] = {}
+    skipped_cols: List[str] = []
+
+    if vec_cols is None:
+        for col in base_gdf.columns:
+            if col == geom_col:
+                continue
+            col_name = str(col)
+            if (
+                not _MUPARSER_IDENT_RE.match(col_name)
+                or col_name in _MUPARSER_RESERVED_CONSTS
+            ):
+                skipped_cols.append(col_name)
+                continue
+            arr = _series_to_float64(base_gdf[col], strict=False)
+            if arr is None:
+                skipped_cols.append(col_name)
+            else:
+                var_arrays[col_name] = arr
+        return var_arrays, skipped_cols
+
+    if isinstance(vec_cols, Mapping):
+        col_map = {str(var_name): str(col_name) for var_name, col_name in vec_cols.items()}
+        for var_name in col_map:
+            if (
+                not _MUPARSER_IDENT_RE.match(var_name)
+                or var_name in _MUPARSER_RESERVED_CONSTS
+            ):
+                raise rsgispy.RSGISPyException(
+                    f"Invalid expression variable name '{var_name}' in vec_cols."
+                )
+        validate_columns_exist(base_gdf, list(col_map.values()))
+        for var_name, col_name in col_map.items():
+            arr = _series_to_float64(base_gdf[col_name], strict=True)
+            if arr is not None:
+                var_arrays[var_name] = arr
+        return var_arrays, skipped_cols
+
+    if isinstance(vec_cols, str):
+        col_names = [vec_cols]
+    elif isinstance(vec_cols, Sequence) and not isinstance(vec_cols, bytes):
+        col_names = [str(col) for col in vec_cols]
+    else:
+        raise rsgispy.RSGISPyException(
+            "vec_cols must be None, a sequence of column names, or a mapping "
+            "of {var_name: col_name}."
+        )
+
+    validate_columns_exist(base_gdf, col_names)
+    for col_name in col_names:
+        if (
+            not _MUPARSER_IDENT_RE.match(col_name)
+            or col_name in _MUPARSER_RESERVED_CONSTS
+        ):
+            raise rsgispy.RSGISPyException(
+                f"Column name '{col_name}' is not a valid muParser identifier; "
+                "pass vec_cols={'var_name': col_name} to alias it."
+            )
+        arr = _series_to_float64(base_gdf[col_name], strict=True)
+        if arr is not None:
+            var_arrays[col_name] = arr
+    return var_arrays, skipped_cols
+
+
+def _cast_vector_maths_result(
+    result_arr: np.ndarray,
+    out_dtype: Optional[Any],
+) -> Any:
+    """Cast evaluated float64 results according to ``out_dtype``."""
+    if out_dtype is None:
+        return result_arr
+
+    is_np_dtype = isinstance(out_dtype, np.dtype) or (
+        isinstance(out_dtype, type) and issubclass(out_dtype, np.generic)
+    )
+    kind = _resolve_cast_kind(out_dtype)
+    if kind is None:
+        raise rsgispy.RSGISPyException(
+            f"Unsupported out_dtype '{out_dtype}' for vector_maths."
+        )
+
+    if kind == "float":
+        if is_np_dtype and np.issubdtype(np.dtype(out_dtype), np.floating):
+            return result_arr.astype(np.dtype(out_dtype))
+        return result_arr.astype(np.float64)
+
+    if kind == "int":
+        has_non_finite = bool(result_arr.size > 0 and not np.all(np.isfinite(result_arr)))
+        if has_non_finite:
+            return pd.array(
+                [pd.NA if not np.isfinite(val) else int(val) for val in result_arr],
+                dtype="Int64",
+            )
+        if is_np_dtype and np.issubdtype(np.dtype(out_dtype), np.integer):
+            return result_arr.astype(np.dtype(out_dtype))
+        return result_arr.astype(np.int64)
+
+    if kind == "bool":
+        has_nan = bool(result_arr.size > 0 and np.any(np.isnan(result_arr)))
+        if has_nan:
+            return pd.array(
+                [pd.NA if np.isnan(val) else bool(val) for val in result_arr],
+                dtype="boolean",
+            )
+        return result_arr.astype(bool)
+
+    return cast_col_data(result_arr, str)
+
+
+def _normalise_vector_maths_out_cols(
+    out_col: Union[str, Sequence[str]],
+) -> List[str]:
+    """Validate and normalise ``out_col`` into a list of unique column names."""
+    if isinstance(out_col, str):
+        if not out_col.strip():
+            raise rsgispy.RSGISPyException(
+                "Output column 'out_col' must be a non-empty string or "
+                "sequence of non-empty strings."
+            )
+        return [out_col]
+
+    if isinstance(out_col, Sequence) and not isinstance(
+        out_col, (bytes, bytearray)
+    ):
+        if not out_col:
+            raise rsgispy.RSGISPyException(
+                "Output column 'out_col' must be a non-empty string or "
+                "sequence of non-empty strings."
+            )
+        out_cols: List[str] = []
+        seen: set = set()
+        for col in out_col:
+            if not isinstance(col, str) or not col.strip():
+                raise rsgispy.RSGISPyException(
+                    "Each entry in 'out_col' must be a non-empty string."
+                )
+            if col in seen:
+                raise rsgispy.RSGISPyException(
+                    f"Duplicate output column name '{col}' in 'out_col'."
+                )
+            seen.add(col)
+            out_cols.append(col)
+        return out_cols
+
+    raise rsgispy.RSGISPyException(
+        "Output column 'out_col' must be a non-empty string or "
+        "sequence of non-empty strings."
+    )
+
+
+def _resolve_vector_maths_out_dtypes(
+    out_dtype: Optional[Any],
+    out_cols: Sequence[str],
+) -> List[Optional[Any]]:
+    """Resolve ``out_dtype`` into one dtype specification per output column."""
+    if out_dtype is None:
+        return [None] * len(out_cols)
+    if isinstance(out_dtype, Mapping):
+        unknown = [key for key in out_dtype if key not in out_cols]
+        if unknown:
+            raise rsgispy.RSGISPyException(
+                f"Unknown column name(s) in out_dtype mapping: {unknown}. "
+                f"Expected keys from {list(out_cols)}."
+            )
+        return [out_dtype.get(col, None) for col in out_cols]
+    if isinstance(out_dtype, (list, tuple)):
+        if len(out_dtype) != len(out_cols):
+            raise rsgispy.RSGISPyException(
+                f"Length of out_dtype ({len(out_dtype)}) must match the "
+                f"number of output columns ({len(out_cols)})."
+            )
+        return list(out_dtype)
+    return [out_dtype] * len(out_cols)
+
+
+def _eval_vector_maths_expr(
+    exp: str,
+    var_arrays: Mapping[str, np.ndarray],
+    skipped_cols: Sequence[str],
+) -> List[Any]:
+    """Compile and evaluate a single- or multi-output muParser expression."""
+    parser = pymu_eval.Parser()
+    if "pi" not in var_arrays:
+        parser.define_const("pi", pymu_eval.MathImpl.CONST_PI)
+    if "e" not in var_arrays:
+        parser.define_const("e", pymu_eval.MathImpl.CONST_E)
+
+    for var_name, arr in var_arrays.items():
+        try:
+            parser.define_var(var_name, arr)
+        except pymu_eval.ParserError as err:
+            raise rsgispy.RSGISPyException(
+                f"Invalid column variable name '{var_name}': {err}"
+            ) from err
+
+    try:
+        parser.set_expr(exp)
+        with np.errstate(all="ignore"):
+            return parser.eval_multi()
+    except pymu_eval.ParserError as err:
+        hint = ""
+        if skipped_cols:
+            used_skipped = [
+                col for col in skipped_cols if re.search(rf"\b{re.escape(col)}\b", exp)
+            ]
+            if used_skipped:
+                hint = (
+                    f" Note that column(s) {used_skipped} could not be bound "
+                    "automatically (non-numeric or non-identifier name)."
+                )
+        raise rsgispy.RSGISPyException(
+            f"Error parsing or evaluating expression '{exp}': {err}{hint}"
+        ) from err
+
+
+def vector_maths(
+    vec_file: VectorInput,
+    vec_lyr: Optional[str],
+    out_col: Union[str, Sequence[str]],
+    exp: str,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
+    out_format: str = "GPKG",
+    vec_cols: Optional[Union[Sequence[str], Mapping[str, str]]] = None,
+    out_dtype: Optional[Any] = None,
+    del_exist_vec: bool = False,
+    out_compress: Optional[Union[str, bool]] = None,
+) -> Optional[gpd.GeoDataFrame]:
+    """
+    Calculate one or more new (or overwrite existing) vector attribute columns
+    from existing columns using a ``pymu-eval`` (muParser) expression.
+
+    When ``vec_cols`` is ``None`` (the default), all numeric and boolean
+    attribute columns whose names are valid muParser identifiers
+    (``[A-Za-z_][A-Za-z0-9_]*``) are bound automatically. Use ``vec_cols`` as
+    a sequence of column names to restrict the bound columns, or as a mapping
+    ``{var_name: col_name}`` to alias column names containing spaces, hyphens,
+    or other characters not permitted in muParser identifiers.
+
+    To calculate multiple output columns in a single expression, pass a
+    sequence of column names to ``out_col`` and separate the sub-expressions
+    in ``exp`` with top-level commas (e.g., ``"expr1, expr2, expr3"``). Each
+    sub-expression is assigned positionally to the corresponding column in
+    ``out_col``. Commas inside function calls (such as ``min(b1, b2)`` or
+    ``avg(b1, b2, b3)``) remain function argument separators and do not start
+    a new output column. Sub-expressions may also span multiple lines, use
+    ternary conditionals (``cond ? val_true : val_false``), or re-assign a
+    bound variable for reuse by subsequent sub-expressions.
+
+    :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
+    :param vec_lyr: Input vector layer name (or ``None``).
+    :param out_col: Output attribute column name (``str``) for a single-output
+                    expression, or a sequence of unique column names matching
+                    the number of comma-separated outputs in ``exp``.
+    :param exp: Mathematical expression string in muParser syntax
+                (e.g., ``'(nir - red) / (nir + red)'``,
+                ``'val > 0 ? sqrt(val) : 0'``, or a comma-separated
+                multi-output expression such as
+                ``'(nir - red) / (nir + red), (nir + red) / 2'``).
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
+    :param out_vec_lyr: Output vector layer name.
+    :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param vec_cols: Optional sequence of column names to expose, or mapping
+                     ``{var_name: col_name}`` binding expression variable names
+                     to column names. If ``None``, all eligible numeric columns
+                     are exposed by name.
+    :param out_dtype: Optional output column type specification: ``None`` for
+                      ``float64``, a single type (e.g., ``float``, ``int``,
+                      ``bool``, ``np.float32``) applied to all outputs, a
+                      sequence of per-output types matching ``out_col``, or a
+                      mapping ``{col_name: dtype}`` for selected output columns.
+    :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
+                          (Default = ``False``).
+    :param out_compress: Optional GeoParquet compression setting (``None`` to
+                         infer from extension or write uncompressed, ``True``
+                         for ``'snappy'``, ``False``/``'none'`` for uncompressed,
+                         or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
+                         ``'brotli'``, ``'lz4'``).
+    :return: Updated :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.vector.attrs
+
+        # Single output column
+        gdf = rsgispy.vector.attrs.vector_maths(
+            "polys.gpkg",
+            "polys",
+            out_col="ndvi",
+            exp="(nir - red) / (nir + red)",
+        )
+
+        # Multiple output columns from comma-separated sub-expressions with
+        # per-column output dtypes
+        multi_exp = (
+            "(nir + red) != 0 ? (nir - red) / (nir + red) : -9999, "
+            "(nir + red) / 2, "
+            "(nir > red) ? 1 : 0"
+        )
+        gdf = rsgispy.vector.attrs.vector_maths(
+            "polys.gpkg",
+            "polys",
+            out_col=["ndvi", "mean_nr", "is_veg"],
+            exp=multi_exp,
+            out_dtype=[np.float32, np.float32, int],
+        )
+
+        # Multi-argument functions (inner commas are function arguments;
+        # top-level commas produce separate columns)
+        gdf = rsgispy.vector.attrs.vector_maths(
+            "polys.gpkg",
+            "polys",
+            out_col=["band_min", "band_max", "band_avg"],
+            exp="min(blue, green, red), max(blue, green, red), avg(blue, green, red)",
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals
+    out_cols = _normalise_vector_maths_out_cols(out_col)
+    col_dtypes = _resolve_vector_maths_out_dtypes(out_dtype, out_cols)
+    if not exp or not isinstance(exp, str) or not exp.strip():
+        raise rsgispy.RSGISPyException(
+            "Expression 'exp' must be a non-empty string."
+        )
+
+    base_gdf = read_vec_gdf(vec_file, vec_lyr)
+    geom_col = base_gdf.geometry.name
+    if geom_col in out_cols:
+        raise rsgispy.RSGISPyException(
+            f"Output column '{geom_col}' cannot overwrite the geometry column."
+        )
+
+    var_arrays, skipped_cols = _collect_vector_maths_vars(base_gdf, vec_cols)
+    raw_results = _eval_vector_maths_expr(exp, var_arrays, skipped_cols)
+
+    if len(raw_results) != len(out_cols):
+        raise rsgispy.RSGISPyException(
+            f"Expression '{exp}' produced {len(raw_results)} output(s), "
+            f"but {len(out_cols)} output column name(s) were provided "
+            f"({out_cols})."
+        )
+
+    n_rows = len(base_gdf)
+    for col_name, col_dtype, raw_result in zip(out_cols, col_dtypes, raw_results):
+        if np.ndim(raw_result) == 0:
+            result_arr = np.full(n_rows, float(raw_result), dtype=np.float64)
+        else:
+            result_arr = np.asarray(raw_result, dtype=np.float64)
+            if result_arr.shape != (n_rows,):
+                raise rsgispy.RSGISPyException(
+                    f"Evaluated result shape {result_arr.shape} for column "
+                    f"'{col_name}' does not match feature count ({n_rows})."
+                )
+        base_gdf[col_name] = _cast_vector_maths_result(result_arr, col_dtype)
+
+    if out_vec_file is None:
+        return base_gdf
+    write_vec_gdf(
+        base_gdf,
+        out_vec_file,
+        out_vec_lyr,
+        out_format=out_format,
+        overwrite=del_exist_vec,
         out_compress=out_compress,
     )
     return None

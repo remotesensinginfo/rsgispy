@@ -583,3 +583,134 @@ def test_prop_true_count_and_unique(tmp_path):
         rsgispy.imagecalc.stats.count_pxls_of_val(str(img), vals=[1], img_band=5, use_pbar=False)
     with pytest.raises(rsgispy.RSGISPyException):
         rsgispy.imagecalc.stats.get_unique_values(str(img), img_band=5)
+
+
+def test_band_maths_multi_output(tmp_path):
+    """Test multi-output comma-separated pymu-eval expressions in band_maths and image_band_math."""
+    in_img = tmp_path / "multi_in.tif"
+    out_img = tmp_path / "multi_out.tif"
+    out_exp_names = tmp_path / "multi_exp_names.tif"
+    out_ibm = tmp_path / "multi_ibm.tif"
+
+    green = np.array([[0.1, 0.3, 0.0], [0.2, 0.4, 0.5]], dtype=np.float32)
+    red = np.array([[0.2, 0.2, 0.0], [0.3, 0.1, 0.4]], dtype=np.float32)
+    nir = np.array([[0.8, 0.6, 0.0], [0.5, 0.7, 0.6]], dtype=np.float32)
+    _create_test_raster(in_img, np.stack([green, red, nir]))
+
+    band_defs = [
+        rsgispy.imagecalc.maths.BandDefn("green", str(in_img), 1),
+        rsgispy.imagecalc.maths.BandDefn("red", str(in_img), 2),
+        rsgispy.imagecalc.maths.BandDefn("nir", str(in_img), 3),
+    ]
+
+    # 1. Multi-line expression with conditionals, multi-arg functions, and a scalar constant
+    multi_exp = """
+        (nir + red) != 0 ? (nir - red) / (nir + red) : -9999,
+        min(green, red, nir),
+        max(green, red, nir),
+        2 * pi
+    """
+    rsgispy.imagecalc.maths.band_maths(
+        output_img=str(out_img),
+        exp=multi_exp,
+        band_defs=band_defs,
+        band_names=["NDVI", "min_val", "max_val", "two_pi"],
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+        use_pbar=False,
+    )
+
+    exp_ndvi = np.where((nir + red) != 0, (nir - red) / (nir + red), -9999.0)
+    exp_min = np.minimum(np.minimum(green, red), nir)
+    exp_max = np.maximum(np.maximum(green, red), nir)
+    exp_two_pi = np.full_like(green, 2.0 * np.pi)
+
+    with rasterio.open(out_img) as src:
+        assert src.count == 4
+        assert src.descriptions == ("NDVI", "min_val", "max_val", "two_pi")
+        np.testing.assert_allclose(src.read(1), exp_ndvi, rtol=1e-5)
+        np.testing.assert_allclose(src.read(2), exp_min, rtol=1e-5)
+        np.testing.assert_allclose(src.read(3), exp_max, rtol=1e-5)
+        np.testing.assert_allclose(src.read(4), exp_two_pi, rtol=1e-5)
+
+    # 2. exp_band_name=True splits top-level sub-expressions while preserving inner commas
+    rsgispy.imagecalc.maths.band_maths(
+        output_img=str(out_exp_names),
+        exp="min(green, red, nir), avg(green, red, nir)",
+        band_defs=band_defs,
+        exp_band_name=True,
+        use_pbar=False,
+    )
+    with rasterio.open(out_exp_names) as src:
+        assert src.count == 2
+        assert src.descriptions == ("min(green, red, nir)", "avg(green, red, nir)")
+        np.testing.assert_allclose(src.read(1), exp_min, rtol=1e-5)
+        np.testing.assert_allclose(src.read(2), (green + red + nir) / 3.0, rtol=1e-5)
+
+    # 3. image_band_math forwards multi-output and band_names
+    rsgispy.imagecalc.maths.image_band_math(
+        input_img=str(in_img),
+        output_img=str(out_ibm),
+        exp="b3 + b2, b3 - b2",
+        band_names=["sum_nr", "diff_nr"],
+        use_pbar=False,
+    )
+    with rasterio.open(out_ibm) as src:
+        assert src.count == 2
+        assert src.descriptions == ("sum_nr", "diff_nr")
+        np.testing.assert_allclose(src.read(1), nir + red, rtol=1e-5)
+        np.testing.assert_allclose(src.read(2), nir - red, rtol=1e-5)
+
+    # 4. Multi-block (>256x256) with variable re-assignment across outputs & output_exists
+    large_in = tmp_path / "large_multi_in.tif"
+    large_out = tmp_path / "large_multi_out.tif"
+    b_nir = np.linspace(2.0, 10.0, 300 * 300, dtype=np.float32).reshape(300, 300)
+    b_red = np.linspace(1.0, 5.0, 300 * 300, dtype=np.float32).reshape(300, 300)
+    _create_test_raster(large_in, np.stack([b_nir, b_red]))
+    _create_test_raster(large_out, np.zeros((3, 300, 300), dtype=np.float32))
+
+    large_defs = [
+        rsgispy.imagecalc.maths.BandDefn("nir", str(large_in), 1),
+        rsgispy.imagecalc.maths.BandDefn("red", str(large_in), 2),
+    ]
+    rsgispy.imagecalc.maths.band_maths(
+        output_img=str(large_out),
+        exp="nir = nir * 0.5, red = red * 0.5, (nir - red) / (nir + red)",
+        band_defs=large_defs,
+        output_exists=True,
+        band_names=["nir_half", "red_half", "ndvi"],
+        use_pbar=False,
+    )
+    with rasterio.open(large_out) as src:
+        assert src.count == 3
+        np.testing.assert_allclose(src.read(1), b_nir * 0.5, rtol=1e-5)
+        np.testing.assert_allclose(src.read(2), b_red * 0.5, rtol=1e-5)
+        np.testing.assert_allclose(
+            src.read(3), (b_nir - b_red) / (b_nir + b_red), rtol=1e-5
+        )
+
+    # 5. Validation errors: mismatched output_exists band count and bad band_names
+    with pytest.raises(rsgispy.RSGISPyException, match="band\\(s\\)"):
+        rsgispy.imagecalc.maths.band_maths(
+            output_img=str(out_ibm),
+            exp="green, red, nir",
+            band_defs=band_defs,
+            output_exists=True,
+            use_pbar=False,
+        )
+    with pytest.raises(rsgispy.RSGISPyException, match="band_names"):
+        rsgispy.imagecalc.maths.band_maths(
+            output_img=str(tmp_path / "bad_names.tif"),
+            exp="green + red, nir - red",
+            band_defs=band_defs,
+            band_names=["only_one"],
+            use_pbar=False,
+        )
+    with pytest.raises(rsgispy.RSGISPyException, match="non-empty"):
+        rsgispy.imagecalc.maths.band_maths(
+            output_img=str(tmp_path / "empty_name.tif"),
+            exp="green + red, nir - red",
+            band_defs=band_defs,
+            band_names=["ok", "  "],
+            use_pbar=False,
+        )
