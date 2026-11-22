@@ -86,6 +86,19 @@ def _traverse_mlsd_ftp_dirs(
     return non_dirs
 
 
+def _parse_ftp_list_line(line: str) -> Optional[Tuple[bool, str]]:
+    """Parse a single UNIX-style FTP ``LIST`` output line into ``(is_dir, name)``."""
+    stripped = line.strip()
+    if not stripped:
+        return None
+    parts = stripped.split(maxsplit=8)
+    if len(parts) == 2 and parts[0].lower() == "total" and parts[1].isdigit():
+        return None
+    entry_name = parts[8] if len(parts) >= 9 else parts[-1]
+    is_dir = parts[0].startswith("d")
+    return is_dir, entry_name
+
+
 def _traverse_nlst_ftp_dirs(
     ftp_conn: ftplib.FTP,
     ftp_path: str,
@@ -106,11 +119,14 @@ def _traverse_nlst_ftp_dirs(
         return lines
 
     dir_lst = _ftp_list_with_retries(_list_lines, try_n_times)
-    for parts in map(str.split, dir_lst):
-        if not parts:
+    for line in dir_lst:
+        parsed = _parse_ftp_list_line(line)
+        if parsed is None:
             continue
-        entry_name = parts[-1]
-        if parts[0][0] == "d":
+        is_dir, entry_name = parsed
+        if is_dir:
+            if entry_name in (".", ".."):
+                continue
             c_dir = posixpath.join(ftp_path, entry_name)
             dirs.append(c_dir)
             if c_dir not in ftp_files:

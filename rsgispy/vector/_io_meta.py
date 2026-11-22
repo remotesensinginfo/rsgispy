@@ -146,6 +146,30 @@ def _crs_to_epsg(crs_val: object) -> Optional[int]:
         return None
 
 
+_INFO_GEOM_TYPE_MAP: Dict[str, int] = {
+    "point": rsgispy.GEOM_PT,
+    "linestring": rsgispy.GEOM_LINE,
+    "polygon": rsgispy.GEOM_POLY,
+    "multipoint": rsgispy.GEOM_MPT,
+    "multilinestring": rsgispy.GEOM_MLINE,
+    "multipolygon": rsgispy.GEOM_MPOLY,
+}
+
+
+def _parse_info_geom_type(raw_geom_type: Optional[str]) -> Optional[int]:
+    """Map an OGR/GeoParquet metadata geometry type string to ``rsgispy.GEOM_*``."""
+    if not raw_geom_type:
+        return None
+    norm = str(raw_geom_type).strip()
+    if norm.startswith("3D "):
+        norm = norm[3:].strip()
+    for suffix in (" ZM", " Z", " M", "25D"):
+        if norm.endswith(suffix):
+            norm = norm[: -len(suffix)].strip()
+            break
+    return _INFO_GEOM_TYPE_MAP.get(norm.lower())
+
+
 def get_vec_lyr_bbox(
     vec_file: VectorInput,
     vec_lyr: Optional[str] = None,
@@ -157,7 +181,9 @@ def get_vec_lyr_bbox(
     :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name. If ``None``, reads the first layer.
     :param compute_if_exp: If ``True`` (default), compute the exact bounds from
-                           geometries if header bounds are unavailable.
+                           geometries if header bounds are unavailable. If
+                           ``False`` and header bounds are unavailable, raises
+                           :class:`rsgispy.RSGISPyException`.
     :return: :class:`rsgispy.BBox` ``(west, east, south, north)`` with ``epsg``
              populated when known.
 
@@ -176,6 +202,12 @@ def get_vec_lyr_bbox(
     capabilities = info.get("capabilities") or {}
     if bounds is not None and capabilities.get("fast_total_bounds", False):
         return bbox_to_rsgis(bounds, epsg=epsg_code)
+
+    if not compute_if_exp:
+        raise rsgispy.RSGISPyException(
+            f"Bounding box is not available in metadata for layer "
+            f"'{info['layer_name']}' and compute_if_exp=False."
+        )
 
     gdf = read_vec_gdf(vec_file, vec_lyr=info["layer_name"])
     if len(gdf) == 0:
@@ -297,7 +329,11 @@ def get_vec_lyr_geom_type(
 
         geom_type = rsgispy.vector.io.get_vec_lyr_geom_type("polys.gpkg", "polys")
     """
-    lyr_name = resolve_vec_layer(vec_file, vec_lyr)
+    info = read_vec_info(vec_file, vec_lyr)
+    mapped = _parse_info_geom_type(info.get("geometry_type"))
+    if mapped is not None:
+        return mapped
+    lyr_name = info.get("layer_name") or resolve_vec_layer(vec_file, vec_lyr)
     gdf = read_vec_gdf(vec_file, vec_lyr=lyr_name)
     return get_gdf_geom_type(gdf)
 

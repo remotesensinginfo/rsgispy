@@ -24,13 +24,22 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
 
-      - name: Build release distributions
+      - name: Verify release tag matches package version
         run: |
-          # NOTE: put your own distribution build steps here.
-          python -m pip install build
+          PKG_VER=$(python -c "import rsgispy; print(rsgispy.__version__)")
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$TAG" != "$PKG_VER" ]; then
+            echo "Release tag '$GITHUB_REF_NAME' does not match rsgispy.__version__ ('$PKG_VER')" >&2
+            exit 1
+          fi
+
+      - name: Build and check release distributions
+        run: |
+          python -m pip install build twine
           python -m build
+          python -m twine check dist/*
 
       - name: Upload distributions
         uses: actions/upload-artifact@v4

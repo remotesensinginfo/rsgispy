@@ -22,7 +22,7 @@ Instead of wrapping compiled C++ extensions and GDAL SWIG (`osgeo`) bindings, `r
 
 - **Existing RSGISLib users** who want a `pip` installable, pure-Python alternative without C++/GDAL compilation constraints, while retaining familiar subpackage names, data type constants (`TYPE_*`), and workflows. Note, while the functionality is similar, `rsgispy` is not a drop-in replacement for RSGISLib and some workflows may require minor adjustments as the module structure has been reorganised and some functions have been renamed or restructured. Also, it is important to note that `rsgispy` is still under active development and some features from RSGISLib may not yet be implemented but RSGISLib will not be maintained in the long term and will shortly be deprecated in favour of `rsgispy`.
 - **Remote sensing researchers & Earth observation practitioners** building reproducible satellite, airborne, or UAV processing pipelines in Python or Jupyter notebooks.
-- **GIS analysts & data engineers** working with Cloud-Optimised GeoTIFFs, GeoParquet, and multi-layer raster/vector stacks on Linux, macOS, or Windows (Python 3.9–3.14).
+- **GIS analysts & data engineers** working with Cloud-Optimised GeoTIFFs, GeoParquet, and multi-layer raster/vector stacks on Linux, macOS, or Windows (Python 3.10–3.14).
 
 ## Background & RSGISLib History
 
@@ -62,6 +62,7 @@ If you use `rsgispy` or build on concepts from RSGISLib in academic work, please
 | `rsgispy.imageprocess` | Windowed raster block-processing & composable tile-graph engine, spatial intersection, and dataset validation |
 | `rsgispy.imageutils` | Raster creation, rasterisation, metadata, masking, mosaicking, tiling, VRTs, warping, and spatial helpers |
 | `rsgispy.imagecalc` | Band/image maths (`pymu-eval`), spectral index stacks (`calcindices`), least-cost paths (`leastcostpath`), statistics, percentiles, comparison, encoding, distance, KNN fill, rescaling, and windowed sampling |
+| `rsgispy.imageregistration` | Image registration, tie-point co-registration, outlier filtering, whole-image shift estimation, and GCP warping |
 | `rsgispy.imagespectral` | Spectral classification (SAM, SCM), linear spectral unmixing, endmembers & PPI, spectral curve summaries (`indices`), spectral pre-processing (smoothing, outlier masking, polyfill), and transforms (whitening, PCA, MNF, Tasseled Cap, histogram matching) |
 | `rsgispy.imagefilter` | Spatial moving-window filters (`stats`, `smooth`, `edge`, `sar`, `texture`, and in-memory `chained` filter graphs) |
 | `rsgispy.imagemorphology` | Morphological raster filtering (dilation, erosion, opening, closing, top-hat transforms) |
@@ -83,7 +84,7 @@ If you use `rsgispy` or build on concepts from RSGISLib in academic work, please
 
 ### Minimal installation
 
-Install `rsgispy` with only its core dependencies (`geopandas`, `matplotlib`, `numpy`, `pandas`, `pymu-eval`, `pyproj`, `rasterio`, `shapely`, and `tqdm`):
+Install `rsgispy` with only its core dependencies (`geopandas`, `matplotlib`, `numpy`, `pandas`, `pymu-eval`, `pyogrio`, `pyproj`, `rasterio`, `shapely`, and `tqdm`):
 
 ```bash
 pip install .
@@ -93,6 +94,13 @@ pip install .
 
 Optional feature groups can be installed individually or all together via `pip` extras:
 
+- `classification`: `optuna`, `pyarrow`, `scikit-learn`, `scipy`
+- `regression`: `optuna`, `pyarrow`, `scikit-learn`, `scipy`
+- `xgboost`: `optuna`, `scikit-learn`, `xgboost`
+- `lightgbm`: `lightgbm`, `optuna`, `scikit-learn`
+- `catboost`: `catboost`, `optuna`, `scikit-learn`
+- `gbdt`: `xgboost`, `lightgbm`, `catboost`, `optuna`, `scikit-learn`
+- `modelling`: `SALib`, `scikit-learn`, `scipy`, `shap`
 - `stats`: `scikit-gstat`, `scikit-learn`, `scipy`
 - `vector`: `alphashape`, `h3`, `openpyxl`, `pyarrow`, `rtree`, `xlsxwriter`
 - `mapping`: `contextily`, `mpl-scatter-density`, `owslib`
@@ -101,7 +109,7 @@ Optional feature groups can be installed individually or all together via `pip` 
 - `unmixing`: `cvxopt`, `pyMCR`, `pysptools`, `scikit-learn`, `scipy`
 - `jupyter`: `ipywidgets`
 - `all`: all optional runtime dependencies above
-- `test`: `flake8`, `pylint`, `pytest`, `pytest-cov`, and `stats`
+- `test`: `flake8`, `pylint`, `pytest`, `pytest-cov`, `classification`, `regression`, and `stats`
 - `docs`: `sphinx`, `sphinx-rtd-theme`
 - `dev`: `all`, `test`, and `docs`
 

@@ -14,7 +14,7 @@ import rasterio
 from rasterio.control import GroundControlPoint
 from rasterio.enums import ColorInterp, Resampling
 from rasterio.warp import reproject as rio_reproject
-from rasterio.warp import transform as rio_transform_coords
+from rasterio.warp import transform_bounds as rio_transform_bounds
 from rasterio.windows import Window
 
 import rsgispy
@@ -197,7 +197,7 @@ def reproject_image(
     *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
-    no_data_val: Optional[float] = 0.0,
+    no_data_val: Optional[float] = None,
     calc_stats: bool = False,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
@@ -221,7 +221,8 @@ def reproject_image(
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
                      (defaults to input image data type).
-    :param no_data_val: No-data value for the reprojected image (Default = ``0.0``).
+    :param no_data_val: Optional no-data value for the reprojected image
+                        (defaults to ``input_img`` nodata when set, else ``0.0``).
     :param calc_stats: Populate image statistics and pyramids (Default = ``False``).
     :param use_pbar: Reserved progress-bar flag for uniform API (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
@@ -249,7 +250,6 @@ def reproject_image(
             "An output EPSG code (out_epsg) must be provided."
         )
 
-    eff_nd = 0.0 if no_data_val is None else float(no_data_val)
     with rasterio.open(input_img, "r") as src:
         in_crs = parse_epsg_crs(in_epsg) if in_epsg is not None else src.crs
         if in_crs is None:
@@ -257,13 +257,23 @@ def reproject_image(
                 f"Could not determine projection for input image: '{input_img}'"
             )
 
+        src_nodata_hdr = src.nodata
+        eff_nd = (
+            float(no_data_val)
+            if no_data_val is not None
+            else (
+                float(src_nodata_hdr) if src_nodata_hdr is not None else 0.0
+            )
+        )
+        src_nd = (
+            float(src_nodata_hdr) if src_nodata_hdr is not None else eff_nd
+        )
+
         x_pxl_res = abs(src.transform.a)
         y_pxl_res = abs(src.transform.e)
         in_res = min(x_pxl_res, y_pxl_res)
         x_size, y_size = src.width, src.height
-        tl_x_in, tl_y_in = src.transform.c, src.transform.f
-        br_x_in = tl_x_in + (x_size * x_pxl_res)
-        br_y_in = tl_y_in - (y_size * y_pxl_res)
+        left, bottom, right, top = src.bounds
         num_bands = src.count
         rsgis_dtype = (
             rsgispy.get_rsgis_datatype(src.dtypes[0])
@@ -271,24 +281,29 @@ def reproject_image(
             else datatype
         )
 
-    xs_out, ys_out = rio_transform_coords(
+    x_min, y_min, x_max, y_max = rio_transform_bounds(
         in_crs,
         out_crs,
-        [tl_x_in, br_x_in, br_x_in, tl_x_in],
-        [tl_y_in, br_y_in, tl_y_in, br_y_in],
+        float(left),
+        float(bottom),
+        float(right),
+        float(top),
+        densify_pts=21,
     )
-    x_min, x_max = float(min(xs_out)), float(max(xs_out))
-    y_min, y_max = float(min(ys_out)), float(max(ys_out))
+    x_min = float(x_min)
+    y_min = float(y_min)
+    x_max = float(x_max)
+    y_max = float(y_max)
 
     out_res = _resolve_reproject_res(
         out_pxl_res=out_pxl_res,
         in_res=in_res,
         x_size=x_size,
         y_size=y_size,
-        tl_x_out=float(xs_out[0]),
-        tl_y_out=float(ys_out[0]),
-        br_x_out=float(xs_out[1]),
-        br_y_out=float(ys_out[1]),
+        tl_x_out=x_min,
+        tl_y_out=y_max,
+        br_x_out=x_max,
+        br_y_out=y_min,
     )
 
     out_tl_x, out_tl_y = x_min, y_max
@@ -332,7 +347,7 @@ def reproject_image(
             src_crs=in_crs,
             dst_crs=out_crs,
             resampling=resampling_alg,
-            src_nodata=eff_nd,
+            src_nodata=src_nd,
             dst_nodata=eff_nd,
             num_threads=num_threads,
         )
@@ -459,7 +474,10 @@ def _resolve_band_nodata(
     if has_cfg:
         if nodata_cfg == "none":
             return [None] * n_bands
-        assert isinstance(nodata_cfg, tuple)
+        if not isinstance(nodata_cfg, tuple):
+            raise rsgispy.RSGISPyException(
+                f"Invalid nodata configuration: expected tuple or 'none', got {nodata_cfg!r}."
+            )
         if len(nodata_cfg) == 1:
             return [float(nodata_cfg[0])] * n_bands
         if len(nodata_cfg) == n_bands:
@@ -863,7 +881,11 @@ def gdal_warp(
             )
             if cfg.has_dst_nodata:
                 if cfg.dst_nodata != "none":
-                    assert isinstance(cfg.dst_nodata, tuple)
+                    if not isinstance(cfg.dst_nodata, tuple):
+                        raise rsgispy.RSGISPyException(
+                            "Invalid dst_nodata configuration: expected tuple "
+                            f"or 'none', got {cfg.dst_nodata!r}."
+                        )
                     dst.nodata = float(cfg.dst_nodata[0])
             elif dst_nd_fallback is not None:
                 val = (

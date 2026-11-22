@@ -3,6 +3,7 @@ The tools.thresholding module provides histogram- and distribution-based
 automatic thresholding utilities.
 """
 
+import sys
 from typing import Any, Optional, Tuple
 
 import numpy as np
@@ -207,29 +208,40 @@ def calc_hist_cross_entropy(data: np.ndarray, threshold: float) -> float:
         bin_centres = bin_centres + offset
         threshold = threshold + offset
 
-    split_idx = int(np.flatnonzero(bin_centres > threshold)[0])
-    m0a = np.sum(histogram[:split_idx])
-    m0b = np.sum(histogram[split_idx:])
-    m1a = np.sum(histogram[:split_idx] * bin_centres[:split_idx])
-    m1b = np.sum(histogram[split_idx:] * bin_centres[split_idx:])
-    mua = m1a / m0a
-    mub = m1b / m0b
+    above = np.flatnonzero(bin_centres > threshold)
+    split_idx = int(above[0]) if above.size > 0 else len(bin_centres)
+    m0a = float(np.sum(histogram[:split_idx]))
+    m0b = float(np.sum(histogram[split_idx:]))
+    m1a = float(np.sum(histogram[:split_idx] * bin_centres[:split_idx]))
+    m1b = float(np.sum(histogram[split_idx:] * bin_centres[split_idx:]))
 
-    return float(-m1a * np.log(mua) - m1b * np.log(mub))
+    ce_val = 0.0
+    if m0a > 0.0:
+        mua = m1a / m0a
+        if mua > 0.0:
+            ce_val -= m1a * float(np.log(mua))
+    if m0b > 0.0:
+        mub = m1b / m0b
+        if mub > 0.0:
+            ce_val -= m1b * float(np.log(mub))
+    return float(ce_val)
 
 
 def calc_li_threshold(
     data: np.ndarray,
     tolerance: Optional[float] = None,
     initial_guess: Optional[float] = None,
+    max_iter: int = 1000,
 ) -> float:
     """
     Calculate threshold using Li's iterative Minimum Cross Entropy method.
 
     :param data: 1D numeric NumPy array.
     :param tolerance: Convergence tolerance (defaults to half the smallest step
-                      between unique sorted data values).
+                      between unique sorted data values). Must be ``> 0`` if
+                      provided.
     :param initial_guess: Optional initial threshold estimate.
+    :param max_iter: Maximum number of iterations before stopping (Default = ``1000``).
     :return: Computed threshold value.
 
     .. code:: python
@@ -239,33 +251,58 @@ def calc_li_threshold(
         data = np.concatenate([np.random.normal(2, 0.5, 200), np.random.normal(6, 0.5, 200)])
         thres = rsgispy.tools.thresholding.calc_li_threshold(data)
     """
-    finite_data = data[np.isfinite(data)]
+    if tolerance is not None and tolerance <= 0.0:
+        raise rsgispy.RSGISPyException(
+            f"tolerance must be strictly greater than 0 (got {tolerance})."
+        )
+    if max_iter <= 0:
+        raise rsgispy.RSGISPyException(
+            f"max_iter must be a positive integer (got {max_iter})."
+        )
+
+    finite_data = np.asarray(data, dtype=np.float64)
+    finite_data = finite_data[np.isfinite(finite_data)]
+    if finite_data.size == 0:
+        raise rsgispy.RSGISPyException("Input data contains no finite values.")
+
+    unique_vals = np.unique(finite_data)
+    if unique_vals.size == 1:
+        return float(unique_vals[0])
 
     offset = 0.0
-    if np.min(finite_data) < 1:
-        offset = float(abs(np.min(finite_data)) + 1.0)
+    min_val = float(unique_vals[0])
+    if min_val < 1.0:
+        offset = abs(min_val) + 1.0
         finite_data = finite_data + offset
+        unique_vals = unique_vals + offset
         if initial_guess is not None:
             initial_guess = initial_guess + offset
 
     if tolerance is None:
-        tolerance = float(np.min(np.diff(np.unique(finite_data))) / 2.0)
+        min_diff = float(np.min(np.diff(unique_vals)))
+        tolerance = max(min_diff / 2.0, sys.float_info.epsilon)
 
     t_next = (
         float(np.mean(finite_data))
         if initial_guess is None
         else float(initial_guess)
     )
-    t_curr = -2.0 * tolerance
+    t_curr = t_next - 2.0 * tolerance
 
-    while abs(t_next - t_curr) > tolerance:
+    n_iter = 0
+    while abs(t_next - t_curr) > tolerance and n_iter < max_iter:
         t_curr = t_next
         foreground = finite_data > t_curr
-        mean_fore = np.mean(finite_data[foreground])
-        mean_back = np.mean(finite_data[~foreground])
+        if not np.any(foreground) or np.all(foreground):
+            break
+        mean_fore = float(np.mean(finite_data[foreground]))
+        mean_back = float(np.mean(finite_data[~foreground]))
+        if mean_fore == mean_back:
+            break
         t_next = float(
             (mean_back - mean_fore) / (np.log(mean_back) - np.log(mean_fore))
         )
+        n_iter += 1
 
     return float(t_next - offset)
 

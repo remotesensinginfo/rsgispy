@@ -19,6 +19,12 @@ from rsgispy.cli._common import (
 )
 from rsgispy.tools import hashing
 
+__all__ = [
+    "build_filehash_parser",
+    "main",
+    "cli_main",
+]
+
 _HASH_FUNCS: Dict[str, Callable[[str], str]] = {
     "md5": hashing.create_md5_hash,
     "sha1": hashing.create_sha1_hash,

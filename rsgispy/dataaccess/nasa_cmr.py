@@ -9,7 +9,8 @@ installed.
 
 import datetime
 import os
-from typing import Dict, List, Optional, Union
+import re
+from typing import Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 
 import rsgispy
@@ -71,18 +72,17 @@ class SessionWithHeaderNASARedirection(_SessionBase):
 
     def rebuild_auth(self, prepared_request, response):
         """
-        Keep credentials when redirected to or from ``urs.earthdata.nasa.gov``.
+        Keep credentials only when redirected over HTTPS to ``urs.earthdata.nasa.gov``.
         """
+        _ = response
         headers = prepared_request.headers
         url = prepared_request.url
 
         if "Authorization" in headers:
-            original_parsed = urlparse(response.request.url)
             redirect_parsed = urlparse(url)
-            if (
-                (original_parsed.hostname != redirect_parsed.hostname)
-                and redirect_parsed.hostname != self.AUTH_HOST
-                and original_parsed.hostname != self.AUTH_HOST
+            if not (
+                redirect_parsed.hostname == self.AUTH_HOST
+                and redirect_parsed.scheme == "https"
             ):
                 del headers["Authorization"]
 
@@ -93,6 +93,23 @@ def _check_cmr_response(data: Dict) -> Union[str, List, Dict]:
         print(data)
         raise rsgispy.RSGISPyException("Data structure is not as expected - check.")
     return data["feed"]["entry"]
+
+
+def _version_sort_key(
+    version_str: str,
+) -> Tuple[Tuple[int, Union[int, str]], ...]:
+    """Build a natural-order comparison key for CMR product version strings."""
+    cleaned = str(version_str).strip()
+    tokens = re.findall(r"\d+|[^\d.\-_]+", cleaned)
+    if not tokens:
+        return ((0, cleaned.lower()),)
+    key_parts: List[Tuple[int, Union[int, str]]] = []
+    for tok in tokens:
+        if tok.isdigit():
+            key_parts.append((1, int(tok)))
+        else:
+            key_parts.append((0, tok.lower()))
+    return tuple(key_parts)
 
 
 def get_prods_info(prod_short_name: str) -> List[Dict]:
@@ -144,7 +161,10 @@ def check_prod_version_avail(prod_short_name: str, version: str) -> bool:
 
 def get_max_prod_version(prod_short_name: str) -> str:
     """
-    Return the highest (latest) integer-comparable version string for a product.
+    Return the highest (latest) version string for a product.
+
+    Handles both integer version IDs (e.g., ``"006"``) and non-integer
+    version strings (e.g., ``"6.1"``, ``"V001"``).
 
     :param prod_short_name: Product short name.
     :return: String representation of the highest version.
@@ -158,15 +178,14 @@ def get_max_prod_version(prod_short_name: str) -> str:
         HAVE_REQUESTS, "get_max_prod_version", "requests", "dataaccess"
     )
     prod_lst = get_prods_info(prod_short_name)
-    first = True
-    max_version_int = 0
+    best_key: Optional[Tuple[Tuple[int, Union[int, str]], ...]] = None
     max_version = ""
     for prod in prod_lst:
-        version_int = int(prod["version_id"])
-        if first or version_int > max_version_int:
-            max_version_int = version_int
-            max_version = prod["version_id"]
-            first = False
+        version_id = str(prod["version_id"])
+        version_key = _version_sort_key(version_id)
+        if best_key is None or version_key > best_key:
+            best_key = version_key
+            max_version = version_id
     return max_version
 
 
@@ -235,12 +254,14 @@ def find_granules(
 
     if start_date is not None or end_date is not None:
         start_date_str = (
-            start_date.strftime("%Y-%m-%dT00:00:00Z")
+            start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
             if start_date is not None
             else ""
         )
         end_date_str = (
-            end_date.strftime("%Y-%m-%dT00:00:00Z") if end_date is not None else ""
+            end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+            if end_date is not None
+            else ""
         )
         prod_srch_params["temporal"] = f"{start_date_str},{end_date_str}"
 
@@ -257,7 +278,7 @@ def find_granules(
         )
 
     if sort_date:
-        prod_srch_params["sort_key"] = "-start_date" if sort_desc else "%2Bstart_date"
+        prod_srch_params["sort_key"] = "-start_date" if sort_desc else "+start_date"
 
     if other_params is not None:
         prod_srch_params = {**prod_srch_params, **other_params}

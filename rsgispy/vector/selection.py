@@ -15,6 +15,14 @@ import rasterio.features
 import rasterio.windows
 from shapely.geometry import box
 
+try:
+    from scipy.spatial import cKDTree  # pylint: disable=import-error
+
+    HAVE_SCIPY = True
+except ImportError:
+    cKDTree = None  # type: ignore[assignment,misc]
+    HAVE_SCIPY = False
+
 import rsgispy
 from rsgispy.imageprocess import (
     bbox_from_dataset,
@@ -22,7 +30,6 @@ from rsgispy.imageprocess import (
     iter_dataset_windows,
 )
 from rsgispy.tools.geometry import (
-    calc_pt_distance,
     do_bboxes_intersect,
     reproj_bbox,
 )
@@ -137,10 +144,24 @@ def does_vmsk_img_intersect(
     # pylint: disable=too-many-locals,unused-argument
     ensure_file_exists(input_vmsk_img, label="Valid mask image")
     roi_lyr = resolve_vec_layer(vec_roi_file, vec_roi_lyr)
+    if get_vec_feat_count(vec_roi_file, roi_lyr) == 0:
+        return False
+
     vec_crs = _resolve_crs_for_bbox(vec_roi_file, roi_lyr, vec_epsg)
-    vec_bbox = get_vec_lyr_bbox(
-        vec_roi_file, vec_lyr=roi_lyr, compute_if_exp=True
-    )
+    try:
+        vec_bbox = get_vec_lyr_bbox(
+            vec_roi_file, vec_lyr=roi_lyr, compute_if_exp=True
+        )
+    except rsgispy.RSGISPyException:
+        roi_chk = read_vec_gdf(
+            vec_roi_file, vec_lyr=roi_lyr, epsg=vec_epsg, copy=False
+        )
+        roi_chk = roi_chk[
+            roi_chk.geometry.notna() & (~roi_chk.geometry.is_empty)
+        ]
+        if len(roi_chk) == 0:
+            return False
+        raise
 
     with rasterio.open(input_vmsk_img, "r") as src:
         img_crs = src.crs
@@ -269,12 +290,18 @@ def spatial_select(
         roi_gdf = roi_gdf.to_crs(in_gdf.crs)
 
     tmp_id_col = "_rsgispy_sel_idx_"
-    work_gdf = in_gdf[["geometry"]].copy()
-    work_gdf[tmp_id_col] = np.arange(len(work_gdf), dtype=np.int64)
+    work_gdf = gpd.GeoDataFrame(
+        {tmp_id_col: np.arange(len(in_gdf), dtype=np.int64)},
+        geometry=in_gdf.geometry.values,
+        crs=in_gdf.crs,
+    )
+    roi_geom_gdf = gpd.GeoDataFrame(
+        geometry=roi_gdf.geometry.values, crs=roi_gdf.crs
+    )
 
     joined = gpd.sjoin(
         work_gdf,
-        roi_gdf[["geometry"]],
+        roi_geom_gdf,
         how="inner",
         predicate=predicate,
     )
@@ -415,10 +442,15 @@ def subset_vec_lyr_to_feat_bboxs(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    bboxes = _vec_spatial.get_geoms_as_bboxs(
-        vec_file_bbox, vec_lyr_bbox
-    )
+    bbox_gdf = read_vec_gdf(vec_file_bbox, vec_lyr=vec_lyr_bbox, copy=False)
     base_gdf = read_vec_gdf(vec_file_tosub, vec_lyr=vec_lyr_tosub, copy=False)
+    if (
+        bbox_gdf.crs is not None
+        and base_gdf.crs is not None
+        and bbox_gdf.crs != base_gdf.crs
+    ):
+        bbox_gdf = bbox_gdf.to_crs(base_gdf.crs)
+    bboxes = _vec_spatial.get_geoms_as_bboxs(bbox_gdf, None)
 
     pbar_cls = rsgispy.get_tqdm()
     if out_file_base is None:
@@ -441,6 +473,19 @@ def subset_vec_lyr_to_feat_bboxs(
         )
         out_files.append(out_vec_file)
     return out_files
+
+
+def _rows_to_att_dicts(
+    df: pd.DataFrame, cols: Sequence[str]
+) -> List[Dict[str, Any]]:
+    """Extract selected columns as a list of ``{col: python_scalar}`` dicts without iterrows."""
+    col_list = list(cols)
+    if not col_list:
+        return [{} for _ in range(len(df))]
+    col_vals = [
+        [to_python_scalar(v) for v in df[col].tolist()] for col in col_list
+    ]
+    return [dict(zip(col_list, row_vals)) for row_vals in zip(*col_vals)]
 
 
 def get_att_lst_select_feats(
@@ -482,18 +527,22 @@ def get_att_lst_select_feats(
     ):
         sel_gdf = sel_gdf.to_crs(in_gdf.crs)
 
-    cols_to_read = list(att_names)
+    left_geom = gpd.GeoDataFrame(
+        geometry=in_gdf.geometry.values,
+        index=np.arange(len(in_gdf)),
+        crs=in_gdf.crs,
+    )
+    right_geom = gpd.GeoDataFrame(
+        geometry=sel_gdf.geometry.values, crs=sel_gdf.crs
+    )
     joined = gpd.sjoin(
-        in_gdf[cols_to_read + ["geometry"]],
-        sel_gdf[["geometry"]],
+        left_geom,
+        right_geom,
         how="inner",
         predicate="intersects",
     )
-
-    return [
-        {col: to_python_scalar(row[col]) for col in cols_to_read}
-        for _, row in joined.iterrows()
-    ]
+    sel_pos = np.sort(joined.index.unique().to_numpy())
+    return _rows_to_att_dicts(in_gdf.iloc[sel_pos], att_names)
 
 
 def get_att_lst_select_bbox_feats(
@@ -529,11 +578,7 @@ def get_att_lst_select_bbox_feats(
     target_bbox = _reproj_bbox_to_gdf_crs(bbox, bbox_epsg, in_gdf.crs)
     sel_gdf = _select_gdf_by_bbox(in_gdf, target_bbox)
 
-    cols_to_read = list(att_names)
-    return [
-        {col: to_python_scalar(row[col]) for col in cols_to_read}
-        for _, row in sel_gdf.iterrows()
-    ]
+    return _rows_to_att_dicts(sel_gdf, att_names)
 
 
 def subset_by_attribute(
@@ -555,7 +600,7 @@ def subset_by_attribute(
     :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name.
     :param sub_col: Attribute column name used to filter features.
-    :param sub_vals: Values (or regex patterns when ``match_type`` is
+    :param sub_vals: Values (or substrings/prefixes when ``match_type`` is
                      ``'contains'`` or ``'start'``) to select.
     :param out_vec_file: Output vector file path, or ``None`` to return an
                          in-memory :class:`geopandas.GeoDataFrame`.
@@ -594,15 +639,22 @@ def subset_by_attribute(
 
     mask = pd.Series(False, index=base_gdf.index)
     col_series = base_gdf[sub_col]
-    for val in sub_vals:
-        if match_key == "equals":
-            mask = mask | (col_series == val)
-        elif match_key == "contains":
-            mask = mask | col_series.astype(str).str.contains(
-                str(val), na=False, regex=False
-            )
-        else:
-            mask = mask | col_series.astype(str).str.match(str(val), na=False)
+    if match_key == "equals":
+        for val in sub_vals:
+            mask = mask | (col_series == val).fillna(False)
+    else:
+        not_na = col_series.notna()
+        str_series = col_series.astype(str)
+        for val in sub_vals:
+            if match_key == "contains":
+                mask = mask | (
+                    not_na
+                    & str_series.str.contains(str(val), na=False, regex=False)
+                )
+            else:
+                mask = mask | (
+                    not_na & str_series.str.startswith(str(val), na=False)
+                )
 
     out_gdf = base_gdf[mask].copy()
     if len(out_gdf) == 0:
@@ -776,7 +828,7 @@ def drop_rows_by_multi_attributes(
 
     keep_mask = pd.Series(True, index=base_gdf.index)
     for col, drop_val in drop_atts.items():
-        keep_mask = keep_mask & (base_gdf[col] != drop_val)
+        keep_mask = keep_mask & (~base_gdf[col].isin([drop_val]))
 
     out_gdf = base_gdf[keep_mask].copy()
     if len(out_gdf) == 0:
@@ -908,8 +960,7 @@ def match_closest_vec_pts(
                          (Default = ``'dist_match'``).
     :param out_att_prefix: Column name prefix when ``cp_match_atts=True``
                            (Default = ``'match_'``).
-    :param use_pbar: If ``True``, display a tqdm progress bar across base points
-                     (Default = ``True``).
+    :param use_pbar: Retained for API compatibility (vectorised KD-tree query).
     :param del_exist_vec: If ``True``, delete ``out_vec_file`` if it exists
                           (Default = ``False``).
     :param out_compress: Optional GeoParquet compression setting.
@@ -926,11 +977,25 @@ def match_closest_vec_pts(
             out_format="GPKG", tolerance=50.0, cp_match_atts=True,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,unused-argument
     base_gdf = read_vec_gdf(vec_base_file, vec_lyr=vec_base_lyr)
     match_gdf = read_vec_gdf(
         vec_match_file, vec_lyr=vec_match_lyr, copy=False
     )
+    if (
+        base_gdf.crs is not None
+        and match_gdf.crs is not None
+        and base_gdf.crs != match_gdf.crs
+    ):
+        match_gdf = match_gdf.to_crs(base_gdf.crs)
+
+    base_gdf = base_gdf[
+        base_gdf.geometry.notna() & (~base_gdf.geometry.is_empty)
+    ].copy()
+    match_gdf = match_gdf[
+        match_gdf.geometry.notna() & (~match_gdf.geometry.is_empty)
+    ]
     if len(base_gdf) == 0 or len(match_gdf) == 0:
         if out_vec_file is None:
             return base_gdf.iloc[0:0].copy()
@@ -941,40 +1006,37 @@ def match_closest_vec_pts(
     match_xs = match_gdf.geometry.x.to_numpy(dtype=float)
     match_ys = match_gdf.geometry.y.to_numpy(dtype=float)
 
-    out_x: List[float] = []
-    out_y: List[float] = []
-    out_dists: List[float] = []
-    match_cols = [c for c in match_gdf.columns if c != "geometry"]
-    match_atts: Dict[str, List[Any]] = {
-        col: [] for col in match_cols
-    } if cp_match_atts else {}
-
-    pbar_cls = rsgispy.get_tqdm()
-    for base_x, base_y in pbar_cls(
-        zip(base_xs, base_ys), total=len(base_xs), disable=not use_pbar
-    ):
-        dists = np.hypot(match_xs - base_x, match_ys - base_y)
-        best_idx = int(np.argmin(dists))
-        join_x = float(match_xs[best_idx])
-        join_y = float(match_ys[best_idx])
-        dist_val = calc_pt_distance(float(base_x), float(base_y), join_x, join_y)
-
-        out_x.append(join_x)
-        out_y.append(join_y)
-        out_dists.append(dist_val)
-
-        if cp_match_atts:
-            row = match_gdf.iloc[best_idx]
-            for col in match_cols:
-                match_atts[col].append(to_python_scalar(row[col]))
+    if HAVE_SCIPY and cKDTree is not None:
+        tree = cKDTree(np.column_stack((match_xs, match_ys)))
+        dists, best_idxs = tree.query(np.column_stack((base_xs, base_ys)), k=1)
+        best_idxs = np.asarray(best_idxs, dtype=np.intp)
+        dists = np.asarray(dists, dtype=float)
+    else:
+        n_base = base_xs.shape[0]
+        best_idxs = np.empty(n_base, dtype=np.intp)
+        dists = np.empty(n_base, dtype=float)
+        chunk_size = 1024
+        for start in range(0, n_base, chunk_size):
+            end = min(start + chunk_size, n_base)
+            dx = base_xs[start:end, np.newaxis] - match_xs[np.newaxis, :]
+            dy = base_ys[start:end, np.newaxis] - match_ys[np.newaxis, :]
+            sq_dists = dx * dx + dy * dy
+            chunk_best = np.argmin(sq_dists, axis=1)
+            best_idxs[start:end] = chunk_best
+            dists[start:end] = np.sqrt(
+                sq_dists[np.arange(end - start), chunk_best]
+            )
 
     out_gdf = base_gdf.copy()
-    out_gdf[out_x_col] = out_x
-    out_gdf[out_y_col] = out_y
-    out_gdf[out_dist_col] = out_dists
+    out_gdf[out_x_col] = match_xs[best_idxs]
+    out_gdf[out_y_col] = match_ys[best_idxs]
+    out_gdf[out_dist_col] = dists
     if cp_match_atts:
+        match_geom_col = match_gdf.geometry.name
+        match_cols = [c for c in match_gdf.columns if c != match_geom_col]
+        matched_sub = match_gdf.iloc[best_idxs]
         for col in match_cols:
-            out_gdf[f"{out_att_prefix}{col}"] = match_atts[col]
+            out_gdf[f"{out_att_prefix}{col}"] = matched_sub[col].values
 
     if tolerance is not None:
         out_gdf = out_gdf[out_gdf[out_dist_col] < tolerance].copy()
@@ -1056,8 +1118,10 @@ def split_vec_lyr_random_subset(
         )
 
     base_gdf = read_vec_gdf(vec_file, vec_lyr=lyr_name, copy=False)
-    smpl_gdf = base_gdf.sample(n=n_smpl, random_state=rnd_seed).copy()
-    remain_gdf = base_gdf.drop(smpl_gdf.index).copy()
+    rng = np.random.default_rng(rnd_seed)
+    perm = rng.permutation(len(base_gdf))
+    smpl_gdf = base_gdf.iloc[perm[:n_smpl]].copy()
+    remain_gdf = base_gdf.iloc[perm[n_smpl:]].copy()
 
     if out_rmain_vec_file is not None:
         write_vec_gdf(
@@ -1218,8 +1282,10 @@ def create_train_test_smpls(
             "Dataset too small for the requested prop_test split."
         )
 
-    test_gdf = base_gdf.sample(n=n_test, random_state=rnd_seed).copy()
-    train_gdf = base_gdf.drop(test_gdf.index).copy()
+    rng = np.random.default_rng(rnd_seed)
+    perm = rng.permutation(len(base_gdf))
+    test_gdf = base_gdf.iloc[perm[:n_test]].copy()
+    train_gdf = base_gdf.iloc[perm[n_test:]].copy()
 
     if out_train_vec_file is not None:
         write_vec_gdf(

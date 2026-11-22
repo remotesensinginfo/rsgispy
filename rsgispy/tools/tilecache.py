@@ -37,11 +37,12 @@ ORIGIN_SHIFT = 2.0 * math.pi * EARTH_RADIUS / 2.0
 INITIAL_RESOLUTION = 2.0 * math.pi * EARTH_RADIUS / float(TILE_SIZE)
 
 
-def resolution(zoom: int) -> float:
+def resolution(zoom: int, tile_size: int = TILE_SIZE) -> float:
     """
     Calculate the pixel resolution (in Web Mercator metres) for a zoom level.
 
     :param zoom: Zoom level.
+    :param tile_size: Tile size in pixels (Default = ``256``).
     :return: Pixel resolution in metres.
 
     .. code:: python
@@ -49,7 +50,7 @@ def resolution(zoom: int) -> float:
         import rsgispy.tools.tilecache
         res_m = rsgispy.tools.tilecache.resolution(zoom=12)
     """
-    return INITIAL_RESOLUTION / (2**zoom)
+    return (2.0 * math.pi * EARTH_RADIUS / float(tile_size)) / (2**zoom)
 
 
 def truncate_lng_lat(lon_deg: float, lat_deg: float) -> Tuple[float, float]:
@@ -98,8 +99,9 @@ def get_tile_for_point(
     )
     metre_y = metre_y * ORIGIN_SHIFT / 180.0
 
-    pixel_x = max(0.0, (metre_x + ORIGIN_SHIFT) / resolution(zoom))
-    pixel_y = max(0.0, (ORIGIN_SHIFT - metre_y) / resolution(zoom))
+    res = resolution(zoom, tile_size=tile_size)
+    pixel_x = max(0.0, (metre_x + ORIGIN_SHIFT) / res)
+    pixel_y = max(0.0, (ORIGIN_SHIFT - metre_y) / res)
 
     max_idx = (2**zoom) - 1
     tile_x = max(0, min(max_idx, int(math.floor(pixel_x / float(tile_size)))))
@@ -343,6 +345,21 @@ def get_tile_path_from_quadkey(
     return tile_x, tile_y, zoom
 
 
+def _lonlat_to_frac_xyz(
+    lon_deg: float, lat_deg: float, zoom: int
+) -> Tuple[float, float]:
+    """Convert WGS84 ``(lon_deg, lat_deg)`` to fractional XYZ tile coordinates."""
+    n_tiles = 2.0**zoom
+    x_f = (lon_deg + 180.0) / 360.0 * n_tiles
+    lat_rad = math.radians(lat_deg)
+    y_f = (
+        (1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi)
+        / 2.0
+        * n_tiles
+    )
+    return x_f, y_f
+
+
 def get_tiles(
     bbox: Sequence[float],
     zooms: Union[int, Sequence[int]],
@@ -367,7 +384,7 @@ def get_tiles(
             bbox=(-4.2, -4.0, 52.3, 52.5), zooms=[10, 11]
         )
     """
-    # pylint: disable=too-many-locals,too-many-branches
+    # pylint: disable=too-many-locals
     west, east, south, north = bbox[0], bbox[1], bbox[2], bbox[3]
     if truncate:
         west, south = truncate_lng_lat(west, south)
@@ -390,31 +407,31 @@ def get_tiles(
         for z_lvl in zoom_seq:
             if z_lvl not in tiles:
                 tiles[z_lvl] = []
-            llx, lly, _ = get_tile_for_point(west_b, south_b, z_lvl, tms)
-            if lly % 1 < epsilon / 10:
-                lly = lly - epsilon
+            max_idx = (2**z_lvl) - 1
+            x_min_f, y_min_f = _lonlat_to_frac_xyz(west_b, north_b, z_lvl)
+            x_max_f, y_max_f = _lonlat_to_frac_xyz(east_b, south_b, z_lvl)
 
-            urx, ury, _ = get_tile_for_point(east_b, north_b, z_lvl, tms)
-            if urx % 1 < epsilon / 10:
-                urx = urx - epsilon
-
-            llx = max(0, llx)
-            ury = max(0, ury)
-
-            llx_i, urx_i, lly_i, ury_i = (
-                int(math.floor(val)) for val in (llx, urx, lly, ury)
+            min_x_tile = max(0, min(max_idx, int(math.floor(x_min_f + epsilon))))
+            max_x_tile = max(
+                min_x_tile,
+                min(max_idx, int(math.floor(x_max_f - epsilon))),
             )
 
-            min_x_tile = min(llx_i, urx_i)
-            max_x_tile = min(max(llx_i, urx_i), (2**z_lvl) - 1)
-            n_x_tiles = max(1, (max_x_tile - min_x_tile) + 1)
+            min_y_xyz = max(0, min(max_idx, int(math.floor(y_min_f + epsilon))))
+            max_y_xyz = max(
+                min_y_xyz,
+                min(max_idx, int(math.floor(y_max_f - epsilon))),
+            )
 
-            min_y_tile = min(ury_i, lly_i)
-            max_y_tile = min(max(ury_i, lly_i), (2**z_lvl) - 1)
-            n_y_tiles = max(1, (max_y_tile - min_y_tile) + 1)
+            if tms:
+                min_y_tile = max_idx - max_y_xyz
+                max_y_tile = max_idx - min_y_xyz
+            else:
+                min_y_tile = min_y_xyz
+                max_y_tile = max_y_xyz
 
-            for i_x in range(min_x_tile, min_x_tile + n_x_tiles):
-                for j_y in range(min_y_tile, min_y_tile + n_y_tiles):
+            for i_x in range(min_x_tile, max_x_tile + 1):
+                for j_y in range(min_y_tile, max_y_tile + 1):
                     tiles[z_lvl].append((i_x, j_y, z_lvl))
     return tiles
 

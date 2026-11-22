@@ -160,7 +160,8 @@ def plot_correlation_heatmap(
                 corr_df,
                 mask=mask,
                 cmap=cmap,
-                vmax=0.3,
+                vmin=-1.0,
+                vmax=1.0,
                 center=0,
                 square=True,
                 linewidths=0.5,
@@ -455,6 +456,14 @@ def _build_shap_explainer(
             feature_perturbation="correlation_dependent",
         )
     if use_tree_explainer is None:
+        shap_fallback_errs = (
+            TypeError,
+            ValueError,
+            AttributeError,
+            KeyError,
+            NotImplementedError,
+            RuntimeError,
+        )
         if is_multi_out_wrap and est_cls_obj.estimators_ and _is_tree_like_estimator(
             est_cls_obj.estimators_[0]
         ):
@@ -462,12 +471,12 @@ def _build_shap_explainer(
                 return _MultiOutputTreeShapWrapper(
                     est_cls_obj.estimators_, var_list
                 )
-            except Exception:  # pylint: disable=broad-exception-caught
+            except shap_fallback_errs:
                 pass
         if _is_tree_like_estimator(est_cls_obj):
             try:
                 return shap.TreeExplainer(est_cls_obj, feature_names=var_list)
-            except Exception:  # pylint: disable=broad-exception-caught
+            except shap_fallback_errs:
                 pass
         if hasattr(est_cls_obj, "coef_"):
             try:
@@ -476,7 +485,7 @@ def _build_shap_explainer(
                     eval_x,
                     feature_perturbation="correlation_dependent",
                 )
-            except Exception:  # pylint: disable=broad-exception-caught
+            except shap_fallback_errs:
                 pass
     pred_callable = (
         est_cls_obj.predict if task == "regression" else est_cls_obj.predict_proba

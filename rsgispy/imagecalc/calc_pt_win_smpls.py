@@ -141,8 +141,13 @@ def _extract_rotated_window(
         0.0,
         img_y_res,
     )
+    pt_col, pt_row = ~src_ds.transform @ (float(pt_xy[0]), float(pt_xy[1]))
+    pivot = (
+        float(pt_col) - float(sub_win.col_off),
+        float(pt_row) - float(sub_win.row_off),
+    )
     pt_img_affine_dst = pt_img_affine_src @ Affine.rotation(
-        pt_angle, pivot=(sub_width / 2.0, sub_height / 2.0)
+        pt_angle, pivot=pivot
     )
 
     roi_x_coords = pt_img_bound_bbox[1] - pt_img_bound_bbox[0]

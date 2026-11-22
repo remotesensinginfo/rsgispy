@@ -761,7 +761,10 @@ def resolve_output_grid(
                 "Both out_size dimensions cannot be 0."
             )
         if req_w is None:
-            assert req_h is not None
+            if req_h is None:
+                raise rsgispy.RSGISPyException(
+                    "Both out_size dimensions cannot be 0."
+                )
             req_w = max(1, int(round(win_w * (float(req_h) / float(win_h)))))
         if req_h is None:
             req_h = max(1, int(round(win_h * (float(req_w) / float(win_w)))))

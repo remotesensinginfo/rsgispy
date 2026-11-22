@@ -3,7 +3,6 @@ The mapping.vector module provides functions for rendering vector layers,
 choropleth maps, and point-density plots onto Matplotlib axes.
 """
 
-import math
 from typing import Any, List, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
@@ -38,12 +37,8 @@ def _subset_vec_bbox(
     gp_vec: Union[gpd.GeoDataFrame, gpd.GeoSeries],
     bbox: Tuple[float, float, float, float],
 ) -> Union[gpd.GeoDataFrame, gpd.GeoSeries]:
-    """Spatially subset a GeoDataFrame/GeoSeries using a buffered bounding box."""
-    min_x_sub = math.floor(bbox[0] - 4)
-    max_x_sub = math.ceil(bbox[1] + 4)
-    min_y_sub = math.floor(bbox[2] - 4)
-    max_y_sub = math.ceil(bbox[3] + 4)
-    return gp_vec.cx[min_x_sub:max_x_sub, min_y_sub:max_y_sub]
+    """Spatially subset a GeoDataFrame/GeoSeries to ``bbox``."""
+    return gp_vec.cx[bbox[0] : bbox[1], bbox[2] : bbox[3]]
 
 
 def _resolve_layer_param(
@@ -376,7 +371,21 @@ def create_vec_pt_density_map(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     # pylint: disable=import-outside-toplevel,import-error,unused-import
-    import mpl_scatter_density  # noqa: F401
+    try:
+        import mpl_scatter_density  # noqa: F401
+
+        has_msd = True
+        msd_err: Optional[str] = None
+    except ImportError as exc:
+        has_msd = False
+        msd_err = str(exc)
+    rsgispy.check_optional_dep(
+        has_msd,
+        "create_vec_pt_density_map",
+        "mpl-scatter-density",
+        "mapping",
+        error_detail=msd_err,
+    )
 
     gp_vec_sub = _subset_vec_bbox(gp_vec, bbox) if sub_in_vec else gp_vec
 
@@ -394,8 +403,8 @@ def create_vec_pt_density_map(
         )
 
     ax.scatter_density(
-        gp_vec_sub["geometry"].x,
-        gp_vec_sub["geometry"].y,
+        gp_vec_sub.geometry.x,
+        gp_vec_sub.geometry.y,
         dpi=density_dpi,
         norm=c_norm,
         cmap=c_cmap,

@@ -183,6 +183,20 @@ def _require_planet() -> None:
         )
 
 
+def _run_async(coro: Any) -> Any:
+    """Execute ``coro`` with ``asyncio.run`` or raise a clear error if a loop is active."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    coro.close()
+    raise rsgispy.RSGISPyException(
+        "Cannot run synchronous Planet API helper while an asyncio event loop "
+        "is already running (e.g., inside Jupyter or an async coroutine). "
+        "Invoke it from a worker thread or await the underlying async helper."
+    )
+
+
 def get_item_type_str(item_type: int) -> str:
     """
     Get the string representation of a given Planet item type (sensor).
@@ -381,7 +395,7 @@ def run_search_planet_items(
             cloud_cover=0.1,
         )
     """
-    return asyncio.run(
+    return _run_async(
         _search_planet_items(
             auth_obj,
             item_type,
@@ -398,7 +412,7 @@ def run_search_planet_items(
     )
 
 
-# pylint: disable=too-many-arguments,too-many-positional-arguments
+# pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
 async def _download_and_validate_item(
     auth_obj: Any,
     item_type: int,
@@ -406,8 +420,19 @@ async def _download_and_validate_item(
     asset_type: int,
     out_file_path: str,
     overwrite: bool = False,
+    max_attempts: int = 200,
+    wait_timeout: Optional[float] = None,
 ) -> None:
     _require_planet()
+
+    if max_attempts <= 0:
+        raise rsgispy.RSGISPyException(
+            f"max_attempts must be a positive integer (got {max_attempts})."
+        )
+    if wait_timeout is not None and wait_timeout <= 0.0:
+        raise rsgispy.RSGISPyException(
+            f"wait_timeout must be strictly greater than 0 (got {wait_timeout})."
+        )
 
     item_type_str = get_item_type_str(item_type)
     asset_type_str = get_asset_type_str(asset_type)
@@ -424,9 +449,28 @@ async def _download_and_validate_item(
             await planet_cl.activate_asset(planet_asset)
             status_bar.update(state="Wait for Activation")
 
-            asset = await planet_cl.wait_asset(
-                planet_asset, callback=status_bar.update_state
-            )
+            wait_kwargs: Dict[str, Any] = {"callback": status_bar.update_state}
+            try:
+                wait_sig = inspect.signature(planet_cl.wait_asset)
+                if "max_attempts" in wait_sig.parameters or any(
+                    param.kind == inspect.Parameter.VAR_KEYWORD
+                    for param in wait_sig.parameters.values()
+                ):
+                    wait_kwargs["max_attempts"] = max_attempts
+            except (TypeError, ValueError):
+                wait_kwargs["max_attempts"] = max_attempts
+
+            wait_coro = planet_cl.wait_asset(planet_asset, **wait_kwargs)
+            if wait_timeout is not None:
+                try:
+                    asset = await asyncio.wait_for(wait_coro, timeout=wait_timeout)
+                except asyncio.TimeoutError as exc:
+                    raise rsgispy.RSGISPyException(
+                        f"Timed out after {wait_timeout}s waiting for Planet asset "
+                        f"'{item_id}' ({asset_type_str}) to activate."
+                    ) from exc
+            else:
+                asset = await wait_coro
 
         path = await planet_cl.download_asset(
             asset, directory=out_file_path, overwrite=overwrite, progress_bar=True
@@ -442,6 +486,8 @@ def run_download_and_validate_item(
     asset_type: int,
     out_file_path: str,
     overwrite: bool = False,
+    max_attempts: int = 200,
+    wait_timeout: Optional[float] = None,
 ) -> None:
     """
     Activate, download, and checksum-validate a single Planet item asset.
@@ -452,6 +498,10 @@ def run_download_and_validate_item(
     :param asset_type: Asset type constant (``RSGIS_PLANET_ASSET_*``).
     :param out_file_path: Output directory where the asset is downloaded.
     :param overwrite: Overwrite existing files if ``True``.
+    :param max_attempts: Maximum polling attempts passed to ``wait_asset``
+                         (Default = ``200``; must be ``> 0``).
+    :param wait_timeout: Optional wall-clock timeout in seconds for asset
+                         activation via ``asyncio.wait_for`` (Default = ``None``).
 
     .. code:: python
 
@@ -466,7 +516,7 @@ def run_download_and_validate_item(
             out_file_path="./planet_downloads",
         )
     """
-    asyncio.run(
+    _run_async(
         _download_and_validate_item(
             auth_obj,
             item_type,
@@ -474,6 +524,8 @@ def run_download_and_validate_item(
             asset_type,
             out_file_path,
             overwrite,
+            max_attempts=max_attempts,
+            wait_timeout=wait_timeout,
         )
     )
 
@@ -550,7 +602,7 @@ def run_create_planet_order(
             bundle_type=pl.RSGIS_PLANET_BUNDLE_analytic_sr_udm2,
         )
     """
-    return asyncio.run(
+    return _run_async(
         _create_planet_order(
             auth_obj, order_name, items, item_type, bundle_type, email_notification
         )
@@ -608,7 +660,7 @@ def run_download_planet_order(
             out_file_path="./planet_orders",
         )
     """
-    return asyncio.run(
+    return _run_async(
         _download_planet_order(auth_obj, order_id, out_file_path, overwrite)
     )
 
@@ -643,7 +695,7 @@ def run_get_planet_orders(auth_obj: Any) -> List[Dict]:
         auth = pl.planet_auth()
         orders = pl.run_get_planet_orders(auth_obj=auth)
     """
-    return asyncio.run(_get_planet_orders(auth_obj))
+    return _run_async(_get_planet_orders(auth_obj))
 
 
 async def _cancel_planet_orders(
@@ -684,4 +736,4 @@ def run_cancel_planet_orders(
             order_ids=["12345678-abcd-1234-abcd-1234567890ab"],
         )
     """
-    return asyncio.run(_cancel_planet_orders(auth_obj, order_ids))
+    return _run_async(_cancel_planet_orders(auth_obj, order_ids))

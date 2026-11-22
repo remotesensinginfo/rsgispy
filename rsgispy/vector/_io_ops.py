@@ -34,6 +34,7 @@ from rsgispy.vectorprocess import (
     finish_vec_output,
     is_geoparquet_file,
     is_geoparquet_format,
+    is_multi_layer_driver,
     parse_crs_input,
     prepare_optional_out_vec,
     prepare_out_vec_file,
@@ -69,15 +70,27 @@ __all__ = [
 
 
 def _concat_gdfs(gdfs: Sequence[gpd.GeoDataFrame]) -> gpd.GeoDataFrame:
-    """Concatenate non-empty GeoDataFrames while preserving CRS."""
+    """Concatenate non-empty GeoDataFrames while aligning CRSs and geometry column names."""
     if len(gdfs) == 1:
         return gdfs[0].copy()
-    crs = gdfs[0].crs
-    merged = pd.concat(list(gdfs), ignore_index=True)
+    ref_crs = next((g.crs for g in gdfs if g.crs is not None), None)
+    ref_geom_col = gdfs[0].geometry.name
+    aligned: List[gpd.GeoDataFrame] = []
+    for gdf in gdfs:
+        item = gdf
+        if ref_crs is not None and item.crs is not None and item.crs != ref_crs:
+            item = item.to_crs(ref_crs)
+        if item.geometry.name != ref_geom_col:
+            item = item.rename_geometry(ref_geom_col)
+        aligned.append(item)
+    merged = pd.concat(aligned, ignore_index=True)
     if not isinstance(merged, gpd.GeoDataFrame):
-        merged = gpd.GeoDataFrame(merged, geometry="geometry", crs=crs)
-    elif merged.crs is None and crs is not None:
-        merged = merged.set_crs(crs, allow_override=True)
+        merged = gpd.GeoDataFrame(merged, geometry=ref_geom_col, crs=ref_crs)
+    else:
+        if merged.active_geometry_name != ref_geom_col:
+            merged = merged.set_geometry(ref_geom_col)
+        if merged.crs is None and ref_crs is not None:
+            merged = merged.set_crs(ref_crs, allow_override=True)
     return merged
 
 
@@ -392,7 +405,10 @@ def reproj_wgs84_vec_to_utm(
         out_compress=out_compress,
     )
     if out_vec_file is None:
-        assert reproj_res is not None
+        if reproj_res is None:
+            raise rsgispy.RSGISPyException(
+                "Reprojection unexpectedly returned None for in-memory output."
+            )
         return reproj_res
     return out_epsg
 
@@ -685,7 +701,6 @@ def merge_to_multi_lyr_vec(
     .. code:: python
 
         import rsgispy.vector.io
-        import rsgispy.vector.io
 
         items = [
             rsgispy.vector.io.VecLayersInfoObj("a.gpkg", "lyr1", "layer_a"),
@@ -696,6 +711,7 @@ def merge_to_multi_lyr_vec(
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     seen_out_lyrs = set()
     out_path: Optional[str] = None
+    fmt = check_format_name(out_format)
     if out_vec_file is not None:
         out_path = os.fspath(out_vec_file)
         if not rsgispy.tools.files.does_path_exists_or_creatable(out_path):
@@ -742,19 +758,25 @@ def merge_to_multi_lyr_vec(
                 )
 
     if out_path is not None:
-        is_pq = is_geoparquet_format(out_format) or is_geoparquet_file(
-            out_path
-        )
+        is_pq = is_geoparquet_format(fmt) or is_geoparquet_file(out_path)
         if is_pq and len(entries) > 1:
             raise rsgispy.RSGISPyException(
                 "GeoParquet does not support multiple layers in a single file; "
                 "use merge_vec_files or GPKG format."
             )
+        if (not is_pq) and len(entries) > 1 and (not is_multi_layer_driver(out_path, fmt)):
+            raise rsgispy.RSGISPyException(
+                f"Output format '{fmt}' does not support multiple layers in a "
+                "single file; use a multi-layer format such as GPKG."
+            )
 
     out_layers: Dict[str, gpd.GeoDataFrame] = {}
     pbar_cls = rsgispy.get_tqdm()
     for entry in pbar_cls(entries, disable=not use_pbar):
-        assert entry.vec_file is not None
+        if entry.vec_file is None:
+            raise rsgispy.RSGISPyException(
+                "VecLayersInfoObj.vec_file must not be None."
+            )
         out_lyr = entry.vec_out_lyr or entry.vec_lyr or "layer"
         if out_lyr in seen_out_lyrs:
             if rename_dup_lyrs:
@@ -851,9 +873,10 @@ def check_polys_wgs84_bounds_geometry(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     out_gdf = read_vec_gdf(data_gdf, vec_lyr=vec_lyr, copy=True)
+    geom_col = out_gdf.geometry.name
     pbar_cls = rsgispy.get_tqdm()
     for idx in pbar_cls(out_gdf.index, disable=not use_pbar):
-        geom = out_gdf.at[idx, "geometry"]
+        geom = out_gdf.at[idx, geom_col]
         if geom is None or geom.is_empty:
             continue
         bounds = geom.bounds
@@ -867,7 +890,7 @@ def check_polys_wgs84_bounds_geometry(
         east_focus = pos_count >= (len(pts) / 2.0)
 
         if geom.geom_type == "Polygon":
-            out_gdf.at[idx, "geometry"] = _unwrap_polygon_coords(
+            out_gdf.at[idx, geom_col] = _unwrap_polygon_coords(
                 geom, east_focus
             )
         elif geom.geom_type == "MultiPolygon":
@@ -875,11 +898,11 @@ def check_polys_wgs84_bounds_geometry(
                 _unwrap_polygon_coords(part, east_focus) for part in geom.geoms
             ]
             if len(fixed_parts) == 1:
-                out_gdf.at[idx, "geometry"] = fixed_parts[0]
+                out_gdf.at[idx, geom_col] = fixed_parts[0]
             else:
                 from shapely.geometry import MultiPolygon
 
-                out_gdf.at[idx, "geometry"] = MultiPolygon(fixed_parts)
+                out_gdf.at[idx, geom_col] = MultiPolygon(fixed_parts)
 
     if out_vec_file is None:
         return out_gdf
@@ -1005,7 +1028,9 @@ def merge_utm_vecs_wgs84(
                     data_gdf = _concat_gdfs(parts).to_crs("EPSG:4326")
                 else:
                     data_gdf = gpd.GeoDataFrame(
-                        columns=data_gdf.columns, crs="EPSG:4326"
+                        columns=data_gdf.columns,
+                        geometry=data_gdf.geometry.name,
+                        crs="EPSG:4326",
                     )
             else:
                 data_gdf = data_gdf.to_crs("EPSG:4326")
@@ -1151,13 +1176,17 @@ def split_feats_to_mlyrs(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     gdf = read_vec_gdf(vec_file, vec_lyr=vec_lyr, copy=False)
     if out_vec_file is not None:
-        is_pq = is_geoparquet_format(out_format) or is_geoparquet_file(
-            out_vec_file
-        )
+        fmt = check_format_name(out_format)
+        is_pq = is_geoparquet_format(fmt) or is_geoparquet_file(out_vec_file)
         if is_pq and len(gdf) > 1:
             raise rsgispy.RSGISPyException(
                 "GeoParquet does not support multiple layers in a single file; "
                 "use split_vec_lyr instead."
+            )
+        if (not is_pq) and len(gdf) > 1 and (not is_multi_layer_driver(out_vec_file, fmt)):
+            raise rsgispy.RSGISPyException(
+                f"Output format '{fmt}' does not support multiple layers in a "
+                "single file; use split_vec_lyr or a multi-layer format such as GPKG."
             )
     pbar_cls = rsgispy.get_tqdm()
     out_layers: Dict[str, gpd.GeoDataFrame] = {}
@@ -1251,6 +1280,12 @@ def split_by_attribute(
                 "GeoParquet does not support multiple layers in a single file; "
                 "set multi_layers=False to write separate files."
             )
+        if multi_layers and not is_multi_layer_driver(out_vec_file, fmt):
+            raise rsgispy.RSGISPyException(
+                f"Output format '{fmt}' does not support multiple layers in a "
+                "single file; set multi_layers=False or use a multi-layer format "
+                "such as GPKG."
+            )
         if (not multi_layers) and (
             (out_file_path is None) or (out_file_ext is None)
         ):
@@ -1277,8 +1312,7 @@ def split_by_attribute(
             try:
                 sub_gdf = sub_gdf.dissolve(by=split_col_name, as_index=False)
             except Exception:  # pylint: disable=broad-exception-caught
-                sub_gdf = sub_gdf.copy()
-                sub_gdf["geometry"] = sub_gdf.geometry.buffer(0)
+                sub_gdf = sub_gdf.set_geometry(sub_gdf.geometry.buffer(0))
                 sub_gdf = sub_gdf.dissolve(by=split_col_name, as_index=False)
 
         val_str = f"{val}"
@@ -1293,18 +1327,24 @@ def split_by_attribute(
 
         if in_memory:
             out_splits[val_str] = sub_gdf
-        elif multi_layers and fmt == "GPKG":
-            assert out_vec_file is not None
+        elif multi_layers:
+            if out_vec_file is None:
+                raise rsgispy.RSGISPyException(
+                    "out_vec_file must be specified when multi_layers=True."
+                )
             write_vec_gdf(
                 sub_gdf,
                 out_vec_file=out_vec_file,
                 out_vec_lyr=val_str,
-                out_format="GPKG",
+                out_format=fmt,
                 out_compress=out_compress,
             )
         else:
-            assert out_file_path is not None
-            assert out_file_ext is not None
+            if out_file_path is None or out_file_ext is None:
+                raise rsgispy.RSGISPyException(
+                    "out_file_path and out_file_ext must be specified when "
+                    "multi_layers=False."
+                )
             c_out_lyr = f"vec_{val_str}"
             c_out_file = os.path.join(
                 os.fspath(out_file_path), f"{c_out_lyr}.{out_file_ext}"
@@ -1690,6 +1730,11 @@ def convert_gpx_to_vec(
             raise rsgispy.RSGISPyException(
                 "GeoParquet only supports a single layer per file; specify "
                 "separate paths for pts_vec_file and line_vec_file."
+            )
+        if not is_multi_layer_driver(pts_vec_file, fmt):
+            raise rsgispy.RSGISPyException(
+                f"Output format '{fmt}' only supports a single layer per file; "
+                "specify separate paths for pts_vec_file and line_vec_file."
             )
         if resolved_pts_lyr == resolved_line_lyr:
             raise rsgispy.RSGISPyException(

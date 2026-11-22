@@ -10,7 +10,9 @@ from typing import Any, Mapping, Optional, Sequence, Union
 import numpy as np
 import rasterio
 import rasterio.crs
+import rasterio.errors
 from rasterio.transform import Affine
+import rasterio.windows
 from rasterio.windows import Window
 
 import rsgispy
@@ -24,12 +26,6 @@ from rsgispy.imageutils._helpers import (
     maybe_pop_stats,
     normalise_creation_options,
     rsgis_dtype_from_np_dtype,
-)
-from rsgispy.imageutils.metadata import (
-    get_img_bbox,
-    get_img_res,
-    get_img_size,
-    get_wkt_proj_from_img,
 )
 from rsgispy.tools.geometry import does_bbox_contain
 
@@ -206,37 +202,59 @@ def create_img_from_array_ref_img(
             gdalformat="GTIFF", datatype=rsgispy.TYPE_8UINT,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    ensure_file_exists(ref_img, label="Reference image")
     arr = np.asarray(data_arr)
-    if arr.ndim not in (2, 3):
+    if arr.ndim == 2:
+        arr = arr[np.newaxis, :, :]
+    elif arr.ndim != 3:
         raise rsgispy.RSGISPyException(
             "The dimensions of the input array must be either 2 or 3."
         )
-    height, width = arr.shape[-2], arr.shape[-1]
+    n_bands, height, width = arr.shape
 
-    if (width, height) != get_img_size(ref_img):
-        raise rsgispy.RSGISPyException(
-            "The input reference image size must be the same as the array - "
-            "otherwise BBOX and resolution will not match."
+    eff_dtype = (
+        rsgis_dtype_from_np_dtype(arr.dtype)
+        if datatype is None
+        else datatype
+    )
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    norm_opts = normalise_creation_options(creation_opts)
+
+    with ExitStack() as stack:
+        ref_src = stack.enter_context(rasterio.open(ref_img, "r"))
+        if (width, height) != (ref_src.width, ref_src.height):
+            raise rsgispy.RSGISPyException(
+                "The input reference image size must be the same as the array - "
+                "otherwise BBOX and resolution will not match."
+            )
+        grid = IntersectionGrid(
+            width=width,
+            height=height,
+            transform=ref_src.transform,
+            crs=ref_src.crs,
+            offsets={},
         )
+        dst = open_output_dataset(
+            stack=stack,
+            output_img=output_img,
+            gdalformat=gdalformat,
+            out_rio_dtype=out_rio_dtype,
+            grid=grid,
+            count=n_bands,
+            output_exists=False,
+            creation_opts=norm_opts,
+        )
+        if no_data_val is not None:
+            dst.nodata = no_data_val
+        dst.write(arr.astype(out_np_dtype, copy=False))
 
-    img_bbox = get_img_bbox(ref_img)
-    x_res, y_res = get_img_res(ref_img, abs_vals=False)
-
-    create_img_from_array(
-        data_arr=arr,
+    maybe_pop_stats(
         output_img=output_img,
-        tl_x=img_bbox[0],
-        tl_y=img_bbox[3],
-        out_img_res_x=x_res,
-        out_img_res_y=y_res,
-        wkt_string=get_wkt_proj_from_img(ref_img),
-        gdalformat=gdalformat,
-        datatype=datatype,
-        no_data_val=no_data_val,
         calc_stats=calc_stats,
+        no_data_val=no_data_val,
         use_pbar=use_pbar,
-        creation_opts=creation_opts,
     )
 
 
@@ -264,6 +282,7 @@ def get_img_coords_pxl_values(
             "img.tif", 1, [500050.0, 500100.0], [5599950.0, 5599900.0]
         )
     """
+    ensure_file_exists(input_img)
     x_arr = np.asarray(x_coords, dtype=np.float64)
     y_arr = np.asarray(y_coords, dtype=np.float64)
     if x_arr.shape != y_arr.shape:
@@ -271,12 +290,20 @@ def get_img_coords_pxl_values(
             "The X and Y image coordinates are not the same."
         )
 
-    img_bbox = get_img_bbox(input_img)
-    img_res_x, img_res_y = get_img_res(input_img, abs_vals=True)
-    x_pxl_locs = np.floor((x_arr - img_bbox[0]) / img_res_x).astype(int)
-    y_pxl_locs = np.floor((img_bbox[3] - y_arr) / img_res_y).astype(int)
+    with rasterio.open(input_img, "r") as src:
+        validate_band_index(img_band, src.count, input_img)
+        col_f, row_f = ~src.transform @ (x_arr, y_arr)
+        x_pxl_locs = np.floor(col_f).astype(np.int64)
+        y_pxl_locs = np.floor(row_f).astype(np.int64)
+        if np.any((x_pxl_locs < 0) | (x_pxl_locs >= src.width)) or np.any(
+            (y_pxl_locs < 0) | (y_pxl_locs >= src.height)
+        ):
+            raise rsgispy.RSGISPyException(
+                "Pixel coordinates are outside the image dimensions."
+            )
+        img_data = src.read(img_band)
 
-    return get_img_pxl_values(input_img, img_band, x_pxl_locs, y_pxl_locs)
+    return img_data[y_pxl_locs, x_pxl_locs].astype(float)
 
 
 def get_img_pxl_values(
@@ -425,11 +452,23 @@ def get_img_column(
             "img.tif", 500050.0, 5599950.0
         )
     """
-    img_bbox = get_img_bbox(input_img)
-    img_res_x, img_res_y = get_img_res(input_img, abs_vals=True)
-    x_pxl_coord = int(math.floor((float(x_coord) - img_bbox[0]) / img_res_x))
-    y_pxl_coord = int(math.floor((img_bbox[3] - float(y_coord)) / img_res_y))
-    return get_img_pxl_column(input_img, x_pxl_coord, y_pxl_coord)
+    ensure_file_exists(input_img)
+    with rasterio.open(input_img, "r") as src:
+        col_f, row_f = ~src.transform @ (float(x_coord), float(y_coord))
+        col_idx = int(math.floor(col_f))
+        row_idx = int(math.floor(row_f))
+        if (
+            col_idx < 0
+            or col_idx >= src.width
+            or row_idx < 0
+            or row_idx >= src.height
+        ):
+            raise rsgispy.RSGISPyException(
+                f"Pixel ({col_idx}, {row_idx}) is outside image dimensions "
+                f"({src.width} x {src.height})."
+            )
+        vals = src.read(window=Window(col_idx, row_idx, 1, 1))
+    return vals[:, 0, 0].astype(np.float32)
 
 
 def get_img_band_pxl_data(
@@ -461,41 +500,48 @@ def get_img_band_pxl_data(
         float(bbox_sub[2]),
         float(bbox_sub[3]),
     )
-    img_x_res, img_y_res = get_img_res(input_img, abs_vals=True)
-    img_bbox = get_img_bbox(input_img)
-    img_x_size, img_y_size = get_img_size(input_img)
 
     with rasterio.open(input_img, "r") as src:
         validate_band_index(img_band, src.count, input_img)
+        bounds = src.bounds
+        img_bbox = (
+            float(bounds.left),
+            float(bounds.right),
+            float(bounds.bottom),
+            float(bounds.top),
+        )
         if not does_bbox_contain(img_bbox, sub_tuple):
             raise rsgispy.RSGISPyException("Subset is not within the image.")
 
-        sub_width = min(
-            img_x_size, int(math.ceil((sub_tuple[1] - sub_tuple[0]) / img_x_res))
-        )
-        sub_height = min(
-            img_y_size, int(math.ceil((sub_tuple[3] - sub_tuple[2]) / img_y_res))
-        )
+        full_win = Window(0, 0, src.width, src.height)
+        try:
+            raw_win = rasterio.windows.from_bounds(
+                left=sub_tuple[0],
+                bottom=sub_tuple[2],
+                right=sub_tuple[1],
+                top=sub_tuple[3],
+                transform=src.transform,
+            ).intersection(full_win)
+        except rasterio.errors.WindowError as err:
+            raise rsgispy.RSGISPyException(
+                "Subset does not overlap valid image pixels."
+            ) from err
+
+        col_off = int(math.floor(raw_win.col_off + 1e-9))
+        row_off = int(math.floor(raw_win.row_off + 1e-9))
+        col_end = int(math.ceil(raw_win.col_off + raw_win.width - 1e-9))
+        row_end = int(math.ceil(raw_win.row_off + raw_win.height - 1e-9))
+        sub_width = col_end - col_off
+        sub_height = row_end - row_off
         if sub_width < 1 or sub_height < 1:
             raise rsgispy.RSGISPyException(
                 f"Subset size is less than 1: {sub_width} x {sub_height}."
             )
 
-        pxl_x_off = (
-            0
-            if sub_width == img_x_size
-            else int(math.floor(((sub_tuple[0] - img_bbox[0]) / img_x_res) + 0.5))
+        clamped_win = Window(col_off, row_off, sub_width, sub_height).intersection(
+            full_win
         )
-        pxl_y_off = (
-            0
-            if sub_height == img_y_size
-            else int(math.floor(((img_bbox[3] - sub_tuple[3]) / img_y_res) + 0.5))
-        )
-
-        return src.read(
-            img_band,
-            window=Window(pxl_x_off, pxl_y_off, sub_width, sub_height),
-        )
+        return src.read(img_band, window=clamped_win)
 
 
 def get_img_data_as_arr(

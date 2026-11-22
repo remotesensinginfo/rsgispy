@@ -747,18 +747,56 @@ def subsample_band_values(
     rnd_seed: Optional[int],
     use_pbar: bool = False,
 ) -> np.ndarray:
-    """Stream valid finite pixel values for 1-based ``band_idx`` cleanly."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    """Stream valid finite pixel values for 1-based ``band_idx`` with O(max_samples) RAM."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     # pylint: disable=import-outside-toplevel
     from rsgispy.imageprocess import iter_dataset_windows
 
-    chunks: List[np.ndarray] = []
+    if max_samples is None:
+        chunks: List[np.ndarray] = []
+        for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
+            arr = src.read(band_idx, window=win, out_dtype=np.float64)
+            valid = build_valid_mask(arr, eff_nd)
+            if np.any(valid):
+                chunks.append(arr[valid])
+        if not chunks:
+            return np.empty(0, dtype=np.float64)
+        return chunks[0] if len(chunks) == 1 else np.concatenate(chunks)
+
+    k = int(max_samples)
+    if k < 1:
+        raise rsgispy.RSGISPyException("max_samples must be >= 1.")
+
+    reservoir = np.empty(k, dtype=np.float64)
+    seen = 0
+    rng = np.random.default_rng(rnd_seed)
+
     for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
         arr = src.read(band_idx, window=win, out_dtype=np.float64)
         valid = build_valid_mask(arr, eff_nd)
-        if np.any(valid):
-            chunks.append(arr[valid])
-    if not chunks:
+        if not np.any(valid):
+            continue
+        vals = arr[valid]
+        n_vals = int(vals.size)
+
+        if seen < k:
+            take = min(k - seen, n_vals)
+            reservoir[seen : seen + take] = vals[:take]
+            seen += take
+            vals = vals[take:]
+            n_vals = int(vals.size)
+
+        if n_vals > 0:
+            counts_arr = np.arange(seen + 1, seen + n_vals + 1, dtype=np.float64)
+            js = np.floor(rng.random(n_vals) * counts_arr).astype(np.int64)
+            hit = js < k
+            if np.any(hit):
+                for slot, val in zip(js[hit].tolist(), vals[hit].tolist()):
+                    reservoir[slot] = val
+            seen += n_vals
+
+    if seen == 0:
         return np.empty(0, dtype=np.float64)
-    vals = chunks[0] if len(chunks) == 1 else np.concatenate(chunks)
-    return _subsample_valid(vals, max_samples=max_samples, rnd_seed=rnd_seed)
+    if seen < k:
+        return reservoir[:seen].copy()
+    return reservoir

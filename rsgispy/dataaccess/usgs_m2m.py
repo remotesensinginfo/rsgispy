@@ -102,6 +102,17 @@ def usgs_login(
     if password is None:
         password = rsgispy.tools.system.get_environment_variable("RSGIS_USGS_PASS")
 
+    if not username or not str(username).strip():
+        raise rsgispy.RSGISPyException(
+            "USGS username must be provided or set via the RSGIS_USGS_USER "
+            "environment variable."
+        )
+    if not password or not str(password).strip():
+        raise rsgispy.RSGISPyException(
+            "USGS password must be provided or set via the RSGIS_USGS_PASS "
+            "environment variable."
+        )
+
     login_data = {"username": username, "password": password}
     login_url = USGS_M2M_URL + "login"
     rtnd_data = rsgispy.tools.http.send_http_json_request(login_url, login_data)
@@ -328,6 +339,8 @@ def usgs_search(
     full_meta: bool = False,
     max_n_rslts: Optional[int] = None,
     start_n: Optional[int] = None,
+    *,
+    validate_dataset: bool = True,
 ) -> Tuple[List[Dict], Dict[str, Any]]:
     """
     Search for imagery scenes using the USGS M2M API.
@@ -346,6 +359,8 @@ def usgs_search(
     :param full_meta: Request full metadata when ``True``.
     :param max_n_rslts: Maximum number of scenes to return (must be <= 100).
     :param start_n: Optional starting record index for pagination.
+    :param validate_dataset: Validate ``dataset`` against known/catalog datasets
+                             before querying (default: ``True``).
     :return: Tuple of ``(scenes_list, search_metadata_dict)``.
 
     .. code:: python
@@ -363,7 +378,8 @@ def usgs_search(
             bbox=[-5.0, -3.0, 52.0, 53.0],
         )
     """
-    _validate_dataset(dataset, api_key)
+    if validate_dataset:
+        _validate_dataset(dataset, api_key)
 
     if max_n_rslts is not None and max_n_rslts > 100:
         raise rsgispy.RSGISPyException(
@@ -468,6 +484,8 @@ def get_all_usgs_search(
             bbox=[-5.0, -3.0, 52.0, 53.0],
         )
     """
+    _validate_dataset(dataset, api_key)
+
     if max_n_rslts <= 100:
         scns, _ = usgs_search(
             dataset,
@@ -482,6 +500,7 @@ def get_all_usgs_search(
             months,
             full_meta,
             max_n_rslts=max_n_rslts,
+            validate_dataset=False,
         )
     else:
         scns, srch_meta = usgs_search(
@@ -496,6 +515,7 @@ def get_all_usgs_search(
             poly_geom,
             months,
             full_meta,
+            validate_dataset=False,
         )
         tot_n_scns = srch_meta["recordsReturned"]
         total_hits = srch_meta["totalHits"]
@@ -515,6 +535,7 @@ def get_all_usgs_search(
                     months,
                     full_meta,
                     start_n=srch_meta["nextRecord"],
+                    validate_dataset=False,
                 )
                 if xtr_scns:
                     scns += xtr_scns
@@ -671,13 +692,11 @@ def check_dwnld_opts(
 
     dwlds_lst: List[Dict[str, str]] = []
     for prod in dnwld_opt_out_info:
-        if dwnld_filetype in ("bundle", "all") and prod["bulkAvailable"]:
+        if dwnld_filetype in ("bundle", "all") and prod.get("bulkAvailable"):
             dwlds_lst.append({"entityId": prod["entityId"], "productId": prod["id"]})
-        if dwnld_filetype == "band" or (
-            dwnld_filetype == "all" and prod["bulkAvailable"]
-        ):
+        if dwnld_filetype in ("band", "all"):
             for sec_dwnld in prod.get("secondaryDownloads") or []:
-                if sec_dwnld["bulkAvailable"]:
+                if sec_dwnld.get("bulkAvailable"):
                     dwlds_lst.append(
                         {
                             "entityId": sec_dwnld["entityId"],

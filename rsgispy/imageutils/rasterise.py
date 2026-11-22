@@ -10,6 +10,7 @@ import os
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
+import pandas as pd
 import pyproj
 import rasterio
 import rasterio.features
@@ -19,7 +20,6 @@ from shapely.geometry import box
 
 import rsgispy
 from rsgispy.imageprocess import (
-    _INT_DTYPES,
     IntersectionGrid,
     ensure_file_exists,
     iter_dataset_windows,
@@ -336,7 +336,7 @@ def rasterise_vec_lyr(
                 gdf = gdf.to_crs(dst.crs)
 
             dst_np_dtype = np.dtype(dst.dtypes[0])
-            is_int_out = dst.dtypes[0] in _INT_DTYPES
+            is_int_out = np.issubdtype(dst_np_dtype, np.integer)
             ras_dtype = (
                 dst_np_dtype
                 if dst_np_dtype in _SUPPORTED_RASTERIZE_DTYPES
@@ -351,9 +351,7 @@ def rasterise_vec_lyr(
             else:
                 vals = []
                 for raw_v in gdf[att_column]:
-                    if raw_v is None or (
-                        isinstance(raw_v, float) and math.isnan(raw_v)
-                    ):
+                    if pd.isna(raw_v):
                         vals.append(None)
                     elif is_int_out:
                         vals.append(int(raw_v))
@@ -369,8 +367,10 @@ def rasterise_vec_lyr(
                 min_x, min_y, max_x, max_y = rasterio.windows.bounds(
                     win, dst.transform
                 )
-                cand_idxs = sindex.query(
-                    box(min_x, min_y, max_x, max_y), predicate="intersects"
+                cand_idxs = np.sort(
+                    sindex.query(
+                        box(min_x, min_y, max_x, max_y), predicate="intersects"
+                    )
                 )
                 if len(cand_idxs) == 0:
                     continue
@@ -405,7 +405,8 @@ def rasterise_vec_lyr(
             output_img=output_img,
             calc_stats=True,
             no_data_val=no_data_val,
-            thematic=thematic and (dtype_str in _INT_DTYPES),
+            thematic=thematic
+            and np.issubdtype(np.dtype(dtype_str), np.integer),
             use_pbar=use_pbar,
         )
 

@@ -182,6 +182,7 @@ def create_img_mosaic(
                 dst_init.write(bg_block, window=out_win)
 
         dst = stack.enter_context(rasterio.open(output_img, "r+"))
+        out_full_win = Window(0, 0, out_w, out_h)
         for path in paths:
             ds = datasets[path]
             ds_col = int(round((float(ds.bounds.left) - min_x) / x_res))
@@ -190,21 +191,35 @@ def create_img_mosaic(
             for in_win in iter_dataset_windows(
                 ds.height, ds.width, use_pbar=use_pbar
             ):
-                win_w = int(in_win.width)
-                win_h = int(in_win.height)
-                dst_win = Window(
+                raw_dst_win = Window(
                     ds_col + int(in_win.col_off),
                     ds_row + int(in_win.row_off),
+                    int(in_win.width),
+                    int(in_win.height),
+                )
+                try:
+                    dst_win = raw_dst_win.intersection(out_full_win)
+                except rasterio.errors.WindowError:
+                    continue
+                win_w = int(dst_win.width)
+                win_h = int(dst_win.height)
+                if win_w <= 0 or win_h <= 0:
+                    continue
+                src_win = Window(
+                    int(in_win.col_off)
+                    + (int(dst_win.col_off) - int(raw_dst_win.col_off)),
+                    int(in_win.row_off)
+                    + (int(dst_win.row_off) - int(raw_dst_win.row_off)),
                     win_w,
                     win_h,
                 )
 
-                in_block = ds.read(window=in_win, out_dtype=np.float64)
+                in_block = ds.read(window=src_win, out_dtype=np.float64)
                 in_skip = in_block[skip_idx]
                 in_valid = (
                     ~np.isnan(in_skip)
                     if skip_is_nan
-                    else (in_skip != float(skip_val))
+                    else (np.isfinite(in_skip) & (in_skip != float(skip_val)))
                 )
 
                 out_block = dst.read(window=dst_win)
@@ -215,7 +230,10 @@ def create_img_mosaic(
                     out_is_bg = (
                         np.isnan(out_skip)
                         if bg_is_nan
-                        else (out_skip == float(background_val))
+                        else (
+                            (~np.isfinite(out_skip))
+                            | (out_skip == float(background_val))
+                        )
                     )
                     if overlap_behaviour == 1:
                         take_in = in_valid & (
@@ -350,7 +368,9 @@ def include_imgs(
                     valid = (
                         ~np.isnan(inc_arr)
                         if skip_is_nan
-                        else (inc_arr != float(skip_val))
+                        else (
+                            np.isfinite(inc_arr) & (inc_arr != float(skip_val))
+                        )
                     )
                     base_arr[valid] = cast_inc[valid]
                     base_ds.write(base_arr, dst_bands, window=dst_win)
@@ -537,7 +557,9 @@ def combine_imgs_to_band(
                         b_idx, window=in_win, out_dtype=np.float64
                     )
                     valid = (
-                        ~np.isnan(arr) if nd_is_nan else (arr != eff_nd)
+                        ~np.isnan(arr)
+                        if nd_is_nan
+                        else (np.isfinite(arr) & (arr != eff_nd))
                     )
                     out_arr[valid] = arr[valid]
 

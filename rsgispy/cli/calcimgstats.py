@@ -20,6 +20,12 @@ from rsgispy.cli._common import (
 )
 from rsgispy.imageutils.stats import pop_img_stats, pop_thmt_img_stats
 
+__all__ = [
+    "build_calcimgstats_parser",
+    "main",
+    "cli_main",
+]
+
 
 def build_calcimgstats_parser() -> argparse.ArgumentParser:
     """Construct the argument parser for ``rsgiscalcimgstats``."""

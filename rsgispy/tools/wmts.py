@@ -5,13 +5,13 @@ requiring GDAL's ``osgeo`` bindings.
 """
 
 from contextlib import ExitStack
+import inspect
 import io
 import math
 import os
 from typing import Any, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
-from PIL import Image
 import pyproj
 import rasterio
 from rasterio.transform import from_origin
@@ -25,21 +25,89 @@ import rsgispy.tools.files
 import rsgispy.tools.geometry
 import rsgispy.tools.strings
 
+try:
+    from PIL import Image  # pylint: disable=import-error
+
+    HAVE_PIL = True
+except ImportError:
+    Image = None  # type: ignore[assignment]
+    HAVE_PIL = False
+
 __all__ = [
     "get_wmts_layer_list",
     "get_wmts_as_img",
 ]
 
 
+def _open_wmts_service(
+    wmts_url: str,
+    feature_name: str,
+    timeout: float = 30.0,
+) -> Any:
+    """Import ``owslib.wmts`` with optional-dep guard and open a WMTS service."""
+    try:
+        import owslib.wmts  # pylint: disable=import-outside-toplevel,import-error
+    except ImportError as exc:
+        rsgispy.check_optional_dep(
+            False, feature_name, "owslib", "mapping", error_detail=str(exc)
+        )
+        raise
+
+    service_cls = owslib.wmts.WebMapTileService
+    try:
+        sig = inspect.signature(service_cls)
+        accepts_timeout = "timeout" in sig.parameters or any(
+            param.kind == inspect.Parameter.VAR_KEYWORD
+            for param in sig.parameters.values()
+        )
+    except (TypeError, ValueError):
+        accepts_timeout = True
+
+    if accepts_timeout:
+        return service_cls(wmts_url, timeout=timeout)
+    return service_cls(wmts_url)
+
+
+def _normalize_tile_image(
+    pil_tile: Any,
+    target_mode: Optional[str],
+) -> Tuple[np.ndarray, str]:
+    """Normalise PIL tile mode so all tiles in a mosaic share band count and mode."""
+    if target_mode is None:
+        if pil_tile.mode in ("P", "LA"):
+            pil_tile = pil_tile.convert("RGBA")
+        elif pil_tile.mode == "1":
+            pil_tile = pil_tile.convert("L")
+        elif pil_tile.mode not in ("L", "RGB", "RGBA", "I", "F", "I;16"):
+            pil_tile = pil_tile.convert("RGBA")
+        resolved_mode = pil_tile.mode
+    else:
+        if pil_tile.mode != target_mode:
+            if pil_tile.mode == "P" and target_mode != "RGBA":
+                pil_tile = pil_tile.convert("RGBA").convert(target_mode)
+            else:
+                pil_tile = pil_tile.convert(target_mode)
+        resolved_mode = target_mode
+
+    tile_arr = np.asarray(pil_tile)
+    if tile_arr.ndim == 2:
+        tile_arr = tile_arr[np.newaxis, :, :]
+    else:
+        tile_arr = np.moveaxis(tile_arr, -1, 0)
+    return tile_arr, resolved_mode
+
+
 def get_wmts_layer_list(
     wmts_url: str,
     name_filter: Optional[str] = None,
+    timeout: float = 30.0,
 ) -> List[str]:
     """
     Retrieve the list of available layer identifiers from a WMTS service.
 
     :param wmts_url: URL of the WMTS service (GetCapabilities endpoint).
     :param name_filter: Optional substring filter applied to layer identifiers.
+    :param timeout: HTTP request timeout in seconds (Default = ``30.0``).
     :return: List of matching layer identifiers.
 
     .. code:: python
@@ -49,10 +117,9 @@ def get_wmts_layer_list(
             "https://example.com/wmts/1.0.0/WMTSCapabilities.xml"
         )
     """
-    # pylint: disable=import-outside-toplevel
-    import owslib.wmts
-
-    wmts_obj = owslib.wmts.WebMapTileService(wmts_url)
+    wmts_obj = _open_wmts_service(
+        wmts_url, "get_wmts_layer_list", timeout=timeout
+    )
     wmts_lyrs = list(wmts_obj.contents)
     if name_filter is not None:
         wmts_lyrs = [lyr for lyr in wmts_lyrs if name_filter in lyr]
@@ -170,6 +237,7 @@ def get_wmts_as_img(
     wmts_epsg: Optional[int] = None,
     *,
     gdalformat: str = "GTIFF",
+    timeout: float = 30.0,
 ) -> None:
     """
     Download and mosaic WMTS tiles covering ``bbox`` to an output raster image.
@@ -183,6 +251,7 @@ def get_wmts_as_img(
     :param tmp_dir: Optional temporary directory for intermediate files.
     :param wmts_epsg: Optional EPSG code override for the WMTS layer.
     :param gdalformat: Output GDAL/rasterio driver format (Default = ``'GTIFF'``).
+    :param timeout: HTTP request timeout in seconds (Default = ``30.0``).
 
     .. code:: python
 
@@ -196,10 +265,9 @@ def get_wmts_as_img(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,too-many-statements,import-outside-toplevel
-    import owslib.wmts
-
-    wmts_obj = owslib.wmts.WebMapTileService(wmts_url)
+    # pylint: disable=too-many-locals,too-many-statements
+    rsgispy.check_optional_dep(HAVE_PIL, "get_wmts_as_img", "pillow", "imaging")
+    wmts_obj = _open_wmts_service(wmts_url, "get_wmts_as_img", timeout=timeout)
     if wmts_lyr not in wmts_obj.contents:
         raise rsgispy.RSGISPyException(
             f"Layer '{wmts_lyr}' was not found in WMTS service '{wmts_url}'."
@@ -253,7 +321,7 @@ def get_wmts_as_img(
 
         dst_stack = ExitStack()
         dst = None
-        n_bands: Optional[int] = None
+        target_mode: Optional[str] = None
         out_rio_dtype: Optional[str] = None
         try:
             for r_idx, row in enumerate(range(row_min, row_max + 1)):
@@ -268,16 +336,11 @@ def get_wmts_as_img(
                     )
                     tile_bytes = tile_resp.read()
                     with Image.open(io.BytesIO(tile_bytes)) as pil_tile:
-                        if pil_tile.mode in ("P", "LA"):
-                            pil_tile = pil_tile.convert("RGBA")
-                        tile_arr = np.asarray(pil_tile)
-                    if tile_arr.ndim == 2:
-                        tile_arr = tile_arr[np.newaxis, :, :]
-                    else:
-                        tile_arr = np.moveaxis(tile_arr, -1, 0)
+                        tile_arr, target_mode = _normalize_tile_image(
+                            pil_tile, target_mode
+                        )
 
                     if dst is None:
-                        n_bands = int(tile_arr.shape[0])
                         out_rio_dtype = str(tile_arr.dtype)
                         dst = open_output_dataset(
                             stack=dst_stack,
@@ -285,11 +348,18 @@ def get_wmts_as_img(
                             gdalformat="GTIFF",
                             out_rio_dtype=out_rio_dtype,
                             grid=mosaic_grid,
-                            count=n_bands,
+                            count=int(tile_arr.shape[0]),
                         )
+                    elif out_rio_dtype is not None and str(tile_arr.dtype) != out_rio_dtype:
+                        tile_arr = tile_arr.astype(out_rio_dtype, copy=False)
                     dst.write(
                         tile_arr,
-                        window=Window(c_idx * tile_w, r_idx * tile_h, tile_w, tile_h),
+                        window=Window(
+                            c_idx * tile_w,
+                            r_idx * tile_h,
+                            int(tile_arr.shape[2]),
+                            int(tile_arr.shape[1]),
+                        ),
                     )
         finally:
             dst_stack.close()

@@ -1750,6 +1750,8 @@ def summarise_multi_endmember_linear_unmixing(
             grid=grid,
             count=n_out_bands,
         )
+        unmix_nodata = 999.0
+        dst_unmix.nodata = unmix_nodata
         for b_idx, b_name in enumerate(endmember_names, start=1):
             dst_unmix.set_band_description(b_idx, b_name)
 
@@ -1761,6 +1763,7 @@ def summarise_multi_endmember_linear_unmixing(
             grid=grid,
             count=1,
         )
+        dst_ref.nodata = 0
 
         orig_xoff, orig_yoff = grid.offsets[resolved_paths[0]]
         model_band_maps = [
@@ -1791,7 +1794,9 @@ def summarise_multi_endmember_linear_unmixing(
 
             best_rmspe = np.full(n_pxls, np.inf, dtype=np.float64)
             best_ref = np.zeros(n_pxls, dtype=np.int32)
-            best_abund = np.zeros((n_pxls, n_out_bands), dtype=np.float32)
+            best_abund = np.full(
+                (n_pxls, n_out_bands), unmix_nodata, dtype=np.float32
+            )
 
             if np.any(vld):
                 v_orig = orig_flat[vld]
@@ -1851,7 +1856,7 @@ def summarise_multi_endmember_linear_unmixing(
         set_band_names(out_unmix_img, endmember_names, feedback=False)
         pop_img_stats(
             out_unmix_img,
-            no_data_val=999,
+            no_data_val=unmix_nodata,
             calc_pyramids=True,
             use_pbar=use_pbar,
         )

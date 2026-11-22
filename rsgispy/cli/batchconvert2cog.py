@@ -28,6 +28,12 @@ from rsgispy.imageutils.colourtable import is_img_thematic
 from rsgispy.imageutils.warp import gdal_translate
 from rsgispy.tools.files import get_file_basename
 
+__all__ = [
+    "build_batchconvert2cog_parser",
+    "main",
+    "cli_main",
+]
+
 
 def _is_valid_raster(img_path: str) -> bool:
     """Return True if ``img_path`` exists and can be opened cleanly by rasterio."""
@@ -171,13 +177,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     in_imgs = resolve_input_files(args.input, natural_sort=True)
     out_dir = os.path.expanduser(args.output)
-    os.makedirs(out_dir, exist_ok=True)
 
     skip_existing = args.skip_existing or args.check_existing
     tasks: List[Tuple[str, str, str, str, Optional[int], str, bool, bool]] = []
+    seen_outputs: Dict[str, str] = {}
     for in_img in in_imgs:
         basename = get_file_basename(in_img)
         out_img = os.path.join(out_dir, f"{basename}.tif")
+        abs_in = os.path.abspath(in_img)
+        abs_out = os.path.abspath(out_img)
+        if abs_out == abs_in:
+            raise RSGISPyException(
+                f"Output COG path '{out_img}' would overwrite input image "
+                f"'{in_img}' in-place. Specify a different output directory."
+            )
+        if abs_out in seen_outputs:
+            raise RSGISPyException(
+                f"Duplicate output filename '{out_img}' produced by inputs "
+                f"'{seen_outputs[abs_out]}' and '{in_img}'."
+            )
+        seen_outputs[abs_out] = in_img
         tasks.append(
             (
                 in_img,
@@ -190,6 +209,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 args.check_existing,
             )
         )
+
+    os.makedirs(out_dir, exist_ok=True)
 
     use_pbar = not args.no_pbar
     tqdm_cls = rsgispy.get_tqdm()

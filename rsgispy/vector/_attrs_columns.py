@@ -134,16 +134,25 @@ def add_unq_numeric_col(
     base_gdf = read_vec_gdf(vec_file, vec_lyr)
     validate_columns_exist(base_gdf, [unq_col])
 
-    unq_vals = base_gdf[unq_col].unique()
+    unq_vals = base_gdf[unq_col].dropna().unique()
+    na_mask = base_gdf[unq_col].isna()
     base_gdf[out_col] = np.zeros(len(base_gdf), dtype=int)
     lut: Dict[str, Dict[Any, Any]] = {"id": {}, "val": {}}
 
-    for idx, raw_val in enumerate(unq_vals, start=1):
+    idx = 0
+    for raw_val in unq_vals:
+        idx += 1
         py_val = to_python_scalar(raw_val)
         sel_rows = base_gdf[unq_col] == raw_val
         base_gdf.loc[sel_rows, out_col] = idx
         lut["id"][str(idx)] = py_val
         lut["val"][str(py_val)] = idx
+
+    if bool(na_mask.any()):
+        idx += 1
+        base_gdf.loc[na_mask, out_col] = idx
+        lut["id"][str(idx)] = None
+        lut["val"]["None"] = idx
 
     if lut_json_file is not None:
         rsgispy.tools.jsonio.write_dict_to_json(lut, os.fspath(lut_json_file))
@@ -1025,7 +1034,8 @@ def create_angle_sets(
 
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     validate_columns_exist(data_gdf, [angle_col])
-    angles = data_gdf[angle_col].to_numpy()
+    angles = data_gdf[angle_col].to_numpy(dtype=float, copy=True)
+    angles[angles == 360.0] = 0.0
     angle_sets = np.zeros_like(angles, dtype=int)
 
     for idx, (s1, e1, s2, e2) in enumerate(

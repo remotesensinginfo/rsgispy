@@ -64,12 +64,14 @@ def get_osm_geom_type_name(geom_type: int) -> str:
     return _OSM_GEOM_TYPE_MAP[geom_type]
 
 
+# pylint: disable=too-many-arguments,too-many-positional-arguments
 def get_osm_gdf(
     bbox: Union[Tuple[float, float, float, float], List[float]],
     osm_tags: Dict[str, Union[bool, str]],
     rsgis_geom_type: int = rsgispy.GEOM_POLY,
     bbox_epsg: int = 4326,
     clip_to_roi: bool = False,
+    col_filter_regex: Optional[str] = None,
 ) -> Any:
     """
     Download OpenStreetMap data into a ``geopandas.GeoDataFrame``.
@@ -81,6 +83,10 @@ def get_osm_gdf(
                             ``rsgispy.GEOM_LINE``, or ``rsgispy.GEOM_POLY``).
     :param bbox_epsg: EPSG code of ``bbox`` (default: 4326).
     :param clip_to_roi: If ``True``, clip returned geometries to ``bbox``.
+    :param col_filter_regex: Optional regular expression passed to
+                             ``DataFrame.filter(regex=...)`` to retain only
+                             matching attribute columns (Default = ``None``,
+                             preserving all OSM tags).
     :return: ``geopandas.GeoDataFrame`` containing matching OSM features.
 
     .. code:: python
@@ -125,7 +131,8 @@ def get_osm_gdf(
         if clip_to_roi:
             data_gdf = data_gdf.clip(osm_bbox)
 
-        data_gdf = data_gdf.filter(regex="addr:|geometry")
+        if col_filter_regex is not None:
+            data_gdf = data_gdf.filter(regex=col_filter_regex)
         return data_gdf
     except Exception:
         print(f"Error: Unable to download OSM {osm_tags}")

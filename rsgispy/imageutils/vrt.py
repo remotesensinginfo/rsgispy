@@ -205,21 +205,21 @@ def _append_complex_source(
     )
 
     dst_rect = ET.SubElement(cs_elem, "DstRect")
-    dst_rect.attrib["xOff"] = f"{dst_x_off:g}"
-    dst_rect.attrib["yOff"] = f"{dst_y_off:g}"
-    dst_rect.attrib["xSize"] = f"{dst_x_size:g}"
-    dst_rect.attrib["ySize"] = f"{dst_y_size:g}"
+    dst_rect.attrib["xOff"] = f"{float(dst_x_off):.17g}"
+    dst_rect.attrib["yOff"] = f"{float(dst_y_off):.17g}"
+    dst_rect.attrib["xSize"] = f"{float(dst_x_size):.17g}"
+    dst_rect.attrib["ySize"] = f"{float(dst_y_size):.17g}"
 
     if src_nodata is not None:
         nd_elem = ET.SubElement(cs_elem, "NODATA")
-        nd_elem.text = f"{src_nodata:g}"
+        nd_elem.text = f"{float(src_nodata):.17g}"
 
     if scale_offset is not None:
         so_elem = ET.SubElement(cs_elem, "ScaleOffset")
-        so_elem.text = f"{scale_offset:g}"
+        so_elem.text = f"{float(scale_offset):.17g}"
     if scale_ratio is not None:
         sr_elem = ET.SubElement(cs_elem, "ScaleRatio")
-        sr_elem.text = f"{scale_ratio:g}"
+        sr_elem.text = f"{float(scale_ratio):.17g}"
 
 
 def _write_vrt_xml(vrt_root: ET.Element, out_vrt_file: str) -> None:

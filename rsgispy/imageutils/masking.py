@@ -421,7 +421,10 @@ def gen_valid_mask(
                 arr = ds.read(window=in_win, out_dtype=np.float64)
                 valid &= np.all(np.isfinite(arr), axis=0)
                 if not nd_is_nan:
-                    assert no_data_val is not None
+                    if no_data_val is None:
+                        raise rsgispy.RSGISPyException(
+                            "no_data_val must be specified."
+                        )
                     valid &= np.all(arr != float(no_data_val), axis=0)
             dst.write(valid.astype(out_np_dtype), 1, window=out_win)
 

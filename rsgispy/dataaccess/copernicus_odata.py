@@ -76,6 +76,7 @@ Functions requiring ``requests`` raise :class:`rsgispy.RSGISPyException`
 if ``requests`` is not installed.
 """
 
+import contextlib
 import datetime
 import os
 from typing import Dict, List, Optional, Tuple, Union
@@ -307,6 +308,11 @@ __all__ = [
 ]
 
 
+def _escape_odata_str(val: str) -> str:
+    """Escape single quotes for OData string literals by doubling them."""
+    return str(val).replace("'", "''")
+
+
 def get_sensor_collection_name(sensor: int) -> str:
     """
     Return the OData collection name for the ``RSGIS_ODATA_*`` sensor constant.
@@ -419,7 +425,7 @@ def query_scn_lst(
     rsgispy.check_optional_dep(
         HAVE_REQUESTS, "query_scn_lst", "requests", "dataaccess"
     )
-    sensor_name = get_sensor_collection_name(sensor)
+    sensor_name = _escape_odata_str(get_sensor_collection_name(sensor))
     query_url = (
         f"{RSGIS_ODATA_PRODUCTS_URL}?$filter=Collection/Name eq '{sensor_name}'"
     )
@@ -456,7 +462,7 @@ def query_scn_lst(
             raise rsgispy.RSGISPyException(
                 "orbit_dir must be either Ascending or Descending"
             )
-        orbit_dir_str = _ODATA_ORBIT_DIR_MAP[orbit_dir]
+        orbit_dir_str = _escape_odata_str(_ODATA_ORBIT_DIR_MAP[orbit_dir])
         orbit_dir_query_str = (
             "Attributes/OData.CSC.StringAttribute/any("
             "att:att/Name eq 'orbitDirection' and "
@@ -467,7 +473,7 @@ def query_scn_lst(
     if product_type is not None:
         if product_type not in _ODATA_PROD_TYPE_MAP:
             raise rsgispy.RSGISPyException("product_type was not recognised")
-        product_type_str = _ODATA_PROD_TYPE_MAP[product_type]
+        product_type_str = _escape_odata_str(_ODATA_PROD_TYPE_MAP[product_type])
         product_type_query_str = (
             "Attributes/OData.CSC.StringAttribute/any("
             "att:att/Name eq 'productType' and "
@@ -516,8 +522,9 @@ def query_scn(scn_name: str) -> Optional[Dict]:
         )
     """
     rsgispy.check_optional_dep(HAVE_REQUESTS, "query_scn", "requests", "dataaccess")
+    escaped_name = _escape_odata_str(scn_name)
     query_url = (
-        f"{RSGIS_ODATA_PRODUCTS_URL}?$filter=Name eq '{scn_name}'&$expand=Locations"
+        f"{RSGIS_ODATA_PRODUCTS_URL}?$filter=Name eq '{escaped_name}'&$expand=Locations"
     )
     resp_obj = requests.get(query_url, timeout=60)
 
@@ -534,6 +541,16 @@ def query_scn(scn_name: str) -> Optional[Dict]:
     return None
 
 
+def _enter_resource(stack: contextlib.ExitStack, obj):
+    """Enter ``obj`` as a context manager if supported, else close on exit."""
+    if hasattr(obj, "__enter__") and hasattr(obj, "__exit__"):
+        return stack.enter_context(obj)
+    if hasattr(obj, "close"):
+        stack.callback(obj.close)
+    return obj
+
+
+# pylint: disable=too-many-locals
 def download_scn(
     access_token: str,
     scn_info: Dict,
@@ -565,9 +582,15 @@ def download_scn(
     rsgispy.check_optional_dep(
         HAVE_REQUESTS, "download_scn", "requests", "dataaccess"
     )
-    scn_name = scn_info["Name"]
+    raw_name = str(scn_info["Name"]).strip()
+    scn_name = os.path.basename(raw_name.replace("\\", "/"))
+    if not scn_name or scn_name in (".", ".."):
+        raise rsgispy.RSGISPyException(
+            f"Invalid scene name for download: {scn_info['Name']!r}"
+        )
     print(f"Downloading {scn_name}")
 
+    os.makedirs(out_path, exist_ok=True)
     out_file_path = os.path.join(out_path, f"{scn_name}.zip")
     if os.path.exists(out_file_path):
         print(f"File already exists: {out_file_path}")
@@ -586,48 +609,62 @@ def download_scn(
     scn_size = scn_dwnld_info["ContentLength"]
     scn_checksum = None
     for checksum_info in scn_dwnld_info.get("Checksum", []):
-        if checksum_info["Algorithm"] == "MD5":
+        if str(checksum_info.get("Algorithm", "")).upper() == "MD5":
             scn_checksum = checksum_info["Value"]
-
-    ses = requests.Session()
-    ses.headers.update(
-        {
-            "Authorization": f"Bearer {access_token}",
-            "User-Agent": f"rsgispy/{rsgispy.get_rsgispy_version()}",
-        }
-    )
 
     if "//catalogue." in scn_url:
         scn_url = scn_url.replace("//catalogue.", "//download.")
-
-    resp_obj = ses.get(
-        scn_url, stream=True, verify=True, allow_redirects=True, timeout=120
-    )
 
     tmp_file_path = os.path.join(out_path, f"{scn_name}.incomplete")
     chunk_size = 8192
     n_chunks = int(scn_size / chunk_size) + 1
     tqdm_cls = rsgispy.get_tqdm()
 
-    if rsgispy.tools.http.check_http_response(resp_obj, scn_url):
-        with open(tmp_file_path, "wb") as file:
-            for chunk in tqdm_cls(
-                resp_obj.iter_content(chunk_size=chunk_size),
-                total=n_chunks,
-                disable=not use_pbar,
-            ):
-                if chunk:
-                    file.write(chunk)
+    try:
+        with contextlib.ExitStack() as stack:
+            ses = _enter_resource(stack, requests.Session())
+            ses.headers.update(
+                {
+                    "Authorization": f"Bearer {access_token}",
+                    "User-Agent": f"rsgispy/{rsgispy.get_rsgispy_version()}",
+                }
+            )
+            resp_obj = _enter_resource(
+                stack,
+                ses.get(
+                    scn_url,
+                    stream=True,
+                    verify=True,
+                    allow_redirects=True,
+                    timeout=120,
+                ),
+            )
+            if rsgispy.tools.http.check_http_response(resp_obj, scn_url):
+                with open(tmp_file_path, "wb") as file:
+                    for chunk in tqdm_cls(
+                        resp_obj.iter_content(chunk_size=chunk_size),
+                        total=n_chunks,
+                        disable=not use_pbar,
+                    ):
+                        if chunk:
+                            file.write(chunk)
 
-    if os.path.exists(tmp_file_path):
+        if not os.path.exists(tmp_file_path):
+            raise rsgispy.RSGISPyException(
+                "Failed to download file - unknown error"
+            )
+
         if scn_checksum is not None:
             md5_checksum = rsgispy.tools.hashing.create_md5_hash(tmp_file_path)
-            if md5_checksum != scn_checksum:
+            if md5_checksum.lower() != str(scn_checksum).strip().lower():
                 raise rsgispy.RSGISPyException("Error - checksum mismatch.")
-        os.rename(tmp_file_path, out_file_path)
+        os.replace(tmp_file_path, out_file_path)
         print(f"Download Complete: {scn_name}")
-    else:
-        raise rsgispy.RSGISPyException("Failed to download file - unknown error")
+    except Exception:
+        if os.path.exists(tmp_file_path):
+            with contextlib.suppress(OSError):
+                os.remove(tmp_file_path)
+        raise
 
 
 def download_scns(

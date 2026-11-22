@@ -117,7 +117,7 @@ def check_sklearn_estimator_fitted(
         raise rsgispy.RSGISPyException(
             f"{label} must be fitted before applying to data."
         ) from err
-    except Exception:  # pylint: disable=broad-exception-caught
+    except (TypeError, AttributeError, ValueError):
         # Non-BaseEstimator classifiers (e.g. custom duck-typed estimators)
         # may not follow sklearn trailing-underscore convention.
         pass

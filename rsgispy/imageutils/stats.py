@@ -4,6 +4,7 @@ pyramids and populating thematic and continuous image statistics and histograms
 using ``rasterio``.
 """
 
+from contextlib import ExitStack
 import math
 import multiprocessing
 import os
@@ -18,7 +19,6 @@ from rasterio.transform import Affine
 import rsgispy
 from rsgispy.imagecalc.stats import calc_basic_img_band_stats
 from rsgispy.imageprocess import (
-    _INT_DTYPES,
     ensure_file_exists,
     iter_single_image_band_blocks,
 )
@@ -227,79 +227,102 @@ def build_img_pyramids_multi_core(
         prefix="rsgispy_ovr_", dir=scratch_root
     ) as work_dir:
         scale_files: List[Tuple[int, int, int, str, Optional[Affine]]] = []
-        for lvl in resolved_levels:
-            ovr_w = max(1, math.ceil(base_w / lvl))
-            ovr_h = max(1, math.ceil(base_h / lvl))
-
-            src_path = input_path
-            src_w = base_w
-            src_h = base_h
-            is_base_src = True
-            if cascade:
-                for prev_lvl, prev_w, prev_h, prev_path, _ in reversed(scale_files):
-                    if lvl % prev_lvl == 0:
-                        src_path = prev_path
-                        src_w = prev_w
-                        src_h = prev_h
-                        is_base_src = False
-                        break
-
-            lvl_xfm: Optional[Affine] = None
-            if has_geo:
-                lvl_xfm = base_transform @ Affine.scale(
-                    base_w / float(ovr_w), base_h / float(ovr_h)
+        need_pool = eff_cores > 1 and any(
+            (
+                math.ceil(max(1, math.ceil(base_w / lvl)) / t_size)
+                * math.ceil(max(1, math.ceil(base_h / lvl)) / t_size)
+            )
+            > 1
+            for lvl in resolved_levels
+        )
+        with ExitStack() as pool_stack:
+            pool = (
+                pool_stack.enter_context(
+                    multiprocessing.Pool(processes=eff_cores)
                 )
+                if need_pool
+                else None
+            )
+            for lvl in resolved_levels:
+                ovr_w = max(1, math.ceil(base_w / lvl))
+                ovr_h = max(1, math.ceil(base_h / lvl))
 
-            scale_x = src_w / float(ovr_w)
-            scale_y = src_h / float(ovr_h)
-            tasks: List[Dict[str, Any]] = []
-            for row_off in range(0, ovr_h, t_size):
-                cur_h = min(t_size, ovr_h - row_off)
-                for col_off in range(0, ovr_w, t_size):
-                    cur_w = min(t_size, ovr_w - col_off)
-                    tile_path = os.path.join(
-                        work_dir, f"lvl_{lvl}_r{row_off}_c{col_off}.tif"
+                src_path = input_path
+                src_w = base_w
+                src_h = base_h
+                is_base_src = True
+                if cascade:
+                    for (
+                        prev_lvl,
+                        prev_w,
+                        prev_h,
+                        prev_path,
+                        _,
+                    ) in reversed(scale_files):
+                        if lvl % prev_lvl == 0:
+                            src_path = prev_path
+                            src_w = prev_w
+                            src_h = prev_h
+                            is_base_src = False
+                            break
+
+                lvl_xfm: Optional[Affine] = None
+                if has_geo:
+                    lvl_xfm = base_transform @ Affine.scale(
+                        base_w / float(ovr_w), base_h / float(ovr_h)
                     )
-                    tile_xfm_tuple: Optional[
-                        Tuple[float, float, float, float, float, float]
-                    ] = None
-                    if lvl_xfm is not None:
-                        t_xfm = lvl_xfm @ Affine.translation(col_off, row_off)
-                        tile_xfm_tuple = (
-                            float(t_xfm.a),
-                            float(t_xfm.b),
-                            float(t_xfm.c),
-                            float(t_xfm.d),
-                            float(t_xfm.e),
-                            float(t_xfm.f),
+
+                scale_x = src_w / float(ovr_w)
+                scale_y = src_h / float(ovr_h)
+                tasks: List[Dict[str, Any]] = []
+                for row_off in range(0, ovr_h, t_size):
+                    cur_h = min(t_size, ovr_h - row_off)
+                    for col_off in range(0, ovr_w, t_size):
+                        cur_w = min(t_size, ovr_w - col_off)
+                        tile_path = os.path.join(
+                            work_dir, f"lvl_{lvl}_r{row_off}_c{col_off}.tif"
                         )
-                    tasks.append(
-                        {
-                            "src_path": src_path,
-                            "src_rect": (
-                                col_off * scale_x,
-                                row_off * scale_y,
-                                cur_w * scale_x,
-                                cur_h * scale_y,
-                            ),
-                            "tile_path": tile_path,
-                            "col_off": col_off,
-                            "row_off": row_off,
-                            "tile_w": cur_w,
-                            "tile_h": cur_h,
-                            "dtypes": dtypes,
-                            "nodatavals": nodatavals,
-                            "nodata_val": uniform_nd,
-                            "resamp_name": resamp_name,
-                            "is_base_src": is_base_src,
-                            "crs_wkt": crs_wkt,
-                            "xfm_vals": tile_xfm_tuple,
-                            "compress": comp_val,
-                        }
-                    )
+                        tile_xfm_tuple: Optional[
+                            Tuple[float, float, float, float, float, float]
+                        ] = None
+                        if lvl_xfm is not None:
+                            t_xfm = lvl_xfm @ Affine.translation(
+                                col_off, row_off
+                            )
+                            tile_xfm_tuple = (
+                                float(t_xfm.a),
+                                float(t_xfm.b),
+                                float(t_xfm.c),
+                                float(t_xfm.d),
+                                float(t_xfm.e),
+                                float(t_xfm.f),
+                            )
+                        tasks.append(
+                            {
+                                "src_path": src_path,
+                                "src_rect": (
+                                    col_off * scale_x,
+                                    row_off * scale_y,
+                                    cur_w * scale_x,
+                                    cur_h * scale_y,
+                                ),
+                                "tile_path": tile_path,
+                                "col_off": col_off,
+                                "row_off": row_off,
+                                "tile_w": cur_w,
+                                "tile_h": cur_h,
+                                "dtypes": dtypes,
+                                "nodatavals": nodatavals,
+                                "nodata_val": uniform_nd,
+                                "resamp_name": resamp_name,
+                                "is_base_src": is_base_src,
+                                "crs_wkt": crs_wkt,
+                                "xfm_vals": tile_xfm_tuple,
+                                "compress": comp_val,
+                            }
+                        )
 
-            if eff_cores > 1 and len(tasks) > 1:
-                with multiprocessing.Pool(processes=eff_cores) as pool:
+                if pool is not None and len(tasks) > 1:
                     tile_results = list(
                         tqdm_cls(
                             pool.imap(render_ovr_tile_worker, tasks),
@@ -309,32 +332,32 @@ def build_img_pyramids_multi_core(
                             disable=not use_pbar,
                         )
                     )
-            else:
-                tile_results = [
-                    render_ovr_tile_worker(task)
-                    for task in tqdm_cls(
-                        tasks,
-                        desc=f"Overview 1:{lvl}",
-                        unit="tile",
-                        disable=not use_pbar,
-                    )
-                ]
+                else:
+                    tile_results = [
+                        render_ovr_tile_worker(task)
+                        for task in tqdm_cls(
+                            tasks,
+                            desc=f"Overview 1:{lvl}",
+                            unit="tile",
+                            disable=not use_pbar,
+                        )
+                    ]
 
-            lvl_path = os.path.join(work_dir, f"lvl_{lvl}.tif")
-            stitch_scale_tiles(
-                lvl_path=lvl_path,
-                tile_results=tile_results,
-                ovr_w=ovr_w,
-                ovr_h=ovr_h,
-                n_bands=n_bands,
-                dtype_str=dtypes[0],
-                nodata_val=uniform_nd,
-                crs_wkt=crs_wkt,
-                lvl_transform=lvl_xfm,
-                compress=comp_val,
-                ovr_block_size=ovr_blk,
-            )
-            scale_files.append((lvl, ovr_w, ovr_h, lvl_path, lvl_xfm))
+                lvl_path = os.path.join(work_dir, f"lvl_{lvl}.tif")
+                stitch_scale_tiles(
+                    lvl_path=lvl_path,
+                    tile_results=tile_results,
+                    ovr_w=ovr_w,
+                    ovr_h=ovr_h,
+                    n_bands=n_bands,
+                    dtype_str=dtypes[0],
+                    nodata_val=uniform_nd,
+                    crs_wkt=crs_wkt,
+                    lvl_transform=lvl_xfm,
+                    compress=comp_val,
+                    ovr_block_size=ovr_blk,
+                )
+                scale_files.append((lvl, ovr_w, ovr_h, lvl_path, lvl_xfm))
 
         if external:
             out_ovr_path = (
@@ -384,11 +407,14 @@ def _calc_int_band_hists(
 ) -> List[Tuple[np.ndarray, int, int]]:
     """
     Accumulate direct integer histograms ``(hist, hist_min, hist_max)`` across
-    blocks for an integer image (``uint8``, ``uint16``, ``int16``, etc.).
+    blocks for an integer image (``uint8``, ``uint16``, ``int16``, ``int64``,
+    ``uint64``, etc.).
     """
     # pylint: disable=too-many-locals
     with rasterio.open(input_img, "r") as src:
         n_bands = src.count
+
+    read_np_dtype = np.uint64 if dtype_str == "uint64" else np.int64
 
     if dtype_str == "uint8":
         bounds = [(0, 255) for _ in range(n_bands)]
@@ -398,7 +424,7 @@ def _calc_int_band_hists(
         first_seen = [True for _ in range(n_bands)]
         for _, block_arrays in iter_single_image_band_blocks(
             input_img=input_img,
-            read_dtype=np.int64,
+            read_dtype=read_np_dtype,
             use_pbar=use_pbar,
         ):
             for idx, band_arr in enumerate(block_arrays):
@@ -427,16 +453,17 @@ def _calc_int_band_hists(
     ]
     for _, block_arrays in iter_single_image_band_blocks(
         input_img=input_img,
-        read_dtype=np.int64,
+        read_dtype=read_np_dtype,
         use_pbar=use_pbar,
     ):
         for idx, band_arr in enumerate(block_arrays):
             h_min, h_max = bounds[idx]
             n_bins = (h_max - h_min) + 1
-            shifted = band_arr.ravel() - h_min
-            valid = shifted[(shifted >= 0) & (shifted < n_bins)]
-            if valid.size > 0:
-                hists[idx] += np.bincount(valid, minlength=n_bins)
+            flat = band_arr.ravel()
+            in_range = (flat >= h_min) & (flat <= h_max)
+            if np.any(in_range):
+                shifted = (flat[in_range] - h_min).astype(np.intp, copy=False)
+                hists[idx] += np.bincount(shifted, minlength=n_bins)
 
     return [
         (hists[idx], bounds[idx][0], bounds[idx][1]) for idx in range(n_bands)
@@ -544,7 +571,7 @@ def pop_thmt_img_stats(
 
     with rasterio.open(input_img, "r") as src:
         dtype_str = src.dtypes[0]
-        if dtype_str not in _INT_DTYPES:
+        if not np.issubdtype(np.dtype(dtype_str), np.integer):
             raise rsgispy.RSGISPyException(
                 "This function only supports integer datasets"
             )

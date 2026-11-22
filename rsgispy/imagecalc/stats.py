@@ -176,25 +176,22 @@ def count_pxls_of_val(
 
     with rasterio.open(input_img, "r") as src:
         n_bands = src.count
-    if img_band is not None and (img_band < 1 or img_band > n_bands):
-        raise rsgispy.RSGISPyException(
-            "The specified input image band is not within the input image."
-        )
+        if img_band is not None and (img_band < 1 or img_band > n_bands):
+            raise rsgispy.RSGISPyException(
+                "The specified input image band is not within the input image."
+            )
 
-    out_vals = np.zeros(len(vals), dtype=np.int64)
-    for _, block_arrays in iter_single_image_band_blocks(
-        input_img=input_img,
-        read_dtype=None,
-        use_pbar=use_pbar,
-    ):
-        target_arrays = (
-            [block_arrays[img_band - 1]]
-            if img_band is not None
-            else block_arrays
-        )
-        for band_arr in target_arrays:
+        out_vals = np.zeros(len(vals), dtype=np.int64)
+        for win in iter_dataset_windows(
+            src.height, src.width, use_pbar=use_pbar
+        ):
+            block_arr = (
+                src.read(indexes=img_band, window=win)
+                if img_band is not None
+                else src.read(window=win)
+            )
             for idx, val in enumerate(vals):
-                out_vals[idx] += int(np.count_nonzero(band_arr == val))
+                out_vals[idx] += int(np.count_nonzero(block_arr == val))
 
     return out_vals
 

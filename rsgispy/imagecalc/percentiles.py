@@ -184,8 +184,10 @@ def calc_band_percentile_msk(
             band_cols = np.column_stack(
                 [block_vars[f"b{idx + 1}"].ravel()[sel] for idx in range(n_bands)]
             )
-            if no_data_val is not None:
-                band_cols = band_cols[(band_cols != no_data_val).all(axis=1)]
+            valid = np.isfinite(band_cols).all(axis=1)
+            if no_data_val is not None and not math.isnan(float(no_data_val)):
+                valid &= (band_cols != no_data_val).all(axis=1)
+            band_cols = band_cols[valid]
             if band_cols.shape[0] > 0:
                 collected.append(band_cols)
 

@@ -47,14 +47,6 @@ from rsgispy.tools._sklearn_spaces import (
 from rsgispy.tools.files import ensure_parent_dir
 from rsgispy.tools.jsonio import write_dict_to_json
 
-try:
-    import joblib  # pylint: disable=import-error
-
-    HAVE_JOBLIB = True
-except ImportError:
-    joblib = None  # type: ignore[assignment]
-    HAVE_JOBLIB = False
-
 _NATIVE_MULTIOUTPUT_REGRESSORS = {
     "LinearRegression",
     "Ridge",

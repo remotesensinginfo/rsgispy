@@ -19,11 +19,12 @@ from shapely.geometry import LineString, Point, Polygon, box, shape
 import rsgispy
 from rsgispy.imageprocess import (
     _INT_DTYPES,
+    bbox_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
     validate_band_index,
 )
-from rsgispy.imageutils.metadata import get_img_bbox, get_img_no_data_value
+from rsgispy.imageutils.metadata import get_img_no_data_value
 import rsgispy.tools.files
 from rsgispy.tools.geometry import (
     find_extent_on_whole_num_grid,
@@ -34,6 +35,7 @@ from rsgispy.tools.geometry import (
 )
 from rsgispy.tools.projection import get_deg_coord_as_str
 import rsgispy.tools.utm
+from rsgispy.vector._io_meta import get_vec_lyr_bbox
 from rsgispy.vectorprocess import (
     CRSLike,
     VectorInput,
@@ -43,11 +45,13 @@ from rsgispy.vectorprocess import (
     get_file_vec_extension,
     is_geoparquet_file,
     is_geoparquet_format,
+    is_multi_layer_driver,
     list_vec_layers,
     parse_crs_input,
     prepare_optional_out_vec,
     prepare_out_vec_file,
     read_vec_gdf,
+    read_vec_info,
     resolve_out_lyr_name,
     write_vec_gdf,
 )
@@ -140,21 +144,32 @@ def polygonise_raster_to_vec_lyr(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
+    target_lyr = (
+        resolve_out_lyr_name(out_vec_file, out_vec_lyr)
+        if out_vec_file is not None
+        else out_vec_lyr
+    )
     if (
         out_vec_file is not None
         and (not replace_file)
         and (not replace_lyr)
         and os.path.exists(out_vec_file)
     ):
-        if is_geoparquet_format(out_format) or is_geoparquet_file(out_vec_file):
+        fmt = check_format_name(out_format)
+        if is_geoparquet_format(fmt) or is_geoparquet_file(out_vec_file):
             raise rsgispy.RSGISPyException(
                 f"Output GeoParquet file '{out_vec_file}' already exists and "
                 "replace_file=False, replace_lyr=False."
             )
-        existing_lyrs = list_vec_layers(out_vec_file)
-        if out_vec_lyr in existing_lyrs:
+        if not is_multi_layer_driver(out_vec_file, fmt):
             raise rsgispy.RSGISPyException(
-                f"Layer '{out_vec_lyr}' already exists in '{out_vec_file}' "
+                f"Output vector file '{out_vec_file}' already exists and "
+                "replace_file=False, replace_lyr=False."
+            )
+        existing_lyrs = list_vec_layers(out_vec_file)
+        if target_lyr in existing_lyrs:
+            raise rsgispy.RSGISPyException(
+                f"Layer '{target_lyr}' already exists in '{out_vec_file}' "
                 "and replace_lyr=False."
             )
 
@@ -193,14 +208,18 @@ def polygonise_raster_to_vec_lyr(
             crs=src_crs,
         )
 
-    return finish_vec_output(
+    if out_vec_file is None:
+        return gdf
+    write_vec_gdf(
         gdf,
         out_vec_file=out_vec_file,
-        out_vec_lyr=out_vec_lyr,
+        out_vec_lyr=target_lyr,
         out_format=out_format,
         overwrite=replace_file,
         out_compress=out_compress,
+        replace_layer=replace_lyr,
     )
+    return None
 
 
 def vectorise_pxls_to_pts(
@@ -690,15 +709,19 @@ def define_grid(
     for sub_wb in split_wgs84:
         utm_zone_bboxs.extend(rsgispy.tools.utm.split_wgs84_bbox_utm_zones(sub_wb))
 
-    if (
-        out_vec_file is not None
-        and (is_geoparquet_format(out_format) or is_geoparquet_file(out_vec_file))
-        and (len(utm_zone_bboxs) > 1)
-    ):
-        raise rsgispy.RSGISPyException(
-            "GeoParquet does not support multiple layers in a single file; "
-            "multi-UTM-zone grids require a multi-layer format such as GPKG."
-        )
+    if out_vec_file is not None and len(utm_zone_bboxs) > 1:
+        fmt = check_format_name(out_format)
+        if is_geoparquet_format(fmt) or is_geoparquet_file(out_vec_file):
+            raise rsgispy.RSGISPyException(
+                "GeoParquet does not support multiple layers in a single file; "
+                "multi-UTM-zone grids require a multi-layer format such as GPKG."
+            )
+        if not is_multi_layer_driver(out_vec_file, fmt):
+            raise rsgispy.RSGISPyException(
+                f"Output format '{fmt}' does not support multiple layers in a "
+                "single file; multi-UTM-zone grids require a multi-layer format "
+                "such as GPKG."
+            )
 
     lyr_prefix = out_vec_lyr or "grid"
     out_gdfs: Dict[str, gpd.GeoDataFrame] = {}
@@ -1070,7 +1093,7 @@ def create_vec_for_imgs(
 
         with rasterio.open(img, "r") as src:
             img_crs = src.crs
-        img_bbox = get_img_bbox(img)
+            img_bbox = bbox_from_dataset(src)
 
         if geometry_type == rsgispy.GEOM_PT:
             geom: Any = Point(
@@ -1291,8 +1314,10 @@ def create_hex_grid_polys(
 
     pbar_cls = rsgispy.get_tqdm()
     hex_parts: List[gpd.GeoDataFrame] = []
-    for idx in pbar_cls(range(len(polys_gdf)), disable=not use_pbar):
-        hex_tmp = create_hex_grid_poly(polys_gdf.iloc[idx], hex_scale)
+    for geom in pbar_cls(
+        polys_gdf.geometry, total=len(polys_gdf), disable=not use_pbar
+    ):
+        hex_tmp = create_hex_grid_poly(geom, hex_scale)
         if hex_tmp is not None and len(hex_tmp) > 0:
             hex_parts.append(hex_tmp)
 
@@ -1595,8 +1620,9 @@ def create_img_transects(
                         f"{label} values must be between 0 and 1."
                     )
 
-    img_bbox = get_img_bbox(input_img)
+    ensure_file_exists(input_img)
     with rasterio.open(input_img, "r") as src:
+        img_bbox = bbox_from_dataset(src)
         img_crs = src.crs
     if img_crs is None:
         raise rsgispy.RSGISPyException(
@@ -1670,20 +1696,30 @@ def create_bbox_vec_lyr(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    in_vec_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
-    x_min, y_min, x_max, y_max = in_vec_gdf.total_bounds
+    info = read_vec_info(vec_file, vec_lyr=vec_lyr)
+    vec_bbox = get_vec_lyr_bbox(vec_file, vec_lyr=vec_lyr, compute_if_exp=True)
+    x_min, x_max, y_min, y_max = (
+        float(vec_bbox[0]),
+        float(vec_bbox[1]),
+        float(vec_bbox[2]),
+        float(vec_bbox[3]),
+    )
+    if not all(np.isfinite([x_min, x_max, y_min, y_max])):
+        raise rsgispy.RSGISPyException(
+            "Input vector layer has no valid geometries to compute a bounding box."
+        )
 
     if whole_num_grid:
         x_min, x_max, y_min, y_max = find_extent_on_whole_num_grid(
-            base_extent=(float(x_min), float(x_max), float(y_min), float(y_max)),
+            base_extent=(x_min, x_max, y_min, y_max),
             base_grid=whole_num_base_grid,
             full_contain=True,
             round_vals=whole_num_round,
         )
 
     bbox_gdf = gpd.GeoDataFrame(
-        {"geometry": [box(x_min, y_min, x_max, y_max)]},
-        crs=in_vec_gdf.crs,
+        geometry=[box(x_min, y_min, x_max, y_max)],
+        crs=info.get("crs"),
     )
     if out_vec_file is None:
         return bbox_gdf

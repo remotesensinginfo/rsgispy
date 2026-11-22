@@ -68,6 +68,7 @@ __all__ = [
     "finalise_plot",
     "fit_clean_estimator",
     "get_positive_class_probs",
+    "lookup_env_var",
     "normalise_array_with_info",
     "plot_roc_curve",
     "predict_raster_from_env_vars",
@@ -175,7 +176,29 @@ class EnvVarInfo:
 
 def check_sklearn_available(feature_name: str) -> None:
     """Verify ``scikit-learn`` is installed before running model routines."""
-    _check_sklearn_available(feature_name, extra="stats")
+    _check_sklearn_available(feature_name, extra="modelling")
+
+
+def lookup_env_var(
+    env_vars: Mapping[str, EnvVarInfo],
+    var_name: str,
+) -> EnvVarInfo:
+    """
+    Look up an :class:`EnvVarInfo` in ``env_vars`` by dictionary key or by
+    :attr:`EnvVarInfo.name`.
+    """
+    if var_name in env_vars:
+        return env_vars[var_name]
+    matches = [info for info in env_vars.values() if info.name == var_name]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise rsgispy.RSGISPyException(
+            f"Variable '{var_name}' matches multiple entries in env_vars."
+        )
+    raise rsgispy.RSGISPyException(
+        f"Variable '{var_name}' was not found in env_vars."
+    )
 
 
 def resolve_analysis_vars(
@@ -187,25 +210,26 @@ def resolve_analysis_vars(
     from ``env_vars`` and optional ``analysis_vars``.
     """
     if analysis_vars is not None:
-        vars_list = [str(v) for v in analysis_vars]
+        raw_vars = [str(v) for v in analysis_vars]
     elif isinstance(env_vars, Mapping):
-        vars_list = []
-        for key, info in env_vars.items():
-            vars_list.append(info.name if info.name is not None else str(key))
+        raw_vars = [
+            info.name if info.name is not None else str(key)
+            for key, info in env_vars.items()
+        ]
     else:
-        vars_list = [str(v) for v in env_vars]
+        raw_vars = [str(v) for v in env_vars]
 
-    if not vars_list:
+    if not raw_vars:
         raise rsgispy.RSGISPyException(
             "analysis_vars must contain at least one variable name."
         )
     if isinstance(env_vars, Mapping):
-        for var_name in vars_list:
-            if var_name not in env_vars:
-                raise rsgispy.RSGISPyException(
-                    f"Variable '{var_name}' was not found in env_vars."
-                )
-    return vars_list
+        resolved: List[str] = []
+        for var_name in raw_vars:
+            info = lookup_env_var(env_vars, var_name)
+            resolved.append(info.name if info.name is not None else var_name)
+        return resolved
+    return raw_vars
 
 
 def read_model_vector(
@@ -371,11 +395,7 @@ def env_vars_to_band_defs(
 
     var_keys: Dict[str, str] = {}
     for idx, var_name in enumerate(analysis_vars):
-        if var_name not in env_vars:
-            raise rsgispy.RSGISPyException(
-                f"Variable '{var_name}' was not found in env_vars."
-            )
-        info = env_vars[var_name]
+        info = lookup_env_var(env_vars, var_name)
         if info.file is None:
             raise rsgispy.RSGISPyException(
                 f"Environmental variable '{var_name}' has file=None."
@@ -404,30 +424,48 @@ def build_env_block_matrix(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Assemble valid, finite environmental covariate rows for pixels matching
-    ``img_msk_val`` inside a raster processing block.
+    ``img_msk_val`` inside a raster processing block, enforcing optional
+    :attr:`EnvVarInfo.min_vld_val` and :attr:`EnvVarInfo.max_vld_val` bounds.
 
     Returns ``(valid_df_matrix, flat_valid_indices)`` where
     ``valid_df_matrix`` has shape ``(n_valid_pxls, n_vars)``.
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     msk_flat = block_vars[_MASK_BAND_KEY].ravel()
     roi_idx = np.flatnonzero(msk_flat == img_msk_val)
     if roi_idx.size == 0:
         return np.empty((0, len(analysis_vars)), dtype=np.float64), roi_idx
 
     band_arrays: List[Tuple[np.ndarray, Optional[float]]] = []
+    infos: List[EnvVarInfo] = []
     for var_name in analysis_vars:
-        info = env_vars[var_name]
-        assert info.file is not None
+        info = lookup_env_var(env_vars, var_name)
+        if info.file is None:
+            raise rsgispy.RSGISPyException(
+                f"Environmental variable '{var_name}' has file=None."
+            )
         ds = datasets[os.fspath(info.file)]
         nd_val = ds.nodatavals[info.band - 1]
         band_arrays.append((block_vars[var_keys[var_name]], nd_val))
+        infos.append(info)
 
     env_mat, valid_idx = extract_roi_feature_matrix(band_arrays, roi_idx)
+    if env_mat.shape[0] > 0:
+        in_range = np.ones(env_mat.shape[0], dtype=bool)
+        for col_idx, info in enumerate(infos):
+            col_vals = env_mat[:, col_idx]
+            if info.min_vld_val is not None:
+                in_range &= col_vals >= float(info.min_vld_val)
+            if info.max_vld_val is not None:
+                in_range &= col_vals <= float(info.max_vld_val)
+        if not np.all(in_range):
+            env_mat = env_mat[in_range]
+            valid_idx = valid_idx[in_range]
+
     if normalise_data and env_mat.shape[0] > 0:
-        for col_idx, var_name in enumerate(analysis_vars):
+        for col_idx, info in enumerate(infos):
             env_mat[:, col_idx] = np.asarray(
-                normalise_array_with_info(env_mat[:, col_idx], env_vars[var_name]),
+                normalise_array_with_info(env_mat[:, col_idx], info),
                 dtype=np.float64,
             )
     return env_mat, valid_idx
@@ -484,8 +522,12 @@ def run_env_block_pipeline(
             grid=grid,
             count=1,
         )
-        if no_data_val is not None and not thematic:
-            dst.nodata = float(no_data_val)
+        if no_data_val is not None:
+            dst.nodata = (
+                int(no_data_val)
+                if np.issubdtype(out_np_dtype, np.integer)
+                else float(no_data_val)
+            )
 
         for out_win, block_vars in iter_image_blocks(
             datasets=datasets,
@@ -505,11 +547,12 @@ def run_env_block_pipeline(
 
     if calc_img_stats:
         if thematic:
+            ignore_zero = no_data_val is None or float(no_data_val) == 0.0
             pop_thmt_img_stats(
                 os.fspath(output_img),
                 add_clr_tab=True,
                 calc_pyramids=True,
-                ignore_zero=True,
+                ignore_zero=ignore_zero,
                 use_pbar=use_pbar,
             )
         else:

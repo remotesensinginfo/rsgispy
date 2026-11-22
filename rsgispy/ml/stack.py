@@ -432,7 +432,9 @@ class ImageFeatureStack:
             grid = (
                 compute_spatial_intersection(datasets)
                 if all_compat
-                else IntersectionGrid.from_dataset(ref_ds)
+                else IntersectionGrid.from_dataset(
+                    ref_ds, offsets={ref_path: (0, 0)}
+                )
             )
             dst = open_output_dataset(
                 stack=stack,
@@ -545,7 +547,9 @@ class ImageFeatureStack:
             grid = (
                 compute_spatial_intersection(all_ds)
                 if all_compat
-                else IntersectionGrid.from_dataset(ref_ds)
+                else IntersectionGrid.from_dataset(
+                    ref_ds, offsets={ref_path: (0, 0)}
+                )
             )
             base_msk_col, base_msk_row = (
                 grid.offsets[msk_path]
@@ -771,7 +775,9 @@ class ImageFeatureStack:
             grid = (
                 compute_spatial_intersection(datasets)
                 if all_compat
-                else IntersectionGrid.from_dataset(ref_ds)
+                else IntersectionGrid.from_dataset(
+                    ref_ds, offsets={ref_path: (0, 0)}
+                )
             )
 
             for poly_idx, row in enumerate(gdf.itertuples(index=False)):

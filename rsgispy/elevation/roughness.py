@@ -578,10 +578,10 @@ class CalcSmithRoughnessMetric(rsgispy.imagecalc.calc_pt_win_smpls.RSGISCalcSumV
         y_north_arr = np.maximum(win_arr[:, 1, 1] - win_arr[:, 0, 1], 0.0)
         y_south_arr = np.maximum(win_arr[:, 1, 1] - win_arr[:, 2, 1], 0.0)
 
-        x_east_frt = float(np.sum(x_east_arr) * x_res)
-        x_west_frt = float(np.sum(x_west_arr) * x_res)
-        y_north_frt = float(np.sum(y_north_arr) * y_res)
-        y_south_frt = float(np.sum(y_south_arr) * y_res)
+        x_east_frt = float(np.sum(x_east_arr) * y_res)
+        x_west_frt = float(np.sum(x_west_arr) * y_res)
+        y_north_frt = float(np.sum(y_north_arr) * x_res)
+        y_south_frt = float(np.sum(y_south_arr) * x_res)
 
         xe_smith_z0 = float(0.5 * h_star * (x_east_frt / grd_area))
         xw_smith_z0 = float(0.5 * h_star * (x_west_frt / grd_area))

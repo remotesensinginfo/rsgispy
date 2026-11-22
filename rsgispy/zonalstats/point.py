@@ -3,19 +3,20 @@ The zonalstats.point module provides point-in-pixel zonal extraction functions
 using ``rasterio`` and ``geopandas``.
 """
 
+import math
 import os
-from typing import List, Optional, Sequence, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
+import rasterio.transform
+from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.vectorprocess import VectorInput
 from rsgispy.zonalstats._helpers import (
-    is_valid_pixel_value as _is_valid_pixel_value,
     open_validated_zonal_multiband_inputs as _open_validated_zonal_multiband_inputs,
     read_vec_file as _read_vec_file,
-    sample_point_pixels as _sample_point_pixels,
     write_vec_file as _write_vec_file,
 )
 
@@ -64,6 +65,94 @@ def _resolve_point_out_fields(
             f"Output field names must be unique: {cols}."
         )
     return cols
+
+
+def _sample_points_by_block(
+    src,
+    bands_list: List[int],
+    nodata_vals: List[Optional[float]],
+    geom_series: gpd.GeoSeries,
+    min_thres: float,
+    max_thres: float,
+    out_no_data_f: float,
+    use_pbar: bool,
+) -> np.ndarray:
+    """
+    Sample raster values for ``geom_series`` using block-grouped window reads.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    n_pts = len(geom_series)
+    n_bands = len(bands_list)
+    out_arr = np.full((n_bands, n_pts), out_no_data_f, dtype=np.float64)
+    if n_pts == 0:
+        return out_arr
+
+    valid_geom_mask = (geom_series.notna() & ~geom_series.is_empty).to_numpy()
+    valid_indices = np.flatnonzero(valid_geom_mask)
+    if valid_indices.size == 0:
+        return out_arr
+
+    valid_geoms = geom_series.iloc[valid_indices]
+    xs = valid_geoms.x.to_numpy(dtype=np.float64)
+    ys = valid_geoms.y.to_numpy(dtype=np.float64)
+    rows, cols = rasterio.transform.rowcol(src.transform, xs, ys)
+    rows = np.asarray(rows, dtype=np.int64)
+    cols = np.asarray(cols, dtype=np.int64)
+
+    in_bounds = (
+        (rows >= 0) & (rows < src.height) & (cols >= 0) & (cols < src.width)
+    )
+    ib_indices = valid_indices[in_bounds]
+    if ib_indices.size == 0:
+        return out_arr
+    ib_rows = rows[in_bounds]
+    ib_cols = cols[in_bounds]
+
+    blk_shapes = getattr(src, "block_shapes", None)
+    if blk_shapes and len(blk_shapes) >= bands_list[0]:
+        blk_h, blk_w = blk_shapes[bands_list[0] - 1]
+    else:
+        blk_h, blk_w = 256, 256
+    blk_h = max(int(blk_h), 1)
+    blk_w = max(int(blk_w), 1)
+
+    groups: Dict[Tuple[int, int], List[int]] = {}
+    for pos in range(ib_indices.size):
+        key = (int(ib_rows[pos] // blk_h), int(ib_cols[pos] // blk_w))
+        groups.setdefault(key, []).append(pos)
+
+    tqdm_cls = rsgispy.get_tqdm()
+    with tqdm_cls(total=n_pts, disable=not use_pbar) as pbar:
+        skipped = n_pts - int(ib_indices.size)
+        if skipped > 0:
+            pbar.update(skipped)
+        for pos_list in groups.values():
+            pos_arr = np.asarray(pos_list, dtype=np.intp)
+            g_rows = ib_rows[pos_arr]
+            g_cols = ib_cols[pos_arr]
+            g_orig = ib_indices[pos_arr]
+
+            r0 = int(g_rows.min())
+            r1 = int(g_rows.max()) + 1
+            c0 = int(g_cols.min())
+            c1 = int(g_cols.max()) + 1
+            win = Window(c0, r0, c1 - c0, r1 - r0)
+            block_data = src.read(bands_list, window=win)
+            sampled = block_data[:, g_rows - r0, g_cols - c0]
+
+            for b_idx in range(n_bands):
+                b_vals = sampled[b_idx].astype(np.float64, copy=False)
+                valid = ~np.isnan(b_vals)
+                nd = nodata_vals[b_idx]
+                if nd is not None and not (
+                    isinstance(nd, float) and math.isnan(nd)
+                ):
+                    valid &= b_vals != nd
+                valid &= (b_vals >= min_thres) & (b_vals <= max_thres)
+                out_arr[b_idx, g_orig[valid]] = b_vals[valid]
+            pbar.update(int(pos_arr.size))
+
+    return out_arr
 
 
 def ext_point_band_values_file(
@@ -170,6 +259,7 @@ def ext_point_band_values_file(
         vec_gdf,
         vec_file,  # type: ignore[arg-type]
         out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+        replace_layer=True,
         out_compress=out_compress,
     )
     return None
@@ -263,34 +353,17 @@ def ext_point_band_values(
         out_cols = _resolve_point_out_fields(
             bands_list, is_scalar_band, out_field
         )
-        out_no_data_f = float(out_no_data_val)
-        n_bands = len(bands_list)
-        out_vals_by_band: List[List[float]] = [[] for _ in range(n_bands)]
+        out_arr = _sample_points_by_block(
+            src=src,
+            bands_list=bands_list,
+            nodata_vals=nodata_vals,
+            geom_series=geom_series,
+            min_thres=min_thres,
+            max_thres=max_thres,
+            out_no_data_f=float(out_no_data_val),
+            use_pbar=use_pbar,
+        )
 
-        tqdm_cls = rsgispy.get_tqdm()
-        for geom in tqdm_cls(
-            geom_series, total=len(vec_gdf), disable=not use_pbar
-        ):
-            if geom is None or geom.is_empty:
-                for b_idx in range(n_bands):
-                    out_vals_by_band[b_idx].append(out_no_data_f)
-                continue
-            sampled = _sample_point_pixels(
-                src, bands_list, geom.x, geom.y, clamp=False
-            )
-            if sampled is None:
-                for b_idx in range(n_bands):
-                    out_vals_by_band[b_idx].append(out_no_data_f)
-                continue
-            for b_idx in range(n_bands):
-                val = float(sampled[b_idx])
-                if _is_valid_pixel_value(
-                    val, nodata_vals[b_idx], min_thres, max_thres
-                ):
-                    out_vals_by_band[b_idx].append(val)
-                else:
-                    out_vals_by_band[b_idx].append(out_no_data_f)
-
-    for col_name, col_vals in zip(out_cols, out_vals_by_band):
-        vec_gdf[col_name] = col_vals
+    for b_idx, col_name in enumerate(out_cols):
+        vec_gdf[col_name] = out_arr[b_idx].tolist()
     return vec_gdf

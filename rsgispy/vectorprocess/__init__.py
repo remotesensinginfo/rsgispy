@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import pyogrio
 import pyproj
 import shapely.geometry
@@ -17,7 +18,10 @@ from shapely.geometry.base import BaseGeometry
 import rsgispy
 from rsgispy.imageprocess import ensure_file_exists
 import rsgispy.tools.files
-from rsgispy.vectorprocess._geoparquet import read_geoparquet_info
+from rsgispy.vectorprocess._geoparquet import (
+    geoparquet_geom_type_name,
+    read_geoparquet_info,
+)
 
 CRSLike = Union[pyproj.CRS, int, str]
 VectorInput = Union[gpd.GeoDataFrame, str, os.PathLike]
@@ -36,6 +40,8 @@ _VECTOR_EXTS: Tuple[str, ...] = (
     ".gml",
     ".kml",
 )
+_MULTI_LAYER_DRIVERS = {"gpkg", "sqlite", "gml", "filegdb", "openfilegdb"}
+_MULTI_LAYER_EXTS: Tuple[str, ...] = (".gpkg", ".sqlite", ".db", ".gml", ".gdb")
 _PARQUET_COMP_SUFFIX_MAP: Dict[str, str] = {
     "gzip": "gzip",
     "gz": "gzip",
@@ -406,10 +412,31 @@ def read_vec_info(
         info = rsgispy.vectorprocess.read_vec_info("polys.gpkg", "polys")
     """
     if isinstance(vec_file, gpd.GeoDataFrame):
+        geom_name = vec_file.active_geometry_name
+        fields = [c for c in vec_file.columns if c != geom_name]
+        dtypes = [str(vec_file[c].dtype) for c in fields]
+        geom_type = "Unknown"
+        total_bounds: Optional[Tuple[float, float, float, float]] = None
+        if geom_name is not None and geom_name in vec_file.columns:
+            gtypes = list(vec_file.geometry.geom_type.dropna().unique())
+            geom_type = geoparquet_geom_type_name(gtypes)
+            if len(vec_file) > 0:
+                raw_bounds = vec_file.total_bounds
+                if all(math.isfinite(float(v)) for v in raw_bounds):
+                    total_bounds = (
+                        float(raw_bounds[0]),
+                        float(raw_bounds[1]),
+                        float(raw_bounds[2]),
+                        float(raw_bounds[3]),
+                    )
         return {
             "crs": vec_file.crs,
             "features": len(vec_file),
-            "fields": [c for c in vec_file.columns if c != vec_file.geometry.name],
+            "fields": fields,
+            "dtypes": dtypes,
+            "geometry_name": geom_name,
+            "geometry_type": geom_type,
+            "total_bounds": total_bounds,
             "layer_name": vec_lyr or "layer",
         }
 
@@ -502,6 +529,18 @@ def read_vec_gdf(
     return gdf
 
 
+def is_multi_layer_driver(
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_format: Optional[str] = None,
+) -> bool:
+    """Return ``True`` if ``out_format`` or ``out_vec_file`` supports multiple layers."""
+    if out_format is not None:
+        return out_format.lower().strip() in _MULTI_LAYER_DRIVERS
+    if out_vec_file is not None:
+        return os.fspath(out_vec_file).lower().endswith(_MULTI_LAYER_EXTS)
+    return False
+
+
 def write_vec_gdf(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     gdf: gpd.GeoDataFrame,
     out_vec_file: Union[str, os.PathLike],
@@ -509,23 +548,32 @@ def write_vec_gdf(  # pylint: disable=too-many-arguments,too-many-positional-arg
     out_format: Optional[str] = None,
     overwrite: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
+    replace_layer: bool = False,
 ) -> None:
     """
-    Write a :class:`geopandas.GeoDataFrame` to disk, handling GPKG layer naming,
-    GeoParquet compression, driver normalisation, and optional file deletion
-    when ``overwrite=True``.
+    Write a :class:`geopandas.GeoDataFrame` to disk, handling multi-layer
+    driver layer naming, GeoParquet compression, driver normalisation, and
+    overwrite protection.
 
     :param gdf: GeoDataFrame to write.
     :param out_vec_file: Destination vector file path.
-    :param out_vec_lyr: Optional destination layer name (used for GPKG).
+    :param out_vec_lyr: Optional destination layer name (used for multi-layer
+                        drivers such as GPKG, SQLite, GML, and FileGDB).
     :param out_format: Optional vector driver name.
     :param overwrite: If ``True``, delete an existing ``out_vec_file`` before
-                      writing (Default = ``False``).
+                      writing. If ``False`` (default), raise
+                      :class:`rsgispy.RSGISPyException` when the target file
+                      (or target layer inside a multi-layer file) already exists,
+                      unless ``replace_layer=True``.
     :param out_compress: Optional GeoParquet compression setting (``None`` to
                          infer from extension or write uncompressed, ``True``
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :param replace_layer: If ``True`` and ``overwrite=False``, replace only the
+                          target layer inside an existing multi-layer container
+                          (preserving sibling layers), or replace an existing
+                          single-layer file (Default = ``False``).
 
     .. code:: python
 
@@ -536,17 +584,41 @@ def write_vec_gdf(  # pylint: disable=too-many-arguments,too-many-positional-arg
         )
     """
     out_path = os.fspath(out_vec_file)
-    if overwrite and os.path.exists(out_path):
-        delete_vec_file(out_path, feedback=False)
-
-    parent_dir = os.path.dirname(os.path.abspath(out_path))
-    if parent_dir:
-        os.makedirs(parent_dir, exist_ok=True)
-
     fmt = check_format_name(out_format) if out_format is not None else None
     is_pq = is_geoparquet_format(fmt) or (
         fmt is None and is_geoparquet_file(out_path)
     )
+    is_multi_lyr = (not is_pq) and is_multi_layer_driver(out_path, fmt)
+    target_lyr = resolve_out_lyr_name(out_path, out_vec_lyr) if is_multi_lyr else None
+
+    if os.path.exists(out_path):
+        if overwrite:
+            delete_vec_file(out_path, feedback=False)
+        elif replace_layer:
+            if not is_multi_lyr:
+                delete_vec_file(out_path, feedback=False)
+        elif is_multi_lyr and target_lyr is not None:
+            try:
+                existing_lyrs = {str(row[0]) for row in pyogrio.list_layers(out_path)}
+            except Exception as err:
+                raise rsgispy.RSGISPyException(
+                    f"The output vector file '{out_path}' already exists and "
+                    "overwrite=False."
+                ) from err
+            if target_lyr in existing_lyrs:
+                raise rsgispy.RSGISPyException(
+                    f"The output vector layer '{target_lyr}' already exists in "
+                    f"'{out_path}' and overwrite=False."
+                )
+        else:
+            raise rsgispy.RSGISPyException(
+                f"The output vector file '{out_path}' already exists and "
+                "overwrite=False."
+            )
+
+    parent_dir = os.path.dirname(os.path.abspath(out_path))
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
 
     if is_pq:
         comp = infer_parquet_compression(out_path, out_compress=out_compress)
@@ -558,17 +630,11 @@ def write_vec_gdf(  # pylint: disable=too-many-arguments,too-many-positional-arg
             ) from err
         return
 
-    is_gpkg = (
-        fmt == "GPKG"
-        if fmt is not None
-        else out_path.lower().endswith(".gpkg")
-    )
-
     write_kw: Dict[str, Any] = {}
     if fmt is not None:
         write_kw["driver"] = fmt
-    if is_gpkg:
-        write_kw["layer"] = resolve_out_lyr_name(out_path, out_vec_lyr)
+    if is_multi_lyr and target_lyr is not None:
+        write_kw["layer"] = target_lyr
 
     try:
         gdf.to_file(out_path, **write_kw)
@@ -784,14 +850,118 @@ def get_gdf_geom_type(gdf: gpd.GeoDataFrame) -> int:
     )
 
 
+def _is_missing_scalar(val: Any) -> bool:
+    """Return ``True`` when scalar ``val`` is ``None``, NaN, or pandas NA/NaT."""
+    if val is None:
+        return True
+    if isinstance(val, (float, np.floating)):
+        return bool(np.isnan(val))
+    if isinstance(val, (int, np.integer, bool, np.bool_, str)):
+        return False
+    try:
+        res = pd.isna(val)
+        return bool(res) if isinstance(res, (bool, np.bool_)) else False
+    except (TypeError, ValueError):
+        return False
+
+
+def _parse_bool_val(val: Any) -> Optional[bool]:
+    """Safely coerce a scalar value (including string booleans) to ``bool`` or ``None``."""
+    if _is_missing_scalar(val):
+        return None
+    if isinstance(val, (bool, np.bool_)):
+        return bool(val)
+    if isinstance(val, str):
+        low = val.strip().lower()
+        if low in ("true", "1", "yes", "y", "t", "on"):
+            return True
+        if low in ("false", "0", "no", "n", "f", "off", ""):
+            return False
+        raise ValueError(f"Cannot interpret string {val!r} as boolean.")
+    return bool(val)
+
+
+def _resolve_cast_kind(att_col_datatype: Any) -> Optional[str]:
+    """Resolve a target type specifier into ``'int'``, ``'float'``, ``'str'``,
+    ``'bool'``, or ``None``.
+    """
+    if att_col_datatype is None:
+        return None
+    if att_col_datatype is bool:
+        return "bool"
+    if att_col_datatype is int:
+        return "int"
+    if att_col_datatype is float:
+        return "float"
+    if att_col_datatype is str:
+        return "str"
+
+    if isinstance(att_col_datatype, int) and not isinstance(att_col_datatype, bool):
+        if att_col_datatype in _LEGACY_OGR_INT_TYPES:
+            return "int"
+        if att_col_datatype in _LEGACY_OGR_FLOAT_TYPES:
+            return "float"
+        if att_col_datatype in _LEGACY_OGR_STR_TYPES:
+            return "str"
+        return None
+
+    if isinstance(att_col_datatype, type) and issubclass(att_col_datatype, np.generic):
+        if issubclass(att_col_datatype, np.bool_):
+            return "bool"
+        if issubclass(att_col_datatype, np.integer):
+            return "int"
+        if issubclass(att_col_datatype, np.floating):
+            return "float"
+        if issubclass(att_col_datatype, np.str_):
+            return "str"
+        return None
+
+    if isinstance(att_col_datatype, np.dtype):
+        if np.issubdtype(att_col_datatype, np.bool_):
+            return "bool"
+        if np.issubdtype(att_col_datatype, np.integer):
+            return "int"
+        if np.issubdtype(att_col_datatype, np.floating):
+            return "float"
+        if np.issubdtype(att_col_datatype, np.str_):
+            return "str"
+        return None
+
+    if isinstance(att_col_datatype, str):
+        key = att_col_datatype.strip().lower()
+        if key in (
+            "int",
+            "int8",
+            "int16",
+            "int32",
+            "int64",
+            "uint8",
+            "uint16",
+            "uint32",
+            "uint64",
+            "integer",
+            "oftinteger",
+            "oftinteger64",
+        ):
+            return "int"
+        if key in ("float", "float16", "float32", "float64", "real", "double", "oftreal"):
+            return "float"
+        if key in ("str", "string", "text", "oftstring"):
+            return "str"
+        if key in ("bool", "bool_", "boolean"):
+            return "bool"
+
+    return None
+
+
 def cast_col_data(
     att_col_data: Sequence[Any],
     att_col_datatype: Any,
 ) -> List[Any]:
     """
     Cast sequence values according to ``att_col_datatype`` (Python type, string
-    name such as ``'int'``/``'float'``/``'str'``, NumPy dtype, legacy integer
-    type code, or ``None``).
+    name such as ``'int'``/``'float'``/``'str'``, NumPy scalar class or dtype,
+    legacy integer type code, or ``None``).
 
     :param att_col_data: Sequence of attribute values.
     :param att_col_datatype: Target type specifier or ``None``.
@@ -803,54 +973,15 @@ def cast_col_data(
 
         vals = rsgispy.vectorprocess.cast_col_data(["1", "2"], int)
     """
-    if att_col_datatype is None:
-        return list(att_col_data)
-
-    if att_col_datatype in (int, np.integer) or (
-        isinstance(att_col_datatype, int)
-        and not isinstance(att_col_datatype, bool)
-        and att_col_datatype in _LEGACY_OGR_INT_TYPES
-    ):
-        return [None if v is None else int(v) for v in att_col_data]
-
-    if att_col_datatype in (float, np.floating) or (
-        isinstance(att_col_datatype, int)
-        and not isinstance(att_col_datatype, bool)
-        and att_col_datatype in _LEGACY_OGR_FLOAT_TYPES
-    ):
-        return [None if v is None else float(v) for v in att_col_data]
-
-    if att_col_datatype is str or (
-        isinstance(att_col_datatype, int)
-        and not isinstance(att_col_datatype, bool)
-        and att_col_datatype in _LEGACY_OGR_STR_TYPES
-    ):
-        return ["" if v is None else str(v) for v in att_col_data]
-
-    if att_col_datatype is bool:
-        return [bool(v) for v in att_col_data]
-
-    if isinstance(att_col_datatype, str):
-        key = att_col_datatype.strip().lower()
-        if key in ("int", "int32", "int64", "integer", "oftinteger", "oftinteger64"):
-            return [None if v is None else int(v) for v in att_col_data]
-        if key in ("float", "float32", "float64", "real", "double", "oftreal"):
-            return [None if v is None else float(v) for v in att_col_data]
-        if key in ("str", "string", "text", "oftstring"):
-            return ["" if v is None else str(v) for v in att_col_data]
-        if key in ("bool", "boolean"):
-            return [bool(v) for v in att_col_data]
-
-    if isinstance(att_col_datatype, np.dtype):
-        if np.issubdtype(att_col_datatype, np.integer):
-            return [None if v is None else int(v) for v in att_col_data]
-        if np.issubdtype(att_col_datatype, np.floating):
-            return [None if v is None else float(v) for v in att_col_data]
-        if np.issubdtype(att_col_datatype, np.bool_):
-            return [bool(v) for v in att_col_data]
-        if np.issubdtype(att_col_datatype, np.str_):
-            return ["" if v is None else str(v) for v in att_col_data]
-
+    kind = _resolve_cast_kind(att_col_datatype)
+    if kind == "int":
+        return [None if _is_missing_scalar(v) else int(v) for v in att_col_data]
+    if kind == "float":
+        return [None if _is_missing_scalar(v) else float(v) for v in att_col_data]
+    if kind == "str":
+        return ["" if _is_missing_scalar(v) else str(v) for v in att_col_data]
+    if kind == "bool":
+        return [_parse_bool_val(v) for v in att_col_data]
     return list(att_col_data)
 
 

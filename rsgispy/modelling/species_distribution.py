@@ -27,6 +27,7 @@ from rsgispy.modelling._helper import (
     extract_features_and_target,
     fit_clean_estimator,
     get_positive_class_probs,
+    lookup_env_var,
     normalise_array_with_info,
     plot_roc_curve,
     predict_raster_from_env_vars,
@@ -133,8 +134,11 @@ def create_finite_mask(
     ) -> np.ndarray:
         valid = block_vars[_MASK_BAND_KEY] == img_msk_val
         for var_name in resolved_vars:
-            info = env_vars[var_name]
-            assert info.file is not None
+            info = lookup_env_var(env_vars, var_name)
+            if info.file is None:
+                raise rsgispy.RSGISPyException(
+                    f"Environmental variable '{var_name}' has file=None."
+                )
             arr = block_vars[var_keys[var_name]]
             valid &= np.isfinite(arr)
             nd_val = datasets[os.fspath(info.file)].nodatavals[info.band - 1]
@@ -142,6 +146,10 @@ def create_finite_mask(
                 isinstance(nd_val, float) and np.isnan(nd_val)
             ):
                 valid &= arr != float(nd_val)
+            if info.min_vld_val is not None:
+                valid &= arr >= float(info.min_vld_val)
+            if info.max_vld_val is not None:
+                valid &= arr <= float(info.max_vld_val)
         return valid.astype(np.uint8)
 
     run_env_block_pipeline(
@@ -231,7 +239,10 @@ def gen_pseudo_absences_smpls(
         out_vec_file=None,
         rnd_seed=rnd_seed,
     )
-    assert pts_gdf is not None
+    if pts_gdf is None:
+        raise rsgispy.RSGISPyException(
+            "Failed to generate random candidate points within the mask extent."
+        )
 
     tmp_col = "__rsgispy_tmp_msk__"
     pts_gdf = ext_point_band_values(
@@ -269,7 +280,10 @@ def gen_pseudo_absences_smpls(
                 out_vec_file=None,
                 out_col="__presence_dist__",
             )
-            assert dist_gdf is not None
+            if dist_gdf is None:
+                raise rsgispy.RSGISPyException(
+                    "Failed to compute nearest distances to presence samples."
+                )
             dist_gdf = dist_gdf[~dist_gdf.index.duplicated(keep="first")]
             dist_gdf = dist_gdf[
                 dist_gdf["__presence_dist__"] > float(presence_smpls_dist_thres)
@@ -289,7 +303,10 @@ def gen_pseudo_absences_smpls(
             n_smpl=int(n_smpls),
             rnd_seed=rnd_seed,
         )
-        assert pts_gdf is not None
+        if pts_gdf is None:
+            raise rsgispy.RSGISPyException(
+                "Failed to subsample candidate pseudo-absence points."
+            )
 
     pts_gdf = pts_gdf.reset_index(drop=True)
     return write_model_vector(
@@ -385,7 +402,10 @@ def extract_env_var_data(
                 valid &= col_vals <= float(info.max_vld_val)
             col_vals = np.where(valid, col_vals, float(out_no_data_val))
             vec_gdf = vec_gdf.drop(columns=[tmp_col])
-            assert info.name is not None
+            if not info.name:
+                raise rsgispy.RSGISPyException(
+                    "Environmental variable is missing a column name."
+                )
             vec_gdf[info.name] = col_vals
 
     return write_model_vector(
@@ -448,6 +468,15 @@ def combine_presence_absence_data(
     absence_gdf = read_model_vector(
         absence_smpls_vec_file, vec_lyr=absence_smpls_vec_lyr
     )
+
+    if presence_gdf.crs is not None and absence_gdf.crs is not None:
+        if presence_gdf.crs != absence_gdf.crs:
+            absence_gdf = absence_gdf.to_crs(presence_gdf.crs)
+    elif presence_gdf.crs is not None or absence_gdf.crs is not None:
+        raise rsgispy.RSGISPyException(
+            "Cannot combine presence and absence datasets when only one has "
+            "a CRS defined."
+        )
 
     analysis_vars = [
         info.name if info.name is not None else str(key)
@@ -939,7 +968,10 @@ def fit_sklearn_mdl(
     test_x, test_y = extract_features_and_target(
         test_gdf, analysis_vars, cls_col=cls_col
     )
-    assert train_y is not None and test_y is not None
+    if train_y is None or test_y is None:
+        raise rsgispy.RSGISPyException(
+            f"Target column '{cls_col}' could not be extracted from data."
+        )
 
     fitted_mdl = fit_clean_estimator(
         est_cls_obj, train_x, train_y, sync_input=not return_model
@@ -1009,7 +1041,10 @@ def fit_sklearn_slg_cls_mdl(
     test_x, test_y = extract_features_and_target(
         test_gdf, analysis_vars, cls_col=cls_col
     )
-    assert test_y is not None
+    if test_y is None:
+        raise rsgispy.RSGISPyException(
+            f"Target column '{cls_col}' could not be extracted from test data."
+        )
 
     fitted_mdl = fit_clean_estimator(
         est_cls_obj, train_x, train_y=None, sync_input=not return_model
@@ -1027,6 +1062,41 @@ def fit_sklearn_slg_cls_mdl(
     if return_model:
         return fitted_mdl, test_acc_val, roc_auc
     return test_acc_val, roc_auc
+
+
+def _ensure_all_classes_in_fold(
+    train_idx: np.ndarray,
+    train_y: np.ndarray,
+    unique_classes: np.ndarray,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """
+    Ensure every class in ``unique_classes`` appears at least once in
+    ``train_idx`` by replacing surplus slots of already-present classes,
+    preserving fold size and never introducing duplicate indices when
+    ``train_idx`` was sampled without replacement.
+    """
+    present_classes = set(np.unique(train_y[train_idx]).tolist())
+    if len(present_classes) >= unique_classes.size:
+        return train_idx
+
+    missing_classes = [
+        cls_val for cls_val in unique_classes if cls_val not in present_classes
+    ]
+    seen_cls: set = set()
+    replaceable_slots: List[int] = []
+    for slot_pos, sample_idx in enumerate(train_idx):
+        cls_val = train_y[sample_idx]
+        if cls_val not in seen_cls:
+            seen_cls.add(cls_val)
+        else:
+            replaceable_slots.append(slot_pos)
+
+    updated_idx = train_idx.copy()
+    for slot_pos, cls_val in zip(replaceable_slots, missing_classes):
+        cls_candidates = np.flatnonzero(train_y == cls_val)
+        updated_idx[slot_pos] = int(rng.choice(cls_candidates, size=1)[0])
+    return updated_idx
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -1092,11 +1162,22 @@ def fit_kfold_sklearn_mdls(
     test_x, test_y = extract_features_and_target(
         test_gdf, analysis_vars, cls_col=cls_col
     )
-    assert train_y is not None and test_y is not None
+    if train_y is None or test_y is None:
+        raise rsgispy.RSGISPyException(
+            f"Target column '{cls_col}' could not be extracted from data."
+        )
 
     n_train = train_y.shape[0]
+    if n_train == 0:
+        raise rsgispy.RSGISPyException("Training dataset must not be empty.")
     n_fold_size = max(1, int(n_train * fold_prop))
     unique_classes = np.unique(train_y)
+    if unique_classes.size > 1 and n_fold_size < unique_classes.size:
+        raise rsgispy.RSGISPyException(
+            f"Computed fold size ({n_fold_size}) is smaller than the number "
+            f"of classes ({unique_classes.size}). Increase fold_prop or "
+            "provide more training samples."
+        )
 
     train_scores: List[float] = []
     test_scores: List[float] = []
@@ -1106,13 +1187,10 @@ def fit_kfold_sklearn_mdls(
     pbar = rsgispy.get_tqdm()
     for _ in pbar(range(n_kfolds), disable=not use_pbar):
         train_idx = rng.choice(n_train, size=n_fold_size, replace=sel_replacement)
-        # Ensure degenerate draws do not drop a class when multiple classes exist.
-        if unique_classes.size > 1 and np.unique(train_y[train_idx]).size < unique_classes.size:
-            per_class_idx = [
-                rng.choice(np.flatnonzero(train_y == cls_val), size=1)[0]
-                for cls_val in unique_classes
-            ]
-            train_idx[: len(per_class_idx)] = per_class_idx
+        if unique_classes.size > 1:
+            train_idx = _ensure_all_classes_in_fold(
+                train_idx, train_y, unique_classes, rng
+            )
 
         train_y_set = train_y[train_idx]
         train_x_set = train_x.iloc[train_idx]
@@ -1210,7 +1288,10 @@ def fit_kfold_sklearn_sgl_cls_mdls(
     test_x, test_y = extract_features_and_target(
         test_gdf, analysis_vars, cls_col=cls_col
     )
-    assert test_y is not None
+    if test_y is None:
+        raise rsgispy.RSGISPyException(
+            f"Target column '{cls_col}' could not be extracted from test data."
+        )
 
     n_train = train_x.shape[0]
     n_fold_size = max(1, int(n_train * fold_prop))
@@ -1432,14 +1513,16 @@ def sklearn_mdl_variable_response_curves(
     if normalised_data and env_vars is not None:
         x_transform_map = {}
         for var in var_list:
-            if var in env_vars:
-                info = env_vars[var]
-                if info.norm_mean is not None and info.norm_std is not None:
-                    norm_std = float(info.norm_std)
-                    norm_mean = float(info.norm_mean)
-                    x_transform_map[var] = (
-                        lambda vals, s=norm_std, m=norm_mean: (vals * s) + m
-                    )
+            try:
+                info = lookup_env_var(env_vars, var)
+            except rsgispy.RSGISPyException:
+                continue
+            if info.norm_mean is not None and info.norm_std is not None:
+                norm_std = float(info.norm_std)
+                norm_mean = float(info.norm_mean)
+                x_transform_map[var] = (
+                    lambda vals, s=norm_std, m=norm_mean: (vals * s) + m
+                )
 
     return run_variable_response_curves(
         x_df=train_gdf[var_list],
@@ -1519,7 +1602,10 @@ def sklearn_jackknife_var_importance(
     test_x_all, test_y = extract_features_and_target(
         test_gdf, var_list, cls_col=cls_col
     )
-    assert train_y is not None and test_y is not None
+    if train_y is None or test_y is None:
+        raise rsgispy.RSGISPyException(
+            f"Target column '{cls_col}' could not be extracted from data."
+        )
 
     def _eval_subset(sub_vars: List[str]) -> Tuple[float, float, float]:
         tr_sub = train_x_all[sub_vars]
@@ -1658,6 +1744,7 @@ def pred_sklearn_mdl_cls(
     calc_img_stats: bool = True,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
+    out_no_data_val: int = 0,
 ) -> None:
     """
     Predict binary presence/absence thematic classification (``uint8``) from a
@@ -1674,15 +1761,25 @@ def pred_sklearn_mdl_cls(
     :param calc_img_stats: Populate thematic statistics and colour table (Default = ``True``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param out_no_data_val: Output ``uint8`` no-data fill value outside the
+                            valid mask (Default = ``0`` for backwards
+                            compatibility; set to ``255`` to distinguish
+                            no-data from absence class ``0``).
 
     .. code:: python
 
         import rsgispy.modelling.species_distribution as sdm
 
         sdm.pred_sklearn_mdl_cls(
-            clf, "valid_mask.tif", 1, env_vars, ["v1", "v2"], "cls.tif"
+            clf, "valid_mask.tif", 1, env_vars, ["v1", "v2"], "cls.tif",
+            out_no_data_val=255,
         )
     """
+    if isinstance(out_no_data_val, bool) or not 0 <= int(out_no_data_val) <= 255:
+        raise rsgispy.RSGISPyException(
+            f"out_no_data_val must be an integer in [0, 255], got {out_no_data_val!r}."
+        )
+    nd_val = float(int(out_no_data_val))
     predict_raster_from_env_vars(
         in_msk_img=in_msk_img,
         img_msk_val=img_msk_val,
@@ -1692,11 +1789,11 @@ def pred_sklearn_mdl_cls(
         predict_fn=est_cls_obj.predict,
         gdalformat=gdalformat,
         out_rio_dtype="uint8",
-        fill_val=0.0,
+        fill_val=nd_val,
         normalise_data=normalise_data,
         calc_img_stats=calc_img_stats,
         thematic=True,
-        no_data_val=0.0,
+        no_data_val=nd_val,
         block_size=block_size,
         use_pbar=use_pbar,
     )
@@ -1782,6 +1879,7 @@ def pred_sklearn_slg_cls_mdl_cls(
     calc_img_stats: bool = True,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
+    out_no_data_val: int = 0,
 ) -> None:
     """
     Predict binary presence (``1``) vs absence (``0``) thematic map from a
@@ -1798,15 +1896,25 @@ def pred_sklearn_slg_cls_mdl_cls(
     :param calc_img_stats: Populate thematic statistics and colour table (Default = ``True``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param out_no_data_val: Output ``uint8`` no-data fill value outside the
+                            valid mask (Default = ``0`` for backwards
+                            compatibility; set to ``255`` to distinguish
+                            no-data from absence class ``0``).
 
     .. code:: python
 
         import rsgispy.modelling.species_distribution as sdm
 
         sdm.pred_sklearn_slg_cls_mdl_cls(
-            oc_mdl, "valid_mask.tif", 1, env_vars, ["v1", "v2"], "oc_cls.tif"
+            oc_mdl, "valid_mask.tif", 1, env_vars, ["v1", "v2"], "oc_cls.tif",
+            out_no_data_val=255,
         )
     """
+    if isinstance(out_no_data_val, bool) or not 0 <= int(out_no_data_val) <= 255:
+        raise rsgispy.RSGISPyException(
+            f"out_no_data_val must be an integer in [0, 255], got {out_no_data_val!r}."
+        )
+    nd_val = float(int(out_no_data_val))
     predict_raster_from_env_vars(
         in_msk_img=in_msk_img,
         img_msk_val=img_msk_val,
@@ -1816,11 +1924,11 @@ def pred_sklearn_slg_cls_mdl_cls(
         predict_fn=lambda df: calc_single_class_predictions(est_cls_obj, df),
         gdalformat=gdalformat,
         out_rio_dtype="uint8",
-        fill_val=0.0,
+        fill_val=nd_val,
         normalise_data=normalise_data,
         calc_img_stats=calc_img_stats,
         thematic=True,
-        no_data_val=0.0,
+        no_data_val=nd_val,
         block_size=block_size,
         use_pbar=use_pbar,
     )

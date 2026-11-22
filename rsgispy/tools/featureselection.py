@@ -136,13 +136,23 @@ def cqv_threshold(
     x_vals = df[cols].values
 
     print(f"Calculating CQV for {len(cols)} predictor variables...")
-    q1 = np.percentile(x_vals, 25, axis=0)
-    q3 = np.percentile(x_vals, 75, axis=0)
-    cqv = (q3 - q1) / (q3 + q1)
+    q1 = np.percentile(x_vals, 25, axis=0).astype(np.float64)
+    q3 = np.percentile(x_vals, 75, axis=0).astype(np.float64)
+    denom = q3 + q1
+    cqv = np.divide(
+        q3 - q1,
+        denom,
+        out=np.full(denom.shape, np.nan, dtype=np.float64),
+        where=denom != 0.0,
+    )
 
-    print(f"Median CQV: {np.median(cqv)}")
+    finite_cqv = cqv[np.isfinite(cqv)]
+    med_cqv = float(np.median(finite_cqv)) if finite_cqv.size > 0 else float("nan")
+    print(f"Median CQV: {med_cqv}")
 
-    good_idx = np.where((cqv >= lowthreshold) & (cqv <= highthreshold))[0]
+    good_idx = np.where(
+        np.isfinite(cqv) & (cqv >= lowthreshold) & (cqv <= highthreshold)
+    )[0]
     good_cols = [cols[i] for i in good_idx]
 
     print(f"Selected {len(good_cols)} useful predictors...")
@@ -193,20 +203,43 @@ def corr_feature_selection(
     rsgispy.check_optional_dep(
         HAVE_SKLEARN, "corr_feature_selection", "scikit-learn", "stats"
     )
-    corr_data = []
-    for dep_var in dep_vars:
-        corr_vals = [
-            df[dep_var].corr(df[ind_var], method="pearson") for ind_var in ind_vars
-        ]
-        corr_data.append(corr_vals)
+    valid_ind_vars: List[str] = []
+    for ind_var in ind_vars:
+        col_vals = np.asarray(df[ind_var].values, dtype=np.float64)
+        finite_vals = col_vals[np.isfinite(col_vals)]
+        if finite_vals.size > 1 and float(np.std(finite_vals)) > 0.0:
+            valid_ind_vars.append(ind_var)
 
-    abs_corr = np.clip(np.abs(np.asarray(corr_data, dtype=np.float64)), 0.0, 1.0 - 1e-12)
+    if not valid_ind_vars:
+        return []
+    if len(valid_ind_vars) <= max(2, n_min_clusters):
+        return valid_ind_vars
+
+    corr_data = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for dep_var in dep_vars:
+            corr_vals = [
+                df[dep_var].corr(df[ind_var], method="pearson")
+                for ind_var in valid_ind_vars
+            ]
+            corr_data.append(corr_vals)
+
+    abs_corr = np.abs(np.asarray(corr_data, dtype=np.float64))
+    np.nan_to_num(abs_corr, copy=False, nan=0.0)
+    abs_corr = np.clip(abs_corr, 0.0, 1.0 - 1e-12)
     pearson_corr = np.tanh(np.mean(np.arctanh(abs_corr), axis=0))
 
     def _pearson_affinity(arr: np.ndarray) -> np.ndarray:
-        corr_mat = np.corrcoef(arr)
-        np.nan_to_num(corr_mat, copy=False, nan=0.0)
-        return 1.0 - np.abs(corr_mat)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            corr_mat = np.corrcoef(arr)
+        corr_mat = np.nan_to_num(corr_mat, copy=True, nan=0.0)
+        np.fill_diagonal(corr_mat, 1.0)
+        dist_mat = np.clip(1.0 - np.abs(corr_mat), 0.0, 1.0)
+        dist_mat = 0.5 * (dist_mat + dist_mat.T)
+        np.fill_diagonal(dist_mat, 0.0)
+        return dist_mat
 
     def _cluster_features(feat_arr: np.ndarray, n_clst: int) -> np.ndarray:
         if feat_arr.ndim != 2:
@@ -219,14 +252,22 @@ def corr_feature_selection(
         clf.fit(feat_arr)
         return clf.labels_ + 1
 
-    x_vals = df[ind_vars].values
-    n_clusters = np.arange(n_min_clusters, n_max_clusters, dtype="int64")
+    x_vals = df[valid_ind_vars].values
+    eff_min = max(2, int(n_min_clusters))
+    eff_max = min(int(n_max_clusters), len(valid_ind_vars))
+    if eff_min >= eff_max:
+        return valid_ind_vars
+
+    dist_mat = _pearson_affinity(x_vals.T)
+    n_clusters = np.arange(eff_min, eff_max, dtype="int64")
     tqdm_cls = rsgispy.get_tqdm()
     cluster_score = []
     for n_clst in tqdm_cls(n_clusters, disable=not use_pbar):
         x_lbls = _cluster_features(x_vals, int(n_clst))
         cluster_score.append(
-            sklearn.metrics.silhouette_score(x_vals.T, x_lbls, metric="correlation")
+            sklearn.metrics.silhouette_score(
+                dist_mat, x_lbls, metric="precomputed"
+            )
         )
 
     best_idx = int(np.argmax(cluster_score))
@@ -240,7 +281,7 @@ def corr_feature_selection(
     for lbl in np.unique(cluster_lbls):
         lbl_idx = np.where(cluster_lbls == lbl)[0]
         best_corr = int(np.argmax(pearson_corr[lbl_idx]))
-        best_predictors.append(ind_vars[lbl_idx[best_corr]])
+        best_predictors.append(valid_ind_vars[lbl_idx[best_corr]])
 
     return best_predictors
 
@@ -350,7 +391,10 @@ def breusch_pagan_test(
 
     ss_tot = float(np.sum((err - np.mean(err, axis=0)) ** 2))
     ss_res = float(np.sum((err - pred_err) ** 2))
-    r2 = 1.0 - (ss_res / ss_tot)
+    if ss_tot <= 1e-30:
+        r2 = 0.0
+    else:
+        r2 = max(0.0, 1.0 - (ss_res / ss_tot))
 
     lm_stat = float(n_samples * r2)
     pval = float(scipy.stats.chi2.sf(lm_stat, x.shape[1]))

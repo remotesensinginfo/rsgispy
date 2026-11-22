@@ -673,12 +673,12 @@ def split_reg_samples(
         if val is not None and (isinstance(val, bool) or int(val) < 0):
             raise rsgispy.RSGISPyException(f"{label} must be >= 0, got {val!r}.")
 
-    all_pos = df.index.to_numpy().copy()
+    all_pos = np.arange(len(df), dtype=np.intp)
     if max_smpls is not None and len(all_pos) > int(max_smpls):
         rng.shuffle(all_pos)
-        work_df = df.loc[all_pos[: int(max_smpls)]]
+        work_df = df.iloc[all_pos[: int(max_smpls)]].reset_index(drop=True)
     else:
-        work_df = df
+        work_df = df.reset_index(drop=True)
 
     use_binned = (
         stratify_col is not None
@@ -694,6 +694,7 @@ def split_reg_samples(
             f"samples_df columns {list(work_df.columns)}."
         )
 
+    work_pos = np.arange(len(work_df), dtype=np.intp)
     if use_binned and stratify_col is not None:
         bins = pd.qcut(
             work_df[stratify_col],
@@ -705,9 +706,9 @@ def split_reg_samples(
             train_idx: List[int] = []
             test_idx: List[int] = []
             valid_idx: List[int] = []
-            for _, grp in work_df.groupby(bins, sort=False):
+            for raw_pos in work_df.groupby(bins, sort=False).indices.values():
                 tr_g, te_g, va_g = _split_index_group(
-                    grp.index.to_numpy(),
+                    np.asarray(raw_pos, dtype=np.intp),
                     train_p,
                     test_p,
                     valid_p,
@@ -722,7 +723,7 @@ def split_reg_samples(
                 valid_idx.extend(va_g)
         else:
             train_idx, test_idx, valid_idx = _split_index_group(
-                work_df.index.to_numpy(),
+                work_pos,
                 train_p,
                 test_p,
                 valid_p,
@@ -734,7 +735,7 @@ def split_reg_samples(
             )
     else:
         train_idx, test_idx, valid_idx = _split_index_group(
-            work_df.index.to_numpy(),
+            work_pos,
             train_p,
             test_p,
             valid_p,
@@ -745,9 +746,9 @@ def split_reg_samples(
             rng,
         )
 
-    train_df = df.loc[train_idx].reset_index(drop=True)
-    test_df = df.loc[test_idx].reset_index(drop=True)
-    valid_df = df.loc[valid_idx].reset_index(drop=True)
+    train_df = work_df.iloc[train_idx].reset_index(drop=True)
+    test_df = work_df.iloc[test_idx].reset_index(drop=True)
+    valid_df = work_df.iloc[valid_idx].reset_index(drop=True)
 
     for df_part, out_path in (
         (train_df, out_train_file),

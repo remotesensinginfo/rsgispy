@@ -106,7 +106,7 @@ from rasterio.enums import Resampling
 from rsgispy._bbox import BBox  # noqa: F401
 
 #: Package version string for ``rsgispy``.
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 #: Undefined raster pixel data type (``0``).
 TYPE_UNDEFINED = 0

@@ -235,36 +235,40 @@ def calc_vec_pt_dist_angle(
     if get_gdf_geom_type(data_gdf) != rsgispy.GEOM_PT:
         raise rsgispy.RSGISPyException("Vector geometry type must be points.")
 
-    geom_pts = data_gdf.geometry.get_coordinates()
-    if not {"x", "y"}.issubset(geom_pts.columns):
-        raise rsgispy.RSGISPyException(
-            "The geometry is not as expected - need x and y coordinates."
+    valid_mask = (
+        data_gdf.geometry.notna() & ~data_gdf.geometry.is_empty
+    ).to_numpy()
+    dists = np.full(len(data_gdf), np.nan, dtype=float)
+    angles_out = np.full(len(data_gdf), np.nan, dtype=float)
+
+    if np.any(valid_mask):
+        valid_geoms = data_gdf.geometry.iloc[np.flatnonzero(valid_mask)]
+        x_coords = valid_geoms.x.to_numpy(dtype=float)
+        y_coords = valid_geoms.y.to_numpy(dtype=float)
+        if x_centre is None:
+            x_centre = float(x_coords.mean())
+        if y_centre is None:
+            y_centre = float(y_coords.mean())
+
+        dists[valid_mask] = np.sqrt(
+            (x_coords - x_centre) ** 2 + (y_coords - y_centre) ** 2
         )
 
-    x_coords = geom_pts["x"].to_numpy()
-    y_coords = geom_pts["y"].to_numpy()
-    if x_centre is None:
-        x_centre = float(x_coords.mean())
-    if y_centre is None:
-        y_centre = float(y_coords.mean())
+        angles = np.rad2deg(
+            np.arctan2(y_coords - y_centre, x_coords - x_centre)
+        )
+        angles_secs = np.zeros_like(angles)
+        angles_secs[(angles >= 0) & (angles <= 90)] = 1
+        angles_secs[angles > 90] = 2
+        angles_secs[angles < 0] = 3
 
-    data_gdf[dist_col] = np.sqrt(
-        (x_coords - x_centre) ** 2 + (y_coords - y_centre) ** 2
-    )
+        angles[angles_secs == 1] = -(angles[angles_secs == 1] - 90.0)
+        angles[angles_secs == 2] = -(angles[angles_secs == 2] - 180.0) + 270.0
+        angles[angles_secs == 3] = -angles[angles_secs == 3] + 90.0
+        angles_out[valid_mask] = angles
 
-    angles = np.rad2deg(
-        np.arctan2(y_coords - y_centre, x_coords - x_centre)
-    )
-    angles_secs = np.zeros_like(angles)
-    angles_secs[(angles >= 0) & (angles <= 90)] = 1
-    angles_secs[angles > 90] = 2
-    angles_secs[angles < 0] = 3
-
-    angles[angles_secs == 1] = -(angles[angles_secs == 1] - 90.0)
-    angles[angles_secs == 2] = -(angles[angles_secs == 2] - 180.0) + 270.0
-    angles[angles_secs == 3] = -angles[angles_secs == 3] + 90.0
-
-    data_gdf[angle_col] = angles
+    data_gdf[dist_col] = dists
+    data_gdf[angle_col] = angles_out
     return finish_vec_output(
         data_gdf,
         out_vec_file,
@@ -320,9 +324,11 @@ def calc_near_dist_to_feats(
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     dist_gdf = read_vec_gdf(vec_dist_file, vec_dist_lyr, copy=False)
 
+    orig_index = data_gdf.index
+    work_gdf = data_gdf.reset_index(drop=True)
     dist_geom_gdf = dist_gdf[[dist_gdf.geometry.name]]
     data_dist_gdf = gpd.sjoin_nearest(
-        data_gdf,
+        work_gdf,
         dist_geom_gdf,
         distance_col=out_col,
         lsuffix="left",
@@ -332,7 +338,10 @@ def calc_near_dist_to_feats(
     if "index_right" in data_dist_gdf.columns:
         data_dist_gdf = data_dist_gdf.drop(columns=["index_right"])
     if data_dist_gdf.index.duplicated().any():
-        data_dist_gdf = data_dist_gdf[~data_dist_gdf.index.duplicated(keep="first")]
+        data_dist_gdf = data_dist_gdf[
+            ~data_dist_gdf.index.duplicated(keep="first")
+        ]
+    data_dist_gdf.index = orig_index[data_dist_gdf.index.to_numpy()]
     return finish_vec_output(
         data_dist_gdf,
         out_vec_file,
@@ -392,7 +401,7 @@ def count_pt_intersects(
             "polys.gpkg", "polys", "pts.gpkg", "pts", "counts.gpkg", "polys"
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     in_gdf = read_vec_gdf(vec_in_file, vec_in_lyr, epsg=vec_in_epsg)
     pts_gdf = read_vec_gdf(
         vec_pts_file, vec_pts_lyr, epsg=vec_pts_epsg, copy=False
@@ -402,9 +411,19 @@ def count_pt_intersects(
     if drop_cols:
         in_gdf = in_gdf.drop(columns=drop_cols)
 
-    in_gdf[tmp_col_name] = np.arange(1, len(in_gdf) + 1, 1, dtype=int)
+    join_ids = np.arange(1, len(in_gdf) + 1, 1, dtype=int)
+    in_gdf[tmp_col_name] = join_ids
+    join_left = gpd.GeoDataFrame(
+        {tmp_col_name: join_ids},
+        geometry=in_gdf.geometry.to_numpy(),
+        crs=in_gdf.crs,
+    )
+    join_right = gpd.GeoDataFrame(
+        geometry=pts_gdf.geometry.to_numpy(),
+        crs=pts_gdf.crs,
+    )
     counts = (
-        in_gdf.sjoin(pts_gdf)
+        gpd.sjoin(join_left, join_right, how="inner", predicate="intersects")
         .groupby(tmp_col_name)
         .size()
         .rename(out_count_col)
@@ -473,22 +492,34 @@ def calc_npts_in_radius(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     rsgispy.check_optional_dep(HAVE_SCIPY, "calc_npts_in_radius", "scipy", "stats")
-    in_gdf = read_vec_gdf(vec_in_file, vec_in_lyr)
+    in_gdf = read_vec_gdf(vec_in_file, vec_lyr=vec_in_lyr)
     if get_gdf_geom_type(in_gdf) != rsgispy.GEOM_PT:
         raise rsgispy.RSGISPyException("Vector geometry type must be points.")
 
-    coords = list(zip(in_gdf.geometry.x, in_gdf.geometry.y))
-    tree = scipy.spatial.KDTree(coords)
-    n_pts = tree.query_ball_point(
-        coords,
-        r=radius,
-        p=2.0,
-        eps=0,
-        workers=n_cores,
-        return_sorted=None,
-        return_length=True,
-    )
-    in_gdf[out_col_name] = n_pts - 1
+    valid_mask = (
+        in_gdf.geometry.notna() & ~in_gdf.geometry.is_empty
+    ).to_numpy()
+    counts = np.zeros(len(in_gdf), dtype=int)
+    if np.any(valid_mask):
+        valid_geoms = in_gdf.geometry.iloc[np.flatnonzero(valid_mask)]
+        coords = np.column_stack(
+            [
+                valid_geoms.x.to_numpy(dtype=float),
+                valid_geoms.y.to_numpy(dtype=float),
+            ]
+        )
+        tree = scipy.spatial.KDTree(coords)
+        n_pts = tree.query_ball_point(
+            coords,
+            r=radius,
+            p=2.0,
+            eps=0,
+            workers=n_cores,
+            return_sorted=None,
+            return_length=True,
+        )
+        counts[valid_mask] = np.asarray(n_pts, dtype=int) - 1
+    in_gdf[out_col_name] = counts
     return finish_vec_output(
         in_gdf,
         out_vec_file,

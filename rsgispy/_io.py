@@ -803,6 +803,7 @@ class TileGraph:
         in_tensors: Sequence[_TileTensor],
         out_hy: int,
         out_hx: int,
+        parsers: Dict[BandMathOp, pymu_eval.Parser],
     ) -> _TileTensor:
         """Evaluate a ``pymu-eval`` :class:`BandMathOp` across bands."""
         aligned = [_crop_tensor(t, out_hy, out_hx) for t in in_tensors]
@@ -815,12 +816,15 @@ class TileGraph:
                     f"BandMathOp inputs have incompatible band counts: {band_counts}."
                 )
 
-        parser = pymu_eval.Parser()
-        var_name_set = set(node.var_names)
-        if "pi" not in var_name_set:
-            parser.define_const("pi", pymu_eval.MathImpl.CONST_PI)
-        if "e" not in var_name_set:
-            parser.define_const("e", pymu_eval.MathImpl.CONST_E)
+        parser = parsers.get(node)
+        needs_parse = parser is None
+        if parser is None:
+            parser = pymu_eval.Parser()
+            var_name_set = set(node.var_names)
+            if "pi" not in var_name_set:
+                parser.define_const("pi", pymu_eval.MathImpl.CONST_PI)
+            if "e" not in var_name_set:
+                parser.define_const("e", pymu_eval.MathImpl.CONST_E)
 
         out_bands: List[np.ndarray] = []
         for b_idx in range(n_bands):
@@ -839,13 +843,14 @@ class TileGraph:
                     invalid_mask = (
                         cur_inv if invalid_mask is None else (invalid_mask | cur_inv)
                     )
-            if b_idx == 0:
+            if needs_parse and b_idx == 0:
                 try:
                     parser.set_expr(node.expr)
                 except pymu_eval.ParserError as err:
                     raise rsgispy.RSGISPyException(
                         f"Invalid BandMathOp expression '{node.expr}': {err}"
                     ) from err
+                parsers[node] = parser
             try:
                 with np.errstate(all="ignore"):
                     val = np.asarray(parser.eval(), dtype=np.float64)
@@ -935,7 +940,10 @@ class TileGraph:
                         f"got {(cur_h, cur_w)} vs {(img_h, img_w)}."
                     )
 
-            assert img_h is not None and img_w is not None
+            if img_h is None or img_w is None:
+                raise rsgispy.RSGISPyException(
+                    "TileGraph could not determine image dimensions from sources."
+                )
             grid = IntersectionGrid(
                 crs=ref_crs,
                 transform=(
@@ -948,6 +956,7 @@ class TileGraph:
 
             open_sinks: Dict[DiskSink, rasterio.io.DatasetWriter] = {}
             mem_arrays: Dict[MemorySink, np.ndarray] = {}
+            band_math_parsers: Dict[BandMathOp, pymu_eval.Parser] = {}
 
             for win in iter_dataset_windows(
                 img_h, img_w, block_size=self.block_size, use_pbar=use_pbar
@@ -994,7 +1003,7 @@ class TileGraph:
                     elif isinstance(node, BandMathOp):
                         in_t = [tensors[p] for p in node.inputs]
                         tensors[node] = self._eval_band_math_op(
-                            node, in_t, hy, hx
+                            node, in_t, hy, hx, band_math_parsers
                         )
                     elif isinstance(node, DiskSink):
                         core = _crop_tensor(tensors[node.inputs[0]], 0, 0).data
