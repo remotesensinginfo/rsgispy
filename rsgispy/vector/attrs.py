@@ -19,6 +19,7 @@ from rsgispy.vector._attrs_columns import (
     create_name_col,
     create_orthogonal_angle_sets,
     find_replace_str_vec_lyr,
+    vector_maths,
 )
 from rsgispy.vector._attrs_io import (
     drop_vec_cols,
@@ -71,6 +72,7 @@ __all__ = [
     "find_replace_str_vec_lyr",
     "create_angle_sets",
     "create_orthogonal_angle_sets",
+    "vector_maths",
     # Spatial attribute enrichment
     "pop_bbox_cols",
     "add_geom_bbox_cols",

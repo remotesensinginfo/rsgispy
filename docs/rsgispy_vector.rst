@@ -37,6 +37,40 @@ Create footprints, enrich attributes, and compute spatial metrics in memory:
    fp_gdf = rsgispy.vector.attrs.add_fid_col(fp_gdf, None, out_col="fid")
    fp_gdf = rsgispy.vector.stats.calc_vec_area(fp_gdf, None, "area_m2")
 
+Calculate multiple new attribute columns in one pass using comma-separated
+``pymu-eval`` expressions with :func:`~rsgispy.vector.attrs.vector_maths`
+(each top-level comma-separated sub-expression maps positionally to the
+corresponding entry in ``out_col``, while commas inside function calls such as
+``min(blue, green, red)`` remain function arguments):
+
+.. code-block:: python
+
+   import numpy as np
+   import rsgispy.vector.attrs
+
+   # Multi-output expression writing three columns with per-column dtypes
+   exp = """
+       (nir + red) != 0 ? (nir - red) / (nir + red) : -9999,
+       avg(blue, green, red),
+       (nir > red) ? 1 : 0
+   """
+   out_gdf = rsgispy.vector.attrs.vector_maths(
+       "samples.gpkg",
+       "samples",
+       out_col=["ndvi", "vis_mean", "is_veg"],
+       exp=exp,
+       out_dtype=[np.float32, np.float32, int],
+   )
+
+   # Alias columns with spaces/hyphens and reuse scaled values across outputs
+   out_gdf = rsgispy.vector.attrs.vector_maths(
+       "samples.gpkg",
+       "samples",
+       out_col=["nir_refl", "red_refl", "ndvi"],
+       exp="nir = nir * 0.0001, red = red * 0.0001, (nir - red) / (nir + red)",
+       vec_cols={"nir": "Band 4", "red": "Band 3"},
+   )
+
 Submodules
 ----------
 
