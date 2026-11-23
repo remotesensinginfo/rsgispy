@@ -1668,3 +1668,138 @@ def test_region_growing_fill_tiled_unseeded_eez_outside_seeds_and_errors(tmp_pat
             err_outs[:2],
             use_pbar=False,
         )
+
+
+def test_get_img_histogram_continuous_options(tmp_path):
+    """Test get_img_histogram with n_bins, bin_size, auto bins, val_range, and mask."""
+    import rsgispy.imagecalc as imagecalc
+
+    assert imagecalc.get_img_histogram is ic_stats.get_img_histogram
+
+    in_img = tmp_path / "cont.tif"
+    msk_img = tmp_path / "msk.tif"
+    arr = np.array(
+        [
+            [
+                [0.1, 0.2, 0.4, 0.9],
+                [0.15, -9999.0, 0.6, 1.0],
+                [0.35, 0.45, 0.75, np.nan],
+            ]
+        ],
+        dtype=np.float32,
+    )
+    msk = np.array(
+        [
+            [
+                [1, 1, 1, 1],
+                [1, 1, 0, 1],
+                [1, 1, 1, 1],
+            ]
+        ],
+        dtype=np.uint8,
+    )
+    _write_raster(in_img, arr, dtype="float32", nodata=-9999.0)
+    _write_raster(msk_img, msk, dtype="uint8", nodata=0)
+
+    # Fixed bin_size with explicit val_range
+    h_bs = ic_stats.get_img_histogram(
+        in_img,
+        img_band=1,
+        bin_size=0.25,
+        val_range=(0.0, 1.0),
+        use_pbar=False,
+    )
+    assert h_bs["n_bins"] == 4
+    assert h_bs["bin_width"] == pytest.approx(0.25)
+    assert h_bs["total_count"] == 10
+    assert h_bs["bin_edges"] == pytest.approx([0.0, 0.25, 0.5, 0.75, 1.0])
+    assert h_bs["bin_centres"] == pytest.approx([0.125, 0.375, 0.625, 0.875])
+    assert h_bs["counts"].tolist() == [3, 3, 1, 3]
+    assert np.sum(h_bs["proportions"]) == pytest.approx(1.0)
+    assert np.sum(h_bs["density"] * h_bs["bin_widths"]) == pytest.approx(1.0)
+    assert len(h_bs["bins"]) == 4
+    assert h_bs["bins"][0]["count"] == 3
+    assert h_bs["bins"][0]["lower_edge"] == pytest.approx(0.0)
+    assert h_bs["bins"][0]["upper_edge"] == pytest.approx(0.25)
+
+    # Fixed n_bins + mask image (excludes pixel with value 0.6)
+    h_nb = ic_stats.get_img_histogram(
+        in_img,
+        img_band=1,
+        n_bins=2,
+        val_range=(0.0, 1.0),
+        in_msk_img=msk_img,
+        img_msk_val=1,
+        use_pbar=False,
+    )
+    assert h_nb["n_bins"] == 2
+    assert h_nb["total_count"] == 9
+    assert h_nb["counts"].tolist() == [6, 3]
+
+    # Auto Scott binning without explicit n_bins / bin_size
+    h_auto = ic_stats.get_img_histogram(in_img, use_pbar=False)
+    assert h_auto["n_bins"] >= 1
+    assert h_auto["total_count"] == 10
+    assert h_auto["counts"].sum() == 10
+
+
+def test_get_img_histogram_integer_bins_and_errors(tmp_path):
+    """Test get_img_histogram integer_bins=True on categorical rasters and error cases."""
+    cat_img = tmp_path / "cat.tif"
+    arr = np.array(
+        [
+            [
+                [1, 1, 2, 0],
+                [4, 2, 1, 0],
+                [4, 4, 2, 1],
+            ]
+        ],
+        dtype=np.uint8,
+    )
+    _write_raster(cat_img, arr, dtype="uint8", nodata=0)
+
+    # Integer bins with nodata=0 excluded: values 1, 2, 4 -> bins [1, 2, 3, 4]
+    h_cat = ic_stats.get_img_histogram(
+        cat_img,
+        img_band=1,
+        integer_bins=True,
+        use_pbar=False,
+    )
+    assert h_cat["integer_bins"] is True
+    assert h_cat["n_bins"] == 4
+    assert h_cat["bin_width"] == pytest.approx(1.0)
+    assert h_cat["min_val"] == 1
+    assert h_cat["max_val"] == 4
+    assert h_cat["bin_values"].tolist() == [1, 2, 3, 4]
+    assert h_cat["bin_centres"] == pytest.approx([1.0, 2.0, 3.0, 4.0])
+    assert h_cat["bin_edges"] == pytest.approx([0.5, 1.5, 2.5, 3.5, 4.5])
+    assert h_cat["counts"].tolist() == [4, 3, 0, 3]
+    assert h_cat["total_count"] == 10
+    assert [b["value"] for b in h_cat["bins"]] == [1, 2, 3, 4]
+    assert [b["count"] for b in h_cat["bins"]] == [4, 3, 0, 3]
+
+    # Constant float raster
+    const_img = tmp_path / "const.tif"
+    _write_raster(const_img, np.full((1, 3, 3), 5.0, dtype=np.float32))
+    h_const = ic_stats.get_img_histogram(const_img, n_bins=3, use_pbar=False)
+    assert h_const["n_bins"] == 3
+    assert h_const["total_count"] == 9
+    assert h_const["counts"].sum() == 9
+
+    # Non-integer float raster with integer_bins=True raises error
+    flt_img = tmp_path / "flt.tif"
+    _write_raster(flt_img, np.array([[[1.2, 2.5], [3.0, 4.0]]], dtype=np.float32))
+    with pytest.raises(rsgispy.RSGISPyException, match="non-integer"):
+        ic_stats.get_img_histogram(flt_img, integer_bins=True, use_pbar=False)
+
+    # Validation errors
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_stats.get_img_histogram(cat_img, n_bins=5, bin_size=1.0)
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_stats.get_img_histogram(cat_img, integer_bins=True, n_bins=4)
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_stats.get_img_histogram(cat_img, n_bins=0)
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_stats.get_img_histogram(cat_img, bin_size=-1.0)
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_stats.get_img_histogram(cat_img, val_range=(5.0, 1.0))

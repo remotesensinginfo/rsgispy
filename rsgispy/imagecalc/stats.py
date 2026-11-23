@@ -6,7 +6,8 @@ pixel value counting, and unique value extraction using ``rasterio``.
 
 from contextlib import ExitStack
 import math
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+import os
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import rasterio
@@ -41,6 +42,7 @@ __all__ = [
     "calc_multi_img_band_stats",
     "get_img_sum_stats_in_pxl",
     "calc_mask_img_pxl_val_prob",
+    "get_img_histogram",
 ]
 
 
@@ -1014,3 +1016,434 @@ def calc_mask_img_pxl_val_prob(
                 out_flat[lookup_mask] = q_probs
 
             dst.write(out_flat.reshape(win_h, win_w), 1, window=out_win)
+
+
+_MAX_INTEGER_HIST_BINS = 1_000_000
+
+
+def _validate_histogram_options(
+    n_bins: Optional[int],
+    bin_size: Optional[float],
+    integer_bins: bool,
+    val_range: Optional[Tuple[float, float]],
+) -> Optional[Tuple[float, float]]:
+    """Validate bin and range arguments for :func:`get_img_histogram`."""
+    if integer_bins and (n_bins is not None or bin_size is not None):
+        raise rsgispy.RSGISPyException(
+            "integer_bins=True cannot be combined with n_bins or bin_size."
+        )
+    if n_bins is not None and bin_size is not None:
+        raise rsgispy.RSGISPyException(
+            "Specify either n_bins or bin_size, not both."
+        )
+    if n_bins is not None and int(n_bins) < 1:
+        raise rsgispy.RSGISPyException("n_bins must be >= 1.")
+    if bin_size is not None:
+        bs_val = float(bin_size)
+        if not math.isfinite(bs_val) or bs_val <= 0.0:
+            raise rsgispy.RSGISPyException(
+                "bin_size must be a finite value greater than 0."
+            )
+
+    norm_range: Optional[Tuple[float, float]] = None
+    if val_range is not None:
+        if len(val_range) != 2:
+            raise rsgispy.RSGISPyException(
+                "val_range must be a (min_val, max_val) 2-tuple."
+            )
+        r_min = float(val_range[0])
+        r_max = float(val_range[1])
+        if not (math.isfinite(r_min) and math.isfinite(r_max)) or r_min > r_max:
+            raise rsgispy.RSGISPyException(
+                "val_range must contain finite bounds with min_val <= max_val."
+            )
+        if integer_bins and (
+            r_min != math.floor(r_min) or r_max != math.floor(r_max)
+        ):
+            raise rsgispy.RSGISPyException(
+                "val_range bounds must be integers when integer_bins=True."
+            )
+        norm_range = (r_min, r_max)
+    return norm_range
+
+
+def _extract_valid_hist_pixels(
+    img_src: Any,
+    img_band: int,
+    img_nodata: Optional[float],
+    use_no_data: bool,
+    msk_src: Optional[Any],
+    img_msk_val: int,
+    base_ci: int,
+    base_ri: int,
+    base_cm: int,
+    base_rm: int,
+    out_win: Window,
+    val_range: Optional[Tuple[float, float]],
+) -> np.ndarray:
+    """Read a block and return 1D valid ``float64`` pixel values."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    win_h = int(out_win.height)
+    win_w = int(out_win.width)
+    img_win = Window(
+        base_ci + int(out_win.col_off),
+        base_ri + int(out_win.row_off),
+        win_w,
+        win_h,
+    )
+    blk = img_src.read(img_band, window=img_win, out_dtype=np.float64).ravel()
+    valid = np.isfinite(blk)
+    if use_no_data and img_nodata is not None and not math.isnan(float(img_nodata)):
+        valid &= blk != float(img_nodata)
+
+    if msk_src is not None:
+        msk_win = Window(
+            base_cm + int(out_win.col_off),
+            base_rm + int(out_win.row_off),
+            win_w,
+            win_h,
+        )
+        msk_arr = msk_src.read(1, window=msk_win).ravel()
+        valid &= msk_arr == img_msk_val
+
+    vals = blk[valid]
+    if val_range is not None and vals.size > 0:
+        vals = vals[(vals >= val_range[0]) & (vals <= val_range[1])]
+    return vals
+
+
+def _build_histogram_edges(
+    v_min: float,
+    v_max: float,
+    n_valid: int,
+    std_val: float,
+    n_bins: Optional[int],
+    bin_size: Optional[float],
+    integer_bins: bool,
+) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    """Construct bin edges (and integer bin labels when ``integer_bins=True``)."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    if integer_bins:
+        min_int = int(round(v_min))
+        max_int = int(round(v_max))
+        span_bins = (max_int - min_int) + 1
+        if span_bins > _MAX_INTEGER_HIST_BINS:
+            raise rsgispy.RSGISPyException(
+                f"Integer histogram span ({span_bins} bins from {min_int} to "
+                f"{max_int}) exceeds limit ({_MAX_INTEGER_HIST_BINS}). Use "
+                "n_bins or bin_size instead."
+            )
+        int_vals = np.arange(min_int, max_int + 1, dtype=np.int64)
+        bin_edges = np.arange(min_int, max_int + 2, dtype=np.float64) - 0.5
+        return bin_edges, int_vals
+
+    if bin_size is not None:
+        bs_val = float(bin_size)
+        span = v_max - v_min
+        if span <= 0.0:
+            n_calc = 1
+        else:
+            n_calc = max(1, int(math.ceil(span / bs_val)))
+        bin_edges = v_min + np.arange(n_calc + 1, dtype=np.float64) * bs_val
+        if bin_edges[-1] < v_max:
+            bin_edges = np.append(bin_edges, bin_edges[-1] + bs_val)
+        return bin_edges, None
+
+    if n_bins is not None:
+        nb_val = int(n_bins)
+    elif v_max <= v_min or n_valid <= 1 or std_val <= 0.0:
+        nb_val = 1
+    else:
+        scott_w = (3.5 * std_val) / (float(n_valid) ** (1.0 / 3.0))
+        if scott_w > 0.0:
+            nb_val = max(1, min(1024, int(math.ceil((v_max - v_min) / scott_w))))
+        else:
+            nb_val = 1
+
+    if v_max <= v_min:
+        bin_edges = np.linspace(v_min - 0.5, v_max + 0.5, nb_val + 1, dtype=np.float64)
+    else:
+        bin_edges = np.linspace(v_min, v_max, nb_val + 1, dtype=np.float64)
+    return bin_edges, None
+
+
+def get_img_histogram(
+    input_img: Union[str, os.PathLike],
+    img_band: int = 1,
+    n_bins: Optional[int] = None,
+    bin_size: Optional[float] = None,
+    integer_bins: bool = False,
+    val_range: Optional[Tuple[float, float]] = None,
+    no_data_val: Optional[float] = None,
+    use_no_data: bool = True,
+    in_msk_img: Optional[Union[str, os.PathLike]] = None,
+    img_msk_val: int = 1,
+    use_pbar: bool = True,
+) -> Dict[str, Any]:
+    """
+    Calculate a histogram for a single raster band using streaming
+    block-wise processing and return counts, bin boundaries, centres,
+    widths, proportions, density, and per-bin summary records.
+
+    Binning modes (mutually exclusive):
+
+    * **Auto** (``n_bins=None``, ``bin_size=None``, ``integer_bins=False``):
+      Estimates the bin count from the streaming standard deviation using
+      Scott's rule.
+    * **Fixed number of bins** (``n_bins=<int>``): Divides the data or
+      ``val_range`` interval into ``n_bins`` equal-width bins.
+    * **Fixed bin width** (``bin_size=<float>``): Builds contiguous bins of
+      width ``bin_size`` covering the data or ``val_range`` interval.
+    * **Single-integer / categorical bins** (``integer_bins=True``): Creates
+      one unit-width bin per integer ``k`` (edges ``[k - 0.5, k + 0.5]``,
+      centre ``k``) across ``[min_int, max_int]``, ideal for thematic or
+      classified rasters.
+
+    :param input_img: Path to the input raster image.
+    :param img_band: 1-based band index to summarise (Default = ``1``).
+    :param n_bins: Optional explicit number of equal-width bins (``>= 1``).
+    :param bin_size: Optional explicit bin width (``> 0``).
+    :param integer_bins: If ``True``, create one bin per integer value
+                         (Default = ``False``).
+    :param val_range: Optional ``(min_val, max_val)`` range restricting
+                      included pixel values and defining outer bin bounds.
+    :param no_data_val: Optional no-data value to exclude. If ``None`` and
+                        ``use_no_data`` is ``True``, uses the band header
+                        no-data value when present.
+    :param use_no_data: If ``True``, exclude ``no_data_val`` pixels
+                        (Default = ``True``).
+    :param in_msk_img: Optional path to a mask raster (band 1 compared to
+                       ``img_msk_val``).
+    :param img_msk_val: Pixel value in ``in_msk_img`` identifying valid
+                        pixels (Default = ``1``).
+    :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
+    :return: Dictionary containing histogram arrays and bin metadata:
+
+             * ``"band"`` (``int``): 1-based band index.
+             * ``"n_bins"`` (``int``): Number of histogram bins.
+             * ``"bin_width"`` (``float``): Scalar bin width.
+             * ``"integer_bins"`` (``bool``): Whether integer binning was used.
+             * ``"min_val"`` (``int | float``): Minimum bound of the histogram.
+             * ``"max_val"`` (``int | float``): Maximum bound of the histogram.
+             * ``"total_count"`` (``int``): Total valid pixels counted.
+             * ``"counts"`` (:class:`numpy.ndarray`): 1D ``int64`` bin counts.
+             * ``"proportions"`` (:class:`numpy.ndarray`): 1D ``float64``
+               per-bin pixel proportions summing to ``1.0`` (when non-empty).
+             * ``"density"`` (:class:`numpy.ndarray`): 1D ``float64``
+               probability density (``counts / (total_count * bin_widths)``).
+             * ``"bin_edges"`` (:class:`numpy.ndarray`): 1D ``float64`` edges
+               of length ``n_bins + 1``.
+             * ``"bin_centres"`` (:class:`numpy.ndarray`): 1D ``float64`` bin
+               centres of length ``n_bins``.
+             * ``"bin_widths"`` (:class:`numpy.ndarray`): 1D ``float64`` bin
+               widths of length ``n_bins``.
+             * ``"bin_values"`` (:class:`numpy.ndarray`, optional): 1D
+               ``int64`` integer values when ``integer_bins=True``.
+             * ``"bins"`` (``list[dict]``): Per-bin dictionaries with keys
+               ``bin_index``, ``lower_edge``, ``upper_edge``, ``centre``,
+               ``width``, ``count``, ``proportion``, ``density`` (plus
+               ``value`` when ``integer_bins=True``).
+
+    .. code:: python
+
+        import rsgispy.imagecalc.stats as imgstats
+
+        # Continuous histogram with fixed bin width
+        ndvi_hist = imgstats.get_img_histogram(
+            input_img="ndvi.tif",
+            img_band=1,
+            bin_size=0.1,
+            val_range=(-1.0, 1.0),
+        )
+
+        # Categorical integer raster histogram (1 bin per class ID)
+        cls_hist = imgstats.get_img_histogram(
+            input_img="landcover.tif",
+            img_band=1,
+            integer_bins=True,
+        )
+        for bin_info in cls_hist["bins"]:
+            print(bin_info["value"], bin_info["count"], bin_info["proportion"])
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches
+    norm_range = _validate_histogram_options(
+        n_bins=n_bins,
+        bin_size=bin_size,
+        integer_bins=integer_bins,
+        val_range=val_range,
+    )
+    in_path = os.fspath(input_img)
+    ensure_file_exists(in_path)
+    msk_path = os.fspath(in_msk_img) if in_msk_img is not None else None
+    if msk_path is not None:
+        ensure_file_exists(msk_path)
+
+    open_paths = [in_path] if msk_path is None else [in_path, msk_path]
+    with ExitStack() as stack:
+        datasets, _ = open_multi_image_datasets(stack, open_paths)
+        img_src = datasets[in_path]
+        validate_band_index(img_band, img_src.count, in_path)
+        msk_src = datasets[msk_path] if msk_path is not None else None
+
+        eff_nodata = (
+            img_src.nodatavals[img_band - 1]
+            if (use_no_data and no_data_val is None)
+            else no_data_val
+        )
+        grid = compute_spatial_intersection(datasets)
+        base_ci, base_ri = grid.offsets[in_path]
+        base_cm, base_rm = grid.offsets[msk_path] if msk_path is not None else (0, 0)
+
+        need_scan = (norm_range is None) or (
+            n_bins is None and bin_size is None and not integer_bins
+        )
+        n_valid = 0
+        mean_val = 0.0
+        m2_val = 0.0
+        v_min = math.inf
+        v_max = -math.inf
+
+        if need_scan:
+            for out_win in iter_dataset_windows(
+                grid.height, grid.width, use_pbar=use_pbar
+            ):
+                vals = _extract_valid_hist_pixels(
+                    img_src=img_src,
+                    img_band=img_band,
+                    img_nodata=eff_nodata,
+                    use_no_data=use_no_data,
+                    msk_src=msk_src,
+                    img_msk_val=img_msk_val,
+                    base_ci=base_ci,
+                    base_ri=base_ri,
+                    base_cm=base_cm,
+                    base_rm=base_rm,
+                    out_win=out_win,
+                    val_range=norm_range,
+                )
+                k = int(vals.size)
+                if k == 0:
+                    continue
+                if integer_bins and not np.all(vals == np.floor(vals)):
+                    raise rsgispy.RSGISPyException(
+                        "Input image contains non-integer values; integer_bins=True "
+                        "requires integer pixel values."
+                    )
+                blk_min = float(np.min(vals))
+                blk_max = float(np.max(vals))
+                v_min = min(v_min, blk_min)
+                v_max = max(v_max, blk_max)
+                blk_mean = float(np.mean(vals))
+                blk_m2 = float(np.sum((vals - blk_mean) ** 2))
+                n_new = n_valid + k
+                delta = blk_mean - mean_val
+                mean_val += delta * (float(k) / float(n_new))
+                m2_val += blk_m2 + (delta * delta) * (
+                    float(n_valid) * float(k) / float(n_new)
+                )
+                n_valid = n_new
+
+            if n_valid == 0 and norm_range is None:
+                raise rsgispy.RSGISPyException(
+                    "No valid pixels found in input image to compute histogram."
+                )
+
+        if norm_range is not None:
+            v_min, v_max = norm_range
+        std_val = math.sqrt(max(m2_val / max(n_valid, 1), 0.0)) if n_valid > 0 else 0.0
+
+        bin_edges, int_vals = _build_histogram_edges(
+            v_min=v_min,
+            v_max=v_max,
+            n_valid=n_valid,
+            std_val=std_val,
+            n_bins=n_bins,
+            bin_size=bin_size,
+            integer_bins=integer_bins,
+        )
+        out_n_bins = int(bin_edges.size - 1)
+        counts = np.zeros(out_n_bins, dtype=np.int64)
+        min_int = int(int_vals[0]) if int_vals is not None else 0
+
+        for out_win in iter_dataset_windows(
+            grid.height, grid.width, use_pbar=use_pbar
+        ):
+            vals = _extract_valid_hist_pixels(
+                img_src=img_src,
+                img_band=img_band,
+                img_nodata=eff_nodata,
+                use_no_data=use_no_data,
+                msk_src=msk_src,
+                img_msk_val=img_msk_val,
+                base_ci=base_ci,
+                base_ri=base_ri,
+                base_cm=base_cm,
+                base_rm=base_rm,
+                out_win=out_win,
+                val_range=norm_range,
+            )
+            if vals.size == 0:
+                continue
+            if int_vals is not None:
+                if not np.all(vals == np.floor(vals)):
+                    raise rsgispy.RSGISPyException(
+                        "Input image contains non-integer values; integer_bins=True "
+                        "requires integer pixel values."
+                    )
+                shifted = vals.astype(np.int64) - min_int
+                in_int_bounds = (shifted >= 0) & (shifted < out_n_bins)
+                if np.any(in_int_bounds):
+                    counts += np.bincount(
+                        shifted[in_int_bounds].astype(np.intp, copy=False),
+                        minlength=out_n_bins,
+                    )
+            else:
+                blk_counts, _ = np.histogram(vals, bins=bin_edges)
+                counts += blk_counts.astype(np.int64)
+
+    total_count = int(np.sum(counts))
+    bin_widths = np.diff(bin_edges)
+    bin_centres = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    if total_count > 0:
+        proportions = counts.astype(np.float64) / float(total_count)
+        density = counts.astype(np.float64) / (float(total_count) * bin_widths)
+    else:
+        proportions = np.zeros(out_n_bins, dtype=np.float64)
+        density = np.zeros(out_n_bins, dtype=np.float64)
+
+    bins_info: List[Dict[str, Any]] = []
+    for idx in range(out_n_bins):
+        entry: Dict[str, Any] = {
+            "bin_index": idx,
+            "lower_edge": float(bin_edges[idx]),
+            "upper_edge": float(bin_edges[idx + 1]),
+            "centre": float(bin_centres[idx]),
+            "width": float(bin_widths[idx]),
+            "count": int(counts[idx]),
+            "proportion": float(proportions[idx]),
+            "density": float(density[idx]),
+        }
+        if int_vals is not None:
+            entry["value"] = int(int_vals[idx])
+        bins_info.append(entry)
+
+    result: Dict[str, Any] = {
+        "band": int(img_band),
+        "n_bins": out_n_bins,
+        "bin_width": float(bin_widths[0]) if out_n_bins > 0 else 0.0,
+        "integer_bins": bool(integer_bins),
+        "min_val": int(round(v_min)) if integer_bins else float(v_min),
+        "max_val": int(round(v_max)) if integer_bins else float(v_max),
+        "total_count": total_count,
+        "counts": counts,
+        "proportions": proportions,
+        "density": density,
+        "bin_edges": bin_edges,
+        "bin_centres": bin_centres,
+        "bin_widths": bin_widths,
+        "bins": bins_info,
+    }
+    if int_vals is not None:
+        result["bin_values"] = int_vals
+    return result

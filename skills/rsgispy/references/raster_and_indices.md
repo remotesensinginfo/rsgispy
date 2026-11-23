@@ -78,6 +78,20 @@ calc_sar_indices(
 - `index_params`: e.g. `{"SDWI_C": {"C": 0.008}}` (for `SDWI` constant, default `C = 1.0` in `SDWI`).
 - Discovery helpers: `get_available_sar_indices()`, `get_sar_index_req_bands(name)`, `get_sar_index_equation(name)`, `get_sar_index_units(name)`.
 
+### Band Histograms (`rsgispy.imagecalc.stats.get_img_histogram`)
+
+`get_img_histogram(input_img, img_band=1, n_bins=None, bin_size=None, integer_bins=False, val_range=None, no_data_val=None, use_no_data=True, in_msk_img=None, img_msk_val=1, use_pbar=True)` computes streaming band histograms and returns `"counts"`, `"proportions"`, `"density"`, `"bin_edges"`, `"bin_centres"`, `"bin_widths"`, `"bin_width"`, `"n_bins"`, `"total_count"`, and per-bin records in `"bins"` (plus `"bin_values"` when `integer_bins=True` for single-integer/categorical datasets):
+
+```python
+from rsgispy.imagecalc.stats import get_img_histogram
+
+# Continuous histogram with fixed bin width
+h_cont = get_img_histogram("ndvi.tif", img_band=1, bin_size=0.1, val_range=(-1.0, 1.0))
+
+# Categorical integer dataset (one bin per integer value)
+h_cat = get_img_histogram("landcover.tif", img_band=1, integer_bins=True)
+```
+
 ## 3. Image Utilities (`rsgispy.imageutils.*`)
 
 - **Metadata (`metadata`)**: `get_img_band_count(img)`, `get_img_res(img)`, `get_img_bbox(img)`, `get_img_no_data_value(img, img_band=1)`, `get_epsg_proj_from_img(img)`, `get_band_names(img)`, `set_band_names(img, band_names)`.

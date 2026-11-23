@@ -31,7 +31,7 @@ description: Generate idiomatic Python code using rsgispy, the pure-Python repla
 | Band math (`pymu-eval`) | `rsgispy.imagecalc.maths` | `BandDefn`, `band_maths`, `image_band_math`, `image_math`, `calc_prop_true_exp` |
 | Optical indices (97) | `rsgispy.imagecalc.calcindices` | `calc_indices`, `get_available_indices`, `get_index_req_bands`, `get_index_equation` |
 | SAR indices (63) | `rsgispy.imagecalc.calcindices` | `calc_sar_indices`, `get_available_sar_indices`, `get_sar_index_req_bands`, `get_sar_index_units` |
-| Raster stats / percentiles | `rsgispy.imagecalc.stats`, `percentiles` | `calc_basic_img_band_stats`, `calc_multi_img_band_stats`, `calc_band_percentile` |
+| Raster stats / histograms / percentiles | `rsgispy.imagecalc.stats`, `percentiles` | `calc_basic_img_band_stats`, `get_img_histogram`, `calc_multi_img_band_stats`, `calc_band_percentile` |
 | Comparison / rescale / fill / dist | `rsgispy.imagecalc.{comparison,rescale,fill,distance,encoding}` | `are_imgs_equal`, `rescale_img_pxl_vals`, `region_growing_fill`, `calc_dist_to_img_vals`, `recode_int_raster` |
 | Metadata, masking, mosaic, warp, tile, VRT | `rsgispy.imageutils.*` | `ImageBandInfo`, `mask_img`, `create_valid_mask`, `reproject_image`, `resample_img_to_match`, `rasterise_vec_lyr`, `create_img_mosaic`, `subset`, `subset_bbox`, `stack_img_bands`, `create_tiles`, `pop_img_stats` |
 | Spatial & SAR filters | `rsgispy.imagefilter.*` | `apply_gaussian_smooth_filter`, `apply_lee_filter`, `apply_refined_lee_filter`, `apply_mean_filter`, `apply_glcm_filter`, `FilterStep`, `apply_filter_chain` |

@@ -105,6 +105,36 @@ conditionals, or re-assign an input variable for reuse in later sub-expressions:
        band_names=["nir_refl", "red_refl", "NDVI"],
    )
 
+Image Histograms (Continuous & Categorical Integer)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:func:`~rsgispy.imagecalc.stats.get_img_histogram` computes streaming band
+histograms supporting fixed bin counts (``n_bins``), fixed bin widths
+(``bin_size``), automatic Scott's-rule binning, or single-integer bins
+(``integer_bins=True``) for categorical/thematic rasters:
+
+.. code-block:: python
+
+   import rsgispy.imagecalc.stats as imgstats
+
+   # Continuous raster with fixed bin width over a custom value range
+   ndvi_hist = imgstats.get_img_histogram(
+       input_img="ndvi.tif",
+       img_band=1,
+       bin_size=0.1,
+       val_range=(-1.0, 1.0),
+   )
+   print(ndvi_hist["bin_edges"], ndvi_hist["counts"], ndvi_hist["proportions"])
+
+   # Categorical integer raster with one bin per integer class ID
+   cls_hist = imgstats.get_img_histogram(
+       input_img="landcover.tif",
+       img_band=1,
+       integer_bins=True,
+   )
+   for bin_info in cls_hist["bins"]:
+       print(bin_info["value"], bin_info["count"], bin_info["proportion"])
+
 Band Mathematics, Spectral Indices & Value Rescaling
 ----------------------------------------------------
 
@@ -122,7 +152,7 @@ Band Mathematics, Spectral Indices & Value Rescaling
 Statistics, Percentiles & Comparison
 ------------------------------------
 
-* :doc:`imagecalc/stats` — Basic band statistics, unique values, multi-image summaries, and mask probabilities.
+* :doc:`imagecalc/stats` — Basic band statistics, streaming histograms (:func:`~rsgispy.imagecalc.stats.get_img_histogram`), unique values, multi-image summaries, and mask probabilities.
 * :doc:`imagecalc/percentiles` — Band percentiles and pixel-wise cross-band/cross-image percentiles.
 * :doc:`imagecalc/comparison` — Image difference, equality tests, correlation, mutual info, EMD, and similarity metrics.
 
