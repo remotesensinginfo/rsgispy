@@ -175,6 +175,7 @@ rsgiswgs84imgres = "rsgispy.cli.wgs84imgres:cli_main"
 
 [project.urls]
 Homepage = "https://github.com/remotesensinginfo/rsgispy"
+Documentation = "https://rsgispy.readthedocs.io"
 Repository = "https://github.com/remotesensinginfo/rsgispy"
 Issues = "https://github.com/remotesensinginfo/rsgispy/issues"
 

@@ -175,6 +175,12 @@ Package Overview
 
 .. toctree::
    :maxdepth: 2
+   :caption: Guides & AI Tooling
+
+   gemini_skill
+
+.. toctree::
+   :maxdepth: 2
    :caption: API Reference
 
    rsgispy
