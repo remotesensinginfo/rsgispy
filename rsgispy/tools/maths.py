@@ -4,9 +4,11 @@ and combinatorial operations.
 """
 
 import collections.abc
+import re
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Union
 
 import numpy as np
+import pymu_eval
 
 import rsgispy
 
@@ -277,3 +279,83 @@ def create_var_list(
             c_val_dict[key] = val
             out_vars.extend(create_var_list(next_vals_lsts, c_val_dict))
     return out_vars
+
+
+def _find_assignment_rhs_end(exp: str, rhs_start: int) -> int:
+    """Return the end index of the assignment RHS starting at ``rhs_start``."""
+    depth = 0
+    in_quote: Optional[str] = None
+    escaped = False
+    for idx in range(rhs_start, len(exp)):
+        ch = exp[idx]
+        if in_quote is not None:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == in_quote:
+                in_quote = None
+            continue
+        if ch in ('"', "'"):
+            in_quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            if depth == 0:
+                return idx
+            depth -= 1
+        elif ch == "," and depth == 0:
+            return idx
+    return len(exp)
+
+
+def configure_muparser_assignment_vars(
+    parser: pymu_eval.Parser,
+    exp: str,
+) -> None:
+    """
+    Register a ``pymu_eval`` variable factory that permits creating new
+    intermediate variables via inline assignment (``var = expr``) while
+    continuing to raise ``ParserError`` for undefined identifiers read without
+    prior assignment.
+
+    :param parser: Configured :class:`pymu_eval.Parser` instance.
+    :param exp: Expression string being compiled on ``parser``.
+    """
+
+    def _var_factory(name: str) -> float:
+        # pylint: disable=protected-access
+        pos = parser._token_reader.get_pos()
+        eq_idx = pos + len(name)
+        while eq_idx < len(exp) and exp[eq_idx] in " \t\r\n":
+            eq_idx += 1
+
+        if (
+            eq_idx < len(exp)
+            and exp[eq_idx] == "="
+            and (eq_idx + 1 >= len(exp) or exp[eq_idx + 1] != "=")
+        ):
+            rhs_start = eq_idx + 1
+            rhs_end = _find_assignment_rhs_end(exp, rhs_start)
+            rhs = exp[rhs_start:rhs_end]
+            for match in re.finditer(rf"\b{re.escape(name)}\b", rhs):
+                tail = rhs[match.end():].lstrip()
+                is_call = tail.startswith("(")
+                is_nested_assign = tail.startswith("=") and not tail.startswith("==")
+                if not is_call and not is_nested_assign:
+                    raise pymu_eval.ParserError(
+                        pymu_eval.EErrorCodes.ecUNASSIGNABLE_TOKEN,
+                        name,
+                        exp,
+                        rhs_start + match.start(),
+                    )
+            return 0.0
+
+        raise pymu_eval.ParserError(
+            pymu_eval.EErrorCodes.ecUNASSIGNABLE_TOKEN,
+            name,
+            exp,
+            pos,
+        )
+
+    parser.set_var_factory(_var_factory)

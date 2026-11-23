@@ -41,18 +41,19 @@ Calculate multiple new attribute columns in one pass using comma-separated
 ``pymu-eval`` expressions with :func:`~rsgispy.vector.attrs.vector_maths`
 (each top-level comma-separated sub-expression maps positionally to the
 corresponding entry in ``out_col``, while commas inside function calls such as
-``min(blue, green, red)`` remain function arguments):
+``min(blue, green, red)`` remain function arguments, and new intermediate
+variables (e.g., ``ndvi = ...``) can be defined and reused by later outputs):
 
 .. code-block:: python
 
    import numpy as np
    import rsgispy.vector.attrs
 
-   # Multi-output expression writing three columns with per-column dtypes
+   # Multi-output expression defining and reusing intermediate `ndvi`
    exp = """
-       (nir + red) != 0 ? (nir - red) / (nir + red) : -9999,
+       ndvi = (nir + red) != 0 ? (nir - red) / (nir + red) : -9999,
        avg(blue, green, red),
-       (nir > red) ? 1 : 0
+       ndvi >= 0.5 ? 1 : 0
    """
    out_gdf = rsgispy.vector.attrs.vector_maths(
        "samples.gpkg",

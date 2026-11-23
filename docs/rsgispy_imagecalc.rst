@@ -61,7 +61,9 @@ that evaluate to multiple outputs in a single pass. In
 sub-expression is written to its corresponding 1-based output band. Commas
 inside function calls (such as ``min(b1, b2, b3)``) stay function argument
 separators, and expressions may span multiple lines, include ternary
-conditionals, or re-assign an input variable for reuse in later sub-expressions:
+conditionals, re-assign an input variable, or define arbitrary new
+intermediate variables (e.g., ``ndvi = (nir - red) / (nir + red + 1e-6)``) for
+reuse in later sub-expressions:
 
 .. code-block:: python
 
@@ -69,21 +71,22 @@ conditionals, or re-assign an input variable for reuse in later sub-expressions:
    import rsgispy.imagecalc.maths
 
    band_defns = [
-       rsgispy.imagecalc.maths.BandDefn(band_name="green", input_img="s2.tif", img_band=2),
        rsgispy.imagecalc.maths.BandDefn(band_name="red", input_img="s2.tif", img_band=3),
        rsgispy.imagecalc.maths.BandDefn(band_name="nir", input_img="s2.tif", img_band=4),
+       rsgispy.imagecalc.maths.BandDefn(band_name="swir1", input_img="s2.tif", img_band=5),
    ]
 
-   # Compute NDVI (band 1) and NDWI (band 2) in one pass with zero-division guards
+   # Define a new intermediate variable (`ndvi`) and reuse it in a later band
    indices_exp = """
-       (nir + red) != 0 ? (nir - red) / (nir + red) : -9999,
-       (green + nir) != 0 ? (green - nir) / (green + nir) : -9999
+       ndvi = (nir - red) / (nir + red + 1e-6),
+       (nir - swir1) / (nir + swir1 + 1e-6),
+       ndvi >= 0.5 ? 1 : 0
    """
    rsgispy.imagecalc.maths.band_maths(
        output_img="indices.tif",
        exp=indices_exp,
        band_defs=band_defns,
-       band_names=["NDVI", "NDWI"],
+       band_names=["NDVI", "NDMI", "VegMask"],
        gdalformat="GTIFF",
        datatype=rsgispy.TYPE_32FLOAT,
    )
@@ -92,7 +95,7 @@ conditionals, or re-assign an input variable for reuse in later sub-expressions:
    # top-level commas separate the three output bands)
    rsgispy.imagecalc.maths.band_maths(
        output_img="band_summary.tif",
-       exp="min(green, red, nir), max(green, red, nir), avg(green, red, nir)",
+       exp="min(red, nir, swir1), max(red, nir, swir1), avg(red, nir, swir1)",
        band_defs=band_defns,
        band_names=["min_refl", "max_refl", "mean_refl"],
    )
@@ -101,7 +104,7 @@ conditionals, or re-assign an input variable for reuse in later sub-expressions:
    rsgispy.imagecalc.maths.band_maths(
        output_img="scaled_and_ndvi.tif",
        exp="nir = nir * 0.0001, red = red * 0.0001, (nir - red) / (nir + red)",
-       band_defs=band_defns[1:],
+       band_defs=band_defns[:2],
        band_names=["nir_refl", "red_refl", "NDVI"],
    )
 

@@ -15,6 +15,7 @@ import pymu_eval
 
 import rsgispy
 import rsgispy.tools.jsonio
+import rsgispy.tools.maths
 import rsgispy.tools.strings
 from rsgispy.vectorprocess import (
     VectorInput,
@@ -1411,6 +1412,8 @@ def _eval_vector_maths_expr(
                 f"Invalid column variable name '{var_name}': {err}"
             ) from err
 
+    rsgispy.tools.maths.configure_muparser_assignment_vars(parser, exp)
+
     try:
         parser.set_expr(exp)
         with np.errstate(all="ignore"):
@@ -1462,8 +1465,14 @@ def vector_maths(
     ``out_col``. Commas inside function calls (such as ``min(b1, b2)`` or
     ``avg(b1, b2, b3)``) remain function argument separators and do not start
     a new output column. Sub-expressions may also span multiple lines, use
-    ternary conditionals (``cond ? val_true : val_false``), or re-assign a
-    bound variable for reuse by subsequent sub-expressions.
+    ternary conditionals (``cond ? val_true : val_false``), re-assign a bound
+    variable, or define arbitrary new intermediate variables (e.g.,
+    ``ndvi = (nir - red) / (nir + red + 1e-6)``) for reuse by subsequent
+    sub-expressions. Note that a top-level assignment sub-expression both
+    binds the variable and writes that value to its positional column in
+    ``out_col``; to define an intermediate without adding an output column,
+    assign inside parentheses (e.g.,
+    ``"(ndvi = (nir - red) / (nir + red + 1e-6)) >= 0.5 ? 1 : 0"``).
 
     :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
@@ -1474,7 +1483,7 @@ def vector_maths(
                 (e.g., ``'(nir - red) / (nir + red)'``,
                 ``'val > 0 ? sqrt(val) : 0'``, or a comma-separated
                 multi-output expression such as
-                ``'(nir - red) / (nir + red), (nir + red) / 2'``).
+                ``'ndvi = (nir - red) / (nir + red + 1e-6), ndvi >= 0.5 ? 1 : 0'``).
     :param out_vec_file: Output vector file path, or ``None`` to return an
                          in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name.
@@ -1511,12 +1520,11 @@ def vector_maths(
             exp="(nir - red) / (nir + red)",
         )
 
-        # Multiple output columns from comma-separated sub-expressions with
-        # per-column output dtypes
+        # Multiple output columns defining and reusing an intermediate variable
         multi_exp = (
-            "(nir + red) != 0 ? (nir - red) / (nir + red) : -9999, "
+            "ndvi = (nir - red) / (nir + red + 1e-6), "
             "(nir + red) / 2, "
-            "(nir > red) ? 1 : 0"
+            "ndvi >= 0.5 ? 1 : 0"
         )
         gdf = rsgispy.vector.attrs.vector_maths(
             "polys.gpkg",
