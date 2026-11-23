@@ -489,6 +489,40 @@ def test_polygonise_and_extract_segment_stats(tmp_path):
     assert os.path.exists(vec_out)
 
 
+def test_polygonise_uint32_legacy_rasterio_compat(tmp_path, monkeypatch):
+    """Verify uint32 label rasters polygonise cleanly even under rasterio < 1.4 dtype rules."""
+    orig_shapes = rasterio.features.shapes
+    legacy_dtypes = {"int16", "int32", "uint8", "uint16", "float32", "float64", "int8"}
+
+    def strict_shapes(source, mask=None, connectivity=4, transform=rasterio.Affine.identity()):
+        if np.asarray(source).dtype.name not in legacy_dtypes:
+            raise ValueError(
+                "image dtype must be one of: int16, int32, uint8, uint16, float32, float64, int8"
+            )
+        return orig_shapes(source, mask=mask, connectivity=connectivity, transform=transform)
+
+    monkeypatch.setattr(rasterio.features, "shapes", strict_shapes)
+
+    lbl_small = np.array(
+        [[0, 1, 1], [2, 2, 0], [2, 3, 3]], dtype=np.uint32
+    )
+    small_img = str(tmp_path / "u32_small.tif")
+    _write_multiband_raster(small_img, lbl_small, nodata=0)
+    gdf_small = rseg.polygonise_segments(small_img, out_vec_file=None)
+    assert set(gdf_small["seg_id"].tolist()) == {1, 2, 3}
+
+    # Also test uint32 values exceeding int32 max (exercises lossless ID remapping fallback)
+    big_a = np.uint32(3_000_000_001)
+    big_b = np.uint32(3_000_000_002)
+    lbl_big = np.array(
+        [[0, big_a, big_a], [big_b, big_b, 0], [big_b, big_b, 0]], dtype=np.uint32
+    )
+    big_img = str(tmp_path / "u32_big.tif")
+    _write_multiband_raster(big_img, lbl_big, nodata=0)
+    gdf_big = rseg.polygonise_segments(big_img, out_vec_file=None)
+    assert set(gdf_big["seg_id"].tolist()) == {int(big_a), int(big_b)}
+
+
 def test_validation_and_dtype_overflow(tmp_path):
     """Verify input validation exceptions and integer label overflow protection."""
     arr = np.arange(36 * 36, dtype=np.float32).reshape(1, 36, 36)

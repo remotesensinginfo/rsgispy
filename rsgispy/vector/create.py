@@ -178,7 +178,10 @@ def polygonise_raster_to_vec_lyr(
         band_arr = src.read(img_band)
         src_crs = src.crs
         src_transform = src.transform
-        is_int = src.dtypes[img_band - 1] in _INT_DTYPES
+        is_int = (
+            src.dtypes[img_band - 1] in _INT_DTYPES
+            or bool(np.issubdtype(band_arr.dtype, np.integer))
+        )
 
     mask_arr: Optional[np.ndarray] = None
     if mask_img is not None:
@@ -188,13 +191,70 @@ def polygonise_raster_to_vec_lyr(
             mask_arr = msk_src.read(mask_band).astype(bool)
 
     connectivity = 8 if use_8_conn else 4
+    # rasterio < 1.4 rejects uint32 / int64 / uint64 in rasterio.features.shapes
+    supported_shapes_dtypes = {
+        np.dtype("int8"),
+        np.dtype("int16"),
+        np.dtype("int32"),
+        np.dtype("uint8"),
+        np.dtype("uint16"),
+        np.dtype("float32"),
+        np.dtype("float64"),
+    }
+    shapes_arr = band_arr
+    remap_vals: Optional[np.ndarray] = None
+    if band_arr.dtype not in supported_shapes_dtypes:
+        active = band_arr[mask_arr] if mask_arr is not None else band_arr
+        if active.size == 0:
+            shapes_arr = np.zeros(band_arr.shape, dtype=np.int32)
+        elif np.issubdtype(band_arr.dtype, np.integer):
+            min_v = int(active.min())
+            max_v = int(active.max())
+            if -2_147_483_648 <= min_v and max_v <= 2_147_483_647:
+                if mask_arr is not None:
+                    shapes_arr = np.where(mask_arr, band_arr, 0).astype(np.int32)
+                else:
+                    shapes_arr = band_arr.astype(np.int32)
+        else:
+            shapes_arr = band_arr.astype(np.float64)
+
     geoms: List[Any] = []
     vals: List[Union[int, float]] = []
-    for geom_dict, pxl_val in rasterio.features.shapes(
-        band_arr, mask=mask_arr, connectivity=connectivity, transform=src_transform
-    ):
+    try:
+        shape_iter = list(
+            rasterio.features.shapes(
+                shapes_arr,
+                mask=mask_arr,
+                connectivity=connectivity,
+                transform=src_transform,
+            )
+        )
+    except ValueError:
+        if np.issubdtype(band_arr.dtype, np.integer):
+            active = band_arr[mask_arr] if mask_arr is not None else band_arr.ravel()
+            remap_vals, inv = np.unique(active, return_inverse=True)
+            remap_arr = np.zeros(band_arr.shape, dtype=np.int32)
+            if mask_arr is not None:
+                remap_arr[mask_arr] = (inv + 1).astype(np.int32)
+            else:
+                remap_arr.ravel()[:] = (inv + 1).astype(np.int32)
+            shape_iter = list(
+                rasterio.features.shapes(
+                    remap_arr,
+                    mask=mask_arr,
+                    connectivity=connectivity,
+                    transform=src_transform,
+                )
+            )
+        else:
+            raise
+
+    for geom_dict, pxl_val in shape_iter:
         geoms.append(shape(geom_dict))
-        vals.append(int(pxl_val) if is_int else float(pxl_val))
+        if remap_vals is not None:
+            vals.append(int(remap_vals[int(pxl_val) - 1]))
+        else:
+            vals.append(int(pxl_val) if is_int else float(pxl_val))
 
     if geoms:
         gdf = gpd.GeoDataFrame(
