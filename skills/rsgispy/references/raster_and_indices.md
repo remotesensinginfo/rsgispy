@@ -132,6 +132,12 @@ h_cat = get_img_histogram("landcover.tif", img_band=1, integer_bins=True)
   - `terrain`: `slope(input_img, output_img, unit="degrees", ...)`, `aspect(input_img, output_img, ...)`, `categorise_aspect(...)`
   - `illumination`: `hillshade(input_img, output_img, azimuth, zenith, ...)`, `shadow_mask(...)`, `local_incidence_angle(...)`
   - `filtering`: `fill_dem_soille_gratin_1994`, `dtm_aspect_median_filter`, `plane_fit_detrend_dem`
+  - `hydrology` (`rsgispy.elevation.hydrology`, projected CRS in metres required; `allow_pure_python=False` for topological/PQ ops):
+    - Conditioning: `identify_sinks`, `fill_depressions`, `breach_depressions`, `burn_streams`, `resolve_flats`, `condition_dem`
+    - Flow routing: `flow_direction` (`method="d8"|"dinf"|"mfd"`), `flow_accumulation` (`out_units="cells"|"area"`), `flow_length`, `flow_distance`, `trace_flow_path`
+    - Streams: `extract_streams`, `stream_link`, `stream_order` (`"strahler"|"shreve"`), `vectorise_streams`
+    - Watersheds: `snap_pour_points`, `delineate_watersheds`, `delineate_basins`, `delineate_subcatchments`, `polygonise_watersheds`
+    - Terrain indices: `calc_hand`, `flood_inundation_from_hand`, `calc_twi`, `calc_spi`, `calc_ls_factor`
 - **Change Detection (`rsgispy.changedetect.*`)**:
   - `imgchngmthds`: `image_difference`, `image_ratio`, `change_vector_analysis`, `multivariate_alteration_detection`, `slow_feature_analysis`
   - `pxloutlierchng`: `find_class_otsu_outliers`, `find_class_li_outliers`, `find_class_kurt_skew_outliers`, `find_class_pyod_outliers`
