@@ -139,5 +139,12 @@ h_cat = get_img_histogram("landcover.tif", img_band=1, integer_bins=True)
   - `transforms`: `calc_tasseled_cap`, `calc_pca`, `calc_mnf`, `histogram_matching`, `whiten_image`
   - `unmixing`: `spec_unmix_fcls`, `spec_unmix_nnls`
   - `classification`: `spectral_angle_mapper`, `spectral_correlation_mapper`
-- **Segmentation (`rsgispy.segmentation.clump`)**:
-  `clump(input_img, output_img, in_memory=False, ...)`, `union_of_clumps(input_imgs, output_img, ...)`.
+- **Segmentation (`rsgispy.segmentation.*`)**:
+  - **Connected-component clumping (`rsgispy.segmentation.clump`)**: `clump(input_img, output_img, in_memory=False, ...)`, `union_of_clumps(input_imgs, output_img, ...)`.
+  - **Remote sensing segmentation (`rsgispy.segmentation`)** — all raster functions follow `(input_img, output_img, ..., *, gdalformat="GTIFF", datatype=None, no_data_val=None, calc_stats=True, use_pbar=True)`, with matching in-memory `*_array(...)` functions and bounded-memory tiling (`tile_size`, `overlap`, `n_workers`, `stitch_seams=True`, `use_numba=True`):
+    - `shepherd_segmentation` / `shepherd_segmentation_array`: Shepherd et al. (2019) global K-means + connected-component clumping + iterative small-segment elimination (`n_clusters=60, min_pixels=100, dist_thres=None, sampling=100, max_iter=50, random_state=42`).
+    - `region_merge_segmentation` / `region_merge_segmentation_array`: Baatz & Schäpe multiresolution FNEA region merging (`scale=25.0, compactness=0.5, shape_weight=0.1, min_pixels=10`).
+    - `slic_segmentation` / `slic_segmentation_array`: Global grid-aligned SLIC superpixels (`n_segments=500, segment_size=None, compactness=10.0, max_iter=10, sigma=0.0, enforce_connectivity=True, min_pixels=10`).
+    - `graph_segmentation` / `graph_segmentation_array`: Felzenszwalb–Huttenlocher graph-based segmentation (`scale=100.0, sigma=0.8, min_pixels=50`).
+    - `watershed_segmentation` / `watershed_segmentation_array`: Seeded or auto-seeded compact gradient watershed (`markers_img=None, min_distance=10, gradient_sigma=1.0, compactness=0.0, min_pixels=10`).
+  - **Post-processing & GEOBIA helpers (`rsgispy.segmentation.utils`)**: `relabel_segments`, `relabel_segments_array`, `eliminate_small_segments`, `eliminate_small_segments_array`, `polygonise_segments`, `extract_segment_stats`, `is_numba_available`.

@@ -39,7 +39,7 @@ description: Generate idiomatic Python code using rsgispy, the pure-Python repla
 | DEM terrain & illumination | `rsgispy.elevation.{terrain,illumination,filtering,roughness}` | `slope`, `aspect`, `categorise_aspect`, `hillshade`, `shadow_mask`, `local_incidence_angle`, `fill_dem_soille_gratin_1994` |
 | Change detection | `rsgispy.changedetect.{imgchngmthds,pxloutlierchng}` | `image_difference`, `image_ratio`, `change_vector_analysis`, `multivariate_alteration_detection`, `find_class_otsu_outliers` |
 | Spectral transforms & unmixing | `rsgispy.imagespectral.{transforms,unmixing,classification}` | `calc_tasseled_cap`, `calc_pca`, `spec_unmix_fcls`, `spec_unmix_nnls`, `spectral_angle_mapper` |
-| Segmentation | `rsgispy.segmentation.clump` | `clump`, `union_of_clumps` |
+| Segmentation | `rsgispy.segmentation.*` | `shepherd_segmentation`, `region_merge_segmentation`, `slic_segmentation`, `graph_segmentation`, `watershed_segmentation`, `eliminate_small_segments`, `relabel_segments`, `polygonise_segments`, `extract_segment_stats`, `clump.clump`, `clump.union_of_clumps` |
 | Vector I/O, geoms, attrs, stats, select | `rsgispy.vector.{io,create,geoms,attrs,stats,selection}` | `vector_maths`, `read_vec_columns`, `write_vec_column`, `reproj_vec_lyr`, `polygonise_raster_to_vec_lyr`, `clip_vec_lyr`, `calc_vec_area`, `spatial_select` |
 | Zonal statistics | `rsgispy.zonalstats.{polygon,point}` | `calc_zonal_band_stats_file`, `calc_zonal_band_stats`, `export_poly_pxls_to_df`, `ext_point_band_values_file` |
 | Unified ML core | `rsgispy.ml.{stack,scaling,predict,cv,tune}` | `BandSpec`, `ImageFeatureStack`, `FeatureScaler`, `predict_raster` |
