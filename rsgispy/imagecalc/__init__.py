@@ -15,5 +15,12 @@ transforms, region filling, percentiles, and windowed point sampling using
 * :mod:`rsgispy.imagecalc.maths` — muParser band/image math expressions and proportions
 * :mod:`rsgispy.imagecalc.percentiles` — band and per-pixel percentile computations
 * :mod:`rsgispy.imagecalc.rescale` — gain/offset and min-max pixel rescaling
-* :mod:`rsgispy.imagecalc.stats` — summary statistics, column stats, and value probabilities
+* :mod:`rsgispy.imagecalc.stats` — summary statistics, histograms, column stats,
+  and value probabilities
 """
+
+from rsgispy.imagecalc.stats import get_img_histogram
+
+__all__ = [
+    "get_img_histogram",
+]
