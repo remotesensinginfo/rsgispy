@@ -129,10 +129,10 @@ def create_raster_img_map(
     )
 
     clr_map = None
+    if len(img_bands) == 1:
+        clr_map = plt.get_cmap("gray")
     if img_stch == rsgispy.IMG_STRETCH_NONE:
         img_data_strch = img_data
-        if len(img_bands) == 1:
-            clr_map = plt.get_cmap("gray")
     elif img_stch == rsgispy.IMG_STRETCH_USER:
         if stch_min_max_vals is None:
             raise rsgispy.RSGISPyException(

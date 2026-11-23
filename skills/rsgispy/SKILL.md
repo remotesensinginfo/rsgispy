@@ -54,7 +54,7 @@ description: Generate idiomatic Python code using rsgispy, the pure-Python repla
 
 ### 1. Band Maths (Single & Multi-Output `pymu-eval`)
 
-Separate multiple output bands with **top-level commas** (commas inside `min(...)`, `max(...)`, `avg(...)` stay function arguments). Intermediate assignments can be reused by later outputs:
+Separate multiple output bands with **top-level commas** (commas inside `min(...)`, `max(...)`, `avg(...)` stay function arguments). Both existing band re-assignments and new intermediate variables (`ndvi = ...`) can be defined and reused by later outputs:
 
 ```python
 import rsgispy
@@ -68,9 +68,9 @@ band_defs = [
 band_maths(
     output_img="veg_stack.tif",
     exp=(
-        "(nir - red) / (nir + red + 1e-6), "
+        "ndvi = (nir - red) / (nir + red + 1e-6), "
         "(nir - swir1) / (nir + swir1 + 1e-6), "
-        "((nir - red) / (nir + red + 1e-6)) > 0.4 ? 1 : 0"
+        "ndvi >= 0.5 ? 1 : 0"
     ),
     band_defs=band_defs,
     band_names=["NDVI", "NDWI_Gao", "VegMask"],
@@ -118,7 +118,7 @@ vector_maths(
     vec_file="plots.gpkg",
     vec_lyr="plots",
     out_col=["agb_t", "carbon_t"],
-    exp="density * area_ha, (density * area_ha) * 0.47",
+    exp="agb = density * area_ha, agb * 0.47",
     out_vec_file="plots_out.gpkg",
     out_vec_lyr="plots",
 )

@@ -12,7 +12,7 @@ All symbols below are verified against `rsgispy` v0.2.2+.
 
 ### Multi-Output `pymu-eval` Expressions
 
-Separate output bands with **top-level commas**. Commas inside function calls (`min(b1, b2)`, `avg(b1, b2, b3)`) remain argument separators. Variable reassignments persist across subsequent comma-separated outputs:
+Separate output bands with **top-level commas**. Commas inside function calls (`min(b1, b2)`, `avg(b1, b2, b3)`) remain argument separators. Both input variable reassignments and new intermediate variables (`ndvi = ...`) persist across subsequent comma-separated outputs (each top-level assignment also emits an output band at its position; wrap in parentheses inside an expression to assign without adding a band):
 
 ```python
 import rsgispy
@@ -22,14 +22,15 @@ image_band_math(
     input_img="s2_scaled.tif",
     output_img="scaled_and_indices.tif",
     exp=(
-        "b1 = b1 * 0.0001, "        # output band 1: scaled Blue
-        "b2 = b2 * 0.0001, "        # output band 2: scaled Green
-        "b3 = b3 * 0.0001, "        # output band 3: scaled Red
-        "b4 = b4 * 0.0001, "        # output band 4: scaled NIR
-        "(b4 - b3) / (b4 + b3), "   # output band 5: NDVI using scaled bands
-        "(b2 - b4) / (b2 + b4)"     # output band 6: NDWI_McFeeters
+        "b1 = b1 * 0.0001, "                 # output band 1: scaled Blue
+        "b2 = b2 * 0.0001, "                 # output band 2: scaled Green
+        "b3 = b3 * 0.0001, "                 # output band 3: scaled Red
+        "b4 = b4 * 0.0001, "                 # output band 4: scaled NIR
+        "ndvi = (b4 - b3) / (b4 + b3), "     # output band 5: NDVI (stored in `ndvi`)
+        "(b2 - b4) / (b2 + b4), "            # output band 6: NDWI_McFeeters
+        "ndvi >= 0.5 ? 1 : 0"                # output band 7: binary veg mask reusing `ndvi`
     ),
-    band_names=["Blue", "Green", "Red", "NIR", "NDVI", "NDWI"],
+    band_names=["Blue", "Green", "Red", "NIR", "NDVI", "NDWI", "VegMask"],
     gdalformat="GTIFF",
     datatype=rsgispy.TYPE_32FLOAT,
 )

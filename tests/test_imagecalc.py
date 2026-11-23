@@ -714,3 +714,109 @@ def test_band_maths_multi_output(tmp_path):
             band_names=["ok", "  "],
             use_pbar=False,
         )
+
+
+def test_band_maths_intermediate_variables(tmp_path):
+    """Test creating and reusing new intermediate variables in band_maths and siblings."""
+    in_img = tmp_path / "s2_tiled.tif"
+    out_img = tmp_path / "interm_multi.tif"
+    out_single = tmp_path / "interm_single.tif"
+    out_ibm = tmp_path / "interm_ibm.tif"
+    out_im = tmp_path / "interm_im.tif"
+
+    # Non-multiple of 256 so full tiles and smaller remainder edge tiles are tested
+    rng = np.random.default_rng(42)
+    red = rng.uniform(0.05, 0.4, size=(270, 260)).astype(np.float32)
+    nir = rng.uniform(0.1, 0.9, size=(270, 260)).astype(np.float32)
+    swir1 = rng.uniform(0.05, 0.5, size=(270, 260)).astype(np.float32)
+    _create_test_raster(in_img, np.stack([red, nir, swir1]))
+
+    band_defs = [
+        rsgispy.imagecalc.maths.BandDefn("red", str(in_img), 1),
+        rsgispy.imagecalc.maths.BandDefn("nir", str(in_img), 2),
+        rsgispy.imagecalc.maths.BandDefn("swir1", str(in_img), 3),
+    ]
+
+    # 1. Exact multi-output pattern defining new intermediate `ndvi` and reusing it
+    exp = (
+        "ndvi = (nir - red) / (nir + red + 1e-6), "
+        "(nir - swir1) / (nir + swir1 + 1e-6), "
+        "ndvi >= 0.5 ? 1 : 0"
+    )
+    rsgispy.imagecalc.maths.band_maths(
+        output_img=str(out_img),
+        exp=exp,
+        band_defs=band_defs,
+        band_names=["NDVI", "NDMI", "VegMask"],
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+        use_pbar=False,
+    )
+
+    exp_ndvi = (nir - red) / (nir + red + 1e-6)
+    exp_ndmi = (nir - swir1) / (nir + swir1 + 1e-6)
+    exp_mask = np.where(exp_ndvi >= 0.5, 1.0, 0.0)
+
+    with rasterio.open(out_img) as src:
+        assert src.count == 3
+        assert src.descriptions == ("NDVI", "NDMI", "VegMask")
+        np.testing.assert_allclose(src.read(1), exp_ndvi, rtol=1e-5, atol=1e-5)
+        np.testing.assert_allclose(src.read(2), exp_ndmi, rtol=1e-5, atol=1e-5)
+        np.testing.assert_array_equal(src.read(3), exp_mask)
+
+    # 2. Inline parenthesized assignment producing a single output band
+    rsgispy.imagecalc.maths.band_maths(
+        output_img=str(out_single),
+        exp="(ndvi = (nir - red) / (nir + red + 1e-6)) >= 0.5 ? 1 : 0",
+        band_defs=band_defs[:2],
+        use_pbar=False,
+    )
+    with rasterio.open(out_single) as src:
+        assert src.count == 1
+        np.testing.assert_array_equal(src.read(1), exp_mask)
+
+    # 3. image_band_math, image_math, and calc_prop_true_exp with intermediate variables
+    rsgispy.imagecalc.maths.image_band_math(
+        input_img=str(in_img),
+        output_img=str(out_ibm),
+        exp="ndvi = (b2 - b1) / (b2 + b1 + 1e-6), ndvi >= 0.5 ? 1 : 0",
+        band_names=["NDVI", "VegMask"],
+        use_pbar=False,
+    )
+    with rasterio.open(out_ibm) as src:
+        assert src.count == 2
+        np.testing.assert_allclose(src.read(1), exp_ndvi, rtol=1e-5, atol=1e-5)
+        np.testing.assert_array_equal(src.read(2), exp_mask)
+
+    rsgispy.imagecalc.maths.image_math(
+        input_img=str(in_img),
+        output_img=str(out_im),
+        exp="scaled = b1 * 2.0, scaled + 1.0",
+        use_pbar=False,
+    )
+    with rasterio.open(out_im) as src:
+        assert src.count == 3
+        np.testing.assert_allclose(src.read(1), red * 2.0 + 1.0, rtol=1e-5)
+        np.testing.assert_allclose(src.read(2), nir * 2.0 + 1.0, rtol=1e-5)
+
+    prop = rsgispy.imagecalc.maths.calc_prop_true_exp(
+        exp="ndvi = (nir - red) / (nir + red + 1e-6), ndvi >= 0.5 ? 1 : 0",
+        band_defs=band_defs[:2],
+        use_pbar=False,
+    )
+    assert prop == pytest.approx(float(np.mean(exp_mask)))
+
+    # 4. Undefined identifiers on RHS, read-before-assign, and initial self-reference
+    #    must still raise RSGISPyException rather than defaulting to zero
+    for bad_exp in [
+        "ndvi = (nir - unknown_band) / (nir + red + 1e-6), ndvi >= 0.5 ? 1 : 0",
+        "ndvi + 1, ndvi = nir - red",
+        "ndvi = ndvi + 1",
+    ]:
+        with pytest.raises(rsgispy.RSGISPyException):
+            rsgispy.imagecalc.maths.band_maths(
+                output_img=str(tmp_path / "bad_interm.tif"),
+                exp=bad_exp,
+                band_defs=band_defs,
+                use_pbar=False,
+            )

@@ -813,3 +813,87 @@ def test_vector_maths_multi_output(tmp_path):
             exp="nir + red, nir - red",
             out_dtype={"missing": float},
         )
+
+
+def test_vector_maths_intermediate_variables():
+    """Test creating and reusing arbitrary intermediate variables in vector_maths."""
+    gdf = gpd.GeoDataFrame(
+        {
+            "red": [0.1, 0.4, 0.2, 0.3],
+            "nir": [0.8, 0.5, 0.6, 0.3],
+            "swir1": [0.2, 0.3, 0.2, 0.1],
+            "cls": ["Forest", "Grass", "Shrub", "Water"],
+        },
+        geometry=[Point(i, i) for i in range(4)],
+        crs="EPSG:32630",
+    )
+
+    # 1. Multi-output expression creating `ndvi` and reusing it in a later column
+    out_gdf = va_cols.vector_maths(
+        gdf,
+        None,
+        out_col=["ndvi", "ndmi", "is_veg"],
+        exp=(
+            "ndvi = (nir - red) / (nir + red + 1e-6), "
+            "(nir - swir1) / (nir + swir1 + 1e-6), "
+            "ndvi >= 0.5 ? 1 : 0"
+        ),
+        out_dtype={"is_veg": int},
+    )
+    red_arr = gdf["red"].to_numpy()
+    nir_arr = gdf["nir"].to_numpy()
+    swir_arr = gdf["swir1"].to_numpy()
+    exp_ndvi = (nir_arr - red_arr) / (nir_arr + red_arr + 1e-6)
+    exp_ndmi = (nir_arr - swir_arr) / (nir_arr + swir_arr + 1e-6)
+    exp_mask = np.where(exp_ndvi >= 0.5, 1, 0)
+
+    assert out_gdf["ndvi"].to_numpy() == pytest.approx(exp_ndvi)
+    assert out_gdf["ndmi"].to_numpy() == pytest.approx(exp_ndmi)
+    assert out_gdf["is_veg"].tolist() == exp_mask.tolist()
+
+    # 2. Inline parenthesized assignment producing a single output column & scalar intermediate
+    single_gdf = va_cols.vector_maths(
+        gdf,
+        None,
+        out_col="veg_mask",
+        exp="(ndvi = (nir - red) / (nir + red + 1e-6)) >= 0.5 ? 1 : 0",
+        out_dtype=int,
+    )
+    assert single_gdf["veg_mask"].tolist() == exp_mask.tolist()
+
+    scalar_gdf = va_cols.vector_maths(
+        gdf,
+        None,
+        out_col=["gain", "scaled_nir"],
+        exp="k = 0.5, nir * k",
+    )
+    assert scalar_gdf["gain"].tolist() == pytest.approx([0.5] * 4)
+    assert scalar_gdf["scaled_nir"].to_numpy() == pytest.approx(nir_arr * 0.5)
+
+    # 3. Empty GeoDataFrame with intermediate variables
+    empty_out = va_cols.vector_maths(
+        gdf.iloc[0:0].copy(),
+        None,
+        out_col=["ndvi", "is_veg"],
+        exp="ndvi = (nir - red) / (nir + red + 1e-6), ndvi >= 0.5 ? 1 : 0",
+        out_dtype={"is_veg": int},
+    )
+    assert len(empty_out) == 0
+    assert "ndvi" in empty_out.columns and "is_veg" in empty_out.columns
+
+    # 4. Undefined RHS variable, skipped non-numeric column, read-before-assign,
+    #    and initial self-reference must still raise RSGISPyException
+    with pytest.raises(rsgispy.RSGISPyException):
+        va_cols.vector_maths(
+            gdf, None, out_col=["a", "b"], exp="ndvi = missing_col * 2, ndvi + 1"
+        )
+    with pytest.raises(rsgispy.RSGISPyException, match="could not be bound"):
+        va_cols.vector_maths(
+            gdf, None, out_col=["a", "b"], exp="tmp = cls * 2, tmp + 1"
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        va_cols.vector_maths(
+            gdf, None, out_col=["a", "b"], exp="ndvi + 1, ndvi = nir - red"
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        va_cols.vector_maths(gdf, None, out_col="a", exp="ndvi = ndvi + 1")

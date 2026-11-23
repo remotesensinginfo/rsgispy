@@ -13,6 +13,7 @@ import rasterio
 from rasterio.windows import Window
 
 import rsgispy
+import rsgispy.tools.maths
 from rsgispy.imageprocess import (
     BandDefn,
     cast_result_block,
@@ -133,6 +134,8 @@ def _create_parser(exp: str, band_names: Sequence[str]) -> pymu_eval.Parser:
                 f"Invalid band variable name '{name}': {err}"
             ) from err
 
+    rsgispy.tools.maths.configure_muparser_assignment_vars(parser, exp)
+
     try:
         parser.set_expr(exp)
         with np.errstate(all="ignore"):
@@ -168,9 +171,15 @@ def band_maths(
     each sub-expression is written to its corresponding 1-based output band
     in order. Commas inside function calls (such as ``min(b1, b2)`` or
     ``avg(b1, b2, b3)``) remain function argument separators and do not start
-    a new output band. Sub-expressions may also span multiple lines and use
-    ternary conditionals (``cond ? val_true : val_false``) or re-assign an
-    input variable (e.g., ``b1 = b1 * 0.0001``) for reuse by later outputs.
+    a new output band. Sub-expressions may also span multiple lines, use
+    ternary conditionals (``cond ? val_true : val_false``), re-assign an input
+    variable (e.g., ``b1 = b1 * 0.0001``), or define arbitrary new intermediate
+    variables (e.g., ``ndvi = (nir - red) / (nir + red + 1e-6)``) for reuse
+    by later sub-expressions. Note that a top-level assignment sub-expression
+    both binds the variable and emits that value as its positional output band;
+    to compute an intermediate without emitting an extra band, assign inside
+    parentheses within a sub-expression (e.g.,
+    ``"(ndvi = (nir - red) / (nir + red + 1e-6)) >= 0.5 ? 1 : 0"``).
 
     :param output_img: Path to the output image file.
     :param exp: String containing the muParser expression to evaluate over the
@@ -216,21 +225,22 @@ def band_maths(
             datatype=rsgispy.TYPE_32FLOAT,
         )
 
-        # Multi-band output using comma-separated sub-expressions (NDVI & NDWI)
+        # Multi-band output defining and reusing an intermediate variable
         idx_defs = [
-            rsgispy.imagecalc.maths.BandDefn('green', 'sentinel2.tif', 2),
             rsgispy.imagecalc.maths.BandDefn('red', 'sentinel2.tif', 3),
             rsgispy.imagecalc.maths.BandDefn('nir', 'sentinel2.tif', 4),
+            rsgispy.imagecalc.maths.BandDefn('swir1', 'sentinel2.tif', 5),
         ]
         multi_exp = (
-            "(nir + red) != 0 ? (nir - red) / (nir + red) : -9999, "
-            "(green + nir) != 0 ? (green - nir) / (green + nir) : -9999"
+            "ndvi = (nir - red) / (nir + red + 1e-6), "
+            "(nir - swir1) / (nir + swir1 + 1e-6), "
+            "ndvi >= 0.5 ? 1 : 0"
         )
         rsgispy.imagecalc.maths.band_maths(
             output_img='indices.tif',
             exp=multi_exp,
             band_defs=idx_defs,
-            band_names=['NDVI', 'NDWI'],
+            band_names=['NDVI', 'NDMI', 'VegMask'],
             gdalformat='GTIFF',
             datatype=rsgispy.TYPE_32FLOAT,
         )
@@ -239,7 +249,7 @@ def band_maths(
         # function arguments; top-level commas separate the 3 output bands)
         rsgispy.imagecalc.maths.band_maths(
             output_img='band_stats.tif',
-            exp='min(green, red, nir), max(green, red, nir), avg(green, red, nir)',
+            exp='min(red, nir, swir1), max(red, nir, swir1), avg(red, nir, swir1)',
             band_defs=idx_defs,
             band_names=['min_refl', 'max_refl', 'mean_refl'],
         )
@@ -433,7 +443,9 @@ def image_band_math(
     Input bands are bound automatically to variables ``b1, b2, ..., bn``
     (1-based). A single expression produces a 1-band output image, while a
     comma-separated expression (e.g., ``"(b4 - b3) / (b4 + b3), (b2 - b4) / (b2 + b4)"``)
-    produces one output band per sub-expression.
+    produces one output band per sub-expression. Sub-expressions may also
+    assign new intermediate variables (e.g., ``"ndvi = (b4 - b3) / (b4 + b3), ndvi > 0.4 ? 1 : 0"``)
+    for reuse by later sub-expressions.
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output image file.

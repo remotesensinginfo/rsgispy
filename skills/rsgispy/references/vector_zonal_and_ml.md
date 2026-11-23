@@ -25,7 +25,7 @@ Every function in `rsgispy.vector` accepts either a file path (`str | Path`) or 
   - `vector_maths(vec_file, vec_lyr, out_col, exp, out_vec_file=None, out_vec_lyr=None, out_format="GPKG", vec_cols=None, out_dtype=None, del_exist_vec=False, out_compress=None)`:
     - Automatically binds all numeric/boolean columns with valid muParser names (`[A-Za-z_][A-Za-z0-9_]*`).
     - Pass `vec_cols={"alias": "Column With Spaces"}` to bind non-identifier column names.
-    - Pass `out_col=["c1", "c2"]` and top-level comma-separated `exp="expr1, expr2"` for multi-column calculation in a single call.
+    - Pass `out_col=["c1", "c2"]` and top-level comma-separated `exp="expr1, expr2"` for multi-column calculation in a single call; new intermediate variables (e.g., `ndvi = ..., ndvi >= 0.5 ? 1 : 0`) can be assigned and reused by later sub-expressions.
 - **Stats & Selection (`rsgispy.vector.stats`, `selection`)**:
   - `calc_vec_area(vec_file, vec_lyr, out_col, out_vec_file=None, ...)`
   - `calc_vec_length(vec_file, vec_lyr, out_col, out_vec_file=None, ...)`
