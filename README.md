@@ -1,4 +1,4 @@
-[![Python package](https://github.com/remotesensinginfo/rsgispy/actions/workflows/python-package.yml/badge.svg)](https://github.com/remotesensinginfo/rsgispy/actions/workflows/python-package.yml)[![Pylint](https://github.com/remotesensinginfo/rsgispy/actions/workflows/pylint.yml/badge.svg)](https://github.com/remotesensinginfo/rsgispy/actions/workflows/pylint.yml)[![CodeQL](https://github.com/remotesensinginfo/rsgispy/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/remotesensinginfo/rsgispy/actions/workflows/github-code-scanning/codeql)[![Upload Python Package](https://github.com/remotesensinginfo/rsgispy/actions/workflows/python-publish.yml/badge.svg)](https://github.com/remotesensinginfo/rsgispy/actions/workflows/python-publish.yml)![PyPI Version](https://img.shields.io/pypi/v/rsgispy)
+[![Python package](https://github.com/remotesensinginfo/rsgispy/actions/workflows/python-package.yml/badge.svg)](https://github.com/remotesensinginfo/rsgispy/actions/workflows/python-package.yml)[![Pylint](https://github.com/remotesensinginfo/rsgispy/actions/workflows/pylint.yml/badge.svg)](https://github.com/remotesensinginfo/rsgispy/actions/workflows/pylint.yml)[![CodeQL](https://github.com/remotesensinginfo/rsgispy/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/remotesensinginfo/rsgispy/actions/workflows/github-code-scanning/codeql)[![Upload Python Package](https://github.com/remotesensinginfo/rsgispy/actions/workflows/python-publish.yml/badge.svg)](https://github.com/remotesensinginfo/rsgispy/actions/workflows/python-publish.yml)[![Documentation](https://readthedocs.org/projects/rsgispy/badge/?version=latest)](https://rsgispy.readthedocs.io)![PyPI Version](https://img.shields.io/pypi/v/rsgispy)
 
 
 
@@ -8,6 +8,8 @@
 **rsgispy** is a pure Python reimplementation of the [Remote Sensing and GIS Software Library (RSGISLib)](https://www.rsgislib.org) designed to be easy to install, cross-platform, and straightforward to maintain while preserving a familiar API.
 
 Instead of wrapping compiled C++ extensions and GDAL SWIG (`osgeo`) bindings, `rsgispy` builds directly on standard modern Python geospatial libraries—including `rasterio`, `geopandas`, `shapely`, `pyproj`, `numpy`, `pandas`, `matplotlib`, and `pymu-eval`—and is distributed under the Apache-2.0 licence.
+
+**Online Documentation:** [https://rsgispy.readthedocs.io](https://rsgispy.readthedocs.io)
 
 ## What is it for?
 
@@ -146,9 +148,27 @@ rsgispy.imagecalc.calcindices.calc_indices(
 )
 ```
 
+## Gemini Skill (AI-Assisted Coding)
+
+An official Gemini Agent Skill lives under [`skills/rsgispy/`](skills/rsgispy/SKILL.md) to help Gemini generate accurate `rsgispy` Python code, optical/SAR index stacks, and `pymu-eval` expressions.
+
+- **Gemini CLI** (from GitHub or a local clone):
+
+  ```bash
+  gemini skills install https://github.com/remotesensinginfo/rsgispy.git --path skills/rsgispy
+  # or link a local clone:
+  gemini skills link ./skills/rsgispy
+  ```
+
+- **Gemini Online** ([https://gemini.google.com/customize/skills](https://gemini.google.com/customize/skills)): upload the `skills/rsgispy` folder (or a `.zip` containing `SKILL.md` and `references/` at the archive root) via **Create → Upload**.
+
+See the [Gemini Skill documentation](docs/gemini_skill.rst) (or the [online documentation](https://rsgispy.readthedocs.io)) for full CLI, web upload, workspace-scoped, and manual installation instructions.
+
 ## Documentation & Licence
 
-Full Sphinx API documentation and index equation references live under [`docs/`](docs/index.rst) and can be built locally with:
+Online documentation is hosted at **[https://rsgispy.readthedocs.io](https://rsgispy.readthedocs.io)**.
+
+Full Sphinx API documentation and index equation references also live under [`docs/`](docs/index.rst) and can be built locally with:
 
 ```bash
 pip install -e ".[docs]"
