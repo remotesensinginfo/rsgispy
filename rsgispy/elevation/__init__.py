@@ -7,4 +7,12 @@ model (DEM) analysis using ``rasterio`` and ``numpy``:
 * :mod:`rsgispy.elevation.filtering` — DTM filtering, pit filling, and detrending
 * :mod:`rsgispy.elevation.fusion` — FFT-based DEM data fusion
 * :mod:`rsgispy.elevation.roughness` — surface roughness metrics
+* :mod:`rsgispy.elevation.hydrology` — hydrological conditioning, flow routing,
+  stream networks, watersheds, HAND, and terrain indices
 """
+
+from rsgispy.elevation import hydrology
+
+__all__ = [
+    "hydrology",
+]

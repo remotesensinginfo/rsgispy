@@ -29,3 +29,17 @@ DEM Filtering & Fusion
 
    elevation/filtering
    elevation/fusion
+
+Hydrological Analysis
+---------------------
+
+* :doc:`elevation/hydrology` — Sink identification, depression filling and breaching,
+  stream burning, flat resolution, D8/D-Infinity/MFD flow routing, flow accumulation,
+  stream ordering and vectorisation, watershed delineation, HAND flood inundation,
+  TWI, SPI, and RUSLE LS factor.
+
+.. toctree::
+   :maxdepth: 1
+
+   elevation/hydrology
+
