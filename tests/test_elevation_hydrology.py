@@ -710,3 +710,53 @@ def test_numba_fallback_and_validation(tmp_path, monkeypatch):
     _write_raster(geo_dem, dem, res=0.001, crs="EPSG:4326")
     with pytest.raises(RSGISPyException, match="projected"):
         hydrology.flow_direction(str(geo_dem), str(tmp_path / "geo_fdir.tif"), use_pbar=False)
+
+
+def test_optional_scipy_handling(tmp_path, monkeypatch):
+    """
+    Verify rsgispy.elevation.hydrology handles missing scipy cleanly:
+    identify_sinks and buffered burn_streams raise RSGISPyException, while
+    unbuffered burn_streams succeeds without scipy.
+    """
+    from shapely.geometry import LineString
+
+    dem = _make_v_valley_with_dam(rows=11, cols=11, res=10.0, dam=True, nodata=-9999.0)
+    dem_path = tmp_path / "dem.tif"
+    _write_raster(dem_path, dem, res=10.0, nodata=-9999.0)
+
+    streams_vec = tmp_path / "streams.gpkg"
+    with rasterio.open(dem_path) as src:
+        x0, y0 = rasterio.transform.xy(src.transform, 1, 5)
+        x1, y1 = rasterio.transform.xy(src.transform, 9, 5)
+    gpd.GeoDataFrame(
+        {"id": [1], "geometry": [LineString([(x0, y0), (x1, y1)])]},
+        crs="EPSG:32630",
+    ).to_file(str(streams_vec), driver="GPKG")
+
+    monkeypatch.setattr(hydrology, "HAVE_SCIPY", False)
+    monkeypatch.setattr(hydrology, "nd_label", None)
+    monkeypatch.setattr(hydrology, "distance_transform_edt", None)
+
+    with pytest.raises(RSGISPyException, match="scipy"):
+        hydrology.identify_sinks(
+            str(dem_path), str(tmp_path / "sinks.tif"), use_pbar=False
+        )
+
+    with pytest.raises(RSGISPyException, match="scipy"):
+        hydrology.burn_streams(
+            str(dem_path),
+            str(streams_vec),
+            str(tmp_path / "burn_buf.tif"),
+            buffer_dist=20.0,
+            use_pbar=False,
+        )
+
+    sharp_out = tmp_path / "burn_sharp.tif"
+    hydrology.burn_streams(
+        str(dem_path),
+        str(streams_vec),
+        str(sharp_out),
+        buffer_dist=None,
+        use_pbar=False,
+    )
+    assert sharp_out.exists()

@@ -3,7 +3,7 @@
 The elevation.hydrology module provides pure-Python hydrological conditioning,
 flow routing, stream network extraction, watershed delineation, and terrain
 index calculation functions using ``numpy``, ``rasterio``, ``geopandas``,
-``shapely``, ``pyproj``, ``scipy``, and optional ``numba`` acceleration.
+``shapely``, ``pyproj``, and optional ``scipy`` / ``numba`` acceleration.
 """
 
 from contextlib import ExitStack
@@ -18,8 +18,17 @@ import pyproj
 import rasterio
 import rasterio.features
 from rasterio.transform import Affine
-from scipy.ndimage import distance_transform_edt, label as nd_label
 from shapely.geometry import LineString, Point, shape
+
+try:
+    from scipy.ndimage import distance_transform_edt  # pylint: disable=import-error
+    from scipy.ndimage import label as nd_label  # pylint: disable=import-error
+
+    HAVE_SCIPY = True
+except ImportError:  # pragma: no cover
+    distance_transform_edt = None
+    nd_label = None
+    HAVE_SCIPY = False
 
 import rsgispy
 from rsgispy import RSGISPyException
@@ -397,6 +406,12 @@ def _agree_burn_array(
     out = dem.astype(np.float64).copy()
     has_buf = buffer_dist is not None and float(buffer_dist) > 0.0
     if has_buf:
+        rsgispy.check_optional_dep(
+            HAVE_SCIPY and distance_transform_edt is not None,
+            "burn_streams (buffer_dist > 0)",
+            "scipy",
+            "stats",
+        )
         buf_d = float(buffer_dist)  # type: ignore[arg-type]
         dist_m = distance_transform_edt(~stream_mask, sampling=(dy, dx))
         in_buf = valid & (~stream_mask) & (dist_m > 0.0) & (dist_m <= buf_d)
@@ -539,6 +554,12 @@ def identify_sinks(
         Display a progress bar (Default = ``True``).
     """
     # pylint: disable=too-many-arguments,too-many-locals
+    rsgispy.check_optional_dep(
+        HAVE_SCIPY and nd_label is not None,
+        "identify_sinks",
+        "scipy",
+        "stats",
+    )
     ensure_file_exists(input_img, "Input DEM image")
     eff_dt, out_rio_dt, out_np_dt = _resolve_out_dtype(datatype, rsgispy.TYPE_32INT)
     del eff_dt
