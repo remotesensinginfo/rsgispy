@@ -26,7 +26,7 @@ __all__ = [
     "check_bbox_overlap",
     "get_gdf_bbox",
     "is_valid_pixel_value",
-    "normalize_band_list",
+    "normalise_band_list",
     "open_raster_band_info",
     "open_validated_zonal_inputs",
     "open_validated_zonal_multiband_inputs",
@@ -38,7 +38,7 @@ __all__ = [
 ]
 
 
-def normalize_band_list(
+def normalise_band_list(
     img_band: Optional[Union[int, Sequence[int]]],
     band_count: int,
     input_img: str,
@@ -152,7 +152,7 @@ def open_validated_zonal_multiband_inputs(
             raise rsgispy.RSGISPyException(
                 f"Could not retrieve a projection from '{input_img}'."
             )
-        bands_list = normalize_band_list(img_bands, src.count, input_img)
+        bands_list = normalise_band_list(img_bands, src.count, input_img)
         img_crs = pyproj.CRS.from_user_input(src.crs)
         img_bbox = bbox_from_dataset(src)
         nodata_vals = [src.nodatavals[b - 1] for b in bands_list]

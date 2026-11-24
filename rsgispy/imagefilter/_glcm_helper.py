@@ -1,5 +1,5 @@
 """
-Internal Gray-Level Co-occurrence Matrix (GLCM) texture computation engine for
+Internal Grey-Level Co-occurrence Matrix (GLCM) texture computation engine for
 :mod:`rsgispy.imagefilter.texture`.
 """
 
@@ -370,6 +370,7 @@ def run_glcm_filter(
     max_val: Optional[float] = None,
     symmetric: bool = True,
     average_angles: bool = True,
+    *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,

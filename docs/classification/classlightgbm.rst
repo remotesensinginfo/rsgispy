@@ -84,7 +84,7 @@ final LightGBM model is trained, evaluated, and applied to the Landsat scene.
         lgb_classifier=model,
         in_msk_img="landsat_valid_mask.tif",
         img_msk_val=1,
-        out_class_img="landsat_lgb_cls.tif",
+        output_img="landsat_lgb_cls.tif",
         out_score_img="landsat_lgb_probs.tif",
     )
 

@@ -336,7 +336,7 @@ def run_sklearn_search_cv(
                 "param_space must be provided for grid or random search."
             )
         base_est = clone_sklearn_estimator(
-            sk_estimator, random_state=rnd_seed, extra=extra
+            sk_estimator, rnd_seed=rnd_seed, extra=extra
         )
         if method == "grid":
             search_obj = sklearn.model_selection.GridSearchCV(
@@ -373,7 +373,7 @@ def run_sklearn_search_cv(
             else sk_estimator
         )
         best_est = clone_sklearn_estimator(
-            base_for_best, random_state=rnd_seed, extra=extra
+            base_for_best, rnd_seed=rnd_seed, extra=extra
         )
         best_est.set_params(**search_obj.best_params_)
         if refit:
@@ -429,7 +429,7 @@ def run_optuna_search(
     def _objective(trial: Any) -> float:
         params = suggest_optuna_params(trial, param_space)
         est = clone_sklearn_estimator(
-            sk_estimator, random_state=rnd_seed, extra=extra
+            sk_estimator, rnd_seed=rnd_seed, extra=extra
         )
         est.set_params(**params)
         if valid_x is not None and valid_y is not None:
@@ -472,7 +472,7 @@ def run_optuna_search(
     results_df = study.trials_dataframe()
 
     best_est = clone_sklearn_estimator(
-        sk_estimator, random_state=rnd_seed, extra=extra
+        sk_estimator, rnd_seed=rnd_seed, extra=extra
     )
     best_est.set_params(**best_trial_params)
     if refit:

@@ -87,7 +87,7 @@ scene.
         sk_classifier=fitted_rf,
         in_msk_img="landsat_valid_mask.tif",
         img_msk_val=1,
-        out_class_img="landsat_rf_cls.tif",
+        output_img="landsat_rf_cls.tif",
         out_score_img="landsat_rf_probs.tif",
     )
 

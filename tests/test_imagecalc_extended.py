@@ -1114,7 +1114,7 @@ def test_region_growing_fill_adjacent_overlap_max_iters_and_nodata(tmp_path):
     with rasterio.open(out_p) as src:
         out = src.read(1)
         assert src.nodata == 99
-    # Center (outside fill_mask==2) stays nodata=99; 3x3 ring around it gets 5; rest stays 99
+    # Centre (outside fill_mask==2) stays nodata=99; 3x3 ring around it gets 5; rest stays 99
     assert out[3, 3] == 99
     assert out[2, 2] == 5 and out[3, 4] == 5 and out[4, 4] == 5
     assert out[1, 3] == 99 and out[0, 0] == 99

@@ -84,7 +84,7 @@ def worker_init_single_thread() -> None:
     Initialise worker processes for multi-process execution.
 
     Pins BLAS/OpenMP/NumExpr thread pools to ``1`` inside worker processes
-    to prevent CPU oversubscription when ``n_workers > 1``. All internal
+    to prevent CPU oversubscription when ``n_jobs > 1``. All internal
     ``numba`` kernels run without ``parallel=True`` so they remain single-
     threaded without mutating ``NUMBA_NUM_THREADS`` post-import.
     """
@@ -101,20 +101,20 @@ def numba_single_thread_guard(enabled: bool = True) -> Iterator[None]:
     yield
 
 
-def validate_n_workers(n_workers: int) -> int:
+def validate_n_jobs(n_jobs: int) -> int:
     """Validate and return integer worker count ``>= 1``."""
-    if isinstance(n_workers, bool) or not isinstance(
-        n_workers, (int, np.integer)
+    if isinstance(n_jobs, bool) or not isinstance(
+        n_jobs, (int, np.integer)
     ):
         raise rsgispy.RSGISPyException(
-            f"n_workers must be a positive integer, got {n_workers!r}."
+            f"n_jobs must be a positive integer, got {n_jobs!r}."
         )
-    workers = int(n_workers)
-    if workers < 1:
+    jobs = int(n_jobs)
+    if jobs < 1:
         raise rsgispy.RSGISPyException(
-            f"n_workers must be >= 1, got {workers}."
+            f"n_jobs must be >= 1, got {jobs}."
         )
-    return workers
+    return jobs
 
 
 def resolve_label_dtype(
@@ -479,23 +479,23 @@ def write_label_raster_from_array(
 
 def relabel_segments_array(
     labels: np.ndarray,
-    nodata_value: int = 0,
+    no_data_val: int = 0,
     contiguous: bool = True,
 ) -> np.ndarray:
     """
     Relabel an integer segmentation array so valid regions have sequential
-    positive IDs ``1..N`` (preserving ``nodata_value``).
+    positive IDs ``1..N`` (preserving ``no_data_val``).
 
     Parameters
     ----------
     labels : numpy.ndarray
         2D integer array of segment labels.
-    nodata_value : int, optional
+    no_data_val : int, optional
         Label value representing masked/invalid pixels (Default = ``0``).
     contiguous : bool, optional
         If ``True`` (Default), remap sorted unique valid IDs strictly to
         ``1..N``. If ``False``, preserve positive IDs and normalise any
-        pixels matching ``nodata_value`` to ``0``.
+        pixels matching ``no_data_val`` to ``0``.
 
     Returns
     -------
@@ -518,16 +518,16 @@ def relabel_segments_array(
         )
     if not contiguous:
         out = arr.astype(np.int64, copy=True)
-        if nodata_value != 0:
-            out[out == nodata_value] = 0
+        if no_data_val != 0:
+            out[out == no_data_val] = 0
         out[out < 0] = 0
         max_v = int(out.max()) if out.size > 0 else 0
         return out.astype(
             np.uint32 if max_v <= np.iinfo(np.uint32).max else np.int64
         )
 
-    valid = arr != nodata_value
-    if nodata_value >= 0:
+    valid = arr != no_data_val
+    if no_data_val >= 0:
         valid &= arr > 0
     if not np.any(valid):
         return np.zeros(arr.shape, dtype=np.uint32)
@@ -819,7 +819,7 @@ def eliminate_small_segments_array(
     labels: np.ndarray,
     data: Optional[np.ndarray] = None,
     min_pixels: int = 10,
-    nodata_value: int = 0,
+    no_data_val: int = 0,
     use_numba: bool = True,
 ) -> np.ndarray:
     """
@@ -840,7 +840,7 @@ def eliminate_small_segments_array(
         adjacent neighbours by Euclidean mean-spectrum distance.
     min_pixels : int, optional
         Minimum segment pixel count to retain (Default = ``10``).
-    nodata_value : int, optional
+    no_data_val : int, optional
         Label value treated as masked/invalid background (Default = ``0``).
     use_numba : bool, optional
         Use ``numba``-compiled merging loops when available (Default = ``True``).
@@ -861,11 +861,11 @@ def eliminate_small_segments_array(
     # pylint: disable=too-many-locals
     if min_pixels <= 1:
         return relabel_segments_array(
-            labels, nodata_value=nodata_value, contiguous=True
+            labels, no_data_val=no_data_val, contiguous=True
         )
 
     compact = relabel_segments_array(
-        labels, nodata_value=nodata_value, contiguous=True
+        labels, no_data_val=no_data_val, contiguous=True
     ).astype(np.int64, copy=False)
     n_seg = int(compact.max()) if compact.size > 0 else 0
     if n_seg == 0:
@@ -874,7 +874,7 @@ def eliminate_small_segments_array(
     counts = np.bincount(compact.ravel(), minlength=n_seg + 1).astype(np.int64)
     counts[0] = 0
     if not np.any((counts[1:] > 0) & (counts[1:] < min_pixels)):
-        return relabel_segments_array(compact, nodata_value=0, contiguous=True)
+        return relabel_segments_array(compact, no_data_val=0, contiguous=True)
 
     has_data = data is not None
     if has_data:
@@ -916,7 +916,7 @@ def eliminate_small_segments_array(
         if counts[root] >= min_pixels:
             lut[r_i] = root
     mapped = lut[compact]
-    return relabel_segments_array(mapped, nodata_value=0, contiguous=True)
+    return relabel_segments_array(mapped, no_data_val=0, contiguous=True)
 
 
 def eliminate_small_segments(
@@ -993,7 +993,7 @@ def eliminate_small_segments(
         labels=labels,
         data=ref_data,
         min_pixels=min_pixels,
-        nodata_value=nd_int,
+        no_data_val=nd_int,
         use_numba=use_numba,
     )
     write_label_raster_from_array(
@@ -1013,7 +1013,7 @@ def polygonise_segments(
     out_vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
     img_band: int = 1,
-    nodata_value: int = 0,
+    no_data_val: int = 0,
     segment_id_field: str = "seg_id",
     use_8_conn: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
@@ -1021,7 +1021,7 @@ def polygonise_segments(
     """
     Polygonise a segmentation label raster into a vector layer using
     :func:`rsgispy.vector.create.polygonise_raster_to_vec_lyr`, excluding
-    ``nodata_value`` pixels.
+    ``no_data_val`` pixels.
 
     Parameters
     ----------
@@ -1036,7 +1036,7 @@ def polygonise_segments(
         Output OGR/vector format (Default = ``'GPKG'``).
     img_band : int, optional
         1-based band index containing segment IDs (Default = ``1``).
-    nodata_value : int, optional
+    no_data_val : int, optional
         Label value to omit from polygonisation (Default = ``0``).
     segment_id_field : str, optional
         Attribute field storing segment IDs (Default = ``'seg_id'``).
@@ -1081,7 +1081,7 @@ def polygonise_segments(
                     src.height, src.width, block_size=get_default_block_size(), use_pbar=False
                 ):
                     blk = src.read(img_band, window=win)
-                    msk_dst.write((blk != nodata_value).astype(np.uint8), 1, window=win)
+                    msk_dst.write((blk != no_data_val).astype(np.uint8), 1, window=win)
 
         gdf = polygonise_raster_to_vec_lyr(
             out_vec_file=None,

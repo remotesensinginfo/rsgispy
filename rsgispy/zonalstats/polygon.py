@@ -292,6 +292,7 @@ def calc_zonal_band_stats_file(
     mode_field: Optional[str] = None,
     median_field: Optional[str] = None,
     vec_def_epsg: Optional[int] = None,
+    *,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
@@ -411,6 +412,7 @@ def calc_zonal_band_stats(
     mode_field: Optional[str] = None,
     median_field: Optional[str] = None,
     vec_def_epsg: Optional[int] = None,
+    *,
     use_pbar: bool = True,
     vec_lyr: Optional[str] = None,
 ) -> gpd.GeoDataFrame:
@@ -494,6 +496,7 @@ def calc_zonal_poly_pts_band_stats_file(
     img_band: int,
     out_field: str,
     vec_def_epsg: Optional[int] = None,
+    *,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
@@ -577,6 +580,7 @@ def calc_zonal_poly_pts_band_stats(
     img_band: int,
     out_field: str,
     vec_def_epsg: Optional[int] = None,
+    *,
     use_pbar: bool = True,
     vec_lyr: Optional[str] = None,
 ) -> gpd.GeoDataFrame:
@@ -666,6 +670,7 @@ def calc_zonal_band_stats_test_poly_pts_file(
     mode_field: Optional[str] = None,
     median_field: Optional[str] = None,
     vec_def_epsg: Optional[int] = None,
+    *,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
@@ -790,6 +795,7 @@ def calc_zonal_band_stats_test_poly_pts(
     mode_field: Optional[str] = None,
     median_field: Optional[str] = None,
     vec_def_epsg: Optional[int] = None,
+    *,
     use_pbar: bool = True,
     vec_lyr: Optional[str] = None,
 ) -> gpd.GeoDataFrame:
@@ -880,6 +886,7 @@ def calc_zonal_band_pxl_counts_file(
     vals_lut: Dict[int, str],
     total_field: str = "pxl_count",
     vec_def_epsg: Optional[int] = None,
+    *,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
@@ -966,6 +973,7 @@ def calc_zonal_band_pxl_counts(
     vals_lut: Dict[int, str],
     total_field: str = "pxl_count",
     vec_def_epsg: Optional[int] = None,
+    *,
     use_pbar: bool = True,
     vec_lyr: Optional[str] = None,
 ) -> gpd.GeoDataFrame:
@@ -1175,6 +1183,7 @@ def export_poly_pxls_to_df(
     include_coords: bool = False,
     reproj_vec: bool = False,
     vec_def_epsg: Optional[int] = None,
+    *,
     vec_lyr: Optional[str] = None,
     use_pbar: bool = True,
 ) -> Optional[pd.DataFrame]:

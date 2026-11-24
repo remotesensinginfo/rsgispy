@@ -77,12 +77,14 @@ def _convert_single_to_cog(
     if compress != "NONE":
         options["COMPRESS"] = compress
 
+    # Post-write statistics tags break GDAL's LAYOUT=COG header on COGs.
     gdal_translate(
         input_img=in_img,
         output_img=out_img,
         options=options,
         gdalformat="COG",
         datatype=datatype,
+        calc_stats=False,
         use_pbar=False,
     )
     return out_img, "converted"

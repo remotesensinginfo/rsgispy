@@ -498,7 +498,7 @@ def test_per_band_input_scaling_and_multiblock(tmp_path):
             band_names=band_names,
             indices=["NDVI", "WBI_BlueNIR"],
             output_img=str(out_path),
-            in_no_data_val=-1.0,
+            no_data_val=-1.0,
             in_gain={1: 1000.0, 2: 1.0, "red": 2000.0, "nir": 5000.0},
             in_offset={1: 10.0, "red": -20.0, "nir": 0.0},
             calc_stats=False,

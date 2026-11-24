@@ -383,13 +383,14 @@ def apply_catboost_regressor(
     cb_regressor: Union[Any, str, os.PathLike],
     in_msk_img: Union[str, os.PathLike],
     img_msk_val: int,
-    out_img: Union[str, os.PathLike],
+    output_img: Union[str, os.PathLike],
     img_band_info: Optional[Sequence[ImageBandInfo]] = None,
     target_cols: TargetColsInput = None,
+    *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     out_no_data_val: float = -9999.0,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
@@ -404,13 +405,13 @@ def apply_catboost_regressor(
     :param cb_regressor: Fitted ``CatBoostRegressor`` instance or saved model path.
     :param in_msk_img: Mask raster path.
     :param img_msk_val: Mask pixel value to predict.
-    :param out_img: Output continuous raster path.
+    :param output_img: Output continuous raster path.
     :param img_band_info: Optional sequence of :class:`ImageBandInfo`.
     :param target_cols: Optional target variable name(s) for band descriptions.
     :param gdalformat: Output GDAL driver format (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` datatype.
     :param out_no_data_val: Nodata fill value (Default = ``-9999.0``).
-    :param calc_img_stats: Compute statistics and pyramids (Default = ``True``).
+    :param calc_stats: Compute statistics and pyramids (Default = ``True``).
     :param block_size: Optional block size in pixels.
     :param creation_opts: Optional GDAL creation options mapping.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
@@ -433,13 +434,13 @@ def apply_catboost_regressor(
         regressor=cb_regressor,
         in_msk_img=in_msk_img,
         img_msk_val=img_msk_val,
-        out_img=out_img,
+        output_img=output_img,
         img_band_info=img_band_info,
         target_cols=target_cols,
         gdalformat=gdalformat,
         datatype=datatype,
         out_no_data_val=out_no_data_val,
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         block_size=block_size,
         creation_opts=creation_opts,
         use_pbar=use_pbar,

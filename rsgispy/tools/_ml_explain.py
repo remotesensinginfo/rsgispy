@@ -879,7 +879,7 @@ def run_boruta_shap_selection(
         comb_x = pd.concat([train_x[active_cols], shadow_df], axis=1)
 
         trial_est = clone_sklearn_estimator(
-            base_clf, random_state=trial_seed, extra=extra
+            base_clf, rnd_seed=trial_seed, extra=extra
         )
         trial_est.fit(comb_x, train_y)
 

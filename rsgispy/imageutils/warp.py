@@ -67,7 +67,7 @@ def resample_img_to_match(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -85,7 +85,7 @@ def resample_img_to_match(
     :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
                      (defaults to the data type of ``in_process_img``).
     :param no_data_val: Optional no-data value (defaults to ``in_process_img`` nodata).
-    :param calc_stats: Populate image statistics and pyramids (Default = ``False``).
+    :param calc_stats: Populate image statistics and pyramids (Default = ``True``).
     :param use_pbar: Reserved progress-bar flag for uniform API (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
 
@@ -198,7 +198,7 @@ def reproject_image(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -223,7 +223,7 @@ def reproject_image(
                      (defaults to input image data type).
     :param no_data_val: Optional no-data value for the reprojected image
                         (defaults to ``input_img`` nodata when set, else ``0.0``).
-    :param calc_stats: Populate image statistics and pyramids (Default = ``False``).
+    :param calc_stats: Populate image statistics and pyramids (Default = ``True``).
     :param use_pbar: Reserved progress-bar flag for uniform API (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
 
@@ -1204,7 +1204,7 @@ def gdal_translate(
     mask_band: Optional[Union[int, str]] = None,
     no_gcp: bool = False,
     gcps: Optional[Sequence[Sequence[float]]] = None,
-    stats: bool = False,
+    calc_stats: bool = True,
     approx_stats: bool = False,
     metadata: Optional[Union[Sequence[str], Mapping[str, str]]] = None,
     domain_metadata: Optional[Mapping[str, Mapping[str, str]]] = None,
@@ -1265,7 +1265,8 @@ def gdal_translate(
     :param no_gcp: Drop source GCPs (``-nogcp``).
     :param gcps: Sequence of GCP tuples ``(pixel, line, easting, northing[, z])``
                  (``-gcp``).
-    :param stats: Compute and write band statistics tags (``-stats``).
+    :param calc_stats: Compute and write band statistics tags (``-stats``,
+                       Default = ``True``).
     :param approx_stats: Write statistics marked as approximate (``-approx_stats``).
     :param metadata: Dataset metadata tags ``KEY=VALUE`` or dict (``-mo``).
     :param domain_metadata: Domain-namespaced tags ``{domain: {key: val}}`` (``-dmo``).
@@ -1284,7 +1285,7 @@ def gdal_translate(
             gdalformat="GTIFF",
             bands=[3, 2, 1],
             src_win=(0, 0, 512, 512),
-            stats=True,
+            calc_stats=True,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -1319,7 +1320,7 @@ def gdal_translate(
         mask_band=mask_band,
         no_gcp=no_gcp,
         gcps=gcps,
-        stats=stats,
+        calc_stats=calc_stats,
         approx_stats=approx_stats,
         metadata=metadata,
         domain_metadata=domain_metadata,
@@ -1514,7 +1515,9 @@ def gdal_translate(
             if valid_ovrs:
                 dst.build_overviews(valid_ovrs, cfg.resampling)
 
-    if cfg.stats or cfg.approx_stats:
+    if (
+        cfg.calc_stats or cfg.approx_stats
+    ) and cfg.gdalformat.upper().strip() != "COG":
         pop_img_stats(
             output_img,
             no_data_val=out_nodata,

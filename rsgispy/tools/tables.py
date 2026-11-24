@@ -65,6 +65,7 @@ _TEXT_COMP_EXTS = (".gz", ".gzip", ".bz2", ".xz", ".zst", ".zip")
 
 def resolve_table_format(
     out_file: Union[str, os.PathLike],
+    *,
     out_format: Optional[str] = None,
 ) -> str:
     """
@@ -110,6 +111,7 @@ def resolve_table_format(
 
 def resolve_table_output_spec(
     out_file: Union[str, os.PathLike],
+    *,
     out_format: Optional[str] = None,
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Tuple[str, Optional[str]]:
@@ -165,6 +167,7 @@ def resolve_table_output_spec(
 def write_dataframe_table(
     df: pd.DataFrame,
     out_file: Union[str, os.PathLike],
+    *,
     out_format: Optional[str] = None,
     out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
@@ -247,6 +250,7 @@ def write_dataframe_table(
 
 def read_dataframe_table(
     in_file: Union[str, os.PathLike],
+    *,
     in_format: Optional[str] = None,
     allow_pickle: bool = True,
 ) -> pd.DataFrame:

@@ -116,7 +116,7 @@ cfg = ClassificationConfig(
 )
 train_df, test_df, valid_df = extract_and_split_class_samples(cfg, test_prop=0.2, valid_prop=0.2, rnd_seed=42)
 clf, metrics = train_sklearn_classifier(cfg, RandomForestClassifier(n_estimators=200, random_state=42), train_df, test_df, valid_df, return_model=True)
-apply_sklearn_classifier(cfg, clf, in_msk_img="valid_msk.tif", img_msk_val=1, out_class_img="cls.tif", gdalformat="GTIFF", datatype=rsgispy.TYPE_8UINT)
+apply_sklearn_classifier(cfg, clf, in_msk_img="valid_msk.tif", img_msk_val=1, output_img="cls.tif", gdalformat="GTIFF", datatype=rsgispy.TYPE_8UINT)
 apply_majority_filter("cls.tif", "cls_filt.tif", filter_size=3, gdalformat="GTIFF", datatype=rsgispy.TYPE_8UINT)
 ```
 

@@ -379,7 +379,7 @@ def test_filter_tie_points_outliers():
         method=imreg.OUTLIER_METHOD_RANSAC,
         model=imreg.TRANSFORM_AFFINE,
         residual_thres=1.0,
-        random_state=42,
+        rnd_seed=42,
         return_model=True,
     )
     assert diag_ransac["n_inliers"] == 25
@@ -432,7 +432,7 @@ def test_gcp_embedding_and_coregister_images(tmp_path):
         search_area=8,
         residual_thres=2.0,
         out_gcp_file=gcp_out,
-        random_state=0,
+        rnd_seed=0,
         use_pbar=False,
     )
     assert summary["n_inliers"] >= 4

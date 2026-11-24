@@ -420,12 +420,12 @@ def _watershed_tile_worker(
     if has_user_markers:
         aux_core = np.where(cropped > 0, cropped, 0).astype(np.int64)
         core_labels = relabel_segments_array(
-            cropped, nodata_value=0, contiguous=True
+            cropped, no_data_val=0, contiguous=True
         )
         return core_labels, aux_core
 
     core_labels = relabel_segments_array(
-        cropped, nodata_value=0, contiguous=True
+        cropped, no_data_val=0, contiguous=True
     )
     return core_labels, None
 
@@ -464,7 +464,7 @@ def watershed_segmentation_array(
     min_pixels: int = 10,
     tile_size: Optional[Union[int, Tuple[int, int]]] = None,
     overlap: int = 32,
-    n_workers: int = 1,
+    n_jobs: int = 1,
     stitch_seams: bool = True,
     use_numba: bool = True,
     no_data_val: Optional[float] = None,
@@ -499,7 +499,7 @@ def watershed_segmentation_array(
         Optional core tile size ``(tile_h, tile_w)`` for tiled processing.
     overlap : int, optional
         Halo padding in pixels around each tile (Default = ``32``).
-    n_workers : int, optional
+    n_jobs : int, optional
         Number of worker processes for tiled execution (Default = ``1``).
     stitch_seams : bool, optional
         Reconcile segments across tile seams (Default = ``True``). Uses exact
@@ -565,7 +565,7 @@ def watershed_segmentation_array(
         params=params,
         tile_size=tile_size,
         overlap=overlap,
-        n_workers=n_workers,
+        n_jobs=n_jobs,
         stitch_seams=stitch_seams,
         seam_mode=seam_mode,
         seam_threshold=0.75,
@@ -586,7 +586,7 @@ def watershed_segmentation(
     bands: Optional[Sequence[int]] = None,
     tile_size: Optional[Union[int, Tuple[int, int]]] = None,
     overlap: int = 32,
-    n_workers: int = 1,
+    n_jobs: int = 1,
     stitch_seams: bool = True,
     use_numba: bool = True,
     *,
@@ -626,7 +626,7 @@ def watershed_segmentation(
         Core tile size ``(tile_h, tile_w)`` for bounded-memory execution.
     overlap : int, optional
         Halo padding in pixels around each tile (Default = ``32``).
-    n_workers : int, optional
+    n_jobs : int, optional
         Number of worker processes for parallel tiled execution
         (Default = ``1``).
     stitch_seams : bool, optional
@@ -705,7 +705,7 @@ def watershed_segmentation(
         params=params,
         tile_size=tile_size,
         overlap=overlap,
-        n_workers=n_workers,
+        n_jobs=n_jobs,
         stitch_seams=stitch_seams,
         seam_mode=seam_mode,
         seam_threshold=0.75,

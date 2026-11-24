@@ -663,3 +663,77 @@ def test_export_poly_pxls_to_df(tmp_path):
     )
     with pytest.raises(rsgispy.RSGISPyException):
         zs_poly.export_poly_pxls_to_df(pts_only, tif_path)
+
+
+def test_zonalstats_constants_helpers_and_kwonly(tmp_path):
+    """Test canonical *CENTRE constants, aliases, normalise_band_list, and kw-only args."""
+    import rsgispy.zonalstats as zs
+    from rsgispy.zonalstats._helpers import normalise_band_list
+
+    assert zs.METHOD_POLYCONTAINSPIXELCENTRE == 1
+    assert zs.METHOD_PIXELCONTAINSPOLYCENTRE == 5
+    assert zs.METHOD_POLYCONTAINSPIXELCENTER == zs.METHOD_POLYCONTAINSPIXELCENTRE
+    assert zs.METHOD_PIXELCONTAINSPOLYCENTER == zs.METHOD_PIXELCONTAINSPOLYCENTRE
+    assert "METHOD_POLYCONTAINSPIXELCENTRE" in zs.__all__
+    assert "METHOD_PIXELCONTAINSPOLYCENTRE" in zs.__all__
+
+    assert normalise_band_list(None, 3, "img.tif") == [1, 2, 3]
+    assert normalise_band_list(2, 3, "img.tif") == [2]
+    assert normalise_band_list([1, 3], 3, "img.tif") == [1, 3]
+
+    arr = np.ones((2, 2), dtype=np.float32)
+    tif_path = str(tmp_path / "kw.tif")
+    _write_test_raster(tif_path, arr, nodata=-9999.0)
+    pts_gdf = gpd.GeoDataFrame(
+        {"id": [1]}, geometry=[Point(500005.0, 5199995.0)], crs="EPSG:32630"
+    )
+    poly_gdf = gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[box(500000.0, 5199980.0, 500020.0, 5200000.0)],
+        crs="EPSG:32630",
+    )
+
+    with pytest.raises(TypeError):
+        zs_pt.ext_point_band_values(
+            pts_gdf.copy(), tif_path, 1, 0.0, 10.0, -1.0, "v", False, None, False
+        )
+    with pytest.raises(TypeError):
+        zs_pt.ext_point_band_values_file(
+            pts_gdf.copy(), None, tif_path, 1, 0.0, 10.0, -1.0, "v", False, None, False
+        )
+    with pytest.raises(TypeError):
+        zs_poly.calc_zonal_band_stats(
+            poly_gdf.copy(),
+            tif_path,
+            1,
+            0.0,
+            10.0,
+            -1.0,
+            None,
+            None,
+            "m",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            False,
+        )
+    with pytest.raises(TypeError):
+        zs_poly.export_poly_pxls_to_df(
+            poly_gdf.copy(),
+            tif_path,
+            [1],
+            None,
+            None,
+            None,
+            None,
+            None,
+            True,
+            False,
+            False,
+            False,
+            None,
+            None,
+        )

@@ -186,12 +186,12 @@ def build_img_pyramids_multi_core(
         base_transform = src.transform
         has_geo = (crs is not None) or (base_transform != Affine.identity())
         crs_wkt = crs.to_wkt() if crs is not None else None
-        colorinterp = list(src.colorinterp)
-        colormaps: Dict[int, Dict[int, Tuple[int, int, int, int]]] = {}
+        colour_interp = list(src.colorinterp)
+        colour_maps: Dict[int, Dict[int, Tuple[int, int, int, int]]] = {}
         for b_idx in range(1, n_bands + 1):
-            if colorinterp[b_idx - 1] == ColorInterp.palette:
+            if colour_interp[b_idx - 1] == ColorInterp.palette:
                 try:
-                    colormaps[b_idx] = src.colormap(b_idx)
+                    colour_maps[b_idx] = src.colormap(b_idx)
                 except ValueError:
                     pass
         base_tags = src.tags()
@@ -313,7 +313,7 @@ def build_img_pyramids_multi_core(
                                 "tile_h": cur_h,
                                 "dtypes": dtypes,
                                 "nodatavals": nodatavals,
-                                "nodata_val": uniform_nd,
+                                "no_data_val": uniform_nd,
                                 "resamp_name": resamp_name,
                                 "is_base_src": is_base_src,
                                 "crs_wkt": crs_wkt,
@@ -351,7 +351,7 @@ def build_img_pyramids_multi_core(
                     ovr_h=ovr_h,
                     n_bands=n_bands,
                     dtype_str=dtypes[0],
-                    nodata_val=uniform_nd,
+                    no_data_val=uniform_nd,
                     crs_wkt=crs_wkt,
                     lvl_transform=lvl_xfm,
                     compress=comp_val,
@@ -391,8 +391,8 @@ def build_img_pyramids_multi_core(
                 crs_wkt=crs_wkt,
                 base_transform=base_transform,
                 has_geo=has_geo,
-                colorinterp=colorinterp,
-                colormaps=colormaps,
+                colour_interp=colour_interp,
+                colour_maps=colour_maps,
                 base_tags=base_tags,
                 band_tags=band_tags,
                 descriptions=descriptions,

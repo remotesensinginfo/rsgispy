@@ -533,11 +533,11 @@ def apply_img_norm_params(
     stats_file: Optional[Union[str, os.PathLike]] = None,
     out_min: Optional[float] = None,
     out_max: Optional[float] = None,
-    out_no_data_val: Optional[float] = None,
     trim_to_limits: Optional[bool] = None,
     *,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
+    out_no_data_val: Optional[float] = None,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
@@ -554,7 +554,6 @@ def apply_img_norm_params(
                        :func:`calc_img_norm_params`.
     :param out_min: Optional override for output minimum value.
     :param out_max: Optional override for output maximum value.
-    :param out_no_data_val: Optional explicit output no-data value.
     :param trim_to_limits: Clamp transformed values to ``[out_min, out_max]``.
                            Defaults to ``True`` for ``'stdev'``, ``'cumulative'``,
                            and ``'user'`` stretches, and ``False`` otherwise.
@@ -562,6 +561,7 @@ def apply_img_norm_params(
                        (Default = ``'GTIFF'``).
     :param datatype: Output data type constant from ``rsgispy.TYPE_*``
                      (Default = ``rsgispy.TYPE_32FLOAT``).
+    :param out_no_data_val: Optional explicit output no-data value.
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
     :param creation_opts: Optional mapping of GDAL creation options.
 
@@ -716,7 +716,6 @@ def normalise_img_pxl_vals(
     method: Union[str, int] = "linear",
     out_min: Optional[float] = None,
     out_max: Optional[float] = None,
-    out_no_data_val: Optional[float] = None,
     out_stats_file: Optional[Union[str, os.PathLike]] = None,
     bands: Optional[Sequence[int]] = None,
     lower: float = 2.0,
@@ -733,6 +732,7 @@ def normalise_img_pxl_vals(
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
     no_data_val: Optional[float] = None,
+    out_no_data_val: Optional[float] = None,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -756,7 +756,6 @@ def normalise_img_pxl_vals(
                    (Default = ``'linear'``).
     :param out_min: Optional target output minimum value.
     :param out_max: Optional target output maximum value.
-    :param out_no_data_val: Optional explicit output no-data value.
     :param out_stats_file: Optional JSON path to save computed parameters.
     :param bands: Optional 1-based band indices to normalise (Default = all).
     :param lower: Lower percentile for ``'cumulative'`` stretch (Default = ``2.0``).
@@ -772,6 +771,7 @@ def normalise_img_pxl_vals(
     :param datatype: Output data type constant from ``rsgispy.TYPE_*``
                      (Default = ``rsgispy.TYPE_32FLOAT``).
     :param no_data_val: Optional explicit input no-data value overriding metadata.
+    :param out_no_data_val: Optional explicit output no-data value.
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
     :param creation_opts: Optional mapping of GDAL creation options.
     :return: Dictionary of calculated normalisation parameters.

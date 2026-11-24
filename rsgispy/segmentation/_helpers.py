@@ -2,7 +2,7 @@
 High-performance internal helpers for :mod:`rsgispy.segmentation`.
 
 Implements an :math:`O(N)` horizontal run-length-encoded (RLE) 4-connected
-component labeling engine backed by :mod:`scipy.sparse.csgraph` when available
+component labelling engine backed by :mod:`scipy.sparse.csgraph` when available
 and a pure-NumPy/Python RLE union-find fallback when ``scipy`` is not
 installed, together with a two-pass tiled streaming pipeline for out-of-core
 rasters.
@@ -187,7 +187,7 @@ def label_4connected(
 
     n_comp, comp_labels = _solve_graph_components(n_runs, u_arr, v_arr)
 
-    # Canonicalize component labels into strict row-major first-appearance order.
+    # Canonicalise component labels into strict row-major first-appearance order.
     first_run = np.empty(n_comp, dtype=np.int64)
     rev_runs = np.arange(n_runs - 1, -1, -1, dtype=np.int64)
     first_run[comp_labels[::-1]] = rev_runs
@@ -290,7 +290,7 @@ def _run_in_memory(
     out_rio_dtype: str = "uint32",
 ) -> None:
     """
-    Execute single-pass vectorized 4-connected clumping in memory, streaming
+    Execute single-pass vectorised 4-connected clumping in memory, streaming
     bands into adjacency masks one band at a time to minimise peak RAM.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -491,7 +491,7 @@ def _run_tiled(
                 prev_col_ids = global_out[:, -1].copy()
                 prev_col_vals = [arr[:, -1].copy() for arr in tile_bands]
 
-        # Resolve global equivalences and canonicalize to scanline order.
+        # Resolve global equivalences and canonicalise to scanline order.
         if total_raw == 0:
             with ExitStack() as out_stack:
                 dst = open_output_dataset(

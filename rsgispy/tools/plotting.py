@@ -340,7 +340,7 @@ def _rescale_band(
     return (((band_arr - low_val) / range_val) * out_gain) + out_off
 
 
-def _finalize_stretch_array(
+def _finalise_stretch_array(
     arr_data: np.ndarray,
     arr_data_out: np.ndarray,
     no_data_val: Optional[float],
@@ -465,7 +465,7 @@ def manual_stretch_np_arr(
                 out_gain,
             )
 
-    return _finalize_stretch_array(
+    return _finalise_stretch_array(
         arr_data=arr_data,
         arr_data_out=arr_data_out,
         no_data_val=no_data_val,
@@ -525,7 +525,7 @@ def linear_stretch_np_arr(
                 band_slice, min_val, max_val, out_off, out_gain
             )
 
-    return _finalize_stretch_array(
+    return _finalise_stretch_array(
         arr_data=arr_data,
         arr_data_out=arr_data_out,
         no_data_val=no_data_val,
@@ -589,7 +589,7 @@ def cumulative_stretch_np_arr(
                 band_slice, float(min_val), float(max_val), out_off, out_gain
             )
 
-    return _finalize_stretch_array(
+    return _finalise_stretch_array(
         arr_data=arr_data,
         arr_data_out=arr_data_out,
         no_data_val=no_data_val,
@@ -661,7 +661,7 @@ def stdev_stretch_np_arr(
     arr_data_out[arr_data_out < out_off] = out_off
     arr_data_out[arr_data_out > (out_gain + out_off)] = out_gain + out_off
 
-    return _finalize_stretch_array(
+    return _finalise_stretch_array(
         arr_data=arr_data,
         arr_data_out=arr_data_out,
         no_data_val=no_data_val,

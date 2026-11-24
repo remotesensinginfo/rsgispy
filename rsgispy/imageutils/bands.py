@@ -75,7 +75,7 @@ def select_img_bands(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -93,7 +93,7 @@ def select_img_bands(
     :param no_data_val: Optional output no-data value (defaults to ``input_img``
                         no-data value when ``None``).
     :param calc_stats: If ``True``, compute image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options (dict or sequence of
@@ -179,7 +179,7 @@ def stack_img_bands(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -203,7 +203,7 @@ def stack_img_bands(
     :param no_data_val: Optional no-data value written where pixels are skipped
                         and set on the output dataset (Default = ``None``).
     :param calc_stats: If ``True``, compute image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options (dict or sequence of
@@ -474,7 +474,7 @@ def sharpen_low_res_bands(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = 0.0,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -495,7 +495,7 @@ def sharpen_low_res_bands(
     :param no_data_val: No-data value ignored during regression fitting
                         (Default = ``0.0``; if ``None``, uses input nodata or ``0.0``).
     :param calc_stats: If ``True``, compute image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options (dict or sequence of

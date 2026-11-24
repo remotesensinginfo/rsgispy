@@ -343,7 +343,7 @@ def test_flow_routing_accumulation_and_stream_topology(tmp_path):
     hydrology.vectorise_streams(
         str(streams_path),
         str(fdir_d8),
-        str(streams_pq),
+        out_vec_file=str(streams_pq),
         dem_img=str(cond_path),
         flow_acc_img=str(acc_d8),
         order_method="shreve",
@@ -427,7 +427,7 @@ def test_flow_routing_accumulation_and_stream_topology(tmp_path):
     hydrology.trace_flow_path(
         str(fdir_d8),
         str(out_pt_vec),
-        str(trace_up),
+        out_vec_file=str(trace_up),
         direction="upstream",
         flow_acc_img=str(acc_d8),
         use_pbar=False,
@@ -469,7 +469,7 @@ def test_watershed_delineation_and_polygonisation(tmp_path):
     hydrology.snap_pour_points(
         str(raw_pts),
         str(acc_path),
-        str(snapped_pts),
+        out_vec_file=str(snapped_pts),
         snap_dist=25.0,
         streams_img=str(streams_path),
         use_pbar=False,
@@ -487,7 +487,7 @@ def test_watershed_delineation_and_polygonisation(tmp_path):
 
     ws_vec = tmp_path / "ws.gpkg"
     hydrology.polygonise_watersheds(
-        str(ws_path), str(ws_vec), dem_img=str(dem_path), dissolve=True, use_pbar=False
+        str(ws_path), out_vec_file=str(ws_vec), dem_img=str(dem_path), dissolve=True, use_pbar=False
     )
     ws_gdf = gpd.read_file(str(ws_vec))
     assert len(ws_gdf) == 1
@@ -622,7 +622,7 @@ def test_hand_flood_inundation_and_terrain_indices(tmp_path):
 def test_numba_fallback_and_validation(tmp_path, monkeypatch):
     """
     Verify HAS_NUMBA = False policy (RSGISPyException by default for topo ops,
-    RuntimeWarning + exact parity with allow_pure_python=True, and vectorized
+    RuntimeWarning + exact parity with allow_pure_python=True, and vectorised
     NumPy parity for stencil ops) as well as CRS & parameter validation.
     """
     dem = _make_v_valley_with_dam(rows=15, cols=15, res=10.0, dam=True, nodata=-9999.0)

@@ -67,7 +67,7 @@ __all__ = [
     "calc_vif_multicollinearity",
     "search_mdl_params",
     "fit_sklearn_mdl",
-    "fit_sklearn_slg_cls_mdl",
+    "fit_sklearn_sgl_cls_mdl",
     "fit_kfold_sklearn_mdls",
     "fit_kfold_sklearn_sgl_cls_mdls",
     "shap_sklearn_mdl_explainer",
@@ -76,11 +76,11 @@ __all__ = [
     "sklearn_jackknife_var_importance",
     "pred_sklearn_mdl_prob",
     "pred_sklearn_mdl_cls",
-    "pred_sklearn_slg_cls_mdl_prob",
-    "pred_sklearn_slg_cls_mdl_cls",
+    "pred_sklearn_sgl_cls_mdl_prob",
+    "pred_sklearn_sgl_cls_mdl_cls",
     "pred_ensemble_sklearn_mdls_prob",
     "pred_ensemble_sklearn_mdls_cls",
-    "pred_ensemble_sklearn_slg_cls_mdls_prob",
+    "pred_ensemble_sklearn_sgl_cls_mdls_prob",
     "pred_ensemble_sklearn_sgl_cls_mdls_cls",
 ]
 
@@ -92,10 +92,11 @@ def create_finite_mask(
     env_vars: Mapping[str, EnvVarInfo],
     analysis_vars: Sequence[str],
     output_img: str,
+    *,
     gdalformat: str = "GTIFF",
     tmp_dir: Optional[str] = None,  # pylint: disable=unused-argument
     use_pbar: bool = True,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
 ) -> None:
     """
     Generate a binary valid-data mask (``1`` valid, ``0`` invalid) where
@@ -113,7 +114,7 @@ def create_finite_mask(
     :param gdalformat: Output GDAL/rasterio format (Default = ``'GTIFF'``).
     :param tmp_dir: Unused legacy parameter retained for signature compatibility.
     :param use_pbar: Display a tqdm progress bar during processing (Default = ``True``).
-    :param calc_img_stats: Populate thematic statistics and pyramids (Default = ``True``).
+    :param calc_stats: Populate thematic statistics and pyramids (Default = ``True``).
 
     .. code:: python
 
@@ -160,7 +161,7 @@ def create_finite_mask(
         block_eval_fn=_eval_mask_block,
         gdalformat=gdalformat,
         out_rio_dtype="uint8",
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         thematic=True,
         no_data_val=0.0,
         use_pbar=use_pbar,
@@ -994,7 +995,7 @@ def fit_sklearn_mdl(
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-def fit_sklearn_slg_cls_mdl(
+def fit_sklearn_sgl_cls_mdl(
     est_cls_obj: Any,
     train_vec_file: VectorInput,
     train_vec_lyr: Optional[str],
@@ -1027,11 +1028,11 @@ def fit_sklearn_slg_cls_mdl(
         import rsgispy.modelling.species_distribution as sdm
 
         mdl = IsolationForest(random_state=42)
-        test_acc, auc_val = sdm.fit_sklearn_slg_cls_mdl(
+        test_acc, auc_val = sdm.fit_sklearn_sgl_cls_mdl(
             mdl, pres_train_gdf, None, test_gdf, None, ["v1", "v2"]
         )
     """
-    check_sklearn_available("fit_sklearn_slg_cls_mdl")
+    check_sklearn_available("fit_sklearn_sgl_cls_mdl")
     train_gdf = read_model_vector(train_vec_file, vec_lyr=train_vec_lyr)
     test_gdf = read_model_vector(test_vec_file, vec_lyr=test_vec_lyr)
 
@@ -1201,7 +1202,7 @@ def fit_kfold_sklearn_mdls(
             train_x_set,
             train_y_set,
             sync_input=False,
-            random_state=fold_seed,
+            rnd_seed=fold_seed,
         )
         est_cls_objs.append(est_cls_fold)
 
@@ -1311,7 +1312,7 @@ def fit_kfold_sklearn_sgl_cls_mdls(
             train_x_set,
             train_y=None,
             sync_input=False,
-            random_state=fold_seed,
+            rnd_seed=fold_seed,
         )
         est_cls_objs.append(est_cls_fold)
 
@@ -1681,9 +1682,10 @@ def pred_sklearn_mdl_prob(
     env_vars: Mapping[str, EnvVarInfo],
     analysis_vars: Sequence[str],
     output_img: str,
+    *,
     gdalformat: str = "GTIFF",
     normalise_data: bool = False,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
 ) -> None:
@@ -1700,7 +1702,7 @@ def pred_sklearn_mdl_prob(
     :param output_img: Output single-band probability image path.
     :param gdalformat: Output GDAL/rasterio format (Default = ``'GTIFF'``).
     :param normalise_data: Apply z-score normalisation from ``env_vars`` when ``True``.
-    :param calc_img_stats: Compute output image statistics and pyramids (Default = ``True``).
+    :param calc_stats: Compute output image statistics and pyramids (Default = ``True``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
 
@@ -1723,7 +1725,7 @@ def pred_sklearn_mdl_prob(
         out_rio_dtype="float32",
         fill_val=-1.0,
         normalise_data=normalise_data,
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         thematic=False,
         no_data_val=-1.0,
         block_size=block_size,
@@ -1739,9 +1741,10 @@ def pred_sklearn_mdl_cls(
     env_vars: Mapping[str, EnvVarInfo],
     analysis_vars: Sequence[str],
     output_img: str,
+    *,
     gdalformat: str = "GTIFF",
     normalise_data: bool = False,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
     out_no_data_val: int = 0,
@@ -1758,7 +1761,7 @@ def pred_sklearn_mdl_cls(
     :param output_img: Output thematic classification image path.
     :param gdalformat: Output GDAL/rasterio format (Default = ``'GTIFF'``).
     :param normalise_data: Apply z-score normalisation from ``env_vars`` when ``True``.
-    :param calc_img_stats: Populate thematic statistics and colour table (Default = ``True``).
+    :param calc_stats: Populate thematic statistics and colour table (Default = ``True``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
     :param out_no_data_val: Output ``uint8`` no-data fill value outside the
@@ -1791,7 +1794,7 @@ def pred_sklearn_mdl_cls(
         out_rio_dtype="uint8",
         fill_val=nd_val,
         normalise_data=normalise_data,
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         thematic=True,
         no_data_val=nd_val,
         block_size=block_size,
@@ -1807,16 +1810,17 @@ def _score_single_class_samples(est_cls_obj: Any, env_df: pd.DataFrame) -> np.nd
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
-def pred_sklearn_slg_cls_mdl_prob(
+def pred_sklearn_sgl_cls_mdl_prob(
     est_cls_obj: Any,
     in_msk_img: str,
     img_msk_val: int,
     env_vars: Mapping[str, EnvVarInfo],
     analysis_vars: Sequence[str],
     output_img: str,
+    *,
     gdalformat: str = "GTIFF",
     normalise_data: bool = False,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     out_no_data_val: float = -9999.0,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
@@ -1834,7 +1838,7 @@ def pred_sklearn_slg_cls_mdl_prob(
     :param output_img: Output ``float32`` score image path.
     :param gdalformat: Output GDAL/rasterio format (Default = ``'GTIFF'``).
     :param normalise_data: Apply z-score normalisation from ``env_vars`` when ``True``.
-    :param calc_img_stats: Compute output image statistics and pyramids (Default = ``True``).
+    :param calc_stats: Compute output image statistics and pyramids (Default = ``True``).
     :param out_no_data_val: No-data fill value outside mask (Default = ``-9999.0``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
@@ -1843,7 +1847,7 @@ def pred_sklearn_slg_cls_mdl_prob(
 
         import rsgispy.modelling.species_distribution as sdm
 
-        sdm.pred_sklearn_slg_cls_mdl_prob(
+        sdm.pred_sklearn_sgl_cls_mdl_prob(
             oc_mdl, "valid_mask.tif", 1, env_vars, ["v1", "v2"], "oc_score.tif"
         )
     """
@@ -1858,7 +1862,7 @@ def pred_sklearn_slg_cls_mdl_prob(
         out_rio_dtype="float32",
         fill_val=float(out_no_data_val),
         normalise_data=normalise_data,
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         thematic=False,
         no_data_val=float(out_no_data_val),
         block_size=block_size,
@@ -1867,16 +1871,17 @@ def pred_sklearn_slg_cls_mdl_prob(
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
-def pred_sklearn_slg_cls_mdl_cls(
+def pred_sklearn_sgl_cls_mdl_cls(
     est_cls_obj: Any,
     in_msk_img: str,
     img_msk_val: int,
     env_vars: Mapping[str, EnvVarInfo],
     analysis_vars: Sequence[str],
     output_img: str,
+    *,
     gdalformat: str = "GTIFF",
     normalise_data: bool = False,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
     out_no_data_val: int = 0,
@@ -1893,7 +1898,7 @@ def pred_sklearn_slg_cls_mdl_cls(
     :param output_img: Output thematic classification image path.
     :param gdalformat: Output GDAL/rasterio format (Default = ``'GTIFF'``).
     :param normalise_data: Apply z-score normalisation from ``env_vars`` when ``True``.
-    :param calc_img_stats: Populate thematic statistics and colour table (Default = ``True``).
+    :param calc_stats: Populate thematic statistics and colour table (Default = ``True``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
     :param out_no_data_val: Output ``uint8`` no-data fill value outside the
@@ -1905,7 +1910,7 @@ def pred_sklearn_slg_cls_mdl_cls(
 
         import rsgispy.modelling.species_distribution as sdm
 
-        sdm.pred_sklearn_slg_cls_mdl_cls(
+        sdm.pred_sklearn_sgl_cls_mdl_cls(
             oc_mdl, "valid_mask.tif", 1, env_vars, ["v1", "v2"], "oc_cls.tif",
             out_no_data_val=255,
         )
@@ -1926,7 +1931,7 @@ def pred_sklearn_slg_cls_mdl_cls(
         out_rio_dtype="uint8",
         fill_val=nd_val,
         normalise_data=normalise_data,
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         thematic=True,
         no_data_val=nd_val,
         block_size=block_size,
@@ -1942,10 +1947,11 @@ def pred_ensemble_sklearn_mdls_prob(
     env_vars: Mapping[str, EnvVarInfo],
     analysis_vars: Sequence[str],
     output_img: str,
+    *,
     gdalformat: str = "GTIFF",
     tmp_dir: Optional[str] = None,  # pylint: disable=unused-argument
     normalise_data: bool = False,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
 ) -> None:
@@ -1963,7 +1969,7 @@ def pred_ensemble_sklearn_mdls_prob(
     :param gdalformat: Output GDAL/rasterio format (Default = ``'GTIFF'``).
     :param tmp_dir: Unused legacy parameter retained for signature compatibility.
     :param normalise_data: Apply z-score normalisation from ``env_vars`` when ``True``.
-    :param calc_img_stats: Compute output image statistics and pyramids (Default = ``True``).
+    :param calc_stats: Compute output image statistics and pyramids (Default = ``True``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
 
@@ -1995,7 +2001,7 @@ def pred_ensemble_sklearn_mdls_prob(
         out_rio_dtype="float32",
         fill_val=-1.0,
         normalise_data=normalise_data,
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         thematic=False,
         no_data_val=-1.0,
         block_size=block_size,
@@ -2011,10 +2017,11 @@ def pred_ensemble_sklearn_mdls_cls(
     env_vars: Mapping[str, EnvVarInfo],
     analysis_vars: Sequence[str],
     output_img: str,
+    *,
     gdalformat: str = "GTIFF",
     tmp_dir: Optional[str] = None,  # pylint: disable=unused-argument
     normalise_data: bool = False,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
 ) -> None:
@@ -2032,7 +2039,7 @@ def pred_ensemble_sklearn_mdls_cls(
     :param gdalformat: Output GDAL/rasterio format (Default = ``'GTIFF'``).
     :param tmp_dir: Unused legacy parameter retained for signature compatibility.
     :param normalise_data: Apply z-score normalisation from ``env_vars`` when ``True``.
-    :param calc_img_stats: Compute output image statistics and pyramids (Default = ``True``).
+    :param calc_stats: Compute output image statistics and pyramids (Default = ``True``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
 
@@ -2067,7 +2074,7 @@ def pred_ensemble_sklearn_mdls_cls(
         out_rio_dtype="float32",
         fill_val=-1.0,
         normalise_data=normalise_data,
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         thematic=False,
         no_data_val=-1.0,
         block_size=block_size,
@@ -2076,17 +2083,18 @@ def pred_ensemble_sklearn_mdls_cls(
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
-def pred_ensemble_sklearn_slg_cls_mdls_prob(
+def pred_ensemble_sklearn_sgl_cls_mdls_prob(
     est_cls_objs: Sequence[Any],
     in_msk_img: str,
     img_msk_val: int,
     env_vars: Mapping[str, EnvVarInfo],
     analysis_vars: Sequence[str],
     output_img: str,
+    *,
     gdalformat: str = "GTIFF",
     tmp_dir: Optional[str] = None,  # pylint: disable=unused-argument
     normalise_data: bool = False,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     out_no_data_val: float = -9999.0,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
@@ -2104,7 +2112,7 @@ def pred_ensemble_sklearn_slg_cls_mdls_prob(
     :param gdalformat: Output GDAL/rasterio format (Default = ``'GTIFF'``).
     :param tmp_dir: Unused legacy parameter retained for signature compatibility.
     :param normalise_data: Apply z-score normalisation from ``env_vars`` when ``True``.
-    :param calc_img_stats: Compute output image statistics and pyramids (Default = ``True``).
+    :param calc_stats: Compute output image statistics and pyramids (Default = ``True``).
     :param out_no_data_val: No-data fill value outside mask (Default = ``-9999.0``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
@@ -2113,14 +2121,14 @@ def pred_ensemble_sklearn_slg_cls_mdls_prob(
 
         import rsgispy.modelling.species_distribution as sdm
 
-        sdm.pred_ensemble_sklearn_slg_cls_mdls_prob(
+        sdm.pred_ensemble_sklearn_sgl_cls_mdls_prob(
             oc_mdls, "valid_mask.tif", 1, env_vars, ["v1", "v2"], "oc_ens_score.tif"
         )
     """
     if not est_cls_objs:
         raise rsgispy.RSGISPyException("est_cls_objs must not be empty.")
 
-    def _ensemble_slg_prob(env_df: pd.DataFrame) -> np.ndarray:
+    def _ensemble_sgl_prob(env_df: pd.DataFrame) -> np.ndarray:
         stack = np.vstack(
             [_score_single_class_samples(mdl, env_df) for mdl in est_cls_objs]
         )
@@ -2132,12 +2140,12 @@ def pred_ensemble_sklearn_slg_cls_mdls_prob(
         env_vars=env_vars,
         analysis_vars=analysis_vars,
         output_img=output_img,
-        predict_fn=_ensemble_slg_prob,
+        predict_fn=_ensemble_sgl_prob,
         gdalformat=gdalformat,
         out_rio_dtype="float32",
         fill_val=float(out_no_data_val),
         normalise_data=normalise_data,
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         thematic=False,
         no_data_val=float(out_no_data_val),
         block_size=block_size,
@@ -2153,10 +2161,11 @@ def pred_ensemble_sklearn_sgl_cls_mdls_cls(
     env_vars: Mapping[str, EnvVarInfo],
     analysis_vars: Sequence[str],
     output_img: str,
+    *,
     gdalformat: str = "GTIFF",
     tmp_dir: Optional[str] = None,  # pylint: disable=unused-argument
     normalise_data: bool = False,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
 ) -> None:
@@ -2174,7 +2183,7 @@ def pred_ensemble_sklearn_sgl_cls_mdls_cls(
     :param gdalformat: Output GDAL/rasterio format (Default = ``'GTIFF'``).
     :param tmp_dir: Unused legacy parameter retained for signature compatibility.
     :param normalise_data: Apply z-score normalisation from ``env_vars`` when ``True``.
-    :param calc_img_stats: Compute output image statistics and pyramids (Default = ``True``).
+    :param calc_stats: Compute output image statistics and pyramids (Default = ``True``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
 
@@ -2189,7 +2198,7 @@ def pred_ensemble_sklearn_sgl_cls_mdls_cls(
     if not est_cls_objs:
         raise rsgispy.RSGISPyException("est_cls_objs must not be empty.")
 
-    def _ensemble_slg_cls(env_df: pd.DataFrame) -> np.ndarray:
+    def _ensemble_sgl_cls(env_df: pd.DataFrame) -> np.ndarray:
         stack = np.vstack(
             [
                 calc_single_class_predictions(mdl, env_df).astype(np.float64)
@@ -2204,12 +2213,12 @@ def pred_ensemble_sklearn_sgl_cls_mdls_cls(
         env_vars=env_vars,
         analysis_vars=analysis_vars,
         output_img=output_img,
-        predict_fn=_ensemble_slg_cls,
+        predict_fn=_ensemble_sgl_cls,
         gdalformat=gdalformat,
         out_rio_dtype="float32",
         fill_val=-1.0,
         normalise_data=normalise_data,
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         thematic=False,
         no_data_val=-1.0,
         block_size=block_size,

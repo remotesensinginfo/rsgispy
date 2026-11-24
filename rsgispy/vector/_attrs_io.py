@@ -112,6 +112,7 @@ def write_vec_column_to_layer(
     att_col_datatype: Any,
     att_col_data: Sequence[Any],
     vec_lyr: Optional[str] = None,
+    *,
     out_format: Optional[str] = None,
     out_compress: Optional[Union[str, bool]] = None,
 ) -> gpd.GeoDataFrame:
@@ -190,6 +191,7 @@ def write_vec_column(
     att_column: str,
     att_col_datatype: Any,
     att_col_data: Sequence[Any],
+    *,
     out_format: Optional[str] = None,
     out_compress: Optional[Union[str, bool]] = None,
     dest_vec_file: Optional[Union[str, os.PathLike]] = None,
@@ -317,6 +319,7 @@ def drop_vec_cols(
     drop_cols: Sequence[str],
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     out_format: str = "GPKG",
     chk_cols_present: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
@@ -381,6 +384,7 @@ def rename_vec_cols(
     rname_cols_lut: Dict[str, str],
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[gpd.GeoDataFrame]:
@@ -433,6 +437,7 @@ def sort_vec_lyr(
     out_vec_lyr: Optional[str],
     sort_by: Union[str, List[str]],
     ascending: Union[bool, List[bool]],
+    *,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[gpd.GeoDataFrame]:
@@ -620,6 +625,7 @@ def export_vec_attrs_to_parquet(
     vec_lyr: Optional[str],
     output_file: Union[str, os.PathLike],
     gzip_output: bool = True,
+    *,
     out_compress: Optional[Union[str, bool]] = None,
 ) -> None:
     """

@@ -380,12 +380,12 @@ def calc_pca(
     valid_msk_val: int = 1,
     bands: Optional[Sequence[int]] = None,
     standardise: bool = False,
-    out_no_data_val: Optional[float] = None,
     out_stats_json: Optional[str] = None,
     *,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
     no_data_val: Optional[float] = None,
+    out_no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> Dict[str, Any]:
@@ -410,9 +410,6 @@ def calc_pca(
     :param standardise: If ``True``, decompose the correlation matrix
                         (zero mean and unit variance per band) rather than the
                         unstandardised covariance matrix (Default = ``False``).
-    :param out_no_data_val: Output nodata value (defaults to ``no_data_val`` if
-                            set, else ``-9999.0`` for float outputs or ``0``
-                            for integer outputs).
     :param out_stats_json: Optional JSON file path to save eigenvalues,
                            explained variance ratios, means, scales, and
                            component loadings.
@@ -421,6 +418,9 @@ def calc_pca(
                      (Default = :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Explicit input nodata value overriding metadata
                         (Default = ``None``).
+    :param out_no_data_val: Output nodata value (defaults to ``no_data_val`` if
+                            set, else ``-9999.0`` for float outputs or ``0``
+                            for integer outputs).
     :param calc_stats: If ``True``, populate raster statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -568,12 +568,12 @@ def calc_mnf(
     valid_msk_val: int = 1,
     bands: Optional[Sequence[int]] = None,
     noise_direction: str = "both",
-    out_no_data_val: Optional[float] = None,
     out_stats_json: Optional[str] = None,
     *,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
     no_data_val: Optional[float] = None,
+    out_no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> Dict[str, Any]:
@@ -600,9 +600,6 @@ def calc_mnf(
                             estimation: ``'both'`` (horizontal and vertical),
                             ``'horizontal'``, or ``'vertical'``
                             (Default = ``'both'``).
-    :param out_no_data_val: Output nodata value (defaults to ``no_data_val`` if
-                            set, else ``-9999.0`` for float outputs or ``0``
-                            for integer outputs).
     :param out_stats_json: Optional JSON file path to save MNF eigenvalues,
                            estimated component SNRs, means, and transform matrix.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
@@ -610,6 +607,9 @@ def calc_mnf(
                      (Default = :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Explicit input nodata value overriding metadata
                         (Default = ``None``).
+    :param out_no_data_val: Output nodata value (defaults to ``no_data_val`` if
+                            set, else ``-9999.0`` for float outputs or ``0``
+                            for integer outputs).
     :param calc_stats: If ``True``, populate raster statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -822,13 +822,13 @@ def calc_tasseled_cap(
     component_names: Optional[Sequence[str]] = None,
     gain: float = 1.0,
     offset: float = 0.0,
-    out_no_data_val: Optional[float] = None,
     valid_msk_img: Optional[str] = None,
     valid_msk_val: int = 1,
     *,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
     no_data_val: Optional[float] = None,
+    out_no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -872,9 +872,6 @@ def calc_tasseled_cap(
                  ``(pixel - offset) / gain`` (Default = ``1.0``).
     :param offset: Optional additive offset subtracted before dividing by
                    ``gain`` (Default = ``0.0``).
-    :param out_no_data_val: Output nodata value (defaults to ``no_data_val`` if
-                            set, else ``-9999.0`` for float outputs or ``0``
-                            for integer outputs).
     :param valid_msk_img: Optional path to a valid-region mask raster file.
     :param valid_msk_val: Pixel value identifying valid pixels in
                           ``valid_msk_img`` (Default = ``1``).
@@ -883,6 +880,9 @@ def calc_tasseled_cap(
                      (Default = :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Explicit input nodata value overriding metadata
                         (Default = ``None``).
+    :param out_no_data_val: Output nodata value (defaults to ``no_data_val`` if
+                            set, else ``-9999.0`` for float outputs or ``0``
+                            for integer outputs).
     :param calc_stats: If ``True``, populate raster statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -1128,7 +1128,6 @@ def histogram_matching(
     ref_bands: Optional[Sequence[int]] = None,
     n_bins: int = 4096,
     ref_no_data_val: Optional[float] = None,
-    out_no_data_val: Optional[float] = None,
     valid_msk_img: Optional[str] = None,
     valid_msk_val: int = 1,
     ref_valid_msk_img: Optional[str] = None,
@@ -1137,6 +1136,7 @@ def histogram_matching(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    out_no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -1160,8 +1160,6 @@ def histogram_matching(
                    (Default = ``4096``).
     :param ref_no_data_val: Explicit nodata value for ``ref_img`` overriding
                             metadata (Default = ``None``).
-    :param out_no_data_val: Output nodata value (defaults to ``input_img``
-                            nodata value when ``None``).
     :param valid_msk_img: Optional valid-region mask image for ``input_img``.
     :param valid_msk_val: Mask value identifying valid pixels in
                           ``valid_msk_img`` (Default = ``1``).
@@ -1173,6 +1171,8 @@ def histogram_matching(
                      (defaults to matching ``input_img`` dtype when ``None``).
     :param no_data_val: Explicit nodata value for ``input_img`` overriding
                         metadata (Default = ``None``).
+    :param out_no_data_val: Output nodata value (defaults to ``input_img``
+                            nodata value when ``None``).
     :param calc_stats: If ``True``, populate raster statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing

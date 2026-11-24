@@ -489,7 +489,7 @@ def run_env_block_pipeline(
     ],
     gdalformat: str = "GTIFF",
     out_rio_dtype: str = "float32",
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     thematic: bool = False,
     no_data_val: Optional[float] = -1.0,
     block_size: Optional[int] = None,
@@ -545,7 +545,7 @@ def run_env_block_pipeline(
             out_arr = cast_result_block(raw_block, win_h, win_w, out_np_dtype)
             dst.write(out_arr, 1, window=out_win)
 
-    if calc_img_stats:
+    if calc_stats:
         if thematic:
             ignore_zero = no_data_val is None or float(no_data_val) == 0.0
             pop_thmt_img_stats(
@@ -575,7 +575,7 @@ def predict_raster_from_env_vars(
     out_rio_dtype: str = "float32",
     fill_val: float = -1.0,
     normalise_data: bool = False,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     thematic: bool = False,
     no_data_val: Optional[float] = -1.0,
     block_size: Optional[int] = None,
@@ -619,7 +619,7 @@ def predict_raster_from_env_vars(
         block_eval_fn=_eval_block,
         gdalformat=gdalformat,
         out_rio_dtype=out_rio_dtype,
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         thematic=thematic,
         no_data_val=no_data_val,
         block_size=block_size,

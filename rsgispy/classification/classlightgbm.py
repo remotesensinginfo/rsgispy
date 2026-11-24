@@ -707,12 +707,13 @@ def apply_lightgbm_binary_classifier(
     lgb_classifier: Union[Any, str, os.PathLike],
     in_msk_img: Union[str, os.PathLike],
     img_msk_val: int,
-    out_class_img: Optional[Union[str, os.PathLike]] = None,
+    output_img: Optional[Union[str, os.PathLike]] = None,
     out_score_img: Optional[Union[str, os.PathLike]] = None,
     img_band_info: Optional[Sequence[ImageBandInfo]] = None,
     pos_class: Optional[Union[str, int]] = None,
     pred_threshold: float = 0.5,
     score_all_classes: bool = False,
+    *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     out_no_data_val: Optional[int] = None,
@@ -720,7 +721,7 @@ def apply_lightgbm_binary_classifier(
     use_internal_id: bool = True,
     recode_to_out_ids: bool = True,
     score_no_data_val: float = -1.0,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
@@ -740,7 +741,7 @@ def apply_lightgbm_binary_classifier(
     :param lgb_classifier: Fitted ``LGBMClassifier`` or path to saved ``.joblib`` file.
     :param in_msk_img: Mask image path.
     :param img_msk_val: Mask pixel value defining pixels to classify.
-    :param out_class_img: Optional output classified ID raster path.
+    :param output_img: Optional output classified ID raster path.
     :param out_score_img: Optional output ``float32`` probability score raster.
     :param img_band_info: Optional sequence of
                           :class:`~rsgispy.classification.classdata.ImageBandInfo`.
@@ -749,13 +750,13 @@ def apply_lightgbm_binary_classifier(
     :param score_all_classes: Write 1 positive-class probability band (``False``)
                               or 2 bands (``True``).
     :param gdalformat: Output raster format (Default = ``'GTIFF'``).
-    :param datatype: Optional ``rsgispy.TYPE_*`` integer datatype for ``out_class_img``.
-    :param out_no_data_val: Optional unsigned integer nodata value for ``out_class_img``.
-    :param class_clr_names: Apply class RGB colour table to ``out_class_img``.
+    :param datatype: Optional ``rsgispy.TYPE_*`` integer datatype for ``output_img``.
+    :param out_no_data_val: Optional unsigned integer nodata value for ``output_img``.
+    :param class_clr_names: Apply class RGB colour table to ``output_img``.
     :param use_internal_id: Whether model predicts 0-based ``internal_id``.
     :param recode_to_out_ids: Recode predicted IDs to ``out_id`` values.
     :param score_no_data_val: Nodata fill value for ``out_score_img``.
-    :param calc_img_stats: Compute statistics and overviews (Default = ``True``).
+    :param calc_stats: Compute statistics and overviews (Default = ``True``).
     :param block_size: Optional processing block size in pixels.
     :param creation_opts: Optional GDAL creation options.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
@@ -773,7 +774,7 @@ def apply_lightgbm_binary_classifier(
             lgb_classifier=model,
             in_msk_img="mask.tif",
             img_msk_val=1,
-            out_class_img="lgb_binary_cls.tif",
+            output_img="lgb_binary_cls.tif",
             out_score_img="lgb_binary_prob.tif",
         )
     """
@@ -787,7 +788,7 @@ def apply_lightgbm_binary_classifier(
         in_msk_img=in_msk_img,
         img_msk_val=img_msk_val,
         binary=True,
-        out_class_img=out_class_img,
+        output_img=output_img,
         out_score_img=out_score_img,
         img_band_info=img_band_info,
         gdalformat=gdalformat,
@@ -798,7 +799,7 @@ def apply_lightgbm_binary_classifier(
         recode_to_out_ids=recode_to_out_ids,
         score_max_only=False,
         score_no_data_val=score_no_data_val,
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         block_size=block_size,
         creation_opts=creation_opts,
         use_pbar=use_pbar,
@@ -815,9 +816,10 @@ def apply_lightgbm_multiclass_classifier(
     lgb_classifier: Union[Any, str, os.PathLike],
     in_msk_img: Union[str, os.PathLike],
     img_msk_val: int,
-    out_class_img: Optional[Union[str, os.PathLike]] = None,
+    output_img: Optional[Union[str, os.PathLike]] = None,
     out_score_img: Optional[Union[str, os.PathLike]] = None,
     img_band_info: Optional[Sequence[ImageBandInfo]] = None,
+    *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     out_no_data_val: Optional[int] = None,
@@ -826,7 +828,7 @@ def apply_lightgbm_multiclass_classifier(
     recode_to_out_ids: bool = True,
     score_max_only: bool = False,
     score_no_data_val: float = -1.0,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
@@ -843,19 +845,19 @@ def apply_lightgbm_multiclass_classifier(
     :param lgb_classifier: Fitted ``LGBMClassifier`` or path to saved ``.joblib`` file.
     :param in_msk_img: Mask image path.
     :param img_msk_val: Mask pixel value defining pixels to classify.
-    :param out_class_img: Optional output classified ID raster path.
+    :param output_img: Optional output classified ID raster path.
     :param out_score_img: Optional output ``float32`` probability score raster.
     :param img_band_info: Optional sequence of
                           :class:`~rsgispy.classification.classdata.ImageBandInfo`.
     :param gdalformat: Output raster format (Default = ``'GTIFF'``).
-    :param datatype: Optional ``rsgispy.TYPE_*`` integer datatype for ``out_class_img``.
-    :param out_no_data_val: Optional unsigned integer nodata value for ``out_class_img``.
-    :param class_clr_names: Apply class RGB colour table to ``out_class_img``.
+    :param datatype: Optional ``rsgispy.TYPE_*`` integer datatype for ``output_img``.
+    :param out_no_data_val: Optional unsigned integer nodata value for ``output_img``.
+    :param class_clr_names: Apply class RGB colour table to ``output_img``.
     :param use_internal_id: Whether model predicts 0-based ``internal_id``.
     :param recode_to_out_ids: Recode predicted IDs to ``out_id`` values.
     :param score_max_only: Write single-band maximum probability when ``True``.
     :param score_no_data_val: Nodata fill value for ``out_score_img``.
-    :param calc_img_stats: Compute statistics and overviews (Default = ``True``).
+    :param calc_stats: Compute statistics and overviews (Default = ``True``).
     :param block_size: Optional processing block size in pixels.
     :param creation_opts: Optional GDAL creation options.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
@@ -873,7 +875,7 @@ def apply_lightgbm_multiclass_classifier(
             lgb_classifier=model,
             in_msk_img="mask.tif",
             img_msk_val=1,
-            out_class_img="lgb_multiclass.tif",
+            output_img="lgb_multiclass.tif",
             out_score_img="lgb_probs.tif",
         )
     """
@@ -887,7 +889,7 @@ def apply_lightgbm_multiclass_classifier(
         in_msk_img=in_msk_img,
         img_msk_val=img_msk_val,
         binary=False,
-        out_class_img=out_class_img,
+        output_img=output_img,
         out_score_img=out_score_img,
         img_band_info=img_band_info,
         gdalformat=gdalformat,
@@ -898,7 +900,7 @@ def apply_lightgbm_multiclass_classifier(
         recode_to_out_ids=recode_to_out_ids,
         score_max_only=score_max_only,
         score_no_data_val=score_no_data_val,
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         block_size=block_size,
         creation_opts=creation_opts,
         use_pbar=use_pbar,

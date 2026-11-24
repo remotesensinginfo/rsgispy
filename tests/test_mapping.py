@@ -877,11 +877,61 @@ def test_categorical_map_legends(tmp_path):
 
     out_lgd_png = tmp_path / "standalone_legend.png"
     r_saved, c_saved = map_legend.save_categorical_legend_img(
-        out_img_file=out_lgd_png,
+        output_img=out_lgd_png,
         classes_info=cfg_json,
         title="Land Cover Classification",
+        swatch_edge_colour="#111111",
         dpi=120,
         transparent=True,
     )
     assert out_lgd_png.exists() and out_lgd_png.stat().st_size > 0
     assert r_saved * c_saved >= 3
+
+
+def test_mapping_british_english_params(tmp_path):
+    """Test renamed British English parameters on elements, legend, and raster maps."""
+    fig, ax = plt.subplots()
+    map_layout.define_axis_extent(ax, (500000.0, 510000.0, 5200000.0, 5210000.0))
+    sb = map_elements.add_scale_bar(
+        ax,
+        epsg_code=32630,
+        style=map_elements.SCALEBAR_STYLE_ALTERNATING,
+        colour="navy",
+        alt_colour="lightgrey",
+        box_colour="ivory",
+    )
+    assert sb.colour == "navy"
+    assert sb.alt_colour == "lightgrey"
+
+    na = map_elements.add_north_arrow(
+        ax,
+        style=map_elements.NORTH_ARROW_STYLE_COMPASS,
+        colour="darkgreen",
+        alt_colour="beige",
+        box_colour="white",
+    )
+    assert na.colour == "darkgreen"
+    assert na.alt_colour == "beige"
+
+    handles = map_legend.create_categorical_legend_patches(
+        classes_info={1: "Forest", 2: "Water"},
+        colour_lut={1: "#228b22", 2: "#1e90ff"},
+        swatch_edge_colour="#000000",
+    )
+    assert len(handles) == 2
+    plt.close(fig)
+
+    arr = np.array([[1.0, 2.0], [-99.0, 4.0]], dtype=np.float32)
+    tif = tmp_path / "nd.tif"
+    _write_continuous_raster(str(tif), arr, nodata=None)
+    fig2, ax2 = plt.subplots()
+    map_raster.create_raster_img_map(
+        ax2,
+        str(tif),
+        img_bands=[1],
+        img_stch=rsgispy.IMG_STRETCH_LINEAR,
+        no_data_val=-99.0,
+        no_data_out_clr=0.0,
+    )
+    assert len(ax2.images) == 1
+    plt.close(fig2)

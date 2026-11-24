@@ -91,7 +91,7 @@ def test_multitile_clustering_preserves_pixel_positions(tmp_path):
         out_single,
         clusterer=KMeans(n_clusters=4, random_state=42, n_init=10),
         out_no_data_val=0,
-        calc_img_stats=False,
+        calc_stats=False,
         block_size=64,
         use_pbar=False,
     )
@@ -100,7 +100,7 @@ def test_multitile_clustering_preserves_pixel_positions(tmp_path):
         out_multi,
         clusterer=KMeans(n_clusters=4, random_state=42, n_init=10),
         out_no_data_val=0,
-        calc_img_stats=False,
+        calc_stats=False,
         block_size=8,
         use_pbar=False,
     )
@@ -244,9 +244,9 @@ def test_optuna_fixed_param_refit_and_verbosity_restore():
             task="classification",
             cv=3,
             n_trials=3,
-            random_state=42,
+            rnd_seed=42,
             refit=True,
-            show_progress=False,
+            use_pbar=False,
         )
         assert optuna.logging.get_verbosity() == optuna.logging.INFO
         assert res.best_params["max_iter"] == 250
@@ -358,7 +358,7 @@ def test_nested_spatial_cv_missing_fold_class():
         task="classification",
         groups=groups,
         outer_cv=GroupKFold(n_splits=2),
-        random_state=21,
+        rnd_seed=21,
     )
     assert res.oof_probabilities is not None
     assert res.oof_probabilities.shape == (30, 3)
@@ -423,7 +423,7 @@ def test_modelling_valid_range_crs_alignment_resolve_vars_and_distinct_nodata(tm
         env_vars,
         ["VarOne", "VarTwo"],
         finite_msk,
-        calc_img_stats=False,
+        calc_stats=False,
         use_pbar=False,
     )
     with rasterio.open(finite_msk) as src:
@@ -501,7 +501,7 @@ def test_modelling_valid_range_crs_alignment_resolve_vars_and_distinct_nodata(tm
         analysis_vars,
         return_model=True,
     )
-    oc_mdl, _, _ = sdm.fit_sklearn_slg_cls_mdl(
+    oc_mdl, _, _ = sdm.fit_sklearn_sgl_cls_mdl(
         IsolationForest(n_estimators=10, contamination=0.1, random_state=3),
         comb_gdf[comb_gdf["clsid"] == 1],
         None,
@@ -522,18 +522,18 @@ def test_modelling_valid_range_crs_alignment_resolve_vars_and_distinct_nodata(tm
         env_vars,
         analysis_vars,
         cls_255,
-        calc_img_stats=False,
+        calc_stats=False,
         use_pbar=False,
         out_no_data_val=255,
     )
-    sdm.pred_sklearn_slg_cls_mdl_cls(
+    sdm.pred_sklearn_sgl_cls_mdl_cls(
         oc_mdl,
         msk_path,
         1,
         env_vars,
         analysis_vars,
         oc_cls_255,
-        calc_img_stats=False,
+        calc_stats=False,
         use_pbar=False,
         out_no_data_val=255,
     )

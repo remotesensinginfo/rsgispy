@@ -289,9 +289,10 @@ def apply_classifier_raster(
     estimator: Any,
     in_msk_img: Union[str, os.PathLike],
     img_msk_val: int,
-    out_class_img: Optional[Union[str, os.PathLike]] = None,
+    output_img: Optional[Union[str, os.PathLike]] = None,
     out_score_img: Optional[Union[str, os.PathLike]] = None,
     img_band_info: Optional[Sequence[ImageBandInfo]] = None,
+    *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     out_no_data_val: Optional[int] = None,
@@ -300,7 +301,7 @@ def apply_classifier_raster(
     recode_to_out_ids: bool = True,
     score_max_only: bool = False,
     score_no_data_val: float = -1.0,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
@@ -316,9 +317,9 @@ def apply_classifier_raster(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
-    if out_class_img is None and out_score_img is None:
+    if output_img is None and out_score_img is None:
         raise rsgispy.RSGISPyException(
-            "At least one of out_class_img or out_score_img must be specified."
+            "At least one of output_img or out_score_img must be specified."
         )
     p_kwargs = dict(predict_kwargs) if predict_kwargs else {}
     check_sklearn_estimator_fitted(estimator, label="classifier")
@@ -387,7 +388,7 @@ def apply_classifier_raster(
     )
 
     out_cls_path = (
-        ensure_parent_dir(out_class_img) if out_class_img is not None else None
+        ensure_parent_dir(output_img) if output_img is not None else None
     )
     out_scr_path = (
         ensure_parent_dir(out_score_img) if out_score_img is not None else None
@@ -593,7 +594,7 @@ def apply_classifier_raster(
             eff_nodata=eff_nodata,
             out_rio_dtype=out_rio_dtype,
             out_np_dtype=out_np_dtype,
-            calc_img_stats=calc_img_stats,
+            calc_stats=calc_stats,
             add_clr_tab=False,
             clr_lut=clr_lut,
             use_pbar=use_pbar,
@@ -601,7 +602,7 @@ def apply_classifier_raster(
 
     if out_scr_path is not None:
         set_img_not_thematic(out_scr_path)
-        if calc_img_stats:
+        if calc_stats:
             pop_img_stats(
                 out_scr_path,
                 no_data_val=float(score_no_data_val),

@@ -155,11 +155,11 @@ def calc_dist_to_img_vals(
     pxl_vals: Union[int, float, Sequence[Union[int, float]]],
     img_band: int = 1,
     max_dist: Optional[float] = None,
-    out_no_data_val: Optional[float] = None,
     unit_geo: bool = True,
     *,
     gdalformat: str = "GTIFF",
     no_data_val: Optional[float] = None,
+    out_no_data_val: Optional[float] = None,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
@@ -173,14 +173,14 @@ def calc_dist_to_img_vals(
     :param img_band: 1-based band index to inspect (Default = ``1``).
     :param max_dist: Optional maximum distance threshold; distances greater
                      than ``max_dist`` are set to ``out_no_data_val``.
-    :param out_no_data_val: Output no-data value (defaults to ``max_dist`` if
-                            ``None``).
     :param unit_geo: If ``True``, return distances in CRS map units; if
                      ``False``, return distances in pixel units (Default = True).
     :param gdalformat: GDAL/rasterio driver format for the output file
                        (Default = ``'GTIFF'``).
     :param no_data_val: Optional input no-data value excluded from calculation
                         and written as ``out_no_data_val``.
+    :param out_no_data_val: Output no-data value (defaults to ``max_dist`` if
+                            ``None``).
     :param use_pbar: Retained for signature consistency (Default = ``True``).
     :param creation_opts: Optional mapping of GDAL creation options.
 
@@ -253,7 +253,6 @@ def calc_dist_to_img_vals_tiled(
     pxl_vals: Union[int, float, Sequence[Union[int, float]]],
     img_band: int = 1,
     max_dist: float = 1000,
-    out_no_data_val: Optional[float] = None,
     unit_geo: bool = True,
     tmp_dir: str = "tmp",
     tile_size: int = 2000,
@@ -261,6 +260,7 @@ def calc_dist_to_img_vals_tiled(
     *,
     gdalformat: str = "GTIFF",
     no_data_val: Optional[float] = None,
+    out_no_data_val: Optional[float] = None,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
@@ -273,8 +273,6 @@ def calc_dist_to_img_vals_tiled(
     :param pxl_vals: Target pixel value or sequence of pixel values.
     :param img_band: 1-based band index to inspect (Default = ``1``).
     :param max_dist: Maximum distance to compute (Default = ``1000``).
-    :param out_no_data_val: Output no-data value (defaults to ``max_dist`` if
-                            ``None``).
     :param unit_geo: If ``True``, distances are in CRS map units; if ``False``,
                      in pixel units (Default = ``True``).
     :param tmp_dir: Retained for API compatibility with ``rsgislib``
@@ -285,6 +283,8 @@ def calc_dist_to_img_vals_tiled(
     :param gdalformat: GDAL/rasterio driver format for the output file
                        (Default = ``'GTIFF'``).
     :param no_data_val: Optional input no-data value (Default = ``None``).
+    :param out_no_data_val: Output no-data value (defaults to ``max_dist`` if
+                            ``None``).
     :param use_pbar: Show a progress bar during tiled processing
                      (Default = ``True``).
     :param creation_opts: Optional mapping of GDAL creation options.

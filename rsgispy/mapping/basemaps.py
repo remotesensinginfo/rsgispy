@@ -19,7 +19,7 @@ import rsgispy.imageutils.warp
 from rsgispy.mapping.elements import (
     NORTH_ARROW_STYLE_TRIANGLE,
     SCALEBAR_STYLE_SOLID,
-    _finalize_map_axis,
+    _finalise_map_axis,
 )
 import rsgispy.tools.files
 import rsgispy.tools.plotting
@@ -270,7 +270,7 @@ def create_wmts_img_map(
     ax.imshow(img_data, extent=img_coords, cmap=imshow_cmap)
     ax.set_xlim([bbox[0], bbox[1]])
     ax.set_ylim([bbox[2], bbox[3]])
-    _finalize_map_axis(
+    _finalise_map_axis(
         ax=ax,
         epsg_code=bbox_epsg,
         bbox=bbox,

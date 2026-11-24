@@ -719,7 +719,7 @@ def filter_tie_points_outliers(
     min_samples: Optional[int] = None,
     mad_scale: float = 3.0,
     output_type: int = TYPE_RSGIS_IMG2MAP,
-    random_state: Optional[int] = None,
+    rnd_seed: Optional[int] = None,
     return_model: bool = False,
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, Dict[str, Any]], None]:
     """
@@ -746,7 +746,7 @@ def filter_tie_points_outliers(
                       (Default = ``3.0``).
     :param output_type: Output format constant ``TYPE_*`` when writing a plain
                         text GCP file (Default = :data:`TYPE_RSGIS_IMG2MAP`).
-    :param random_state: Optional RNG seed for reproducible RANSAC sampling.
+    :param rnd_seed: Optional RNG seed for reproducible RANSAC sampling.
     :param return_model: If ``True`` and ``out_gcp_file`` is ``None``, return
                          ``(filtered_df, diagnostics_dict)``.
     :return: Filtered :class:`pandas.DataFrame` (or tuple when
@@ -811,7 +811,7 @@ def filter_tie_points_outliers(
 
     inlier_mask = np.ones(n_pts, dtype=bool)
     if method_key == OUTLIER_METHOD_RANSAC:
-        rng = np.random.default_rng(random_state)
+        rng = np.random.default_rng(rnd_seed)
         best_count = -1
         best_rmse = np.inf
         best_mask: Optional[np.ndarray] = None

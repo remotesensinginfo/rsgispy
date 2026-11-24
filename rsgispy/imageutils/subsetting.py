@@ -38,7 +38,7 @@ def subset_bbox(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -57,7 +57,7 @@ def subset_bbox(
                      (defaults to the input image data type).
     :param no_data_val: Optional output no-data value (defaults to input nodata).
     :param calc_stats: Populate image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: Show a progress bar during subsetting (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
 
@@ -142,7 +142,7 @@ def subset_to_img(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -157,7 +157,7 @@ def subset_to_img(
                      (defaults to the input image data type).
     :param no_data_val: Optional output no-data value (defaults to input nodata).
     :param calc_stats: Populate image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: Show a progress bar during subsetting (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
 
@@ -211,7 +211,7 @@ def subset(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -229,7 +229,7 @@ def subset(
                      (defaults to the input image data type).
     :param no_data_val: Optional output no-data value (defaults to input nodata).
     :param calc_stats: Populate image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: Show a progress bar during subsetting (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
 

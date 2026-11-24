@@ -1810,7 +1810,7 @@ def calc_indices(
     *,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
-    in_no_data_val: Optional[float] = None,
+    no_data_val: Optional[float] = None,
     out_no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -1882,8 +1882,8 @@ def calc_indices(
                        (Default = ``'GTIFF'``).
     :param datatype: Output data type constant from ``rsgispy.TYPE_*``
                      (Default = ``rsgispy.TYPE_32FLOAT``).
-    :param in_no_data_val: Optional input no-data value. If ``None``, reads the
-                           no-data value(s) from the input image header.
+    :param no_data_val: Optional input no-data value. If ``None``, reads the
+                        no-data value(s) from the input image header.
     :param out_no_data_val: Optional output no-data value. If ``None``, uses
                             ``-999.0`` for signed/floating-point types (or
                             ``0`` / type minimum for narrow integer types).
@@ -1966,8 +1966,8 @@ def calc_indices(
 
         in_nodata_map: Dict[str, Optional[float]] = {}
         for b_name in req_band_set:
-            if in_no_data_val is not None:
-                in_nodata_map[b_name] = float(in_no_data_val)
+            if no_data_val is not None:
+                in_nodata_map[b_name] = float(no_data_val)
             else:
                 b_idx = canonical_to_idx[b_name]
                 in_nodata_map[b_name] = src.nodatavals[b_idx - 1]
@@ -2144,7 +2144,7 @@ def calc_sar_indices(
     *,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
-    in_no_data_val: Optional[float] = None,
+    no_data_val: Optional[float] = None,
     out_no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
@@ -2218,8 +2218,8 @@ def calc_sar_indices(
                        (Default = ``'GTIFF'``).
     :param datatype: Output data type constant from ``rsgispy.TYPE_*``
                      (Default = ``rsgispy.TYPE_32FLOAT``).
-    :param in_no_data_val: Optional input no-data value. If ``None``, reads the
-                           no-data value(s) from the input image header.
+    :param no_data_val: Optional input no-data value. If ``None``, reads the
+                        no-data value(s) from the input image header.
     :param out_no_data_val: Optional output no-data value. If ``None``, uses
                             ``-999.0`` for signed/floating-point types (or
                             ``0`` / type minimum for narrow integer types).
@@ -2318,8 +2318,8 @@ def calc_sar_indices(
 
         in_nodata_map: Dict[str, Optional[float]] = {}
         for b_name in req_band_set:
-            if in_no_data_val is not None:
-                in_nodata_map[b_name] = float(in_no_data_val)
+            if no_data_val is not None:
+                in_nodata_map[b_name] = float(no_data_val)
             else:
                 b_idx = canonical_to_idx[b_name]
                 in_nodata_map[b_name] = src.nodatavals[b_idx - 1]

@@ -32,7 +32,7 @@ from rsgispy.segmentation.utils import (
     relabel_segments_array,
     resolve_input_nodata,
     resolve_label_dtype,
-    validate_n_workers,
+    validate_n_jobs,
     worker_init_single_thread,
     _eliminate_small_regions_kernel,
 )
@@ -244,15 +244,15 @@ def crop_halo_labels(halo_labels: np.ndarray, tile: TileWindow) -> np.ndarray:
 def offset_tile_labels(
     labels: np.ndarray,
     offset: int,
-    nodata_value: int = 0,
+    no_data_val: int = 0,
 ) -> Tuple[np.ndarray, int]:
     """
     Shift positive labels in ``labels`` by ``offset`` while keeping
-    ``nodata_value`` unchanged. Returns ``(shifted_labels, new_max_id)``.
+    ``no_data_val`` unchanged. Returns ``(shifted_labels, new_max_id)``.
     """
     out = labels.astype(np.int64, copy=True)
-    valid = out != nodata_value
-    if nodata_value >= 0:
+    valid = out != no_data_val
+    if no_data_val >= 0:
         valid &= out > 0
     if not np.any(valid):
         return out, offset
@@ -590,7 +590,7 @@ def run_tiled_array_pipeline(
     params: Dict[str, Any],
     tile_size: Optional[Union[int, Tuple[int, int]]] = None,
     overlap: int = 0,
-    n_workers: int = 1,
+    n_jobs: int = 1,
     stitch_seams: bool = True,
     seam_mode: str = "spectral",
     seam_threshold: float = 1.0,
@@ -604,7 +604,7 @@ def run_tiled_array_pipeline(
     reconciliation, and contiguous ``1..N`` relabelling.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    workers = validate_n_workers(n_workers)
+    workers = validate_n_jobs(n_jobs)
     _, height, width = arr_3d.shape
     tiles = plan_tiles(height, width, tile_size=tile_size, overlap=overlap)
 
@@ -615,11 +615,11 @@ def run_tiled_array_pipeline(
                 core_labels,
                 data=arr_3d,
                 min_pixels=min_pixels,
-                nodata_value=0,
+                no_data_val=0,
                 use_numba=use_numba,
             )
         return relabel_segments_array(
-            core_labels, nodata_value=0, contiguous=True
+            core_labels, no_data_val=0, contiguous=True
         )
 
     tasks = [
@@ -690,7 +690,7 @@ def run_tiled_array_pipeline(
         use_numba=use_numba,
     )
     mapped = lut[out_labels]
-    return relabel_segments_array(mapped, nodata_value=0, contiguous=True)
+    return relabel_segments_array(mapped, no_data_val=0, contiguous=True)
 
 
 def run_tiled_raster_pipeline(
@@ -701,7 +701,7 @@ def run_tiled_raster_pipeline(
     params: Dict[str, Any],
     tile_size: Optional[Union[int, Tuple[int, int]]] = None,
     overlap: int = 0,
-    n_workers: int = 1,
+    n_jobs: int = 1,
     stitch_seams: bool = True,
     seam_mode: str = "spectral",
     seam_threshold: float = 1.0,
@@ -720,7 +720,7 @@ def run_tiled_raster_pipeline(
     remapping, and standard ``rsgispy`` statistics population.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
-    workers = validate_n_workers(n_workers)
+    workers = validate_n_jobs(n_jobs)
     in_path = os.fspath(input_img)
     out_path = os.fspath(output_img)
     _, out_rio_dtype, out_np_dtype = resolve_label_dtype(datatype)
@@ -757,7 +757,7 @@ def run_tiled_raster_pipeline(
             params=params,
             tile_size=None,
             overlap=0,
-            n_workers=1,
+            n_jobs=1,
             stitch_seams=stitch_seams,
             seam_mode=seam_mode,
             seam_threshold=seam_threshold,
@@ -843,7 +843,7 @@ def run_tiled_raster_pipeline(
                     tid, c_lbl, c_arr, c_aux = _raster_tile_task(task)
                     _record_tile(tiles[tid], c_lbl, c_arr, c_aux)
             else:
-                # Stream results into deterministic tile order to keep IDs identical to n_workers=1
+                # Stream results into deterministic tile order to keep IDs identical to n_jobs=1
                 pending: Dict[
                     int, Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]
                 ] = {}

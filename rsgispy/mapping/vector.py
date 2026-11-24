@@ -14,7 +14,7 @@ import rsgispy
 from rsgispy.mapping.elements import (
     NORTH_ARROW_STYLE_TRIANGLE,
     SCALEBAR_STYLE_SOLID,
-    _finalize_map_axis,
+    _finalise_map_axis,
 )
 
 __all__ = [
@@ -176,7 +176,7 @@ def create_vec_lyr_map(
     ax.ticklabel_format(useOffset=False, style="plain")
 
     vec_epsg = _get_vec_epsg(vec_list[0]) if vec_list else None
-    _finalize_map_axis(
+    _finalise_map_axis(
         ax=ax,
         epsg_code=vec_epsg,
         bbox=bbox,
@@ -284,7 +284,7 @@ def create_choropleth_vec_lyr_map(
     ax.set_ylim([bbox[2], bbox[3]])
     ax.ticklabel_format(useOffset=False, style="plain")
 
-    _finalize_map_axis(
+    _finalise_map_axis(
         ax=ax,
         epsg_code=_get_vec_epsg(gp_vec),
         bbox=bbox,
@@ -416,7 +416,7 @@ def create_vec_pt_density_map(
     ax.set_ylim([bbox[2], bbox[3]])
     ax.ticklabel_format(useOffset=False, style="plain")
 
-    _finalize_map_axis(
+    _finalise_map_axis(
         ax=ax,
         epsg_code=_get_vec_epsg(gp_vec),
         bbox=bbox,

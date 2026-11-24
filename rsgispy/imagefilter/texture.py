@@ -1,5 +1,5 @@
 """
-Gray-Level Co-occurrence Matrix (GLCM) spatial texture filters for raster images.
+Grey-Level Co-occurrence Matrix (GLCM) spatial texture filters for raster images.
 """
 
 from typing import List, Optional, Sequence, Union
@@ -55,7 +55,7 @@ def apply_glcm_filter(
     use_pbar: bool = True,
 ) -> None:
     """
-    Compute moving-window Gray-Level Co-occurrence Matrix (GLCM) texture
+    Compute moving-window Grey-Level Co-occurrence Matrix (GLCM) texture
     features for each band of ``input_img``.
 
     Supported ``properties`` include ``'contrast'``, ``'dissimilarity'``,

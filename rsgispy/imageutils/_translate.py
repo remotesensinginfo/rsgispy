@@ -112,7 +112,7 @@ class TranslateConfig:
     mask_band: Optional[Union[int, str]] = None
     no_gcp: bool = False
     gcps: List[GroundControlPoint] = field(default_factory=list)
-    stats: bool = False
+    calc_stats: bool = True
     approx_stats: bool = False
     metadata: Dict[str, str] = field(default_factory=dict)
     domain_metadata: Dict[str, Dict[str, str]] = field(default_factory=dict)
@@ -401,7 +401,7 @@ def _parse_cli_tokens(tokens: Sequence[str], cfg: TranslateConfig) -> None:
                 c_str
             )
         elif tok == "-stats":
-            cfg.stats = True
+            cfg.calc_stats = True
         elif tok == "-approx_stats":
             cfg.approx_stats = True
         elif tok == "-nomd":
@@ -606,8 +606,10 @@ def build_translate_config(
                         z=elev,
                     )
                 )
-    if kwargs.get("stats"):
-        cfg.stats = True
+    if kwargs.get("calc_stats") is False:
+        cfg.calc_stats = False
+    elif kwargs.get("calc_stats"):
+        cfg.calc_stats = True
     if kwargs.get("approx_stats"):
         cfg.approx_stats = True
     if kwargs.get("metadata"):

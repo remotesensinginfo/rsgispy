@@ -138,7 +138,7 @@ def mask_img(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -159,7 +159,7 @@ def mask_img(
     :param no_data_val: Optional output no-data value (defaults to ``input_img``
                         no-data value when ``None``).
     :param calc_stats: If ``True``, compute image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options (dict or sequence of
@@ -271,7 +271,7 @@ def gen_finite_mask(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -286,7 +286,7 @@ def gen_finite_mask(
                      (defaults to :data:`rsgispy.TYPE_8UINT`).
     :param no_data_val: Optional output no-data value (Default = ``None``).
     :param calc_stats: If ``True``, compute thematic statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options (dict or sequence of
@@ -346,7 +346,7 @@ def gen_valid_mask(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = 0.0,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -362,7 +362,7 @@ def gen_valid_mask(
     :param no_data_val: Value representing no-data (Default = ``0.0``; pass ``None``
                         to check only finiteness).
     :param calc_stats: If ``True``, compute thematic statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options (dict or sequence of
@@ -446,7 +446,7 @@ def gen_img_edge_mask(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -463,7 +463,7 @@ def gen_img_edge_mask(
                      (defaults to :data:`rsgispy.TYPE_8UINT`).
     :param no_data_val: Optional output no-data value (Default = ``None``).
     :param calc_stats: If ``True``, compute thematic statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options (dict or sequence of
@@ -541,7 +541,7 @@ def mask_all_band_zero_vals(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -561,7 +561,7 @@ def mask_all_band_zero_vals(
     :param no_data_val: Optional output no-data value (defaults to ``input_img``
                         no-data value when ``None``).
     :param calc_stats: If ``True``, compute image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options (dict or sequence of
@@ -636,7 +636,7 @@ def create_valid_mask(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -661,7 +661,7 @@ def create_valid_mask(
     :param no_data_val: Optional no-data metadata value to set on ``output_img``
                         (Default = ``None``).
     :param calc_stats: If ``True``, compute thematic statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options (dict or sequence of

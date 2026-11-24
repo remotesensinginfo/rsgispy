@@ -55,7 +55,7 @@ __all__ = [
     "create_dist_zones_to_vec_lyr",
 ]
 
-_SUPPORTED_RASTERIZE_DTYPES = {
+_SUPPORTED_RASTERISE_DTYPES = {
     np.dtype("uint8"),
     np.dtype("int16"),
     np.dtype("uint16"),
@@ -339,7 +339,7 @@ def rasterise_vec_lyr(
             is_int_out = np.issubdtype(dst_np_dtype, np.integer)
             ras_dtype = (
                 dst_np_dtype
-                if dst_np_dtype in _SUPPORTED_RASTERIZE_DTYPES
+                if dst_np_dtype in _SUPPORTED_RASTERISE_DTYPES
                 else np.float64
             )
 
@@ -612,7 +612,7 @@ def create_dist_zones_to_vec_lyr(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -644,7 +644,7 @@ def create_dist_zones_to_vec_lyr(
                      (defaults to ``rsgispy.TYPE_8UINT``).
     :param no_data_val: Optional output no-data value (Default = ``None``).
     :param calc_stats: If ``True``, populate raster statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or

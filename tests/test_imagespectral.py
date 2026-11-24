@@ -217,7 +217,7 @@ def test_convert_mtxt_to_df(tmp_path):
 
 def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
     """Verify extract_avg_endmembers returns a DataFrame with class columns."""
-    assert zs.METHOD_POLYCONTAINSPIXELCENTER == 1
+    assert zs.METHOD_POLYCONTAINSPIXELCENTRE == 1
     assert zs.METHOD_POLYOVERLAPSPIXEL == 2
 
     img_path = tmp_path / "img.tif"
@@ -253,7 +253,7 @@ def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
         "rois",
         out_file=str(out_csv),
         class_col="landcover",
-        pxl_in_poly_method=zs.METHOD_POLYCONTAINSPIXELCENTER,
+        pxl_in_poly_method=zs.METHOD_POLYCONTAINSPIXELCENTRE,
     )
 
     assert isinstance(em_df, pd.DataFrame)
@@ -269,7 +269,7 @@ def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
         gdf,
         None,
         class_col="landcover",
-        pxl_in_poly_method=zs.METHOD_POLYCONTAINSPIXELCENTER,
+        pxl_in_poly_method=zs.METHOD_POLYCONTAINSPIXELCENTRE,
     )
     assert em.are_endmembers_equal(em_df, em_df_gdf)
 
@@ -368,7 +368,7 @@ def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
         str(img_path),
         str(ppi_path),
         niters=50,
-        seed=42,
+        rnd_seed=42,
         calc_stats=False,
         use_pbar=False,
     )

@@ -20,7 +20,7 @@ description: Generate idiomatic Python code using rsgispy, the pure-Python repla
    - Geometry types: `rsgispy.GEOM_PT`, `GEOM_LINE`, `GEOM_POLY`, `GEOM_MPT`, `GEOM_MLINE`, `GEOM_MPOLY`
 4. **Standardised keyword-only raster output options**: Most raster-writing functions accept these keyword-only parameters after `*`:
    `*, gdalformat="GTIFF", datatype=..., no_data_val=..., calc_stats=..., use_pbar=..., creation_opts=...`
-   (Note: `band_maths` and `image_band_math` accept `gdalformat`, `datatype`, `use_pbar`, `creation_opts`, `band_names`; `calc_indices` / `calc_sar_indices` use `in_no_data_val` and `out_no_data_val`.)
+   (Note: `band_maths` and `image_band_math` accept `gdalformat`, `datatype`, `use_pbar`, `creation_opts`, `band_names`; `calc_indices` / `calc_sar_indices` use `no_data_val` and `out_no_data_val`.)
 5. **Dual path / `GeoDataFrame` vector API**: Most functions in `rsgispy.vector.*` and `rsgispy.zonalstats.*` accept either a file path (`str | Path`) or a `geopandas.GeoDataFrame`. Passing `out_vec_file=None` (where supported) returns an in-memory `GeoDataFrame` instead of writing to disk.
 6. **Optional extras**: Core install (`pip install rsgispy`) covers raster/vector I/O, `band_maths`, `vector_maths`, `calc_indices`, `calc_sar_indices`, `elevation`, `imagemorphology`, `imageutils`, and `zonalstats`. ML/GBDT, SHAP/SALib, GLCM/scikit-image, `dataaccess`, and `mapping` basemaps use extras: `classification`, `regression`, `gbdt`, `modelling`, `stats`, `vector`, `mapping`, `dataaccess`, `imaging`, `unmixing`, or `all`.
 

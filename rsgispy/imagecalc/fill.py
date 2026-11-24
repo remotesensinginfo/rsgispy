@@ -885,7 +885,7 @@ def region_growing_fill(
 
     For very large extents (such as country-wide mosaics with offshore EEZ
     zones) that exceed available RAM, use :func:`region_growing_fill_tiled`
-    to obtain the exact same global result without tiling artifacts.
+    to obtain the exact same global result without tiling artefacts.
 
     :param in_regions_img: Path to the input seed regions image (band 1). All
                            non-no-data pixel values define unique region IDs.
@@ -1150,7 +1150,7 @@ def _inspect_tile_inputs(
 def _tiled_init_worker(
     task: Tuple[Any, ...],
 ) -> Tuple[int, bool, bool, bool, Optional[Dict[str, Any]]]:
-    """Top-level multiprocessing worker for Pass 0 local Dial initialization."""
+    """Top-level multiprocessing worker for Pass 0 local Dial initialisation."""
     # pylint: disable=too-many-locals
     (
         idx,
@@ -1372,7 +1372,7 @@ def region_growing_fill_tiled(
     """
     Tiled multi-image version of :func:`region_growing_fill` using iterative
     multi-sweep tile-boundary distance propagation and optional multiprocessing
-    to eliminate tiling artifacts across a set of abutting image tiles.
+    to eliminate tiling artefacts across a set of abutting image tiles.
 
     Takes matching sequences of input seed region tiles (``in_regions_imgs``),
     input fillable target mask tiles (``in_fill_regions_imgs``), and output

@@ -13,7 +13,7 @@ Landsat, and multi-spectral orthomosaics) with:
 
 * **Bounded-memory tiled execution**: Configurable ``tile_size`` and halo
   ``overlap`` padding with cross-tile seam stitching (``stitch_seams=True``).
-* **Multi-core parallelism**: Parallel per-tile execution via ``n_workers``
+* **Multi-core parallelism**: Parallel per-tile execution via ``n_jobs``
   with deterministic row-major output ordering.
 * **Optional ``numba`` JIT acceleration**: Compiled hot loops via
   ``use_numba=True`` with automatic pure-Python fallback when ``numba`` is not
@@ -44,7 +44,7 @@ GEOBIA Workflow Example
        min_pixels=100,
        tile_size=1024,
        overlap=32,
-       n_workers=4,
+       n_jobs=4,
        gdalformat="GTIFF",
        datatype=rsgispy.TYPE_32UINT,
    )

@@ -1475,6 +1475,7 @@ def run_window_halo_blocks(
     output_img: str,
     win_shape: Tuple[int, int],
     block_fn: Callable[[np.ndarray], np.ndarray],
+    *,
     gdalformat: str = "GTIFF",
     out_rio_dtype: str = "float32",
     out_np_dtype: Optional[np.dtype] = None,
@@ -1483,7 +1484,7 @@ def run_window_halo_blocks(
     read_dtype: Any = np.float64,
     pad_mode: str = "edge",
     fill_value: float = 0.0,
-    out_nodata: Optional[float] = None,
+    out_no_data_val: Optional[float] = None,
     clamp_int: bool = True,
     full_width_strips: bool = False,
     use_pbar: bool = True,
@@ -1516,7 +1517,7 @@ def run_window_halo_blocks(
                      (Default = ``'edge'``).
     :param fill_value: Fill constant when ``pad_mode='constant'``
                        (Default = ``0.0``).
-    :param out_nodata: Optional output nodata metadata value.
+    :param out_no_data_val: Optional output no-data metadata value.
     :param clamp_int: Clamp integer outputs to valid dtype bounds
                       (Default = ``True``).
     :param full_width_strips: If ``True``, iterate in full-width horizontal strips
@@ -1562,8 +1563,8 @@ def run_window_halo_blocks(
             count=out_count,
             creation_opts=creation_opts,
         )
-        if out_nodata is not None:
-            dst.nodata = out_nodata
+        if out_no_data_val is not None:
+            dst.nodata = out_no_data_val
 
         blk_width = src.width if full_width_strips else None
         for out_win in iter_dataset_windows(

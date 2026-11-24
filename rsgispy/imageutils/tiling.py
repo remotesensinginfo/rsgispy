@@ -103,7 +103,7 @@ def create_tiles(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> List[str]:
@@ -123,7 +123,7 @@ def create_tiles(
                      (defaults to the input image data type).
     :param no_data_val: Optional output no-data value (defaults to input nodata).
     :param calc_stats: Populate image statistics and pyramids for each tile
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: Show a progress bar over tile generation (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
     :return: List of created tile file paths.
@@ -210,7 +210,7 @@ def create_tiles_multi_core(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -229,7 +229,7 @@ def create_tiles_multi_core(
                      (defaults to the input image data type).
     :param no_data_val: Optional output no-data value (defaults to input nodata).
     :param calc_stats: Populate image statistics and pyramids for each tile
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: Show a progress bar over tile generation (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
 
@@ -354,7 +354,7 @@ def create_raster_tiles_bbox(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -377,7 +377,7 @@ def create_raster_tiles_bbox(
                      (defaults to :data:`rsgispy.TYPE_8UINT`).
     :param no_data_val: Optional output no-data value.
     :param calc_stats: Populate image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: Show a progress bar over tile generation (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
 

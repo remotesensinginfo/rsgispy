@@ -151,7 +151,7 @@ def test_xgboost_univariate_and_multivariate(tmp_path: Path):
             xgb_regressor=model_json,
             in_msk_img=msk_path,
             img_msk_val=1,
-            out_img=out_uni,
+            output_img=out_uni,
             use_gpu=True,
             use_pbar=False,
         )
@@ -175,7 +175,7 @@ def test_xgboost_univariate_and_multivariate(tmp_path: Path):
         xgb_regressor=mv_model,
         in_msk_img=msk_path,
         img_msk_val=1,
-        out_img=out_mv,
+        output_img=out_mv,
         use_pbar=False,
     )
     with rasterio.open(out_mv) as src:
@@ -233,7 +233,7 @@ def test_lightgbm_univariate_and_multivariate(tmp_path: Path):
         lgb_regressor=model_path,
         in_msk_img=msk_path,
         img_msk_val=1,
-        out_img=out_mv,
+        output_img=out_mv,
         use_pbar=False,
     )
     with rasterio.open(out_mv) as src:
@@ -305,7 +305,7 @@ def test_catboost_univariate_and_multivariate(tmp_path: Path):
         cb_regressor=mv_model,
         in_msk_img=msk_path,
         img_msk_val=1,
-        out_img=out_mv,
+        output_img=out_mv,
         use_pbar=False,
     )
     with rasterio.open(out_mv) as src:

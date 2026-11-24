@@ -449,7 +449,7 @@ def test_spatial_block_kfold(method):
     y = (coords[:, 0] > 500.0).astype(int)
 
     splitter = SpatialBlockKFold(
-        n_splits=4, method=method, stratify=(method != "checkerboard"), random_state=42
+        n_splits=4, method=method, stratify=(method != "checkerboard"), rnd_seed=42
     )
     seen = []
     for tr, te in splitter.split(X, y, coords=coords):
@@ -468,7 +468,7 @@ def test_spatial_buffer_cv_enforces_minimum_distance():
 
     buf_dist = 150.0
     splitter = SpatialBufferCV(
-        n_splits=5, buffer_dist=buf_dist, method="kmeans", random_state=42
+        n_splits=5, buffer_dist=buf_dist, method="kmeans", rnd_seed=42
     )
     fold_count = 0
     for tr, te in splitter.split(X, y, coords=coords):
@@ -488,7 +488,7 @@ def test_polygon_group_kfold_zero_leakage():
     y = (groups % 2).astype(int)
 
     for stratify in (False, True):
-        splitter = PolygonGroupKFold(n_splits=4, stratify=stratify, random_state=42)
+        splitter = PolygonGroupKFold(n_splits=4, stratify=stratify, rnd_seed=42)
         seen = []
         for tr, te in splitter.split(X, y, groups=groups):
             assert len(set(groups[tr]).intersection(set(groups[te]))) == 0
@@ -522,11 +522,11 @@ def test_tune_estimator_and_nested_spatial_cv():
         y=y_cls,
         param_space=param_space,
         task="classification",
-        cv=SpatialBlockKFold(n_splits=3, method="kmeans", random_state=42),
+        cv=SpatialBlockKFold(n_splits=3, method="kmeans", rnd_seed=42),
         coords=coords,
         scaler=FeatureScaler(method="standard_scaler"),
         n_trials=4,
-        show_progress=False,
+        use_pbar=False,
     )
     assert isinstance(tune_res, TuneResult)
     assert tune_res.best_estimator is not None
@@ -540,12 +540,12 @@ def test_tune_estimator_and_nested_spatial_cv():
         y=y_cls,
         task="classification",
         coords=coords,
-        outer_cv=SpatialBlockKFold(n_splits=3, method="grid", random_state=42),
-        inner_cv=SpatialBlockKFold(n_splits=2, method="kmeans", random_state=42),
+        outer_cv=SpatialBlockKFold(n_splits=3, method="grid", rnd_seed=42),
+        inner_cv=SpatialBlockKFold(n_splits=2, method="kmeans", rnd_seed=42),
         param_space=param_space,
         scaler=FeatureScaler(method="zscore"),
         n_trials=3,
-        show_progress=False,
+        use_pbar=False,
     )
     assert isinstance(ncv_cls, NestedCVResult)
     assert len(ncv_cls.fold_scores) == 3
@@ -559,9 +559,9 @@ def test_tune_estimator_and_nested_spatial_cv():
         y=y_reg,
         task="regression",
         coords=coords,
-        outer_cv=SpatialBlockKFold(n_splits=3, method="kmeans", random_state=42),
+        outer_cv=SpatialBlockKFold(n_splits=3, method="kmeans", rnd_seed=42),
         scaler=FeatureScaler(method="robust_zscore"),
-        show_progress=False,
+        use_pbar=False,
     )
     assert len(ncv_reg.fold_scores) == 3
     assert "r2" in ncv_reg.overall_metrics

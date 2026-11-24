@@ -166,6 +166,7 @@ def ext_point_band_values_file(
     out_field: Optional[Union[str, Sequence[str]]] = None,
     reproj_vec: bool = False,
     vec_def_epsg: Optional[int] = None,
+    *,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
@@ -275,6 +276,7 @@ def ext_point_band_values(
     out_field: Optional[Union[str, Sequence[str]]] = None,
     reproj_vec: bool = False,
     vec_def_epsg: Optional[int] = None,
+    *,
     use_pbar: bool = True,
     vec_lyr: Optional[str] = None,
 ) -> gpd.GeoDataFrame:

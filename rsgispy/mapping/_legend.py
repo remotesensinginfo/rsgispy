@@ -80,7 +80,7 @@ def _normalise_rgba(
     )
 
 
-def _read_raster_colormap(
+def _read_raster_colourmap(
     input_img: str,
     band: int = 1,
 ) -> Dict[int, Tuple[float, float, float, float]]:
@@ -186,7 +186,7 @@ def resolve_legend_entries(
 
     img_path = os.fspath(input_img) if input_img is not None else None
     raster_cmap: Dict[int, Tuple[float, float, float, float]] = (
-        _read_raster_colormap(img_path, band=band) if img_path is not None else {}
+        _read_raster_colourmap(img_path, band=band) if img_path is not None else {}
     )
     explicit_lut: Dict[int, Tuple[float, float, float, float]] = (
         {int(k): _normalise_rgba(v) for k, v in colour_lut.items()}
@@ -384,7 +384,7 @@ def calc_categorical_legend_layout(
 def build_legend_handles(
     entries: Sequence[LegendEntry],
     swatch_shape: str = "rectangle",
-    swatch_edgecolor: str = "#333333",
+    swatch_edge_colour: str = "#333333",
     swatch_linewidth: float = 0.6,
     swatch_size: float = 9.0,
 ) -> List[Any]:
@@ -394,7 +394,7 @@ def build_legend_handles(
         return [
             Patch(
                 facecolor=e.colour,
-                edgecolor=swatch_edgecolor,
+                edgecolor=swatch_edge_colour,
                 linewidth=swatch_linewidth,
                 label=e.label,
             )
@@ -410,7 +410,7 @@ def build_legend_handles(
                 linestyle="None",
                 color="none",
                 markerfacecolor=e.colour,
-                markeredgecolor=swatch_edgecolor,
+                markeredgecolor=swatch_edge_colour,
                 markeredgewidth=swatch_linewidth,
                 markersize=float(swatch_size),
                 label=e.label,
@@ -499,7 +499,7 @@ def create_companion_legend_axis(
     pxl_val_fmt: str = "{val}: {name}",
     max_label_width: Optional[int] = None,
     swatch_shape: str = "rectangle",
-    swatch_edgecolor: str = "#333333",
+    swatch_edge_colour: str = "#333333",
     swatch_linewidth: float = 0.6,
     swatch_size: float = 9.0,
     frameon: bool = True,
@@ -579,7 +579,7 @@ def create_companion_legend_axis(
     handles = build_legend_handles(
         entries,
         swatch_shape=swatch_shape,
-        swatch_edgecolor=swatch_edgecolor,
+        swatch_edge_colour=swatch_edge_colour,
         swatch_linewidth=swatch_linewidth,
         swatch_size=swatch_size,
     )
@@ -606,7 +606,7 @@ def create_companion_legend_axis(
 
 
 def save_standalone_legend(
-    out_img_file: Union[str, os.PathLike],
+    output_img: Union[str, os.PathLike],
     classes_info: Optional[Any] = None,
     input_img: Optional[Union[str, os.PathLike]] = None,
     band: int = 1,
@@ -627,7 +627,7 @@ def save_standalone_legend(
     pxl_val_fmt: str = "{val}: {name}",
     max_label_width: Optional[int] = None,
     swatch_shape: str = "rectangle",
-    swatch_edgecolor: str = "#333333",
+    swatch_edge_colour: str = "#333333",
     swatch_linewidth: float = 0.6,
     swatch_size: float = 9.0,
     frameon: bool = True,
@@ -642,7 +642,7 @@ def save_standalone_legend(
     dpi: int = 300,
     transparent: bool = False,
 ) -> Tuple[int, int]:
-    """Render a standalone categorical legend image and save to ``out_img_file``."""
+    """Render a standalone categorical legend image and save to ``output_img``."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     entries = resolve_legend_entries(
         classes_info=classes_info,
@@ -678,7 +678,7 @@ def save_standalone_legend(
         handles = build_legend_handles(
             entries,
             swatch_shape=swatch_shape,
-            swatch_edgecolor=swatch_edgecolor,
+            swatch_edge_colour=swatch_edge_colour,
             swatch_linewidth=swatch_linewidth,
             swatch_size=swatch_size,
         )
@@ -701,7 +701,7 @@ def save_standalone_legend(
             labelspacing=labelspacing,
             borderpad=borderpad,
         )
-        out_path = ensure_parent_dir(out_img_file)
+        out_path = ensure_parent_dir(output_img)
         fig.savefig(
             out_path,
             dpi=int(dpi),
