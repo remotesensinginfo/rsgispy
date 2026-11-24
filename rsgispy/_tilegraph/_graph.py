@@ -412,6 +412,6 @@ def run_tile_graph(
     :param block_size: Core tile size in pixels (Default = ``256``).
     :param use_pbar: Display a ``tqdm`` progress bar (Default = ``True``).
     :return: Dictionary of :class:`MemorySink` outputs (empty when only
-             :class:`DiskSink`s are used).
+             :class:`DiskSink` instances are used).
     """
     return TileGraph(sinks=sinks, block_size=block_size).run(use_pbar=use_pbar)

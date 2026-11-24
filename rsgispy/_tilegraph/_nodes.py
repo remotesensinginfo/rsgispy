@@ -331,7 +331,7 @@ class PointwiseOp(TileNode):
     objects at identical spatial alignment (automatically cropping mismatched
     halos for skip connections).
 
-    :param inputs: Single :class:`TileNode` or sequence of :class:`TileNode`s.
+    :param inputs: Single :class:`TileNode` or sequence of :class:`TileNode` objects.
     :param func: Callable receiving unpacked 3D tile arrays ``(*arrays)`` (or
                  ``(*arrays, ctx)`` when ``pass_ctx=True``).
     :param pass_ctx: If ``True``, append :class:`TileContext` as the final
