@@ -12,6 +12,7 @@ import numpy as np
 import rasterio
 
 import rsgispy
+from rsgispy._numba import optional_njit, use_compiled
 from rsgispy.imageprocess import (
     build_valid_mask,
     create_output_from_dataset,
@@ -40,13 +41,121 @@ _NEIGHBOURS_8: Tuple[Tuple[int, int, float], ...] = (
 )
 
 
+_NBR_DR = np.array([nb[0] for nb in _NEIGHBOURS_8], dtype=np.int64)
+_NBR_DC = np.array([nb[1] for nb in _NEIGHBOURS_8], dtype=np.int64)
+_NBR_LEN = np.array([nb[2] for nb in _NEIGHBOURS_8], dtype=np.float64)
+
+
+@optional_njit(cache=True, warn=False)
+def _dijkstra_geometric_kernel(
+    cost_arr: np.ndarray,
+    start_r: int,
+    start_c: int,
+    stop_r: int,
+    stop_c: int,
+    nbr_dr: np.ndarray,
+    nbr_dc: np.ndarray,
+    nbr_len: np.ndarray,
+) -> Tuple[np.ndarray, int]:
+    """
+    Compiled 8-connected geometric Dijkstra returning ``(path_rc, n_path)``
+    where ``path_rc[:n_path]`` holds ``(row, col)`` from start to stop
+    (``n_path == 0`` when no finite path exists).
+
+    Uses the same ``heapq`` ordering on ``(dist, row, col)`` tuples, the same
+    edge cost arithmetic, and the same neighbour order as
+    :func:`_dijkstra_geometric_path_py`, so paths and tie-breaking match.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    height, width = cost_arr.shape
+    dist = np.full((height, width), np.inf, dtype=np.float64)
+    prev_r = np.full((height, width), -1, dtype=np.int64)
+    prev_c = np.full((height, width), -1, dtype=np.int64)
+    visited = np.zeros((height, width), dtype=np.bool_)
+
+    dist[start_r, start_c] = 0.0
+    heap = [(0.0, np.int64(start_r), np.int64(start_c))]
+    while len(heap) > 0:
+        cur_d, r, c = heapq.heappop(heap)
+        if visited[r, c]:
+            continue
+        visited[r, c] = True
+        if r == stop_r and c == stop_c:
+            break
+        c_u = cost_arr[r, c]
+        for k in range(nbr_dr.shape[0]):
+            nr = r + nbr_dr[k]
+            nc = c + nbr_dc[k]
+            if nr < 0 or nr >= height or nc < 0 or nc >= width or visited[nr, nc]:
+                continue
+            c_v = cost_arr[nr, nc]
+            if not (np.isfinite(c_u) and np.isfinite(c_v)):
+                continue
+            alt = cur_d + 0.5 * (c_u + c_v) * nbr_len[k]
+            if alt < dist[nr, nc]:
+                dist[nr, nc] = alt
+                prev_r[nr, nc] = r
+                prev_c[nr, nc] = c
+                heapq.heappush(heap, (alt, nr, nc))
+
+    path = np.empty((height * width, 2), dtype=np.int64)
+    if not np.isfinite(dist[stop_r, stop_c]):
+        return path[:0], 0
+    n_path = 0
+    cr = np.int64(stop_r)
+    cc = np.int64(stop_c)
+    while cr != -1 and cc != -1:
+        path[n_path, 0] = cr
+        path[n_path, 1] = cc
+        n_path += 1
+        if cr == start_r and cc == start_c:
+            break
+        pr = prev_r[cr, cc]
+        pc = prev_c[cr, cc]
+        cr = pr
+        cc = pc
+    return path[:n_path][::-1].copy(), n_path
+
+
 def _dijkstra_geometric_path(
     cost_arr: np.ndarray,
     start_rc: Tuple[int, int],
     stop_rc: Tuple[int, int],
 ) -> List[Tuple[int, int]]:
     """
-    Pure-Python 8-connected geometric Dijkstra fallback matching
+    8-connected geometric Dijkstra fallback matching
+    ``skimage.graph.route_through_array(..., geometric=True, fully_connected=True)``
+    used when ``scikit-image`` is unavailable. Runs a ``numba``-compiled kernel
+    when available, otherwise :func:`_dijkstra_geometric_path_py`.
+    """
+    if start_rc == stop_rc:
+        return [start_rc]
+    if not use_compiled(_dijkstra_geometric_kernel, "_dijkstra_geometric_path"):
+        return _dijkstra_geometric_path_py(cost_arr, start_rc, stop_rc)
+    path_arr, n_path = _dijkstra_geometric_kernel(
+        np.ascontiguousarray(cost_arr, dtype=np.float64),
+        int(start_rc[0]),
+        int(start_rc[1]),
+        int(stop_rc[0]),
+        int(stop_rc[1]),
+        _NBR_DR,
+        _NBR_DC,
+        _NBR_LEN,
+    )
+    if n_path == 0:
+        raise rsgispy.RSGISPyException(
+            "No valid least-cost path found between start_coord and stop_coord."
+        )
+    return [(int(pr), int(pc)) for pr, pc in path_arr]
+
+
+def _dijkstra_geometric_path_py(
+    cost_arr: np.ndarray,
+    start_rc: Tuple[int, int],
+    stop_rc: Tuple[int, int],
+) -> List[Tuple[int, int]]:
+    """
+    Pure-Python ``heapq`` 8-connected geometric Dijkstra fallback matching
     ``skimage.graph.route_through_array(..., geometric=True, fully_connected=True)``.
     """
     # pylint: disable=too-many-locals
@@ -140,8 +249,8 @@ def perform_least_cost_path_calc(
     ``start_coord`` to ``stop_coord`` and write a binary ``uint8`` path raster.
 
     Uses ``skimage.graph.route_through_array`` when ``scikit-image`` is
-    installed, falling back to a pure-Python 8-connected Dijkstra geometric
-    solver otherwise.
+    installed, falling back to an 8-connected Dijkstra geometric solver
+    otherwise (``numba``-compiled when available, pure Python if not).
 
     :param cost_surface_img: Path to the input raster cost surface image.
     :param output_img: Path to the output binary raster image (``1`` on path,

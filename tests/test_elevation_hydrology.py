@@ -16,6 +16,13 @@ import rsgispy
 from rsgispy import RSGISPyException
 from rsgispy.elevation import hydrology
 
+# These tests use numba-compiled topological kernels for reference outputs
+# (topological ops raise without ``allow_pure_python=True`` when numba is
+# unavailable); the no-numba policy is covered by the subprocess test below.
+requires_numba = pytest.mark.skipif(
+    not hydrology.HAS_NUMBA, reason="numba not installed or disabled"
+)
+
 
 def _write_raster(
     path,
@@ -157,6 +164,7 @@ def test_hydrology_signatures_and_exports():
             assert p.default == kw_default, (fn.__name__, kw_name)
 
 
+@requires_numba
 def test_dem_conditioning_valley_and_dam(tmp_path):
     """
     Verify sink identification, breaching, filling (exact float32 flats),
@@ -258,6 +266,7 @@ def test_dem_conditioning_valley_and_dam(tmp_path):
         assert np.all(cs_arr[cs_arr != -1] == 0)
 
 
+@requires_numba
 def test_flow_routing_accumulation_and_stream_topology(tmp_path):
     """
     Test D8, D-Inf, MFD drainage area conservation, flow_length, flow_distance,
@@ -436,6 +445,7 @@ def test_flow_routing_accumulation_and_stream_topology(tmp_path):
     assert up_gdf.iloc[0]["path_length_m"] > 100.0
 
 
+@requires_numba
 def test_watershed_delineation_and_polygonisation(tmp_path):
     """
     Verify snap_pour_points, delineate_watersheds (single & nested gauges),
@@ -525,6 +535,7 @@ def test_watershed_delineation_and_polygonisation(tmp_path):
         assert np.all(sc_ds.read(1) > 0)
 
 
+@requires_numba
 def test_hand_flood_inundation_and_terrain_indices(tmp_path):
     """
     Verify calc_hand (HAND == 0 on streams and monotonic upslope),
@@ -627,6 +638,7 @@ def test_hand_flood_inundation_and_terrain_indices(tmp_path):
         assert td.read(1)[0, 0] == pytest.approx(-9999.0)
 
 
+@requires_numba
 def test_numba_fallback_and_validation(tmp_path, monkeypatch):
     """
     Verify HAS_NUMBA = False policy (RSGISPyException by default for topo ops,

@@ -15,6 +15,7 @@ import rasterio
 from numpy.lib.stride_tricks import sliding_window_view
 
 import rsgispy
+from rsgispy._numba import use_compiled
 from rsgispy.imageprocess import ensure_file_exists, extract_overlap_arrays
 from rsgispy.imageregistration import (
     OUTLIER_METHOD_MAD,
@@ -35,6 +36,11 @@ from rsgispy.imageregistration._helpers import (
     load_tie_points_table,
     refine_grid_subpixel,
     write_tie_points_file,
+)
+from rsgispy.imageregistration._kernels import (
+    SUPPORTED_KERNEL_METRICS,
+    masked_values_finite,
+    template_surface_kernel,
 )
 from rsgispy.tools.stats import (
     calc_similarity_metric,
@@ -75,6 +81,31 @@ _MODEL_MIN_SAMPLES: Dict[str, int] = {
     TRANSFORM_POLY2: 6,
     TRANSFORM_POLY3: 10,
 }
+
+
+def _use_surface_kernel(
+    metric_id: int,
+    ref_patch: np.ndarray,
+    flt_search: np.ndarray,
+    ref_mask: np.ndarray,
+    flt_mask: np.ndarray,
+) -> bool:
+    """
+    Return ``True`` when the compiled template surface kernel supports
+    ``metric_id`` and all masked inputs are finite (non-finite values keep the
+    NumPy path so error/NaN semantics are unchanged).
+    """
+    if int(metric_id) not in SUPPORTED_KERNEL_METRICS:
+        return False
+    if not use_compiled(
+        template_surface_kernel,
+        "generate_tie_points",
+        fallback_desc="the NumPy similarity search",
+    ):
+        return False
+    return masked_values_finite(ref_patch, ref_mask) and masked_values_finite(
+        flt_search, flt_mask
+    )
 
 
 def _match_template_patch(
@@ -118,6 +149,19 @@ def _match_template_patch(
             surface = np.sqrt(np.mean(diff * diff, axis=(2, 3)))
         elif metric_id == rsgispy.METRIC_MANHATTAN:
             surface = np.mean(np.abs(windows - ref_patch[None, None, :, :]), axis=(2, 3))
+        elif _use_surface_kernel(metric_id, ref_patch, flt_search, ref_mask, flt_mask):
+            # Kernel returns the surface already in [yi, xi] (sy, sx) order;
+            # pre-flip so the shared flip below restores it.
+            surface = template_surface_kernel(
+                np.ascontiguousarray(ref_patch, dtype=np.float64),
+                np.ascontiguousarray(flt_search, dtype=np.float64),
+                np.ascontiguousarray(ref_mask, dtype=np.bool_),
+                np.ascontiguousarray(flt_mask, dtype=np.bool_),
+                sa,
+                int(metric_id),
+                0,
+                int(hist_bins),
+            )[::-1, ::-1]
         else:
             surface = np.full((n_grid, n_grid), np.nan, dtype=np.float64)
             r_flat = ref_patch.ravel()
@@ -131,6 +175,17 @@ def _match_template_patch(
                     )
         # Flip axes so index [yi, xi] corresponds to sy = yi - sa, sx = xi - sa
         surface = surface[::-1, ::-1]
+    elif _use_surface_kernel(metric_id, ref_patch, flt_search, ref_mask, flt_mask):
+        surface = template_surface_kernel(
+            np.ascontiguousarray(ref_patch, dtype=np.float64),
+            np.ascontiguousarray(flt_search, dtype=np.float64),
+            np.ascontiguousarray(ref_mask, dtype=np.bool_),
+            np.ascontiguousarray(flt_mask, dtype=np.bool_),
+            sa,
+            int(metric_id),
+            max(8, int(0.5 * win_h * win_w)),
+            int(hist_bins),
+        )
     else:
         surface = np.full((n_grid, n_grid), np.nan, dtype=np.float64)
         min_pxls = max(8, int(0.5 * win_h * win_w))

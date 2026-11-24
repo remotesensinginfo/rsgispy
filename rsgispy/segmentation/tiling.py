@@ -16,6 +16,8 @@ import rasterio
 from rasterio.windows import Window
 
 import rsgispy
+from rsgispy._numba import use_compiled
+from rsgispy._unionfind import uf_min_root_kernel
 from rsgispy.imageprocess import (
     IntersectionGrid,
     build_valid_mask,
@@ -259,15 +261,11 @@ def offset_tile_labels(
     return out, int(out[valid].max())
 
 
-def reconcile_seam_equivalences(
+def _reconcile_seam_equivalences_py(
     n_labels: int,
     merge_pairs: Sequence[Tuple[int, int]],
 ) -> np.ndarray:
-    """
-    Resolve cross-tile segment equivalence pairs ``(u, v)`` into a deterministic
-    1D lookup table mapping ``1..n_labels`` to canonical component roots (with
-    ``0`` preserved).
-    """
+    """Pure-Python union-find fallback for :func:`reconcile_seam_equivalences`."""
     parent = np.arange(n_labels + 1, dtype=np.int64)
     for raw_u, raw_v in merge_pairs:
         u = int(raw_u)
@@ -292,6 +290,34 @@ def reconcile_seam_equivalences(
             root = parent[root]
         parent[idx] = root
     return parent
+
+
+def reconcile_seam_equivalences(
+    n_labels: int,
+    merge_pairs: Union[Sequence[Tuple[int, int]], np.ndarray],
+) -> np.ndarray:
+    """
+    Resolve cross-tile segment equivalence pairs ``(u, v)`` into a deterministic
+    1D lookup table mapping ``1..n_labels`` to canonical component roots (with
+    ``0`` preserved). Each label maps to the minimum label in its component.
+
+    ``merge_pairs`` may be a sequence of pairs or an ``(N, 2)`` integer array.
+    Pairs referencing labels outside ``1..n_labels`` are ignored. Uses a
+    ``numba``-compiled union-by-rank / path-halving kernel when available
+    (suitable for ``10^5 - 10^7`` labels) and a pure-Python fallback otherwise.
+    """
+    n_labels = max(int(n_labels), 0)
+    if not use_compiled(uf_min_root_kernel, "reconcile_seam_equivalences"):
+        if isinstance(merge_pairs, np.ndarray):
+            merge_pairs = merge_pairs.reshape(-1, 2).tolist()
+        return _reconcile_seam_equivalences_py(n_labels, merge_pairs)
+    pairs = np.asarray(merge_pairs, dtype=np.int64).reshape(-1, 2)
+    return uf_min_root_kernel(
+        np.ascontiguousarray(pairs[:, 0]),
+        np.ascontiguousarray(pairs[:, 1]),
+        n_labels + 1,
+        1,
+    )
 
 
 @dataclass
@@ -402,10 +428,14 @@ def _gather_seam_pairs_and_merges(
             global_counts[s_idx:e_idx] = rec.counts[1:]
             global_sums[s_idx:e_idx, :] = rec.band_sums[1:, :]
 
-    # Accumulate all unique seam adjacency edges (u < v) and pixel seam diffs
-    edge_diff_sums: Dict[Tuple[int, int], float] = {}
-    edge_pixel_counts: Dict[Tuple[int, int], int] = {}
-    exact_merge_pairs: List[Tuple[int, int]] = []
+    # Accumulate all seam adjacency pixel pairs in deterministic traversal
+    # order, then reduce per unique edge (u < v) with ``np.bincount`` (which
+    # sums sequentially in input order, matching a per-pixel dict reduction).
+    seam_u: List[np.ndarray] = []
+    seam_v: List[np.ndarray] = []
+    seam_d: List[np.ndarray] = []
+    exact_u: List[np.ndarray] = []
+    exact_v: List[np.ndarray] = []
 
     def _inspect_seam(
         ids_a: np.ndarray,
@@ -435,15 +465,12 @@ def _gather_seam_pairs_and_merges(
             ab = aux_b[valid_seam]
             match_mask = (aa > 0) & (aa == ab)
             if np.any(match_mask):
-                for u_i, v_i in zip(
-                    ga[match_mask].tolist(), gb[match_mask].tolist()
-                ):
-                    exact_merge_pairs.append((u_i, v_i))
+                exact_u.append(ga[match_mask])
+                exact_v.append(gb[match_mask])
 
-        for u_i, v_i, d_val in zip(ga.tolist(), gb.tolist(), px_dists.tolist()):
-            key = (u_i, v_i) if u_i < v_i else (v_i, u_i)
-            edge_diff_sums[key] = edge_diff_sums.get(key, 0.0) + float(d_val)
-            edge_pixel_counts[key] = edge_pixel_counts.get(key, 0) + 1
+        seam_u.append(ga)
+        seam_v.append(gb)
+        seam_d.append(np.asarray(px_dists, dtype=np.float64))
 
     for (g_r, g_c), rec in sorted(records_by_grid.items()):
         right_rec = records_by_grid.get((g_r, g_c + 1))
@@ -471,46 +498,73 @@ def _gather_seam_pairs_and_merges(
                 bot_rec.top_aux,
             )
 
-    merge_pairs = list(exact_merge_pairs)
-    if stitch_seams and seam_mode == "spectral" and edge_diff_sums:
-        for (u_i, v_i), d_sum in sorted(edge_diff_sums.items()):
-            cnt = edge_pixel_counts[(u_i, v_i)]
-            mean_edge_dist = d_sum / float(cnt)
-            cu = max(1, int(global_counts[u_i]))
-            cv = max(1, int(global_counts[v_i]))
-            mean_u = global_sums[u_i] / float(cu)
-            mean_v = global_sums[v_i] / float(cv)
-            seg_dist = float(np.sqrt(np.sum((mean_u - mean_v) ** 2)))
-            if mean_edge_dist <= seam_threshold and seg_dist <= seam_threshold * 1.5:
-                merge_pairs.append((u_i, v_i))
+    # Unique undirected seam edges (sorted by (u, v)) with summed pixel
+    # distances and pixel counts.
+    if seam_u:
+        all_u = np.concatenate(seam_u)
+        all_v = np.concatenate(seam_v)
+        all_d = np.concatenate(seam_d)
+        lo = np.minimum(all_u, all_v)
+        hi = np.maximum(all_u, all_v)
+        key_base = np.int64(total_raw_labels + 1)
+        uniq_keys, inv = np.unique(lo * key_base + hi, return_inverse=True)
+        inv = inv.ravel()
+        edge_u = uniq_keys // key_base
+        edge_v = uniq_keys % key_base
+        edge_diff_sums = np.bincount(inv, weights=all_d, minlength=uniq_keys.size)
+        edge_pixel_counts = np.bincount(inv, minlength=uniq_keys.size)
+    else:
+        edge_u = np.empty(0, dtype=np.int64)
+        edge_v = np.empty(0, dtype=np.int64)
+        edge_diff_sums = np.empty(0, dtype=np.float64)
+        edge_pixel_counts = np.empty(0, dtype=np.int64)
+    has_edges = edge_u.size > 0
+
+    pair_u: List[np.ndarray] = list(exact_u)
+    pair_v: List[np.ndarray] = list(exact_v)
+    if stitch_seams and seam_mode == "spectral" and has_edges:
+        mean_edge_dist = edge_diff_sums / edge_pixel_counts.astype(np.float64)
+        cu = np.maximum(1, global_counts[edge_u]).astype(np.float64)
+        cv = np.maximum(1, global_counts[edge_v]).astype(np.float64)
+        mean_u = global_sums[edge_u] / cu[:, np.newaxis]
+        mean_v = global_sums[edge_v] / cv[:, np.newaxis]
+        seg_dist = np.sqrt(np.sum((mean_u - mean_v) ** 2, axis=1))
+        sel = (mean_edge_dist <= seam_threshold) & (
+            seg_dist <= seam_threshold * 1.5
+        )
+        if np.any(sel):
+            pair_u.append(edge_u[sel])
+            pair_v.append(edge_v[sel])
+
+    if pair_u:
+        merge_pairs = np.stack(
+            [np.concatenate(pair_u), np.concatenate(pair_v)], axis=1
+        ).astype(np.int64, copy=False)
+    else:
+        merge_pairs = np.empty((0, 2), dtype=np.int64)
 
     seam_parent = reconcile_seam_equivalences(total_raw_labels, merge_pairs)
 
-    # Update counts & band_sums onto seam roots
-    merged_counts = np.zeros(total_raw_labels + 1, dtype=np.int64)
-    merged_sums = np.zeros((total_raw_labels + 1, n_bands), dtype=np.float64)
-    for idx in range(1, total_raw_labels + 1):
-        root = int(seam_parent[idx])
-        merged_counts[root] += global_counts[idx]
-        merged_sums[root] += global_sums[idx]
+    # Update counts & band_sums onto seam roots (sequential bincount
+    # accumulation in label order)
+    n_lut = total_raw_labels + 1
+    roots = seam_parent[1:]
+    merged_counts = np.zeros(n_lut, dtype=np.int64)
+    np.add.at(merged_counts, roots, global_counts[1:])
+    merged_sums = np.zeros((n_lut, n_bands), dtype=np.float64)
+    for b_i in range(n_bands):
+        merged_sums[:, b_i] = np.bincount(
+            roots, weights=global_sums[1:, b_i], minlength=n_lut
+        )
 
     # Merge any remaining sub-threshold segments clipped by tile boundaries
-    if min_pixels > 1 and edge_diff_sums:
-        u_lst: List[int] = []
-        v_lst: List[int] = []
-        for u_i, v_i in sorted(edge_diff_sums.keys()):
-            ru = int(seam_parent[u_i])
-            rv = int(seam_parent[v_i])
-            if ru != rv:
-                if ru < rv:
-                    u_lst.append(ru)
-                    v_lst.append(rv)
-                else:
-                    u_lst.append(rv)
-                    v_lst.append(ru)
-        if u_lst:
-            u_arr = np.asarray(u_lst, dtype=np.int64)
-            v_arr = np.asarray(v_lst, dtype=np.int64)
+    if min_pixels > 1 and has_edges:
+        ru = seam_parent[edge_u]
+        rv = seam_parent[edge_v]
+        diff_root = ru != rv
+        if np.any(diff_root):
+            u_arr = np.minimum(ru, rv)[diff_root].astype(np.int64)
+            v_arr = np.maximum(ru, rv)[diff_root].astype(np.int64)
             elim_parent = call_kernel(
                 _eliminate_small_regions_kernel,
                 use_numba,

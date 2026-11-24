@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 """
 Internal windowed spatial filtering and convolution engine for
 :mod:`rsgispy.imagefilter`.
@@ -10,6 +11,7 @@ import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
 import rsgispy
+from rsgispy._numba import optional_njit, prange, use_compiled
 from rsgispy.imageprocess import (
     build_valid_mask,
     ensure_file_exists,
@@ -194,15 +196,82 @@ def stat_range(
     return out
 
 
+@optional_njit(parallel=True, cache=True, warn=False)
+def _stat_mode_kernel(
+    wins: np.ndarray,
+    valid: np.ndarray,
+    centre_valid: np.ndarray,
+) -> np.ndarray:
+    """
+    Compiled sliding-window mode (parallel over rows). For each centre-valid
+    pixel, valid window values are sorted and the smallest finite value with
+    the longest run is returned, matching :func:`_stat_mode_numpy` exactly.
+    """
+    # pylint: disable=too-many-locals,too-many-nested-blocks
+    h, w, k_h, k_w = wins.shape
+    k_len = k_h * k_w
+    out = np.full((h, w), np.nan, dtype=np.float64)
+    for r in prange(h):
+        buf = np.empty(k_len, dtype=np.float64)
+        for c in range(w):
+            if not centre_valid[r, c]:
+                continue
+            n_valid = 0
+            for i in range(k_h):
+                for j in range(k_w):
+                    if valid[r, c, i, j]:
+                        buf[i * k_w + j] = wins[r, c, i, j]
+                        n_valid += 1
+                    else:
+                        buf[i * k_w + j] = np.inf
+            if n_valid == 0:
+                continue
+            srt = np.sort(buf)
+            best_cnt = 0
+            best_idx = 0
+            k = 0
+            while k < k_len:
+                val = srt[k]
+                if not np.isfinite(val):
+                    k += 1
+                    continue
+                j = k + 1
+                while j < k_len and srt[j] == val:
+                    j += 1
+                if j - k > best_cnt:
+                    best_cnt = j - k
+                    best_idx = k
+                k = j
+            out[r, c] = srt[best_idx]
+    return out
+
+
 def stat_mode(
     wins: np.ndarray,
     centre: np.ndarray,
     valid: np.ndarray,
     centre_valid: np.ndarray,
 ) -> np.ndarray:
-    """Compute local window mode over valid pixels with deterministic ties."""
-    # pylint: disable=too-many-locals
+    """
+    Compute local window mode over valid pixels with deterministic ties
+    (smallest of the most frequent finite values). Uses a ``numba``-compiled
+    kernel when available, otherwise :func:`_stat_mode_numpy`.
+    """
     del centre
+    if wins.dtype.kind in "biuf" and use_compiled(
+        _stat_mode_kernel, "stat_mode", fallback_desc="the vectorised NumPy fallback"
+    ):
+        return _stat_mode_kernel(wins, valid.astype(np.bool_, copy=False), centre_valid)
+    return _stat_mode_numpy(wins, valid, centre_valid)
+
+
+def _stat_mode_numpy(
+    wins: np.ndarray,
+    valid: np.ndarray,
+    centre_valid: np.ndarray,
+) -> np.ndarray:
+    """Vectorised NumPy sliding-window mode (fallback for :func:`stat_mode`)."""
+    # pylint: disable=too-many-locals
     h, w = centre_valid.shape
     k_len = wins.shape[2] * wins.shape[3]
     flat = wins.reshape(-1, k_len)

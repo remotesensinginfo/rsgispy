@@ -14,12 +14,18 @@ from rasterio.control import GroundControlPoint
 from rasterio.transform import Affine
 
 import rsgispy
+from rsgispy._numba import use_compiled
 from rsgispy.imageprocess import ensure_file_exists, get_gdal_img_creation_opts
 from rsgispy.imageregistration import (
     TYPE_ENVI_IMG2IMG,
     TYPE_ENVI_IMG2MAP,
     TYPE_RSGIS_IMG2MAP,
     TYPE_RSGIS_MAPOFFS,
+)
+from rsgispy.imageregistration._kernels import (
+    SUPPORTED_KERNEL_METRICS,
+    masked_values_finite,
+    shift_surface_kernel,
 )
 from rsgispy.tools.stats import calc_similarity_metric
 from rsgispy.tools.tables import _TABLE_EXTS, write_dataframe_table
@@ -110,6 +116,33 @@ def search_shift_surface(
     ``flt`` shifted by ``(-sy, -sx)`` aligns with ``ref``.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if (
+        int(metric_id) in SUPPORTED_KERNEL_METRICS
+        and use_compiled(
+            shift_surface_kernel,
+            "search_shift_surface",
+            fallback_desc="the NumPy similarity search",
+        )
+        and masked_values_finite(ref_bands_arr, ref_valid)
+        and masked_values_finite(flt_bands_arr, flt_valid)
+    ):
+        surface, counts = shift_surface_kernel(
+            np.ascontiguousarray(ref_bands_arr, dtype=np.float64),
+            np.ascontiguousarray(flt_bands_arr, dtype=np.float64),
+            np.ascontiguousarray(ref_valid, dtype=np.bool_),
+            np.ascontiguousarray(flt_valid, dtype=np.bool_),
+            int(y_search),
+            int(x_search),
+            int(metric_id),
+            int(hist_bins),
+            int(min_valid_pxls),
+        )
+        if not np.any(np.isfinite(surface)):
+            raise rsgispy.RSGISPyException(
+                "Insufficient overlapping valid pixels to evaluate image shift."
+            )
+        return surface, counts
+
     sy_vals = np.arange(-int(y_search), int(y_search) + 1)
     sx_vals = np.arange(-int(x_search), int(x_search) + 1)
     h, w = ref_valid.shape

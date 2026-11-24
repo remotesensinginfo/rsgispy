@@ -17,6 +17,7 @@ from rasterio.transform import Affine
 from rasterio.vrt import WarpedVRT
 
 import rsgispy
+from rsgispy._numba import optional_njit, use_compiled
 from rsgispy.imageprocess import (
     IntersectionGrid,
     build_valid_mask as _valid_mask,
@@ -176,6 +177,82 @@ def dtm_aspect_median_filter(
         )
 
 
+@optional_njit(cache=True, warn=False)
+def _priority_flood_fill_kernel(
+    dem: np.ndarray,
+    seed_mask: np.ndarray,
+    visited: np.ndarray,
+    out: np.ndarray,
+) -> None:
+    """
+    Compiled Soille & Gratin (1994) priority-flood over an ``int64`` DEM.
+
+    Seeds every ``seed_mask`` pixel at its own elevation, then floods
+    8-connected unvisited neighbours at ``max(h_cur, dem[nr, nc])``.
+    ``visited`` (``True`` for invalid pixels) and ``out`` are updated in
+    place. Priority-flood output is independent of tie ordering, so results
+    are identical to :func:`_priority_flood_fill_py`.
+    """
+    # pylint: disable=too-many-locals
+    height, width = dem.shape
+    heap = [(np.int64(0), np.int64(0), np.int64(0))]
+    heap.pop()
+    for r_idx in range(height):
+        for c_idx in range(width):
+            if seed_mask[r_idx, c_idx]:
+                elev = dem[r_idx, c_idx]
+                out[r_idx, c_idx] = elev
+                visited[r_idx, c_idx] = True
+                heap.append((elev, np.int64(r_idx), np.int64(c_idx)))
+    heapq.heapify(heap)
+    while len(heap) > 0:
+        h_cur, r_cur, c_cur = heapq.heappop(heap)
+        r_min = max(0, r_cur - 1)
+        r_max = min(height, r_cur + 2)
+        c_min = max(0, c_cur - 1)
+        c_max = min(width, c_cur + 2)
+        for nr in range(r_min, r_max):
+            for nc in range(c_min, c_max):
+                if not visited[nr, nc]:
+                    visited[nr, nc] = True
+                    new_val = max(h_cur, dem[nr, nc])
+                    out[nr, nc] = new_val
+                    heapq.heappush(heap, (new_val, np.int64(nr), np.int64(nc)))
+
+
+def _priority_flood_fill_py(
+    dem: np.ndarray,
+    seed_mask: np.ndarray,
+    visited: np.ndarray,
+    out: np.ndarray,
+) -> None:
+    """Pure-Python ``heapq`` fallback for :func:`_priority_flood_fill_kernel`."""
+    # pylint: disable=too-many-locals
+    heap: list = []
+    seed_r, seed_c = np.where(seed_mask)
+    for r_idx, c_idx in zip(seed_r.tolist(), seed_c.tolist()):
+        elev = int(dem[r_idx, c_idx])
+        out[r_idx, c_idx] = elev
+        visited[r_idx, c_idx] = True
+        heap.append((elev, r_idx, c_idx))
+
+    heapq.heapify(heap)
+    height, width = dem.shape
+    while heap:
+        h_cur, r_cur, c_cur = heapq.heappop(heap)
+        r_min = max(0, r_cur - 1)
+        r_max = min(height, r_cur + 2)
+        c_min = max(0, c_cur - 1)
+        c_max = min(width, c_cur + 2)
+        for nr in range(r_min, r_max):
+            for nc in range(c_min, c_max):
+                if not visited[nr, nc]:
+                    visited[nr, nc] = True
+                    new_val = max(h_cur, int(dem[nr, nc]))
+                    out[nr, nc] = new_val
+                    heapq.heappush(heap, (new_val, nr, nc))
+
+
 def fill_dem_soille_gratin_1994(
     in_dem_img: str,
     in_vld_img: str,
@@ -268,29 +345,16 @@ def fill_dem_soille_gratin_1994(
         vld_nbr_wins = np.lib.stride_tricks.sliding_window_view(vld_pad, (3, 3))
         seed_mask = vld & np.any(~vld_nbr_wins, axis=(2, 3))
 
-        heap: list = []
-        seed_r, seed_c = np.where(seed_mask)
-        for r_idx, c_idx in zip(seed_r.tolist(), seed_c.tolist()):
-            elev = int(dem[r_idx, c_idx])
-            out[r_idx, c_idx] = elev
-            visited[r_idx, c_idx] = True
-            heap.append((elev, r_idx, c_idx))
-
-        heapq.heapify(heap)
-        height, width = dem.shape
-        while heap:
-            h_cur, r_cur, c_cur = heapq.heappop(heap)
-            r_min = max(0, r_cur - 1)
-            r_max = min(height, r_cur + 2)
-            c_min = max(0, c_cur - 1)
-            c_max = min(width, c_cur + 2)
-            for nr in range(r_min, r_max):
-                for nc in range(c_min, c_max):
-                    if not visited[nr, nc]:
-                        visited[nr, nc] = True
-                        new_val = max(h_cur, int(dem[nr, nc]))
-                        out[nr, nc] = new_val
-                        heapq.heappush(heap, (new_val, nr, nc))
+        # uint64 values beyond the int64 range cannot use the int64 kernel
+        fits_i64 = dem.dtype != np.uint64 or int(dem.max()) <= np.iinfo(np.int64).max
+        if fits_i64 and use_compiled(
+            _priority_flood_fill_kernel, "fill_dem_soille_gratin_1994"
+        ):
+            _priority_flood_fill_kernel(
+                np.ascontiguousarray(dem, dtype=np.int64), seed_mask, visited, out
+            )
+        else:
+            _priority_flood_fill_py(dem, seed_mask, visited, out)
 
         out[~vld] = fill_nodata
 

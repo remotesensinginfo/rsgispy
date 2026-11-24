@@ -9,7 +9,7 @@ from typing import Tuple
 
 import numpy as np
 
-from rsgispy._numba import HAS_NUMBA, njit, prange  # noqa: F401
+from rsgispy._numba import HAS_NUMBA, njit, optional_njit, prange  # noqa: F401
 
 
 # Clockwise D8 encoding starting East:
@@ -1875,3 +1875,171 @@ def calc_ls_numpy(
     ls = (m_exp + 1.0) * ((a_val / 22.13) ** m_exp) * ((sin_b / 0.0896) ** n_exp)
     out[valid] = ls.astype(np.float32)
     return out
+
+
+# ---------------------------------------------------------------------------
+# D8 path tracing kernels (trace_flow_path / vectorise_streams).
+#
+# Decorated with ``optional_njit``: the undecorated ``py_func`` is the
+# pure-Python implementation used when numba is unavailable, so compiled and
+# fallback paths execute identical logic.
+# ---------------------------------------------------------------------------
+
+# 256-entry lookup tables indexed by uint8 D8 code
+D8_LUT_OK = np.zeros(256, dtype=np.bool_)
+D8_LUT_DR = np.zeros(256, dtype=np.int64)
+D8_LUT_DC = np.zeros(256, dtype=np.int64)
+D8_LUT_IDX = np.full(256, -1, dtype=np.int64)
+D8_LUT_ANGLE = np.full(256, np.nan, dtype=np.float64)
+for _k in range(8):
+    _code = int(D8_CODES[_k])
+    D8_LUT_OK[_code] = True
+    D8_LUT_DR[_code] = int(D8_DR[_k])
+    D8_LUT_DC[_code] = int(D8_DC[_k])
+    D8_LUT_IDX[_code] = _k
+for _code, _ang in (
+    (1, 0.0),
+    (128, 0.25 * np.pi),
+    (64, 0.5 * np.pi),
+    (32, 0.75 * np.pi),
+    (16, np.pi),
+    (8, 1.25 * np.pi),
+    (4, 1.5 * np.pi),
+    (2, 1.75 * np.pi),
+):
+    D8_LUT_ANGLE[_code] = _ang
+del _k, _code, _ang
+
+
+@optional_njit(cache=True, warn=False)
+def trace_d8_path_kernel(
+    fdir: np.ndarray,
+    valid: np.ndarray,
+    acc_arr: np.ndarray,
+    acc_valid: np.ndarray,
+    r0: int,
+    c0: int,
+    upstream: bool,
+    visited: np.ndarray,
+    lut_ok: np.ndarray,
+    lut_dr: np.ndarray,
+    lut_dc: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Trace one D8 flow path from ``(r0, c0)`` and return ``(rows, cols)`` of
+    visited cells in order. Downstream follows ``fdir`` codes; upstream
+    follows the unvisited donor neighbour with maximum ``acc_arr`` (first in
+    D8 order on ties). ``visited`` (``uint8``, all zero on entry) is used as
+    scratch space and is reset to zero before returning.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-branches,too-many-nested-blocks
+    height, width = fdir.shape
+    rows = [np.int64(r0)]
+    cols = [np.int64(c0)]
+    rows.pop()
+    cols.pop()
+    curr_r = np.int64(r0)
+    curr_c = np.int64(c0)
+    while True:
+        if visited[curr_r, curr_c]:
+            break
+        visited[curr_r, curr_c] = 1
+        rows.append(curr_r)
+        cols.append(curr_c)
+        if not upstream:
+            code = fdir[curr_r, curr_c]
+            if not lut_ok[code]:
+                break
+            nr = curr_r + lut_dr[code]
+            nc = curr_c + lut_dc[code]
+            if not (0 <= nr < height and 0 <= nc < width and valid[nr, nc]):
+                break
+            curr_r = nr
+            curr_c = nc
+        else:
+            best_acc = -1.0
+            best_r = np.int64(-1)
+            best_c = np.int64(-1)
+            for k in range(8):
+                nr = curr_r + np.int64(D8_DR[k])
+                nc = curr_c + np.int64(D8_DC[k])
+                if 0 <= nr < height and 0 <= nc < width:
+                    if valid[nr, nc] and acc_valid[nr, nc]:
+                        if not visited[nr, nc] and fdir[nr, nc] == D8_REV_CODES[k]:
+                            if acc_arr[nr, nc] > best_acc:
+                                best_acc = acc_arr[nr, nc]
+                                best_r = nr
+                                best_c = nc
+            if best_r < 0:
+                break
+            curr_r = best_r
+            curr_c = best_c
+    n = len(rows)
+    out_r = np.empty(n, dtype=np.int64)
+    out_c = np.empty(n, dtype=np.int64)
+    for i in range(n):
+        out_r[i] = rows[i]
+        out_c[i] = cols[i]
+        visited[rows[i], cols[i]] = 0
+    return out_r, out_c
+
+
+@optional_njit(cache=True, warn=False)
+def trace_stream_reach_kernel(
+    fdir: np.ndarray,
+    valid: np.ndarray,
+    streams_bin: np.ndarray,
+    link_grid: np.ndarray,
+    r0: int,
+    c0: int,
+    lut_ok: np.ndarray,
+    lut_dr: np.ndarray,
+    lut_dc: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, int, int, int]:
+    """
+    Follow D8 directions from reach start ``(r0, c0)`` while cells remain on
+    the same stream link. Returns ``(rows, cols, down_link_id, conf_r,
+    conf_c)`` where ``(conf_r, conf_c)`` is the downstream confluence cell on
+    another link (``-1`` if the reach ends without one). Stops after
+    ``height * width`` steps to guard against cyclic direction grids.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    height, width = fdir.shape
+    lid = link_grid[r0, c0]
+    rows = [np.int64(r0)]
+    cols = [np.int64(c0)]
+    rows.pop()
+    cols.pop()
+    r = np.int64(r0)
+    c = np.int64(c0)
+    down_link_id = np.int64(-1)
+    conf_r = np.int64(-1)
+    conf_c = np.int64(-1)
+    max_steps = height * width
+    for _ in range(max_steps):
+        rows.append(r)
+        cols.append(c)
+        code = fdir[r, c]
+        if not lut_ok[code]:
+            break
+        nr = r + lut_dr[code]
+        nc = c + lut_dc[code]
+        if not (0 <= nr < height and 0 <= nc < width and valid[nr, nc]):
+            break
+        if streams_bin[nr, nc] != 1:
+            break
+        if link_grid[nr, nc] != lid:
+            down_link_id = np.int64(link_grid[nr, nc])
+            conf_r = nr
+            conf_c = nc
+            break
+        r = nr
+        c = nc
+    n = len(rows)
+    out_r = np.empty(n, dtype=np.int64)
+    out_c = np.empty(n, dtype=np.int64)
+    for i in range(n):
+        out_r[i] = rows[i]
+        out_c[i] = cols[i]
+    return out_r, out_c, down_link_id, conf_r, conf_c

@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover
 
 import rsgispy
 from rsgispy import RSGISPyException
-from rsgispy._numba import HAS_NUMBA, warn_numba_fallback
+from rsgispy._numba import HAS_NUMBA, numba_enabled, warn_numba_fallback
 from rsgispy.elevation._hydro_kernels import (
     D8_CODES,
     apply_flat_routing_d8_kernel,
@@ -125,6 +125,18 @@ def _call_topo_kernel(
         warn_numba_fallback(func_name, stacklevel=3)
     py_fn = getattr(kernel, "py_func", kernel)
     return py_fn(*args)
+
+
+def _run_optional_kernel(kernel: Any, *args: Any) -> Any:
+    """
+    Run an :func:`rsgispy._numba.optional_njit` kernel compiled when ``numba``
+    is active (respecting the ``hydrology.HAS_NUMBA`` facade flag), otherwise
+    run its pure-Python ``py_func`` silently (these kernels were pure Python
+    before compilation was added, so no fallback warning is emitted).
+    """
+    if _has_numba() and numba_enabled() and kernel.jit_func is not None:
+        return kernel(*args)
+    return kernel.py_func(*args)
 
 
 def _warn_numpy_fallback(func_name: str) -> None:
