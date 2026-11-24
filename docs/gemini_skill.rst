@@ -16,15 +16,31 @@ What the Skill Provides
   guidance.
 - **Progressive-disclosure references** (``skills/rsgispy/references/``):
 
-  - ``raster_and_indices.md`` — ``band_maths`` / ``image_band_math`` (single
-    and multi-output expressions), ``calc_indices`` (97 optical indices),
-    ``calc_sar_indices`` (63 SAR indices with automatic dB/power conversion),
-    ``imageutils``, ``imagefilter``, ``imagemorphology``, ``elevation``,
-    ``changedetect``, ``imagespectral``, and ``segmentation``.
-  - ``vector_zonal_and_ml.md`` — ``rsgispy.vector`` (including
-    ``vector_maths``), ``rsgispy.zonalstats``, ``rsgispy.ml``,
-    ``rsgispy.classification``, ``rsgispy.regression``, ``rsgispy.mapping``,
-    and ``rsgispy.cli`` tools.
+  - ``raster_and_indices.md`` — ``rsgispy.BBox``, ``rsgispy.imageprocess``
+    (including ``TileGraph``), ``band_maths`` / ``image_band_math`` (single
+    and multi-output ``pymu-eval`` expressions), ``calc_indices`` (97 optical
+    indices), ``calc_sar_indices`` (63 SAR indices with automatic dB/power
+    conversion), ``imagecalc.*``, and all 18 ``imageutils.*`` submodules.
+  - ``calibration_registration_and_spectral.md`` — ``imagecalibration``
+    (radiometry, solar angles, Landsat C2 L1/L2, Sentinel-2 L2A, CloudSEN12
+    cloud masking), ``imageregistration`` (``shift``, ``tiepoints``,
+    ``warping``), ``changedetect``, and ``imagespectral``.
+  - ``elevation_segmentation_and_filters.md`` — ``elevation`` (terrain,
+    illumination, filtering, fusion, roughness, hydrology & flood indices),
+    ``segmentation`` (Shepherd, region-merge, SLIC, graph, watershed, clumping),
+    ``imagefilter`` (stats, smooth, edge, SAR speckle, GLCM, ``FilterStep``
+    chains), and ``imagemorphology``.
+  - ``vector_and_zonalstats.md`` — ``vectorprocess``, ``rsgispy.vector``
+    (``io``, ``create``, ``geoms``, ``attrs`` incl. ``vector_maths``,
+    ``stats``, ``selection``), and ``rsgispy.zonalstats`` (polygon and point).
+  - ``ml_classification_regression_and_sdm.md`` — ``rsgispy.ml``
+    (``ImageFeatureStack``, ``FeatureScaler``, spatial CV, Optuna tuning,
+    tiled inference), ``rsgispy.classification`` (sklearn/GBDT/clustering,
+    accuracy metrics, post-processing), ``rsgispy.regression``, and
+    ``rsgispy.modelling.species_distribution``.
+  - ``tools_mapping_dataaccess_and_cli.md`` — ``rsgispy.mapping``,
+    ``rsgispy.dataaccess``, ``rsgispy.droneutils``, all 29
+    ``rsgispy.tools.*`` modules, and all 11 ``rsgispy.cli`` tools.
 
 Installing in Gemini CLI
 ------------------------

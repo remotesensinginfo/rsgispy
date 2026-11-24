@@ -1,0 +1,128 @@
+# DEM Elevation, Hydrology, Segmentation, Spatial Filters & Morphology
+
+Covers `rsgispy.elevation.*`, `rsgispy.segmentation.*`, `rsgispy.imagefilter.*`, and `rsgispy.imagemorphology` in `rsgispy` v0.3.1.
+
+---
+
+## 1. `rsgispy.elevation.*`
+
+> Note: Functions in `elevation.{terrain,illumination,filtering,fusion,hydrology}` accept keyword-only `*, gdalformat='GTIFF', datatype=None, no_data_val=None, calc_stats=True, use_pbar=True` (no `creation_opts`).
+
+### Terrain Derivatives (`rsgispy.elevation.terrain`)
+- `slope(input_img, output_img, unit='degrees', *, ...)` (`unit`: `'degrees'` or `'radians'`)
+- `slope_pxl_res_img(in_dem_img, in_pxl_res_img, output_img, unit='degrees', *, ...)` (for geographic / varying pixel-size DEMs)
+- `aspect(input_img, output_img, *, ...)`
+- `aspect_pxl_res_img(in_dem_img, in_pxl_res_img, output_img, *, ...)`
+- `categorise_aspect(input_img, output_img, *, ...)`
+
+### Solar Illumination (`rsgispy.elevation.illumination`)
+- `hillshade(input_img, output_img, azimuth, zenith, *, ...)`
+- `hillshade_pxl_res_img(in_dem_img, in_pxl_res_img, output_img, azimuth, zenith, *, ...)`
+- `shadow_mask(input_img, output_img, azimuth, zenith, max_height, *, ...)`
+- `local_incidence_angle(input_img, output_img, azimuth, zenith, *, ...)`
+- `local_exitance_angle(input_img, output_img, azimuth, zenith, *, ...)`
+
+### Filtering & Fusion (`rsgispy.elevation.{filtering,fusion}`)
+- `filtering.dtm_aspect_median_filter(in_dem_img, in_aspect_img, output_img, aspect_range, win_h_size, *, ...)`
+- `filtering.fill_dem_soille_gratin_1994(in_dem_img, in_vld_img, output_img, *, ...)`
+- `filtering.plane_fit_detrend_dem(input_img, output_img, win_size, *, ...)`
+- `filtering.resampling_detrend_dem(input_img, output_img, resmp_res, low_resmp_mthd=5, up_smpl_mthd=3, tmp_dir=None, *, ...)`
+- `fusion.fft_dem_fusion(high_res_dem_img, low_res_dem_img, fused_dem_img, c_size=20, *, ...)`
+
+### Surface Roughness Profiles (`rsgispy.elevation.roughness`)
+Follows dual path / `GeoDataFrame` pattern (`out_vec_file=None` returns `GeoDataFrame`). Works with point/transect sample boxes (`calc_pt_win_smpls`):
+- Classes: `CalcProfileRoughMetrics(detrend=True, detrend_poly_order=1, create_plots=False, out_plot_path=None)`, `CalcMunroRoughnessMetric(...)`, `CalcSmithRoughnessMetric(detrend=True, ...)`
+- Functions: `calc_simple_roughness_profile_metrics(...)`, `calc_munro_roughness_profile_metrics(...)`, `calc_smith_roughness_metrics(...)`, `calc_all_roughness_profile_metrics(...)`
+
+### Hydrology (`rsgispy.elevation.hydrology`)
+> **Numba behaviour**: Graph/priority-queue hydrology functions default to `allow_pure_python=False`, which requires `numba` (`HAS_NUMBA = True`) and raises `RSGISPyException` if `numba` is not installed unless `allow_pure_python=True` is passed explicitly.
+
+- **Sink & DEM conditioning**:
+  - `identify_sinks(input_img, output_img, output_depth_img=None, allow_pure_python=False, *, ...)`
+  - `fill_depressions(input_img, output_img, resolve_flats=True, allow_pure_python=False, *, ...)`
+  - `breach_depressions(input_img, output_img, max_depth=None, max_length=None, fill_remaining=True, allow_pure_python=False, *, ...)`
+  - `burn_streams(dem_img, streams_vec, output_img, burn_depth=5.0, buffer_dist=None, smooth_drop=2.0, *, ...)`
+  - `resolve_flats(input_img, output_img, allow_pure_python=False, *, ...)`
+  - `condition_dem(input_img, output_img, method='breach_and_fill', max_breach_depth=None, max_breach_length=None, streams_vec=None, burn_depth=5.0, buffer_dist=None, allow_pure_python=False, *, ...)`
+- **Flow routing**:
+  - `flow_direction(input_img, output_img, method='d8', flat_routing=True, mfd_exponent=1.1, allow_pure_python=False, *, ...)` (`method`: `'d8'`, `'dinf'`, `'mfd'`)
+  - `flow_accumulation(input_img, output_img, weight_img=None, out_units='cells', allow_pure_python=False, *, ...)`
+  - `flow_length(input_img, output_img, direction='downstream', weight_img=None, allow_pure_python=False, *, ...)`
+  - `flow_distance(flow_dir_img, streams_img, output_img, dem_img=None, distance_type='horizontal', allow_pure_python=False, *, ...)`
+  - `trace_flow_path(flow_dir_img, pour_points_vec, out_vec_file, direction='downstream', flow_acc_img=None, *, out_format=None, out_vec_lyr=None, overwrite=True, no_data_val=None, use_pbar=True)`
+- **Streams & watersheds**:
+  - `extract_streams(input_img, output_img, threshold, threshold_units='cells', *, ...)`
+  - `stream_link(streams_img, flow_dir_img, output_img, allow_pure_python=False, *, ...)`
+  - `stream_order(streams_img, flow_dir_img, output_img, method='strahler', allow_pure_python=False, *, ...)`
+  - `vectorise_streams(streams_img, flow_dir_img, out_vec_file, dem_img=None, flow_acc_img=None, order_method='strahler', allow_pure_python=False, *, ...)`
+  - `snap_pour_points(pour_points_vec, flow_acc_img, out_vec_file, snap_dist, streams_img=None, *, ...)`
+  - `delineate_watersheds(flow_dir_img, pour_points_vec, output_img, id_field=None, allow_pure_python=False, *, ...)`
+  - `delineate_basins(input_img, output_img, allow_pure_python=False, *, ...)`
+  - `delineate_subcatchments(flow_dir_img, stream_link_img, output_img, allow_pure_python=False, *, ...)`
+  - `polygonise_watersheds(watershed_img, out_vec_file, dem_img=None, dissolve=True, simplify_tol=None, *, ...)`
+- **Flood & terrain indices**:
+  - `calc_hand(dem_img, flow_dir_img, streams_img, output_img, allow_pure_python=False, *, ...)` (Height Above Nearest Drainage)
+  - `flood_inundation_from_hand(input_img, output_img, water_depth, *, ...)`
+  - `calc_twi(specific_catchment_area_img, slope_img, output_img, slope_units='degrees', min_slope=0.001, *, ...)`
+  - `calc_spi(specific_catchment_area_img, slope_img, output_img, slope_units='degrees', *, ...)`
+  - `calc_ls_factor(specific_catchment_area_img, slope_img, output_img, slope_units='degrees', m=0.4, n=1.3, *, ...)`
+
+---
+
+## 2. `rsgispy.segmentation.*`
+
+All major algorithms provide both file-based (`*_segmentation`) and NumPy array (`*_segmentation_array`) entrypoints with optional tiled + multi-core execution (`tile_size`, `overlap`, `n_jobs`, `stitch_seams`) and `use_numba=True` (use `is_numba_available()` / `HAVE_NUMBA` to inspect; emits warning and falls back if Numba is unavailable).
+
+- **Algorithms** (top-level `rsgispy.segmentation` and dedicated submodules):
+  - `shepherd.shepherd_segmentation(input_img, output_img, n_clusters=60, min_pixels=100, dist_thres=None, sampling=100, max_iter=50, bands=None, tile_size=None, overlap=32, n_jobs=1, stitch_seams=True, rnd_seed=42, use_numba=True, *, gdalformat='GTIFF', datatype=None, no_data_val=None, calc_stats=True, use_pbar=True)` + `shepherd_segmentation_array(...)`
+  - `region_merge.region_merge_segmentation(..., scale=25.0, compactness=0.5, shape_weight=0.1, min_pixels=10, ...)` + `region_merge_segmentation_array(...)`
+  - `slic.slic_segmentation(..., n_segments=500, segment_size=None, compactness=10.0, max_iter=10, sigma=0.0, enforce_connectivity=True, min_pixels=10, ...)` + `slic_segmentation_array(...)`
+  - `graph.graph_segmentation(..., scale=100.0, sigma=0.8, min_pixels=50, ...)` + `graph_segmentation_array(...)`
+  - `watershed.watershed_segmentation(..., markers_img=None, min_distance=10, gradient_sigma=1.0, compactness=0.0, min_pixels=10, ...)` + `watershed_segmentation_array(...)`
+- **Clumping (`rsgispy.segmentation.clump`)**:
+  - `clump(input_img, output_img, in_memory=False, block_size=None, *, ...)`
+  - `union_of_clumps(input_imgs, output_img, in_memory=None, block_size=None, *, ...)`
+- **Utilities & post-processing (`rsgispy.segmentation.utils` & top-level `rsgispy.segmentation`)**:
+  - `relabel_segments(input_img, output_img, contiguous=True, *, ...)` + `relabel_segments_array(...)`
+  - `eliminate_small_segments(input_img, output_img, ref_img=None, min_pixels=10, bands=None, use_numba=True, *, ...)` + `eliminate_small_segments_array(...)`
+  - `polygonise_segments(input_img, out_vec_file=None, out_vec_lyr=None, out_format='GPKG', img_band=1, no_data_val=0, segment_id_field='seg_id', use_8_conn=False, out_compress=None) -> GeoDataFrame | None`
+  - `extract_segment_stats(segments_img, feature_img, out_vec_file=None, out_vec_lyr=None, out_format='GPKG', bands=None, min_thres=-1e12, max_thres=1e12, out_no_data_val=-9999.0, segment_id_field='seg_id', use_pbar=True, out_compress=None) -> GeoDataFrame | None`
+- **Tiling primitives (`rsgispy.segmentation.tiling`)**: `TileWindow`, `plan_tiles`, `normalise_tile_size`, `extract_halo_tile`, `crop_halo_labels`, `offset_tile_labels`, `reconcile_seam_equivalences`, `run_tiled_array_pipeline`, `run_tiled_raster_pipeline`.
+
+---
+
+## 3. `rsgispy.imagefilter.*`
+
+> Standard keyword-only args: `*, gdalformat='GTIFF', datatype=None, no_data_val=None, calc_stats=True, use_pbar=True` (except `chained.apply_filter_chain` which also accepts `creation_opts=None`).
+
+- **Window statistics (`stats`)**: `apply_median_filter`, `apply_mean_filter`, `apply_min_filter`, `apply_max_filter`, `apply_mode_filter`, `apply_stddev_filter`, `apply_range_filter`, `apply_total_filter`, `apply_mean_diff_filter`, `apply_mean_diff_abs_filter`, `apply_total_diff_filter`, `apply_total_diff_abs_filter`, `apply_coeff_of_var_filter`, `apply_norm_var_filter`, `apply_norm_var_sqrt_filter`, `apply_norm_var_ln_filter`, `apply_texture_var_filter` (default `filter_size=3`).
+- **Smoothing (`smooth`)**: `apply_kuwahara_filter(..., filter_size=5)`, `apply_gaussian_smooth_filter(..., filter_size=3, stddev_x=1.0, stddev_y=1.0, filter_angle=0.0)`, `apply_kernel_filter(input_img, output_img, kernel, normalise=False, *, ...)`.
+- **Edge detection (`edge`)**: `apply_sobel_filter`, `apply_sobel_x_filter`, `apply_sobel_y_filter`, `apply_prewitt_filter`, `apply_prewitt_x_filter`, `apply_prewitt_y_filter`, `apply_gaussian_1st_deriv_filter`, `apply_gaussian_2nd_deriv_filter`, `apply_laplacian_filter`.
+- **SAR speckle (`sar`)**: `apply_lee_filter(..., filter_size=3, n_looks=1.0)`, `apply_enhanced_lee_filter(..., filter_size=5, n_looks=1.0, damping=1.0)`, `apply_frost_filter(..., filter_size=5, damping=1.0)`, `apply_enhanced_frost_filter(..., filter_size=5, n_looks=1.0, damping=1.0)`, `apply_kuan_filter(..., filter_size=5, n_looks=1.0)`, `apply_gamma_map_filter(..., filter_size=5, n_looks=1.0)`, `apply_refined_lee_filter(..., filter_size=7, n_looks=1.0)`.
+- **GLCM texture (`texture`; requires `imaging` / `scikit-image`)**:
+  - Constants: `GLCM_CONTRAST='contrast'`, `GLCM_DISSIMILARITY='dissimilarity'`, `GLCM_HOMOGENEITY='homogeneity'`, `GLCM_ASM='asm'`, `GLCM_ENERGY='energy'`, `GLCM_CORRELATION='correlation'`, `GLCM_ENTROPY='entropy'`, `GLCM_MEAN='mean'`, `GLCM_VARIANCE='variance'`, `GLCM_MAX_PROB='max_prob'`, `GLCM_ALL_PROPERTIES`.
+  - `apply_glcm_filter(input_img, output_img, properties=GLCM_ALL_PROPERTIES, filter_size=5, distances=(1,), angles=(0.0, 45.0, 90.0, 135.0), n_levels=32, min_val=None, max_val=None, symmetric=True, average_angles=True, *, ...)`
+- **In-memory fused chains (`chained`)**:
+  - `FilterStep(kind: str, filter_size: int = 3, params: Dict[str, Any] = {}, name: Optional[str] = None)`
+  - Supported `kind` values:
+    - Any of the 18 window stat/kuwahara names (`'median'`, `'mean'`, `'min'`, `'max'`, `'mode'`, `'stddev'`, `'range'`, `'total'`, `'mean_diff'`, `'mean_diff_abs'`, `'total_diff'`, `'total_diff_abs'`, `'coeff_of_var'`, `'norm_var'`, `'norm_var_sqrt'`, `'norm_var_ln'`, `'texture_var'`, `'kuwahara'`)
+    - `'lee'` (`params={'n_looks': 1.0}`)
+    - `'gaussian'` (`params={'stddev': 1.0}` or `stddev_x`, `stddev_y`, `filter_angle`)
+    - `'laplacian'` (`params={'stddev': 1.0}`)
+    - `'sobel'`, `'prewitt'`
+    - `'kernel'` (`params={'kernel': array_2d, 'zero_dc': False}`)
+    - `'band_math'` (`params={'expr': "..."}` — binds `'x'` to current step and any prior named step `step.name`)
+    - `'pointwise'` (`params={'func': callable_arr_fn}`)
+  - `apply_filter_chain(input_img, output_img, steps, block_size=256, *, gdalformat='GTIFF', datatype=None, no_data_val=None, calc_stats=True, use_pbar=True, creation_opts=None)`
+  - `build_filter_chain_node(source, steps, *, no_data_val=None) -> TileNode` (composable inside `TileGraph`).
+
+---
+
+## 4. `rsgispy.imagemorphology`
+
+- `create_circular_op(output_file, op_size)` (creates ASCII structuring element file for `use_op_file=True`; otherwise uses circular structuring element of `op_size`).
+- **Basic operators**: `image_dilate`, `image_erode`, `image_gradient`
+- **Combined-out variants**: `image_dilate_combined_out`, `image_erode_combined_out`, `image_gradient_combined_out`
+- **Local minima**: `image_local_minima(..., sequencial_out=False, allow_equal=True, ...)`, `image_local_minima_combined_out(...)`
+- **Compound operators**: `image_opening(..., niters=1)`, `image_closing(..., niters=1)`, `image_black_top_hat`, `image_white_top_hat`
+- Common parameters: `(input_img, output_img, morph_op_file='', use_op_file=False, op_size=3, [tmp_img=None], *, gdalformat='GTIFF', datatype=None, no_data_val=None, calc_stats=True, use_pbar=True)`.
