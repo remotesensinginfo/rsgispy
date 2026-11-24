@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 import warnings
 from typing import Dict, List, Optional, Sequence
@@ -24,6 +23,7 @@ from rsgispy.cli._common import (
     build_parser,
     run_cli,
 )
+from rsgispy.tools.utm import epsg_for_utm, parse_utm_zone_str
 from rsgispy.vector.io import get_wkt_proj_from_vec
 
 __all__ = [
@@ -32,7 +32,6 @@ __all__ = [
     "cli_main",
 ]
 
-_UTM_RE = re.compile(r"^(\d{1,2})([NSns])$")
 _OUTPUT_FORMATS = ("epsg", "wkt", "wkt2", "wkt-pretty", "proj4", "json")
 
 
@@ -50,18 +49,8 @@ def _read_text_file(path: str) -> str:
 
 def _crs_from_utm(utm_str: str) -> pyproj.CRS:
     """Parse a WGS84 UTM zone specification (e.g., ``36N`` or ``01S``)."""
-    match = _UTM_RE.match(utm_str.strip())
-    if not match:
-        raise RSGISPyException(
-            f"Invalid --utm specification '{utm_str}': expected <zone><N|S> "
-            "(e.g., 36N or 01S)."
-        )
-    zone = int(match.group(1))
-    hemi = match.group(2).upper()
-    if not 1 <= zone <= 60:
-        raise RSGISPyException(f"UTM zone must be between 1 and 60 (got {zone}).")
-    epsg = (32600 if hemi == "N" else 32700) + zone
-    return pyproj.CRS.from_epsg(epsg)
+    zone, hemi = parse_utm_zone_str(utm_str)
+    return pyproj.CRS.from_epsg(epsg_for_utm(zone, hemi))
 
 
 def _load_crs(args: argparse.Namespace) -> pyproj.CRS:

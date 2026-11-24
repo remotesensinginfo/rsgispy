@@ -17,6 +17,7 @@ import rsgispy
 import rsgispy.tools.files
 from rsgispy.vectorprocess import (
     VectorInput,
+    ensure_matching_crs,
     is_geoparquet_file,
     is_geoparquet_format,
     list_vec_layers,
@@ -802,12 +803,7 @@ def thin_vector_geoms(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     pts_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     grid_gdf = read_vec_gdf(grid_vec_file, grid_vec_lyr, copy=False)
-    if (
-        pts_gdf.crs is not None
-        and grid_gdf.crs is not None
-        and pts_gdf.crs != grid_gdf.crs
-    ):
-        grid_gdf = grid_gdf.to_crs(pts_gdf.crs)
+    grid_gdf = ensure_matching_crs(pts_gdf, grid_gdf)
 
     pts_only = gpd.GeoDataFrame(
         geometry=pts_gdf.geometry.values,

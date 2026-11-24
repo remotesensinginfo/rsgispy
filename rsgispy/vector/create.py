@@ -20,6 +20,7 @@ import rsgispy
 from rsgispy.imageprocess import (
     _INT_DTYPES,
     bbox_from_dataset,
+    build_valid_cube_mask,
     ensure_file_exists,
     iter_dataset_windows,
     validate_band_index,
@@ -460,10 +461,7 @@ def extract_img_footprint(
         nd_val = float(eff_nd)
         for win in iter_dataset_windows(height, width, use_pbar=use_pbar):
             arr = src.read(window=win)
-            if np.isnan(nd_val):
-                block_valid = np.all(np.isfinite(arr), axis=0)
-            else:
-                block_valid = np.all(np.isfinite(arr) & (arr != nd_val), axis=0)
+            block_valid = build_valid_cube_mask(arr, no_data_val=nd_val, axis=0)
             r0 = int(win.row_off)
             c0 = int(win.col_off)
             valid_mask[r0 : r0 + int(win.height), c0 : c0 + int(win.width)] = block_valid

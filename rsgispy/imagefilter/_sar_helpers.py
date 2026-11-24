@@ -7,7 +7,7 @@ from typing import Tuple
 
 import numpy as np
 
-from rsgispy.imagefilter._helper import StatFunc, _window_mean_var
+from rsgispy.imagefilter._helpers import StatFunc, _window_mean_var
 
 
 def _distance_grid(size: int) -> np.ndarray:

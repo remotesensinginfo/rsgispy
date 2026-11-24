@@ -25,7 +25,7 @@ from rsgispy._io import (
     TileNode,
     WindowOp,
 )
-from rsgispy.imagefilter._helper import (
+from rsgispy.imagefilter._helpers import (
     _apply_tile_nd,
     _resolve_out_nodata,
     stat_mode,
@@ -43,7 +43,7 @@ from rsgispy.imageprocess import (
     run_window_halo_blocks,
     validate_band_index,
 )
-from rsgispy.imageutils._helpers import normalise_creation_options
+from rsgispy.imageprocess import normalise_creation_options
 from rsgispy.imageutils.colourtable import define_colour_table, set_img_thematic
 from rsgispy.imageutils.metadata import set_band_names, set_img_no_data_value
 from rsgispy.imageutils.stats import build_img_pyramids, pop_thmt_img_stats

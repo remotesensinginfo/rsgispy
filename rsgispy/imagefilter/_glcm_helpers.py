@@ -12,7 +12,7 @@ from numpy.lib.stride_tricks import sliding_window_view
 import rasterio
 
 import rsgispy
-from rsgispy.imagefilter._helper import (
+from rsgispy.imagefilter._helpers import (
     _apply_tile_nd,
     _resolve_out_nodata,
     validate_filter_size,

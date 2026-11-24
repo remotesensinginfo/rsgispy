@@ -181,7 +181,8 @@ def calc_dist_to_img_vals(
                         and written as ``out_no_data_val``.
     :param out_no_data_val: Output no-data value (defaults to ``max_dist`` if
                             ``None``).
-    :param use_pbar: Retained for signature consistency (Default = ``True``).
+    :param use_pbar: Display a tqdm progress bar during processing
+                     (Default = ``True``).
     :param creation_opts: Optional mapping of GDAL creation options.
 
     .. code:: python
@@ -198,7 +199,7 @@ def calc_dist_to_img_vals(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,unused-argument
+    # pylint: disable=too-many-locals
     rsgispy.check_optional_dep(HAVE_SCIPY, "calc_dist_to_img_vals", "scipy", "stats")
     ensure_file_exists(input_img)
     target_vals = _normalise_pxl_vals(pxl_vals)
@@ -218,20 +219,12 @@ def calc_dist_to_img_vals(
             ) from err
 
         validate_band_index(img_band, src.count, input_img)
+        x_res = abs(float(src.transform.a))
+        y_res = abs(float(src.transform.e))
         if unit_geo:
-            sampling = (abs(float(src.transform.e)), abs(float(src.transform.a)))
+            sampling = (y_res, x_res)
         else:
             sampling = (1.0, 1.0)
-
-        band_arr = src.read(img_band)
-        dist_arr = _compute_distance_block(
-            band_arr=band_arr,
-            target_vals=target_vals,
-            sampling=sampling,
-            max_dist=max_dist,
-            no_data_val=no_data_val,
-            out_no_data_val=float(eff_out_nd),
-        )
 
         grid = compute_spatial_intersection({input_img: src})
         dst = open_output_dataset(
@@ -244,7 +237,63 @@ def calc_dist_to_img_vals(
             creation_opts=creation_opts,
         )
         dst.nodata = float(eff_out_nd)
-        dst.write(dist_arr, 1)
+
+        if max_dist is not None and max_dist > 0:
+            if unit_geo:
+                x_ovl = math.ceil(float(max_dist) / x_res) + 10
+                y_ovl = math.ceil(float(max_dist) / y_res) + 10
+            else:
+                x_ovl = math.ceil(float(max_dist)) + 10
+                y_ovl = math.ceil(float(max_dist)) + 10
+            for win in iter_dataset_windows(
+                src.height, src.width, use_pbar=use_pbar
+            ):
+                row_off = int(win.row_off)
+                col_off = int(win.col_off)
+                core_h = int(win.height)
+                core_w = int(win.width)
+                pad_r0 = max(0, row_off - y_ovl)
+                pad_r1 = min(src.height, row_off + core_h + y_ovl)
+                pad_c0 = max(0, col_off - x_ovl)
+                pad_c1 = min(src.width, col_off + core_w + x_ovl)
+                pad_win = Window(
+                    pad_c0, pad_r0, pad_c1 - pad_c0, pad_r1 - pad_r0
+                )
+                pad_arr = src.read(img_band, window=pad_win)
+                pad_dist = _compute_distance_block(
+                    band_arr=pad_arr,
+                    target_vals=target_vals,
+                    sampling=sampling,
+                    max_dist=max_dist,
+                    no_data_val=no_data_val,
+                    out_no_data_val=float(eff_out_nd),
+                )
+                inner_r0 = row_off - pad_r0
+                inner_c0 = col_off - pad_c0
+                core_dist = pad_dist[
+                    inner_r0 : inner_r0 + core_h,
+                    inner_c0 : inner_c0 + core_w,
+                ]
+                dst.write(core_dist, 1, window=win)
+        else:
+            band_arr = np.empty((src.height, src.width), dtype=src.dtypes[0])
+            for win in iter_dataset_windows(
+                src.height, src.width, use_pbar=use_pbar
+            ):
+                r0 = int(win.row_off)
+                c0 = int(win.col_off)
+                band_arr[
+                    r0 : r0 + int(win.height), c0 : c0 + int(win.width)
+                ] = src.read(img_band, window=win)
+            dist_arr = _compute_distance_block(
+                band_arr=band_arr,
+                target_vals=target_vals,
+                sampling=sampling,
+                max_dist=max_dist,
+                no_data_val=no_data_val,
+                out_no_data_val=float(eff_out_nd),
+            )
+            dst.write(dist_arr, 1)
 
 
 def calc_dist_to_img_vals_tiled(
@@ -430,6 +479,7 @@ def buffer_img_pxl_vals(
     tmp_dir: Optional[str] = None,
     *,
     gdalformat: str = "GTIFF",
+    use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """
@@ -448,6 +498,8 @@ def buffer_img_pxl_vals(
                     provided (retained for API compatibility).
     :param gdalformat: GDAL/rasterio driver format for the output file
                        (Default = ``'GTIFF'``).
+    :param use_pbar: Display a tqdm progress bar during processing
+                     (Default = ``True``).
     :param creation_opts: Optional mapping of GDAL creation options.
 
     .. code:: python
@@ -478,23 +530,16 @@ def buffer_img_pxl_vals(
             ) from err
 
         validate_band_index(img_band, src.count, input_img)
+        x_res = abs(float(src.transform.a))
+        y_res = abs(float(src.transform.e))
         if unit_geo:
-            sampling = (abs(float(src.transform.e)), abs(float(src.transform.a)))
+            sampling = (y_res, x_res)
+            x_ovl = max(1, math.ceil(float(buf_thres) / x_res)) + 10
+            y_ovl = max(1, math.ceil(float(buf_thres) / y_res)) + 10
         else:
             sampling = (1.0, 1.0)
-
-        band_arr = src.read(img_band)
-        dist_arr = _compute_distance_block(
-            band_arr=band_arr,
-            target_vals=target_vals,
-            sampling=sampling,
-            max_dist=float(buf_thres) * 1.1,
-            no_data_val=None,
-            out_no_data_val=-999.0,
-        )
-        buf_mask = np.where(
-            (dist_arr >= 0.0) & (dist_arr < float(buf_thres)), 1, 0
-        ).astype(np.uint8)
+            x_ovl = max(1, math.ceil(float(buf_thres))) + 10
+            y_ovl = max(1, math.ceil(float(buf_thres))) + 10
 
         grid = compute_spatial_intersection({input_img: src})
         dst = open_output_dataset(
@@ -506,4 +551,38 @@ def buffer_img_pxl_vals(
             count=1,
             creation_opts=creation_opts,
         )
-        dst.write(buf_mask, 1)
+
+        max_d = max(float(buf_thres) * 1.1, 0.0)
+        for win in iter_dataset_windows(
+            src.height, src.width, use_pbar=use_pbar
+        ):
+            row_off = int(win.row_off)
+            col_off = int(win.col_off)
+            core_h = int(win.height)
+            core_w = int(win.width)
+            pad_r0 = max(0, row_off - y_ovl)
+            pad_r1 = min(src.height, row_off + core_h + y_ovl)
+            pad_c0 = max(0, col_off - x_ovl)
+            pad_c1 = min(src.width, col_off + core_w + x_ovl)
+            pad_win = Window(
+                pad_c0, pad_r0, pad_c1 - pad_c0, pad_r1 - pad_r0
+            )
+            pad_arr = src.read(img_band, window=pad_win)
+            pad_dist = _compute_distance_block(
+                band_arr=pad_arr,
+                target_vals=target_vals,
+                sampling=sampling,
+                max_dist=max_d,
+                no_data_val=None,
+                out_no_data_val=-999.0,
+            )
+            inner_r0 = row_off - pad_r0
+            inner_c0 = col_off - pad_c0
+            core_dist = pad_dist[
+                inner_r0 : inner_r0 + core_h,
+                inner_c0 : inner_c0 + core_w,
+            ]
+            buf_mask = np.where(
+                (core_dist >= 0.0) & (core_dist < float(buf_thres)), 1, 0
+            ).astype(np.uint8)
+            dst.write(buf_mask, 1, window=win)

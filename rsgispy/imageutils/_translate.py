@@ -18,22 +18,12 @@ from rasterio.windows import Window
 from rasterio.windows import transform as window_transform
 
 import rsgispy
-from rsgispy.imageprocess import iter_dataset_windows, validate_band_index
-from rsgispy.imageutils._helpers import normalise_creation_options
-
-_GDAL_OT_TO_RSGIS: Dict[str, int] = {
-    "byte": rsgispy.TYPE_8UINT,
-    "uint8": rsgispy.TYPE_8UINT,
-    "int8": rsgispy.TYPE_8INT,
-    "uint16": rsgispy.TYPE_16UINT,
-    "int16": rsgispy.TYPE_16INT,
-    "uint32": rsgispy.TYPE_32UINT,
-    "int32": rsgispy.TYPE_32INT,
-    "uint64": rsgispy.TYPE_64UINT,
-    "int64": rsgispy.TYPE_64INT,
-    "float32": rsgispy.TYPE_32FLOAT,
-    "float64": rsgispy.TYPE_64FLOAT,
-}
+from rsgispy.imageprocess import (
+    build_valid_mask,
+    iter_dataset_windows,
+    normalise_creation_options,
+    validate_band_index,
+)
 
 _CLI_RESAMPLE_MAP: Dict[str, Resampling] = {
     "nearest": Resampling.nearest,
@@ -154,14 +144,7 @@ def _consume_args(tokens: Sequence[str], idx: int, count: int, flag: str) -> Lis
 
 def _parse_datatype_arg(dtype: Union[int, str]) -> int:
     """Resolve an ``rsgispy.TYPE_*`` int or GDAL type string to ``TYPE_*``."""
-    if isinstance(dtype, (int, np.integer)) and not isinstance(dtype, bool):
-        return int(dtype)
-    if isinstance(dtype, str):
-        key = dtype.strip().lower()
-        if key in _GDAL_OT_TO_RSGIS:
-            return _GDAL_OT_TO_RSGIS[key]
-        return rsgispy.get_rsgis_datatype(key)
-    raise rsgispy.RSGISPyException(f"Unsupported datatype value: {dtype!r}.")
+    return rsgispy.get_rsgis_datatype(dtype)
 
 
 def _resolve_resampling(alg: Union[int, Resampling, str]) -> Resampling:
@@ -836,10 +819,7 @@ def compute_src_minmax(
         block = src.read(list(src_bands), window=r_win).astype(np.float64)
         for pos, bidx in enumerate(src_bands):
             band_arr = block[pos]
-            mask = np.isfinite(band_arr)
-            b_nd = nd_vals[bidx - 1]
-            if b_nd is not None:
-                mask &= band_arr != float(b_nd)
+            mask = build_valid_mask(band_arr, nd_vals[bidx - 1])
             valid = band_arr[mask]
             if unscale and valid.size > 0:
                 s_val = float(src.scales[bidx - 1])

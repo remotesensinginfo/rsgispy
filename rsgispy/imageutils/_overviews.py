@@ -10,13 +10,13 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import rasterio
-from rasterio.enums import ColorInterp, Resampling
 import rasterio.shutil
+from rasterio.enums import ColorInterp, Resampling
 from rasterio.transform import Affine
-from rasterio.vrt import _gdal_typename
 from rasterio.windows import Window
 
 import rsgispy
+from rsgispy import get_gdal_datatype_name as _gdal_typename
 from rsgispy.imageutils.vrt import (
     _resampling_to_vrt_name,
     _write_vrt_xml,

@@ -27,7 +27,7 @@ from rsgispy.imageregistration import (
     TRANSFORM_SIMILARITY,
     TRANSFORM_TPS,
 )
-from rsgispy.imageregistration._helper import (
+from rsgispy.imageregistration._helpers import (
     copy_raster_with_updates,
     df_to_gcps,
     load_tie_points_table,

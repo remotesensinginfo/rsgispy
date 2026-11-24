@@ -14,6 +14,7 @@ from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imageprocess import (
+    build_valid_mask,
     cast_result_block,
     compute_spatial_intersection,
     ensure_file_exists,
@@ -107,11 +108,9 @@ def _extract_valid_paired_pixels(
         arr_a = ds_a.read(img_a_band, window=win_a, out_dtype=np.float64).ravel()
         arr_b = ds_b.read(img_b_band, window=win_b, out_dtype=np.float64).ravel()
 
-    valid = np.isfinite(arr_a) & np.isfinite(arr_b)
-    if not np.isnan(nd_a):
-        valid &= arr_a != nd_a
-    if not np.isnan(nd_b):
-        valid &= arr_b != nd_b
+    valid = build_valid_mask(arr_a, no_data_val=float(nd_a)) & build_valid_mask(
+        arr_b, no_data_val=float(nd_b)
+    )
 
     return arr_a[valid], arr_b[valid]
 
@@ -235,11 +234,17 @@ def _calc_imgs_equal(
                 raise rsgispy.RSGISPyException(
                     "The number of image bands is not the same between the two images."
                 )
+            ref_bands: Optional[List[int]] = None
+            cmp_bands: Optional[List[int]] = None
+        elif img_ref_band is not None and img_cmp_band is not None:
+            validate_band_index(img_ref_band, ds_ref.count, in_ref_img)
+            validate_band_index(img_cmp_band, ds_cmp.count, in_cmp_img)
+            ref_bands = [int(img_ref_band)]
+            cmp_bands = [int(img_cmp_band)]
         else:
-            if img_ref_band is not None:
-                validate_band_index(img_ref_band, ds_ref.count, in_ref_img)
-            if img_cmp_band is not None:
-                validate_band_index(img_cmp_band, ds_cmp.count, in_cmp_img)
+            raise rsgispy.RSGISPyException(
+                "Both img_ref_band and img_cmp_band must be specified together, or both omitted."
+            )
 
         grid = compute_spatial_intersection(datasets)
         base_cref, base_rref = grid.offsets[in_ref_img]
@@ -264,14 +269,14 @@ def _calc_imgs_equal(
             )
             ref_arr = (
                 ds_ref.read(window=win_ref, out_dtype=np.float64)
-                if img_ref_band is None
-                else ds_ref.read(img_ref_band, window=win_ref, out_dtype=np.float64)
-            ).ravel()
+                if ref_bands is None
+                else ds_ref.read(ref_bands, window=win_ref, out_dtype=np.float64)
+            )
             cmp_arr = (
                 ds_cmp.read(window=win_cmp, out_dtype=np.float64)
-                if img_cmp_band is None
-                else ds_cmp.read(img_cmp_band, window=win_cmp, out_dtype=np.float64)
-            ).ravel()
+                if cmp_bands is None
+                else ds_cmp.read(cmp_bands, window=win_cmp, out_dtype=np.float64)
+            )
 
             valid = ~(np.isnan(ref_arr) | np.isnan(cmp_arr))
             ref_v = ref_arr[valid]

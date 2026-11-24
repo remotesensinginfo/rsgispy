@@ -45,7 +45,7 @@ from rsgispy.imageprocess import (
     open_output_dataset,
     validate_band_index,
 )
-from rsgispy.imageutils._helpers import normalise_creation_options
+from rsgispy.imageprocess import normalise_creation_options
 from rsgispy.imageutils.masking import ImageBandInfo
 from rsgispy.ml.scaling import FeatureScaler
 from rsgispy.tools._ml_data import read_feature_block
@@ -65,7 +65,7 @@ class BandSpec:
     an :class:`ImageFeatureStack`.
 
     Unifies :class:`~rsgispy.imageutils.masking.ImageBandInfo` and
-    :class:`~rsgispy.modelling._helper.EnvVarInfo`.
+    :class:`~rsgispy.modelling._helpers.EnvVarInfo`.
 
     :param file_name: Path to the raster file.
     :param name: Optional logical image/variable prefix.
@@ -141,7 +141,7 @@ class BandSpec:
 
     @classmethod
     def from_env_var_info(cls, env_info: Any) -> "BandSpec":
-        """Create a :class:`BandSpec` from a :class:`~rsgispy.modelling._helper.EnvVarInfo`."""
+        """Create a :class:`BandSpec` from a :class:`~rsgispy.modelling._helpers.EnvVarInfo`."""
         if not env_info.file:
             raise rsgispy.RSGISPyException(
                 "EnvVarInfo must define a non-empty 'file' path."
@@ -214,7 +214,7 @@ class ImageFeatureStack:
 
     :param specs: Non-empty sequence of :class:`BandSpec`,
                   :class:`~rsgispy.imageutils.masking.ImageBandInfo`,
-                  :class:`~rsgispy.modelling._helper.EnvVarInfo`, file paths,
+                  :class:`~rsgispy.modelling._helpers.EnvVarInfo`, file paths,
                   or dictionaries.
     :param scaler: Optional :class:`~rsgispy.ml.scaling.FeatureScaler` applied
                    on the fly during tiled prediction or block iteration.

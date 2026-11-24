@@ -595,10 +595,18 @@ def test_hand_flood_inundation_and_terrain_indices(tmp_path):
     twi_pct = tmp_path / "twi_pct.tif"
     spi_path = tmp_path / "spi.tif"
     ls_path = tmp_path / "ls.tif"
-    hydrology.calc_twi(str(sca_path), str(deg_path), str(twi_deg), slope_units="degrees", use_pbar=False)
-    hydrology.calc_twi(str(sca_path), str(pct_path), str(twi_pct), slope_units="percent", use_pbar=False)
-    hydrology.calc_spi(str(sca_path), str(rad_path), str(spi_path), slope_units="radians", use_pbar=False)
-    hydrology.calc_ls_factor(str(sca_path), str(deg_path), str(ls_path), slope_units="degrees", use_pbar=False)
+    hydrology.calc_twi(
+        str(sca_path), str(deg_path), str(twi_deg), slope_units="degrees", use_pbar=False
+    )
+    hydrology.calc_twi(
+        str(sca_path), str(pct_path), str(twi_pct), slope_units="percent", use_pbar=False
+    )
+    hydrology.calc_spi(
+        str(sca_path), str(rad_path), str(spi_path), slope_units="radians", use_pbar=False
+    )
+    hydrology.calc_ls_factor(
+        str(sca_path), str(deg_path), str(ls_path), slope_units="degrees", use_pbar=False
+    )
 
     tan15 = math.tan(math.radians(15.0))
     sin15 = math.sin(math.radians(15.0))
@@ -661,12 +669,32 @@ def test_numba_fallback_and_validation(tmp_path, monkeypatch):
     fdir_np = tmp_path / "fdir_np.tif"
     dinf_np = tmp_path / "dinf_np.tif"
     mfd_np = tmp_path / "mfd_np.tif"
-    with pytest.warns(RuntimeWarning):
-        hydrology.flow_direction(str(fill_py), str(fdir_np), method="d8", use_pbar=False)
-    with pytest.warns(RuntimeWarning):
-        hydrology.flow_direction(str(fill_py), str(dinf_np), method="dinf", use_pbar=False)
-    with pytest.warns(RuntimeWarning):
-        hydrology.flow_direction(str(fill_py), str(mfd_np), method="mfd", use_pbar=False)
+    # Filled dam DEM contains flats: flat_routing=True must enforce allow_pure_python
+    for meth, out_p in [("d8", fdir_np), ("dinf", dinf_np), ("mfd", mfd_np)]:
+        with pytest.raises(RSGISPyException, match="numba"):
+            hydrology.flow_direction(
+                str(fill_py), str(out_p), method=meth, use_pbar=False
+            )
+        with pytest.warns(RuntimeWarning) as rec:
+            hydrology.flow_direction(
+                str(fill_py),
+                str(out_p),
+                method=meth,
+                allow_pure_python=True,
+                use_pbar=False,
+            )
+        assert len(rec) == 1
+
+    # With flat_routing=False, vectorised NumPy path runs without allow_pure_python
+    with pytest.warns(RuntimeWarning) as rec_nf:
+        hydrology.flow_direction(
+            str(fill_py),
+            str(tmp_path / "fdir_noflat.tif"),
+            method="d8",
+            flat_routing=False,
+            use_pbar=False,
+        )
+    assert len(rec_nf) == 1
 
     acc_py = tmp_path / "acc_py.tif"
     with pytest.raises(RSGISPyException, match="numba"):
@@ -760,3 +788,80 @@ def test_optional_scipy_handling(tmp_path, monkeypatch):
         use_pbar=False,
     )
     assert sharp_out.exists()
+
+
+def test_true_no_numba_subprocess(tmp_path):
+    """Verify hydrology import and pure-Python fallbacks with numba blocked at import time."""
+    import subprocess
+    import sys
+
+    dem = _make_v_valley_with_dam(rows=11, cols=11, res=10.0, dam=True, nodata=-9999.0)
+    dem_path = tmp_path / "dem.tif"
+    _write_raster(dem_path, dem, res=10.0, nodata=-9999.0)
+
+    script = f"""
+import sys, warnings
+sys.modules["numba"] = None
+import rsgispy
+from rsgispy.elevation import hydrology
+assert hydrology.HAS_NUMBA is False
+
+dem = {str(dem_path)!r}
+tmp = {str(tmp_path)!r}
+
+try:
+    hydrology.fill_depressions(dem, tmp + "/fill.tif", use_pbar=False)
+    raise AssertionError("Expected RSGISPyException without allow_pure_python")
+except rsgispy.RSGISPyException:
+    pass
+
+with warnings.catch_warnings(record=True) as rec:
+    warnings.simplefilter("always")
+    hydrology.fill_depressions(dem, tmp + "/fill.tif", allow_pure_python=True, use_pbar=False)
+    rt = [w for w in rec if issubclass(w.category, RuntimeWarning)]
+    assert len(rt) == 1, f"Expected 1 RuntimeWarning, got {{len(rt)}}"
+
+for meth in ("d8", "dinf", "mfd"):
+    out_p = tmp + f"/fdir_{{meth}}.tif"
+    try:
+        hydrology.flow_direction(tmp + "/fill.tif", out_p, method=meth, use_pbar=False)
+        raise AssertionError(f"Expected RSGISPyException for {{meth}} flat routing")
+    except rsgispy.RSGISPyException:
+        pass
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        hydrology.flow_direction(
+            tmp + "/fill.tif", out_p, method=meth, allow_pure_python=True, use_pbar=False
+        )
+        rt = [w for w in rec if issubclass(w.category, RuntimeWarning)]
+        assert len(rt) == 1, f"Expected 1 RuntimeWarning for {{meth}}, got {{len(rt)}}"
+
+with warnings.catch_warnings(record=True) as rec:
+    warnings.simplefilter("always")
+    hydrology.flow_direction(
+        tmp + "/fill.tif", tmp + "/fdir_nf.tif", method="d8", flat_routing=False, use_pbar=False
+    )
+    rt = [w for w in rec if issubclass(w.category, RuntimeWarning)]
+    assert len(rt) == 1
+
+with warnings.catch_warnings(record=True) as rec:
+    warnings.simplefilter("always")
+    hydrology.flow_accumulation(
+        tmp + "/fdir_d8.tif", tmp + "/acc.tif", allow_pure_python=True, use_pbar=False
+    )
+    hydrology.extract_streams(tmp + "/acc.tif", tmp + "/str.tif", threshold=5.0, use_pbar=False)
+    hydrology.stream_link(
+        tmp + "/fdir_d8.tif",
+        tmp + "/str.tif",
+        tmp + "/lnk.tif",
+        allow_pure_python=True,
+        use_pbar=False,
+    )
+"""
+    res = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, f"Subprocess failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}"

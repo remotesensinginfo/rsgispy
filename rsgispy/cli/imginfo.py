@@ -11,7 +11,7 @@ import math
 import os
 import sys
 import warnings
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import pyproj
@@ -27,6 +27,7 @@ from rsgispy.cli._common import (
     resolve_input_files,
     run_cli,
 )
+from rsgispy.imageutils.metadata import transform_bounds_to_wgs84
 from rsgispy.tools.projection import degrees_to_metres
 
 __all__ = [
@@ -121,29 +122,6 @@ def _get_crs_summary(crs: Any) -> Dict[str, Any]:
     }
 
 
-def _compute_wgs84_bbox(
-    bounds: Tuple[float, float, float, float],
-    crs: Any,
-) -> Optional[List[float]]:
-    """Transform a projected bounding box ``(left, bottom, right, top)`` to WGS84."""
-    try:
-        py_crs = pyproj.CRS.from_user_input(crs)
-        if py_crs.is_geographic:
-            return None
-        transformer = pyproj.Transformer.from_crs(
-            py_crs, pyproj.CRS.from_epsg(4326), always_xy=True
-        )
-        left, bottom, right, top = bounds
-        west, south, east, north = transformer.transform_bounds(
-            left, bottom, right, top, densify_pts=21
-        )
-        if not all(math.isfinite(v) for v in (west, east, south, north)):
-            return None
-        return [float(west), float(east), float(south), float(north)]
-    except Exception:  # pylint: disable=broad-exception-caught
-        return None
-
-
 def _inspect_kea_rat(input_img: str) -> Optional[Dict[str, Any]]:
     """Inspect KEA/HDF5 Raster Attribute Table columns if available."""
     if os.path.splitext(input_img)[1].lower() != ".kea":
@@ -176,69 +154,11 @@ def _compute_band_stats(
     nodata: Optional[float],
 ) -> Dict[str, Optional[float]]:
     """Stream blocks of ``bidx`` with running min/max and Chan/Welford mean/std."""
-    nodata_is_finite = nodata is not None and not (
-        isinstance(nodata, float) and math.isnan(nodata)
+    from rsgispy.imageprocess import (  # pylint: disable=import-outside-toplevel
+        compute_dataset_band_stats,
     )
-    count = 0
-    min_val = math.inf
-    max_val = -math.inf
-    mean_val = 0.0
-    m2_val = 0.0
 
-    for _, window in ds.block_windows(bidx):
-        block = ds.read(bidx, window=window, masked=False).astype(
-            np.float64, copy=False
-        )
-        valid = np.isfinite(block)
-        if nodata_is_finite:
-            valid &= block != nodata
-        if not np.any(valid):
-            continue
-
-        vals = block[valid]
-        n_block = int(vals.size)
-        blk_min = float(np.min(vals))
-        blk_max = float(np.max(vals))
-        blk_mean = float(np.mean(vals))
-        blk_m2 = float(np.sum((vals - blk_mean) ** 2))
-
-        if count == 0:
-            min_val = blk_min
-            max_val = blk_max
-            mean_val = blk_mean
-            m2_val = blk_m2
-            count = n_block
-        else:
-            min_val = min(min_val, blk_min)
-            max_val = max(max_val, blk_max)
-            new_count = count + n_block
-            delta = blk_mean - mean_val
-            mean_val += delta * (n_block / new_count)
-            m2_val += blk_m2 + (delta ** 2) * (count * n_block / new_count)
-            count = new_count
-
-    if count == 0:
-        return {
-            "min": None,
-            "max": None,
-            "mean": None,
-            "std": None,
-            "median": None,
-            "mode": None,
-            "valid_percent": 0.0,
-        }
-
-    total_px = ds.width * ds.height
-    valid_pct = 100.0 * float(count) / float(total_px) if total_px > 0 else 0.0
-    return {
-        "min": min_val,
-        "max": max_val,
-        "mean": mean_val,
-        "std": math.sqrt(max(0.0, m2_val / count)),
-        "median": None,
-        "mode": None,
-        "valid_percent": valid_pct,
-    }
+    return compute_dataset_band_stats(ds, bidx, nodata)
 
 
 def _detect_is_tiled(
@@ -370,9 +290,15 @@ def collect_img_info(
                     xm, ym = degrees_to_metres(centre_lat, x_res, y_res)
                     res_metres = [float(xm), float(ym)]
                 else:
-                    wgs84_bbox = _compute_wgs84_bbox(
+                    wgs84_box = transform_bounds_to_wgs84(
                         (bounds.left, bounds.bottom, bounds.right, bounds.top),
                         ds.crs,
+                        skip_if_geographic=True,
+                    )
+                    wgs84_bbox = (
+                        [float(v) for v in wgs84_box]
+                        if wgs84_box is not None
+                        else None
                     )
 
             gcps_list, gcp_crs = ds.gcps

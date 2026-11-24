@@ -28,7 +28,6 @@ from rsgispy.segmentation.utils import (
     call_kernel,
     check_label_overflow,
     eliminate_small_segments_array,
-    numba_single_thread_guard,
     relabel_segments_array,
     resolve_input_nodata,
     resolve_label_dtype,
@@ -389,7 +388,8 @@ def _gather_seam_pairs_and_merges(
     Build global segment LUT across tiles: reconcile seams, optionally merge
     sub-threshold border segments across tile edges, and relabel ``1..N``.
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches
     if total_raw_labels == 0:
         return np.zeros(1, dtype=np.uint32)
 
@@ -640,19 +640,18 @@ def run_tiled_array_pipeline(
             tid, c_lbl, c_aux = _array_tile_task(task)
             results_by_id[tid] = (c_lbl, c_aux)
     else:
-        with numba_single_thread_guard(enabled=True):
-            with ProcessPoolExecutor(
-                max_workers=workers, initializer=worker_init_single_thread
-            ) as executor:
-                futs = [executor.submit(_array_tile_task, t) for t in tasks]
-                for fut in tqdm_cls(
-                    as_completed(futs),
-                    total=len(futs),
-                    disable=not use_pbar,
-                    desc="Segmenting tiles",
-                ):
-                    tid, c_lbl, c_aux = fut.result()
-                    results_by_id[tid] = (c_lbl, c_aux)
+        with ProcessPoolExecutor(
+            max_workers=workers, initializer=worker_init_single_thread
+        ) as executor:
+            futs = [executor.submit(_array_tile_task, t) for t in tasks]
+            for fut in tqdm_cls(
+                as_completed(futs),
+                total=len(futs),
+                disable=not use_pbar,
+                desc="Segmenting tiles",
+            ):
+                tid, c_lbl, c_aux = fut.result()
+                results_by_id[tid] = (c_lbl, c_aux)
 
     out_labels = np.zeros((height, width), dtype=np.int64)
     records_by_grid: Dict[Tuple[int, int], _TileSeamRecord] = {}
@@ -719,7 +718,8 @@ def run_tiled_raster_pipeline(
     optional multi-core tile execution, two-pass temporary GeoTIFF LUT
     remapping, and standard ``rsgispy`` statistics population.
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches
     workers = validate_n_jobs(n_jobs)
     in_path = os.fspath(input_img)
     out_path = os.fspath(output_img)
@@ -848,29 +848,28 @@ def run_tiled_raster_pipeline(
                     int, Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]
                 ] = {}
                 next_tid = 0
-                with numba_single_thread_guard(enabled=True):
-                    with ProcessPoolExecutor(
-                        max_workers=workers,
-                        initializer=worker_init_single_thread,
-                    ) as executor:
-                        futs = [
-                            executor.submit(_raster_tile_task, t)
-                            for t in tasks
-                        ]
-                        for fut in tqdm_cls(
-                            as_completed(futs),
-                            total=len(futs),
-                            disable=not use_pbar,
-                            desc="Segmenting tiles",
-                        ):
-                            tid, c_lbl, c_arr, c_aux = fut.result()
-                            pending[tid] = (c_lbl, c_arr, c_aux)
-                            while next_tid in pending:
-                                p_lbl, p_arr, p_aux = pending.pop(next_tid)
-                                _record_tile(
-                                    tiles[next_tid], p_lbl, p_arr, p_aux
-                                )
-                                next_tid += 1
+                with ProcessPoolExecutor(
+                    max_workers=workers,
+                    initializer=worker_init_single_thread,
+                ) as executor:
+                    futs = [
+                        executor.submit(_raster_tile_task, t)
+                        for t in tasks
+                    ]
+                    for fut in tqdm_cls(
+                        as_completed(futs),
+                        total=len(futs),
+                        disable=not use_pbar,
+                        desc="Segmenting tiles",
+                    ):
+                        tid, c_lbl, c_arr, c_aux = fut.result()
+                        pending[tid] = (c_lbl, c_arr, c_aux)
+                        while next_tid in pending:
+                            p_lbl, p_arr, p_aux = pending.pop(next_tid)
+                            _record_tile(
+                                tiles[next_tid], p_lbl, p_arr, p_aux
+                            )
+                            next_tid += 1
 
         lut = _gather_seam_pairs_and_merges(
             records_by_grid=records_by_grid,

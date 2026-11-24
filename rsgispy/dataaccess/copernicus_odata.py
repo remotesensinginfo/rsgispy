@@ -76,16 +76,15 @@ Functions requiring ``requests`` raise :class:`rsgispy.RSGISPyException`
 if ``requests`` is not installed.
 """
 
-import contextlib
 import datetime
 import os
 from typing import Dict, List, Optional, Tuple, Union
 
 import rsgispy
+from rsgispy.tools._download_common import stream_http_download
+import rsgispy.tools.credentials
 import rsgispy.tools.geometry
-import rsgispy.tools.hashing
 import rsgispy.tools.http
-import rsgispy.tools.system
 
 try:
     import requests  # pylint: disable=import-error
@@ -349,11 +348,9 @@ def get_access_token(
     rsgispy.check_optional_dep(
         HAVE_REQUESTS, "get_access_token", "requests", "dataaccess"
     )
-    if username is None:
-        username = rsgispy.tools.system.get_environment_variable("RSGIS_COP_USER")
-
-    if password is None:
-        password = rsgispy.tools.system.get_environment_variable("RSGIS_COP_PASS")
+    username, password = rsgispy.tools.credentials.resolve_env_user_pass(
+        username, password, "RSGIS_COP_USER", "RSGIS_COP_PASS"
+    )
 
     data = {
         "client_id": "cdse-public",
@@ -541,15 +538,6 @@ def query_scn(scn_name: str) -> Optional[Dict]:
     return None
 
 
-def _enter_resource(stack: contextlib.ExitStack, obj):
-    """Enter ``obj`` as a context manager if supported, else close on exit."""
-    if hasattr(obj, "__enter__") and hasattr(obj, "__exit__"):
-        return stack.enter_context(obj)
-    if hasattr(obj, "close"):
-        stack.callback(obj.close)
-    return obj
-
-
 # pylint: disable=too-many-locals
 def download_scn(
     access_token: str,
@@ -616,55 +604,27 @@ def download_scn(
         scn_url = scn_url.replace("//catalogue.", "//download.")
 
     tmp_file_path = os.path.join(out_path, f"{scn_name}.incomplete")
-    chunk_size = 8192
-    n_chunks = int(scn_size / chunk_size) + 1
-    tqdm_cls = rsgispy.get_tqdm()
-
-    try:
-        with contextlib.ExitStack() as stack:
-            ses = _enter_resource(stack, requests.Session())
-            ses.headers.update(
-                {
-                    "Authorization": f"Bearer {access_token}",
-                    "User-Agent": f"rsgispy/{rsgispy.get_rsgispy_version()}",
-                }
-            )
-            resp_obj = _enter_resource(
-                stack,
-                ses.get(
-                    scn_url,
-                    stream=True,
-                    verify=True,
-                    allow_redirects=True,
-                    timeout=120,
-                ),
-            )
-            if rsgispy.tools.http.check_http_response(resp_obj, scn_url):
-                with open(tmp_file_path, "wb") as file:
-                    for chunk in tqdm_cls(
-                        resp_obj.iter_content(chunk_size=chunk_size),
-                        total=n_chunks,
-                        disable=not use_pbar,
-                    ):
-                        if chunk:
-                            file.write(chunk)
-
-        if not os.path.exists(tmp_file_path):
-            raise rsgispy.RSGISPyException(
-                "Failed to download file - unknown error"
-            )
-
-        if scn_checksum is not None:
-            md5_checksum = rsgispy.tools.hashing.create_md5_hash(tmp_file_path)
-            if md5_checksum.lower() != str(scn_checksum).strip().lower():
-                raise rsgispy.RSGISPyException("Error - checksum mismatch.")
-        os.replace(tmp_file_path, out_file_path)
-        print(f"Download Complete: {scn_name}")
-    except Exception:
-        if os.path.exists(tmp_file_path):
-            with contextlib.suppress(OSError):
-                os.remove(tmp_file_path)
-        raise
+    ses = requests.Session()
+    ses.headers.update(
+        {
+            "Authorization": f"Bearer {access_token}",
+            "User-Agent": f"rsgispy/{rsgispy.get_rsgispy_version()}",
+        }
+    )
+    stream_http_download(
+        session=ses,
+        url=scn_url,
+        out_file_path=out_file_path,
+        tmp_file_path=tmp_file_path,
+        chunk_size=8192,
+        total_bytes=scn_size,
+        timeout=120,
+        get_kwargs={"verify": True, "allow_redirects": True},
+        expected_md5=scn_checksum,
+        use_pbar=use_pbar,
+        complete_label=scn_name,
+        check_response_fn=rsgispy.tools.http.check_http_response,
+    )
 
 
 def download_scns(

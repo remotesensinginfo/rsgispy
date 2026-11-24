@@ -4,7 +4,7 @@ Statistical, dispersion, and local-difference moving-window raster filters.
 
 from typing import List, Optional
 
-from rsgispy.imagefilter._helper import (
+from rsgispy.imagefilter._helpers import (
     run_window_stat_filter,
     stat_coeff_of_var,
     stat_max,

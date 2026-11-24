@@ -51,8 +51,8 @@ import inspect
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import rsgispy
+import rsgispy.tools.credentials
 import rsgispy.tools.geometry
-import rsgispy.tools.system
 
 # pylint: disable=invalid-name
 PLANET_AVAIL = True
@@ -269,16 +269,12 @@ def planet_auth(
     """
     _require_planet()
 
-    if username is None:
-        username = rsgispy.tools.system.get_environment_variable("RSGIS_PLANET_USER")
-
-    if password is None:
-        password = rsgispy.tools.system.get_environment_variable("RSGIS_PLANET_PASS")
-
-    if api_key is None:
-        api_key = rsgispy.tools.system.get_environment_variable("RSGIS_PLANET_API_KEY")
-    if api_key is None:
-        api_key = rsgispy.tools.system.get_environment_variable("PL_API_KEY")
+    username, password = rsgispy.tools.credentials.resolve_env_user_pass(
+        username, password, "RSGIS_PLANET_USER", "RSGIS_PLANET_PASS"
+    )
+    api_key = rsgispy.tools.credentials.resolve_env_credential(
+        api_key, ("RSGIS_PLANET_API_KEY", "PL_API_KEY")
+    )
 
     if api_key is not None:
         return planet.Auth.from_key(api_key)

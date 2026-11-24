@@ -19,6 +19,7 @@ from rasterio.transform import Affine
 import rsgispy
 from rsgispy.imagecalc.stats import calc_basic_img_band_stats
 from rsgispy.imageprocess import (
+    build_valid_mask,
     ensure_file_exists,
     iter_single_image_band_blocks,
 )
@@ -520,6 +521,7 @@ def pop_thmt_img_stats(
     use_multi_core_pyramids: bool = False,
     n_cores: int = 1,
     tile_size: int = 1024,
+    ignore_cog: bool = False,
 ) -> None:
     """
     Populate an integer thematic input image (e.g., ``uint8``, ``uint16``, ``int16``
@@ -539,6 +541,8 @@ def pop_thmt_img_stats(
                     ``use_multi_core_pyramids=True`` (Default = ``1``).
     :param tile_size: Overview tile width and height in pixels at each scale
                       when ``use_multi_core_pyramids=True`` (Default = ``1024``).
+    :param ignore_cog: Whether to ignore breaking COG layout when modifying a COG
+                       file in place (Default = ``False``).
 
     .. note::
 
@@ -576,13 +580,17 @@ def pop_thmt_img_stats(
                 "This function only supports integer datasets"
             )
 
-    set_img_thematic(input_img)
+    set_img_thematic(input_img, ignore_cog=ignore_cog)
+
+    open_opts: Dict[str, Any] = {}
+    if ignore_cog:
+        open_opts["IGNORE_COG_LAYOUT_BREAK"] = "YES"
 
     if add_clr_tab:
         hist_info = _calc_int_band_hists(
             input_img, dtype_str=dtype_str, use_pbar=use_pbar
         )
-        with rasterio.open(input_img, "r+") as dst:
+        with rasterio.open(input_img, "r+", **open_opts) as dst:
             if ignore_zero:
                 dst.nodata = 0
 
@@ -644,7 +652,11 @@ def pop_thmt_img_stats(
                 use_pbar=use_pbar,
             )
         else:
-            build_img_pyramids(input_img, resampling_method=Resampling.nearest)
+            build_img_pyramids(
+                input_img,
+                resampling_method=Resampling.nearest,
+                ignore_cog=ignore_cog,
+            )
 
 
 def _calc_linear_band_hists(
@@ -677,11 +689,9 @@ def _calc_linear_band_hists(
         input_img=input_img, use_pbar=use_pbar
     ):
         for idx, band_arr in enumerate(block_arrays):
-            data = band_arr.ravel()
-            if no_data_val is not None:
-                data = data[data != no_data_val]
-            data = data[np.isfinite(data)]
-            if data.size > 0:
+            valid = build_valid_mask(band_arr, no_data_val)
+            if np.any(valid):
+                data = band_arr[valid]
                 _, _, c_min, c_max, n_bins = hist_params[idx]
                 counts, _ = np.histogram(
                     data, bins=n_bins, range=(c_min, c_max)

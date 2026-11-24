@@ -26,11 +26,13 @@ __all__ = [
 ]
 
 
-def set_img_thematic(input_img: str) -> None:
+def set_img_thematic(input_img: str, ignore_cog: bool = False) -> None:
     """
     Set all image bands in ``input_img`` to have ``LAYER_TYPE=thematic`` metadata.
 
     :param input_img: Path to the image file to update.
+    :param ignore_cog: If ``True``, pass ``IGNORE_COG_LAYOUT_BREAK=YES`` when
+                       updating a COG file in place (Default = ``False``).
 
     .. code:: python
 
@@ -39,8 +41,11 @@ def set_img_thematic(input_img: str) -> None:
         rsgispy.imageutils.colourtable.set_img_thematic("cls_img.tif")
     """
     _ensure_img_exists(input_img)
+    open_opts: Dict[str, str] = {}
+    if ignore_cog:
+        open_opts["IGNORE_COG_LAYOUT_BREAK"] = "YES"
     try:
-        with rasterio.open(input_img, "r+") as dst:
+        with rasterio.open(input_img, "r+", **open_opts) as dst:
             for bidx in range(1, dst.count + 1):
                 dst.update_tags(bidx, LAYER_TYPE="thematic")
     except Exception as err:
@@ -49,11 +54,13 @@ def set_img_thematic(input_img: str) -> None:
         ) from err
 
 
-def set_img_not_thematic(input_img: str) -> None:
+def set_img_not_thematic(input_img: str, ignore_cog: bool = False) -> None:
     """
     Set all image bands in ``input_img`` to have ``LAYER_TYPE=athematic`` metadata.
 
     :param input_img: Path to the image file to update.
+    :param ignore_cog: If ``True``, pass ``IGNORE_COG_LAYOUT_BREAK=YES`` when
+                       updating a COG file in place (Default = ``False``).
 
     .. code:: python
 
@@ -62,8 +69,11 @@ def set_img_not_thematic(input_img: str) -> None:
         rsgispy.imageutils.colourtable.set_img_not_thematic("img.tif")
     """
     _ensure_img_exists(input_img)
+    open_opts: Dict[str, str] = {}
+    if ignore_cog:
+        open_opts["IGNORE_COG_LAYOUT_BREAK"] = "YES"
     try:
-        with rasterio.open(input_img, "r+") as dst:
+        with rasterio.open(input_img, "r+", **open_opts) as dst:
             for bidx in range(1, dst.count + 1):
                 dst.update_tags(bidx, LAYER_TYPE="athematic")
     except Exception as err:

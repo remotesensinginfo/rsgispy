@@ -28,7 +28,7 @@ from rsgispy.ml.cv import nested_spatial_cv
 from rsgispy.ml.predict import predict_quantiles_raster, predict_raster
 from rsgispy.ml.stack import BandSpec, ImageFeatureStack
 from rsgispy.ml.tune import tune_estimator
-from rsgispy.modelling._helper import resolve_analysis_vars
+from rsgispy.modelling._helpers import resolve_analysis_vars
 import rsgispy.modelling.species_distribution as sdm
 from rsgispy.regression.regdata import split_reg_samples
 from rsgispy.regression.regsklearn import (

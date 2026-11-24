@@ -36,6 +36,8 @@ from rsgispy.tools.geometry import (
 import rsgispy.vector._spatial as _vec_spatial
 from rsgispy.vectorprocess import (
     VectorInput,
+    align_gdf_crs,
+    ensure_matching_crs,
     finish_vec_output,
     parse_crs_input,
     read_vec_gdf,
@@ -184,12 +186,7 @@ def does_vmsk_img_intersect(
         if len(roi_gdf) == 0:
             return False
 
-        if (
-            img_crs is not None
-            and roi_gdf.crs is not None
-            and roi_gdf.crs != img_crs
-        ):
-            roi_gdf = roi_gdf.to_crs(img_crs)
+        roi_gdf = align_gdf_crs(roi_gdf, img_crs)
 
         roi_sindex = roi_gdf.sindex
         roi_geoms = roi_gdf.geometry.to_numpy()
@@ -284,12 +281,7 @@ def spatial_select(
         vec_roi_file, vec_lyr=vec_roi_lyr, epsg=vec_roi_epsg, copy=False
     )
 
-    if (
-        in_gdf.crs is not None
-        and roi_gdf.crs is not None
-        and in_gdf.crs != roi_gdf.crs
-    ):
-        roi_gdf = roi_gdf.to_crs(in_gdf.crs)
+    roi_gdf = ensure_matching_crs(in_gdf, roi_gdf)
 
     tmp_id_col = "_rsgispy_sel_idx_"
     work_gdf = gpd.GeoDataFrame(
@@ -448,12 +440,7 @@ def subset_vec_lyr_to_feat_bboxs(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     bbox_gdf = read_vec_gdf(vec_file_bbox, vec_lyr=vec_lyr_bbox, copy=False)
     base_gdf = read_vec_gdf(vec_file_tosub, vec_lyr=vec_lyr_tosub, copy=False)
-    if (
-        bbox_gdf.crs is not None
-        and base_gdf.crs is not None
-        and bbox_gdf.crs != base_gdf.crs
-    ):
-        bbox_gdf = bbox_gdf.to_crs(base_gdf.crs)
+    bbox_gdf = ensure_matching_crs(base_gdf, bbox_gdf)
     bboxes = _vec_spatial.get_geoms_as_bboxs(bbox_gdf, None)
 
     pbar_cls = rsgispy.get_tqdm()
@@ -524,12 +511,7 @@ def get_att_lst_select_feats(
     validate_columns_exist(in_gdf, att_names)
     sel_gdf = read_vec_gdf(vec_sel_file, vec_lyr=vec_sel_lyr, copy=False)
 
-    if (
-        in_gdf.crs is not None
-        and sel_gdf.crs is not None
-        and in_gdf.crs != sel_gdf.crs
-    ):
-        sel_gdf = sel_gdf.to_crs(in_gdf.crs)
+    sel_gdf = ensure_matching_crs(in_gdf, sel_gdf)
 
     left_geom = gpd.GeoDataFrame(
         geometry=in_gdf.geometry.values,
@@ -993,12 +975,7 @@ def match_closest_vec_pts(
     match_gdf = read_vec_gdf(
         vec_match_file, vec_lyr=vec_match_lyr, copy=False
     )
-    if (
-        base_gdf.crs is not None
-        and match_gdf.crs is not None
-        and base_gdf.crs != match_gdf.crs
-    ):
-        match_gdf = match_gdf.to_crs(base_gdf.crs)
+    match_gdf = ensure_matching_crs(base_gdf, match_gdf)
 
     base_gdf = base_gdf[
         base_gdf.geometry.notna() & (~base_gdf.geometry.is_empty)

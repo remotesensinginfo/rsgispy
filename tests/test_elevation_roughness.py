@@ -123,6 +123,29 @@ def test_calc_pt_smpl_img_vals_debug_export(tmp_path):
             angle_col="angle",
         )
 
+    # Missing CRS on input raster must raise RSGISPyException
+    no_crs_dem = tmp_path / "dem_no_crs.tif"
+    with rasterio.open(
+        no_crs_dem,
+        "w",
+        driver="GTiff",
+        height=16,
+        width=16,
+        count=1,
+        dtype="float32",
+        crs=None,
+        transform=rasterio.transform.from_origin(500000.0, 5200000.0, 10.0, 10.0),
+    ) as dst:
+        dst.write(np.zeros((16, 16), dtype=np.float32), 1)
+    with pytest.raises(rsgispy.RSGISPyException, match="CRS"):
+        rcptwin.calc_pt_smpl_img_vals(
+            str(no_crs_dem),
+            str(pts_path),
+            None,
+            calc_objs=[debug_obj],
+            use_pbar=False,
+        )
+
 
 def test_simple_and_munro_roughness_metrics(tmp_path):
     """Test calc_simple_roughness_profile_metrics and calc_munro_roughness_profile_metrics."""

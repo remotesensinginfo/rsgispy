@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 import numpy as np
 import rasterio
+from rasterio.io import DatasetWriter
 from rasterio.transform import Affine
 from rasterio.windows import Window
 
@@ -17,21 +18,19 @@ import rsgispy
 from rsgispy.imagecalc.stats import get_unique_values
 from rsgispy.imageprocess import (
     IntersectionGrid,
+    build_valid_mask,
     cast_result_block,
     compute_spatial_intersection,
     ensure_file_exists,
     iter_dataset_windows,
+    maybe_pop_stats,
+    normalise_creation_options,
     open_multi_image_datasets,
     open_output_dataset,
+    resolve_out_dtype,
     validate_band_index,
     validate_crs_and_res,
 )
-from rsgispy.imageutils._helpers import (
-    maybe_pop_stats,
-    normalise_creation_options,
-    rsgis_dtype_from_np_dtype,
-)
-from rsgispy.imageutils.colourtable import set_img_thematic
 from rsgispy.tools.jsonio import write_dict_to_json
 from rsgispy.tools.maths import create_var_list
 
@@ -42,6 +41,19 @@ __all__ = [
     "combine_imgs_to_band",
     "combine_binary_masks",
 ]
+
+
+def _open_rw_dataset(stack: ExitStack, img_path: str) -> DatasetWriter:
+    """Open ``img_path`` in ``r+`` mode, passing ``IGNORE_COG_LAYOUT_BREAK=YES`` if COG."""
+    is_cog = False
+    with rasterio.open(img_path, "r") as probe_ds:
+        struct_tags = probe_ds.tags(ns="IMAGE_STRUCTURE") or {}
+        if str(struct_tags.get("LAYOUT", "")).upper() == "COG":
+            is_cog = True
+    open_kwargs: Dict[str, Any] = {}
+    if is_cog:
+        open_kwargs["IGNORE_COG_LAYOUT_BREAK"] = "YES"
+    return stack.enter_context(rasterio.open(img_path, "r+", **open_kwargs))
 
 
 def create_img_mosaic(
@@ -109,7 +121,6 @@ def create_img_mosaic(
 
     norm_opts = normalise_creation_options(creation_opts)
     skip_idx = int(skip_band) - 1
-    skip_is_nan = math.isnan(float(skip_val))
     bg_is_nan = math.isnan(float(background_val))
     eff_nd = float(no_data_val) if no_data_val is not None else float(background_val)
 
@@ -118,13 +129,9 @@ def create_img_mosaic(
         first_ds = datasets[paths[0]]
         validate_crs_and_res(datasets, first_ds)
 
-        eff_dtype = (
-            rsgis_dtype_from_np_dtype(first_ds.dtypes[0])
-            if datatype is None
-            else datatype
+        _, out_rio_dtype, out_np_dtype = resolve_out_dtype(
+            datatype, ref_np_dtype=first_ds.dtypes[0]
         )
-        out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
-        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
 
         n_bands = int(first_ds.count)
         if skip_idx < 0 or skip_idx >= n_bands:
@@ -156,83 +163,74 @@ def create_img_mosaic(
             offsets={},
         )
 
-        with ExitStack() as init_stack:
-            dst_init = open_output_dataset(
-                stack=init_stack,
-                output_img=output_img,
-                gdalformat=gdalformat,
-                out_rio_dtype=out_rio_dtype,
-                grid=grid,
-                count=n_bands,
-                output_exists=False,
-                creation_opts=norm_opts,
-            )
-            dst_init.nodata = eff_nd
-            for bidx in range(1, n_bands + 1):
-                desc = first_ds.descriptions[bidx - 1]
-                if desc:
-                    dst_init.set_band_description(bidx, desc)
-
-            for out_win in iter_dataset_windows(out_h, out_w, use_pbar=False):
-                bg_block = np.full(
-                    (n_bands, int(out_win.height), int(out_win.width)),
-                    background_val,
-                    dtype=out_np_dtype,
-                )
-                dst_init.write(bg_block, window=out_win)
-
-        dst = stack.enter_context(rasterio.open(output_img, "r+"))
-        out_full_win = Window(0, 0, out_w, out_h)
+        ds_extents = []
         for path in paths:
             ds = datasets[path]
             ds_col = int(round((float(ds.bounds.left) - min_x) / x_res))
             ds_row = int(round((max_y - float(ds.bounds.top)) / y_res))
+            ds_win = Window(ds_col, ds_row, int(ds.width), int(ds.height))
+            ds_extents.append((ds, ds_col, ds_row, ds_win))
 
-            for in_win in iter_dataset_windows(
-                ds.height, ds.width, use_pbar=use_pbar
-            ):
-                raw_dst_win = Window(
-                    ds_col + int(in_win.col_off),
-                    ds_row + int(in_win.row_off),
-                    int(in_win.width),
-                    int(in_win.height),
-                )
+        dst = open_output_dataset(
+            stack=stack,
+            output_img=output_img,
+            gdalformat=gdalformat,
+            out_rio_dtype=out_rio_dtype,
+            grid=grid,
+            count=n_bands,
+            output_exists=False,
+            creation_opts=norm_opts,
+        )
+        dst.nodata = eff_nd
+        for bidx in range(1, n_bands + 1):
+            desc = first_ds.descriptions[bidx - 1]
+            if desc:
+                dst.set_band_description(bidx, desc)
+
+        for out_win in iter_dataset_windows(out_h, out_w, use_pbar=use_pbar):
+            out_block = np.full(
+                (n_bands, int(out_win.height), int(out_win.width)),
+                background_val,
+                dtype=out_np_dtype,
+            )
+
+            for ds, ds_col, ds_row, ds_win in ds_extents:
                 try:
-                    dst_win = raw_dst_win.intersection(out_full_win)
+                    inter_win = out_win.intersection(ds_win)
                 except rasterio.errors.WindowError:
                     continue
-                win_w = int(dst_win.width)
-                win_h = int(dst_win.height)
-                if win_w <= 0 or win_h <= 0:
+                inter_w = int(inter_win.width)
+                inter_h = int(inter_win.height)
+                if inter_w <= 0 or inter_h <= 0:
                     continue
+
                 src_win = Window(
-                    int(in_win.col_off)
-                    + (int(dst_win.col_off) - int(raw_dst_win.col_off)),
-                    int(in_win.row_off)
-                    + (int(dst_win.row_off) - int(raw_dst_win.row_off)),
-                    win_w,
-                    win_h,
+                    int(inter_win.col_off) - ds_col,
+                    int(inter_win.row_off) - ds_row,
+                    inter_w,
+                    inter_h,
                 )
+                rel_r0 = int(inter_win.row_off) - int(out_win.row_off)
+                rel_c0 = int(inter_win.col_off) - int(out_win.col_off)
+                rel_r1 = rel_r0 + inter_h
+                rel_c1 = rel_c0 + inter_w
 
                 in_block = ds.read(window=src_win, out_dtype=np.float64)
                 in_skip = in_block[skip_idx]
-                in_valid = (
-                    ~np.isnan(in_skip)
-                    if skip_is_nan
-                    else (np.isfinite(in_skip) & (in_skip != float(skip_val)))
+                in_valid = build_valid_mask(
+                    in_skip, no_data_val=float(skip_val)
                 )
 
-                out_block = dst.read(window=dst_win)
+                sub_out = out_block[:, rel_r0:rel_r1, rel_c0:rel_c1]
                 if overlap_behaviour == 0:
                     take_in = in_valid
                 else:
-                    out_skip = out_block[skip_idx].astype(np.float64)
+                    out_skip = sub_out[skip_idx].astype(np.float64)
                     out_is_bg = (
                         np.isnan(out_skip)
                         if bg_is_nan
-                        else (
-                            (~np.isfinite(out_skip))
-                            | (out_skip == float(background_val))
+                        else ~build_valid_mask(
+                            out_skip, no_data_val=float(background_val)
                         )
                     )
                     if overlap_behaviour == 1:
@@ -246,16 +244,18 @@ def create_img_mosaic(
 
                 if np.any(take_in):
                     cast_in = cast_result_block(
-                        in_block, win_h, win_w, out_np_dtype
+                        in_block, inter_h, inter_w, out_np_dtype
                     )
-                    out_block[:, take_in] = cast_in[:, take_in]
-                    dst.write(out_block, window=dst_win)
+                    sub_out[:, take_in] = cast_in[:, take_in]
+
+            dst.write(out_block, window=out_win)
 
     maybe_pop_stats(
         output_img=output_img,
         calc_stats=calc_stats,
         no_data_val=eff_nd,
         use_pbar=use_pbar,
+        gdalformat=gdalformat,
     )
 
 
@@ -291,7 +291,7 @@ def include_imgs(
         raise rsgispy.RSGISPyException("include_imgs must not be empty.")
 
     with ExitStack() as stack:
-        base_ds = stack.enter_context(rasterio.open(input_img, "r+"))
+        base_ds = _open_rw_dataset(stack, input_img)
         base_dtype = np.dtype(base_ds.dtypes[0])
         x_res = abs(float(base_ds.transform.a))
         y_res = abs(float(base_ds.transform.e))
@@ -310,10 +310,6 @@ def include_imgs(
         else:
             src_bands = None
             dst_bands = list(range(1, base_ds.count + 1))
-
-        skip_is_nan = (
-            math.isnan(float(skip_val)) if skip_val is not None else False
-        )
 
         for inc_path in inc_paths:
             inc_ds = inc_datasets[inc_path]
@@ -366,12 +362,8 @@ def include_imgs(
 
                 if skip_val is not None:
                     base_arr = base_ds.read(dst_bands, window=dst_win)
-                    valid = (
-                        ~np.isnan(inc_arr)
-                        if skip_is_nan
-                        else (
-                            np.isfinite(inc_arr) & (inc_arr != float(skip_val))
-                        )
+                    valid = build_valid_mask(
+                        inc_arr, no_data_val=float(skip_val)
                     )
                     base_arr[valid] = cast_inc[valid]
                     base_ds.write(base_arr, dst_bands, window=dst_win)
@@ -414,7 +406,7 @@ def include_imgs_with_overlap(
         )
 
     with ExitStack() as stack:
-        base_ds = stack.enter_context(rasterio.open(input_img, "r+"))
+        base_ds = _open_rw_dataset(stack, input_img)
         base_dtype = np.dtype(base_ds.dtypes[0])
         x_res = abs(float(base_ds.transform.a))
         y_res = abs(float(base_ds.transform.e))
@@ -514,17 +506,12 @@ def combine_imgs_to_band(
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     norm_opts = normalise_creation_options(creation_opts)
     eff_nd = 0.0 if no_data_val is None else float(no_data_val)
-    nd_is_nan = math.isnan(eff_nd)
 
     with ExitStack() as stack:
         datasets, paths = open_multi_image_datasets(stack, input_imgs)
-        eff_dtype = (
-            rsgis_dtype_from_np_dtype(datasets[paths[0]].dtypes[0])
-            if datatype is None
-            else datatype
+        _, out_rio_dtype, out_np_dtype = resolve_out_dtype(
+            datatype, ref_np_dtype=datasets[paths[0]].dtypes[0]
         )
-        out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
-        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
         grid = compute_spatial_intersection(datasets)
 
         dst = open_output_dataset(
@@ -558,11 +545,7 @@ def combine_imgs_to_band(
                     arr = ds.read(
                         b_idx, window=in_win, out_dtype=np.float64
                     )
-                    valid = (
-                        ~np.isnan(arr)
-                        if nd_is_nan
-                        else (np.isfinite(arr) & (arr != eff_nd))
-                    )
+                    valid = build_valid_mask(arr, no_data_val=eff_nd)
                     out_arr[valid] = arr[valid]
 
             dst.write(
@@ -576,6 +559,7 @@ def combine_imgs_to_band(
         calc_stats=calc_stats,
         no_data_val=eff_nd,
         use_pbar=use_pbar,
+        gdalformat=gdalformat,
     )
 
 
@@ -629,9 +613,9 @@ def combine_binary_masks(
             f"combine_binary_masks supports at most 8 binary masks, got {len(msk_imgs_dict)}."
         )
 
-    eff_dtype = rsgispy.TYPE_8UINT if datatype is None else datatype
-    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    _, out_rio_dtype, out_np_dtype = resolve_out_dtype(
+        datatype, default_dtype=rsgispy.TYPE_8UINT
+    )
     norm_opts = normalise_creation_options(creation_opts)
     keys: List[str] = list(msk_imgs_dict.keys())
     img_paths: List[str] = [os.fspath(msk_imgs_dict[k]) for k in keys]
@@ -675,13 +659,15 @@ def combine_binary_masks(
             )
             dst.write(packed, 1, window=out_win)
 
-    set_img_thematic(output_img)
+        dst.update_tags(1, LAYER_TYPE="thematic")
+
     maybe_pop_stats(
         output_img=output_img,
         calc_stats=calc_stats,
         no_data_val=no_data_val,
         thematic=True,
         use_pbar=use_pbar,
+        gdalformat=gdalformat,
     )
 
     uniq_vals = set(int(v) for v in get_unique_values(output_img, img_band=1))

@@ -35,7 +35,7 @@ from rsgispy.ml.predict import (
 from rsgispy.ml.scaling import FeatureScaler
 from rsgispy.ml.stack import BandSpec, ImageFeatureStack
 from rsgispy.ml.tune import TuneResult, get_default_param_space, tune_estimator
-from rsgispy.modelling._helper import EnvVarInfo
+from rsgispy.modelling._helpers import EnvVarInfo
 from rsgispy.regression.regdata import RegressionConfig
 
 

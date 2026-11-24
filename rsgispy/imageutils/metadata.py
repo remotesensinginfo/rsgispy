@@ -6,7 +6,7 @@ Raster metadata, spatial geometry, projection, and GCP utilities for
 import math
 import os
 import shutil
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pyproj
@@ -37,6 +37,8 @@ __all__ = [
     "get_img_band_count",
     "get_img_bbox",
     "get_img_bbox_in_proj",
+    "transform_bounds_to_wgs84",
+    "get_img_bbox_wgs84",
     "get_img_subset_pxl_bbox",
     "get_img_pxl_spatial_coords",
     "get_img_pxl_coords",
@@ -225,6 +227,79 @@ def get_img_bbox_in_proj(input_img: str, out_epsg: int) -> rsgispy.BBox:
         pyproj.CRS.from_epsg(int(out_epsg)),
     )
     return rsgispy.BBox.from_rsgis(reproj, epsg=int(out_epsg))
+
+
+def transform_bounds_to_wgs84(
+    bounds: Tuple[float, float, float, float],
+    crs: Any,
+    *,
+    skip_if_geographic: bool = False,
+) -> Optional[rsgispy.BBox]:
+    """
+    Transform a bounding box ``(left, bottom, right, top)`` in ``crs`` to WGS84
+    (``EPSG:4326``) using densified boundary points.
+
+    :param bounds: Raster/spatial bounds tuple ``(left, bottom, right, top)``.
+    :param crs: Source CRS descriptor (``pyproj.CRS``, ``rasterio`` CRS, WKT,
+                or EPSG code).
+    :param skip_if_geographic: When ``True``, return ``None`` if ``crs`` is
+                               already geographic (Default = ``False``).
+    :return: :class:`rsgispy.BBox` ``(west, east, south, north)`` with
+             ``epsg=4326``, or ``None`` if transformation fails, produces
+             non-finite coordinates, or is skipped.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+        bbox = rsgispy.imageutils.metadata.transform_bounds_to_wgs84(
+            (500000.0, 5599000.0, 501000.0, 5600000.0), "EPSG:32630"
+        )
+    """
+    if crs is None:
+        return None
+    try:
+        py_crs = pyproj.CRS.from_user_input(crs)
+        if skip_if_geographic and py_crs.is_geographic:
+            return None
+        transformer = pyproj.Transformer.from_crs(
+            py_crs, pyproj.CRS.from_epsg(4326), always_xy=True
+        )
+        left, bottom, right, top = bounds
+        west, south, east, north = transformer.transform_bounds(
+            left, bottom, right, top, densify_pts=21
+        )
+        if not all(math.isfinite(val) for val in (west, east, south, north)):
+            return None
+        return rsgispy.BBox(
+            float(west), float(east), float(south), float(north), epsg=4326
+        )
+    except Exception:  # pylint: disable=broad-exception-caught
+        return None
+
+
+def get_img_bbox_wgs84(input_img: str) -> Optional[rsgispy.BBox]:
+    """
+    Retrieve the WGS84 (``EPSG:4326``) bounding box of ``input_img``.
+
+    :param input_img: Path to the input image file.
+    :return: :class:`rsgispy.BBox` ``(west, east, south, north)`` with
+             ``epsg=4326``, or ``None`` if the image has no CRS or its bounds
+             cannot be transformed to finite WGS84 coordinates.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+        bbox = rsgispy.imageutils.metadata.get_img_bbox_wgs84("img.tif")
+    """
+    _ensure_img_exists(input_img)
+    with rasterio.open(input_img, "r") as src:
+        if src.crs is None:
+            return None
+        bounds = src.bounds
+        return transform_bounds_to_wgs84(
+            (bounds.left, bounds.bottom, bounds.right, bounds.top),
+            src.crs,
+        )
 
 
 def get_img_subset_pxl_bbox(
@@ -666,46 +741,6 @@ def get_utm_zone(input_img: str) -> Optional[str]:
     return f"{zone_num:02d}{hemi}"
 
 
-_RIO_DTYPE_TO_GDAL_ENUM: Dict[str, int] = {
-    "uint8": 1,
-    "byte": 1,
-    "uint16": 2,
-    "int16": 3,
-    "uint32": 4,
-    "int32": 5,
-    "float32": 6,
-    "float64": 7,
-    "cint16": 8,
-    "cint32": 9,
-    "complex64": 10,
-    "cfloat32": 10,
-    "complex128": 11,
-    "cfloat64": 11,
-    "uint64": 12,
-    "int64": 13,
-    "int8": 14,
-}
-
-_RIO_DTYPE_TO_GDAL_NAME: Dict[str, str] = {
-    "uint8": "Byte",
-    "byte": "Byte",
-    "uint16": "UInt16",
-    "int16": "Int16",
-    "uint32": "UInt32",
-    "int32": "Int32",
-    "float32": "Float32",
-    "float64": "Float64",
-    "cint16": "CInt16",
-    "cint32": "CInt32",
-    "complex64": "CFloat32",
-    "cfloat32": "CFloat32",
-    "complex128": "CFloat64",
-    "cfloat64": "CFloat64",
-    "uint64": "UInt64",
-    "int64": "Int64",
-    "int8": "Int8",
-}
-
 _EXT_TO_GDAL_FORMAT: Dict[str, str] = {
     ".env": "ENVI",
     ".kea": "KEA",
@@ -793,11 +828,7 @@ def get_gdal_datatype_from_img(input_img: str) -> int:
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
         dtype_key = str(src.dtypes[0]).lower()
-    if dtype_key not in _RIO_DTYPE_TO_GDAL_ENUM:
-        raise rsgispy.RSGISPyException(
-            f"Unsupported raster data type '{dtype_key}' in '{input_img}'."
-        )
-    return _RIO_DTYPE_TO_GDAL_ENUM[dtype_key]
+    return rsgispy.get_gdal_datatype_enum(dtype_key)
 
 
 def get_rsgislib_datatype_from_img(input_img: str) -> int:
@@ -836,11 +867,7 @@ def get_gdal_datatype_name_from_img(input_img: str) -> str:
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
         dtype_key = str(src.dtypes[0]).lower()
-    if dtype_key not in _RIO_DTYPE_TO_GDAL_NAME:
-        raise rsgispy.RSGISPyException(
-            f"Unsupported raster data type '{dtype_key}' in '{input_img}'."
-        )
-    return _RIO_DTYPE_TO_GDAL_NAME[dtype_key]
+    return rsgispy.get_gdal_datatype_name(dtype_key)
 
 
 def get_gdal_format_from_ext(input_img: str) -> str:

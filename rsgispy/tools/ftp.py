@@ -13,6 +13,10 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import rsgispy
+from rsgispy.tools._download_common import (
+    process_download_queue_db,
+    write_download_queue_db,
+)
 import rsgispy.tools.files
 
 try:
@@ -236,7 +240,6 @@ def create_file_listings_db(
         try_n_times,
         mlsd_not_avail,
     )
-    lst_db = pysondb.getDb(db_json)
     db_data = [
         {
             "ftp_url": ftp_url,
@@ -246,8 +249,7 @@ def create_file_listings_db(
         }
         for c_file in tqdm_cls(non_dirs_lst, disable=not use_pbar)
     ]
-    if db_data:
-        lst_db.addMany(db_data)
+    write_download_queue_db(pysondb, db_json, db_data)
 
 
 def filter_file_listings_db(
@@ -300,8 +302,7 @@ def filter_file_listings_db(
             )
 
     if out_db_data:
-        lst_out_db = pysondb.getDb(out_db_file)
-        lst_out_db.addMany(out_db_data)
+        write_download_queue_db(pysondb, out_db_file, out_db_data)
 
 
 def download_ftp_file(
@@ -449,11 +450,8 @@ def download_files_use_lst_db(
     rsgispy.check_optional_dep(
         HAVE_PYSONDB, "download_files_use_lst_db", "pysondb", "dataaccess"
     )
-    tqdm_cls = rsgispy.get_tqdm()
-    lst_db = pysondb.getDb(db_json)
-    dwld_files = lst_db.getByQuery({"downloaded": False})
 
-    for dwn_file in tqdm_cls(dwld_files, disable=not use_pbar):
+    def _download_record(dwn_file: Dict[str, Any]) -> Tuple[bool, str]:
         basename = os.path.basename(dwn_file["rmt_path"])
         if create_dir_struct:
             dir_path = os.path.dirname(dwn_file["rmt_path"]).lstrip("/")
@@ -473,10 +471,11 @@ def download_files_use_lst_db(
             ftp_pass=ftp_pass,
             print_info=False,
         )
-        if dwnlded:
-            lst_db.updateById(
-                dwn_file["id"], {"lcl_path": local_path, "downloaded": True}
-            )
+        return dwnlded, local_path
+
+    process_download_queue_db(
+        pysondb, db_json, _download_record, use_pbar=use_pbar
+    )
 
 
 def upload_ftp_file(

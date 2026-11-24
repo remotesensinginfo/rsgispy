@@ -21,16 +21,16 @@ from rasterio.windows import Window
 import rsgispy
 from rsgispy.imageprocess import (
     IntersectionGrid,
+    build_valid_mask,
     cast_result_block,
     compute_spatial_intersection,
     ensure_file_exists,
     iter_dataset_windows,
-    open_output_dataset,
-)
-from rsgispy.imageutils._helpers import (
     maybe_pop_stats,
     normalise_creation_options,
-    rsgis_dtype_from_np_dtype,
+    open_output_dataset,
+    resolve_out_dtype,
+    resolve_out_nodata,
 )
 from rsgispy.imageutils.checks import do_gdal_layers_have_same_proj
 from rsgispy.tools.system import num_process_cores
@@ -91,17 +91,13 @@ def _collect_reference_points(
     """Read valid reference pixel centres and values from band 1 of ``in_ref_img``."""
     coords_list: List[np.ndarray] = []
     vals_list: List[np.ndarray] = []
-    ref_nd_is_nan = np.isnan(ref_no_data)
 
     with rasterio.open(in_ref_img, "r") as ref_src:
         for win in iter_dataset_windows(
             ref_src.height, ref_src.width, use_pbar=False
         ):
             arr = ref_src.read(1, window=win, out_dtype=np.float64)
-            if ref_nd_is_nan:
-                valid = np.isfinite(arr)
-            else:
-                valid = np.isfinite(arr) & (arr != ref_no_data)
+            valid = build_valid_mask(arr, float(ref_no_data))
             if not np.any(valid):
                 continue
             loc_rows, loc_cols = np.nonzero(valid)
@@ -258,13 +254,7 @@ def _valid_seed_mask(
     reg_arr: np.ndarray, ref_no_data: Union[int, float]
 ) -> np.ndarray:
     """Return boolean mask of valid non-nodata seed pixels in ``reg_arr``."""
-    if np.issubdtype(reg_arr.dtype, np.floating):
-        if np.isnan(ref_no_data):
-            return np.isfinite(reg_arr)
-        return np.isfinite(reg_arr) & (reg_arr != ref_no_data)
-    if np.isnan(ref_no_data):
-        return np.ones(reg_arr.shape, dtype=bool)
-    return reg_arr != ref_no_data
+    return build_valid_mask(reg_arr, float(ref_no_data))
 
 
 def _connectivity_spec(
@@ -311,21 +301,19 @@ def _resolve_out_dtype_and_nodata(
     else:
         eff_ref_nd = 0
 
-    eff_dtype = (
-        rsgis_dtype_from_np_dtype(reg_src.dtypes[0])
-        if datatype is None
-        else datatype
+    _, out_rio_dtype, out_np_dtype = resolve_out_dtype(
+        datatype, ref_np_dtype=reg_src.dtypes[0]
     )
-    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
-
-    if no_data_val is not None:
-        eff_out_nd: Union[int, float] = no_data_val
-    elif np.isnan(eff_ref_nd) and np.issubdtype(out_np_dtype, np.integer):
-        eff_out_nd = 0
-    else:
-        eff_out_nd = eff_ref_nd
-
+    resolved_nd = resolve_out_nodata(
+        out_np_dtype,
+        out_no_data_val=no_data_val,
+        fallback_nodata=float(eff_ref_nd),
+        default_float=0.0,
+        default_int=0.0,
+        allow_round_int=True,
+        allow_nonfinite_float=True,
+    )
+    eff_out_nd: Union[int, float] = 0 if resolved_nd is None else resolved_nd
     if np.issubdtype(out_np_dtype, np.integer) and not np.isnan(eff_out_nd):
         eff_out_nd = int(eff_out_nd)
 

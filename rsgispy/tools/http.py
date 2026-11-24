@@ -14,6 +14,11 @@ import tempfile
 from typing import Any, Dict, Optional, Tuple
 
 import rsgispy
+from rsgispy.tools._download_common import (
+    process_download_queue_db,
+    stream_http_download,
+    write_download_queue_db,
+)
 import rsgispy.tools.hashing
 
 try:
@@ -233,37 +238,21 @@ def download_file_http(
     rsgispy.check_optional_dep(
         HAVE_REQUESTS, "download_file_http", "requests", "dataaccess"
     )
-    tqdm_cls = rsgispy.get_tqdm()
     session_http = requests.Session()
     if (username is not None) and (password is not None):
         session_http.auth = (username, password)
     session_http.headers["User-Agent"] = f"rsgispy/{rsgispy.get_rsgispy_version()}"
 
-    tmp_dwnld_path = f"{out_file_path}.incomplete"
-
     try:
-        with session_http.get(
-            input_url,
-            stream=True,
-            auth=session_http.auth,
+        stream_http_download(
+            session=session_http,
+            url=input_url,
+            out_file_path=out_file_path,
             timeout=timeout,
-        ) as resp:
-            if check_http_response(resp, input_url):
-                total = int(resp.headers.get("content-length", 0))
-                chunk_size = 2**20
-                n_chunks = int(total / chunk_size) + 1
-
-                with open(tmp_dwnld_path, "wb") as out_fp:
-                    for chunk in tqdm_cls(
-                        resp.iter_content(chunk_size=chunk_size),
-                        total=n_chunks,
-                        disable=not use_pbar,
-                    ):
-                        if chunk:
-                            out_fp.write(chunk)
-        if os.path.exists(tmp_dwnld_path):
-            os.rename(tmp_dwnld_path, out_file_path)
-            print(f"Download Complete: {out_file_path}")
+            get_kwargs={"auth": session_http.auth},
+            use_pbar=use_pbar,
+            check_response_fn=check_http_response,
+        )
     except Exception as err:  # pylint: disable=broad-exception-caught
         if no_except:
             print(err)
@@ -397,7 +386,6 @@ def create_file_listings_db(
         HAVE_PYSONDB, "create_file_listings_db", "pysondb", "dataaccess"
     )
     tqdm_cls = rsgispy.get_tqdm()
-    lst_db = pysondb.getDb(db_json)
     db_data = [
         {
             "http_url": file_urls[c_file],
@@ -407,8 +395,7 @@ def create_file_listings_db(
         }
         for c_file in tqdm_cls(file_urls, disable=not use_pbar)
     ]
-    if db_data:
-        lst_db.addMany(db_data)
+    write_download_queue_db(pysondb, db_json, db_data)
 
 
 def download_http_files_use_lst_db(
@@ -453,12 +440,9 @@ def download_http_files_use_lst_db(
             "dataaccess",
         )
 
-    tqdm_cls = rsgispy.get_tqdm()
-    lst_db = pysondb.getDb(db_json)
-    dwld_files = lst_db.getByQuery({"downloaded": False})
     os.makedirs(out_dir_path, exist_ok=True)
 
-    for dwn_file in tqdm_cls(dwld_files, disable=not use_pbar):
+    def _download_record(dwn_file: Dict[str, Any]) -> Tuple[bool, str]:
         basename = dwn_file["file_name"]
         lcl_path = os.path.join(out_dir_path, basename)
         file_exists = os.path.exists(lcl_path) if check_file_exists else False
@@ -484,8 +468,8 @@ def download_http_files_use_lst_db(
                 )
         else:
             dwnlded = True
+        return dwnlded, lcl_path
 
-        if dwnlded:
-            lst_db.updateById(
-                dwn_file["id"], {"lcl_path": lcl_path, "downloaded": True}
-            )
+    process_download_queue_db(
+        pysondb, db_json, _download_record, use_pbar=use_pbar
+    )

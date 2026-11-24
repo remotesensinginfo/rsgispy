@@ -471,7 +471,6 @@ def test_vectorutils_selection(tmp_path):
         assert not hasattr(vu_sel, moved_name)
 
     assert rsgispy.vector.__all__ == ["io", "create", "geoms", "attrs", "stats", "selection"]
-    assert not hasattr(rsgispy.vectorprocess, "__all__")
     for reexport_name in (
         "get_vec_lyr_bbox",
         "merge_vec_files",

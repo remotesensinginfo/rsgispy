@@ -13,6 +13,7 @@ import rasterio
 
 import rsgispy
 from rsgispy.imageprocess import (
+    build_valid_mask,
     create_output_from_dataset,
     ensure_file_exists,
     validate_band_index,
@@ -173,11 +174,10 @@ def perform_least_cost_path_calc(
         start_rc = _coord_to_pixel(src, start_coord, "start_coord")
         stop_rc = _coord_to_pixel(src, stop_coord, "stop_coord")
         cost_arr = src.read(cost_img_band).astype(np.float64, copy=True)
-        invalid_cost = ~np.isfinite(cost_arr)
-        if src.nodata is not None:
-            nd_val = float(src.nodata)
-            if math.isfinite(nd_val):
-                invalid_cost |= cost_arr == nd_val
+        invalid_cost = ~build_valid_mask(
+            cost_arr,
+            no_data_val=float(src.nodata) if src.nodata is not None else None,
+        )
         if np.any(invalid_cost):
             cost_arr[invalid_cost] = np.inf
 

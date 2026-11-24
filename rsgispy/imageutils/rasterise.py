@@ -21,13 +21,12 @@ from shapely.geometry import box
 import rsgispy
 from rsgispy.imageprocess import (
     IntersectionGrid,
+    build_valid_mask,
     ensure_file_exists,
     iter_dataset_windows,
-    open_output_dataset,
-)
-from rsgispy.imageutils._helpers import (
     maybe_pop_stats,
     normalise_creation_options,
+    open_output_dataset,
 )
 from rsgispy.imageutils.blank import (
     create_blank_img_from_bbox,
@@ -759,7 +758,7 @@ def create_dist_zones_to_vec_lyr(
     out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
 
-    valid = (dist_arr != dist_nd_val) & np.isfinite(dist_arr)
+    valid = build_valid_mask(dist_arr, no_data_val=float(dist_nd_val))
     out_arr = np.full(
         (grid.height, grid.width),
         backgrd_val,

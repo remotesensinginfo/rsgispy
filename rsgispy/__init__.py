@@ -99,14 +99,14 @@ Environmental/modelling variable types:
     * ``VAR_TYPE_CATEGORICAL = 2``
 """
 
-from typing import Optional, Union
+from typing import Any, Dict, Optional, Union
 import numpy as np
 from rasterio.enums import Resampling
 
 from rsgispy._bbox import BBox  # noqa: F401
 
 #: Package version string for ``rsgispy``.
-__version__ = "0.2.2"
+__version__ = "0.3.0"
 
 #: Undefined raster pixel data type (``0``).
 TYPE_UNDEFINED = 0
@@ -319,6 +319,46 @@ _STR_TO_RSGIS_DTYPE = {
     "float64": TYPE_64FLOAT,
 }
 
+_RIO_DTYPE_TO_GDAL_ENUM: Dict[str, int] = {
+    "uint8": 1,
+    "byte": 1,
+    "uint16": 2,
+    "int16": 3,
+    "uint32": 4,
+    "int32": 5,
+    "float32": 6,
+    "float64": 7,
+    "cint16": 8,
+    "cint32": 9,
+    "complex64": 10,
+    "cfloat32": 10,
+    "complex128": 11,
+    "cfloat64": 11,
+    "uint64": 12,
+    "int64": 13,
+    "int8": 14,
+}
+
+_RIO_DTYPE_TO_GDAL_NAME: Dict[str, str] = {
+    "uint8": "Byte",
+    "byte": "Byte",
+    "uint16": "UInt16",
+    "int16": "Int16",
+    "uint32": "UInt32",
+    "int32": "Int32",
+    "float32": "Float32",
+    "float64": "Float64",
+    "cint16": "CInt16",
+    "cint32": "CInt32",
+    "complex64": "CFloat32",
+    "cfloat32": "CFloat32",
+    "complex128": "CFloat64",
+    "cfloat64": "CFloat64",
+    "uint64": "UInt64",
+    "int64": "Int64",
+    "int8": "Int8",
+}
+
 
 class RSGISPyException(Exception):
     """
@@ -339,24 +379,112 @@ class RSGISPyException(Exception):
         return repr(self.value)
 
 
-def get_rsgis_datatype(gdal_type: str) -> int:
+def get_rsgis_datatype(gdal_type: Union[str, int, Any]) -> int:
     """
-    Convert from a GDAL/rasterio data type string to an RSGIS data type int.
+    Convert from a GDAL/rasterio/NumPy data type string or ``TYPE_*`` integer
+    to an RSGIS data type int.
 
-    :param gdal_type: Data type name string (e.g., 'float32', 'uint8', 'byte').
-    :return: RSGIS data type constant (e.g., rsgispy.TYPE_32FLOAT).
+    :param gdal_type: Data type name string (e.g., ``'float32'``, ``'uint8'``,
+                      ``'byte'``), ``numpy.dtype``, or ``rsgispy.TYPE_*`` int.
+    :return: RSGIS data type constant (e.g., ``rsgispy.TYPE_32FLOAT``).
 
     .. code:: python
 
         import rsgispy
         dtype = rsgispy.get_rsgis_datatype("float32")
     """
-    key = gdal_type.lower().strip()
+    if isinstance(gdal_type, (int, np.integer)) and not isinstance(
+        gdal_type, bool
+    ):
+        dt_int = int(gdal_type)
+        if dt_int in _RSGIS_TO_RASTERIO_DTYPE:
+            return dt_int
+        raise RSGISPyException(
+            f"The data type '{gdal_type}' is unknown / not supported."
+        )
+    if isinstance(gdal_type, str):
+        key = gdal_type.lower().strip()
+    elif isinstance(gdal_type, np.dtype) or (
+        isinstance(gdal_type, type) and issubclass(gdal_type, np.generic)
+    ):
+        key = str(np.dtype(gdal_type)).lower().strip()
+    else:
+        raise RSGISPyException(
+            f"The data type '{gdal_type}' is unknown / not supported."
+        )
     if key not in _STR_TO_RSGIS_DTYPE:
         raise RSGISPyException(
             f"The data type '{gdal_type}' is unknown / not supported."
         )
     return _STR_TO_RSGIS_DTYPE[key]
+
+
+def rsgis_dtype_from_np_dtype(
+    dtype_obj: Any, fallback: int = TYPE_32FLOAT
+) -> int:
+    """
+    Resolve an ``rsgispy.TYPE_*`` constant from a NumPy/rasterio dtype, mapping
+    ``bool`` to :data:`TYPE_8UINT` and falling back to ``fallback`` for unknown
+    types.
+
+    :param dtype_obj: NumPy dtype, dtype string, or scalar type.
+    :param fallback: Fallback ``rsgispy.TYPE_*`` constant (Default = ``TYPE_32FLOAT``).
+    :return: ``rsgispy.TYPE_*`` integer constant.
+    """
+    dtype_str = str(np.dtype(dtype_obj)).lower().strip()
+    if dtype_str in _STR_TO_RSGIS_DTYPE:
+        return _STR_TO_RSGIS_DTYPE[dtype_str]
+    if dtype_str == "bool":
+        return TYPE_8UINT
+    return fallback
+
+
+def get_gdal_datatype_name(datatype: Union[int, str, Any]) -> str:
+    """
+    Convert an ``rsgispy.TYPE_*`` constant, rasterio/GDAL dtype string, or
+    ``numpy.dtype`` into the canonical GDAL data type name (e.g., ``'Byte'``,
+    ``'UInt16'``, ``'Float32'``).
+
+    :param datatype: ``rsgispy.TYPE_*`` int, dtype string, or ``numpy.dtype``.
+    :return: Canonical GDAL data type name string.
+    """
+    if isinstance(datatype, (int, np.integer)) and not isinstance(
+        datatype, bool
+    ):
+        dtype_key = get_rasterio_datatype(int(datatype)).lower()
+    elif isinstance(datatype, str):
+        dtype_key = datatype.strip().lower()
+    else:
+        dtype_key = str(np.dtype(datatype)).strip().lower()
+    if dtype_key not in _RIO_DTYPE_TO_GDAL_NAME:
+        raise RSGISPyException(
+            f"Unsupported raster data type '{datatype}'."
+        )
+    return _RIO_DTYPE_TO_GDAL_NAME[dtype_key]
+
+
+def get_gdal_datatype_enum(datatype: Union[int, str, Any]) -> int:
+    """
+    Convert an ``rsgispy.TYPE_*`` constant, rasterio/GDAL dtype string, or
+    ``numpy.dtype`` into the integer GDAL ``GDT_*`` enum value (e.g., ``1``
+    for ``GDT_Byte``, ``6`` for ``GDT_Float32``).
+
+    :param datatype: ``rsgispy.TYPE_*`` int, dtype string, or ``numpy.dtype``.
+    :return: Integer GDAL data type constant.
+    """
+    if isinstance(datatype, (int, np.integer)) and not isinstance(
+        datatype, bool
+    ):
+        dtype_key = get_rasterio_datatype(int(datatype)).lower()
+    elif isinstance(datatype, str):
+        dtype_key = datatype.strip().lower()
+    else:
+        dtype_key = str(np.dtype(datatype)).strip().lower()
+    if dtype_key not in _RIO_DTYPE_TO_GDAL_ENUM:
+        raise RSGISPyException(
+            f"Unsupported raster data type '{datatype}'."
+        )
+    return _RIO_DTYPE_TO_GDAL_ENUM[dtype_key]
 
 
 def get_rasterio_datatype(rsgislib_datatype: int) -> str:

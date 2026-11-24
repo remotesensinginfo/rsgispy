@@ -16,6 +16,7 @@ from rsgispy.imageprocess import (
     cast_result_block,
     compute_spatial_intersection,
     ensure_file_exists,
+    fits_dtype_range,
     iter_dataset_windows,
     open_output_dataset,
 )
@@ -42,21 +43,10 @@ def _resolve_recoded_nodata(
             cand = float(recode_dict[src_nd_int])
         elif not keep_vals_not_in_dict:
             cand = 0.0
-    if np.issubdtype(out_np_dtype, np.integer):
-        if not math.isfinite(cand) or not cand.is_integer():
-            return None
-        info_i = np.iinfo(out_np_dtype)
-        cand_int = int(cand)
-        if int(info_i.min) <= cand_int <= int(info_i.max):
-            return float(cand_int)
-        return None
-    if np.issubdtype(out_np_dtype, np.floating):
-        if not math.isfinite(cand):
-            return cand
-        info_f = np.finfo(out_np_dtype)
-        if float(info_f.min) <= cand <= float(info_f.max):  # pylint: disable=no-member
-            return cand
-        return None
+    if not math.isfinite(cand) and np.issubdtype(out_np_dtype, np.floating):
+        return cand
+    if fits_dtype_range(cand, out_np_dtype):
+        return float(int(cand)) if np.issubdtype(out_np_dtype, np.integer) else cand
     return None
 
 

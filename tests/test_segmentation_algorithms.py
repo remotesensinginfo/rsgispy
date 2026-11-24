@@ -583,3 +583,91 @@ def test_validation_and_dtype_overflow(tmp_path):
             datatype=rsgispy.TYPE_8UINT,
             use_pbar=False,
         )
+
+
+def test_true_no_numba_subprocess():
+    """Verify segmentation algorithms and warning semantics when numba is absent."""
+    import subprocess
+    import sys
+
+    script = """
+import sys, warnings
+sys.modules["numba"] = None
+import numpy as np
+import rsgispy.segmentation as rseg
+
+assert rseg.is_numba_available() is False
+
+arr = np.zeros((3, 16, 16), dtype=np.float32)
+arr[:, :8, :8] = 10.0
+arr[:, :8, 8:] = 100.0
+arr[:, 8:, :8] = 200.0
+arr[:, 8:, 8:] = 300.0
+
+calls = [
+    (
+        "shepherd",
+        lambda nb: rseg.shepherd_segmentation_array(
+            arr, n_clusters=4, min_pixels=4, sampling=1, rnd_seed=42, use_numba=nb
+        ),
+    ),
+    (
+        "region_merge",
+        lambda nb: rseg.region_merge_segmentation_array(
+            arr, scale=20.0, min_pixels=4, use_numba=nb
+        ),
+    ),
+    (
+        "slic",
+        lambda nb: rseg.slic_segmentation_array(
+            arr, segment_size=8.0, min_pixels=4, use_numba=nb
+        ),
+    ),
+    (
+        "graph",
+        lambda nb: rseg.graph_segmentation_array(
+            arr, scale=50.0, min_pixels=4, use_numba=nb
+        ),
+    ),
+    (
+        "watershed",
+        lambda nb: rseg.watershed_segmentation_array(
+            arr, min_distance=4, min_pixels=4, use_numba=nb
+        ),
+    ),
+]
+
+for name, fn in calls:
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        out_warn = fn(True)
+    rt = [w for w in rec if issubclass(w.category, RuntimeWarning)]
+    assert len(rt) >= 1, f"Expected RuntimeWarning for {name} with use_numba=True"
+    assert int(out_warn.max()) >= 1
+
+    with warnings.catch_warnings(record=True) as rec_silent:
+        warnings.simplefilter("always")
+        out_silent = fn(False)
+    rt_silent = [w for w in rec_silent if issubclass(w.category, RuntimeWarning)]
+    assert len(rt_silent) == 0, f"Unexpected RuntimeWarning for {name} with use_numba=False"
+    np.testing.assert_array_equal(out_warn, out_silent)
+
+relab = rseg.relabel_segments_array(out_silent)
+assert int(relab.max()) >= 1
+relab_small = relab.copy()
+relab_small[0, 0] = int(relab.max()) + 1
+with warnings.catch_warnings(record=True) as rec_elim:
+    warnings.simplefilter("always")
+    cleaned = rseg.eliminate_small_segments_array(
+        relab_small, data=arr, min_pixels=8, use_numba=True
+    )
+assert any(issubclass(w.category, RuntimeWarning) for w in rec_elim)
+assert cleaned.shape == relab.shape
+"""
+    res = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, f"Subprocess failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}"

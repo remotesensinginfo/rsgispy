@@ -89,6 +89,13 @@ def test_utm_conversions_and_zones():
     assert len(splits) >= 2
     assert splits[0][0] == 29
 
+    with pytest.raises(rsgispy.RSGISPyException):
+        utm.to_latlon(easting, northing, zone)
+    with pytest.raises(rsgispy.RSGISPyException):
+        utm.to_latlon(easting, northing, zone, zone_letter="U", northern=True)
+    with pytest.raises(rsgispy.RSGISPyException):
+        utm.from_latlon(np.array([-10.0, 10.0]), np.array([-4.0, -4.0]))
+
 
 def test_tilecache_roundtrips(tmp_path):
     res0 = tilecache.resolution(0)

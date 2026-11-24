@@ -4,7 +4,7 @@ Grey-Level Co-occurrence Matrix (GLCM) spatial texture filters for raster images
 
 from typing import List, Optional, Sequence, Union
 
-from rsgispy.imagefilter._glcm_helper import (
+from rsgispy.imagefilter._glcm_helpers import (
     GLCM_ALL_PROPERTIES,
     GLCM_ASM,
     GLCM_CONTRAST,

@@ -17,6 +17,7 @@ import shapely.geometry
 import rsgispy
 from rsgispy.vectorprocess import (
     VectorInput,
+    ensure_matching_crs,
     extract_geom_pts,
     prepare_optional_out_vec,
     pt_xy,
@@ -1016,12 +1017,7 @@ def estimate_future_coastline(
     curr_data_gdf = read_vec_gdf(curr_vec_file, curr_vec_lyr, copy=False)
     trans_data_gdf = read_vec_gdf(trans_vec_file, trans_vec_lyr, copy=False)
     validate_columns_exist(trans_data_gdf, [trans_rate_col])
-    if (
-        curr_data_gdf.crs is not None
-        and trans_data_gdf.crs is not None
-        and curr_data_gdf.crs != trans_data_gdf.crs
-    ):
-        curr_data_gdf = curr_data_gdf.to_crs(trans_data_gdf.crs)
+    curr_data_gdf = ensure_matching_crs(trans_data_gdf, curr_data_gdf)
 
     curr_geoms = curr_data_gdf.geometry[
         curr_data_gdf.geometry.notna() & (~curr_data_gdf.geometry.is_empty)

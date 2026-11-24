@@ -13,21 +13,20 @@ from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imageprocess import (
+    build_valid_mask,
     cast_result_block,
     compute_spatial_intersection,
     create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
+    maybe_pop_stats,
+    normalise_creation_options,
     open_multi_image_datasets,
     open_output_dataset,
     read_window_with_halo,
+    rsgis_dtype_from_np_dtype,
     validate_band_index,
     validate_crs_and_res,
-)
-from rsgispy.imageutils._helpers import (
-    maybe_pop_stats,
-    normalise_creation_options,
-    rsgis_dtype_from_np_dtype,
 )
 
 __all__ = [
@@ -446,15 +445,12 @@ def _calc_low_band_bounds(
     src: rasterio.DatasetReader,
     low_bands: Sequence[int],
     no_data_val: float,
-    nd_is_nan: bool,
 ) -> Dict[int, List[float]]:
     """Compute valid min/max bounds for each low-resolution band."""
     low_bounds: Dict[int, List[float]] = {}
     for l_band in low_bands:
         arr = src.read(l_band, out_dtype=np.float64)
-        vmask = np.isfinite(arr)
-        if not nd_is_nan:
-            vmask &= arr != no_data_val
+        vmask = build_valid_mask(arr, no_data_val=no_data_val)
         if np.any(vmask):
             low_bounds[l_band] = [
                 float(arr[vmask].min()),
@@ -543,7 +539,6 @@ def sharpen_low_res_bands(
             if no_data_val is not None
             else (float(src.nodata) if src.nodata is not None else 0.0)
         )
-        nd_is_nan = math.isnan(eff_nd)
 
         for binfo in band_info:
             if binfo.band is None or binfo.status not in valid_statuses:
@@ -562,9 +557,7 @@ def sharpen_low_res_bands(
                 "one SHARP_RES_LOW band."
             )
 
-        low_bounds = _calc_low_band_bounds(
-            src, low_bands, eff_nd, nd_is_nan
-        )
+        low_bounds = _calc_low_band_bounds(src, low_bands, eff_nd)
         dst = create_output_from_dataset(
             stack=stack,
             src=src,
@@ -589,18 +582,16 @@ def sharpen_low_res_bands(
             ]
             high_valid = np.ones_like(high_halos[0], dtype=bool)
             for h_arr in high_halos:
-                high_valid &= np.isfinite(h_arr)
-                if not nd_is_nan:
-                    high_valid &= h_arr != eff_nd
+                high_valid &= build_valid_mask(h_arr, no_data_val=eff_nd)
 
             out_bands = []
             for binfo in band_info:
                 src_b = int(binfo.band)
                 if binfo.status == rsgispy.SHARP_RES_LOW:
                     l_halo = read_window_with_halo(src, src_b, dst_win, half)
-                    l_valid = high_valid & np.isfinite(l_halo)
-                    if not nd_is_nan:
-                        l_valid &= l_halo != eff_nd
+                    l_valid = high_valid & build_valid_mask(
+                        l_halo, no_data_val=eff_nd
+                    )
                     bmin, bmax = low_bounds[src_b]
                     if len(high_halos) == 1:
                         sharpened = _sharpen_single_high_band(

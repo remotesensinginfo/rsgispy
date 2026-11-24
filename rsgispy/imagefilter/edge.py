@@ -4,7 +4,7 @@ Edge-detection and spatial derivative convolution filters for raster images.
 
 from typing import List, Optional
 
-from rsgispy.imagefilter._helper import (
+from rsgispy.imagefilter._helpers import (
     gaussian_kernel,
     laplacian_kernel,
     prewitt_kernels,

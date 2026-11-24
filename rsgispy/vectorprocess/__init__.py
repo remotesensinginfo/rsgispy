@@ -757,8 +757,92 @@ def get_gdf_bbox(
         raise rsgispy.RSGISPyException(
             "Could not compute valid bounding box for the vector layer."
         )
-    epsg = vec_gdf.crs.to_epsg() if vec_gdf.crs is not None else None
+    epsg = crs_to_epsg(vec_gdf.crs)
     return bbox_to_rsgis((min_x, min_y, max_x, max_y), epsg=epsg)
+
+
+def crs_to_epsg(crs_val: Any) -> Optional[int]:
+    """
+    Resolve an integer EPSG code from a CRS object, WKT/PROJ string, or EPSG
+    integer, returning ``None`` when unavailable or unparseable.
+
+    :param crs_val: CRS descriptor (``pyproj.CRS``, ``rasterio`` CRS, WKT/PROJ
+                    string, EPSG integer, or ``None``).
+    :return: Integer EPSG code, or ``None`` if it cannot be determined.
+
+    .. code:: python
+
+        import rsgispy.vectorprocess
+
+        epsg = rsgispy.vectorprocess.crs_to_epsg("EPSG:4326")
+    """
+    if crs_val is None or crs_val == "":
+        return None
+    if hasattr(crs_val, "to_epsg"):
+        try:
+            epsg_code = crs_val.to_epsg()
+            if epsg_code is not None:
+                return int(epsg_code)
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+    try:
+        crs_obj = (
+            crs_val
+            if isinstance(crs_val, pyproj.CRS)
+            else pyproj.CRS.from_user_input(crs_val)
+        )
+        epsg_code = crs_obj.to_epsg()
+        return int(epsg_code) if epsg_code is not None else None
+    except Exception:  # pylint: disable=broad-exception-caught
+        return None
+
+
+def align_gdf_crs(
+    gdf: gpd.GeoDataFrame,
+    target_crs: Any,
+) -> gpd.GeoDataFrame:
+    """
+    Reproject ``gdf`` to ``target_crs`` when both CRSs are defined and differ.
+
+    :param gdf: Input GeoDataFrame.
+    :param target_crs: Target CRS (``pyproj.CRS``, ``rasterio`` CRS, EPSG
+                       integer, WKT/PROJ string, or ``None``).
+    :return: Original ``gdf`` if already aligned or either CRS is undefined,
+             otherwise a reprojected :class:`geopandas.GeoDataFrame`.
+
+    .. code:: python
+
+        import rsgispy.vectorprocess
+
+        aligned_gdf = rsgispy.vectorprocess.align_gdf_crs(gdf, target_crs)
+    """
+    if target_crs is not None and gdf.crs is not None and gdf.crs != target_crs:
+        return gdf.to_crs(target_crs)
+    return gdf
+
+
+def ensure_matching_crs(
+    primary_gdf: gpd.GeoDataFrame,
+    secondary_gdf: gpd.GeoDataFrame,
+) -> gpd.GeoDataFrame:
+    """
+    Reproject ``secondary_gdf`` to ``primary_gdf.crs`` when both CRSs are
+    defined and differ.
+
+    :param primary_gdf: Reference GeoDataFrame supplying the target CRS.
+    :param secondary_gdf: Secondary GeoDataFrame to align.
+    :return: Original ``secondary_gdf`` if already aligned or either CRS is
+             undefined, otherwise a reprojected :class:`geopandas.GeoDataFrame`.
+
+    .. code:: python
+
+        import rsgispy.vectorprocess
+
+        aligned_roi = rsgispy.vectorprocess.ensure_matching_crs(
+            base_gdf, roi_gdf
+        )
+    """
+    return align_gdf_crs(secondary_gdf, primary_gdf.crs)
 
 
 def parse_crs_input(crs_val: CRSLike) -> pyproj.CRS:
@@ -877,7 +961,9 @@ def _parse_bool_val(val: Any) -> Optional[bool]:
             return True
         if low in ("false", "0", "no", "n", "f", "off", ""):
             return False
-        raise ValueError(f"Cannot interpret string {val!r} as boolean.")
+        raise rsgispy.RSGISPyException(
+            f"Cannot interpret string {val!r} as boolean."
+        )
     return bool(val)
 
 
@@ -1133,3 +1219,39 @@ def extract_geom_pts(
         )
 
     return pts_lst
+
+
+__all__ = [
+    "CRSLike",
+    "VectorInput",
+    "is_geoparquet_file",
+    "is_geoparquet_format",
+    "infer_parquet_compression",
+    "check_format_name",
+    "get_file_vec_extension",
+    "delete_vec_file",
+    "prepare_out_vec_file",
+    "list_vec_layers",
+    "resolve_vec_layer",
+    "prepare_optional_out_vec",
+    "resolve_out_lyr_name",
+    "read_vec_info",
+    "read_vec_gdf",
+    "is_multi_layer_driver",
+    "write_vec_gdf",
+    "finish_vec_output",
+    "validate_columns_exist",
+    "bbox_to_rsgis",
+    "get_gdf_bbox",
+    "crs_to_epsg",
+    "align_gdf_crs",
+    "ensure_matching_crs",
+    "parse_crs_input",
+    "resolve_vector_crs",
+    "get_gdf_geom_type",
+    "cast_col_data",
+    "to_python_scalar",
+    "build_atts_dataframe",
+    "pt_xy",
+    "extract_geom_pts",
+]

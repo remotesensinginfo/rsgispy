@@ -15,6 +15,7 @@ from shapely.geometry.base import BaseGeometry
 import rsgispy
 from rsgispy.vectorprocess import (
     VectorInput,
+    crs_to_epsg,
     extract_geom_pts,
     prepare_optional_out_vec,
     read_vec_gdf,
@@ -238,12 +239,7 @@ def get_geoms_as_bboxs(
         bboxes = rsgispy.vector.geoms.get_geoms_as_bboxs("polys.gpkg", "polys")
     """
     base_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
-    epsg_code: Optional[int] = None
-    if base_gdf.crs is not None:
-        try:
-            epsg_code = base_gdf.crs.to_epsg()
-        except Exception:  # pylint: disable=broad-exception-caught
-            epsg_code = None
+    epsg_code = crs_to_epsg(base_gdf.crs)
     geom_bounds = base_gdf.geometry.bounds
     return [
         rsgispy.BBox(

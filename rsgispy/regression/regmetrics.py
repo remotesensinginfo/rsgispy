@@ -30,7 +30,7 @@ from rsgispy.tools.files import ensure_parent_dir
 import rsgispy.tools.jsonio
 from rsgispy.vector.attrs import write_vec_column_to_layer
 from rsgispy.vectorprocess import VectorInput, finish_vec_output, read_vec_gdf
-from rsgispy.zonalstats._helpers import (
+from rsgispy.zonalstats import (
     open_validated_zonal_inputs,
     sample_point_pixel,
 )
