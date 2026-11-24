@@ -26,7 +26,7 @@ from rsgispy._io import (
     TileGraph,
     TileNode,
 )
-from rsgispy.imagefilter._helper import (
+from rsgispy.imagefilter._helpers import (
     _resolve_out_nodata,
     gaussian_kernel,
     gradient_magnitude_node,

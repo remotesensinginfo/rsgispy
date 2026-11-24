@@ -140,7 +140,14 @@ def test_package_layout_and_constants():
 
     mod_dir = pathlib.Path(modelling_pkg.__file__).parent
     py_files = sorted(p.name for p in mod_dir.glob("*.py"))
-    assert py_files == ["__init__.py", "_helper.py", "species_distribution.py"]
+    assert py_files == [
+        "__init__.py",
+        "_helpers.py",
+        "_sdm_data.py",
+        "_sdm_models.py",
+        "_sdm_predict.py",
+        "species_distribution.py",
+    ]
 
     info = sdm.EnvVarInfo(
         name="Temp",

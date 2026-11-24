@@ -15,6 +15,7 @@ import rsgispy.tools.strings
 from rsgispy.vectorprocess import (
     VectorInput,
     check_format_name,
+    ensure_matching_crs,
     prepare_optional_out_vec,
     read_vec_gdf,
     resolve_out_lyr_name,
@@ -32,20 +33,6 @@ __all__ = [
     "clip_and_merge_with_roi",
     "clip_vec_into_sets",
 ]
-
-
-def _align_secondary_crs(
-    primary_gdf: gpd.GeoDataFrame,
-    secondary_gdf: gpd.GeoDataFrame,
-) -> gpd.GeoDataFrame:
-    """Reproject ``secondary_gdf`` to ``primary_gdf.crs`` when both are defined and differ."""
-    if (
-        primary_gdf.crs is not None
-        and secondary_gdf.crs is not None
-        and primary_gdf.crs != secondary_gdf.crs
-    ):
-        return secondary_gdf.to_crs(primary_gdf.crs)
-    return secondary_gdf
 
 
 def _overlay_vec_lyrs(
@@ -67,7 +54,7 @@ def _overlay_vec_lyrs(
 
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
     over_data_gdf = read_vec_gdf(vec_over_file, vec_over_lyr)
-    over_data_gdf = _align_secondary_crs(data_gdf, over_data_gdf)
+    over_data_gdf = ensure_matching_crs(data_gdf, over_data_gdf)
     res_gdf = gpd.overlay(data_gdf, over_data_gdf, how=how)
 
     if out_path is None:
@@ -388,7 +375,7 @@ def clip_vec_lyr(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     base_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     roi_gdf = read_vec_gdf(vec_roi_file, vec_roi_lyr, copy=False)
-    roi_gdf = _align_secondary_crs(base_gdf, roi_gdf)
+    roi_gdf = ensure_matching_crs(base_gdf, roi_gdf)
     clipped_gdf = gpd.clip(base_gdf, roi_gdf, keep_geom_type=True)
     if out_vec_file is None:
         return clipped_gdf
@@ -455,7 +442,7 @@ def clip_and_merge_with_roi(
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     roi_gdf = read_vec_gdf(vec_roi_file, vec_roi_lyr)
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
-    roi_gdf = _align_secondary_crs(data_gdf, roi_gdf)
+    roi_gdf = ensure_matching_crs(data_gdf, roi_gdf)
     roi_gdf[ref_col_name] = roi_rgn_val
     data_gdf[ref_col_name] = data_rgn_val
 
@@ -548,7 +535,7 @@ def clip_vec_into_sets(
 
     data_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     roi_gdf = read_vec_gdf(vec_roi_file, vec_roi_lyr, copy=False)
-    roi_gdf = _align_secondary_crs(data_gdf, roi_gdf)
+    roi_gdf = ensure_matching_crs(data_gdf, roi_gdf)
 
     validate_columns_exist(roi_gdf, [roi_att_col])
     unq_roi_vals = roi_gdf[roi_att_col].unique()

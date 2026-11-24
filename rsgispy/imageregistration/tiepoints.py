@@ -30,7 +30,7 @@ from rsgispy.imageregistration import (
     TRANSFORM_SIMILARITY,
     TYPE_RSGIS_IMG2MAP,
 )
-from rsgispy.imageregistration._helper import (
+from rsgispy.imageregistration._helpers import (
     find_surface_extremum,
     load_tie_points_table,
     refine_grid_subpixel,

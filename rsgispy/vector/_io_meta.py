@@ -15,6 +15,7 @@ from rsgispy.vectorprocess import (
     VectorInput,
     bbox_to_rsgis,
     check_format_name,
+    crs_to_epsg,
     delete_vec_file,
     get_file_vec_extension,
     get_gdf_geom_type,
@@ -36,6 +37,7 @@ __all__ = [
     "get_vec_lyr_bbox_in_proj",
     "get_vec_feat_count",
     "get_geom_type_name",
+    "parse_geom_type_label",
     "get_vec_lyr_geom_type",
     "get_vec_lyrs_lst",
     "get_vec_lyr_cols",
@@ -125,25 +127,7 @@ def get_epsg_proj_from_vec(
         epsg_code = rsgispy.vector.io.get_epsg_proj_from_vec("polys.gpkg", "polys")
     """
     info = read_vec_info(vec_file, vec_lyr)
-    crs_val = info.get("crs")
-    if not crs_val:
-        return None
-    try:
-        epsg_code = pyproj.CRS.from_user_input(crs_val).to_epsg()
-        return int(epsg_code) if epsg_code is not None else None
-    except Exception:  # pylint: disable=broad-exception-caught
-        return None
-
-
-def _crs_to_epsg(crs_val: object) -> Optional[int]:
-    """Extract an integer EPSG code from a CRS-like object, or ``None``."""
-    if not crs_val:
-        return None
-    try:
-        epsg_code = pyproj.CRS.from_user_input(crs_val).to_epsg()
-        return int(epsg_code) if epsg_code is not None else None
-    except Exception:  # pylint: disable=broad-exception-caught
-        return None
+    return crs_to_epsg(info.get("crs"))
 
 
 _INFO_GEOM_TYPE_MAP: Dict[str, int] = {
@@ -156,10 +140,8 @@ _INFO_GEOM_TYPE_MAP: Dict[str, int] = {
 }
 
 
-def _parse_info_geom_type(raw_geom_type: Optional[str]) -> Optional[int]:
-    """Map an OGR/GeoParquet metadata geometry type string to ``rsgispy.GEOM_*``."""
-    if not raw_geom_type:
-        return None
+def _normalise_geom_type_str(raw_geom_type: str) -> str:
+    """Strip 3D/Z/M/25D qualifiers from a raw metadata geometry type string."""
     norm = str(raw_geom_type).strip()
     if norm.startswith("3D "):
         norm = norm[3:].strip()
@@ -167,7 +149,39 @@ def _parse_info_geom_type(raw_geom_type: Optional[str]) -> Optional[int]:
         if norm.endswith(suffix):
             norm = norm[: -len(suffix)].strip()
             break
-    return _INFO_GEOM_TYPE_MAP.get(norm.lower())
+    return norm
+
+
+def _parse_info_geom_type(raw_geom_type: Optional[str]) -> Optional[int]:
+    """Map an OGR/GeoParquet metadata geometry type string to ``rsgispy.GEOM_*``."""
+    if not raw_geom_type:
+        return None
+    return _INFO_GEOM_TYPE_MAP.get(
+        _normalise_geom_type_str(raw_geom_type).lower()
+    )
+
+
+def parse_geom_type_label(raw_geom_type: Optional[str]) -> str:
+    """
+    Normalise an OGR/GeoParquet metadata geometry type string into a concise
+    human-readable label (e.g. ``'Polygon'``, ``'Multi-Line'``, ``'Unknown'``).
+
+    :param raw_geom_type: Geometry type string from ``read_vec_info``, or ``None``.
+    :return: Human-readable geometry label.
+
+    .. code:: python
+
+        import rsgispy.vector.io
+
+        label = rsgispy.vector.io.parse_geom_type_label("3D MultiLineString Z")
+    """
+    if not raw_geom_type:
+        return "Unknown"
+    norm = _normalise_geom_type_str(raw_geom_type)
+    mapped = _INFO_GEOM_TYPE_MAP.get(norm.lower())
+    if mapped is not None:
+        return _GEOM_TYPE_NAMES[mapped]
+    return norm
 
 
 def get_vec_lyr_bbox(
@@ -194,7 +208,7 @@ def get_vec_lyr_bbox(
         bbox = rsgispy.vector.io.get_vec_lyr_bbox("polys.gpkg", "polys")
     """
     info = read_vec_info(vec_file, vec_lyr)
-    epsg_code = _crs_to_epsg(info.get("crs"))
+    epsg_code = crs_to_epsg(info.get("crs"))
     bounds = info.get("total_bounds")
     if bounds is not None and not compute_if_exp:
         return bbox_to_rsgis(bounds, epsg=epsg_code)
@@ -215,7 +229,7 @@ def get_vec_lyr_bbox(
             f"Vector layer '{info['layer_name']}' is empty."
         )
     if epsg_code is None:
-        epsg_code = _crs_to_epsg(gdf.crs)
+        epsg_code = crs_to_epsg(gdf.crs)
     return bbox_to_rsgis(gdf.total_bounds, epsg=epsg_code)
 
 

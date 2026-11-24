@@ -6,7 +6,7 @@ Raster metadata, spatial geometry, projection, and GCP utilities for
 import math
 import os
 import shutil
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pyproj
@@ -37,6 +37,8 @@ __all__ = [
     "get_img_band_count",
     "get_img_bbox",
     "get_img_bbox_in_proj",
+    "transform_bounds_to_wgs84",
+    "get_img_bbox_wgs84",
     "get_img_subset_pxl_bbox",
     "get_img_pxl_spatial_coords",
     "get_img_pxl_coords",
@@ -225,6 +227,79 @@ def get_img_bbox_in_proj(input_img: str, out_epsg: int) -> rsgispy.BBox:
         pyproj.CRS.from_epsg(int(out_epsg)),
     )
     return rsgispy.BBox.from_rsgis(reproj, epsg=int(out_epsg))
+
+
+def transform_bounds_to_wgs84(
+    bounds: Tuple[float, float, float, float],
+    crs: Any,
+    *,
+    skip_if_geographic: bool = False,
+) -> Optional[rsgispy.BBox]:
+    """
+    Transform a bounding box ``(left, bottom, right, top)`` in ``crs`` to WGS84
+    (``EPSG:4326``) using densified boundary points.
+
+    :param bounds: Raster/spatial bounds tuple ``(left, bottom, right, top)``.
+    :param crs: Source CRS descriptor (``pyproj.CRS``, ``rasterio`` CRS, WKT,
+                or EPSG code).
+    :param skip_if_geographic: When ``True``, return ``None`` if ``crs`` is
+                               already geographic (Default = ``False``).
+    :return: :class:`rsgispy.BBox` ``(west, east, south, north)`` with
+             ``epsg=4326``, or ``None`` if transformation fails, produces
+             non-finite coordinates, or is skipped.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+        bbox = rsgispy.imageutils.metadata.transform_bounds_to_wgs84(
+            (500000.0, 5599000.0, 501000.0, 5600000.0), "EPSG:32630"
+        )
+    """
+    if crs is None:
+        return None
+    try:
+        py_crs = pyproj.CRS.from_user_input(crs)
+        if skip_if_geographic and py_crs.is_geographic:
+            return None
+        transformer = pyproj.Transformer.from_crs(
+            py_crs, pyproj.CRS.from_epsg(4326), always_xy=True
+        )
+        left, bottom, right, top = bounds
+        west, south, east, north = transformer.transform_bounds(
+            left, bottom, right, top, densify_pts=21
+        )
+        if not all(math.isfinite(val) for val in (west, east, south, north)):
+            return None
+        return rsgispy.BBox(
+            float(west), float(east), float(south), float(north), epsg=4326
+        )
+    except Exception:  # pylint: disable=broad-exception-caught
+        return None
+
+
+def get_img_bbox_wgs84(input_img: str) -> Optional[rsgispy.BBox]:
+    """
+    Retrieve the WGS84 (``EPSG:4326``) bounding box of ``input_img``.
+
+    :param input_img: Path to the input image file.
+    :return: :class:`rsgispy.BBox` ``(west, east, south, north)`` with
+             ``epsg=4326``, or ``None`` if the image has no CRS or its bounds
+             cannot be transformed to finite WGS84 coordinates.
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+        bbox = rsgispy.imageutils.metadata.get_img_bbox_wgs84("img.tif")
+    """
+    _ensure_img_exists(input_img)
+    with rasterio.open(input_img, "r") as src:
+        if src.crs is None:
+            return None
+        bounds = src.bounds
+        return transform_bounds_to_wgs84(
+            (bounds.left, bounds.bottom, bounds.right, bounds.top),
+            src.crs,
+        )
 
 
 def get_img_subset_pxl_bbox(

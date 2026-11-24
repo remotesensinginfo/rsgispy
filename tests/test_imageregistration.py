@@ -17,7 +17,7 @@ import rsgispy.imageregistration as imreg
 import rsgispy.imageregistration.shift as imreg_shift
 import rsgispy.imageregistration.tiepoints as imreg_tp
 import rsgispy.imageregistration.warping as imreg_warp
-from rsgispy.imageregistration._helper import read_tie_points_file
+from rsgispy.imageregistration._helpers import read_tie_points_file
 
 
 def _make_textured_array(height: int = 128, width: int = 128, seed: int = 123) -> np.ndarray:

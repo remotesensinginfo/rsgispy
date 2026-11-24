@@ -6,9 +6,9 @@ import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import rsgispy
+import rsgispy.tools.credentials
 import rsgispy.tools.dicts
 import rsgispy.tools.http
-import rsgispy.tools.system
 
 DATA_PRODUCTS: Dict[str, str] = {
     "landsat_tm_c1": "5e83d08fd9932768",
@@ -96,22 +96,14 @@ def usgs_login(
         import rsgispy.dataaccess.usgs_m2m as m2m
         api_key = m2m.usgs_login("my_username", "my_password")
     """
-    if username is None:
-        username = rsgispy.tools.system.get_environment_variable("RSGIS_USGS_USER")
-
-    if password is None:
-        password = rsgispy.tools.system.get_environment_variable("RSGIS_USGS_PASS")
-
-    if not username or not str(username).strip():
-        raise rsgispy.RSGISPyException(
-            "USGS username must be provided or set via the RSGIS_USGS_USER "
-            "environment variable."
-        )
-    if not password or not str(password).strip():
-        raise rsgispy.RSGISPyException(
-            "USGS password must be provided or set via the RSGIS_USGS_PASS "
-            "environment variable."
-        )
+    username, password = rsgispy.tools.credentials.resolve_env_user_pass(
+        username,
+        password,
+        "RSGIS_USGS_USER",
+        "RSGIS_USGS_PASS",
+        required=True,
+        service_name="USGS",
+    )
 
     login_data = {"username": username, "password": password}
     login_url = USGS_M2M_URL + "login"

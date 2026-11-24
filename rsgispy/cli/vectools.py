@@ -33,37 +33,19 @@ from rsgispy.vector.io import (
     get_vec_lyr_geom_type,
     get_vec_lyrs_lst,
     get_wkt_proj_from_vec,
+    parse_geom_type_label,
 )
-from rsgispy.vectorprocess import bbox_to_rsgis, read_vec_info
+from rsgispy.vectorprocess import (
+    bbox_to_rsgis,
+    read_vec_info,
+    to_python_scalar,
+)
 
 __all__ = [
     "build_vectools_parser",
     "main",
     "cli_main",
 ]
-
-_GEOM_LABEL_MAP: Dict[str, str] = {
-    "point": "Point",
-    "linestring": "Line",
-    "polygon": "Polygon",
-    "multipoint": "Multi-Point",
-    "multilinestring": "Multi-Line",
-    "multipolygon": "Multi-Polygon",
-}
-
-
-def _geom_label_from_info(raw_geom_type: Optional[str]) -> str:
-    """Normalise a ``read_vec_info`` geometry type string for display."""
-    if not raw_geom_type:
-        return "Unknown"
-    norm = str(raw_geom_type).strip()
-    if norm.startswith("3D "):
-        norm = norm[3:].strip()
-    for suffix in (" ZM", " Z", " M", "25D"):
-        if norm.endswith(suffix):
-            norm = norm[: -len(suffix)].strip()
-            break
-    return _GEOM_LABEL_MAP.get(norm.lower(), norm)
 
 
 def _crs_label_from_wkt(wkt_str: str) -> str:
@@ -77,13 +59,6 @@ def _crs_label_from_wkt(wkt_str: str) -> str:
         return f"{auth_prefix}{crs.name}"
     except Exception:  # pylint: disable=broad-exception-caught
         return wkt_str.splitlines()[0][:80]
-
-
-def _json_safe(val: Any) -> Any:
-    """Convert numpy scalar values into JSON-serialisable Python types."""
-    if hasattr(val, "item"):
-        return val.item()
-    return val
 
 
 def build_vectools_parser() -> argparse.ArgumentParser:
@@ -172,7 +147,7 @@ def _print_summary(
     else:
         n_feats = int(get_vec_feat_count(vec_file, active_lyr))
 
-    geom_type = _geom_label_from_info(info.get("geometry_type"))
+    geom_type = parse_geom_type_label(info.get("geometry_type"))
 
     bbox: Optional[List[float]] = None
     raw_bounds = info.get("total_bounds")
@@ -291,7 +266,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         output_lines.append(geom)
 
     if args.unique_vals:
-        unq = [_json_safe(v) for v in get_unq_col_values(vec_file, args.layer, args.column)]
+        unq = [
+            to_python_scalar(v)
+            for v in get_unq_col_values(vec_file, args.layer, args.column)
+        ]
         results["unique_values"] = unq
         output_lines.extend(str(v) for v in unq)
 

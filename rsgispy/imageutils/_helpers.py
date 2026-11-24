@@ -3,15 +3,13 @@ Internal shared raster helpers for :mod:`rsgispy.imageutils`.
 """
 
 from contextlib import ExitStack
-from typing import Any, Dict, Mapping, Optional, Sequence, Union
+from typing import Any, Mapping, Optional, Sequence, Union
 
-import numpy as np
 import rasterio
 import rasterio.crs
 from rasterio.windows import Window
 from rasterio.windows import transform as window_transform
 
-import rsgispy
 from rsgispy.imageprocess import (
     IntersectionGrid,
     cast_result_block,

@@ -40,9 +40,12 @@ from rsgispy.regression.regdata import (
     read_reg_config,
 )
 from rsgispy.tools._gbdt_common import (
+    check_gbdt_backend_available as _check_reg_backend_available,
     merge_gbdt_params as _tools_merge_gbdt_params,
+    prepared_gbdt_predict_estimator as _prepared_gbdt_predict_estimator,
     resolve_gbdt_gpu as _tools_resolve_gbdt_gpu,
     resolve_gbdt_optuna_space as _tools_resolve_gbdt_optuna_space,
+    run_gbdt_optuna_optimisation as _run_gbdt_optuna_optimisation,
 )
 from rsgispy.tools._ml_data import (
     load_samples_df,
@@ -52,14 +55,7 @@ from rsgispy.tools._ml_data import (
     resolve_estimator_feature_cols as _resolve_estimator_feature_cols,
     resolve_feature_cols as _tools_resolve_feature_cols,
 )
-from rsgispy.tools._ml_tune import (
-    HAVE_OPTUNA,
-    optuna,
-    resolve_cv_splitter,
-    run_optuna_study,
-    save_search_outputs,
-    suggest_optuna_params,
-)
+from rsgispy.tools._ml_tune import HAVE_OPTUNA
 from rsgispy.tools._sklearn import (
     check_sklearn_available as _check_sklearn_available,
     check_sklearn_estimator_fitted,
@@ -67,7 +63,7 @@ from rsgispy.tools._sklearn import (
     sync_sklearn_estimator_state,
 )
 from rsgispy.tools.files import ensure_parent_dir
-from rsgispy.tools.jsonio import to_json_compatible, write_dict_to_json
+from rsgispy.tools.jsonio import write_dict_to_json
 
 RegConfigInput = Union[
     RegressionConfig,
@@ -649,25 +645,6 @@ class GBDTRegBackendSpec:
     get_error_detail: Optional[Callable[[], Optional[str]]] = None
 
 
-def _check_reg_backend_available(
-    backend: GBDTRegBackendSpec,
-    func_name: str,
-) -> None:
-    """Verify GBDT regressor backend availability and surface native errors."""
-    err_detail = (
-        backend.get_error_detail()
-        if backend.get_error_detail is not None
-        else None
-    )
-    rsgispy.check_optional_dep(
-        backend.is_available(),
-        func_name,
-        backend.package_name,
-        backend.extra,
-        error_detail=err_detail,
-    )
-
-
 def _merge_gbdt_reg_params(
     backend: GBDTRegBackendSpec,
     n_targets: int,
@@ -758,7 +735,7 @@ def optimise_gbdt_regressor(
     using Optuna Bayesian optimisation (TPE sampler).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,too-many-branches
+    # pylint: disable=too-many-locals
     _check_reg_backend_available(backend, func_name)
     rsgispy.check_optional_dep(
         HAVE_OPTUNA, func_name, "optuna", backend.extra
@@ -794,109 +771,29 @@ def optimise_gbdt_regressor(
         extended_param_space=extended_param_space,
         fixed_params=fixed_params,
     )
-    scorer = (
-        sklearn.metrics.get_scorer(scoring)
-        if isinstance(scoring, str)
-        else scoring
-    )
-    cv_obj = (
-        None
-        if valid_x is not None
-        else resolve_cv_splitter(cv, train_y, rnd_seed, stratified=False)
-    )
 
-    def _objective(trial: Any) -> float:
-        if callable(trial_space) or trial_space:
-            trial_params = suggest_optuna_params(trial, trial_space)
-        else:
-            trial_params = {}
-        combined = dict(trial_params)
-        if fixed_params:
-            combined.update(fixed_params)
-        est_jobs = n_jobs if (valid_x is not None or gpu_active) else 1
-        params = _merge_gbdt_reg_params(
+    def _merge(
+        explicit: Mapping[str, Any],
+        eff_jobs: Optional[int],
+    ) -> Dict[str, Any]:
+        return _merge_gbdt_reg_params(
             backend=backend,
             n_targets=n_targets,
             base_regressor=regressor,
-            explicit_params=combined,
+            explicit_params=explicit,
             rnd_seed=rnd_seed,
-            n_jobs=est_jobs,
+            n_jobs=eff_jobs,
             early_stopping_rounds=early_stopping_rounds,
             has_valid=valid_x is not None,
             verbose=verbose,
             gpu_active=gpu_active,
             gpu_device_id=eff_gpu_id,
         )
-        if valid_x is not None and valid_y is not None:
-            fitted = _build_and_fit_gbdt_reg(
-                backend=backend,
-                params=params,
-                base_regressor=regressor,
-                n_targets=n_targets,
-                train_x=train_x,
-                train_y=train_y,
-                valid_x=valid_x,
-                valid_y=valid_y,
-                early_stopping_rounds=early_stopping_rounds,
-            )
-            return float(scorer(fitted, valid_x, valid_y))
 
-        est = backend.build_estimator(params, regressor, n_targets)
-        cv_jobs = 1 if gpu_active else n_jobs
-        scores = sklearn.model_selection.cross_val_score(
-            est,
-            train_x,
-            train_y,
-            cv=cv_obj,
-            scoring=scoring,
-            n_jobs=cv_jobs,
-        )
-        return float(np.mean(scores))
-
-    study, _ = run_optuna_study(
-        objective=_objective,
-        n_trials=n_trials,
-        timeout=timeout,
-        direction=direction,
-        rnd_seed=rnd_seed,
-        verbose=verbose,
-        func_name=func_name,
-        extra=backend.extra,
-        use_pbar=use_pbar,
-    )
-
-    if callable(trial_space):
-        fixed_trial = optuna.trial.FixedTrial(study.best_trial.params)
-        best_trial_params = dict(
-            suggest_optuna_params(fixed_trial, trial_space)
-        )
-    else:
-        best_trial_params = dict(study.best_trial.params)
-        for p_name, spec in trial_space.items():
-            if not isinstance(spec, (Mapping, tuple, list)):
-                best_trial_params[p_name] = spec
-
-    best_combined = dict(best_trial_params)
-    if fixed_params:
-        best_combined.update(fixed_params)
-    final_params = _merge_gbdt_reg_params(
-        backend=backend,
-        n_targets=n_targets,
-        base_regressor=regressor,
-        explicit_params=best_combined,
-        rnd_seed=rnd_seed,
-        n_jobs=n_jobs,
-        early_stopping_rounds=early_stopping_rounds,
-        has_valid=valid_x is not None,
-        verbose=verbose,
-        gpu_active=gpu_active,
-        gpu_device_id=eff_gpu_id,
-    )
-
-    if refit:
-        best_est = _build_and_fit_gbdt_reg(
+    def _build_fit(params: Dict[str, Any]) -> Any:
+        return _build_and_fit_gbdt_reg(
             backend=backend,
-            params=final_params,
+            params=params,
             base_regressor=regressor,
             n_targets=n_targets,
             train_x=train_x,
@@ -905,22 +802,39 @@ def optimise_gbdt_regressor(
             valid_y=valid_y,
             early_stopping_rounds=early_stopping_rounds,
         )
-    else:
-        best_est = backend.build_estimator(final_params, regressor, n_targets)
 
-    best_params_json = to_json_compatible(best_combined)
-    best_score = float(study.best_value)
-    results_df = study.trials_dataframe()
-
-    save_search_outputs(
-        results_df=results_df,
-        best_params=best_params_json,
-        best_score=best_score,
-        scoring=scoring,
-        search_method="optuna",
+    return _run_gbdt_optuna_optimisation(
+        backend=backend,
+        func_name=func_name,
+        train_x=train_x,
+        train_y=train_y,
+        valid_x=valid_x,
+        valid_y=valid_y,
+        trial_space=trial_space,
         space_mode=space_mode,
+        fixed_params=fixed_params,
+        merge_params_fn=_merge,
+        build_estimator_fn=lambda p: backend.build_estimator(
+            p, regressor, n_targets
+        ),
+        build_and_fit_fn=_build_fit,
+        scoring=scoring,
+        cv=cv,
+        stratified=False,
+        n_trials=n_trials,
+        timeout=timeout,
+        direction=direction,
+        n_jobs=n_jobs,
+        rnd_seed=rnd_seed,
+        refit=refit,
+        verbose=verbose,
+        use_gpu=use_gpu,
+        gpu_active=gpu_active,
+        use_pbar=use_pbar,
         out_results_file=out_results_file,
         out_params_json=out_params_json,
+        out_model_file=out_model_file,
+        return_results=return_results,
         extra_meta={
             "library": backend.name.lower(),
             "task": "multivariate" if n_targets > 1 else "univariate",
@@ -929,26 +843,6 @@ def optimise_gbdt_regressor(
             "gpu_used": bool(gpu_active),
         },
     )
-
-    if out_model_file is not None:
-        if not refit:
-            raise rsgispy.RSGISPyException(
-                "out_model_file requires refit=True so the saved model is fitted."
-            )
-        backend.save_model(best_est, out_model_file)
-
-    if return_results:
-        return best_est, {
-            "search_method": "optuna",
-            "param_space_mode": space_mode,
-            "use_gpu_requested": bool(use_gpu),
-            "gpu_used": bool(gpu_active),
-            "best_params": best_params_json,
-            "best_score": best_score,
-            "results_df": results_df,
-            "search_obj": study,
-        }
-    return best_est
 
 
 def train_gbdt_regressor(
@@ -1028,14 +922,9 @@ def train_gbdt_regressor(
     if not return_model and regressor is not None:
         sync_sklearn_estimator_state(regressor, fitted_est)
 
-    eval_est = fitted_est
-    predict_kwargs: Dict[str, Any] = {}
-    cleanup_fn: Optional[Callable[[], None]] = None
-    if backend.prepare_predict_estimator is not None:
-        eval_est, predict_kwargs, cleanup_fn = backend.prepare_predict_estimator(
-            fitted_est, gpu_active, eff_gpu_id
-        )
-    try:
+    with _prepared_gbdt_predict_estimator(
+        backend, fitted_est, gpu_active, eff_gpu_id
+    ) as (eval_est, predict_kwargs):
         metrics = calc_reg_split_metrics(
             eval_est,
             train_x,
@@ -1066,9 +955,6 @@ def train_gbdt_regressor(
                     predict_kwargs=predict_kwargs,
                 )
             )
-    finally:
-        if cleanup_fn is not None:
-            cleanup_fn()
 
     if out_model_file is not None:
         backend.save_model(fitted_est, out_model_file)
@@ -1118,14 +1004,9 @@ def apply_gbdt_regressor(
         if isinstance(regressor, (str, os.PathLike))
         else regressor
     )
-    eval_est = estimator
-    predict_kwargs: Dict[str, Any] = {}
-    cleanup_fn: Optional[Callable[[], None]] = None
-    if backend.prepare_predict_estimator is not None:
-        eval_est, predict_kwargs, cleanup_fn = backend.prepare_predict_estimator(
-            estimator, gpu_active, eff_gpu_id
-        )
-    try:
+    with _prepared_gbdt_predict_estimator(
+        backend, estimator, gpu_active, eff_gpu_id
+    ) as (eval_est, predict_kwargs):
         apply_regressor_raster(
             reg_cfg=reg_cfg,
             estimator=eval_est,
@@ -1143,6 +1024,3 @@ def apply_gbdt_regressor(
             use_pbar=use_pbar,
             predict_kwargs=predict_kwargs,
         )
-    finally:
-        if cleanup_fn is not None:
-            cleanup_fn()

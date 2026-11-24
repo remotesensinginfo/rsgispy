@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import rasterio
+import rasterio.shutil
 from rasterio.enums import ColorInterp, Resampling
 from rasterio.transform import Affine
 from rasterio.windows import Window

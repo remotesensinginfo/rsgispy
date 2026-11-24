@@ -25,7 +25,7 @@ from rsgispy._io import (
     TileNode,
     WindowOp,
 )
-from rsgispy.imagefilter._helper import (
+from rsgispy.imagefilter._helpers import (
     _apply_tile_nd,
     _resolve_out_nodata,
     stat_mode,

@@ -5,7 +5,6 @@ and block-wise raster classification.
 """
 
 import os
-import shutil
 from typing import (
     Any,
     Callable,
@@ -17,8 +16,6 @@ from typing import (
     Union,
 )
 
-import numpy as np
-
 from rsgispy.classification._gbdt import (
     GBDTBackendSpec,
     apply_gbdt_classifier,
@@ -28,6 +25,8 @@ from rsgispy.classification._gbdt import (
 from rsgispy.classification._helpers import ClsConfigInput, SamplesInput
 from rsgispy.classification.classdata import ImageBandInfo
 from rsgispy.tools._gbdt_common import (
+    apply_lgb_gpu_params as _tools_apply_lgb_gpu_params,
+    detect_lightgbm_gpu_device as _tools_detect_lightgbm_gpu_device,
     fit_lgb_estimator as _fit_lgb_estimator,
     get_lightgbm_optuna_param_space as _tools_get_lightgbm_optuna_param_space,
     load_joblib_model,
@@ -58,39 +57,12 @@ def _detect_lightgbm_gpu_device(
     """
     Detect an operational LightGBM GPU backend (``'cuda'`` or ``'gpu'``).
 
-    ``'cuda'`` is only probed when NVIDIA driver indicators are present so
-    CPU-only builds do not emit C++ fatal stderr messages.
+    Delegates to :func:`rsgispy.tools._gbdt_common.detect_lightgbm_gpu_device`.
     """
     dev_idx = validate_gpu_device_id(gpu_device_id)
     if not HAVE_LIGHTGBM or lgb is None:
         return None
-    has_nvidia = (
-        shutil.which("nvidia-smi") is not None
-        or os.path.exists("/dev/nvidia0")
-        or bool(os.environ.get("CUDA_VISIBLE_DEVICES", "").strip())
-    )
-    candidates = ("cuda", "gpu") if has_nvidia else ("gpu",)
-    probe_x = np.array(
-        [[0.0, 1.0], [1.0, 0.0], [0.2, 0.8], [0.8, 0.2]],
-        dtype=np.float32,
-    )
-    probe_y = np.array([0, 1, 0, 1], dtype=np.int32)
-    for dev_name in candidates:
-        kwargs: Dict[str, Any] = {
-            "n_estimators": 1,
-            "min_child_samples": 1,
-            "min_data_in_bin": 1,
-            "device": dev_name,
-            "verbose": -1,
-        }
-        if dev_idx is not None:
-            kwargs["gpu_device_id"] = dev_idx
-        try:
-            lgb.LGBMClassifier(**kwargs).fit(probe_x, probe_y)
-            return dev_name
-        except Exception:  # pylint: disable=broad-exception-caught
-            continue
-    return None
+    return _tools_detect_lightgbm_gpu_device(dev_idx)
 
 
 def is_lightgbm_gpu_available(gpu_device_id: Optional[int] = None) -> bool:
@@ -226,15 +198,11 @@ def _apply_lgb_gpu_params(
     gpu_device_id: Optional[int],
 ) -> Dict[str, Any]:
     """Configure LightGBM parameters for CUDA or OpenCL GPU training."""
-    out = dict(params)
-    out.pop("device_type", None)
-    device = _detect_lightgbm_gpu_device(gpu_device_id) or "gpu"
-    out["device"] = device
-    if gpu_device_id is not None:
-        out["gpu_device_id"] = int(gpu_device_id)
-    if device == "gpu" and "max_bin" in out and out["max_bin"] is not None:
-        out["max_bin"] = min(int(out["max_bin"]), 255)
-    return out
+    return _tools_apply_lgb_gpu_params(
+        params,
+        gpu_device_id,
+        detect_device_fn=_detect_lightgbm_gpu_device,
+    )
 
 
 _LGB_BACKEND = GBDTBackendSpec(

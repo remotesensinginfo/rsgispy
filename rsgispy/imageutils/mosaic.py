@@ -129,7 +129,7 @@ def create_img_mosaic(
         validate_crs_and_res(datasets, first_ds)
 
         _, out_rio_dtype, out_np_dtype = resolve_out_dtype(
-            datatype, default_dtype=first_ds.dtypes[0]
+            datatype, ref_np_dtype=first_ds.dtypes[0]
         )
 
         n_bands = int(first_ds.count)
@@ -509,7 +509,7 @@ def combine_imgs_to_band(
     with ExitStack() as stack:
         datasets, paths = open_multi_image_datasets(stack, input_imgs)
         _, out_rio_dtype, out_np_dtype = resolve_out_dtype(
-            datatype, default_dtype=datasets[paths[0]].dtypes[0]
+            datatype, ref_np_dtype=datasets[paths[0]].dtypes[0]
         )
         grid = compute_spatial_intersection(datasets)
 

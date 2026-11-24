@@ -9,23 +9,7 @@ from typing import Tuple
 
 import numpy as np
 
-try:
-    from numba import njit, prange
-
-    HAS_NUMBA = True
-except ImportError:  # pragma: no cover
-    HAS_NUMBA = False
-
-    def njit(*args, **kwargs):  # type: ignore[no-redef]
-        if len(args) == 1 and callable(args[0]) and not kwargs:
-            return args[0]
-
-        def decorator(func):
-            return func
-
-        return decorator
-
-    prange = range  # type: ignore[assignment]
+from rsgispy._numba import HAS_NUMBA, njit, prange  # noqa: F401
 
 
 # Clockwise D8 encoding starting East:

@@ -62,7 +62,7 @@ avoiding intermediate disk writes:
        RasterSource,
        TileGraph,
    )
-   from rsgispy.imagefilter._helper import window_stat_node
+   from rsgispy.imagefilter._helpers import window_stat_node
 
    src = RasterSource("input.tif")
    med = window_stat_node(src, stat="median", filter_size=3)

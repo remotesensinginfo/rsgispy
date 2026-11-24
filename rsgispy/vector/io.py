@@ -18,6 +18,7 @@ from rsgispy.vector._io_meta import (
     get_vec_lyr_geom_type,
     get_vec_lyrs_lst,
     get_wkt_proj_from_vec,
+    parse_geom_type_label,
 )
 from rsgispy.vector._io_ops import (
     check_polys_wgs84_bounds_geometry,
@@ -48,6 +49,7 @@ __all__ = [
     "get_vec_lyr_bbox_in_proj",
     "get_vec_feat_count",
     "get_geom_type_name",
+    "parse_geom_type_label",
     "get_vec_lyr_geom_type",
     "get_vec_lyrs_lst",
     "get_vec_lyr_cols",

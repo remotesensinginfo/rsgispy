@@ -18,6 +18,12 @@ Pixel-in-polygon selection method constants:
     * ``METHOD_POLYAREAINPIXEL = 9``
 """
 
+from rsgispy.zonalstats._helpers import (
+    open_validated_zonal_inputs,
+    open_validated_zonal_multiband_inputs,
+    sample_point_pixel,
+)
+
 #: Pixel is completely contained within polygon (``0``).
 METHOD_POLYCONTAINSPIXEL = 0
 #: Pixel centre falls inside polygon (``1``).
@@ -54,4 +60,7 @@ __all__ = [
     "METHOD_ENVELOPE",
     "METHOD_PIXELAREAINPOLY",
     "METHOD_POLYAREAINPIXEL",
+    "open_validated_zonal_inputs",
+    "open_validated_zonal_multiband_inputs",
+    "sample_point_pixel",
 ]

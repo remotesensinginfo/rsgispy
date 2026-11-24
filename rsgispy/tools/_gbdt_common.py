@@ -5,6 +5,7 @@ serialisation helpers reused across :mod:`rsgispy.classification` and
 :mod:`rsgispy.regression`.
 """
 
+from contextlib import contextmanager
 import importlib
 import inspect
 import os
@@ -14,6 +15,7 @@ from typing import (
     Any,
     Callable,
     Dict,
+    Iterator,
     Mapping,
     Optional,
     Tuple,
@@ -26,7 +28,16 @@ import pandas as pd
 
 import rsgispy
 from rsgispy.imageprocess import ensure_file_exists
+from rsgispy.tools._ml_tune import (
+    extract_best_optuna_params,
+    resolve_cv_splitter,
+    run_optuna_study,
+    save_search_outputs,
+    suggest_optuna_params,
+)
+from rsgispy.tools._sklearn import sklearn
 from rsgispy.tools.files import ensure_parent_dir
+from rsgispy.tools.jsonio import to_json_compatible
 
 OptunaSpaceType = Union[Dict[str, Any], Callable[[Any], Mapping[str, Any]]]
 
@@ -493,11 +504,17 @@ def get_lightgbm_optuna_param_space(
 def apply_lgb_gpu_params(
     params: Dict[str, Any],
     gpu_device_id: Optional[int],
+    detect_device_fn: Optional[Callable[[Optional[int]], Optional[str]]] = None,
 ) -> Dict[str, Any]:
     """Configure LightGBM parameters for CUDA or OpenCL GPU training."""
     out = dict(params)
     out.pop("device_type", None)
-    device = detect_lightgbm_gpu_device(gpu_device_id) or "gpu"
+    detect_fn = (
+        detect_device_fn
+        if detect_device_fn is not None
+        else detect_lightgbm_gpu_device
+    )
+    device = detect_fn(gpu_device_id) or "gpu"
     out["device"] = device
     if gpu_device_id is not None:
         out["gpu_device_id"] = int(gpu_device_id)
@@ -593,10 +610,17 @@ def load_joblib_model(
 # ---------------------------------------------------------------------------
 
 
-def is_catboost_gpu_available(gpu_device_id: Optional[int] = None) -> bool:
+def is_catboost_gpu_available(
+    gpu_device_id: Optional[int] = None,
+    get_gpu_count_fn: Optional[Callable[[], Any]] = None,
+) -> bool:
     """Check whether CUDA GPU execution is supported and available for CatBoost."""
     dev_idx = validate_gpu_device_id(gpu_device_id)
-    get_gpu_cnt = _get_cb_gpu_device_count()
+    get_gpu_cnt = (
+        get_gpu_count_fn
+        if get_gpu_count_fn is not None
+        else _get_cb_gpu_device_count()
+    )
     if get_gpu_cnt is None:
         return False
     try:
@@ -879,3 +903,182 @@ def resolve_gbdt_optuna_space(
         trial_space = eff_space
 
     return trial_space, space_mode
+
+
+def check_gbdt_backend_available(backend: Any, func_name: str) -> None:
+    """Verify GBDT backend availability and surface any native load error."""
+    err_detail = (
+        backend.get_error_detail()
+        if backend.get_error_detail is not None
+        else None
+    )
+    rsgispy.check_optional_dep(
+        backend.is_available(),
+        func_name,
+        backend.package_name,
+        backend.extra,
+        error_detail=err_detail,
+    )
+
+
+@contextmanager
+def prepared_gbdt_predict_estimator(
+    backend: Any,
+    estimator: Any,
+    gpu_active: bool,
+    gpu_device_id: Optional[int],
+) -> Iterator[Tuple[Any, Dict[str, Any]]]:
+    """
+    Context manager preparing a GBDT estimator for CPU/GPU inference and
+    restoring any temporary device configuration on exit.
+    """
+    eval_est = estimator
+    predict_kwargs: Dict[str, Any] = {}
+    cleanup_fn: Optional[Callable[[], None]] = None
+    if backend.prepare_predict_estimator is not None:
+        eval_est, predict_kwargs, cleanup_fn = backend.prepare_predict_estimator(
+            estimator, gpu_active, gpu_device_id
+        )
+    try:
+        yield eval_est, predict_kwargs
+    finally:
+        if cleanup_fn is not None:
+            cleanup_fn()
+
+
+def run_gbdt_optuna_optimisation(
+    *,
+    backend: Any,
+    func_name: str,
+    train_x: pd.DataFrame,
+    train_y: np.ndarray,
+    valid_x: Optional[pd.DataFrame],
+    valid_y: Optional[np.ndarray],
+    trial_space: OptunaSpaceType,
+    space_mode: str,
+    fixed_params: Optional[Mapping[str, Any]],
+    merge_params_fn: Callable[[Mapping[str, Any], Optional[int]], Dict[str, Any]],
+    build_estimator_fn: Callable[[Dict[str, Any]], Any],
+    build_and_fit_fn: Callable[[Dict[str, Any]], Any],
+    scoring: Union[str, Callable[..., float]],
+    cv: Union[int, Any],
+    stratified: bool,
+    n_trials: int,
+    timeout: Optional[float],
+    direction: str,
+    n_jobs: Optional[int],
+    rnd_seed: Optional[int],
+    refit: bool,
+    verbose: int,
+    use_gpu: bool,
+    gpu_active: bool,
+    use_pbar: bool,
+    out_results_file: Optional[Union[str, os.PathLike]],
+    out_params_json: Optional[Union[str, os.PathLike]],
+    out_model_file: Optional[Union[str, os.PathLike]],
+    return_results: bool,
+    extra_meta: Mapping[str, Any],
+) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
+    """
+    Execute the shared Optuna Bayesian optimisation loop, CV/validation
+    scoring, best-parameter reconstruction, optional refitting, and output
+    persistence for both classification and regression GBDT workflows.
+    """
+    # pylint: disable=too-many-arguments,too-many-locals
+    scorer = (
+        sklearn.metrics.get_scorer(scoring)
+        if isinstance(scoring, str)
+        else scoring
+    )
+    cv_obj = (
+        None
+        if valid_x is not None
+        else resolve_cv_splitter(
+            cv, train_y, rnd_seed, stratified=stratified
+        )
+    )
+
+    def _objective(trial: Any) -> float:
+        if callable(trial_space) or trial_space:
+            trial_params = suggest_optuna_params(trial, trial_space)
+        else:
+            trial_params = {}
+        combined = dict(trial_params)
+        if fixed_params:
+            combined.update(fixed_params)
+        est_jobs = n_jobs if (valid_x is not None or gpu_active) else 1
+        params = merge_params_fn(combined, est_jobs)
+        if valid_x is not None and valid_y is not None:
+            fitted = build_and_fit_fn(params)
+            return float(scorer(fitted, valid_x, valid_y))
+
+        est = build_estimator_fn(params)
+        cv_jobs = 1 if gpu_active else n_jobs
+        scores = sklearn.model_selection.cross_val_score(
+            est,
+            train_x,
+            train_y,
+            cv=cv_obj,
+            scoring=scoring,
+            n_jobs=cv_jobs,
+        )
+        return float(np.mean(scores))
+
+    study, _ = run_optuna_study(
+        objective=_objective,
+        n_trials=n_trials,
+        timeout=timeout,
+        direction=direction,
+        rnd_seed=rnd_seed,
+        verbose=verbose,
+        func_name=func_name,
+        extra=backend.extra,
+        use_pbar=use_pbar,
+    )
+
+    best_trial_params = extract_best_optuna_params(study, trial_space)
+    best_combined = dict(best_trial_params)
+    if fixed_params:
+        best_combined.update(fixed_params)
+    final_params = merge_params_fn(best_combined, n_jobs)
+
+    if refit:
+        best_est = build_and_fit_fn(final_params)
+    else:
+        best_est = build_estimator_fn(final_params)
+
+    best_params_json = to_json_compatible(best_combined)
+    best_score = float(study.best_value)
+    results_df = study.trials_dataframe()
+
+    save_search_outputs(
+        results_df=results_df,
+        best_params=best_params_json,
+        best_score=best_score,
+        scoring=scoring,
+        search_method="optuna",
+        space_mode=space_mode,
+        out_results_file=out_results_file,
+        out_params_json=out_params_json,
+        extra_meta=extra_meta,
+    )
+
+    if out_model_file is not None:
+        if not refit:
+            raise rsgispy.RSGISPyException(
+                "out_model_file requires refit=True so the saved model is fitted."
+            )
+        backend.save_model(best_est, out_model_file)
+
+    if return_results:
+        return best_est, {
+            "search_method": "optuna",
+            "param_space_mode": space_mode,
+            "use_gpu_requested": bool(use_gpu),
+            "gpu_used": bool(gpu_active),
+            "best_params": best_params_json,
+            "best_score": best_score,
+            "results_df": results_df,
+            "search_obj": study,
+        }
+    return best_est

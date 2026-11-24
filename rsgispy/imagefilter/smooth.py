@@ -7,7 +7,7 @@ from typing import List, Optional, Sequence, Union
 import numpy as np
 
 import rsgispy
-from rsgispy.imagefilter._helper import (
+from rsgispy.imagefilter._helpers import (
     gaussian_kernel,
     run_kernel_filter,
     run_window_stat_filter,

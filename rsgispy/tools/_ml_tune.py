@@ -67,11 +67,24 @@ def normalise_search_method(search_method: str) -> str:
 def suggest_optuna_params(
     trial: Any,
     param_space: Union[Mapping[str, Any], Callable[[Any], Mapping[str, Any]]],
+    *,
+    allow_empty: bool = False,
 ) -> Dict[str, Any]:
     """
     Sample hyperparameters for an Optuna trial from either a user-supplied
     ``trial -> dict`` callable or a declarative dictionary specification.
+
+    Supported dictionary value specifications:
+
+    * Tagged tuples: ``('int', low, high[, step])``,
+      ``('float', low, high[, log])``, ``('logfloat', low, high)``, and
+      ``('categorical', choices)`` (or ``('categorical', c1, c2, ...)``).
+    * Explicit spec mappings: ``{'type': 'int'|'float'|'categorical', ...}``.
+    * Numeric 2-tuples ``(low, high)`` for uniform integer or float ranges.
+    * Lists or other tuples for categorical choices.
+    * Fixed scalar constants passed through unchanged.
     """
+    # pylint: disable=too-many-branches
     if callable(param_space):
         suggested = param_space(trial)
         if not isinstance(suggested, Mapping):
@@ -81,13 +94,40 @@ def suggest_optuna_params(
             )
         return dict(suggested)
 
-    if not isinstance(param_space, Mapping) or not param_space:
+    if not isinstance(param_space, Mapping) or (
+        not allow_empty and not param_space
+    ):
         raise rsgispy.RSGISPyException(
             "param_space must be a non-empty dictionary or callable for Optuna."
         )
 
     params: Dict[str, Any] = {}
     for p_name, spec in param_space.items():
+        if isinstance(spec, tuple) and len(spec) >= 2 and isinstance(spec[0], str):
+            tag = spec[0].strip().lower()
+            if tag == "int" and len(spec) >= 3:
+                step = int(spec[3]) if len(spec) > 3 else 1
+                params[p_name] = trial.suggest_int(
+                    p_name, int(spec[1]), int(spec[2]), step=step
+                )
+                continue
+            if tag in ("float", "logfloat") and len(spec) >= 3:
+                use_log = (tag == "logfloat") or (
+                    len(spec) > 3 and bool(spec[3])
+                )
+                params[p_name] = trial.suggest_float(
+                    p_name, float(spec[1]), float(spec[2]), log=use_log
+                )
+                continue
+            if tag == "categorical":
+                choices = (
+                    list(spec[1])
+                    if len(spec) == 2 and isinstance(spec[1], (list, tuple))
+                    else list(spec[1:])
+                )
+                params[p_name] = trial.suggest_categorical(p_name, choices)
+                continue
+
         if isinstance(spec, Mapping):
             p_type = str(spec.get("type", "")).strip().lower()
             if p_type == "int":
@@ -99,11 +139,12 @@ def suggest_optuna_params(
                     log=bool(spec.get("log", False)),
                 )
             elif p_type == "float":
+                step_val = spec.get("step")
                 params[p_name] = trial.suggest_float(
                     p_name,
                     float(spec["low"]),
                     float(spec["high"]),
-                    step=spec.get("step"),
+                    step=float(step_val) if step_val is not None else None,
                     log=bool(spec.get("log", False)),
                 )
             elif p_type == "categorical":
@@ -140,6 +181,24 @@ def suggest_optuna_params(
         else:
             params[p_name] = spec
     return params
+
+
+def extract_best_optuna_params(
+    study: Any,
+    param_space: Union[Mapping[str, Any], Callable[[Any], Mapping[str, Any]]],
+) -> Dict[str, Any]:
+    """
+    Reconstruct the complete best hyperparameter dictionary (including fixed
+    constants and conditional parameters) from a completed Optuna ``study``.
+    """
+    fixed_trial = optuna.trial.FixedTrial(study.best_trial.params)
+    if callable(param_space):
+        return dict(suggest_optuna_params(fixed_trial, param_space))
+    if not param_space:
+        return dict(study.best_trial.params)
+    return dict(
+        suggest_optuna_params(fixed_trial, param_space, allow_empty=True)
+    )
 
 
 def resolve_cv_splitter(
@@ -262,8 +321,10 @@ def run_optuna_study(
     func_name: str,
     extra: str,
     use_pbar: bool = True,
+    sampler: Optional[Any] = None,
+    pruner: Optional[Any] = None,
 ) -> Tuple[Any, str]:
-    """Create and execute an Optuna TPE study cleanly."""
+    """Create and execute an Optuna study cleanly, restoring logging verbosity."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     rsgispy.check_optional_dep(HAVE_OPTUNA, func_name, "optuna", extra)
     if int(n_trials) < 1:
@@ -274,12 +335,20 @@ def run_optuna_study(
             f"direction must be 'maximize' or 'minimize', got {direction!r}."
         )
 
-    sampler = optuna.samplers.TPESampler(seed=rnd_seed)
+    eff_sampler = (
+        sampler
+        if sampler is not None
+        else optuna.samplers.TPESampler(seed=rnd_seed)
+    )
     prev_verbosity = optuna.logging.get_verbosity()
     if verbose <= 0:
         optuna.logging.set_verbosity(optuna.logging.WARNING)
     try:
-        study = optuna.create_study(direction=dir_norm, sampler=sampler)
+        study = optuna.create_study(
+            direction=dir_norm,
+            sampler=eff_sampler,
+            pruner=pruner,
+        )
         study.optimize(
             objective,
             n_trials=int(n_trials),
@@ -457,15 +526,7 @@ def run_optuna_search(
         use_pbar=use_pbar,
     )
 
-    if callable(param_space):
-        best_trial_params = dict(
-            param_space(optuna.trial.FixedTrial(study.best_trial.params))
-        )
-    else:
-        best_trial_params = dict(study.best_trial.params)
-        for p_name, spec in param_space.items():
-            if not isinstance(spec, (Mapping, tuple, list)):
-                best_trial_params[p_name] = spec
+    best_trial_params = extract_best_optuna_params(study, param_space)
 
     best_params = to_json_compatible(best_trial_params)
     best_score = float(study.best_value)

@@ -13,7 +13,6 @@ import rsgispy
 from rsgispy.imageprocess import (
     build_valid_mask,
     ensure_file_exists,
-    fits_dtype_range as _fits_dtype,
     resolve_out_nodata as _ip_resolve_out_nodata,
     run_window_halo_blocks,
     validate_odd_window_size,

@@ -388,7 +388,8 @@ def _gather_seam_pairs_and_merges(
     Build global segment LUT across tiles: reconcile seams, optionally merge
     sub-threshold border segments across tile edges, and relabel ``1..N``.
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches
     if total_raw_labels == 0:
         return np.zeros(1, dtype=np.uint32)
 
@@ -717,7 +718,8 @@ def run_tiled_raster_pipeline(
     optional multi-core tile execution, two-pass temporary GeoTIFF LUT
     remapping, and standard ``rsgispy`` statistics population.
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches
     workers = validate_n_jobs(n_jobs)
     in_path = os.fspath(input_img)
     out_path = os.fspath(output_img)

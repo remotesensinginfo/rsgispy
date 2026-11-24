@@ -13,13 +13,13 @@ import os
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
-import pyproj
 import rasterio
 from rasterio.windows import Window
 
 import rsgispy
 import rsgispy.tools.files
 import rsgispy.tools.jsonio
+from rsgispy.vectorprocess import crs_to_epsg
 
 try:
     import h5py  # pylint: disable=import-error
@@ -60,21 +60,6 @@ def _validate_file_exists_and_size(
             f"File size is greater than max. threshold ({file_size_bytes}).",
         )
     return True, ""
-
-
-def _resolve_epsg(crs_input: Any) -> Optional[int]:
-    """Resolve an EPSG code from a ``rasterio`` CRS or WKT/PROJ string."""
-    if crs_input is None:
-        return None
-    if hasattr(crs_input, "to_epsg"):
-        epsg = crs_input.to_epsg()
-        if epsg is not None:
-            return int(epsg)
-    try:
-        crs_obj = pyproj.CRS.from_user_input(crs_input)
-        return crs_obj.to_epsg()
-    except Exception:  # pylint: disable=broad-exception-caught
-        return None
 
 
 def _handle_failed_file(
@@ -201,7 +186,7 @@ def _check_crs_epsg(
         return False, f"{label} projection is empty."
 
     if epsg_code > 0:
-        resolved_epsg = _resolve_epsg(crs_val)
+        resolved_epsg = crs_to_epsg(crs_val)
         if resolved_epsg is None:
             return False, f"{label} projection returned a None EPSG code."
         if int(resolved_epsg) != int(epsg_code):
@@ -823,7 +808,7 @@ def _read_raster_geom_signature(
     with rasterio.open(img_path, "r") as src:
         bounds = src.bounds
         bbox = (float(bounds.left), float(bounds.right), float(bounds.bottom), float(bounds.top))
-        epsg = _resolve_epsg(src.crs)
+        epsg = crs_to_epsg(src.crs)
         return (int(src.width), int(src.height)), bbox, epsg
 
 

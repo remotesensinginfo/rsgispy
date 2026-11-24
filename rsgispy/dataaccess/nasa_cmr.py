@@ -14,6 +14,11 @@ from typing import Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 
 import rsgispy
+from rsgispy.tools._download_common import (
+    process_download_queue_db,
+    stream_http_download,
+    write_download_queue_db,
+)
 import rsgispy.tools.credentials
 import rsgispy.tools.dicts
 import rsgispy.tools.http
@@ -398,30 +403,18 @@ def cmr_download_file_http(
     rsgispy.check_optional_dep(
         HAVE_REQUESTS, "cmr_download_file_http", "requests", "dataaccess"
     )
-    tqdm_cls = rsgispy.get_tqdm()
     session_http = SessionWithHeaderNASARedirection(username, password)
     session_http.headers["User-Agent"] = f"rsgispy/{rsgispy.get_rsgispy_version()}"
 
-    tmp_dwnld_path = f"{out_file_path}.incomplete"
-
     try:
-        with session_http.get(input_url, stream=True, timeout=120) as resp:
-            if rsgispy.tools.http.check_http_response(resp, input_url):
-                total = int(resp.headers.get("content-length", 0))
-                chunk_size = 2**20
-                n_chunks = int(total / chunk_size) + 1
-
-                with open(tmp_dwnld_path, "wb") as out_fh:
-                    for chunk in tqdm_cls(
-                        resp.iter_content(chunk_size=chunk_size),
-                        total=n_chunks,
-                        disable=not use_pbar,
-                    ):
-                        if chunk:
-                            out_fh.write(chunk)
-        if os.path.exists(tmp_dwnld_path):
-            os.rename(tmp_dwnld_path, out_file_path)
-            print(f"Download Complete: {out_file_path}")
+        stream_http_download(
+            session=session_http,
+            url=input_url,
+            out_file_path=out_file_path,
+            timeout=120,
+            use_pbar=use_pbar,
+            check_response_fn=rsgispy.tools.http.check_http_response,
+        )
     except Exception as exc:  # pylint: disable=broad-exception-caught
         if no_except:
             print(exc)
@@ -504,9 +497,7 @@ def create_cmr_dwnld_db(
         else:
             granules_no_url.append(producer_granule_id)
 
-    lst_db = pysondb.getDb(db_json)
-    if db_data:
-        lst_db.addMany(db_data)
+    write_download_queue_db(pysondb, db_json, db_data)
 
     return granules_no_url
 
@@ -550,13 +541,9 @@ def download_granules_use_dwnld_db(
             "dataaccess",
         )
 
-    tqdm_cls = rsgispy.get_tqdm()
     username, password = rsgispy.tools.credentials.get_username_password(user_pass_file)
 
-    lst_db = pysondb.getDb(db_json)
-    dwld_files = lst_db.getByQuery({"downloaded": False})
-
-    for dwn_file in tqdm_cls(dwld_files, disable=not use_pbar):
+    def _download_record(dwn_file: Dict) -> Tuple[bool, str]:
         out_file_path = os.path.join(out_path, dwn_file["producer_granule_id"])
         print(f"Downloading: {out_file_path}")
         if use_wget:
@@ -574,8 +561,8 @@ def download_granules_use_dwnld_db(
                 password=password,
                 use_pbar=use_pbar,
             )
+        return dwn_success, out_file_path
 
-        if dwn_success:
-            lst_db.updateById(
-                dwn_file["id"], {"lcl_path": out_file_path, "downloaded": True}
-            )
+    process_download_queue_db(
+        pysondb, db_json, _download_record, use_pbar=use_pbar
+    )

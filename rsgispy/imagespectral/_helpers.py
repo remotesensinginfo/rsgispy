@@ -3,7 +3,6 @@ Internal shared helpers for :mod:`rsgispy.imagespectral` submodules.
 """
 
 from contextlib import ExitStack
-import math
 from typing import Any, List, Optional, Sequence, Tuple
 
 import numpy as np

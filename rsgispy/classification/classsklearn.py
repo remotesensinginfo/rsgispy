@@ -19,7 +19,6 @@ from typing import (
 import numpy as np
 import pandas as pd
 
-import rsgispy
 from rsgispy.classification._cls_common import (
     apply_classifier_raster as _apply_classifier_raster,
 )
@@ -33,11 +32,9 @@ from rsgispy.classification._helpers import (
     load_samples_df as _load_samples_df,
     resolve_feature_cols as _resolve_feature_cols,
 )
-from rsgispy.classification._sklearn_spaces import (
-    build_sklearn_param_space as _build_sklearn_param_space,
-)
 from rsgispy.classification.classdata import ImageBandInfo
 from rsgispy.imageprocess import ensure_file_exists
+from rsgispy.tools._gbdt_common import load_joblib_model, save_joblib_model
 from rsgispy.tools._ml_tune import (
     normalise_search_method as _normalise_search_method,
     resolve_sklearn_param_space as _tools_resolve_sklearn_param_space,
@@ -48,16 +45,11 @@ from rsgispy.tools._ml_tune import (
 from rsgispy.tools._sklearn import (
     fit_clean_sklearn_estimator,
 )
+from rsgispy.tools._sklearn_spaces import (
+    build_sklearn_param_space as _build_sklearn_param_space,
+)
 from rsgispy.tools.files import ensure_parent_dir
 from rsgispy.tools.jsonio import write_dict_to_json
-
-try:
-    import joblib  # pylint: disable=import-error
-
-    HAVE_JOBLIB = True
-except ImportError:
-    joblib = None  # type: ignore[assignment]
-    HAVE_JOBLIB = False
 
 __all__ = [
     "get_sklearn_classifier_param_space",
@@ -88,11 +80,14 @@ def save_sklearn_classifier(
         clf = RandomForestClassifier(n_estimators=50)
         csk.save_sklearn_classifier(clf, "rf_classifier.joblib")
     """
-    rsgispy.check_optional_dep(
-        HAVE_JOBLIB, "save_sklearn_classifier", "joblib", "classification"
+    save_joblib_model(
+        model=sk_classifier,
+        out_file=out_file,
+        have_pkg=True,
+        pkg_name="joblib",
+        extra="classification",
+        func_name="save_sklearn_classifier",
     )
-    out_path = ensure_parent_dir(out_file)
-    joblib.dump(sk_classifier, out_path)
 
 
 def load_sklearn_classifier(
@@ -111,12 +106,16 @@ def load_sklearn_classifier(
 
         clf = csk.load_sklearn_classifier("rf_classifier.joblib")
     """
-    rsgispy.check_optional_dep(
-        HAVE_JOBLIB, "load_sklearn_classifier", "joblib", "classification"
-    )
     in_path = os.fspath(in_file)
     ensure_file_exists(in_path, label="Classifier model")
-    return joblib.load(in_path)
+    return load_joblib_model(
+        in_file=in_path,
+        have_pkg=True,
+        pkg_name="joblib",
+        extra="classification",
+        func_name="load_sklearn_classifier",
+        label="Classifier model",
+    )
 
 
 def get_sklearn_classifier_param_space(
@@ -164,9 +163,10 @@ def get_sklearn_classifier_param_space(
     """
     method = _normalise_search_method(search_method)
     return _build_sklearn_param_space(
-        sk_classifier=sk_classifier,
+        sk_estimator=sk_classifier,
         method=method,
         extended=bool(extended),
+        task="classification",
     )
 
 

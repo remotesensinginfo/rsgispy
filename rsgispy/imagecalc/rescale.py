@@ -178,7 +178,6 @@ def calc_img_rescale(
         scale = float(n_gain) / float(c_gain)
         c_off = float(c_offset)
         n_off = float(n_offset)
-        c_nd_is_nan = np.isnan(c_no_data_val)
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar

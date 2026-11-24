@@ -105,13 +105,12 @@ def calc_basic_img_band_stats(
         for idx, band_arr in enumerate(block_arrays):
             valid = build_valid_mask(band_arr, no_data_val=eff_nd)
             if np.any(valid):
-                accum.update_1d(band_arr[valid], band_idx=idx)
+                accum.update_band(idx, band_arr[valid])
 
-    min_vals_f, max_vals_f, mean_vals, stddev_vals, counts = accum.finalize()
-    min_vals = np.where(counts > 0, min_vals_f, 0.0).astype(np_dt)
-    max_vals = np.where(counts > 0, max_vals_f, 0.0).astype(np_dt)
+    min_vals = np.where(accum.counts > 0, accum.mins, 0.0).astype(np_dt)
+    max_vals = np.where(accum.counts > 0, accum.maxs, 0.0).astype(np_dt)
 
-    return min_vals, max_vals, mean_vals, stddev_vals
+    return min_vals, max_vals, accum.means.copy(), accum.stds()
 
 
 def count_pxls_of_val(
@@ -1305,21 +1304,20 @@ def get_img_histogram(
                         "Input image contains non-integer values; integer_bins=True "
                         "requires integer pixel values."
                     )
-                accum.update_1d(vals, band_idx=0)
+                accum.update_band(0, vals)
 
             if int(accum.counts[0]) == 0 and norm_range is None:
                 raise rsgispy.RSGISPyException(
                     "No valid pixels found in input image to compute histogram."
                 )
 
-        min_arr, max_arr, _, std_arr, cnt_arr = accum.finalize()
-        n_valid = int(cnt_arr[0])
+        n_valid = int(accum.counts[0])
         if n_valid > 0:
-            v_min = float(min_arr[0])
-            v_max = float(max_arr[0])
+            v_min = float(accum.mins[0])
+            v_max = float(accum.maxs[0])
         if norm_range is not None:
             v_min, v_max = norm_range
-        std_val = float(std_arr[0]) if n_valid > 0 else 0.0
+        std_val = float(accum.stds()[0]) if n_valid > 0 else 0.0
 
         bin_edges, int_vals = _build_histogram_edges(
             v_min=v_min,

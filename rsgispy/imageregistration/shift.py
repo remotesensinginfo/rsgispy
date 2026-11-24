@@ -16,7 +16,7 @@ from rsgispy.imageprocess import (
     extract_overlap_arrays,
     resolve_band_pair,
 )
-from rsgispy.imageregistration._helper import (
+from rsgispy.imageregistration._helpers import (
     copy_raster_with_updates,
     find_surface_extremum,
     refine_grid_subpixel,

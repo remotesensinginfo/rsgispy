@@ -28,6 +28,7 @@ from rsgispy.tools._gbdt_common import (
     apply_cb_gpu_params as _apply_cb_gpu_params,
     fit_cb_estimator as _fit_cb_estimator,
     get_catboost_optuna_param_space as _tools_get_catboost_optuna_param_space,
+    is_catboost_gpu_available as _tools_is_catboost_gpu_available,
     load_xgb_or_cb_model,
     prepare_cb_predict_estimator as _prepare_cb_predict_estimator,
     safe_import_optional,
@@ -80,13 +81,9 @@ def is_catboost_gpu_available(gpu_device_id: Optional[int] = None) -> bool:
     dev_idx = validate_gpu_device_id(gpu_device_id)
     if not HAVE_CATBOOST or _cb_get_gpu_device_count is None:
         return False
-    try:
-        n_gpus = int(_cb_get_gpu_device_count())
-    except Exception:  # pylint: disable=broad-exception-caught
-        return False
-    if dev_idx is not None:
-        return n_gpus > dev_idx
-    return n_gpus > 0
+    return _tools_is_catboost_gpu_available(
+        dev_idx, get_gpu_count_fn=_cb_get_gpu_device_count
+    )
 
 
 def get_catboost_optuna_param_space(

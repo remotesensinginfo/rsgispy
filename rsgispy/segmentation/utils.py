@@ -16,7 +16,6 @@ from rsgispy.imageprocess import (
     IntersectionGrid,
     OnlineStatsAccumulator,
     build_valid_cube_mask,
-    build_valid_mask,
     ensure_file_exists,
     get_default_block_size,
     iter_dataset_windows,
@@ -24,15 +23,12 @@ from rsgispy.imageprocess import (
     resolve_out_dtype,
     validate_band_index,
 )
+from rsgispy._numba import (
+    HAVE_NUMBA,
+    make_njit,
+    warn_numba_fallback,
+)
 from rsgispy.imageutils.stats import pop_img_stats
-
-try:
-    import numba  # pylint: disable=import-error
-
-    HAVE_NUMBA = True
-except ImportError:
-    numba = None  # type: ignore[assignment]
-    HAVE_NUMBA = False
 
 __all__ = [
     "HAVE_NUMBA",
@@ -66,17 +62,21 @@ def is_numba_available() -> bool:
     return HAVE_NUMBA
 
 
-def make_njit(func: Any) -> Any:
-    """Decorate ``func`` with ``numba.njit(cache=False)`` when available."""
-    if HAVE_NUMBA:
-        return numba.njit(cache=False)(func)
-    return func
-
-
 def call_kernel(kernel: Any, use_numba: bool, *args: Any) -> Any:
-    """Dispatch to a Numba-compiled kernel or its pure-Python fallback."""
-    if use_numba and HAVE_NUMBA:
-        return kernel(*args)
+    """
+    Dispatch to a Numba-compiled kernel or its pure-Python fallback.
+
+    Emits a :class:`RuntimeWarning` when ``use_numba=True`` is requested but
+    ``numba`` is not installed; stays silent when ``use_numba=False`` is
+    explicitly passed.
+    """
+    if use_numba:
+        if HAVE_NUMBA:
+            return kernel(*args)
+        warn_numba_fallback(
+            getattr(kernel, "__name__", "segmentation"),
+            stacklevel=3,
+        )
     py_fn = getattr(kernel, "py_func", kernel)
     return py_fn(*args)
 
@@ -117,13 +117,12 @@ def resolve_label_dtype(
 ) -> Tuple[int, str, np.dtype]:
     """
     Resolve an optional ``rsgispy.TYPE_*`` constant for integer label rasters,
-    defaulting to :data:`rsgispy.TYPE_32INT`.
+    defaulting to :data:`rsgispy.TYPE_32UINT`.
     """
     return resolve_out_dtype(
         datatype,
-        default_dtype=rsgispy.TYPE_32INT,
+        default_dtype=rsgispy.TYPE_32UINT,
         require_int=True,
-        label="Segmentation label",
     )
 
 
@@ -392,7 +391,10 @@ def compute_global_band_stats(
             np.empty((0, n_bands), dtype=np.float64),
         )
 
-    band_mins, band_maxs, means, stds, _ = accum.finalize()
+    band_mins = accum.mins.copy()
+    band_maxs = accum.maxs.copy()
+    means = accum.means.copy()
+    stds = accum.stds()
     stds = np.where(stds > 1e-12, stds, 1.0)
     samples = (
         np.vstack(sample_chunks)

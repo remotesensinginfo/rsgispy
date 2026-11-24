@@ -33,14 +33,14 @@ from rsgispy.tools._gbdt_common import (
     get_lightgbm_optuna_param_space,
     get_xgboost_optuna_param_space,
 )
-
-try:
-    import optuna  # pylint: disable=import-error
-
-    HAVE_OPTUNA = True
-except ImportError:
-    optuna = None  # type: ignore[assignment]
-    HAVE_OPTUNA = False
+from rsgispy.tools._ml_tune import (
+    HAVE_OPTUNA,
+    extract_best_optuna_params,
+    optuna,
+    run_optuna_study,
+    suggest_optuna_params,
+)
+from rsgispy.tools._sklearn_spaces import build_sklearn_param_space
 
 __all__ = [
     "TuneResult",
@@ -67,68 +67,47 @@ def get_default_param_space(
     task: str = "classification",
     extended: bool = False,
     binary: bool = True,
-) -> Dict[str, Any]:
+) -> Union[Dict[str, Any], Callable[[Any], Mapping[str, Any]]]:
     """
     Return a sensible built-in Optuna hyperparameter search space for common
     estimators across ``classification``, ``regression``, and ``modelling``.
 
-    :param model_type: One of ``'xgboost'``, ``'lightgbm'``, ``'catboost'``,
-                       ``'random_forest'``, ``'extra_trees'``,
-                       ``'hist_gb'``, ``'svm'``, ``'mlp'``, or ``'linear'``.
+    Delegates to :mod:`rsgispy.tools._gbdt_common` for GBDT backends and
+    :mod:`rsgispy.tools._sklearn_spaces` for ``scikit-learn`` estimators.
+
+    :param model_type: Estimator name or alias such as ``'xgboost'``,
+                       ``'lightgbm'``, ``'catboost'``, ``'rf'``, ``'et'``,
+                       ``'hist_gb'``, ``'svm'``, ``'mlp'``, ``'neural_net'``,
+                       or ``'linear'``.
     :param task: ``'classification'`` (Default) or ``'regression'``.
-    :param extended: Use broader search space for GBDTs (Default = ``False``).
+    :param extended: Use broader search space (Default = ``False``).
     :param binary: Binary vs. multiclass GBDT hints (Default = ``True``).
-    :return: Dictionary mapping parameter names to search-space definitions.
+    :return: Dictionary or Optuna ``fn(trial) -> dict`` callable mapping
+             parameter names to search-space definitions.
     """
-    key = str(model_type).strip().lower()
+    task_norm = str(task).strip().lower()
+    if task_norm not in ("classification", "regression"):
+        raise rsgispy.RSGISPyException(
+            f"task must be 'classification' or 'regression', got {task!r}."
+        )
+    key = str(model_type).strip().lower().replace("_", "").replace("-", "").replace(" ", "")
     if key in ("xgb", "xgboost"):
         return get_xgboost_optuna_param_space(
-            extended=extended, binary=binary, task=task
+            extended=extended, binary=binary, task=task_norm
         )
     if key in ("lgb", "lgbm", "lightgbm"):
-        return get_lightgbm_optuna_param_space(extended=extended, task=task)
+        return get_lightgbm_optuna_param_space(
+            extended=extended, task=task_norm
+        )
     if key in ("cb", "catboost"):
-        return get_catboost_optuna_param_space(extended=extended, task=task)
-    if key in ("rf", "random_forest", "randomforest"):
-        return {
-            "n_estimators": {"type": "int", "low": 50, "high": 400, "step": 50},
-            "max_depth": {"type": "int", "low": 3, "high": 25},
-            "min_samples_split": {"type": "int", "low": 2, "high": 20},
-            "min_samples_leaf": {"type": "int", "low": 1, "high": 10},
-            "max_features": {"type": "categorical", "choices": ["sqrt", "log2", 0.5, 0.8]},
-        }
-    if key in ("et", "extra_trees", "extratrees"):
-        return {
-            "n_estimators": {"type": "int", "low": 50, "high": 400, "step": 50},
-            "max_depth": {"type": "int", "low": 4, "high": 30},
-            "min_samples_leaf": {"type": "int", "low": 1, "high": 10},
-            "max_features": {"type": "categorical", "choices": ["sqrt", "log2", 0.5, 0.8]},
-        }
-    if key in ("hist_gb", "histgradientboosting"):
-        return {
-            "max_iter": {"type": "int", "low": 50, "high": 400, "step": 25},
-            "learning_rate": {"type": "float", "low": 0.01, "high": 0.3, "log": True},
-            "max_leaf_nodes": {"type": "int", "low": 15, "high": 127},
-            "min_samples_leaf": {"type": "int", "low": 5, "high": 50},
-            "l2_regularization": {"type": "float", "low": 1e-4, "high": 10.0, "log": True},
-        }
-    if key in ("svm", "svc", "svr"):
-        return {
-            "C": {"type": "float", "low": 1e-2, "high": 1e2, "log": True},
-            "gamma": {"type": "categorical", "choices": ["scale", "auto"]},
-        }
-    if key in ("mlp", "neural_net"):
-        return {
-            "alpha": {"type": "float", "low": 1e-5, "high": 1e-1, "log": True},
-            "learning_rate_init": {"type": "float", "low": 1e-4, "high": 1e-1, "log": True},
-        }
-    if key in ("linear", "ridge", "logistic"):
-        if task == "regression":
-            return {"alpha": {"type": "float", "low": 1e-4, "high": 1e3, "log": True}}
-        return {"C": {"type": "float", "low": 1e-3, "high": 1e3, "log": True}}
-
-    raise rsgispy.RSGISPyException(
-        f"Unknown model_type '{model_type}' for get_default_param_space()."
+        return get_catboost_optuna_param_space(
+            extended=extended, task=task_norm
+        )
+    return build_sklearn_param_space(
+        sk_estimator=model_type,
+        method="optuna",
+        extended=bool(extended),
+        task=task_norm,
     )
 
 
@@ -140,73 +119,13 @@ def suggest_params_from_space(
     Sample a hyperparameter dictionary from ``param_space`` using an Optuna
     ``trial``.
 
-    Supports both a callable ``(trial) -> dict`` and a declarative dictionary
-    whose values are either ``{'type': 'int'|'float'|'categorical', ...}``
-    mappings or fixed scalar constants.
+    Supports a callable ``(trial) -> dict`` or a declarative dictionary whose
+    values are tagged tuples (``('int', ...)``, ``('float', ...)``,
+    ``('logfloat', ...)``, ``('categorical', ...)``), 2-tuple numeric ranges,
+    categorical lists, ``{'type': 'int'|'float'|'categorical', ...}`` dicts,
+    or fixed scalar constants.
     """
-    if callable(param_space):
-        return dict(param_space(trial))
-    if not isinstance(param_space, Mapping):
-        raise rsgispy.RSGISPyException(
-            "param_space must be a dictionary or callable(trial) -> dict."
-        )
-
-    params: Dict[str, Any] = {}
-    for name, spec in param_space.items():
-        if isinstance(spec, tuple) and len(spec) >= 2 and isinstance(spec[0], str):
-            tag = spec[0].strip().lower()
-            if tag == "int" and len(spec) >= 3:
-                step = int(spec[3]) if len(spec) > 3 else 1
-                params[name] = trial.suggest_int(
-                    name, int(spec[1]), int(spec[2]), step=step
-                )
-                continue
-            if tag in ("float", "logfloat") and len(spec) >= 3:
-                use_log = (tag == "logfloat") or (
-                    len(spec) > 3 and bool(spec[3])
-                )
-                params[name] = trial.suggest_float(
-                    name, float(spec[1]), float(spec[2]), log=use_log
-                )
-                continue
-            if tag == "categorical":
-                choices = (
-                    list(spec[1])
-                    if len(spec) == 2 and isinstance(spec[1], (list, tuple))
-                    else list(spec[1:])
-                )
-                params[name] = trial.suggest_categorical(name, choices)
-                continue
-        if isinstance(spec, Mapping) and "type" in spec:
-            p_type = str(spec["type"]).strip().lower()
-            if p_type == "int":
-                params[name] = trial.suggest_int(
-                    name,
-                    int(spec["low"]),
-                    int(spec["high"]),
-                    step=int(spec.get("step", 1)),
-                    log=bool(spec.get("log", False)),
-                )
-            elif p_type == "float":
-                step = spec.get("step")
-                params[name] = trial.suggest_float(
-                    name,
-                    float(spec["low"]),
-                    float(spec["high"]),
-                    step=float(step) if step is not None else None,
-                    log=bool(spec.get("log", False)),
-                )
-            elif p_type == "categorical":
-                params[name] = trial.suggest_categorical(
-                    name, list(spec["choices"])
-                )
-            else:
-                raise rsgispy.RSGISPyException(
-                    f"Unsupported Optuna param type '{p_type}' for '{name}'."
-                )
-        else:
-            params[name] = spec
-    return params
+    return suggest_optuna_params(trial, param_space, allow_empty=True)
 
 
 def tune_estimator(
@@ -279,55 +198,45 @@ def tune_estimator(
     if not splits:
         raise rsgispy.RSGISPyException("cv produced zero valid splits.")
 
-    prev_verbosity = optuna.logging.get_verbosity()
-    optuna.logging.set_verbosity(optuna.logging.WARNING)
-    try:
-        eff_sampler = (
-            sampler
-            if sampler is not None
-            else optuna.samplers.TPESampler(seed=rnd_seed)
-        )
-        study = optuna.create_study(
-            direction=direction,
-            sampler=eff_sampler,
-            pruner=pruner,
-        )
+    def _objective(trial: Any) -> float:
+        params = suggest_params_from_space(trial, param_space)
+        scores: List[float] = []
+        for step_idx, (tr_idx, val_idx) in enumerate(splits):
+            x_tr = _index_rows(X, tr_idx)
+            y_tr = y_arr[tr_idx]
+            x_val = _index_rows(X, val_idx)
+            y_val = y_arr[val_idx]
 
-        def _objective(trial: Any) -> float:
-            params = suggest_params_from_space(trial, param_space)
-            scores: List[float] = []
-            for step_idx, (tr_idx, val_idx) in enumerate(splits):
-                x_tr = _index_rows(X, tr_idx)
-                y_tr = y_arr[tr_idx]
-                x_val = _index_rows(X, val_idx)
-                y_val = y_arr[val_idx]
+            if scaler is not None:
+                fold_scaler = scaler.clone_unfitted()
+                x_tr = fold_scaler.fit_transform(x_tr)
+                x_val = fold_scaler.transform(x_val)
 
-                if scaler is not None:
-                    fold_scaler = scaler.clone_unfitted()
-                    x_tr = fold_scaler.fit_transform(x_tr)
-                    x_val = fold_scaler.transform(x_val)
+            est = estimator_factory(params)
+            est.fit(x_tr, y_tr)
+            preds = np.asarray(est.predict(x_val)).ravel()
+            sc = _evaluate_score(y_val, preds, task_norm, scoring)
+            scores.append(sc)
+            trial.report(float(np.mean(scores)), step=step_idx)
+            if trial.should_prune():
+                raise optuna.TrialPruned()
+        return float(np.mean(scores))
 
-                est = estimator_factory(params)
-                est.fit(x_tr, y_tr)
-                preds = np.asarray(est.predict(x_val)).ravel()
-                sc = _evaluate_score(y_val, preds, task_norm, scoring)
-                scores.append(sc)
-                trial.report(float(np.mean(scores)), step=step_idx)
-                if trial.should_prune():
-                    raise optuna.TrialPruned()
-            return float(np.mean(scores))
+    study, _ = run_optuna_study(
+        objective=_objective,
+        n_trials=int(n_trials),
+        timeout=timeout,
+        direction=direction,
+        rnd_seed=rnd_seed,
+        verbose=0,
+        func_name="tune_estimator",
+        extra="classification",
+        use_pbar=use_pbar,
+        sampler=sampler,
+        pruner=pruner,
+    )
 
-        study.optimize(
-            _objective,
-            n_trials=int(n_trials),
-            timeout=timeout,
-            show_progress_bar=bool(use_pbar),
-        )
-    finally:
-        optuna.logging.set_verbosity(prev_verbosity)
-
-    fixed_trial = optuna.trial.FixedTrial(study.best_trial.params)
-    best_params = dict(suggest_params_from_space(fixed_trial, param_space))
+    best_params = extract_best_optuna_params(study, param_space)
     best_score = float(study.best_value)
 
     best_est: Optional[Any] = None

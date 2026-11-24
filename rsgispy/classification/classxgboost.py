@@ -16,8 +16,6 @@ from typing import (
     Union,
 )
 
-import numpy as np
-
 from rsgispy.classification._gbdt import (
     GBDTBackendSpec,
     apply_gbdt_classifier,
@@ -30,6 +28,7 @@ from rsgispy.tools._gbdt_common import (
     apply_xgb_gpu_params as _apply_xgb_gpu_params,
     fit_xgb_estimator as _fit_xgb_estimator,
     get_xgboost_optuna_param_space as _tools_get_xgboost_optuna_param_space,
+    is_xgboost_gpu_available as _tools_is_xgboost_gpu_available,
     load_xgb_or_cb_model,
     prepare_xgb_predict_estimator as _prepare_xgb_predict_estimator,
     safe_import_optional,
@@ -76,29 +75,7 @@ def is_xgboost_gpu_available(gpu_device_id: Optional[int] = None) -> bool:
     dev_idx = validate_gpu_device_id(gpu_device_id)
     if not HAVE_XGBOOST or xgb is None:
         return False
-    try:
-        build_info = xgb.build_info()
-    except Exception:  # pylint: disable=broad-exception-caught
-        return False
-    if not bool(build_info.get("USE_CUDA", False)):
-        return False
-    device = "cuda" if dev_idx is None else f"cuda:{dev_idx}"
-    probe_x = np.array(
-        [[0.0, 1.0], [1.0, 0.0], [0.2, 0.8], [0.8, 0.2]],
-        dtype=np.float32,
-    )
-    probe_y = np.array([0, 1, 0, 1], dtype=np.int32)
-    try:
-        xgb.XGBClassifier(
-            n_estimators=1,
-            max_depth=1,
-            tree_method="hist",
-            device=device,
-            verbosity=0,
-        ).fit(probe_x, probe_y)
-        return True
-    except Exception:  # pylint: disable=broad-exception-caught
-        return False
+    return _tools_is_xgboost_gpu_available(dev_idx)
 
 
 def get_xgboost_optuna_param_space(

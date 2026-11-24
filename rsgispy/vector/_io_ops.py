@@ -28,6 +28,7 @@ import rsgispy.vector._spatial as _vec_spatial
 from rsgispy.vectorprocess import (
     CRSLike,
     VectorInput,
+    align_gdf_crs,
     bbox_to_rsgis,
     check_format_name,
     extract_geom_pts,
@@ -77,9 +78,7 @@ def _concat_gdfs(gdfs: Sequence[gpd.GeoDataFrame]) -> gpd.GeoDataFrame:
     ref_geom_col = gdfs[0].geometry.name
     aligned: List[gpd.GeoDataFrame] = []
     for gdf in gdfs:
-        item = gdf
-        if ref_crs is not None and item.crs is not None and item.crs != ref_crs:
-            item = item.to_crs(ref_crs)
+        item = align_gdf_crs(gdf, ref_crs)
         if item.geometry.name != ref_geom_col:
             item = item.rename_geometry(ref_geom_col)
         aligned.append(item)

@@ -43,11 +43,11 @@ from rsgispy.tools.tables import (
 from rsgispy.vectorprocess import VectorInput
 from rsgispy.zonalstats._helpers import (
     is_valid_pixel_value as _is_valid_pixel_value,
+    load_zonal_vec_gdf as _load_zonal_vec_gdf,
     open_validated_zonal_inputs as _open_validated_zonal_inputs,
     open_validated_zonal_multiband_inputs as _open_validated_zonal_multiband_inputs,
-    read_vec_file as _read_vec_file,
+    run_zonal_file_op as _run_zonal_file_op,
     sample_point_pixel as _sample_point_pixel,
-    write_vec_file as _write_vec_file,
 )
 
 __all__ = [
@@ -356,44 +356,31 @@ def calc_zonal_band_stats_file(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    is_gdf_input = isinstance(vec_file, gpd.GeoDataFrame)
-    vec_gdf = _read_vec_file(vec_file, vec_lyr)
-    vec_gdf = calc_zonal_band_stats(
-        vec_gdf,
-        input_img,
-        img_band,
-        min_thres,
-        max_thres,
-        out_no_data_val,
-        min_field=min_field,
-        max_field=max_field,
-        mean_field=mean_field,
-        stddev_field=stddev_field,
-        sum_field=sum_field,
-        count_field=count_field,
-        mode_field=mode_field,
-        median_field=median_field,
-        vec_def_epsg=vec_def_epsg,
-        use_pbar=use_pbar,
-    )
-    if out_vec_file is not None:
-        _write_vec_file(
+    return _run_zonal_file_op(
+        vec_file,
+        vec_lyr,
+        lambda vec_gdf: calc_zonal_band_stats(
             vec_gdf,
-            out_vec_file,
-            out_vec_lyr if out_vec_lyr is not None else vec_lyr,
-            out_compress=out_compress,
-        )
-        return None
-    if is_gdf_input:
-        return vec_gdf
-    _write_vec_file(
-        vec_gdf,
-        vec_file,  # type: ignore[arg-type]
-        out_vec_lyr if out_vec_lyr is not None else vec_lyr,
-        replace_layer=True,
+            input_img,
+            img_band,
+            min_thres,
+            max_thres,
+            out_no_data_val,
+            min_field=min_field,
+            max_field=max_field,
+            mean_field=mean_field,
+            stddev_field=stddev_field,
+            sum_field=sum_field,
+            count_field=count_field,
+            mode_field=mode_field,
+            median_field=median_field,
+            vec_def_epsg=vec_def_epsg,
+            use_pbar=use_pbar,
+        ),
+        out_vec_file=out_vec_file,
+        out_vec_lyr=out_vec_lyr,
         out_compress=out_compress,
     )
-    return None
 
 
 def calc_zonal_band_stats(
@@ -463,8 +450,7 @@ def calc_zonal_band_stats(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    if isinstance(vec_gdf, (str, os.PathLike)):
-        vec_gdf = _read_vec_file(vec_gdf, vec_lyr)
+    vec_gdf = _load_zonal_vec_gdf(vec_gdf, vec_lyr)
     field_map: Dict[str, Optional[str]] = {
         "min": min_field,
         "max": max_field,
@@ -544,34 +530,21 @@ def calc_zonal_poly_pts_band_stats_file(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    is_gdf_input = isinstance(vec_file, gpd.GeoDataFrame)
-    vec_gdf = _read_vec_file(vec_file, vec_lyr)
-    vec_gdf = calc_zonal_poly_pts_band_stats(
-        vec_gdf,
-        input_img,
-        img_band,
-        out_field,
-        vec_def_epsg=vec_def_epsg,
-        use_pbar=use_pbar,
-    )
-    if out_vec_file is not None:
-        _write_vec_file(
+    return _run_zonal_file_op(
+        vec_file,
+        vec_lyr,
+        lambda vec_gdf: calc_zonal_poly_pts_band_stats(
             vec_gdf,
-            out_vec_file,
-            out_vec_lyr if out_vec_lyr is not None else vec_lyr,
-            out_compress=out_compress,
-        )
-        return None
-    if is_gdf_input:
-        return vec_gdf
-    _write_vec_file(
-        vec_gdf,
-        vec_file,  # type: ignore[arg-type]
-        out_vec_lyr if out_vec_lyr is not None else vec_lyr,
-        replace_layer=True,
+            input_img,
+            img_band,
+            out_field,
+            vec_def_epsg=vec_def_epsg,
+            use_pbar=use_pbar,
+        ),
+        out_vec_file=out_vec_file,
+        out_vec_lyr=out_vec_lyr,
         out_compress=out_compress,
     )
-    return None
 
 
 def calc_zonal_poly_pts_band_stats(
@@ -617,11 +590,7 @@ def calc_zonal_poly_pts_band_stats(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    if vec_gdf is None:
-        raise rsgispy.RSGISPyException("The inputted vector layer was None")
-
-    if isinstance(vec_gdf, (str, os.PathLike)):
-        vec_gdf = _read_vec_file(vec_gdf, vec_lyr)
+    vec_gdf = _load_zonal_vec_gdf(vec_gdf, vec_lyr)
 
     if not out_field:
         raise rsgispy.RSGISPyException(
@@ -735,46 +704,33 @@ def calc_zonal_band_stats_test_poly_pts_file(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    is_gdf_input = isinstance(vec_file, gpd.GeoDataFrame)
-    vec_gdf = _read_vec_file(vec_file, vec_lyr)
-    vec_gdf = calc_zonal_band_stats_test_poly_pts(
-        vec_gdf,
-        input_img,
-        img_band,
-        min_thres,
-        max_thres,
-        out_no_data_val,
-        percentile=percentile,
-        percentile_field=percentile_field,
-        min_field=min_field,
-        max_field=max_field,
-        mean_field=mean_field,
-        stddev_field=stddev_field,
-        sum_field=sum_field,
-        count_field=count_field,
-        mode_field=mode_field,
-        median_field=median_field,
-        vec_def_epsg=vec_def_epsg,
-        use_pbar=use_pbar,
-    )
-    if out_vec_file is not None:
-        _write_vec_file(
+    return _run_zonal_file_op(
+        vec_file,
+        vec_lyr,
+        lambda vec_gdf: calc_zonal_band_stats_test_poly_pts(
             vec_gdf,
-            out_vec_file,
-            out_vec_lyr if out_vec_lyr is not None else vec_lyr,
-            out_compress=out_compress,
-        )
-        return None
-    if is_gdf_input:
-        return vec_gdf
-    _write_vec_file(
-        vec_gdf,
-        vec_file,  # type: ignore[arg-type]
-        out_vec_lyr if out_vec_lyr is not None else vec_lyr,
-        replace_layer=True,
+            input_img,
+            img_band,
+            min_thres,
+            max_thres,
+            out_no_data_val,
+            percentile=percentile,
+            percentile_field=percentile_field,
+            min_field=min_field,
+            max_field=max_field,
+            mean_field=mean_field,
+            stddev_field=stddev_field,
+            sum_field=sum_field,
+            count_field=count_field,
+            mode_field=mode_field,
+            median_field=median_field,
+            vec_def_epsg=vec_def_epsg,
+            use_pbar=use_pbar,
+        ),
+        out_vec_file=out_vec_file,
+        out_vec_lyr=out_vec_lyr,
         out_compress=out_compress,
     )
-    return None
 
 
 def calc_zonal_band_stats_test_poly_pts(
@@ -850,8 +806,7 @@ def calc_zonal_band_stats_test_poly_pts(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    if isinstance(vec_gdf, (str, os.PathLike)):
-        vec_gdf = _read_vec_file(vec_gdf, vec_lyr)
+    vec_gdf = _load_zonal_vec_gdf(vec_gdf, vec_lyr)
     field_map: Dict[str, Optional[str]] = {
         "min": min_field,
         "max": max_field,
@@ -935,35 +890,22 @@ def calc_zonal_band_pxl_counts_file(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    is_gdf_input = isinstance(vec_file, gpd.GeoDataFrame)
-    vec_gdf = _read_vec_file(vec_file, vec_lyr)
-    vec_gdf = calc_zonal_band_pxl_counts(
-        vec_gdf,
-        input_img,
-        img_band,
-        vals_lut,
-        total_field=total_field,
-        vec_def_epsg=vec_def_epsg,
-        use_pbar=use_pbar,
-    )
-    if out_vec_file is not None:
-        _write_vec_file(
+    return _run_zonal_file_op(
+        vec_file,
+        vec_lyr,
+        lambda vec_gdf: calc_zonal_band_pxl_counts(
             vec_gdf,
-            out_vec_file,
-            out_vec_lyr if out_vec_lyr is not None else vec_lyr,
-            out_compress=out_compress,
-        )
-        return None
-    if is_gdf_input:
-        return vec_gdf
-    _write_vec_file(
-        vec_gdf,
-        vec_file,  # type: ignore[arg-type]
-        out_vec_lyr if out_vec_lyr is not None else vec_lyr,
-        replace_layer=True,
+            input_img,
+            img_band,
+            vals_lut,
+            total_field=total_field,
+            vec_def_epsg=vec_def_epsg,
+            use_pbar=use_pbar,
+        ),
+        out_vec_file=out_vec_file,
+        out_vec_lyr=out_vec_lyr,
         out_compress=out_compress,
     )
-    return None
 
 
 def calc_zonal_band_pxl_counts(
@@ -1012,11 +954,7 @@ def calc_zonal_band_pxl_counts(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    if vec_gdf is None:
-        raise rsgispy.RSGISPyException("The inputted vector layer was None")
-
-    if isinstance(vec_gdf, (str, os.PathLike)):
-        vec_gdf = _read_vec_file(vec_gdf, vec_lyr)
+    vec_gdf = _load_zonal_vec_gdf(vec_gdf, vec_lyr)
 
     if not vals_lut:
         raise rsgispy.RSGISPyException(
@@ -1266,8 +1204,7 @@ def export_poly_pxls_to_df(
             out_file, out_format=out_format, out_compress=out_compress
         )
 
-    if isinstance(vec_gdf, (str, os.PathLike)):
-        vec_gdf = _read_vec_file(vec_gdf, vec_lyr)
+    vec_gdf = _load_zonal_vec_gdf(vec_gdf, vec_lyr)
 
     geom_types = set(vec_gdf.geom_type.dropna().unique())
     if geom_types and not geom_types.issubset({"Polygon", "MultiPolygon"}):

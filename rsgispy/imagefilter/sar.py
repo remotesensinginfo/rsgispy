@@ -4,12 +4,12 @@ SAR backscatter adaptive speckle filters for raster imagery.
 
 from typing import List, Optional
 
-from rsgispy.imagefilter._helper import (
+from rsgispy.imagefilter._helpers import (
     make_lee_stat_fn,
     run_window_stat_filter,
     validate_positive,
 )
-from rsgispy.imagefilter._sar_helper import (
+from rsgispy.imagefilter._sar_helpers import (
     make_enhanced_frost_stat_fn,
     make_enhanced_lee_stat_fn,
     make_frost_stat_fn,

@@ -5,6 +5,7 @@ conversions, and bounding box splitting utilities.
 Adapted from https://github.com/Turbo87/utm/blob/master/utm/conversion.py.
 """
 
+import re
 from typing import List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -38,6 +39,7 @@ __all__ = [
     "R",
     "ZONE_LETTERS",
     "min_max_eastings_for_lat",
+    "parse_utm_zone_str",
     "epsg_for_utm",
     "utm_from_epsg",
     "split_wgs84_bbox_utm_zones",
@@ -78,6 +80,7 @@ P5 = 1097.0 / 512 * _E4
 R = 6378137
 
 ZONE_LETTERS = "CDEFGHJKLMNPQRSTUVWXX"
+_UTM_ZONE_RE = re.compile(r"^(\d{1,2})([NSns])$")
 
 
 def min_max_eastings_for_lat(latitude: float, zone: int = 1) -> Tuple[float, float]:
@@ -104,6 +107,35 @@ def min_max_eastings_for_lat(latitude: float, zone: int = 1) -> Tuple[float, flo
     max_utm = from_latlon(latitude, max_long, force_zone_number=zone)
 
     return float(min_utm[0]), float(max_utm[0])
+
+
+def parse_utm_zone_str(utm_str: str) -> Tuple[int, str]:
+    """
+    Parse a WGS84 UTM zone specification string such as ``'30N'`` or ``'01S'``
+    into ``(zone, hemisphere)``.
+
+    :param utm_str: UTM zone string matching ``<zone><N|S>`` (zone ``1..60``).
+    :return: Tuple ``(zone_number, hemisphere)`` where ``hemisphere`` is
+             ``'N'`` or ``'S'``.
+
+    .. code:: python
+
+        import rsgispy.tools.utm
+        zone, hemi = rsgispy.tools.utm.parse_utm_zone_str("30N")
+    """
+    match = _UTM_ZONE_RE.match(utm_str.strip())
+    if not match:
+        raise rsgispy.RSGISPyException(
+            f"Invalid UTM specification '{utm_str}': expected <zone><N|S> "
+            "(e.g., 36N or 01S)."
+        )
+    zone = int(match.group(1))
+    hemi = match.group(2).upper()
+    if not 1 <= zone <= 60:
+        raise rsgispy.RSGISPyException(
+            f"UTM zone must be between 1 and 60 (got {zone})."
+        )
+    return zone, hemi
 
 
 def epsg_for_utm(zone: int, hemisphere: str) -> int:

@@ -5,9 +5,10 @@ username/password credential file utilities.
 
 import base64
 import os
-from typing import Tuple
+from typing import Optional, Sequence, Tuple, Union
 
 import rsgispy
+import rsgispy.tools.system
 import rsgispy.tools.textio
 
 __all__ = [
@@ -15,6 +16,8 @@ __all__ = [
     "decode_base64_text",
     "create_username_password_file",
     "get_username_password",
+    "resolve_env_credential",
+    "resolve_env_user_pass",
 ]
 
 
@@ -101,3 +104,94 @@ def get_username_password(input_file: str) -> Tuple[str, str]:
         decode_base64_text(in_data_lst[0]),
         decode_base64_text(in_data_lst[1]),
     )
+
+
+def resolve_env_credential(
+    value: Optional[str],
+    env_vars: Union[str, Sequence[str]],
+    *,
+    required: bool = False,
+    label: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Resolve a credential string, falling back to one or more environment
+    variables when ``value`` is ``None``.
+
+    :param value: Explicitly supplied credential string, or ``None`` to look up
+                  environment variables.
+    :param env_vars: Environment variable name or ordered sequence of fallback
+                     environment variable names.
+    :param required: When ``True``, raise :class:`rsgispy.RSGISPyException` if
+                     the resolved value is ``None`` or blank.
+    :param label: Human-readable credential label used in error messages when
+                  ``required=True`` (e.g. ``"USGS username"``).
+    :return: Resolved credential string, or ``None`` if unset and not required.
+
+    .. code:: python
+
+        import rsgispy.tools.credentials
+        api_key = rsgispy.tools.credentials.resolve_env_credential(
+            None, ("RSGIS_PLANET_API_KEY", "PL_API_KEY")
+        )
+    """
+    var_names = [env_vars] if isinstance(env_vars, str) else list(env_vars)
+    resolved = value
+    if resolved is None:
+        for var_name in var_names:
+            resolved = rsgispy.tools.system.get_environment_variable(var_name)
+            if resolved is not None:
+                break
+    if required and (not resolved or not str(resolved).strip()):
+        desc = label or "Credential"
+        vars_desc = " or ".join(var_names)
+        raise rsgispy.RSGISPyException(
+            f"{desc} must be provided or set via the {vars_desc} "
+            f"environment variable."
+        )
+    return resolved
+
+
+def resolve_env_user_pass(
+    username: Optional[str],
+    password: Optional[str],
+    user_env_vars: Union[str, Sequence[str]],
+    pass_env_vars: Union[str, Sequence[str]],
+    *,
+    required: bool = False,
+    service_name: str = "",
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Resolve ``(username, password)`` credentials from explicit arguments or
+    environment variables.
+
+    :param username: Explicit username, or ``None`` to read ``user_env_vars``.
+    :param password: Explicit password, or ``None`` to read ``pass_env_vars``.
+    :param user_env_vars: Username environment variable name(s).
+    :param pass_env_vars: Password environment variable name(s).
+    :param required: When ``True``, raise :class:`rsgispy.RSGISPyException` if
+                     either username or password is missing or blank.
+    :param service_name: Optional service prefix for error messages (e.g.
+                         ``"USGS"``).
+    :return: ``(username, password)`` tuple.
+
+    .. code:: python
+
+        import rsgispy.tools.credentials
+        user, passwd = rsgispy.tools.credentials.resolve_env_user_pass(
+            None, None, "RSGIS_COP_USER", "RSGIS_COP_PASS"
+        )
+    """
+    prefix = f"{service_name} " if service_name else ""
+    resolved_user = resolve_env_credential(
+        username,
+        user_env_vars,
+        required=required,
+        label=f"{prefix}username",
+    )
+    resolved_pass = resolve_env_credential(
+        password,
+        pass_env_vars,
+        required=required,
+        label=f"{prefix}password",
+    )
+    return resolved_user, resolved_pass

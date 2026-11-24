@@ -15,9 +15,9 @@ from rasterio.windows import Window
 import rsgispy
 from rsgispy.vectorprocess import VectorInput
 from rsgispy.zonalstats._helpers import (
+    load_zonal_vec_gdf as _load_zonal_vec_gdf,
     open_validated_zonal_multiband_inputs as _open_validated_zonal_multiband_inputs,
-    read_vec_file as _read_vec_file,
-    write_vec_file as _write_vec_file,
+    run_zonal_file_op as _run_zonal_file_op,
 )
 
 __all__ = [
@@ -232,38 +232,25 @@ def ext_point_band_values_file(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    is_gdf_input = isinstance(vec_file, gpd.GeoDataFrame)
-    vec_gdf = _read_vec_file(vec_file, vec_lyr)
-    vec_gdf = ext_point_band_values(
-        vec_gdf,
-        input_img,
-        img_band,
-        min_thres,
-        max_thres,
-        out_no_data_val,
-        out_field=out_field,
-        reproj_vec=reproj_vec,
-        vec_def_epsg=vec_def_epsg,
-        use_pbar=use_pbar,
-    )
-    if out_vec_file is not None:
-        _write_vec_file(
+    return _run_zonal_file_op(
+        vec_file,
+        vec_lyr,
+        lambda vec_gdf: ext_point_band_values(
             vec_gdf,
-            out_vec_file,
-            out_vec_lyr if out_vec_lyr is not None else vec_lyr,
-            out_compress=out_compress,
-        )
-        return None
-    if is_gdf_input:
-        return vec_gdf
-    _write_vec_file(
-        vec_gdf,
-        vec_file,  # type: ignore[arg-type]
-        out_vec_lyr if out_vec_lyr is not None else vec_lyr,
-        replace_layer=True,
+            input_img,
+            img_band,
+            min_thres,
+            max_thres,
+            out_no_data_val,
+            out_field=out_field,
+            reproj_vec=reproj_vec,
+            vec_def_epsg=vec_def_epsg,
+            use_pbar=use_pbar,
+        ),
+        out_vec_file=out_vec_file,
+        out_vec_lyr=out_vec_lyr,
         out_compress=out_compress,
     )
-    return None
 
 
 def ext_point_band_values(
@@ -330,11 +317,7 @@ def ext_point_band_values(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    if vec_gdf is None:
-        raise rsgispy.RSGISPyException("The inputted vector layer was None")
-
-    if isinstance(vec_gdf, (str, os.PathLike)):
-        vec_gdf = _read_vec_file(vec_gdf, vec_lyr)
+    vec_gdf = _load_zonal_vec_gdf(vec_gdf, vec_lyr)
 
     geom_types = set(vec_gdf.geom_type.dropna().unique())
     if not geom_types or not geom_types.issubset({"Point"}):

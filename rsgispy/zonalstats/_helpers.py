@@ -4,7 +4,8 @@ Internal shared vector/raster helpers for :mod:`rsgispy.zonalstats`.
 
 from contextlib import contextmanager
 import math
-from typing import Iterator, List, Optional, Sequence, Tuple, Union
+import os
+from typing import Callable, Iterator, List, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
@@ -16,6 +17,7 @@ import rsgispy
 from rsgispy.imageprocess import bbox_from_dataset, validate_band_index
 import rsgispy.tools.geometry
 from rsgispy.vectorprocess import (
+    VectorInput,
     get_gdf_bbox,
     read_vec_gdf as read_vec_file,
     resolve_vector_crs,
@@ -26,14 +28,69 @@ __all__ = [
     "check_bbox_overlap",
     "get_gdf_bbox",
     "is_valid_pixel_value",
+    "load_zonal_vec_gdf",
     "normalise_band_list",
     "open_validated_zonal_inputs",
     "open_validated_zonal_multiband_inputs",
     "read_vec_file",
     "resolve_vector_crs",
+    "run_zonal_file_op",
     "sample_point_pixel",
     "write_vec_file",
 ]
+
+
+def load_zonal_vec_gdf(
+    vec_gdf: Optional[VectorInput],
+    vec_lyr: Optional[str] = None,
+) -> gpd.GeoDataFrame:
+    """
+    Validate that ``vec_gdf`` is not ``None`` and load it into a
+    :class:`geopandas.GeoDataFrame` when supplied as a file path.
+    """
+    if vec_gdf is None:
+        raise rsgispy.RSGISPyException("The inputted vector layer was None")
+    if isinstance(vec_gdf, (str, os.PathLike)):
+        return read_vec_file(vec_gdf, vec_lyr)
+    return vec_gdf
+
+
+def run_zonal_file_op(
+    vec_file: VectorInput,
+    vec_lyr: Optional[str],
+    compute_fn: Callable[[gpd.GeoDataFrame], gpd.GeoDataFrame],
+    *,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
+    out_compress: Optional[Union[str, bool]] = None,
+) -> Optional[gpd.GeoDataFrame]:
+    """
+    Load ``vec_file``, apply ``compute_fn``, and either write the updated layer
+    to disk (to ``out_vec_file`` or in-place onto ``vec_file``) or return the
+    in-memory :class:`geopandas.GeoDataFrame`.
+    """
+    is_gdf_input = isinstance(vec_file, gpd.GeoDataFrame)
+    vec_gdf = read_vec_file(vec_file, vec_lyr)
+    vec_gdf = compute_fn(vec_gdf)
+    target_lyr = out_vec_lyr if out_vec_lyr is not None else vec_lyr
+    if out_vec_file is not None:
+        write_vec_file(
+            vec_gdf,
+            out_vec_file,
+            target_lyr,
+            out_compress=out_compress,
+        )
+        return None
+    if is_gdf_input:
+        return vec_gdf
+    write_vec_file(
+        vec_gdf,
+        vec_file,  # type: ignore[arg-type]
+        target_lyr,
+        replace_layer=True,
+        out_compress=out_compress,
+    )
+    return None
 
 
 def normalise_band_list(
