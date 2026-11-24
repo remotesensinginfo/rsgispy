@@ -186,10 +186,10 @@ def _fit_kmeans_fallback(
     samples: np.ndarray,
     n_clusters: int,
     max_iter: int,
-    random_state: Optional[int],
+    rnd_seed: Optional[int],
 ) -> np.ndarray:
     """Deterministic pure-NumPy K-means fallback when scikit-learn is absent."""
-    rng = np.random.default_rng(random_state)
+    rng = np.random.default_rng(rnd_seed)
     n_samples = samples.shape[0]
     init_idx = rng.choice(n_samples, size=n_clusters, replace=False)
     centroids = samples[init_idx].copy()
@@ -220,7 +220,7 @@ def _fit_kmeans_centroids(
     stds: np.ndarray,
     n_clusters: int,
     max_iter: int,
-    random_state: Optional[int],
+    rnd_seed: Optional[int],
 ) -> np.ndarray:
     """Standardise global samples and fit K-means centroids deterministically."""
     if samples.shape[0] == 0:
@@ -239,13 +239,13 @@ def _fit_kmeans_centroids(
             n_clusters=eff_k,
             max_iter=max(10, int(max_iter) * 4),
             n_init=3,
-            random_state=random_state,
+            random_state=rnd_seed,
         )
         km.fit(std_samples)
         return np.asarray(km.cluster_centers_, dtype=np.float64)
     except ImportError:
         return _fit_kmeans_fallback(
-            std_samples, eff_k, max(10, int(max_iter) * 4), random_state
+            std_samples, eff_k, max(10, int(max_iter) * 4), rnd_seed
         )
 
 
@@ -336,7 +336,7 @@ def _shepherd_tile_worker(
             halo_clumps = lut[halo_clumps]
 
     core_labels = relabel_segments_array(
-        crop_halo_labels(halo_clumps, tile), nodata_value=0, contiguous=True
+        crop_halo_labels(halo_clumps, tile), no_data_val=0, contiguous=True
     )
     core_clusters = crop_halo_labels(cluster_map, tile)
     core_clusters = np.where(core_labels > 0, core_clusters, 0)
@@ -382,9 +382,9 @@ def shepherd_segmentation_array(
     max_iter: int = 50,
     tile_size: Optional[Union[int, Tuple[int, int]]] = None,
     overlap: int = 32,
-    n_workers: int = 1,
+    n_jobs: int = 1,
     stitch_seams: bool = True,
-    random_state: Optional[int] = 42,
+    rnd_seed: Optional[int] = 42,
     use_numba: bool = True,
     no_data_val: Optional[float] = None,
     use_pbar: bool = False,
@@ -416,12 +416,12 @@ def shepherd_segmentation_array(
         Optional core tile size ``(tile_h, tile_w)`` for tiled processing.
     overlap : int, optional
         Halo padding in pixels around each tile (Default = ``32``).
-    n_workers : int, optional
+    n_jobs : int, optional
         Number of worker processes for tiled execution (Default = ``1``).
     stitch_seams : bool, optional
         Merge identical K-means cluster segments across tile boundaries
         (Default = ``True``).
-    random_state : int or None, optional
+    rnd_seed : int or None, optional
         Deterministic random seed for K-means initialisation (Default = ``42``).
     use_numba : bool, optional
         Enable optional ``numba`` JIT acceleration when installed
@@ -473,7 +473,7 @@ def shepherd_segmentation_array(
         stds=stds,
         n_clusters=n_clusters,
         max_iter=max_iter,
-        random_state=random_state,
+        rnd_seed=rnd_seed,
     )
     params = {
         "centroids": centroids,
@@ -493,7 +493,7 @@ def shepherd_segmentation_array(
         params=params,
         tile_size=tile_size,
         overlap=overlap,
-        n_workers=n_workers,
+        n_jobs=n_jobs,
         stitch_seams=stitch_seams,
         seam_mode="exact_aux",
         min_pixels=pipeline_min_px,
@@ -513,9 +513,9 @@ def shepherd_segmentation(
     bands: Optional[Sequence[int]] = None,
     tile_size: Optional[Union[int, Tuple[int, int]]] = None,
     overlap: int = 32,
-    n_workers: int = 1,
+    n_jobs: int = 1,
     stitch_seams: bool = True,
-    random_state: Optional[int] = 42,
+    rnd_seed: Optional[int] = 42,
     use_numba: bool = True,
     *,
     gdalformat: str = "GTIFF",
@@ -554,13 +554,13 @@ def shepherd_segmentation(
         16M pixels).
     overlap : int, optional
         Halo overlap pixels around each tile (Default = ``32``).
-    n_workers : int, optional
+    n_jobs : int, optional
         Number of worker processes for parallel tile processing
         (Default = ``1``).
     stitch_seams : bool, optional
         Reconnect segments sharing the same K-means cluster across tile seams
         (Default = ``True``).
-    random_state : int or None, optional
+    rnd_seed : int or None, optional
         Random seed for deterministic K-means clustering (Default = ``42``).
     use_numba : bool, optional
         Enable optional ``numba`` JIT acceleration when available
@@ -583,7 +583,7 @@ def shepherd_segmentation(
     Stage 1 streams ``input_img`` block-by-block to compute global band means,
     standard deviations, and subsampled pixels for K-means clustering so all
     tiles share the same centroids. Stage 2 executes per-tile assignment,
-    clumping, and elimination in parallel using ``n_workers``.
+    clumping, and elimination in parallel using ``n_jobs``.
 
     Examples
     --------
@@ -616,7 +616,7 @@ def shepherd_segmentation(
         stds=stds,
         n_clusters=n_clusters,
         max_iter=max_iter,
-        random_state=random_state,
+        rnd_seed=rnd_seed,
     )
     params = {
         "centroids": centroids,
@@ -637,7 +637,7 @@ def shepherd_segmentation(
         params=params,
         tile_size=tile_size,
         overlap=overlap,
-        n_workers=n_workers,
+        n_jobs=n_jobs,
         stitch_seams=stitch_seams,
         seam_mode="exact_aux",
         min_pixels=pipeline_min_px,

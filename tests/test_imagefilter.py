@@ -320,7 +320,7 @@ def test_imagefilter_submodules_and_sar_filters(tmp_path):
 
 
 def test_glcm_texture_filters(tmp_path):
-    """Test GLCM texture properties against skimage and multi-band/nodata behavior."""
+    """Test GLCM texture properties against skimage and multi-band/nodata behaviour."""
     import rsgispy.imagefilter.texture as if_tex
 
     sk_feat = pytest.importorskip("skimage.feature")

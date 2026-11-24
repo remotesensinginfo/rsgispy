@@ -723,7 +723,7 @@ def extract_avg_endmembers(
             "rois",
             out_file="endmembers.csv",
             class_col="landcover",
-            pxl_in_poly_method=zs.METHOD_POLYCONTAINSPIXELCENTER,
+            pxl_in_poly_method=zs.METHOD_POLYCONTAINSPIXELCENTRE,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -933,7 +933,7 @@ def calc_ppi(
     lthres: float = 0,
     uthres: float = 0,
     img_gain: float = 1,
-    seed: Optional[int] = None,
+    rnd_seed: Optional[int] = None,
     *,
     gdalformat: str = "GTIFF",
     calc_stats: bool = True,
@@ -953,7 +953,7 @@ def calc_ppi(
                    (Default = ``0``).
     :param img_gain: Positive gain divisor applied to input reflectance values
                      when not equal to ``1`` (Default = ``1``).
-    :param seed: Optional random seed for reproducible projections.
+    :param rnd_seed: Optional random seed for reproducible projections.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param calc_stats: If ``True``, compute statistics and pyramids on
                        ``output_img`` (Default = ``True``).
@@ -968,7 +968,7 @@ def calc_ppi(
             "pca_img.tif",
             "ppi_out.tif",
             niters=500,
-            seed=42,
+            rnd_seed=42,
             gdalformat="GTIFF",
         )
     """
@@ -981,8 +981,8 @@ def calc_ppi(
         raise rsgispy.RSGISPyException("img_gain must be positive.")
 
     eff_seed = (
-        int(seed)
-        if seed is not None
+        int(rnd_seed)
+        if rnd_seed is not None
         else int(np.random.default_rng().integers(0, 2**63 - 1))
     )
     u16_max = np.uint32(np.iinfo(np.uint16).max)

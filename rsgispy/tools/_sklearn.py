@@ -50,7 +50,7 @@ def check_sklearn_available(
 
 def clone_sklearn_estimator(
     est_obj: Any,
-    random_state: Optional[int] = None,
+    rnd_seed: Optional[int] = None,
     extra: str = "stats",
 ) -> Any:
     """
@@ -59,10 +59,10 @@ def clone_sklearn_estimator(
     """
     check_sklearn_available("clone_sklearn_estimator", extra=extra)
     cloned = sklearn.base.clone(est_obj, safe=True)
-    if random_state is not None:
+    if rnd_seed is not None:
         params = cloned.get_params(deep=False)
         if "random_state" in params:
-            cloned.set_params(random_state=int(random_state))
+            cloned.set_params(random_state=int(rnd_seed))
     return cloned
 
 
@@ -80,7 +80,7 @@ def fit_clean_sklearn_estimator(
     train_x: Any,
     train_y: Optional[np.ndarray] = None,
     sync_input: bool = True,
-    random_state: Optional[int] = None,
+    rnd_seed: Optional[int] = None,
     extra: str = "stats",
 ) -> Any:
     """
@@ -88,7 +88,7 @@ def fit_clean_sklearn_estimator(
     (and ``train_y`` when provided), and optionally update ``est_obj`` in place.
     """
     clean_est = clone_sklearn_estimator(
-        est_obj, random_state=random_state, extra=extra
+        est_obj, rnd_seed=rnd_seed, extra=extra
     )
     if train_y is None:
         clean_est.fit(train_x)

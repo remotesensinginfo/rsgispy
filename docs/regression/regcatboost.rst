@@ -54,7 +54,7 @@ uses ``loss_function="MultiRMSE"`` for native multi-output regression.
         cb_regressor=model,
         in_msk_img="landsat_valid_mask.tif",
         img_msk_val=1,
-        out_img="landsat_canopy_cover_cb.tif",
+        output_img="landsat_canopy_cover_cb.tif",
     )
 
 Optuna Hyperparameter Search Spaces

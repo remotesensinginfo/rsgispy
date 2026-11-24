@@ -74,7 +74,7 @@ columns in ``target_cols`` (for example, ``["canopy_cover", "canopy_height"]``).
         xgb_regressor=model,
         in_msk_img="landsat_valid_mask.tif",
         img_msk_val=1,
-        out_img="landsat_canopy_cover_xgb.tif",
+        output_img="landsat_canopy_cover_xgb.tif",
     )
 
 Optuna Hyperparameter Search Spaces

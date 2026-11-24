@@ -280,7 +280,7 @@ def _read_change_window(
 def _stream_band_change_op(
     in_base_img: str,
     in_chng_img: str,
-    out_img: str,
+    output_img: str,
     op_kind: str,
     vld_msk_img: Optional[str],
     vld_msk_val: int,
@@ -359,7 +359,7 @@ def _stream_band_change_op(
         dst = create_output_from_dataset(
             stack=stack,
             src=base_src,
-            output_img=out_img,
+            output_img=output_img,
             gdalformat=gdalformat,
             out_rio_dtype=out_rio_dtype,
             count=n_bands,
@@ -417,7 +417,7 @@ def _stream_band_change_op(
 
     if calc_stats:
         pop_img_stats(
-            out_img,
+            output_img,
             no_data_val=no_data_val,
             calc_pyramids=True,
             use_pbar=use_pbar,
@@ -510,7 +510,7 @@ def image_difference(
     _stream_band_change_op(
         in_base_img=in_base_img,
         in_chng_img=in_chng_img,
-        out_img=out_diff_img,
+        output_img=out_diff_img,
         op_kind="diff",
         vld_msk_img=vld_msk_img,
         vld_msk_val=vld_msk_val,
@@ -581,7 +581,7 @@ def image_ratio(
     _stream_band_change_op(
         in_base_img=in_base_img,
         in_chng_img=in_chng_img,
-        out_img=out_ratio_img,
+        output_img=out_ratio_img,
         op_kind="ratio",
         vld_msk_img=vld_msk_img,
         vld_msk_val=vld_msk_val,
@@ -781,7 +781,7 @@ def slow_feature_analysis(
                         (Default = ``1e-6``).
     :param sfa_norm_trans: If ``True``, normalise the transformation matrix
                            (Default = ``False``).
-    :param sfa_regular: If ``True``, regularise the generalized eigenvalue
+    :param sfa_regular: If ``True``, regularise the generalised eigenvalue
                         matrix with a smoothness penalty (Default = ``False``).
     :param use_kmeans: Use K-means clustering instead of Otsu thresholding for
                        the binary change mask (Default = ``False``).
@@ -857,16 +857,16 @@ def slow_feature_analysis(
 
         mean_x = np.sum(weight * img_x_mat, axis=1, keepdims=True) / sum_w
         mean_y = np.sum(weight * img_y_mat, axis=1, keepdims=True) / sum_w
-        center_x = img_x_mat - mean_x
-        center_y = img_y_mat - mean_y
+        centre_x = img_x_mat - mean_x
+        centre_y = img_y_mat - mean_y
 
-        var_x = np.sum(weight * np.square(center_x), axis=1, keepdims=True) / denom
-        var_y = np.sum(weight * np.square(center_y), axis=1, keepdims=True) / denom
+        var_x = np.sum(weight * np.square(centre_x), axis=1, keepdims=True) / denom
+        var_y = np.sum(weight * np.square(centre_y), axis=1, keepdims=True) / denom
         std_x = np.sqrt(np.maximum(var_x, 1e-12))
         std_y = np.sqrt(np.maximum(var_y, 1e-12))
 
-        norm_x = center_x / std_x
-        norm_y = center_y / std_y
+        norm_x = centre_x / std_x
+        norm_y = centre_y / std_y
         diff_img = norm_x - norm_y
         mat_a = (weight * diff_img) @ diff_img.T / denom
         mat_b = ((weight * norm_x) @ norm_x.T + (weight * norm_y) @ norm_y.T) / (
@@ -958,13 +958,13 @@ def slow_feature_analysis(
 
 
 def _covw(
-    center_x: np.ndarray, center_y: np.ndarray, w: np.ndarray
+    centre_x: np.ndarray, centre_y: np.ndarray, w: np.ndarray
 ) -> np.ndarray:
     """Compute weighted joint covariance matrix for MAD."""
     n = w.shape[1]
     sqrt_w = np.sqrt(np.maximum(w, 0.0))
     sum_w = max(float(w.sum()), 1e-12)
-    v = np.concatenate((center_x, center_y), axis=0) * sqrt_w
+    v = np.concatenate((centre_x, centre_y), axis=0) * sqrt_w
     return (v @ v.T) / sum_w * (float(n) / max(1.0, float(n - 1)))
 
 
@@ -1080,10 +1080,10 @@ def multivariate_alteration_detection(
         sum_w = max(float(np.sum(weight)), 1e-12)
         mean_x = np.sum(weight * img_x_mat, axis=1, keepdims=True) / sum_w
         mean_y = np.sum(weight * img_y_mat, axis=1, keepdims=True) / sum_w
-        center_x = img_x_mat - mean_x
-        center_y = img_y_mat - mean_y
+        centre_x = img_x_mat - mean_x
+        centre_y = img_y_mat - mean_y
 
-        cov_xy = _covw(center_x, center_y, weight)
+        cov_xy = _covw(centre_x, centre_y, weight)
         size = cov_xy.shape[0]
         sigma_11 = cov_xy[0:n_bands, 0:n_bands] + 1e-9 * np.eye(n_bands)
         sigma_22 = cov_xy[n_bands:size, n_bands:size] + 1e-9 * np.eye(n_bands)
@@ -1112,7 +1112,7 @@ def multivariate_alteration_detection(
         signs = np.where(cross_corr < 0.0, -1.0, 1.0)
         eigenvector_y = eigenvector_y * signs
 
-        mad_variates = (eigenvector_x.T @ center_x) - (eigenvector_y.T @ center_y)
+        mad_variates = (eigenvector_x.T @ centre_x) - (eigenvector_y.T @ centre_y)
         mad_var = np.maximum(2.0 * (1.0 - np.clip(eigenvalue, -1.0, 0.999999)), 1e-12)
         chi_square_dis = np.sum(
             np.square(mad_variates) / mad_var.reshape(n_bands, 1),

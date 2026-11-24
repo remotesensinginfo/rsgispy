@@ -500,7 +500,7 @@ def train_sklearn_classifier(
         train_x,
         train_y,
         sync_input=not return_model,
-        random_state=rnd_seed,
+        rnd_seed=rnd_seed,
     )
 
     metrics = _calc_split_metrics(fitted_est, train_x, train_y, "train")
@@ -536,9 +536,10 @@ def apply_sklearn_classifier(
     sk_classifier: Union[Any, str, os.PathLike],
     in_msk_img: Union[str, os.PathLike],
     img_msk_val: int,
-    out_class_img: Optional[Union[str, os.PathLike]] = None,
+    output_img: Optional[Union[str, os.PathLike]] = None,
     out_score_img: Optional[Union[str, os.PathLike]] = None,
     img_band_info: Optional[Sequence[ImageBandInfo]] = None,
+    *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     out_no_data_val: Optional[int] = None,
@@ -547,7 +548,7 @@ def apply_sklearn_classifier(
     recode_to_out_ids: bool = True,
     score_max_only: bool = False,
     score_no_data_val: float = -1.0,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
@@ -570,9 +571,9 @@ def apply_sklearn_classifier(
                        classified.
     :param img_msk_val: Pixel value within ``in_msk_img`` identifying pixels to
                         classify.
-    :param out_class_img: Optional output classified ID raster path. At least
-                          one of ``out_class_img`` or ``out_score_img`` must be
-                          provided.
+    :param output_img: Optional output classified ID raster path. At least
+                       one of ``output_img`` or ``out_score_img`` must be
+                       provided.
     :param out_score_img: Optional output ``float32`` probability score raster
                           path (requires classifier ``predict_proba``). By
                           default writes one band per class ordered by class ID;
@@ -584,28 +585,28 @@ def apply_sklearn_classifier(
                           ``cls_cfg`` is a plain class-info mapping).
     :param gdalformat: Output GDAL/rasterio format (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` integer datatype for
-                     ``out_class_img``. When ``None`` (default), automatically
+                     ``output_img``. When ``None`` (default), automatically
                      selects the smallest unsigned integer datatype fitting all
                      output class IDs and nodata.
     :param out_no_data_val: Optional unsigned integer nodata value for
-                            ``out_class_img``. When ``None`` (default), selects
+                            ``output_img``. When ``None`` (default), selects
                             ``0`` if unused by any output class ID, otherwise the
                             next unused unsigned integer.
     :param class_clr_names: If ``True`` (default), apply class RGB colour table
-                            to ``out_class_img`` when output dtype is ``uint8``
+                            to ``output_img`` when output dtype is ``uint8``
                             or ``uint16``.
     :param use_internal_id: Whether ``sk_classifier`` predicts 0-based
                             ``internal_id`` values (Default = ``True``).
     :param recode_to_out_ids: If ``True`` (default) and ``use_internal_id=True``,
                               recode predictions to ``out_id`` values before
-                              writing ``out_class_img``.
+                              writing ``output_img``.
     :param score_max_only: If ``False`` (default), write one probability band
                            per class to ``out_score_img``; if ``True``, write a
                            single band containing maximum class probability.
     :param score_no_data_val: Nodata fill value for ``out_score_img``
                               (Default = ``-1.0``).
-    :param calc_img_stats: If ``True`` (default), compute output statistics and
-                           overview pyramids.
+    :param calc_stats: If ``True`` (default), compute output statistics and
+                       overview pyramids.
     :param block_size: Optional processing block size in pixels.
     :param creation_opts: Optional GDAL creation options mapping.
     :param use_pbar: Display a tqdm progress bar during classification
@@ -620,7 +621,7 @@ def apply_sklearn_classifier(
             sk_classifier=clf,
             in_msk_img="valid_mask.tif",
             img_msk_val=1,
-            out_class_img="classified.tif",
+            output_img="classified.tif",
             out_score_img="class_probs.tif",
         )
     """
@@ -637,7 +638,7 @@ def apply_sklearn_classifier(
         estimator=estimator,
         in_msk_img=in_msk_img,
         img_msk_val=img_msk_val,
-        out_class_img=out_class_img,
+        output_img=output_img,
         out_score_img=out_score_img,
         img_band_info=img_band_info,
         gdalformat=gdalformat,
@@ -648,7 +649,7 @@ def apply_sklearn_classifier(
         recode_to_out_ids=recode_to_out_ids,
         score_max_only=score_max_only,
         score_no_data_val=score_no_data_val,
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         block_size=block_size,
         creation_opts=creation_opts,
         use_pbar=use_pbar,

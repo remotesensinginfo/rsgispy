@@ -11,14 +11,14 @@ interface as :mod:`rsgispy.classification.classsklearn`:
    dataset at once. This supports all ``scikit-learn`` clustering algorithms
    (including transductive estimators without ``predict()``, such as ``DBSCAN``,
    ``OPTICS``, ``AgglomerativeClustering``, and ``SpectralClustering``) with
-   no tile boundary artifacts, but can be slow and memory-intensive on large
+   no tile boundary artefacts, but can be slow and memory-intensive on large
    images.
 2. :func:`img_pixel_sample_cluster` — Extracts a sample of valid pixel values
    from the input image(s), fits the ``scikit-learn`` clusterer on that subset,
    and then applies the fitted model block-by-block across the whole image
    using ``predict()``. This is substantially faster and much more
    memory-efficient for large datasets while remaining free of tile boundary
-   artifacts.
+   artefacts.
 """
 
 from contextlib import ExitStack
@@ -334,6 +334,7 @@ def img_pixel_cluster(
     in_msk_img: Optional[Union[str, os.PathLike]] = None,
     img_msk_val: int = 1,
     no_data_val: Optional[float] = None,
+    *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     out_no_data_val: Optional[int] = None,
@@ -341,7 +342,7 @@ def img_pixel_cluster(
     use_mean_shift_est_band_width: bool = False,
     mean_shift_quantile: float = 0.3,
     mean_shift_n_samples: Optional[int] = None,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     add_clr_tab: bool = True,
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
@@ -360,7 +361,7 @@ def img_pixel_cluster(
     this supports **any** ``scikit-learn`` clustering algorithm—including
     transductive methods that do not implement ``predict()`` (such as
     ``DBSCAN``, ``OPTICS``, ``AgglomerativeClustering``, and
-    ``SpectralClustering``) — with no tile boundary artifacts.
+    ``SpectralClustering``) — with no tile boundary artefacts.
 
     .. warning::
 
@@ -409,9 +410,9 @@ def img_pixel_cluster(
                                 (Default = ``0.3``).
     :param mean_shift_n_samples: Optional subsample count passed to
                                  ``estimate_bandwidth``.
-    :param calc_img_stats: If ``True`` (default), compute thematic image
-                           statistics, histogram, and pyramids.
-    :param add_clr_tab: If ``True`` (default) and ``calc_img_stats=True``,
+    :param calc_stats: If ``True`` (default), compute thematic image
+                       statistics, histogram, and pyramids.
+    :param add_clr_tab: If ``True`` (default) and ``calc_stats=True``,
                         populate an RGB colour table for integer outputs.
     :param block_size: Optional raster read/write block size in pixels.
     :param creation_opts: Optional GDAL creation options mapping.
@@ -505,7 +506,7 @@ def img_pixel_cluster(
             raw_labels = np.asarray(fitted_est.labels_, dtype=np.int64)
         else:
             fitted_est = clone_sklearn_estimator(
-                clusterer, random_state=rnd_seed, extra="classification"
+                clusterer, rnd_seed=rnd_seed, extra="classification"
             )
             if hasattr(fitted_est, "fit_predict"):
                 raw_labels = np.asarray(
@@ -569,7 +570,7 @@ def img_pixel_cluster(
         eff_nodata=eff_nodata,
         out_rio_dtype=out_rio_dtype,
         out_np_dtype=out_np_dtype,
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         add_clr_tab=add_clr_tab,
         clr_lut=None,
         use_pbar=use_pbar,
@@ -675,6 +676,7 @@ def img_pixel_sample_cluster(
     in_msk_img: Optional[Union[str, os.PathLike]] = None,
     img_msk_val: int = 1,
     no_data_val: Optional[float] = None,
+    *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     out_no_data_val: Optional[int] = None,
@@ -682,7 +684,7 @@ def img_pixel_sample_cluster(
     use_mean_shift_est_band_width: bool = False,
     mean_shift_quantile: float = 0.3,
     mean_shift_n_samples: Optional[int] = None,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     add_clr_tab: bool = True,
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
@@ -702,7 +704,7 @@ def img_pixel_sample_cluster(
     which is then evaluated across all valid pixels block by block. Because
     model fitting runs only on the subset and inference streams in windows,
     this is far faster and uses minimal RAM compared to
-    :func:`img_pixel_cluster` without introducing tile boundary artifacts.
+    :func:`img_pixel_cluster` without introducing tile boundary artefacts.
 
     Only compatible with clustering estimators implementing ``predict()``
     (e.g., ``KMeans``, ``MiniBatchKMeans``, ``BisectingKMeans``, ``Birch``,
@@ -747,9 +749,9 @@ def img_pixel_sample_cluster(
                                 (Default = ``0.3``).
     :param mean_shift_n_samples: Optional subsample count passed to
                                  ``estimate_bandwidth``.
-    :param calc_img_stats: If ``True`` (default), compute thematic image
-                           statistics, histogram, and pyramids.
-    :param add_clr_tab: If ``True`` (default) and ``calc_img_stats=True``,
+    :param calc_stats: If ``True`` (default), compute thematic image
+                       statistics, histogram, and pyramids.
+    :param add_clr_tab: If ``True`` (default) and ``calc_stats=True``,
                         populate an RGB colour table for integer outputs.
     :param block_size: Optional raster processing block size in pixels.
     :param creation_opts: Optional GDAL creation options mapping.
@@ -835,7 +837,7 @@ def img_pixel_sample_cluster(
                 smpl,
                 train_y=None,
                 sync_input=True,
-                random_state=rnd_seed,
+                rnd_seed=rnd_seed,
                 extra="classification",
             )
         check_sklearn_estimator_fitted(fitted_est, label="clusterer")
@@ -896,7 +898,7 @@ def img_pixel_sample_cluster(
         eff_nodata=eff_nodata,
         out_rio_dtype=out_rio_dtype,
         out_np_dtype=out_np_dtype,
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         add_clr_tab=add_clr_tab,
         clr_lut=None,
         use_pbar=use_pbar,

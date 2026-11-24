@@ -220,7 +220,7 @@ def test_sklearn_univariate_search_train_and_apply(tmp_path: Path):
         sk_regressor=model_file,
         in_msk_img=msk_img,
         img_msk_val=1,
-        out_img=out_tif,
+        output_img=out_tif,
         out_no_data_val=-9999.0,
         block_size=8,
         use_pbar=False,
@@ -260,7 +260,7 @@ def test_sklearn_multivariate_native_and_autowrap(tmp_path: Path):
         sk_regressor=mv_et,
         in_msk_img=msk_img,
         img_msk_val=1,
-        out_img=out_mv_tif,
+        output_img=out_mv_tif,
         use_pbar=False,
     )
     with rasterio.open(out_mv_tif) as src:

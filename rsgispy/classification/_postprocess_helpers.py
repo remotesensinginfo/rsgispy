@@ -251,7 +251,7 @@ def run_majority_filter(
         read_dtype=np.float64,
         pad_mode="constant",
         fill_value=np.nan,
-        out_nodata=meta.out_nd,
+        out_no_data_val=meta.out_nd,
         clamp_int=True,
         use_pbar=use_pbar,
         creation_opts=norm_opts,

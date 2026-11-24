@@ -286,7 +286,7 @@ def test_tiled_raster_parallel_worker_parity_and_seam_stitching(
 ):
     """
     Verify tiled execution with overlap produces identical results between
-    n_workers=1 and n_workers=2, respects nodata, and stitches uniform regions
+    n_jobs=1 and n_jobs=2, respects nodata, and stitches uniform regions
     spanning tile seams cleanly when stitch_seams=True.
     """
     # Create a uniform 2-class vertical split spanning tile boundaries at row=16, col=16
@@ -308,7 +308,7 @@ def test_tiled_raster_parallel_worker_parity_and_seam_stitching(
         out_w1,
         tile_size=16,
         overlap=8,
-        n_workers=1,
+        n_jobs=1,
         stitch_seams=True,
         calc_stats=False,
         use_pbar=False,
@@ -319,7 +319,7 @@ def test_tiled_raster_parallel_worker_parity_and_seam_stitching(
         out_w2,
         tile_size=16,
         overlap=8,
-        n_workers=2,
+        n_jobs=2,
         stitch_seams=True,
         calc_stats=False,
         use_pbar=False,
@@ -330,7 +330,7 @@ def test_tiled_raster_parallel_worker_parity_and_seam_stitching(
         out_nostitch,
         tile_size=16,
         overlap=8,
-        n_workers=1,
+        n_jobs=1,
         stitch_seams=False,
         calc_stats=False,
         use_pbar=False,
@@ -389,7 +389,7 @@ def test_relabel_and_eliminate_small_segments(tmp_path):
         ],
         dtype=np.int32,
     )
-    relab = rseg.relabel_segments_array(raw)
+    relab = rseg.relabel_segments_array(raw, no_data_val=0)
     assert relab.dtype == np.uint32
     np.testing.assert_array_equal(
         np.unique(relab), np.array([0, 1, 2, 3, 4], dtype=np.uint32)
@@ -400,10 +400,10 @@ def test_relabel_and_eliminate_small_segments(tmp_path):
     spec[0, :2, 1:4] = 100.0
     spec[0, 2:, 3:] = 50.0
     cleaned_spec = rseg.eliminate_small_segments_array(
-        raw, data=spec, min_pixels=4, use_numba=True
+        raw, data=spec, min_pixels=4, no_data_val=0, use_numba=True
     )
     cleaned_py = rseg.eliminate_small_segments_array(
-        raw, data=spec, min_pixels=4, use_numba=False
+        raw, data=spec, min_pixels=4, no_data_val=0, use_numba=False
     )
     np.testing.assert_array_equal(cleaned_spec, cleaned_py)
     # Pixel (3,1) which had label 99 merged into surrounding label 30
@@ -456,11 +456,12 @@ def test_polygonise_and_extract_segment_stats(tmp_path):
         n_clusters=4,
         min_pixels=20,
         sampling=1,
+        rnd_seed=42,
         calc_stats=False,
         use_pbar=False,
     )
 
-    poly_gdf = rseg.polygonise_segments(seg_img, out_vec_file=None)
+    poly_gdf = rseg.polygonise_segments(seg_img, out_vec_file=None, no_data_val=0)
     assert isinstance(poly_gdf, gpd.GeoDataFrame)
     assert len(poly_gdf) >= 4
     assert "seg_id" in poly_gdf.columns
@@ -548,7 +549,7 @@ def test_validation_and_dtype_overflow(tmp_path):
             arr, markers=np.zeros((5, 5), dtype=np.int32)
         )
     with pytest.raises(rsgispy.RSGISPyException):
-        rseg.slic_segmentation_array(arr, n_workers=0)
+        rseg.slic_segmentation_array(arr, n_jobs=0)
 
     # Non-integer output datatype rejected
     with pytest.raises(rsgispy.RSGISPyException):

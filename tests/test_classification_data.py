@@ -441,7 +441,7 @@ def test_recode_internal_to_output_ids_and_raster(tmp_path):
     }
 
     preds = np.array([0, 1, 2, 255, 0], dtype=np.uint8)
-    recoded = rcd.recode_internal_to_out_ids(preds, class_info, nodata_val=255)
+    recoded = rcd.recode_internal_to_out_ids(preds, class_info, no_data_val=255)
     np.testing.assert_array_equal(
         recoded, np.array([10, 25, 200, 255, 10], dtype=np.uint8)
     )

@@ -152,6 +152,7 @@ def _coerce_step(step: Union[FilterStep, Mapping[str, Any]]) -> FilterStep:
 def build_filter_chain_node(
     source: TileNode,
     steps: Sequence[Union[FilterStep, Mapping[str, Any]]],
+    *,
     no_data_val: Optional[float] = None,
 ) -> TileNode:
     """

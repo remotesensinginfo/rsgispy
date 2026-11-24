@@ -116,7 +116,7 @@ and export a topologically linked vector network with :func:`vectorise_streams`.
    hydro.vectorise_streams(
        streams_img=streams_bin,
        flow_dir_img=fdir_d8,
-       output_vec=streams_gpkg,
+       out_vec_file=streams_gpkg,
        dem_img=cond_dem,
        flow_acc_img=facc_cells,
        order_method="strahler",
@@ -161,7 +161,7 @@ highest-accumulation stream cell within ``snap_dist`` metres via
    hydro.snap_pour_points(
        pour_points_vec="gauges.gpkg",
        flow_acc_img=facc_cells,
-       output_vec=pour_pts_snapped,
+       out_vec_file=pour_pts_snapped,
        snap_dist=50.0,
    )
    hydro.delineate_watersheds(

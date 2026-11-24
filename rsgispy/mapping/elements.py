@@ -252,9 +252,9 @@ class MapScaleBar(AnchoredOffsetbox):
         style: str = SCALEBAR_STYLE_SOLID,
         loc: str = "upper right",
         n_segments: int = 4,
-        color: str = "black",
-        alt_color: str = "white",
-        box_color: str = "white",
+        colour: str = "black",
+        alt_colour: str = "white",
+        box_colour: str = "white",
         box_alpha: float = 0.8,
         frameon: bool = True,
         font_size: float = 9.0,
@@ -271,8 +271,8 @@ class MapScaleBar(AnchoredOffsetbox):
         self.style = style
         self.loc_str = loc
         self.n_segments = int(n_segments)
-        self.color = color
-        self.alt_color = alt_color
+        self.colour = colour
+        self.alt_colour = alt_colour
         self.font_size = float(font_size)
         self.bar_height = float(bar_height)
         self.label_text = f"{_format_scale_val(bar_value)} {units}"
@@ -291,7 +291,7 @@ class MapScaleBar(AnchoredOffsetbox):
         )
         self.set_zorder(zorder)
         if frameon:
-            self.patch.set_facecolor(box_color)
+            self.patch.set_facecolor(box_colour)
             self.patch.set_alpha(box_alpha)
             self.patch.set_edgecolor("none")
         self._populate_drawing(est_pts)
@@ -313,7 +313,7 @@ class MapScaleBar(AnchoredOffsetbox):
                 self.label_text,
                 textprops={
                     "fontsize": self.font_size,
-                    "color": self.color,
+                    "color": self.colour,
                     "fontweight": "normal",
                 },
             )
@@ -355,7 +355,7 @@ class MapScaleBar(AnchoredOffsetbox):
                     (0.0, 0.0),
                     bar_pts,
                     self.bar_height,
-                    facecolor=self.color,
+                    facecolor=self.colour,
                     edgecolor="none",
                 )
             )
@@ -378,14 +378,14 @@ class MapScaleBar(AnchoredOffsetbox):
 
         if self.style == SCALEBAR_STYLE_ALTERNATING:
             for idx in range(n_seg):
-                fill_c = self.color if idx % 2 == 0 else self.alt_color
+                fill_c = self.colour if idx % 2 == 0 else self.alt_colour
                 self._drawing_area.add_artist(
                     Rectangle(
                         (left_pad + idx * seg_w, 0.0),
                         seg_w,
                         self.bar_height,
                         facecolor=fill_c,
-                        edgecolor=self.color,
+                        edgecolor=self.colour,
                         linewidth=0.8,
                     )
                 )
@@ -395,7 +395,7 @@ class MapScaleBar(AnchoredOffsetbox):
                 Line2D(
                     [left_pad, left_pad + bar_pts],
                     [y_base, y_base],
-                    color=self.color,
+                    color=self.colour,
                     linewidth=1.5,
                 )
             )
@@ -410,7 +410,7 @@ class MapScaleBar(AnchoredOffsetbox):
                     Line2D(
                         [x_tick, x_tick],
                         [y_base, y_base + tick_h],
-                        color=self.color,
+                        color=self.colour,
                         linewidth=1.2 if idx in (0, n_seg) else 0.9,
                     )
                 )
@@ -433,7 +433,7 @@ class MapScaleBar(AnchoredOffsetbox):
                     y_lbl,
                     _format_scale_val(val),
                     fontsize=self.font_size,
-                    color=self.color,
+                    color=self.colour,
                     ha="center",
                     va="bottom",
                 )
@@ -444,7 +444,7 @@ class MapScaleBar(AnchoredOffsetbox):
                 0.0,
                 self.units,
                 fontsize=self.font_size,
-                color=self.color,
+                color=self.colour,
                 ha="left",
                 va="bottom",
             )
@@ -475,11 +475,11 @@ class MapNorthArrow(AnchoredOffsetbox):
         style: str = NORTH_ARROW_STYLE_TRIANGLE,
         loc: str = "upper left",
         size: float = 24.0,
-        color: str = "black",
-        alt_color: str = "white",
+        colour: str = "black",
+        alt_colour: str = "white",
         label: str = "N",
         font_size: float = 10.0,
-        box_color: str = "white",
+        box_colour: str = "white",
         box_alpha: float = 0.8,
         frameon: bool = True,
         pad: float = 0.4,
@@ -490,16 +490,16 @@ class MapNorthArrow(AnchoredOffsetbox):
         self.style = style
         self.loc_str = loc
         self.size = float(size)
-        self.color = color
-        self.alt_color = alt_color
+        self.colour = colour
+        self.alt_colour = alt_colour
         self.label = label
         self.rotation = float(rotation)
 
         arrow_da = _build_north_arrow_drawing(
             style=style,
             size=self.size,
-            color=color,
-            alt_color=alt_color,
+            colour=colour,
+            alt_colour=alt_colour,
             rotation=self.rotation,
         )
         if label:
@@ -508,7 +508,7 @@ class MapNorthArrow(AnchoredOffsetbox):
                 textprops={
                     "fontsize": font_size,
                     "fontweight": "bold",
-                    "color": color,
+                    "color": colour,
                 },
             )
             child: Any = VPacker(
@@ -529,7 +529,7 @@ class MapNorthArrow(AnchoredOffsetbox):
         )
         self.set_zorder(zorder)
         if frameon:
-            self.patch.set_facecolor(box_color)
+            self.patch.set_facecolor(box_colour)
             self.patch.set_alpha(box_alpha)
             self.patch.set_edgecolor("none")
 
@@ -551,8 +551,8 @@ def _rotate_points(
 def _build_north_arrow_drawing(
     style: str,
     size: float,
-    color: str,
-    alt_color: str,
+    colour: str,
+    alt_colour: str,
     rotation: float,
 ) -> DrawingArea:
     """Create a ``DrawingArea`` containing the requested north arrow symbol."""
@@ -585,8 +585,8 @@ def _build_north_arrow_drawing(
         notch = (cx, h * 0.24)
         left_pt = (w * 0.16, h * 0.04)
         right_pt = (w * 0.84, h * 0.04)
-        _add_poly([apex, left_pt, notch], facecolor=color, edgecolor=color)
-        _add_poly([apex, notch, right_pt], facecolor=alt_color, edgecolor=color)
+        _add_poly([apex, left_pt, notch], facecolor=colour, edgecolor=colour)
+        _add_poly([apex, notch, right_pt], facecolor=alt_colour, edgecolor=colour)
     elif style == NORTH_ARROW_STYLE_ARROW:
         sw = w * 0.09
         hw = w * 0.28
@@ -601,8 +601,8 @@ def _build_north_arrow_drawing(
                 (cx - hw, shaft_top),
                 (cx - sw, shaft_top),
             ],
-            facecolor=color,
-            edgecolor=color,
+            facecolor=colour,
+            edgecolor=colour,
             linewidth=0.8,
         )
     elif style == NORTH_ARROW_STYLE_COMPASS:
@@ -618,17 +618,17 @@ def _build_north_arrow_drawing(
         se_pt = (cx + inner_r, cy - inner_r)
         sw_pt = (cx - inner_r, cy - inner_r)
         facets = [
-            ([(cx, cy), n_pt, nw_pt], color),
-            ([(cx, cy), ne_pt, n_pt], alt_color),
-            ([(cx, cy), e_pt, ne_pt], color),
-            ([(cx, cy), se_pt, e_pt], alt_color),
-            ([(cx, cy), s_pt, se_pt], color),
-            ([(cx, cy), sw_pt, s_pt], alt_color),
-            ([(cx, cy), w_pt, sw_pt], color),
-            ([(cx, cy), nw_pt, w_pt], alt_color),
+            ([(cx, cy), n_pt, nw_pt], colour),
+            ([(cx, cy), ne_pt, n_pt], alt_colour),
+            ([(cx, cy), e_pt, ne_pt], colour),
+            ([(cx, cy), se_pt, e_pt], alt_colour),
+            ([(cx, cy), s_pt, se_pt], colour),
+            ([(cx, cy), sw_pt, s_pt], alt_colour),
+            ([(cx, cy), w_pt, sw_pt], colour),
+            ([(cx, cy), nw_pt, w_pt], alt_colour),
         ]
         for coords, fc in facets:
-            _add_poly(coords, facecolor=fc, edgecolor=color, linewidth=0.7)
+            _add_poly(coords, facecolor=fc, edgecolor=colour, linewidth=0.7)
     else:
         apex = (cx, h * 0.94)
         notch = (cx, h * 0.26)
@@ -636,13 +636,13 @@ def _build_north_arrow_drawing(
         right_pt = (w * 0.80, h * 0.06)
         _add_poly(
             [apex, right_pt, notch, left_pt],
-            facecolor=alt_color,
-            edgecolor=color,
+            facecolor=alt_colour,
+            edgecolor=colour,
             linewidth=1.5,
         )
         stem = _rotate_points([notch, apex], cx, cy, rotation)
         da.add_artist(
-            Line2D(stem[:, 0], stem[:, 1], color=color, linewidth=1.2)
+            Line2D(stem[:, 0], stem[:, 1], color=colour, linewidth=1.2)
         )
 
     return da
@@ -659,9 +659,9 @@ def add_scale_bar(
     fixed_value: Optional[float] = None,
     n_segments: Optional[int] = None,
     dx: Optional[float] = None,
-    color: str = "black",
-    alt_color: str = "white",
-    box_color: str = "white",
+    colour: str = "black",
+    alt_colour: str = "white",
+    box_colour: str = "white",
     box_alpha: float = 0.8,
     frameon: bool = True,
     font_size: float = 9.0,
@@ -692,9 +692,9 @@ def add_scale_bar(
     :param n_segments: Optional number of subdivisions for ``'alternating'`` and
                        ``'ticks'`` styles.
     :param dx: Optional explicit metres-per-map-unit scale factor override.
-    :param color: Primary bar/text colour (Default = ``'black'``).
-    :param alt_color: Secondary segment colour for alternating style (Default = ``'white'``).
-    :param box_color: Background box fill colour (Default = ``'white'``).
+    :param colour: Primary bar/text colour (Default = ``'black'``).
+    :param alt_colour: Secondary segment colour for alternating style (Default = ``'white'``).
+    :param box_colour: Background box fill colour (Default = ``'white'``).
     :param box_alpha: Background box opacity (Default = 0.8).
     :param frameon: Whether to draw a background box behind the scale bar (Default = True).
     :param font_size: Label font size in points (Default = 9.0).
@@ -786,9 +786,9 @@ def add_scale_bar(
         style=style,
         loc=norm_loc,
         n_segments=seg_count,
-        color=color,
-        alt_color=alt_color,
-        box_color=box_color,
+        colour=colour,
+        alt_colour=alt_colour,
+        box_colour=box_colour,
         box_alpha=box_alpha,
         frameon=frameon,
         font_size=font_size,
@@ -806,11 +806,11 @@ def add_north_arrow(
     loc: str = "upper left",
     style: str = NORTH_ARROW_STYLE_TRIANGLE,
     size: float = 24.0,
-    color: str = "black",
-    alt_color: str = "white",
+    colour: str = "black",
+    alt_colour: str = "white",
     label: str = "N",
     font_size: float = 10.0,
-    box_color: str = "white",
+    box_colour: str = "white",
     box_alpha: float = 0.8,
     frameon: bool = True,
     pad: float = 0.4,
@@ -827,16 +827,16 @@ def add_north_arrow(
                   :data:`NORTH_ARROW_STYLE_ARROW`, :data:`NORTH_ARROW_STYLE_COMPASS`,
                   or :data:`NORTH_ARROW_STYLE_SIMPLE`.
     :param size: Symbol size in points (Default = 24.0).
-    :param color: Primary stroke and fill colour (Default = ``'black'``).
-    :param alt_color: Secondary fill colour for split/outlined styles (Default = ``'white'``).
+    :param colour: Primary stroke and fill colour (Default = ``'black'``).
+    :param alt_colour: Secondary fill colour for split/outlined styles (Default = ``'white'``).
     :param label: Label drawn above the arrow symbol (Default = ``'N'``).
     :param font_size: Label font size in points (Default = 10.0).
-    :param box_color: Background box fill colour (Default = ``'white'``).
+    :param box_colour: Background box fill colour (Default = ``'white'``).
     :param box_alpha: Background box opacity (Default = 0.8).
     :param frameon: Whether to draw a background box (Default = True).
     :param pad: Internal box padding (Default = 0.4).
     :param borderpad: Margin between box and axis edges (Default = 0.5).
-    :param rotation: Counterclockwise arrow rotation in degrees (Default = 0.0).
+    :param rotation: Anticlockwise arrow rotation in degrees (Default = 0.0).
     :param zorder: Artist z-order (Default = 10.0).
     :return: Created :class:`MapNorthArrow` artist.
 
@@ -870,11 +870,11 @@ def add_north_arrow(
         style=style,
         loc=norm_loc,
         size=size,
-        color=color,
-        alt_color=alt_color,
+        colour=colour,
+        alt_colour=alt_colour,
         label=label,
         font_size=font_size,
-        box_color=box_color,
+        box_colour=box_colour,
         box_alpha=box_alpha,
         frameon=frameon,
         pad=pad,
@@ -886,7 +886,7 @@ def add_north_arrow(
     return artist
 
 
-def _finalize_map_axis(
+def _finalise_map_axis(
     ax: matplotlib.axes.Axes,
     epsg_code: Optional[int],
     bbox: Tuple[float, float, float, float],

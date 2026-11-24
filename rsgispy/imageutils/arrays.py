@@ -54,7 +54,7 @@ def create_img_from_array(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -76,7 +76,7 @@ def create_img_from_array(
                      (defaults to matching ``data_arr.dtype``).
     :param no_data_val: Optional output no-data value (Default = ``None``).
     :param calc_stats: If ``True``, compute image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar when computing
                      statistics (Default = ``True``).
     :param creation_opts: Optional GDAL creation options (dict or sequence of
@@ -166,7 +166,7 @@ def create_img_from_array_ref_img(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -184,7 +184,7 @@ def create_img_from_array_ref_img(
                      (defaults to matching ``data_arr.dtype``).
     :param no_data_val: Optional output no-data value (Default = ``None``).
     :param calc_stats: If ``True``, compute image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar when computing
                      statistics (Default = ``True``).
     :param creation_opts: Optional GDAL creation options (dict or sequence of

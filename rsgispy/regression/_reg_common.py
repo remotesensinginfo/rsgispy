@@ -467,13 +467,14 @@ def apply_regressor_raster(
     estimator: Any,
     in_msk_img: Union[str, os.PathLike],
     img_msk_val: int,
-    out_img: Union[str, os.PathLike],
+    output_img: Union[str, os.PathLike],
     img_band_info: Optional[Sequence[ImageBandInfo]] = None,
     target_cols: TargetColsInput = None,
+    *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     out_no_data_val: float = -9999.0,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
@@ -512,7 +513,7 @@ def apply_regressor_raster(
     use_df_input, df_cols, band_specs = _resolve_estimator_feature_cols(
         estimator, band_specs
     )
-    out_path = ensure_parent_dir(out_img)
+    out_path = ensure_parent_dir(output_img)
 
     with ExitStack() as stack:
         msk_ds, datasets, grid, all_compatible = _open_apply_datasets(
@@ -594,7 +595,7 @@ def apply_regressor_raster(
             )
 
     set_img_not_thematic(out_path)
-    if calc_img_stats:
+    if calc_stats:
         pop_img_stats(
             out_path,
             no_data_val=float(out_no_data_val),
@@ -1087,13 +1088,14 @@ def apply_gbdt_regressor(
     regressor: Union[Any, str, os.PathLike],
     in_msk_img: Union[str, os.PathLike],
     img_msk_val: int,
-    out_img: Union[str, os.PathLike],
+    output_img: Union[str, os.PathLike],
     img_band_info: Optional[Sequence[ImageBandInfo]] = None,
     target_cols: TargetColsInput = None,
+    *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     out_no_data_val: float = -9999.0,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
@@ -1129,13 +1131,13 @@ def apply_gbdt_regressor(
             estimator=eval_est,
             in_msk_img=in_msk_img,
             img_msk_val=img_msk_val,
-            out_img=out_img,
+            output_img=output_img,
             img_band_info=img_band_info,
             target_cols=target_cols,
             gdalformat=gdalformat,
             datatype=datatype,
             out_no_data_val=out_no_data_val,
-            calc_img_stats=calc_img_stats,
+            calc_stats=calc_stats,
             block_size=block_size,
             creation_opts=creation_opts,
             use_pbar=use_pbar,

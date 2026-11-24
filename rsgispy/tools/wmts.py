@@ -68,7 +68,7 @@ def _open_wmts_service(
     return service_cls(wmts_url)
 
 
-def _normalize_tile_image(
+def _normalise_tile_image(
     pil_tile: Any,
     target_mode: Optional[str],
 ) -> Tuple[np.ndarray, str]:
@@ -336,7 +336,7 @@ def get_wmts_as_img(
                     )
                     tile_bytes = tile_resp.read()
                     with Image.open(io.BytesIO(tile_bytes)) as pil_tile:
-                        tile_arr, target_mode = _normalize_tile_image(
+                        tile_arr, target_mode = _normalise_tile_image(
                             pil_tile, target_mode
                         )
 

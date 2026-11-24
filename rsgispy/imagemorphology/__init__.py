@@ -381,7 +381,7 @@ def _run_window_morphology(
         per_band=False,
         read_dtype=np.float64,
         pad_mode="edge",
-        out_nodata=out_nd,
+        out_no_data_val=out_nd,
         clamp_int=True,
         full_width_strips=use_strips,
         use_pbar=use_pbar,

@@ -55,7 +55,7 @@ stopping per target.
         lgb_regressor=model,
         in_msk_img="landsat_valid_mask.tif",
         img_msk_val=1,
-        out_img="landsat_canopy_cover_lgb.tif",
+        output_img="landsat_canopy_cover_lgb.tif",
     )
 
 Optuna Hyperparameter Search Spaces

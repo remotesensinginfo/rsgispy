@@ -296,7 +296,7 @@ def warp_with_gcps(
     use_tps: bool = False,
     use_poly: bool = True,
     poly_order: int = 3,
-    use_multi_thread: bool = True,
+    use_multi_threaded: bool = True,
     refine_gcps: Optional[Union[float, Tuple[float, Optional[int]]]] = None,
     *,
     gdalformat: str = "GTIFF",
@@ -318,7 +318,7 @@ def warp_with_gcps(
     :param use_poly: Use polynomial transformation when ``use_tps=False``
                      (Default = ``True``).
     :param poly_order: Polynomial order ``1``, ``2``, or ``3`` (Default = ``3``).
-    :param use_multi_thread: Enable multi-threaded warping (Default = ``True``).
+    :param use_multi_threaded: Enable multi-threaded warping (Default = ``True``).
     :param refine_gcps: Optional ``tolerance`` or ``(tolerance, min_gcps)`` to
                         prune outlier GCPs during warping.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
@@ -385,7 +385,7 @@ def warp_with_gcps(
         gdalformat=gdalformat,
         datatype=datatype,
         dst_nodata=no_data_val,
-        use_multi_threaded=use_multi_thread,
+        use_multi_threaded=use_multi_threaded,
         tps=use_tps,
         order=order_val,
         refine_gcps=refine_gcps,
@@ -414,7 +414,7 @@ def warp_with_tie_points(
     use_tps: bool = False,
     match_ref_grid: bool = True,
     refine_gcps: Optional[Union[float, Tuple[float, Optional[int]]]] = None,
-    use_multi_thread: bool = True,
+    use_multi_threaded: bool = True,
     *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
@@ -449,7 +449,7 @@ def warp_with_tie_points(
                            ``match_ref_grid=False``, only updates the
                            geotransform header without resampling.
     :param refine_gcps: Optional GCP outlier tolerance passed to ``gdal_warp``.
-    :param use_multi_thread: Enable multi-threaded warping (Default = ``True``).
+    :param use_multi_threaded: Enable multi-threaded warping (Default = ``True``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type (``None``
                      preserves input pixel dtype).
@@ -622,7 +622,7 @@ def warp_with_tie_points(
                     gdalformat=gdalformat,
                     datatype=datatype,
                     dst_nodata=no_data_val,
-                    use_multi_threaded=use_multi_thread,
+                    use_multi_threaded=use_multi_threaded,
                     use_pbar=use_pbar,
                 )
             if calc_stats:
@@ -686,7 +686,7 @@ def warp_with_tie_points(
                 use_tps=eff_tps,
                 use_poly=not eff_tps,
                 poly_order=eff_order,
-                use_multi_thread=use_multi_thread,
+                use_multi_threaded=use_multi_threaded,
                 refine_gcps=refine_gcps,
                 gdalformat=gdalformat,
                 datatype=datatype,
@@ -703,7 +703,7 @@ def warp_with_tie_points(
                 gdalformat=gdalformat,
                 datatype=datatype,
                 dst_nodata=no_data_val,
-                use_multi_threaded=use_multi_thread,
+                use_multi_threaded=use_multi_threaded,
                 tps=eff_tps,
                 order=None if eff_tps else eff_order,
                 refine_gcps=refine_gcps,
@@ -753,7 +753,7 @@ def coregister_images(
     interp_method: int = rsgispy.INTERP_BILINEAR,
     match_ref_grid: bool = True,
     out_gcp_file: Optional[Union[str, os.PathLike]] = None,
-    random_state: Optional[int] = None,
+    rnd_seed: Optional[int] = None,
     *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
@@ -799,7 +799,7 @@ def coregister_images(
     :param interp_method: Resampling method ``rsgispy.INTERP_*``.
     :param match_ref_grid: Resample onto ``in_ref_img`` grid (Default = ``True``).
     :param out_gcp_file: Optional path to save filtered inlier tie points.
-    :param random_state: Optional RNG seed for reproducible RANSAC sampling.
+    :param rnd_seed: Optional RNG seed for reproducible RANSAC sampling.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type (``None``
                      preserves input pixel dtype).
@@ -859,7 +859,7 @@ def coregister_images(
         method=outlier_method,
         model=filter_model,
         residual_thres=residual_thres,
-        random_state=random_state,
+        rnd_seed=rnd_seed,
         return_model=True,
     )
 

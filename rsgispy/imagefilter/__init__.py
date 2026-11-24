@@ -8,7 +8,7 @@ filter type:
 * :mod:`rsgispy.imagefilter.edge` — Sobel, Prewitt, Gaussian derivative, and Laplacian edge filters.
 * :mod:`rsgispy.imagefilter.sar` — Lee, Enhanced Lee, Frost, Enhanced Frost, Kuan, Gamma MAP,
   and Refined Lee SAR speckle filters.
-* :mod:`rsgispy.imagefilter.texture` — Gray-Level Co-occurrence Matrix (GLCM) texture filters.
+* :mod:`rsgispy.imagefilter.texture` — Grey-Level Co-occurrence Matrix (GLCM) texture filters.
 * :mod:`rsgispy.imagefilter.chained` — In-memory halo-fused multi-step filter & band-math pipelines.
 """
 

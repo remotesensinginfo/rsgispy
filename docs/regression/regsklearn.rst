@@ -81,7 +81,7 @@ block-by-block to produce a continuous canopy cover map.
         sk_regressor=fitted_rf,
         in_msk_img="landsat_valid_mask.tif",
         img_msk_val=1,
-        out_img="landsat_canopy_cover_rf.tif",
+        output_img="landsat_canopy_cover_rf.tif",
     )
 
 Multivariate Regression Example
@@ -119,7 +119,7 @@ descriptions:
         sk_regressor=mv_model,
         in_msk_img="landsat_valid_mask.tif",
         img_msk_val=1,
-        out_img="landsat_forest_structure.tif",
+        output_img="landsat_forest_structure.tif",
     )
 
 Standard Parameter Search Spaces

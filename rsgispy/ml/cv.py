@@ -56,14 +56,14 @@ def _validate_coords(
 def _simple_kmeans_2d(
     pts: np.ndarray,
     k: int,
-    random_state: Optional[int] = 42,
+    rnd_seed: Optional[int] = 42,
     max_iter: int = 50,
 ) -> np.ndarray:
     """Lightweight deterministic k-means++ clustering in 2D without extra deps."""
     n_pts = pts.shape[0]
     if k >= n_pts:
         return np.arange(n_pts, dtype=np.int64) % k
-    rng = np.random.default_rng(random_state)
+    rng = np.random.default_rng(rnd_seed)
 
     # K-means++ seeding for well-separated spatial clusters
     centres = np.empty((k, 2), dtype=np.float64)
@@ -100,7 +100,7 @@ def _assign_blocks_to_folds(
     y: Optional[np.ndarray],
     stratify: bool,
     shuffle: bool,
-    random_state: Optional[int],
+    rnd_seed: Optional[int],
 ) -> np.ndarray:
     """Assign each spatial block ID to one of ``n_splits`` balanced folds."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -113,7 +113,7 @@ def _assign_blocks_to_folds(
             f"n_splits ({n_splits}). Reduce block_size or n_splits."
         )
 
-    rng = np.random.default_rng(random_state)
+    rng = np.random.default_rng(rnd_seed)
     order = np.arange(n_blocks)
     if shuffle:
         rng.shuffle(order)
@@ -180,7 +180,7 @@ class SpatialBlockKFold:
                      class frequencies in ``y`` (Default = ``False``).
     :param shuffle: Randomly permute blocks before fold assignment
                     (Default = ``True``).
-    :param random_state: Optional random seed (Default = ``42``).
+    :param rnd_seed: Optional random seed (Default = ``42``).
 
     .. code:: python
 
@@ -202,7 +202,7 @@ class SpatialBlockKFold:
         method: str = "grid",
         stratify: bool = False,
         shuffle: bool = True,
-        random_state: Optional[int] = 42,
+        rnd_seed: Optional[int] = 42,
     ) -> None:
         if int(n_splits) < 2:
             raise rsgispy.RSGISPyException(
@@ -223,7 +223,7 @@ class SpatialBlockKFold:
         self.method = mthd
         self.stratify = bool(stratify)
         self.shuffle = bool(shuffle)
-        self.random_state = random_state
+        self.rnd_seed = rnd_seed
 
     def get_n_splits(
         self,
@@ -242,7 +242,7 @@ class SpatialBlockKFold:
     ) -> np.ndarray:
         if self.method == "kmeans":
             return _simple_kmeans_2d(
-                coords, k=self.n_splits, random_state=self.random_state
+                coords, k=self.n_splits, rnd_seed=self.rnd_seed
             )
 
         min_xy = coords.min(axis=0)
@@ -274,7 +274,7 @@ class SpatialBlockKFold:
             y=y,
             stratify=self.stratify,
             shuffle=self.shuffle,
-            random_state=self.random_state,
+            rnd_seed=self.rnd_seed,
         )
 
     def split(
@@ -318,7 +318,7 @@ class SpatialBufferCV:
     :param method: Base spatial fold partitioning: ``'kmeans'`` (Default) or
                    ``'grid'``.
     :param block_size: Optional grid block size when ``method='grid'``.
-    :param random_state: Optional random seed (Default = ``42``).
+    :param rnd_seed: Optional random seed (Default = ``42``).
     """
 
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -329,7 +329,7 @@ class SpatialBufferCV:
         buffer_dist: float = 100.0,
         method: str = "kmeans",
         block_size: Optional[float] = None,
-        random_state: Optional[int] = 42,
+        rnd_seed: Optional[int] = 42,
     ) -> None:
         if int(n_splits) < 2:
             raise rsgispy.RSGISPyException(
@@ -343,7 +343,7 @@ class SpatialBufferCV:
         self.buffer_dist = float(buffer_dist)
         self.method = str(method).strip().lower()
         self.block_size = block_size
-        self.random_state = random_state
+        self.rnd_seed = rnd_seed
 
     def get_n_splits(
         self,
@@ -371,7 +371,7 @@ class SpatialBufferCV:
             n_splits=self.n_splits,
             block_size=self.block_size,
             method=self.method,
-            random_state=self.random_state,
+            rnd_seed=self.rnd_seed,
         )
         buf_sq = self.buffer_dist * self.buffer_dist
         for raw_train_idx, val_idx in base_cv.split(X, y=y, coords=c_arr):
@@ -407,7 +407,7 @@ class PolygonGroupKFold:
                      (Default = ``False``).
     :param shuffle: Shuffle polygon groups prior to fold assignment
                     (Default = ``True``).
-    :param random_state: Optional random seed (Default = ``42``).
+    :param rnd_seed: Optional random seed (Default = ``42``).
     """
 
     def __init__(
@@ -415,7 +415,7 @@ class PolygonGroupKFold:
         n_splits: int = 5,
         stratify: bool = False,
         shuffle: bool = True,
-        random_state: Optional[int] = 42,
+        rnd_seed: Optional[int] = 42,
     ) -> None:
         if int(n_splits) < 2:
             raise rsgispy.RSGISPyException(
@@ -424,7 +424,7 @@ class PolygonGroupKFold:
         self.n_splits = int(n_splits)
         self.stratify = bool(stratify)
         self.shuffle = bool(shuffle)
-        self.random_state = random_state
+        self.rnd_seed = rnd_seed
 
     def get_n_splits(
         self,
@@ -463,7 +463,7 @@ class PolygonGroupKFold:
             y=y_arr,
             stratify=self.stratify,
             shuffle=self.shuffle,
-            random_state=self.random_state,
+            rnd_seed=self.rnd_seed,
         )
         all_idx = np.arange(n_samples, dtype=np.intp)
         for fold in range(self.n_splits):
@@ -602,8 +602,8 @@ def nested_spatial_cv(
     n_trials: int = 20,
     timeout: Optional[float] = None,
     direction: str = "maximize",
-    random_state: Optional[int] = 42,
-    show_progress: bool = True,
+    rnd_seed: Optional[int] = 42,
+    use_pbar: bool = True,
 ) -> NestedCVResult:
     """
     Run nested spatial cross-validation with fold-local feature scaling and
@@ -635,8 +635,8 @@ def nested_spatial_cv(
                      (Default = ``20``).
     :param timeout: Optional Optuna timeout in seconds per outer fold.
     :param direction: Optuna direction ``'maximize'`` (Default) or ``'minimize'``.
-    :param random_state: Random seed (Default = ``42``).
-    :param show_progress: Display Optuna/tqdm progress bars (Default = ``True``).
+    :param rnd_seed: Random seed (Default = ``42``).
+    :param use_pbar: Display Optuna/tqdm progress bars (Default = ``True``).
     :return: :class:`NestedCVResult` with out-of-fold predictions and metrics.
     """
     # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
@@ -654,10 +654,10 @@ def nested_spatial_cv(
     if outer_cv is None:
         if c_arr is not None:
             eff_outer: Any = SpatialBlockKFold(
-                n_splits=5, random_state=random_state
+                n_splits=5, rnd_seed=rnd_seed
             )
         elif g_arr is not None:
-            eff_outer = PolygonGroupKFold(n_splits=5, random_state=random_state)
+            eff_outer = PolygonGroupKFold(n_splits=5, rnd_seed=rnd_seed)
         else:
             eff_outer = 5
     else:
@@ -703,15 +703,15 @@ def nested_spatial_cv(
                     eff_inner = SpatialBlockKFold(
                         n_splits=3,
                         method="kmeans",
-                        random_state=(
-                            None if random_state is None else int(random_state) + fold_idx
+                        rnd_seed=(
+                            None if rnd_seed is None else int(rnd_seed) + fold_idx
                         ),
                     )
                 elif g_tr is not None:
                     eff_inner = PolygonGroupKFold(
                         n_splits=3,
-                        random_state=(
-                            None if random_state is None else int(random_state) + fold_idx
+                        rnd_seed=(
+                            None if rnd_seed is None else int(rnd_seed) + fold_idx
                         ),
                     )
                 else:
@@ -731,10 +731,10 @@ def nested_spatial_cv(
                 timeout=timeout,
                 direction=direction,
                 refit=False,
-                random_state=(
-                    None if random_state is None else int(random_state) + fold_idx
+                rnd_seed=(
+                    None if rnd_seed is None else int(rnd_seed) + fold_idx
                 ),
-                show_progress=show_progress,
+                use_pbar=use_pbar,
             )
             best_params = dict(tune_res.best_params)
         else:

@@ -1,6 +1,6 @@
 # pylint: disable=too-many-lines
 """
-Numba-accelerated numerical kernels and vectorized NumPy fallbacks for
+Numba-accelerated numerical kernels and vectorised NumPy fallbacks for
 :mod:`rsgispy.elevation.hydrology`.
 """
 
@@ -39,7 +39,7 @@ D8_CONTOUR_L = np.array([0.5, 0.354, 0.5, 0.354, 0.5, 0.354, 0.5, 0.354], dtype=
 
 @njit
 def _d8_to_idx(code: int) -> int:
-    """Return neighbor index 0..7 for a D8 bitmask, or -1 if unresolved/invalid."""
+    """Return neighbour index 0..7 for a D8 bitmask, or -1 if unresolved/invalid."""
     if code == 1:
         return 0
     if code == 2:
@@ -70,7 +70,7 @@ def _d8_to_offset(code: int) -> Tuple[int, int]:
 
 @njit
 def _step_dist(k: int, dx: float, dy: float, diag_d: float) -> float:
-    """Return metric centre-to-centre distance for D8 neighbor index ``k``."""
+    """Return metric centre-to-centre distance for D8 neighbour index ``k``."""
     if k == 0 or k == 4:
         return dx
     if k == 2 or k == 6:
@@ -260,7 +260,7 @@ def priority_flood_kernel(dem: np.ndarray, valid: np.ndarray) -> np.ndarray:
 
 @njit
 def single_cell_pits_kernel(dem: np.ndarray, valid: np.ndarray) -> np.ndarray:
-    """Return boolean mask of valid cells whose valid 8-neighbors are all strictly higher."""
+    """Return boolean mask of valid cells whose valid 8-neighbours are all strictly higher."""
     height, width = dem.shape
     pits = np.zeros((height, width), dtype=np.bool_)
     for r in range(height):
@@ -323,7 +323,7 @@ def breach_depressions_kernel(
     z_out = dem.astype(np.float64).copy()
     diag_d = math.hypot(dx, dy)
 
-    # Locate candidate pit cells (interior valid cells with no strictly lower neighbor)
+    # Locate candidate pit cells (interior valid cells with no strictly lower neighbour)
     max_pits = height * width
     pit_z = np.empty(max_pits, dtype=np.float64)
     pit_r = np.empty(max_pits, dtype=np.int32)
@@ -378,7 +378,7 @@ def breach_depressions_kernel(
         c0 = int(pit_c[p_idx])
         z0 = z_out[r0, c0]
 
-        # Skip if earlier breach already gave this cell a strictly lower neighbor
+        # Skip if earlier breach already gave this cell a strictly lower neighbour
         already_drained = False
         for k in range(8):
             nr = r0 + int(D8_DR[k])
@@ -666,7 +666,7 @@ def flow_dir_d8_njit(
 def flow_dir_d8_numpy(
     dem: np.ndarray, valid: np.ndarray, dx: float, dy: float
 ) -> np.ndarray:
-    """Vectorized NumPy D8 bitmask flow direction calculation."""
+    """Vectorised NumPy D8 bitmask flow direction calculation."""
     height, width = dem.shape
     diag_d = math.hypot(dx, dy)
     slopes = np.zeros((8, height, width), dtype=np.float64)
@@ -824,7 +824,7 @@ def flow_dir_dinf_numpy(
     dy: float,
     nd_val: float,
 ) -> np.ndarray:
-    """Vectorized NumPy Tarboton (1997) D-Infinity flow direction."""
+    """Vectorised NumPy Tarboton (1997) D-Infinity flow direction."""
     # pylint: disable=too-many-locals
     height, width = dem.shape
     diag_d = math.hypot(dx, dy)
@@ -952,7 +952,7 @@ def flow_dir_mfd_numpy(
     exponent: float,
     nd_val: float,
 ) -> np.ndarray:
-    """Vectorized NumPy Quinn et al. (1991) 8-band Multiple Flow Direction."""
+    """Vectorised NumPy Quinn et al. (1991) 8-band Multiple Flow Direction."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     height, width = dem.shape
     diag_d = math.hypot(dx, dy)
@@ -1045,7 +1045,7 @@ def _dinf_targets(
     ang: float, dx: float, dy: float
 ) -> Tuple[int, int, int, int, float, float]:
     """
-    Resolve D-Infinity CCW angle ``ang in [0, 2*pi)`` into two neighbor
+    Resolve D-Infinity CCW angle ``ang in [0, 2*pi)`` into two neighbour
     offsets ``(dr1, dc1, dr2, dc2, w1, w2)``.
     """
     # pylint: disable=too-many-branches
@@ -1058,7 +1058,7 @@ def _dinf_targets(
     if ang < 0.0:
         return 0, 0, 0, 0, 0.0, 0.0
 
-    # Normalize near 2*pi
+    # Normalise near 2*pi
     if ang >= two_pi - 1e-12:
         ang = 0.0
 
@@ -1458,7 +1458,7 @@ def extract_streams_njit(
 def extract_streams_numpy(
     acc: np.ndarray, valid: np.ndarray, threshold: float, nd_val: int
 ) -> np.ndarray:
-    """Vectorized NumPy binary stream extraction."""
+    """Vectorised NumPy binary stream extraction."""
     out = np.full(acc.shape, nd_val, dtype=np.uint8)
     out[valid] = np.where(acc[valid] >= threshold, np.uint8(1), np.uint8(0))
     return out
@@ -1695,7 +1695,7 @@ def flood_inundation_scalar_njit(
 def flood_inundation_scalar_numpy(
     hand: np.ndarray, valid: np.ndarray, stage: float, nd_val: float
 ) -> np.ndarray:
-    """Vectorized NumPy scalar-stage flood inundation depth."""
+    """Vectorised NumPy scalar-stage flood inundation depth."""
     out = np.full(hand.shape, nd_val, dtype=np.float32)
     out[valid] = np.maximum(0.0, stage - hand[valid]).astype(np.float32)
     return out
@@ -1719,7 +1719,7 @@ def flood_inundation_raster_njit(
 def flood_inundation_raster_numpy(
     hand: np.ndarray, stage_arr: np.ndarray, valid: np.ndarray, nd_val: float
 ) -> np.ndarray:
-    """Vectorized NumPy raster-stage flood inundation depth."""
+    """Vectorised NumPy raster-stage flood inundation depth."""
     out = np.full(hand.shape, nd_val, dtype=np.float32)
     out[valid] = np.maximum(0.0, stage_arr[valid] - hand[valid]).astype(np.float32)
     return out
@@ -1779,7 +1779,7 @@ def calc_twi_numpy(
     dx: float,
     nd_val: float,
 ) -> np.ndarray:
-    """Vectorized NumPy Topographic Wetness Index."""
+    """Vectorised NumPy Topographic Wetness Index."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     out = np.full(sca.shape, nd_val, dtype=np.float32)
     s_v = slope_arr[valid]
@@ -1821,7 +1821,7 @@ def calc_spi_numpy(
     unit_code: int,
     nd_val: float,
 ) -> np.ndarray:
-    """Vectorized NumPy Stream Power Index."""
+    """Vectorised NumPy Stream Power Index."""
     out = np.full(sca.shape, nd_val, dtype=np.float32)
     s_v = slope_arr[valid]
     if unit_code == 0:
@@ -1876,7 +1876,7 @@ def calc_ls_numpy(
     n_exp: float,
     nd_val: float,
 ) -> np.ndarray:
-    """Vectorized NumPy Moore & Burch (1986) RUSLE LS Factor."""
+    """Vectorised NumPy Moore & Burch (1986) RUSLE LS Factor."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     out = np.full(sca.shape, nd_val, dtype=np.float32)
     s_v = slope_arr[valid]

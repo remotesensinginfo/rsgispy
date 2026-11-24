@@ -506,7 +506,7 @@ def train_sklearn_regressor(
         train_x,
         train_y,
         sync_input=not return_model and not was_wrapped,
-        random_state=rnd_seed,
+        rnd_seed=rnd_seed,
         extra="regression",
     )
 
@@ -542,13 +542,14 @@ def apply_sklearn_regressor(
     sk_regressor: Union[Any, str, os.PathLike],
     in_msk_img: Union[str, os.PathLike],
     img_msk_val: int,
-    out_img: Union[str, os.PathLike],
+    output_img: Union[str, os.PathLike],
     img_band_info: Optional[Sequence[ImageBandInfo]] = None,
     target_cols: TargetColsInput = None,
+    *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     out_no_data_val: float = -9999.0,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
@@ -567,8 +568,8 @@ def apply_sklearn_regressor(
                        predicted.
     :param img_msk_val: Pixel value within ``in_msk_img`` identifying valid
                         pixels to predict.
-    :param out_img: Output continuous prediction raster path (single-band for
-                    univariate regression, multi-band for multivariate).
+    :param output_img: Output continuous prediction raster path (single-band for
+                       univariate regression, multi-band for multivariate).
     :param img_band_info: Optional sequence of :class:`ImageBandInfo` overriding
                           ``reg_cfg.img_band_info``.
     :param target_cols: Optional target variable name(s) used for band count
@@ -577,8 +578,8 @@ def apply_sklearn_regressor(
     :param datatype: Optional ``rsgispy.TYPE_*`` integer datatype (defaults to
                      ``rsgispy.TYPE_32FLOAT``).
     :param out_no_data_val: Output nodata fill value (Default = ``-9999.0``).
-    :param calc_img_stats: Compute output band statistics and overview pyramids
-                           (Default = ``True``).
+    :param calc_stats: Compute output band statistics and overview pyramids
+                       (Default = ``True``).
     :param block_size: Optional processing block size in pixels.
     :param creation_opts: Optional GDAL creation options mapping.
     :param use_pbar: Display a tqdm progress bar during prediction
@@ -593,7 +594,7 @@ def apply_sklearn_regressor(
             sk_regressor="landsat_rf_model.joblib",
             in_msk_img="landsat_valid_mask.tif",
             img_msk_val=1,
-            out_img="canopy_cover_pred.tif",
+            output_img="canopy_cover_pred.tif",
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -608,13 +609,13 @@ def apply_sklearn_regressor(
         estimator=estimator,
         in_msk_img=in_msk_img,
         img_msk_val=img_msk_val,
-        out_img=out_img,
+        output_img=output_img,
         img_band_info=img_band_info,
         target_cols=target_cols,
         gdalformat=gdalformat,
         datatype=datatype,
         out_no_data_val=out_no_data_val,
-        calc_img_stats=calc_img_stats,
+        calc_stats=calc_stats,
         block_size=block_size,
         creation_opts=creation_opts,
         use_pbar=use_pbar,

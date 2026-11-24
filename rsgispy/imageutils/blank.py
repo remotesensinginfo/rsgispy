@@ -55,7 +55,7 @@ def _write_blank_grid_img(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -168,7 +168,7 @@ def create_blank_img(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -196,7 +196,7 @@ def create_blank_img(
                      (defaults to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional no-data value to set on the output dataset.
     :param calc_stats: If ``True``, compute image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options (dict or list of
@@ -248,7 +248,7 @@ def create_copy_img(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -266,7 +266,7 @@ def create_copy_img(
                      (defaults to matching ``input_img``).
     :param no_data_val: Optional no-data value to set on the output dataset.
     :param calc_stats: If ``True``, compute image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options (dict or list of
@@ -322,7 +322,7 @@ def create_blank_buf_img_from_ref_img(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -341,7 +341,7 @@ def create_blank_buf_img_from_ref_img(
                      (defaults to matching ``input_img``).
     :param no_data_val: Optional no-data value. If ``None``, read from ``input_img``.
     :param calc_stats: If ``True``, compute image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options (dict or list of
@@ -431,7 +431,7 @@ def create_blank_img_from_bbox(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -453,7 +453,7 @@ def create_blank_img_from_bbox(
                      (defaults to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional no-data value to set on the output dataset.
     :param calc_stats: If ``True``, compute image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options (dict or list of
@@ -622,7 +622,7 @@ def create_blank_ref_imgs(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> List[str]:
@@ -659,7 +659,7 @@ def create_blank_ref_imgs(
                      (defaults to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional no-data value to set on the output datasets.
     :param calc_stats: If ``True``, compute image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar across polygons
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options (dict or list of

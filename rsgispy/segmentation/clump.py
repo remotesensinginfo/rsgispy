@@ -42,7 +42,7 @@ def clump(
     Clump an input image (band 1) into 4-connected regions of identical pixel
     values, assigning unique sequential clump IDs (``1 .. N``).
 
-    Uses a vectorized horizontal run-length-encoded (RLE) graph solver
+    Uses a vectorised horizontal run-length-encoded (RLE) graph solver
     (``scipy.sparse.csgraph`` when installed, with a pure-Python/NumPy RLE
     union-find fallback) in either single-pass in-memory mode or a
     memory-bounded two-pass tiled streaming mode.

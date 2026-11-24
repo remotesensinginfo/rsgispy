@@ -936,7 +936,7 @@ def finalise_thematic_output_img(
     eff_nodata: int,
     out_rio_dtype: str,
     out_np_dtype: np.dtype,
-    calc_img_stats: bool = True,
+    calc_stats: bool = True,
     add_clr_tab: bool = False,
     clr_lut: Optional[Dict[int, List[int]]] = None,
     use_pbar: bool = True,
@@ -945,7 +945,7 @@ def finalise_thematic_output_img(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     set_img_thematic(out_cls_path)
     set_img_no_data_value(out_cls_path, eff_nodata, img_band=1)
-    if calc_img_stats:
+    if calc_stats:
         if out_rio_dtype in _INT_DTYPES:
             pop_thmt_img_stats(
                 out_cls_path,

@@ -382,7 +382,7 @@ def test_train_and_apply_sklearn_classifier_ids_and_probs(tmp_path):
         sk_classifier=model_path,
         in_msk_img=fix["msk_img"],
         img_msk_val=1,
-        out_class_img=out_cls,
+        output_img=out_cls,
         out_score_img=out_score,
         block_size=8,
         use_pbar=False,
@@ -423,14 +423,14 @@ def test_train_and_apply_sklearn_classifier_ids_and_probs(tmp_path):
         assert np.argmax(probs[:, 8, 10]) == 1  # Water
         assert np.argmax(probs[:, 14, 10]) == 2  # Urban
 
-    # Single-band max probability output only (out_class_img=None, score_max_only=True).
+    # Single-band max probability output only (output_img=None, score_max_only=True).
     out_max_score = tmp_path / "max_prob.tif"
     rcsk.apply_sklearn_classifier(
         cls_cfg=fix["cfg"],
         sk_classifier=base_clf,
         in_msk_img=fix["msk_img"],
         img_msk_val=1,
-        out_class_img=None,
+        output_img=None,
         out_score_img=out_max_score,
         score_max_only=True,
         use_pbar=False,
@@ -498,7 +498,7 @@ def test_apply_class_zero_and_xgboost_workflow(tmp_path):
         sk_classifier=xgb_clf,
         in_msk_img=msk_path,
         img_msk_val=1,
-        out_class_img=out_cls,
+        output_img=out_cls,
         out_score_img=out_probs,
         img_band_info=img_band_info,
         use_pbar=False,
@@ -522,7 +522,7 @@ def test_apply_sklearn_validation_errors(tmp_path):
             RandomForestClassifier(),
             fix["msk_img"],
             1,
-            out_class_img=None,
+            output_img=None,
             out_score_img=None,
         )
 
@@ -533,7 +533,7 @@ def test_apply_sklearn_validation_errors(tmp_path):
             RandomForestClassifier(),
             fix["msk_img"],
             1,
-            out_class_img=tmp_path / "unfitted.tif",
+            output_img=tmp_path / "unfitted.tif",
         )
 
     # SVC(probability=False) lacks predict_proba when out_score_img is requested.
@@ -545,7 +545,7 @@ def test_apply_sklearn_validation_errors(tmp_path):
             svc,
             fix["msk_img"],
             1,
-            out_class_img=tmp_path / "svc.tif",
+            output_img=tmp_path / "svc.tif",
             out_score_img=tmp_path / "svc_prob.tif",
         )
 

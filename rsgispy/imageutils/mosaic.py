@@ -55,7 +55,7 @@ def create_img_mosaic(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -79,7 +79,7 @@ def create_img_mosaic(
     :param no_data_val: Optional output no-data value (defaults to
                         ``background_val``).
     :param calc_stats: If ``True``, populate raster statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or
@@ -262,6 +262,7 @@ def create_img_mosaic(
 def include_imgs(
     input_img: str,
     include_imgs: Sequence[str],
+    *,
     input_bands: Optional[Sequence[int]] = None,
     skip_val: Optional[float] = None,
     use_pbar: bool = True,
@@ -382,6 +383,7 @@ def include_imgs_with_overlap(
     input_img: str,
     include_imgs: Sequence[str],
     overlap: int,
+    *,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -476,7 +478,7 @@ def combine_imgs_to_band(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = 0.0,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -493,7 +495,7 @@ def combine_imgs_to_band(
     :param no_data_val: No-data value ignored during combination
                         (Default = ``0.0``).
     :param calc_stats: Populate image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
@@ -585,7 +587,7 @@ def combine_binary_masks(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -603,7 +605,7 @@ def combine_binary_masks(
                      (defaults to :data:`rsgispy.TYPE_8UINT`).
     :param no_data_val: Optional no-data value written to output raster metadata.
     :param calc_stats: Populate thematic statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.

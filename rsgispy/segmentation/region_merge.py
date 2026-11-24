@@ -355,7 +355,7 @@ def _region_merge_tile_worker(
         halo_labels = grid_ids
 
     core_labels = relabel_segments_array(
-        crop_halo_labels(halo_labels, tile), nodata_value=0, contiguous=True
+        crop_halo_labels(halo_labels, tile), no_data_val=0, contiguous=True
     )
     return core_labels, None
 
@@ -391,7 +391,7 @@ def region_merge_segmentation_array(
     min_pixels: int = 10,
     tile_size: Optional[Union[int, Tuple[int, int]]] = None,
     overlap: int = 32,
-    n_workers: int = 1,
+    n_jobs: int = 1,
     stitch_seams: bool = True,
     use_numba: bool = True,
     no_data_val: Optional[float] = None,
@@ -421,7 +421,7 @@ def region_merge_segmentation_array(
         Optional core tile size ``(tile_h, tile_w)`` for tiled execution.
     overlap : int, optional
         Halo padding in pixels around each tile (Default = ``32``).
-    n_workers : int, optional
+    n_jobs : int, optional
         Number of worker processes for parallel tile execution (Default = ``1``).
     stitch_seams : bool, optional
         Spectrally reconcile segments across tile boundaries (Default = ``True``).
@@ -473,7 +473,7 @@ def region_merge_segmentation_array(
         params=params,
         tile_size=tile_size,
         overlap=overlap,
-        n_workers=n_workers,
+        n_jobs=n_jobs,
         stitch_seams=stitch_seams,
         seam_mode="spectral",
         seam_threshold=seam_thres,
@@ -493,7 +493,7 @@ def region_merge_segmentation(
     bands: Optional[Sequence[int]] = None,
     tile_size: Optional[Union[int, Tuple[int, int]]] = None,
     overlap: int = 32,
-    n_workers: int = 1,
+    n_jobs: int = 1,
     stitch_seams: bool = True,
     use_numba: bool = True,
     *,
@@ -529,7 +529,7 @@ def region_merge_segmentation(
         Core tile size ``(tile_h, tile_w)`` for bounded-memory execution.
     overlap : int, optional
         Halo padding in pixels around each tile (Default = ``32``).
-    n_workers : int, optional
+    n_jobs : int, optional
         Number of worker processes for parallel tile processing
         (Default = ``1``).
     stitch_seams : bool, optional
@@ -593,7 +593,7 @@ def region_merge_segmentation(
         params=params,
         tile_size=tile_size,
         overlap=overlap,
-        n_workers=n_workers,
+        n_jobs=n_jobs,
         stitch_seams=stitch_seams,
         seam_mode="spectral",
         seam_threshold=seam_thres,

@@ -46,6 +46,7 @@ def calc_vec_area(
     out_col: str,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[gpd.GeoDataFrame]:
@@ -94,6 +95,7 @@ def calc_vec_length(
     out_col: str,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[gpd.GeoDataFrame]:
@@ -140,6 +142,7 @@ def calc_vec_length(
 def get_poly_hole_area(
     vec_file: VectorInput,
     vec_lyr: Optional[str],
+    *,
     use_pbar: bool = True,
 ) -> List[float]:
     """
@@ -189,6 +192,7 @@ def calc_vec_pt_dist_angle(
     vec_lyr: Optional[str],
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     out_format: str = "GPKG",
     x_centre: Optional[float] = None,
     y_centre: Optional[float] = None,
@@ -286,6 +290,7 @@ def calc_near_dist_to_feats(
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
     out_col: str = "dist",
+    *,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[gpd.GeoDataFrame]:
@@ -358,6 +363,7 @@ def count_pt_intersects(
     vec_pts_lyr: Optional[str],
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     out_format: str = "GPKG",
     out_count_col: str = "n_points",
     tmp_col_name: str = "tmp_join_fid",
@@ -455,6 +461,7 @@ def calc_npts_in_radius(
     radius: float,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     out_format: str = "GPKG",
     out_col_name: str = "n_pts_r",
     n_cores: int = 1,

@@ -1221,7 +1221,7 @@ def get_cls_id_luts(
 def recode_internal_to_out_ids(
     preds: Union[np.ndarray, pd.Series, Sequence[int]],
     class_info: Union[ClassificationConfig, Mapping[str, ClassInfoObj]],
-    nodata_val: Optional[int] = None,
+    no_data_val: Optional[int] = None,
     out_dtype: Optional[Any] = None,
     keep_unmapped: bool = False,
 ) -> Union[np.ndarray, pd.Series]:
@@ -1233,7 +1233,7 @@ def recode_internal_to_out_ids(
                   internal class predictions.
     :param class_info: A :class:`ClassificationConfig` or mapping of
                        ``{class_name: ClassInfoObj}``.
-    :param nodata_val: Optional nodata/background value preserved unchanged.
+    :param no_data_val: Optional nodata/background value preserved unchanged.
     :param out_dtype: Optional NumPy output dtype. When ``None``, selects an
                       integer dtype large enough for all output class IDs.
     :param keep_unmapped: If ``True``, leave values absent from ``class_info``
@@ -1254,8 +1254,8 @@ def recode_internal_to_out_ids(
     # pylint: disable=too-many-locals
     internal_to_out, _ = get_cls_id_luts(class_info)
     target_vals = list(internal_to_out.values())
-    if nodata_val is not None:
-        target_vals.append(int(nodata_val))
+    if no_data_val is not None:
+        target_vals.append(int(no_data_val))
 
     if out_dtype is None:
         _, resolved_dtype = select_out_int_dtype(target_vals)
@@ -1268,14 +1268,14 @@ def recode_internal_to_out_ids(
 
     out_arr = (
         arr_int.astype(resolved_dtype, copy=True)
-        if keep_unmapped or nodata_val is not None
+        if keep_unmapped or no_data_val is not None
         else np.empty(arr_int.shape, dtype=resolved_dtype)
     )
 
     mapped_mask = np.zeros(arr_int.shape, dtype=bool)
-    if nodata_val is not None:
-        nd_mask = arr_int == int(nodata_val)
-        out_arr[nd_mask] = int(nodata_val)
+    if no_data_val is not None:
+        nd_mask = arr_int == int(no_data_val)
+        out_arr[nd_mask] = int(no_data_val)
         mapped_mask |= nd_mask
 
     for int_id, out_id in internal_to_out.items():

@@ -40,6 +40,7 @@ def create_img_extent_lut(
     vec_file: Optional[Union[str, os.PathLike]] = None,
     vec_lyr: Optional[str] = None,
     out_format: str = "GPKG",
+    *,
     ignore_none_imgs: bool = False,
     out_proj_wgs84: bool = False,
     overwrite_lut_file: bool = False,

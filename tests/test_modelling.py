@@ -178,7 +178,7 @@ def test_create_finite_mask(tmp_path):
         env_vars=fx["env_vars"],
         analysis_vars=["VarOne", "VarTwo", "CatThree"],
         output_img=out_mask,
-        calc_img_stats=False,
+        calc_stats=False,
         use_pbar=False,
     )
 
@@ -205,7 +205,7 @@ def test_gen_pseudo_absences_smpls(tmp_path):
         fx["env_vars"],
         ["VarOne", "VarTwo"],
         valid_mask,
-        calc_img_stats=False,
+        calc_stats=False,
         use_pbar=False,
     )
 
@@ -441,7 +441,7 @@ def test_sklearn_loop_isolation_and_fitting(tmp_path):
     # 4. Single-class model fitting
     pres_train = train_gdf[train_gdf["clsid"] == 1].copy()
     oc_template = IsolationForest(n_estimators=10, contamination=0.05, random_state=42)
-    oc_mdl, oc_acc, oc_auc = sdm.fit_sklearn_slg_cls_mdl(
+    oc_mdl, oc_acc, oc_auc = sdm.fit_sklearn_sgl_cls_mdl(
         oc_template,
         pres_train,
         None,
@@ -635,7 +635,7 @@ def test_raster_predictions_single_and_ensemble(tmp_path):
         env_vars,
         ["VarOne", "VarTwo", "CatThree"],
         valid_mask,
-        calc_img_stats=False,
+        calc_stats=False,
         use_pbar=False,
     )
 
@@ -676,7 +676,7 @@ def test_raster_predictions_single_and_ensemble(tmp_path):
     )
 
     # Single-class classifier and ensemble
-    oc_mdl, _, _ = sdm.fit_sklearn_slg_cls_mdl(
+    oc_mdl, _, _ = sdm.fit_sklearn_sgl_cls_mdl(
         IsolationForest(n_estimators=10, contamination=0.05, random_state=9),
         pres_train,
         None,
@@ -706,38 +706,38 @@ def test_raster_predictions_single_and_ensemble(tmp_path):
     oc_ens_prob_img = str(tmp_path / "oc_ens_prob.tif")
     oc_ens_cls_img = str(tmp_path / "oc_ens_cls.tif")
 
-    # Force multi-block iteration via block_size=16 (exercise calc_img_stats=True once)
+    # Force multi-block iteration via block_size=16 (exercise calc_stats=True once)
     sdm.pred_sklearn_mdl_prob(
         clf, valid_mask, 1, env_vars, analysis_vars, prob_img,
-        normalise_data=True, calc_img_stats=True, block_size=16, use_pbar=False,
+        normalise_data=True, calc_stats=True, block_size=16, use_pbar=False,
     )
     sdm.pred_sklearn_mdl_cls(
         clf, valid_mask, 1, env_vars, analysis_vars, cls_img,
-        normalise_data=True, calc_img_stats=False, block_size=16, use_pbar=False,
+        normalise_data=True, calc_stats=False, block_size=16, use_pbar=False,
     )
-    sdm.pred_sklearn_slg_cls_mdl_prob(
+    sdm.pred_sklearn_sgl_cls_mdl_prob(
         oc_mdl, valid_mask, 1, env_vars, analysis_vars, oc_prob_img,
-        normalise_data=True, calc_img_stats=False, block_size=16, use_pbar=False,
+        normalise_data=True, calc_stats=False, block_size=16, use_pbar=False,
     )
-    sdm.pred_sklearn_slg_cls_mdl_cls(
+    sdm.pred_sklearn_sgl_cls_mdl_cls(
         oc_mdl, valid_mask, 1, env_vars, analysis_vars, oc_cls_img,
-        normalise_data=True, calc_img_stats=False, block_size=16, use_pbar=False,
+        normalise_data=True, calc_stats=False, block_size=16, use_pbar=False,
     )
     sdm.pred_ensemble_sklearn_mdls_prob(
         ens_mdls, valid_mask, 1, env_vars, analysis_vars, ens_prob_img,
-        normalise_data=True, calc_img_stats=False, block_size=16, use_pbar=False,
+        normalise_data=True, calc_stats=False, block_size=16, use_pbar=False,
     )
     sdm.pred_ensemble_sklearn_mdls_cls(
         ens_mdls, valid_mask, 1, env_vars, analysis_vars, ens_cls_img,
-        normalise_data=True, calc_img_stats=False, block_size=16, use_pbar=False,
+        normalise_data=True, calc_stats=False, block_size=16, use_pbar=False,
     )
-    sdm.pred_ensemble_sklearn_slg_cls_mdls_prob(
+    sdm.pred_ensemble_sklearn_sgl_cls_mdls_prob(
         oc_ens, valid_mask, 1, env_vars, analysis_vars, oc_ens_prob_img,
-        normalise_data=True, calc_img_stats=False, block_size=16, use_pbar=False,
+        normalise_data=True, calc_stats=False, block_size=16, use_pbar=False,
     )
     sdm.pred_ensemble_sklearn_sgl_cls_mdls_cls(
         oc_ens, valid_mask, 1, env_vars, analysis_vars, oc_ens_cls_img,
-        normalise_data=True, calc_img_stats=False, block_size=16, use_pbar=False,
+        normalise_data=True, calc_stats=False, block_size=16, use_pbar=False,
     )
 
     with rasterio.open(valid_mask) as msrc:

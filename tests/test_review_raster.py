@@ -695,10 +695,10 @@ def test_calc_ppi_tiled_streaming_deterministic(tmp_path, monkeypatch):
     out1 = str(tmp_path / "ppi1.tif")
     out2 = str(tmp_path / "ppi2.tif")
     endm.calc_ppi(
-        in_img, out1, niters=200, seed=99, calc_stats=False, use_pbar=False
+        in_img, out1, niters=200, rnd_seed=99, calc_stats=False, use_pbar=False
     )
     endm.calc_ppi(
-        in_img, out2, niters=200, seed=99, calc_stats=False, use_pbar=False
+        in_img, out2, niters=200, rnd_seed=99, calc_stats=False, use_pbar=False
     )
     with rasterio.open(out1) as d1, rasterio.open(out2) as d2:
         a1 = d1.read(1)

@@ -174,9 +174,9 @@ def _call_topo_kernel(
 
 
 def _warn_numpy_fallback(func_name: str) -> None:
-    """Emit a ``RuntimeWarning`` when falling back to vectorized NumPy."""
+    """Emit a ``RuntimeWarning`` when falling back to vectorised NumPy."""
     warnings.warn(
-        f"numba is not installed; running '{func_name}' using the vectorized "
+        f"numba is not installed; running '{func_name}' using the vectorised "
         "NumPy fallback.",
         RuntimeWarning,
         stacklevel=3,
@@ -310,7 +310,7 @@ def _write_raster_array(
     gdalformat: str,
     out_rio_dtype: str,
     out_np_dtype: np.dtype,
-    out_nodata: Optional[float],
+    out_no_data_val: Optional[float],
     calc_stats: bool,
     use_pbar: bool,
 ) -> None:
@@ -340,14 +340,14 @@ def _write_raster_array(
             grid=grid,
             count=count,
         )
-        if out_nodata is not None:
-            dst.nodata = out_nodata
+        if out_no_data_val is not None:
+            dst.nodata = out_no_data_val
         dst.write(write_data)
 
     if calc_stats:
         pop_img_stats(
             input_img=output_img,
-            no_data_val=out_nodata,
+            no_data_val=out_no_data_val,
             calc_pyramids=True,
             ignore_cog=gdalformat.upper().strip() == "COG",
             use_pbar=use_pbar,
@@ -418,9 +418,9 @@ def _agree_burn_array(
         if np.any(in_buf):
             out[in_buf] -= smooth_drop * (1.0 - dist_m[in_buf] / buf_d) ** 2
 
-    drop_center = burn_depth + (smooth_drop if has_buf else 0.0)
-    center_cells = valid & stream_mask
-    out[center_cells] -= drop_center
+    drop_centre = burn_depth + (smooth_drop if has_buf else 0.0)
+    centre_cells = valid & stream_mask
+    out[centre_cells] -= drop_centre
     return out
 
 
@@ -593,7 +593,7 @@ def identify_sinks(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -614,7 +614,7 @@ def identify_sinks(
                     gdalformat=gdalformat,
                     out_rio_dtype=depth_rio_dt,
                     out_np_dtype=depth_np_dt,
-                    out_nodata=depth_nd,
+                    out_no_data_val=depth_nd,
                     calc_stats=calc_stats,
                     use_pbar=use_pbar,
                 )
@@ -700,7 +700,7 @@ def fill_depressions(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -815,7 +815,7 @@ def breach_depressions(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -918,7 +918,7 @@ def burn_streams(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -993,7 +993,7 @@ def resolve_flats(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -1134,7 +1134,7 @@ def condition_dem(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -1307,7 +1307,7 @@ def flow_direction(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -1443,7 +1443,7 @@ def flow_accumulation(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -1557,7 +1557,7 @@ def flow_length(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -1680,7 +1680,7 @@ def flow_distance(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -1690,7 +1690,7 @@ def flow_distance(
 def trace_flow_path(
     flow_dir_img: str,
     pour_points_vec: str,
-    output_vec: str,
+    out_vec_file: str,
     direction: str = "downstream",
     flow_acc_img: Optional[str] = None,
     *,
@@ -1710,7 +1710,7 @@ def trace_flow_path(
         Path to the input D8 flow direction raster (``uint8``).
     pour_points_vec : str
         Path to the input seed points vector file.
-    output_vec : str
+    out_vec_file : str
         Path to the output vector LineString dataset.
     direction : {'downstream', 'upstream'}, optional
         Tracing direction (Default = ``'downstream'``).
@@ -1838,7 +1838,7 @@ def trace_flow_path(
         out_gdf = gpd.GeoDataFrame(records, geometry="geometry", crs=fdir_src.crs)
         write_vec_gdf(
             out_gdf,
-            output_vec,
+            out_vec_file,
             out_vec_lyr=out_vec_lyr,
             out_format=out_format,
             overwrite=overwrite,
@@ -1930,7 +1930,7 @@ def extract_streams(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -2015,7 +2015,7 @@ def stream_link(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -2109,7 +2109,7 @@ def stream_order(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -2119,7 +2119,7 @@ def stream_order(
 def vectorise_streams(
     streams_img: str,
     flow_dir_img: str,
-    output_vec: str,
+    out_vec_file: str,
     dem_img: Optional[str] = None,
     flow_acc_img: Optional[str] = None,
     order_method: str = "strahler",
@@ -2142,7 +2142,7 @@ def vectorise_streams(
         Path to the binary stream network mask raster (``1`` = stream).
     flow_dir_img : str
         Path to the D8 flow direction raster (``uint8``).
-    output_vec : str
+    out_vec_file : str
         Path to the output vector stream file (e.g., ``.gpkg``, ``.parquet``,
         ``.shp``, ``.geojson``).
     dem_img : str or None, optional
@@ -2307,7 +2307,7 @@ def vectorise_streams(
 
         write_vec_gdf(
             out_gdf,
-            output_vec,
+            out_vec_file,
             out_vec_lyr=out_vec_lyr,
             out_format=out_format,
             overwrite=overwrite,
@@ -2322,7 +2322,7 @@ def vectorise_streams(
 def snap_pour_points(
     pour_points_vec: str,
     flow_acc_img: str,
-    output_vec: str,
+    out_vec_file: str,
     snap_dist: float,
     streams_img: Optional[str] = None,
     *,
@@ -2342,7 +2342,7 @@ def snap_pour_points(
         Path to the input pour points vector file.
     flow_acc_img : str
         Path to the flow accumulation raster.
-    output_vec : str
+    out_vec_file : str
         Path to the output snapped pour points vector file.
     snap_dist : float
         Maximum snap search distance in CRS metres.
@@ -2452,7 +2452,7 @@ def snap_pour_points(
         out_gdf = gpd.GeoDataFrame(records, geometry="geometry", crs=acc_src.crs)
         write_vec_gdf(
             out_gdf,
-            output_vec,
+            out_vec_file,
             out_vec_lyr=out_vec_lyr,
             out_format=out_format,
             overwrite=overwrite,
@@ -2567,7 +2567,7 @@ def delineate_watersheds(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -2648,7 +2648,7 @@ def delineate_basins(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -2737,7 +2737,7 @@ def delineate_subcatchments(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -2746,7 +2746,7 @@ def delineate_subcatchments(
 
 def polygonise_watersheds(
     watershed_img: str,
-    output_vec: str,
+    out_vec_file: str,
     dem_img: Optional[str] = None,
     dissolve: bool = True,
     simplify_tol: Optional[float] = None,
@@ -2765,7 +2765,7 @@ def polygonise_watersheds(
     ----------
     watershed_img : str
         Path to the input integer watershed/basin raster.
-    output_vec : str
+    out_vec_file : str
         Path to the output vector polygon dataset.
     dem_img : str or None, optional
         Optional aligned DEM raster used to compute ``elev_min``, ``elev_mean``,
@@ -2863,7 +2863,7 @@ def polygonise_watersheds(
 
             write_vec_gdf(
                 gdf,
-                output_vec,
+                out_vec_file,
                 out_vec_lyr=out_vec_lyr,
                 out_format=out_format,
                 overwrite=overwrite,
@@ -2967,7 +2967,7 @@ def calc_hand(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -3065,7 +3065,7 @@ def flood_inundation_from_hand(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -3159,7 +3159,7 @@ def calc_twi(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -3243,7 +3243,7 @@ def calc_spi(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )
@@ -3338,7 +3338,7 @@ def calc_ls_factor(
                 gdalformat=gdalformat,
                 out_rio_dtype=out_rio_dt,
                 out_np_dtype=out_np_dt,
-                out_nodata=out_nd,
+                out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
             )

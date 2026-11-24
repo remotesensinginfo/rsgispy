@@ -721,7 +721,7 @@ def test_gdal_translate_metadata_spatial_mask_gcps_and_cli(tmp_path):
         metadata={"AUTHOR": "rsgispy"},
         domain_metadata={"MYDOM": {"K": "V"}},
         no_metadata=True,
-        stats=True,
+        calc_stats=True,
         use_pbar=False,
     )
     with rasterio.open(out_p) as dst:

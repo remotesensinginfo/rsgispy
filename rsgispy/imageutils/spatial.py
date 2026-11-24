@@ -71,7 +71,7 @@ def calc_wgs84_pixel_area(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -90,7 +90,7 @@ def calc_wgs84_pixel_area(
                      (defaults to :data:`rsgispy.TYPE_64FLOAT`).
     :param no_data_val: Optional output no-data value.
     :param calc_stats: Populate image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
 
@@ -152,7 +152,7 @@ def calc_wgs84_pixel_size(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -167,7 +167,7 @@ def calc_wgs84_pixel_size(
                      (defaults to :data:`rsgispy.TYPE_64FLOAT`).
     :param no_data_val: Optional output no-data value.
     :param calc_stats: Populate image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
 
@@ -230,7 +230,7 @@ def calc_pixel_locations(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -245,7 +245,7 @@ def calc_pixel_locations(
                      (defaults to :data:`rsgispy.TYPE_64FLOAT`).
     :param no_data_val: Optional output no-data value.
     :param calc_stats: Populate image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
 
@@ -304,7 +304,7 @@ def calc_wgs84_pixel_locations(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = 0.0,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -319,7 +319,7 @@ def calc_wgs84_pixel_locations(
                      (defaults to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Output no-data value (Default = ``0.0``).
     :param calc_stats: Populate image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: Show a progress bar during calculation (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
 
@@ -763,7 +763,7 @@ def grid_scattered_pts(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = 0.0,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -789,7 +789,7 @@ def grid_scattered_pts(
                      (defaults to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Output no-data value (Default = ``0.0``).
     :param calc_stats: Populate image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: Show a progress bar during gridding (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
 

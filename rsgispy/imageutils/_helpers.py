@@ -126,10 +126,11 @@ def copy_raster_window(
     row_off: int,
     width: int,
     height: int,
+    *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:

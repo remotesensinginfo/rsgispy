@@ -49,7 +49,7 @@ def perform_random_pxl_sample_in_mask(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -68,7 +68,7 @@ def perform_random_pxl_sample_in_mask(
                      (defaults to the input image data type).
     :param no_data_val: Optional output no-data value.
     :param calc_stats: Populate image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: Reserved progress-bar flag for uniform API
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
@@ -299,7 +299,7 @@ def assign_random_pxls(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -321,7 +321,7 @@ def assign_random_pxls(
                      (defaults to :data:`rsgispy.TYPE_8UINT`).
     :param no_data_val: Optional no-data value assigned in output metadata.
     :param calc_stats: Populate image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
@@ -420,7 +420,7 @@ def generate_random_pxl_vals_img(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
-    calc_stats: bool = False,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
 ) -> None:
@@ -438,7 +438,7 @@ def generate_random_pxl_vals_img(
                      (defaults to :data:`rsgispy.TYPE_32INT`).
     :param no_data_val: Optional no-data value assigned in output metadata.
     :param calc_stats: Populate image statistics and pyramids
-                       (Default = ``False``).
+                       (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.

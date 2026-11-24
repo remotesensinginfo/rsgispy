@@ -260,7 +260,7 @@ def run_rfe_selection(
     # pylint: disable=too-many-locals
     feat_list = list(feat_cols)
     base_est = clone_sklearn_estimator(
-        sk_estimator, random_state=rnd_seed, extra=extra
+        sk_estimator, rnd_seed=rnd_seed, extra=extra
     )
     if use_cv:
         cv_splitter = resolve_cv_splitter(
@@ -396,7 +396,7 @@ def run_from_model_selection(
             x_df,
             y_arr,
             sync_input=False,
-            random_state=rnd_seed,
+            rnd_seed=rnd_seed,
             extra=extra,
         )
 

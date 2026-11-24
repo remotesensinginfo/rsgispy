@@ -227,8 +227,8 @@ def tune_estimator(
     pruner: Optional[Any] = None,
     sampler: Optional[Any] = None,
     refit: bool = True,
-    random_state: Optional[int] = 42,
-    show_progress: bool = True,
+    rnd_seed: Optional[int] = 42,
+    use_pbar: bool = True,
 ) -> TuneResult:
     """
     Tune hyperparameters for any estimator via Optuna using spatial, group, or
@@ -257,8 +257,8 @@ def tune_estimator(
     :param sampler: Optional Optuna sampler instance (defaults to seeded TPESampler).
     :param refit: Refit best estimator (and ``best_scaler`` if ``scaler`` is
                   provided) on the full dataset ``(X, y)`` (Default = ``True``).
-    :param random_state: Optional seed for the default TPESampler (Default = ``42``).
-    :param show_progress: Display Optuna ``tqdm`` progress bar (Default = ``True``).
+    :param rnd_seed: Optional seed for the default TPESampler (Default = ``42``).
+    :param use_pbar: Display Optuna ``tqdm`` progress bar (Default = ``True``).
     :return: :class:`TuneResult`.
     """
     # pylint: disable=too-many-arguments,too-many-locals
@@ -285,7 +285,7 @@ def tune_estimator(
         eff_sampler = (
             sampler
             if sampler is not None
-            else optuna.samplers.TPESampler(seed=random_state)
+            else optuna.samplers.TPESampler(seed=rnd_seed)
         )
         study = optuna.create_study(
             direction=direction,
@@ -321,7 +321,7 @@ def tune_estimator(
             _objective,
             n_trials=int(n_trials),
             timeout=timeout,
-            show_progress_bar=bool(show_progress),
+            show_progress_bar=bool(use_pbar),
         )
     finally:
         optuna.logging.set_verbosity(prev_verbosity)

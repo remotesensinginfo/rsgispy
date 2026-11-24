@@ -17,7 +17,7 @@ from rsgispy.mapping._legend import create_companion_legend_axis
 from rsgispy.mapping.elements import (
     NORTH_ARROW_STYLE_TRIANGLE,
     SCALEBAR_STYLE_SOLID,
-    _finalize_map_axis,
+    _finalise_map_axis,
 )
 from rsgispy.mapping.legend import (
     add_categorical_legend,
@@ -59,7 +59,7 @@ def create_raster_img_map(
     show_scale_bar: bool = True,
     use_grid: bool = False,
     show_map_axis: bool = True,
-    img_no_data_val: Optional[float] = None,
+    no_data_val: Optional[float] = None,
     no_data_out_clr: Optional[Union[float, Tuple[float, float, float]]] = None,
     stch_min_max_vals: Optional[Union[Dict[str, float], List[Dict[str, float]]]] = None,
     stch_n_stdevs: float = 2.0,
@@ -85,7 +85,7 @@ def create_raster_img_map(
     :param show_scale_bar: Whether to add a scale bar (Default = True).
     :param use_grid: Whether to enable axis gridlines (Default = False).
     :param show_map_axis: Whether to display axis ticks and frame (Default = True).
-    :param img_no_data_val: Optional no-data value; read from image header if ``None``.
+    :param no_data_val: Optional no-data value; read from image header if ``None``.
     :param no_data_out_clr: Optional colour value(s) assigned to no-data pixels.
     :param stch_min_max_vals: Stretch min/max dict(s) required when
                               ``img_stch == rsgispy.IMG_STRETCH_USER``.
@@ -121,8 +121,8 @@ def create_raster_img_map(
     img_bbox, img_epsg, src_nodata = _read_raster_map_meta(input_img)
     if bbox is None:
         bbox = img_bbox
-    if img_no_data_val is None:
-        img_no_data_val = src_nodata
+    if no_data_val is None:
+        no_data_val = src_nodata
 
     img_data, img_coords = rsgispy.tools.plotting.get_raster_mpl_imshow(
         input_img, bands=img_bands, bbox=bbox
@@ -141,23 +141,23 @@ def create_raster_img_map(
         img_data_strch = rsgispy.tools.plotting.manual_stretch_np_arr(
             img_data,
             stch_min_max_vals,
-            no_data_val=img_no_data_val,
+            no_data_val=no_data_val,
             no_data_clr=no_data_out_clr,
         )
     elif img_stch == rsgispy.IMG_STRETCH_LINEAR:
         img_data_strch = rsgispy.tools.plotting.linear_stretch_np_arr(
-            img_data, no_data_val=img_no_data_val, no_data_clr=no_data_out_clr
+            img_data, no_data_val=no_data_val, no_data_clr=no_data_out_clr
         )
     elif img_stch == rsgispy.IMG_STRETCH_STDEV:
         img_data_strch = rsgispy.tools.plotting.stdev_stretch_np_arr(
             img_data,
             n_stdevs=stch_n_stdevs,
-            no_data_val=img_no_data_val,
+            no_data_val=no_data_val,
             no_data_clr=no_data_out_clr,
         )
     elif img_stch == rsgispy.IMG_STRETCH_CUMULATIVE:
         img_data_strch = rsgispy.tools.plotting.cumulative_stretch_np_arr(
-            img_data, no_data_val=img_no_data_val, no_data_clr=no_data_out_clr
+            img_data, no_data_val=no_data_val, no_data_clr=no_data_out_clr
         )
     else:
         raise rsgispy.RSGISPyException(
@@ -175,7 +175,7 @@ def create_raster_img_map(
     ax.set_ylim([img_coords[2], img_coords[3]])
     ax.ticklabel_format(useOffset=False, style="plain")
 
-    _finalize_map_axis(
+    _finalise_map_axis(
         ax=ax,
         epsg_code=img_epsg,
         bbox=bbox,
@@ -326,7 +326,7 @@ def create_thematic_raster_map(
     ):
         ax.imshow(img_data_arr, extent=img_coords, alpha=img_alpha, zorder=plot_zorder)
 
-    _finalize_map_axis(
+    _finalise_map_axis(
         ax=ax,
         epsg_code=img_epsg,
         bbox=bbox,
@@ -498,7 +498,7 @@ def create_raster_cmap_img_map(
     ax.set_ylim([img_coords[2], img_coords[3]])
     ax.ticklabel_format(useOffset=False, style="plain")
 
-    _finalize_map_axis(
+    _finalise_map_axis(
         ax=ax,
         epsg_code=img_epsg,
         bbox=bbox,

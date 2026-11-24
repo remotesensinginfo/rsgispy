@@ -1372,7 +1372,7 @@ def calc_jackknife_feature_importance(
             tr_sub,
             train_y,
             sync_input=False,
-            random_state=rnd_seed,
+            rnd_seed=rnd_seed,
             extra="classification",
         )
         res = calc_split_metrics(est_sub, tr_sub, train_y, "train")

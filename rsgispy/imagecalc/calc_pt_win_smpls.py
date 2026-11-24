@@ -200,6 +200,7 @@ def calc_pt_smpl_img_vals(
     angle_col: Optional[str] = None,
     x_box_col: str = "xbox",
     y_box_col: str = "ybox",
+    *,
     no_data_val: Optional[float] = None,
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,

@@ -351,7 +351,7 @@ def test_gbdt_binary_optimise_train_and_apply(tmp_path: Path, spec: dict):
         spec["cls_kw"]: model_path,
         "in_msk_img": fix["msk_img"],
         "img_msk_val": 1,
-        "out_class_img": out_cls,
+        "output_img": out_cls,
         "out_score_img": out_prob,
         "pred_threshold": 0.5,
         "block_size": 8,
@@ -389,7 +389,7 @@ def test_gbdt_binary_optimise_train_and_apply(tmp_path: Path, spec: dict):
         cls_cfg=fix["cfg"],
         in_msk_img=fix["msk_img"],
         img_msk_val=1,
-        out_class_img=None,
+        output_img=None,
         out_score_img=out_prob2,
         score_all_classes=True,
         use_pbar=False,
@@ -451,7 +451,7 @@ def test_gbdt_multiclass_optimise_train_and_apply(tmp_path: Path, spec: dict):
         cls_cfg=fix["cfg"],
         in_msk_img=fix["msk_img"],
         img_msk_val=1,
-        out_class_img=out_cls,
+        output_img=out_cls,
         out_score_img=out_probs,
         block_size=8,
         use_pbar=False,
@@ -483,7 +483,7 @@ def test_gbdt_multiclass_optimise_train_and_apply(tmp_path: Path, spec: dict):
         cls_cfg=fix["cfg"],
         in_msk_img=fix["msk_img"],
         img_msk_val=1,
-        out_class_img=None,
+        output_img=None,
         out_score_img=out_max,
         score_max_only=True,
         use_pbar=False,
@@ -665,7 +665,7 @@ def test_gbdt_validation_and_missing_dep_errors(tmp_path: Path, monkeypatch):
                 xgb_classifier=trained,
                 in_msk_img=bin_fix["msk_img"],
                 img_msk_val=1,
-                out_class_img=tmp_path / "bad.tif",
+                output_img=tmp_path / "bad.tif",
                 pred_threshold=1.5,
             )
 
@@ -787,7 +787,7 @@ def test_gbdt_gpu_fallback_and_validation(tmp_path: Path, monkeypatch, spec: dic
             cls_cfg=fix["cfg"],
             in_msk_img=fix["msk_img"],
             img_msk_val=1,
-            out_class_img=out_cls,
+            output_img=out_cls,
             use_pbar=False,
             use_gpu=True,
             **{spec["cls_kw"]: model},
@@ -1049,7 +1049,7 @@ def test_xgboost_feature_order_subset_and_id_mismatch_guards(tmp_path: Path):
         xgb_classifier=rev_mdl,
         in_msk_img=fix["msk_img"],
         img_msk_val=1,
-        out_class_img=out_rev,
+        output_img=out_rev,
         use_pbar=False,
     )
     with rasterio.open(out_rev, "r") as src:
@@ -1073,7 +1073,7 @@ def test_xgboost_feature_order_subset_and_id_mismatch_guards(tmp_path: Path):
         xgb_classifier=sub_mdl,
         in_msk_img=fix["msk_img"],
         img_msk_val=1,
-        out_class_img=out_sub,
+        output_img=out_sub,
         use_pbar=False,
     )
     with rasterio.open(out_sub, "r") as src:
@@ -1091,7 +1091,7 @@ def test_xgboost_feature_order_subset_and_id_mismatch_guards(tmp_path: Path):
             xgb_classifier=trained_mc,
             in_msk_img=fix["msk_img"],
             img_msk_val=1,
-            out_class_img=tmp_path / "mc_mismatch.tif",
+            output_img=tmp_path / "mc_mismatch.tif",
             use_internal_id=False,
             use_pbar=False,
         )
@@ -1116,7 +1116,7 @@ def test_xgboost_feature_order_subset_and_id_mismatch_guards(tmp_path: Path):
             in_msk_img=fix["msk_img"],
             img_msk_val=1,
             img_band_info=one_band_info,
-            out_class_img=tmp_path / "mc_missing_band.tif",
+            output_img=tmp_path / "mc_missing_band.tif",
             use_pbar=False,
         )
 
@@ -1128,8 +1128,8 @@ def test_xgboost_feature_order_subset_and_id_mismatch_guards(tmp_path: Path):
             xgb_classifier=trained_mc,
             in_msk_img=fix["msk_img"],
             img_msk_val=99,
-            out_class_img=tmp_path / "mc_empty_msk.tif",
-            calc_img_stats=False,
+            output_img=tmp_path / "mc_empty_msk.tif",
+            calc_stats=False,
             use_pbar=False,
         )
 

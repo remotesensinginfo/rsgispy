@@ -44,7 +44,7 @@ def create_categorical_legend_patches(
     pxl_val_fmt: str = "{val}: {name}",
     max_label_width: Optional[int] = None,
     swatch_shape: str = "rectangle",
-    swatch_edgecolor: str = "#333333",
+    swatch_edge_colour: str = "#333333",
     swatch_linewidth: float = 0.6,
     swatch_size: float = 9.0,
 ) -> List[Any]:
@@ -64,7 +64,7 @@ def create_categorical_legend_patches(
     :param bbox: Optional map extent ``(MinX, MaxX, MinY, MaxY)`` used when
                  ``only_present_in_img=True``.
     :param ignore_zero: Exclude background pixel value ``0`` (Default = ``True``).
-    :param include_vals: Optional whitelist of pixel values to keep.
+    :param include_vals: Optional allowlist of pixel values to keep.
     :param exclude_vals: Optional pixel values to exclude.
     :param only_present_in_img: Show only classes whose pixel value appears in
                                 ``input_img`` (Default = ``False``).
@@ -73,7 +73,7 @@ def create_categorical_legend_patches(
     :param pxl_val_fmt: Format template when ``show_pxl_vals=True``.
     :param max_label_width: Optional line-wrap width for long class names.
     :param swatch_shape: Swatch style: ``'rectangle'``, ``'square'``, or ``'circle'``.
-    :param swatch_edgecolor: Colour of swatch border (Default = ``'#333333'``).
+    :param swatch_edge_colour: Colour of swatch border (Default = ``'#333333'``).
     :param swatch_linewidth: Line width of swatch border (Default = ``0.6``).
     :param swatch_size: Marker size for ``'square'`` / ``'circle'`` swatches.
     :return: List of Matplotlib legend handle objects.
@@ -107,7 +107,7 @@ def create_categorical_legend_patches(
     return build_legend_handles(
         entries=entries,
         swatch_shape=swatch_shape,
-        swatch_edgecolor=swatch_edgecolor,
+        swatch_edge_colour=swatch_edge_colour,
         swatch_linewidth=swatch_linewidth,
         swatch_size=swatch_size,
     )
@@ -137,7 +137,7 @@ def add_categorical_legend(
     pxl_val_fmt: str = "{val}: {name}",
     max_label_width: Optional[int] = None,
     swatch_shape: str = "rectangle",
-    swatch_edgecolor: str = "#333333",
+    swatch_edge_colour: str = "#333333",
     swatch_linewidth: float = 0.6,
     swatch_size: float = 9.0,
     frameon: bool = True,
@@ -162,6 +162,13 @@ def add_categorical_legend(
     When both ``ncols`` and ``nrows`` are ``None`` (auto mode), column and row
     counts are chosen automatically from the axis size and class label lengths.
 
+    Note that styling and layout keyword arguments (``ncols``, ``loc``,
+    ``bbox_to_anchor``, ``fontsize``, ``title_fontsize``, ``frameon``,
+    ``facecolor``, ``edgecolor``, ``framealpha``, ``fancybox``,
+    ``columnspacing``, ``handletextpad``, ``labelspacing``, ``borderpad``) are
+    passed directly through to :meth:`matplotlib.axes.Axes.legend` and
+    therefore retain Matplotlib's parameter names.
+
     :param ax: Target Matplotlib axis.
     :param classes_info: ``{pixel_val: class_name}`` dict,
                          ``{pixel_val: (name, colour)}`` dict,
@@ -184,7 +191,7 @@ def add_categorical_legend(
     :param fontsize: Class label font size in points (Default = ``9.5``).
     :param title_fontsize: Optional title font size (Default = ``fontsize + 1``).
     :param ignore_zero: Exclude background pixel value ``0`` (Default = ``True``).
-    :param include_vals: Optional whitelist of pixel values to keep.
+    :param include_vals: Optional allowlist of pixel values to keep.
     :param exclude_vals: Optional pixel values to exclude.
     :param only_present_in_img: Show only classes present in ``input_img``.
     :param sort_by: Ordering mode: ``'id'``, ``'name'``, or ``'none'``.
@@ -192,18 +199,22 @@ def add_categorical_legend(
     :param pxl_val_fmt: Format template when ``show_pxl_vals=True``.
     :param max_label_width: Optional line-wrap width for long class names.
     :param swatch_shape: ``'rectangle'``, ``'square'``, or ``'circle'``.
-    :param swatch_edgecolor: Colour of swatch border (Default = ``'#333333'``).
+    :param swatch_edge_colour: Colour of swatch border (Default = ``'#333333'``).
     :param swatch_linewidth: Line width of swatch border (Default = ``0.6``).
     :param swatch_size: Marker size for ``'square'`` / ``'circle'`` swatches.
-    :param frameon: Draw legend frame box (Default = ``True``).
-    :param facecolor: Legend background colour (Default = ``'white'``).
-    :param edgecolor: Legend border colour (Default = ``'#CCCCCC'``).
-    :param framealpha: Legend background opacity (Default = ``0.92``).
-    :param fancybox: Rounded legend corners (Default = ``True``).
-    :param columnspacing: Horizontal gap between columns (Default = ``1.2``).
-    :param handletextpad: Gap between swatch and text (Default = ``0.6``).
-    :param labelspacing: Vertical spacing between entries (Default = ``0.45``).
-    :param borderpad: Internal frame padding (Default = ``0.6``).
+    :param frameon: Draw legend frame box (Matplotlib passthrough; Default = ``True``).
+    :param facecolor: Legend background colour (Matplotlib ``ax.legend`` passthrough;
+                      Default = ``'white'``).
+    :param edgecolor: Legend border colour (Matplotlib ``ax.legend`` passthrough;
+                      Default = ``'#CCCCCC'``).
+    :param framealpha: Legend background opacity (Matplotlib passthrough; Default = ``0.92``).
+    :param fancybox: Rounded legend corners (Matplotlib passthrough; Default = ``True``).
+    :param columnspacing: Horizontal gap between columns (Matplotlib passthrough;
+                          Default = ``1.2``).
+    :param handletextpad: Gap between swatch and text (Matplotlib passthrough; Default = ``0.6``).
+    :param labelspacing: Vertical spacing between entries (Matplotlib passthrough;
+                         Default = ``0.45``).
+    :param borderpad: Internal frame padding (Matplotlib passthrough; Default = ``0.6``).
     :return: Created :class:`matplotlib.legend.Legend` instance.
 
     .. code:: python
@@ -249,7 +260,7 @@ def add_categorical_legend(
     handles = build_legend_handles(
         entries=entries,
         swatch_shape=swatch_shape,
-        swatch_edgecolor=swatch_edgecolor,
+        swatch_edge_colour=swatch_edge_colour,
         swatch_linewidth=swatch_linewidth,
         swatch_size=swatch_size,
     )
@@ -305,7 +316,7 @@ def add_categorical_legend_axis(
     pxl_val_fmt: str = "{val}: {name}",
     max_label_width: Optional[int] = None,
     swatch_shape: str = "rectangle",
-    swatch_edgecolor: str = "#333333",
+    swatch_edge_colour: str = "#333333",
     swatch_linewidth: float = 0.6,
     swatch_size: float = 9.0,
     frameon: bool = True,
@@ -329,6 +340,13 @@ def add_categorical_legend_axis(
     dimensions of ``ax`` and class label lengths (favouring a vertical layout
     when ``ax`` is taller than it is wide).
 
+    Note that styling and layout keyword arguments (``ncols``, ``loc``,
+    ``bbox_to_anchor``, ``fontsize``, ``title_fontsize``, ``frameon``,
+    ``facecolor``, ``edgecolor``, ``framealpha``, ``fancybox``,
+    ``columnspacing``, ``handletextpad``, ``labelspacing``, ``borderpad``) are
+    passed directly through to :meth:`matplotlib.axes.Axes.legend` and
+    therefore retain Matplotlib's parameter names.
+
     :param ax: Dedicated Matplotlib axis into which the legend is drawn.
     :param classes_info: Class dictionary,
                          :class:`~rsgispy.classification.classdata.ClassificationConfig`,
@@ -346,7 +364,7 @@ def add_categorical_legend_axis(
     :param fontsize: Class label font size in points (Default = ``9.5``).
     :param title_fontsize: Optional title font size (Default = ``fontsize + 1``).
     :param ignore_zero: Exclude background pixel value ``0`` (Default = ``True``).
-    :param include_vals: Optional whitelist of pixel values to keep.
+    :param include_vals: Optional allowlist of pixel values to keep.
     :param exclude_vals: Optional pixel values to exclude.
     :param only_present_in_img: Show only classes present in ``input_img``.
     :param sort_by: Ordering mode: ``'id'``, ``'name'``, or ``'none'``.
@@ -354,18 +372,22 @@ def add_categorical_legend_axis(
     :param pxl_val_fmt: Format template when ``show_pxl_vals=True``.
     :param max_label_width: Optional line-wrap width for long class names.
     :param swatch_shape: ``'rectangle'``, ``'square'``, or ``'circle'``.
-    :param swatch_edgecolor: Colour of swatch border (Default = ``'#333333'``).
+    :param swatch_edge_colour: Colour of swatch border (Default = ``'#333333'``).
     :param swatch_linewidth: Line width of swatch border (Default = ``0.6``).
     :param swatch_size: Marker size for ``'square'`` / ``'circle'`` swatches.
-    :param frameon: Draw legend frame box (Default = ``True``).
-    :param facecolor: Legend background colour (Default = ``'white'``).
-    :param edgecolor: Legend border colour (Default = ``'#CCCCCC'``).
-    :param framealpha: Legend background opacity (Default = ``0.95``).
-    :param fancybox: Rounded legend corners (Default = ``True``).
-    :param columnspacing: Horizontal gap between columns (Default = ``1.2``).
-    :param handletextpad: Gap between swatch and text (Default = ``0.6``).
-    :param labelspacing: Vertical spacing between entries (Default = ``0.45``).
-    :param borderpad: Internal frame padding (Default = ``0.6``).
+    :param frameon: Draw legend frame box (Matplotlib passthrough; Default = ``True``).
+    :param facecolor: Legend background colour (Matplotlib ``ax.legend`` passthrough;
+                      Default = ``'white'``).
+    :param edgecolor: Legend border colour (Matplotlib ``ax.legend`` passthrough;
+                      Default = ``'#CCCCCC'``).
+    :param framealpha: Legend background opacity (Matplotlib passthrough; Default = ``0.95``).
+    :param fancybox: Rounded legend corners (Matplotlib passthrough; Default = ``True``).
+    :param columnspacing: Horizontal gap between columns (Matplotlib passthrough;
+                          Default = ``1.2``).
+    :param handletextpad: Gap between swatch and text (Matplotlib passthrough; Default = ``0.6``).
+    :param labelspacing: Vertical spacing between entries (Matplotlib passthrough;
+                         Default = ``0.45``).
+    :param borderpad: Internal frame padding (Matplotlib passthrough; Default = ``0.6``).
     :return: Created :class:`matplotlib.legend.Legend` instance.
 
     .. code:: python
@@ -414,7 +436,7 @@ def add_categorical_legend_axis(
     handles = build_legend_handles(
         entries=entries,
         swatch_shape=swatch_shape,
-        swatch_edgecolor=swatch_edgecolor,
+        swatch_edge_colour=swatch_edge_colour,
         swatch_linewidth=swatch_linewidth,
         swatch_size=swatch_size,
     )
@@ -442,7 +464,7 @@ def add_categorical_legend_axis(
 
 
 def save_categorical_legend_img(
-    out_img_file: Union[str, os.PathLike],
+    output_img: Union[str, os.PathLike],
     classes_info: Optional[Any] = None,
     input_img: Optional[Union[str, os.PathLike]] = None,
     band: int = 1,
@@ -463,7 +485,7 @@ def save_categorical_legend_img(
     pxl_val_fmt: str = "{val}: {name}",
     max_label_width: Optional[int] = None,
     swatch_shape: str = "rectangle",
-    swatch_edgecolor: str = "#333333",
+    swatch_edge_colour: str = "#333333",
     swatch_linewidth: float = 0.6,
     swatch_size: float = 9.0,
     frameon: bool = True,
@@ -482,7 +504,14 @@ def save_categorical_legend_img(
     Create and save a standalone categorical legend image file (e.g. PNG, PDF,
     or SVG) tightly cropped around the formatted legend.
 
-    :param out_img_file: Output image file path (e.g. ``'legend.png'``).
+    Note that styling keyword arguments (``ncols``, ``fontsize``,
+    ``title_fontsize``, ``frameon``, ``facecolor``, ``edgecolor``,
+    ``framealpha``, ``fancybox``, ``columnspacing``, ``handletextpad``,
+    ``labelspacing``, ``borderpad``) are passed directly through to
+    :meth:`matplotlib.axes.Axes.legend` and therefore retain Matplotlib's
+    parameter names.
+
+    :param output_img: Output image file path (e.g. ``'legend.png'``).
     :param classes_info: Class dictionary,
                          :class:`~rsgispy.classification.classdata.ClassificationConfig`,
                          or JSON path.
@@ -499,7 +528,7 @@ def save_categorical_legend_img(
     :param fontsize: Class label font size in points (Default = ``10.0``).
     :param title_fontsize: Optional title font size (Default = ``fontsize + 1``).
     :param ignore_zero: Exclude background pixel value ``0`` (Default = ``True``).
-    :param include_vals: Optional whitelist of pixel values to keep.
+    :param include_vals: Optional allowlist of pixel values to keep.
     :param exclude_vals: Optional pixel values to exclude.
     :param only_present_in_img: Show only classes present in ``input_img``.
     :param sort_by: Ordering mode: ``'id'``, ``'name'``, or ``'none'``.
@@ -507,18 +536,22 @@ def save_categorical_legend_img(
     :param pxl_val_fmt: Format template when ``show_pxl_vals=True``.
     :param max_label_width: Optional line-wrap width for long class names.
     :param swatch_shape: ``'rectangle'``, ``'square'``, or ``'circle'``.
-    :param swatch_edgecolor: Colour of swatch border (Default = ``'#333333'``).
+    :param swatch_edge_colour: Colour of swatch border (Default = ``'#333333'``).
     :param swatch_linewidth: Line width of swatch border (Default = ``0.6``).
     :param swatch_size: Marker size for ``'square'`` / ``'circle'`` swatches.
-    :param frameon: Draw legend frame box (Default = ``True``).
-    :param facecolor: Legend background colour (Default = ``'white'``).
-    :param edgecolor: Legend border colour (Default = ``'#CCCCCC'``).
-    :param framealpha: Legend background opacity (Default = ``1.0``).
-    :param fancybox: Rounded legend corners (Default = ``True``).
-    :param columnspacing: Horizontal gap between columns (Default = ``1.2``).
-    :param handletextpad: Gap between swatch and text (Default = ``0.6``).
-    :param labelspacing: Vertical spacing between entries (Default = ``0.45``).
-    :param borderpad: Internal frame padding (Default = ``0.6``).
+    :param frameon: Draw legend frame box (Matplotlib passthrough; Default = ``True``).
+    :param facecolor: Legend background colour (Matplotlib ``ax.legend`` passthrough;
+                      Default = ``'white'``).
+    :param edgecolor: Legend border colour (Matplotlib ``ax.legend`` passthrough;
+                      Default = ``'#CCCCCC'``).
+    :param framealpha: Legend background opacity (Matplotlib passthrough; Default = ``1.0``).
+    :param fancybox: Rounded legend corners (Matplotlib passthrough; Default = ``True``).
+    :param columnspacing: Horizontal gap between columns (Matplotlib passthrough;
+                          Default = ``1.2``).
+    :param handletextpad: Gap between swatch and text (Matplotlib passthrough; Default = ``0.6``).
+    :param labelspacing: Vertical spacing between entries (Matplotlib passthrough;
+                         Default = ``0.45``).
+    :param borderpad: Internal frame padding (Matplotlib passthrough; Default = ``0.6``).
     :param dpi: Output figure resolution in DPI (Default = ``300``).
     :param transparent: If ``True``, export with a transparent background.
     :return: Tuple ``(nrows, ncols)`` used in the saved legend layout.
@@ -528,7 +561,7 @@ def save_categorical_legend_img(
         import rsgispy.mapping.legend as legend
 
         nrows, ncols = legend.save_categorical_legend_img(
-            out_img_file="landcover_legend.png",
+            output_img="landcover_legend.png",
             classes_info={1: "Forest", 2: "Grassland", 3: "Urban", 4: "Water"},
             colour_lut={1: "#228b22", 2: "#9acd32", 3: "#d62728", 4: "#1f77b4"},
             title="Land Cover Classes",
@@ -536,7 +569,7 @@ def save_categorical_legend_img(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     return save_standalone_legend(
-        out_img_file=out_img_file,
+        output_img=output_img,
         classes_info=classes_info,
         input_img=input_img,
         band=band,
@@ -557,7 +590,7 @@ def save_categorical_legend_img(
         pxl_val_fmt=pxl_val_fmt,
         max_label_width=max_label_width,
         swatch_shape=swatch_shape,
-        swatch_edgecolor=swatch_edgecolor,
+        swatch_edge_colour=swatch_edge_colour,
         swatch_linewidth=swatch_linewidth,
         swatch_size=swatch_size,
         frameon=frameon,

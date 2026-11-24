@@ -48,6 +48,7 @@ def convert_polys_to_lines_gp(
     vec_poly_lyr: Optional[str],
     vec_line_file: Optional[Union[str, os.PathLike]] = None,
     vec_line_lyr: Optional[str] = None,
+    *,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     exterior_lines: bool = False,
@@ -129,6 +130,7 @@ def calc_poly_centroids(
     out_format: str = "GPKG",
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[gpd.GeoDataFrame]:
     """
@@ -177,6 +179,7 @@ def explode_vec_lyr(
     vec_lyr: Optional[str],
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[gpd.GeoDataFrame]:
@@ -227,6 +230,7 @@ def explode_vec_lyr(
 def explode_vec_files(
     in_vec_files: Sequence[VectorInput],
     output_dir: Optional[Union[str, os.PathLike]] = None,
+    *,
     out_format: str = "GPKG",
     out_vec_ext: str = "gpkg",
     use_pbar: bool = True,
@@ -333,6 +337,7 @@ def simplify_geometries(
     out_format: str = "GPKG",
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     del_exist_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[gpd.GeoDataFrame]:
@@ -407,6 +412,7 @@ def delete_polygon_holes(
     out_format: str = "GPKG",
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     area_thres: Optional[float] = None,
     del_exist_vec: bool = False,
     use_pbar: bool = True,
@@ -489,6 +495,7 @@ def buffer_vec_layer_gp(
     buf_dist: float,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     out_format: str = "GPKG",
     del_exist_vec: bool = False,
     buf_res: int = 16,
@@ -577,6 +584,7 @@ def split_vec_by_grid(
     y_grid_size: float,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[gpd.GeoDataFrame]:
@@ -642,6 +650,7 @@ def rm_polys_area(
     area_thres: float,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     out_format: str = "GPKG",
     less_than: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
@@ -703,6 +712,7 @@ def vec_lyr_dissolve(
     vec_col: str,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[gpd.GeoDataFrame]:
@@ -755,6 +765,7 @@ def thin_vector_geoms(
     grid_vec_lyr: Optional[str],
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[gpd.GeoDataFrame]:
@@ -833,6 +844,7 @@ def shiftxy_vec_lyr(
     y_shift: float,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[gpd.GeoDataFrame]:

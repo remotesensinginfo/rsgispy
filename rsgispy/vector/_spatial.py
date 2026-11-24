@@ -66,6 +66,7 @@ def get_geom_pts(
 def get_vec_lyr_as_pts(
     vec_file: VectorInput,
     vec_lyr: Optional[str],
+    *,
     use_pbar: bool = True,
 ) -> List[Tuple[float, float]]:
     """
@@ -98,6 +99,7 @@ def create_alpha_shape(
     vec_lyr: Optional[str],
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
+    *,
     out_format: str = "GPKG",
     alpha_val: Optional[float] = None,
     alpha_vals: Optional[Sequence[float]] = None,
@@ -289,6 +291,7 @@ def bbox_intersects_vec_lyr(
 def create_rtree_index(
     vec_file: VectorInput,
     vec_lyr: Optional[str],
+    *,
     use_pbar: bool = True,
 ):
     """
@@ -428,6 +431,7 @@ def vec_intersects_vec(
     vec_base_lyr: Optional[str],
     vec_comp_file: VectorInput,
     vec_comp_lyr: Optional[str],
+    *,
     use_pbar: bool = True,
 ) -> bool:
     """
@@ -465,6 +469,7 @@ def vec_overlaps_vec(
     vec_base_lyr: Optional[str],
     vec_comp_file: VectorInput,
     vec_comp_lyr: Optional[str],
+    *,
     use_pbar: bool = True,
 ) -> bool:
     """
@@ -502,6 +507,7 @@ def vec_within_vec(
     vec_base_lyr: Optional[str],
     vec_comp_file: VectorInput,
     vec_comp_lyr: Optional[str],
+    *,
     use_pbar: bool = True,
 ) -> bool:
     """
@@ -539,6 +545,7 @@ def vec_contains_vec(
     vec_base_lyr: Optional[str],
     vec_comp_file: VectorInput,
     vec_comp_lyr: Optional[str],
+    *,
     use_pbar: bool = True,
 ) -> bool:
     """
@@ -576,6 +583,7 @@ def vec_touches_vec(
     vec_base_lyr: Optional[str],
     vec_comp_file: VectorInput,
     vec_comp_lyr: Optional[str],
+    *,
     use_pbar: bool = True,
 ) -> bool:
     """
@@ -613,6 +621,7 @@ def vec_crosses_vec(
     vec_base_lyr: Optional[str],
     vec_comp_file: VectorInput,
     vec_comp_lyr: Optional[str],
+    *,
     use_pbar: bool = True,
 ) -> bool:
     """

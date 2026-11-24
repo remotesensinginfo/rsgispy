@@ -213,8 +213,8 @@ def render_ovr_tile_worker(
         "compress": task["compress"],
         "interleave": "BAND",
     }
-    if task["nodata_val"] is not None:
-        create_kwargs["nodata"] = task["nodata_val"]
+    if task["no_data_val"] is not None:
+        create_kwargs["nodata"] = task["no_data_val"]
     if task["crs_wkt"] is not None:
         create_kwargs["crs"] = task["crs_wkt"]
     if tile_xfm is not None:
@@ -233,7 +233,7 @@ def stitch_scale_tiles(
     ovr_h: int,
     n_bands: int,
     dtype_str: str,
-    nodata_val: Any,
+    no_data_val: Any,
     crs_wkt: Optional[str],
     lvl_transform: Optional[Affine],
     compress: str,
@@ -254,8 +254,8 @@ def stitch_scale_tiles(
         "interleave": "BAND",
         "BIGTIFF": "IF_SAFER",
     }
-    if nodata_val is not None:
-        create_kwargs["nodata"] = nodata_val
+    if no_data_val is not None:
+        create_kwargs["nodata"] = no_data_val
     if crs_wkt is not None:
         create_kwargs["crs"] = crs_wkt
     if lvl_transform is not None:
@@ -280,8 +280,8 @@ def write_ovr_bundle_vrt(
     crs_wkt: Optional[str],
     primary_transform: Optional[Affine],
     primary_is_base: bool,
-    colorinterp: Optional[Sequence[ColorInterp]] = None,
-    colormaps: Optional[Dict[int, Dict[int, Tuple[int, int, int, int]]]] = None,
+    colour_interp: Optional[Sequence[ColorInterp]] = None,
+    colour_maps: Optional[Dict[int, Dict[int, Tuple[int, int, int, int]]]] = None,
 ) -> None:
     """
     Build a VRT binding ``primary_path`` with explicit ``<Overview>`` entries
@@ -317,8 +317,8 @@ def write_ovr_bundle_vrt(
             nd_elem = ET.SubElement(band_elem, "NoDataValue")
             nd_elem.text = format_nodata_text(nd_val)
 
-        if colorinterp is not None and b_idx - 1 < len(colorinterp):
-            ci_name = colorinterp[b_idx - 1].name
+        if colour_interp is not None and b_idx - 1 < len(colour_interp):
+            ci_name = colour_interp[b_idx - 1].name
             if ci_name in (
                 "undefined",
                 "gray",
@@ -338,8 +338,8 @@ def write_ovr_bundle_vrt(
                 ci_elem = ET.SubElement(band_elem, "ColorInterp")
                 ci_elem.text = ci_name.capitalize()
 
-        if colormaps and b_idx in colormaps:
-            cmap = colormaps[b_idx]
+        if colour_maps and b_idx in colour_maps:
+            cmap = colour_maps[b_idx]
             ct_elem = ET.SubElement(band_elem, "ColorTable")
             max_idx = max(cmap.keys()) if cmap else -1
             for entry_idx in range(max_idx + 1):
@@ -452,8 +452,8 @@ def finalise_internal_ovr(
     crs_wkt: Optional[str],
     base_transform: Affine,
     has_geo: bool,
-    colorinterp: Sequence[ColorInterp],
-    colormaps: Dict[int, Dict[int, Tuple[int, int, int, int]]],
+    colour_interp: Sequence[ColorInterp],
+    colour_maps: Dict[int, Dict[int, Tuple[int, int, int, int]]],
     base_tags: Dict[str, str],
     band_tags: Sequence[Dict[str, str]],
     descriptions: Sequence[Optional[str]],
@@ -476,8 +476,8 @@ def finalise_internal_ovr(
         crs_wkt=crs_wkt,
         primary_transform=base_transform if has_geo else None,
         primary_is_base=True,
-        colorinterp=colorinterp,
-        colormaps=colormaps,
+        colour_interp=colour_interp,
+        colour_maps=colour_maps,
     )
     staging_img = os.path.join(
         os.path.dirname(os.path.abspath(dest_path)),
@@ -501,8 +501,8 @@ def finalise_internal_ovr(
         with rasterio.open(
             staging_img, "r+", IGNORE_COG_LAYOUT_BREAK="YES"
         ) as out_dst:
-            if colorinterp:
-                out_dst.colorinterp = list(colorinterp)
+            if colour_interp:
+                out_dst.colorinterp = list(colour_interp)
             if base_tags:
                 out_dst.update_tags(**base_tags)
             for b_idx in range(1, len(dtypes) + 1):
