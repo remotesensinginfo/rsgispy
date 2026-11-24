@@ -56,7 +56,7 @@ from rsgispy.imageprocess import (
     open_output_dataset,
     validate_band_index,
 )
-from rsgispy.imageutils._helpers import normalise_creation_options
+from rsgispy.imageprocess import normalise_creation_options
 from rsgispy.imageutils.sampling import extract_img_pxl_sample
 from rsgispy.tools._sklearn import (
     check_sklearn_estimator_fitted,

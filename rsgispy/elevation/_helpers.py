@@ -18,34 +18,9 @@ from rsgispy.imageprocess import (
     ensure_file_exists,
     iter_dataset_windows,
     read_window_with_halo,
+    resolve_nodata_and_fill as _resolve_output_nodata,
 )
 from rsgispy.imageutils.stats import pop_img_stats
-
-
-def _resolve_output_nodata(
-    eff_nd: Optional[float], out_np_dtype: np.dtype
-) -> Tuple[Optional[float], float]:
-    """Return ``(dst_nodata_header, fill_value)`` compatible with ``out_np_dtype``."""
-    if np.issubdtype(out_np_dtype, np.floating):
-        if eff_nd is not None:
-            nd_val = float(eff_nd)
-            return nd_val, nd_val
-        return None, float("nan")
-
-    if np.issubdtype(out_np_dtype, np.integer):
-        info = np.iinfo(out_np_dtype)
-        if (
-            eff_nd is not None
-            and math.isfinite(float(eff_nd))
-            and info.min <= float(eff_nd) <= info.max
-        ):
-            nd_val = float(int(round(float(eff_nd))))
-            return nd_val, nd_val
-        if eff_nd is not None:
-            return 0.0, 0.0
-        return None, 0.0
-
-    return eff_nd, (float(eff_nd) if eff_nd is not None else 0.0)
 
 
 def validate_sun_angles(azimuth: float, zenith: float) -> None:

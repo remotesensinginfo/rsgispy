@@ -256,9 +256,13 @@ def to_latlon(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not zone_letter and northern is None:
-        raise ValueError("either zone_letter or northern needs to be set")
+        raise rsgispy.RSGISPyException(
+            "either zone_letter or northern needs to be set"
+        )
     if zone_letter and northern is not None:
-        raise ValueError("set either zone_letter or northern, but not both")
+        raise rsgispy.RSGISPyException(
+            "set either zone_letter or northern, but not both"
+        )
 
     if strict:
         if not rsgispy.tools.maths.in_bounds(
@@ -436,7 +440,7 @@ def from_latlon(
     )
 
     if rsgispy.tools.maths.mixed_signs(latitude):
-        raise ValueError("latitudes must all have the same sign")
+        raise rsgispy.RSGISPyException("latitudes must all have the same sign")
     if rsgispy.tools.maths.negative(latitude):
         northing += 10000000
 

@@ -176,69 +176,10 @@ def _compute_band_stats(
     nodata: Optional[float],
 ) -> Dict[str, Optional[float]]:
     """Stream blocks of ``bidx`` with running min/max and Chan/Welford mean/std."""
-    nodata_is_finite = nodata is not None and not (
-        isinstance(nodata, float) and math.isnan(nodata)
-    )
-    count = 0
-    min_val = math.inf
-    max_val = -math.inf
-    mean_val = 0.0
-    m2_val = 0.0
+    from rsgispy.imageprocess import compute_dataset_band_stats  # pylint: disable=import-outside-toplevel
 
-    for _, window in ds.block_windows(bidx):
-        block = ds.read(bidx, window=window, masked=False).astype(
-            np.float64, copy=False
-        )
-        valid = np.isfinite(block)
-        if nodata_is_finite:
-            valid &= block != nodata
-        if not np.any(valid):
-            continue
+    return compute_dataset_band_stats(ds, bidx, nodata)
 
-        vals = block[valid]
-        n_block = int(vals.size)
-        blk_min = float(np.min(vals))
-        blk_max = float(np.max(vals))
-        blk_mean = float(np.mean(vals))
-        blk_m2 = float(np.sum((vals - blk_mean) ** 2))
-
-        if count == 0:
-            min_val = blk_min
-            max_val = blk_max
-            mean_val = blk_mean
-            m2_val = blk_m2
-            count = n_block
-        else:
-            min_val = min(min_val, blk_min)
-            max_val = max(max_val, blk_max)
-            new_count = count + n_block
-            delta = blk_mean - mean_val
-            mean_val += delta * (n_block / new_count)
-            m2_val += blk_m2 + (delta ** 2) * (count * n_block / new_count)
-            count = new_count
-
-    if count == 0:
-        return {
-            "min": None,
-            "max": None,
-            "mean": None,
-            "std": None,
-            "median": None,
-            "mode": None,
-            "valid_percent": 0.0,
-        }
-
-    total_px = ds.width * ds.height
-    valid_pct = 100.0 * float(count) / float(total_px) if total_px > 0 else 0.0
-    return {
-        "min": min_val,
-        "max": max_val,
-        "mean": mean_val,
-        "std": math.sqrt(max(0.0, m2_val / count)),
-        "median": None,
-        "mode": None,
-        "valid_percent": valid_pct,
-    }
 
 
 def _detect_is_tiled(

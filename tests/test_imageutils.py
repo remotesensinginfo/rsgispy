@@ -1240,6 +1240,25 @@ def test_create_img_mosaic(tmp_path):
         assert b1[3, 7] == 20.0  # max(10, 20) == 20
         assert b1[7, 7] == 10.0  # max(10, 5) == 10
 
+    # COG output support (no r+ reopen layout break)
+    out_cog = tmp_path / "mosaic_cog.tif"
+    rsgispy.imageutils.mosaic.create_img_mosaic(
+        [str(img_a), str(img_b)],
+        str(out_cog),
+        background_val=-99.0,
+        skip_val=0.0,
+        skip_band=1,
+        overlap_behaviour=0,
+        gdalformat="COG",
+        datatype=rsgispy.TYPE_32FLOAT,
+        calc_stats=True,
+        use_pbar=False,
+    )
+    with rasterio.open(out_cog) as src:
+        b1 = src.read(1)
+        assert b1[3, 2] == 10.0
+        assert b1[3, 7] == 20.0
+
 
 def test_include_imgs_and_with_overlap(tmp_path):
     """Test include_imgs (skip_val and input_bands) and include_imgs_with_overlap."""

@@ -210,7 +210,7 @@ def _calc_zonal_stats_core(
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if all(name is None for name in field_map.values()):
         raise rsgispy.RSGISPyException(
-            "At least one field needs to be specified for there is to an output."
+            "At least one field needs to be specified for there to be an output."
         )
 
     if allow_centroid_fallback:

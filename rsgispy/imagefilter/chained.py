@@ -366,9 +366,11 @@ def apply_filter_chain(
         no_data_val=eff_in_nd,
     )
     if out_nd is not None and eff_in_nd is not None and out_nd != eff_in_nd:
+        from rsgispy.imageprocess import build_valid_mask  # pylint: disable=import-outside-toplevel
+
         def _remap_nd(arr: np.ndarray) -> np.ndarray:
             return np.where(
-                (~np.isfinite(arr)) | (arr == eff_in_nd),
+                ~build_valid_mask(arr, no_data_val=float(eff_in_nd)),
                 float(out_nd),
                 arr,
             )

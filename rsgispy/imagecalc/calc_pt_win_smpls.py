@@ -173,7 +173,11 @@ def _extract_rotated_window(
         dtype=src_ds.dtypes[0],
     )
 
-    warp_crs = src_ds.crs if src_ds.crs is not None else "EPSG:32630"
+    if src_ds.crs is None:
+        raise rsgispy.RSGISPyException(
+            "Input image does not define a CRS; an explicit CRS is required."
+        )
+    warp_crs = src_ds.crs
     reproject(
         source=sub_arr,
         destination=roi_arr,
@@ -275,6 +279,10 @@ def calc_pt_smpl_img_vals(
         img_bbox = bbox_from_dataset(src_ds)
         img_dtype = src_ds.dtypes[0]
         img_crs = src_ds.crs
+        if img_crs is None:
+            raise rsgispy.RSGISPyException(
+                f"Input image '{input_img}' does not define a CRS; an explicit CRS is required."
+            )
         img_count = src_ds.count
 
         for i, row in tqdm_cls(

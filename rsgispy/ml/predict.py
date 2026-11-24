@@ -30,7 +30,7 @@ from rsgispy.imageprocess import (
     cast_result_block,
     open_output_dataset,
 )
-from rsgispy.imageutils._helpers import normalise_creation_options
+from rsgispy.imageprocess import normalise_creation_options
 from rsgispy.imageutils.colourtable import set_img_not_thematic, set_img_thematic
 from rsgispy.imageutils.metadata import set_band_names, set_img_no_data_value
 from rsgispy.imageutils.stats import pop_img_stats, pop_thmt_img_stats

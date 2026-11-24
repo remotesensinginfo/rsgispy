@@ -9,7 +9,10 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 import numpy as np
 
 import rsgispy
-from rsgispy.imageprocess import build_valid_mask
+from rsgispy.imageprocess import (
+    build_valid_mask,
+    resolve_out_nodata as _ip_resolve_out_nodata,
+)
 
 try:
     import sklearn.preprocessing as sk_prep
@@ -184,21 +187,6 @@ def _linear_map_array(
     return (
         ((arr - float(in_min)) / span) * (float(out_max) - float(out_min))
     ) + float(out_min)
-
-
-def _subsample_valid(
-    vals: np.ndarray,
-    max_samples: Optional[int],
-    rnd_seed: Optional[int],
-) -> np.ndarray:
-    """Subsample a 1D array of valid pixel values deterministically if needed."""
-    if max_samples is None or vals.size <= int(max_samples):
-        return vals
-    if int(max_samples) < 1:
-        raise rsgispy.RSGISPyException("max_samples must be >= 1.")
-    rng = np.random.default_rng(rnd_seed)
-    idx = rng.choice(vals.size, size=int(max_samples), replace=False)
-    return vals[idx]
 
 
 def _extract_user_bounds(
@@ -718,25 +706,17 @@ def resolve_out_nodata(
     out_np_dtype: np.dtype,
 ) -> Optional[float]:
     """Resolve output nodata value representable in ``out_np_dtype``."""
-    if out_no_data_val is not None:
-        return float(out_no_data_val)
     first_nd = band_specs[0].get("no_data_val") if band_specs else None
-    if first_nd is None:
+    if out_no_data_val is None and first_nd is None:
         return None
-    nd_val = float(first_nd)
-    if not math.isfinite(nd_val):
-        return nd_val if np.issubdtype(out_np_dtype, np.floating) else 0.0
-    if np.issubdtype(out_np_dtype, np.floating):
-        info_f = np.finfo(out_np_dtype)
-        if float(info_f.min) <= nd_val <= float(info_f.max):  # pylint: disable=no-member
-            return nd_val
-        return -9999.0
-    if np.issubdtype(out_np_dtype, np.integer):
-        info_i = np.iinfo(out_np_dtype)
-        if nd_val.is_integer() and int(info_i.min) <= int(nd_val) <= int(info_i.max):
-            return nd_val
-        return 0.0
-    return nd_val
+    return _ip_resolve_out_nodata(
+        out_np_dtype,
+        out_no_data_val=out_no_data_val,
+        fallback_nodata=first_nd,
+        default_float=-9999.0,
+        default_int=0.0,
+        allow_nonfinite_float=True,
+    )
 
 
 def subsample_band_values(

@@ -15,6 +15,8 @@ from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imageprocess import (
+    OnlineStatsAccumulator,
+    build_valid_cube_mask,
     build_valid_mask,
     cast_result_block,
     compute_spatial_intersection,
@@ -94,51 +96,20 @@ def calc_basic_img_band_stats(
             )
 
     np_dt = rsgispy.get_numpy_datatype(rsgis_dt)
-    min_vals_f = np.zeros(n_bands, dtype=np.float64)
-    max_vals_f = np.zeros(n_bands, dtype=np.float64)
-    mean_vals = np.zeros(n_bands, dtype=np.float64)
-    m2_vals = np.zeros(n_bands, dtype=np.float64)
-    n_vals = np.zeros(n_bands, dtype=np.int64)
-    first_arr = np.ones(n_bands, dtype=bool)
+    accum = OnlineStatsAccumulator(n_bands)
+    eff_nd = no_data_val if use_no_data else None
 
     for _, block_arrays in iter_single_image_band_blocks(
         input_img=input_img, read_dtype=np.float64, use_pbar=use_pbar
     ):
         for idx, band_arr in enumerate(block_arrays):
-            data = band_arr.ravel()
-            if use_no_data and no_data_val is not None:
-                data = data[data != no_data_val]
-            data = data[np.isfinite(data)]
-            k = int(data.size)
-            if k > 0:
-                d_min = float(data.min())
-                d_max = float(data.max())
-                if first_arr[idx]:
-                    min_vals_f[idx] = d_min
-                    max_vals_f[idx] = d_max
-                    first_arr[idx] = False
-                else:
-                    if d_min < min_vals_f[idx]:
-                        min_vals_f[idx] = d_min
-                    if d_max > max_vals_f[idx]:
-                        max_vals_f[idx] = d_max
+            valid = build_valid_mask(band_arr, no_data_val=eff_nd)
+            if np.any(valid):
+                accum.update_1d(band_arr[valid], band_idx=idx)
 
-                batch_mean = float(np.mean(data))
-                batch_m2 = float(np.sum((data - batch_mean) ** 2))
-                n_prev = int(n_vals[idx])
-                n_new = n_prev + k
-                delta = batch_mean - mean_vals[idx]
-                mean_vals[idx] += delta * (float(k) / float(n_new))
-                m2_vals[idx] += batch_m2 + (delta * delta) * (
-                    float(n_prev) * float(k) / float(n_new)
-                )
-                n_vals[idx] = n_new
-
-    min_vals = min_vals_f.astype(np_dt)
-    max_vals = max_vals_f.astype(np_dt)
-    stddev_vals = np.where(
-        n_vals > 0, np.sqrt(np.maximum(m2_vals / np.maximum(n_vals, 1), 0.0)), 0.0
-    )
+    min_vals_f, max_vals_f, mean_vals, stddev_vals, counts = accum.finalize()
+    min_vals = np.where(counts > 0, min_vals_f, 0.0).astype(np_dt)
+    max_vals = np.where(counts > 0, max_vals_f, 0.0).astype(np_dt)
 
     return min_vals, max_vals, mean_vals, stddev_vals
 
@@ -304,7 +275,7 @@ def _calc_stack_stat(stack_arr: np.ndarray, stat_type: int) -> np.ndarray:
     ``np.nan`` or non-finite.
     """
     # pylint: disable=too-many-return-statements
-    valid_mask = np.isfinite(stack_arr)
+    valid_mask = build_valid_mask(stack_arr)
     counts = np.sum(valid_mask, axis=0)
     out_shape = stack_arr.shape[1:]
 
@@ -879,11 +850,13 @@ def calc_mask_img_pxl_val_prob(
             blk = img_src.read(list(img_bands), window=img_win, out_dtype=np.float64)
             cols = np.column_stack([blk[i].ravel()[msk_sel] for i in range(len(img_bands))])
 
-            valid = np.all(np.isfinite(cols), axis=1)
+            valid = build_valid_cube_mask(cols, axis=1)
             if use_no_data:
                 for dim_idx, nd_val in enumerate(band_nodatas):
-                    if nd_val is not None and not math.isnan(float(nd_val)):
-                        valid &= cols[:, dim_idx] != float(nd_val)
+                    if nd_val is not None:
+                        valid &= build_valid_mask(
+                            cols[:, dim_idx], no_data_val=float(nd_val)
+                        )
             if np.any(valid):
                 samples.append(cols[valid])
 
@@ -924,7 +897,7 @@ def calc_mask_img_pxl_val_prob(
         def _compute_bin_indices(
             arr_2d: np.ndarray,
         ) -> Tuple[np.ndarray, np.ndarray]:
-            in_bounds = np.all(np.isfinite(arr_2d), axis=1)
+            in_bounds = build_valid_cube_mask(arr_2d, axis=1)
             idx_mat = np.zeros(arr_2d.shape, dtype=np.int64)
             for dim_idx in range(n_dims):
                 col = arr_2d[:, dim_idx]
@@ -983,11 +956,13 @@ def calc_mask_img_pxl_val_prob(
             blk = img_src.read(list(img_bands), window=img_win, out_dtype=np.float64)
             flat_2d = np.column_stack([blk[i].ravel() for i in range(n_dims)])
 
-            valid_pxls = np.all(np.isfinite(flat_2d), axis=1)
+            valid_pxls = build_valid_cube_mask(flat_2d, axis=1)
             if use_no_data:
                 for dim_idx, nd_val in enumerate(band_nodatas):
-                    if nd_val is not None and not math.isnan(float(nd_val)):
-                        valid_pxls &= flat_2d[:, dim_idx] != float(nd_val)
+                    if nd_val is not None:
+                        valid_pxls &= build_valid_mask(
+                            flat_2d[:, dim_idx], no_data_val=float(nd_val)
+                        )
 
             idx_mat, in_bounds = _compute_bin_indices(flat_2d)
             lookup_mask = valid_pxls & in_bounds
@@ -1092,10 +1067,7 @@ def _extract_valid_hist_pixels(
         win_h,
     )
     blk = img_src.read(img_band, window=img_win, out_dtype=np.float64).ravel()
-    valid = np.isfinite(blk)
-    if use_no_data and img_nodata is not None and not math.isnan(float(img_nodata)):
-        valid &= blk != float(img_nodata)
-
+    msk_arr = None
     if msk_src is not None:
         msk_win = Window(
             base_cm + int(out_win.col_off),
@@ -1104,7 +1076,13 @@ def _extract_valid_hist_pixels(
             win_h,
         )
         msk_arr = msk_src.read(1, window=msk_win).ravel()
-        valid &= msk_arr == img_msk_val
+
+    valid = build_valid_mask(
+        blk,
+        no_data_val=float(img_nodata) if (use_no_data and img_nodata is not None) else None,
+        msk_arr=msk_arr,
+        valid_msk_val=img_msk_val,
+    )
 
     vals = blk[valid]
     if val_range is not None and vals.size > 0:
@@ -1298,9 +1276,7 @@ def get_img_histogram(
         need_scan = (norm_range is None) or (
             n_bins is None and bin_size is None and not integer_bins
         )
-        n_valid = 0
-        mean_val = 0.0
-        m2_val = 0.0
+        accum = OnlineStatsAccumulator(1)
         v_min = math.inf
         v_max = -math.inf
 
@@ -1322,36 +1298,28 @@ def get_img_histogram(
                     out_win=out_win,
                     val_range=norm_range,
                 )
-                k = int(vals.size)
-                if k == 0:
+                if vals.size == 0:
                     continue
                 if integer_bins and not np.all(vals == np.floor(vals)):
                     raise rsgispy.RSGISPyException(
                         "Input image contains non-integer values; integer_bins=True "
                         "requires integer pixel values."
                     )
-                blk_min = float(np.min(vals))
-                blk_max = float(np.max(vals))
-                v_min = min(v_min, blk_min)
-                v_max = max(v_max, blk_max)
-                blk_mean = float(np.mean(vals))
-                blk_m2 = float(np.sum((vals - blk_mean) ** 2))
-                n_new = n_valid + k
-                delta = blk_mean - mean_val
-                mean_val += delta * (float(k) / float(n_new))
-                m2_val += blk_m2 + (delta * delta) * (
-                    float(n_valid) * float(k) / float(n_new)
-                )
-                n_valid = n_new
+                accum.update_1d(vals, band_idx=0)
 
-            if n_valid == 0 and norm_range is None:
+            if int(accum.counts[0]) == 0 and norm_range is None:
                 raise rsgispy.RSGISPyException(
                     "No valid pixels found in input image to compute histogram."
                 )
 
+        min_arr, max_arr, _, std_arr, cnt_arr = accum.finalize()
+        n_valid = int(cnt_arr[0])
+        if n_valid > 0:
+            v_min = float(min_arr[0])
+            v_max = float(max_arr[0])
         if norm_range is not None:
             v_min, v_max = norm_range
-        std_val = math.sqrt(max(m2_val / max(n_valid, 1), 0.0)) if n_valid > 0 else 0.0
+        std_val = float(std_arr[0]) if n_valid > 0 else 0.0
 
         bin_edges, int_vals = _build_histogram_edges(
             v_min=v_min,

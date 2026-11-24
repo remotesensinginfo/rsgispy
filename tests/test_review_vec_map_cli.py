@@ -159,6 +159,8 @@ class TestVectorProcessHelpers:
         )
         assert vp.cast_col_data(["1", "2"], int) == [1, 2]
         assert vp.cast_col_data(["true", "0"], bool) == [True, False]
+        with pytest.raises(RSGISPyException):
+            vp.cast_col_data(["not_a_bool"], bool)
         atts_df = vp.build_atts_dataframe(
             2,
             atts={"k": ["10", "20"]},

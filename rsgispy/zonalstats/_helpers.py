@@ -27,13 +27,11 @@ __all__ = [
     "get_gdf_bbox",
     "is_valid_pixel_value",
     "normalise_band_list",
-    "open_raster_band_info",
     "open_validated_zonal_inputs",
     "open_validated_zonal_multiband_inputs",
     "read_vec_file",
     "resolve_vector_crs",
     "sample_point_pixel",
-    "sample_point_pixels",
     "write_vec_file",
 ]
 
@@ -68,23 +66,6 @@ def normalise_band_list(
     for band_idx in bands:
         validate_band_index(band_idx, band_count, input_img)
     return bands
-
-
-def open_raster_band_info(
-    src: rasterio.DatasetReader,
-    input_img: str,
-    img_band: int,
-) -> Tuple[pyproj.CRS, Optional[float], Tuple[float, float, float, float]]:
-    """Validate raster CRS and band index, returning ``(crs, nodata, bbox)``."""
-    validate_band_index(img_band, src.count, input_img)
-    if src.crs is None:
-        raise rsgispy.RSGISPyException(
-            f"Could not retrieve a projection from '{input_img}'."
-        )
-    img_crs = pyproj.CRS.from_user_input(src.crs)
-    nodata = src.nodatavals[img_band - 1]
-    img_bbox = bbox_from_dataset(src)
-    return img_crs, nodata, img_bbox
 
 
 def check_bbox_overlap(
@@ -192,28 +173,6 @@ def sample_point_pixel(
 
     arr = src.read(img_band, window=Window(int(col), int(row), 1, 1))
     return float(arr[0, 0])
-
-
-def sample_point_pixels(
-    src: rasterio.DatasetReader,
-    img_bands: Sequence[int],
-    x_coord: float,
-    y_coord: float,
-    clamp: bool = False,
-) -> Optional[np.ndarray]:
-    """
-    Read pixel values for ``img_bands`` at ``(x_coord, y_coord)`` or return
-    ``None`` if outside raster bounds.
-    """
-    row, col = src.index(x_coord, y_coord)
-    if clamp:
-        row = min(max(int(row), 0), src.height - 1)
-        col = min(max(int(col), 0), src.width - 1)
-    elif row < 0 or row >= src.height or col < 0 or col >= src.width:
-        return None
-
-    arr = src.read(list(img_bands), window=Window(int(col), int(row), 1, 1))
-    return arr[:, 0, 0]
 
 
 def is_valid_pixel_value(

@@ -13,6 +13,8 @@ import rsgispy
 from rsgispy.imageprocess import (
     build_valid_mask,
     ensure_file_exists,
+    fits_dtype_range as _fits_dtype,
+    resolve_out_nodata as _ip_resolve_out_nodata,
     run_window_halo_blocks,
     validate_odd_window_size,
 )
@@ -64,19 +66,6 @@ def validate_kernel(kernel: np.ndarray) -> np.ndarray:
     return arr
 
 
-def _fits_dtype(value: float, np_dtype: np.dtype) -> bool:
-    """Return True if finite scalar ``value`` is representable in ``np_dtype``."""
-    if np.issubdtype(np_dtype, np.floating):
-        info = np.finfo(np_dtype)
-        return float(info.min) <= value <= float(info.max)  # pylint: disable=no-member
-    if np.issubdtype(np_dtype, np.integer):
-        if not float(value).is_integer():
-            return False
-        info_i = np.iinfo(np_dtype)
-        return int(info_i.min) <= int(value) <= int(info_i.max)
-    return False
-
-
 def _resolve_out_nodata(
     eff_in_nd: Optional[float],
     out_np_dtype: np.dtype,
@@ -84,12 +73,12 @@ def _resolve_out_nodata(
     """Resolve output nodata value preserving input nodata when representable."""
     if eff_in_nd is None or not math.isfinite(float(eff_in_nd)):
         return None
-    nd_val = float(eff_in_nd)
-    if _fits_dtype(nd_val, out_np_dtype):
-        return nd_val
-    if np.issubdtype(out_np_dtype, np.floating):
-        return -9999.0
-    return 0.0
+    return _ip_resolve_out_nodata(
+        out_np_dtype,
+        fallback_nodata=float(eff_in_nd),
+        default_float=-9999.0,
+        default_int=0.0,
+    )
 
 
 def stat_mean(

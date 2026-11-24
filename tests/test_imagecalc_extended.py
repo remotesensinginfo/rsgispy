@@ -625,6 +625,8 @@ def test_comparison_functions(tmp_path):
         str(u1_p), str(u2_p), flt_dif=4.0, use_pbar=False
     )
     assert u_eq is True and u_prop == pytest.approx(1.0)
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_cmp._calc_imgs_equal(str(u1_p), str(u2_p), img_ref_band=1, img_cmp_band=None)
 
     corr, pval = ic_cmp.calc_img_correlation(
         str(a_p),

@@ -11,9 +11,11 @@ from rasterio.io import DatasetReader
 
 import rsgispy
 from rsgispy.imageprocess import (
+    build_valid_cube_mask,
     compute_spatial_intersection,
     ensure_file_exists,
     open_multi_image_datasets,
+    resolve_out_nodata,
     validate_band_index,
 )
 from rsgispy.imageutils.metadata import get_img_no_data_value
@@ -47,14 +49,14 @@ def resolve_eff_nodata(
     eff_in_nd = (
         no_data_val if no_data_val is not None else get_img_no_data_value(input_img)
     )
-    if out_no_data_val is not None:
-        eff_out_nd = float(out_no_data_val)
-    elif eff_in_nd is not None and math.isfinite(float(eff_in_nd)):
-        eff_out_nd = float(eff_in_nd)
-    elif np.issubdtype(out_np_dtype, np.floating):
-        eff_out_nd = -9999.0
-    else:
-        eff_out_nd = 0.0
+    resolved_out = resolve_out_nodata(
+        out_np_dtype,
+        out_no_data_val=out_no_data_val,
+        fallback_nodata=eff_in_nd,
+        default_float=-9999.0,
+        default_int=0.0,
+    )
+    eff_out_nd = 0.0 if resolved_out is None else float(resolved_out)
     return eff_in_nd, eff_out_nd
 
 
@@ -65,12 +67,12 @@ def valid_cube_mask(
     valid_msk_val: int = 1,
 ) -> np.ndarray:
     """Compute a 2D boolean mask of finite, non-nodata, unmasked pixels."""
-    valid = np.all(np.isfinite(blk), axis=0)
-    if eff_in_nd is not None and math.isfinite(float(eff_in_nd)):
-        valid &= np.all(blk != float(eff_in_nd), axis=0)
-    if msk_blk is not None:
-        valid &= msk_blk == valid_msk_val
-    return valid
+    return build_valid_cube_mask(
+        blk,
+        no_data_val=eff_in_nd,
+        msk_arr=msk_blk,
+        valid_msk_val=valid_msk_val,
+    )
 
 
 def open_spectral_inputs(

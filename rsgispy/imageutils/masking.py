@@ -13,17 +13,17 @@ from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imageprocess import (
+    build_valid_cube_mask,
+    build_valid_mask,
     cast_result_block,
     compute_spatial_intersection,
     iter_dataset_windows,
-    open_multi_image_datasets,
-    open_output_dataset,
-    validate_band_index,
-)
-from rsgispy.imageutils._helpers import (
     maybe_pop_stats,
     normalise_creation_options,
+    open_multi_image_datasets,
+    open_output_dataset,
     rsgis_dtype_from_np_dtype,
+    validate_band_index,
 )
 from rsgispy.imageutils.colourtable import set_img_thematic
 
@@ -326,7 +326,7 @@ def gen_finite_mask(
             grid.height, grid.width, use_pbar=use_pbar
         ):
             arr = in_ds.read(window=out_win, out_dtype=np.float64)
-            finite_msk = np.all(np.isfinite(arr), axis=0).astype(out_np_dtype)
+            finite_msk = build_valid_cube_mask(arr, axis=0).astype(out_np_dtype)
             dst.write(finite_msk, 1, window=out_win)
 
     set_img_thematic(output_img)
@@ -385,7 +385,6 @@ def gen_valid_mask(
     eff_dtype = rsgispy.TYPE_8UINT if datatype is None else datatype
     out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
-    nd_is_nan = no_data_val is None or math.isnan(float(no_data_val))
     norm_opts = normalise_creation_options(creation_opts)
 
     with ExitStack() as stack:
@@ -419,13 +418,11 @@ def gen_valid_mask(
                     win_h,
                 )
                 arr = ds.read(window=in_win, out_dtype=np.float64)
-                valid &= np.all(np.isfinite(arr), axis=0)
-                if not nd_is_nan:
-                    if no_data_val is None:
-                        raise rsgispy.RSGISPyException(
-                            "no_data_val must be specified."
-                        )
-                    valid &= np.all(arr != float(no_data_val), axis=0)
+                valid &= build_valid_cube_mask(
+                    arr,
+                    no_data_val=float(no_data_val) if no_data_val is not None else None,
+                    axis=0,
+                )
             dst.write(valid.astype(out_np_dtype), 1, window=out_win)
 
     set_img_thematic(output_img)
@@ -752,13 +749,14 @@ def create_valid_mask(
                 )
                 for b_idx in bands:
                     arr = ds.read(b_idx, window=in_win, out_dtype=np.float64)
-                    valid &= np.isfinite(arr)
                     nd = ds.nodatavals[b_idx - 1]
                     eff_nd = (
                         default_no_data_val if nd is None else float(nd)
                     )
-                    if eff_nd is not None and not math.isnan(float(eff_nd)):
-                        valid &= arr != float(eff_nd)
+                    valid &= build_valid_mask(
+                        arr,
+                        no_data_val=float(eff_nd) if eff_nd is not None else None,
+                    )
             dst.write(valid.astype(out_np_dtype), 1, window=out_win)
 
     set_img_thematic(out_msk_path)

@@ -3,10 +3,9 @@ Core utilities, optional ``numba`` acceleration, post-processing, and downstream
 ``rsgispy`` integration helpers for :mod:`rsgispy.segmentation`.
 """
 
-from contextlib import contextmanager
 import os
 import tempfile
-from typing import Any, Iterator, List, Optional, Sequence, Tuple, Union
+from typing import Any, List, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
@@ -15,11 +14,14 @@ import rasterio
 import rsgispy
 from rsgispy.imageprocess import (
     IntersectionGrid,
+    OnlineStatsAccumulator,
+    build_valid_cube_mask,
     build_valid_mask,
     ensure_file_exists,
     get_default_block_size,
     iter_dataset_windows,
     open_output_dataset,
+    resolve_out_dtype,
     validate_band_index,
 )
 from rsgispy.imageutils.stats import pop_img_stats
@@ -94,13 +96,6 @@ def worker_init_single_thread() -> None:
     os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 
-@contextmanager
-def numba_single_thread_guard(enabled: bool = True) -> Iterator[None]:
-    """Context manager reserving worker thread-pinning hooks."""
-    _ = enabled
-    yield
-
-
 def validate_n_jobs(n_jobs: int) -> int:
     """Validate and return integer worker count ``>= 1``."""
     if isinstance(n_jobs, bool) or not isinstance(
@@ -122,16 +117,14 @@ def resolve_label_dtype(
 ) -> Tuple[int, str, np.dtype]:
     """
     Resolve an optional ``rsgispy.TYPE_*`` constant for integer label rasters,
-    defaulting to :data:`rsgispy.TYPE_32UINT`.
+    defaulting to :data:`rsgispy.TYPE_32INT`.
     """
-    eff_dtype = rsgispy.TYPE_32UINT if datatype is None else datatype
-    rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
-    np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
-    if not np.issubdtype(np_dtype, np.integer):
-        raise rsgispy.RSGISPyException(
-            f"Segmentation label output datatype must be an integer type, got '{rio_dtype}'."
-        )
-    return eff_dtype, rio_dtype, np_dtype
+    return resolve_out_dtype(
+        datatype,
+        default_dtype=rsgispy.TYPE_32INT,
+        require_int=True,
+        label="Segmentation label",
+    )
 
 
 def check_label_overflow(max_label: int, out_np_dtype: np.dtype) -> None:
@@ -194,9 +187,7 @@ def normalise_array_input(
             f"Input array must be non-empty, got shape {arr.shape}."
         )
 
-    valid_mask = np.ones((arr_3d.shape[1], arr_3d.shape[2]), dtype=bool)
-    for b_idx in range(arr_3d.shape[0]):
-        valid_mask &= build_valid_mask(arr_3d[b_idx], no_data_val=no_data_val)
+    valid_mask = build_valid_cube_mask(arr_3d, no_data_val=no_data_val, axis=0)
     return arr_3d, valid_mask
 
 
@@ -366,11 +357,7 @@ def compute_global_band_stats(
     """
     # pylint: disable=too-many-locals
     n_bands = len(bands)
-    band_sums = np.zeros(n_bands, dtype=np.float64)
-    band_sq_sums = np.zeros(n_bands, dtype=np.float64)
-    band_mins = np.full(n_bands, np.inf, dtype=np.float64)
-    band_maxs = np.full(n_bands, -np.inf, dtype=np.float64)
-    valid_count = 0
+    accum = OnlineStatsAccumulator(n_bands)
     sample_chunks: List[np.ndarray] = []
     stride = max(1, int(sampling))
     total_sampled = 0
@@ -381,21 +368,13 @@ def compute_global_band_stats(
             src.height, src.width, use_pbar=use_pbar
         ):
             block = src.read(list(bands), window=win, out_dtype=np.float64)
-            v_mask = np.ones(
-                (int(win.height), int(win.width)), dtype=bool
-            )
-            for b_i in range(n_bands):
-                v_mask &= build_valid_mask(block[b_i], no_data_val=eff_nd)
+            v_mask = build_valid_cube_mask(block, no_data_val=eff_nd, axis=0)
 
             if not np.any(v_mask):
                 continue
 
             flat_valid = block[:, v_mask].T  # (n_valid, n_bands)
-            valid_count += int(flat_valid.shape[0])
-            band_sums += flat_valid.sum(axis=0)
-            band_sq_sums += np.square(flat_valid).sum(axis=0)
-            band_mins = np.minimum(band_mins, flat_valid.min(axis=0))
-            band_maxs = np.maximum(band_maxs, flat_valid.max(axis=0))
+            accum.update_matrix(flat_valid)
 
             if total_sampled < max_samples:
                 sub = flat_valid[::stride]
@@ -404,7 +383,7 @@ def compute_global_band_stats(
                     sample_chunks.append(sub[:take])
                     total_sampled += take
 
-    if valid_count == 0:
+    if int(accum.counts[0]) == 0:
         return (
             np.zeros(n_bands, dtype=np.float64),
             np.ones(n_bands, dtype=np.float64),
@@ -413,11 +392,7 @@ def compute_global_band_stats(
             np.empty((0, n_bands), dtype=np.float64),
         )
 
-    means = band_sums / float(valid_count)
-    variances = np.maximum(
-        (band_sq_sums / float(valid_count)) - np.square(means), 0.0
-    )
-    stds = np.sqrt(variances)
+    band_mins, band_maxs, means, stds, _ = accum.finalize()
     stds = np.where(stds > 1e-12, stds, 1.0)
     samples = (
         np.vstack(sample_chunks)

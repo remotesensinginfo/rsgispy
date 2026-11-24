@@ -19,10 +19,12 @@ from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imageprocess import (
+    build_valid_mask,
     cast_result_block,
     ensure_file_exists,
     iter_dataset_windows,
     open_output_dataset,
+    update_chan_moments,
 )
 from rsgispy.imagespectral._helpers import (
     open_spectral_inputs,
@@ -252,23 +254,9 @@ def _update_streaming_moments(
     batch: np.ndarray,
 ) -> Tuple[int, Optional[np.ndarray], Optional[np.ndarray]]:
     """Update exact running mean and centred scatter matrix ``M2`` (Chan et al.)."""
-    n_b = int(batch.shape[0])
-    if n_b == 0:
-        return count_a, mean_a, m2_a
-    mean_b = np.mean(batch, axis=0)
-    centred_b = batch - mean_b
-    m2_b = centred_b.T @ centred_b
-    if count_a == 0 or mean_a is None or m2_a is None:
-        return n_b, mean_b, m2_b
-    delta = mean_b - mean_a
-    n_total = count_a + n_b
-    mean_new = mean_a + delta * (float(n_b) / float(n_total))
-    m2_new = (
-        m2_a
-        + m2_b
-        + np.outer(delta, delta) * (float(count_a) * float(n_b) / float(n_total))
+    return update_chan_moments(
+        count_a, mean_a, m2_a, batch, track_covariance=True
     )
-    return n_total, mean_new, m2_new
 
 
 def _canonicalise_eigenvector_signs(vecs: np.ndarray) -> np.ndarray:
@@ -1036,21 +1024,22 @@ def _compute_streaming_band_cdfs(
             blk = img_ds.read(
                 band_indices, window=img_win, out_dtype=np.float64
             )
-            msk_valid: Optional[np.ndarray] = None
+            msk_arr: Optional[np.ndarray] = None
             if msk_ds is not None and msk_off is not None:
                 msk_win = Window(
                     msk_off[0] + col_off, msk_off[1] + row_off, win_w, win_h
                 )
-                msk_valid = msk_ds.read(1, window=msk_win) == valid_msk_val
+                msk_arr = msk_ds.read(1, window=msk_win)
 
             for idx in range(n_bands):
                 arr = blk[idx]
-                vld = np.isfinite(arr)
                 nd = band_nds[idx]
-                if nd is not None and math.isfinite(float(nd)):
-                    vld &= arr != float(nd)
-                if msk_valid is not None:
-                    vld &= msk_valid
+                vld = build_valid_mask(
+                    arr,
+                    no_data_val=float(nd) if nd is not None else None,
+                    msk_arr=msk_arr,
+                    valid_msk_val=valid_msk_val,
+                )
                 if np.any(vld):
                     vals = arr[vld]
                     vmins[idx] = min(vmins[idx], float(np.min(vals)))
@@ -1089,23 +1078,24 @@ def _compute_streaming_band_cdfs(
             blk = img_ds.read(
                 band_indices, window=img_win, out_dtype=np.float64
             )
-            msk_valid = None
+            msk_arr = None
             if msk_ds is not None and msk_off is not None:
                 msk_win = Window(
                     msk_off[0] + col_off, msk_off[1] + row_off, win_w, win_h
                 )
-                msk_valid = msk_ds.read(1, window=msk_win) == valid_msk_val
+                msk_arr = msk_ds.read(1, window=msk_win)
 
             for idx in range(n_bands):
                 if vmaxs[idx] <= vmins[idx]:
                     continue
                 arr = blk[idx]
-                vld = np.isfinite(arr)
                 nd = band_nds[idx]
-                if nd is not None and math.isfinite(float(nd)):
-                    vld &= arr != float(nd)
-                if msk_valid is not None:
-                    vld &= msk_valid
+                vld = build_valid_mask(
+                    arr,
+                    no_data_val=float(nd) if nd is not None else None,
+                    msk_arr=msk_arr,
+                    valid_msk_val=valid_msk_val,
+                )
                 if np.any(vld):
                     cnt_hist, _ = np.histogram(arr[vld], bins=edges_list[idx])
                     hists[idx] += cnt_hist
@@ -1294,24 +1284,25 @@ def histogram_matching(
             blk = img_ds.read(
                 in_band_list, window=img_win, out_dtype=np.float64
             )
-            msk_valid: Optional[np.ndarray] = None
+            msk_arr: Optional[np.ndarray] = None
             if msk_ds is not None and msk_off is not None:
                 msk_win = Window(
                     msk_off[0] + col_off, msk_off[1] + row_off, win_w, win_h
                 )
-                msk_valid = msk_ds.read(1, window=msk_win) == valid_msk_val
+                msk_arr = msk_ds.read(1, window=msk_win)
 
             out_blk = np.full(
                 (n_bands, win_h, win_w), fill_val, dtype=np.float64
             )
             for idx in range(n_bands):
                 arr = blk[idx]
-                vld = np.isfinite(arr)
                 nd = in_band_nds[idx]
-                if nd is not None and math.isfinite(float(nd)):
-                    vld &= arr != float(nd)
-                if msk_valid is not None:
-                    vld &= msk_valid
+                vld = build_valid_mask(
+                    arr,
+                    no_data_val=float(nd) if nd is not None else None,
+                    msk_arr=msk_arr,
+                    valid_msk_val=valid_msk_val,
+                )
                 if np.any(vld):
                     vals = arr[vld]
                     if (

@@ -877,7 +877,9 @@ def _parse_bool_val(val: Any) -> Optional[bool]:
             return True
         if low in ("false", "0", "no", "n", "f", "off", ""):
             return False
-        raise ValueError(f"Cannot interpret string {val!r} as boolean.")
+        raise rsgispy.RSGISPyException(
+            f"Cannot interpret string {val!r} as boolean."
+        )
     return bool(val)
 
 

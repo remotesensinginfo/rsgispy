@@ -894,7 +894,7 @@ class TileGraph:
             iter_dataset_windows,
             open_output_dataset,
         )
-        from rsgispy.imageutils._helpers import normalise_creation_options
+        from rsgispy.imageprocess import normalise_creation_options
 
         sources = [
             n for n in self.topo_order if isinstance(n, (RasterSource, ArraySource))

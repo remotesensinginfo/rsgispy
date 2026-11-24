@@ -36,11 +36,13 @@ from rsgispy.imagecalc._sar_indices import (
     normalise_sar_units,
 )
 from rsgispy.imageprocess import (
+    OnlineStatsAccumulator,
     build_valid_mask,
     compute_spatial_intersection,
     create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
+    resolve_out_nodata as _ip_resolve_out_nodata,
     validate_band_index,
 )
 from rsgispy.imageutils.stats import pop_img_stats
@@ -1634,30 +1636,18 @@ def _resolve_out_nodata(
     out_no_data_val: Optional[float], out_np_dtype: np.dtype
 ) -> float:
     """Resolve and validate the output no-data value for the target dtype."""
-    is_int = np.issubdtype(out_np_dtype, np.integer)
-    if out_no_data_val is None:
-        if not is_int:
-            return -999.0
-        info = np.iinfo(out_np_dtype)
-        if info.min <= -999 <= info.max:
-            return -999.0
-        if info.min == 0:
-            return 0.0
-        return float(info.min)
-
-    f_val = float(out_no_data_val)
-    if is_int:
-        if not math.isfinite(f_val):
-            raise rsgispy.RSGISPyException(
-                "out_no_data_val must be finite for integer output datatypes."
-            )
-        info = np.iinfo(out_np_dtype)
-        if f_val < info.min or f_val > info.max:
-            raise rsgispy.RSGISPyException(
-                f"out_no_data_val ({out_no_data_val}) is outside the valid range "
-                f"[{info.min}, {info.max}] for dtype '{out_np_dtype.name}'."
-            )
-    return f_val
+    res = _ip_resolve_out_nodata(
+        out_np_dtype,
+        out_no_data_val=out_no_data_val,
+        default_float=-999.0,
+        default_int=-999.0,
+        clamp_int=True,
+        unsigned_clamp="zero",
+        strict_explicit=True,
+        allow_round_int=True,
+        allow_nonfinite_float=True,
+    )
+    return -999.0 if res is None else float(res)
 
 
 def _resolve_index_params(
@@ -1720,10 +1710,7 @@ def _calc_brightness_stretch_bounds(
     """Compute ``(mean - k*std, mean + k*std)`` for ``Brightness_Scaled``."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     vis_bands = ("blue", "green", "red")
-    total_count = 0
-    shift_val: Optional[float] = None
-    sum_shifted = 0.0
-    sum_sq_shifted = 0.0
+    acc = OnlineStatsAccumulator(n_bands=1)
 
     for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
         scaled_bands, invalid_masks = _read_scaled_bands(
@@ -1745,22 +1732,14 @@ def _calc_brightness_stretch_bounds(
         ) / 3.0
         vals = brightness[valid_mask]
         vals = vals[np.isfinite(vals)]
-        if vals.size == 0:
-            continue
-        if shift_val is None:
-            shift_val = float(vals[0])
-        diff = vals - shift_val
-        total_count += int(vals.size)
-        sum_shifted += float(np.sum(diff))
-        sum_sq_shifted += float(np.sum(diff * diff))
+        if vals.size > 0:
+            acc.update_band(0, vals)
 
-    if total_count == 0 or shift_val is None:
+    if int(acc.counts[0]) == 0:
         return 0.0, 0.0
 
-    mean_shifted = sum_shifted / total_count
-    mean_val = shift_val + mean_shifted
-    variance = max(0.0, (sum_sq_shifted / total_count) - (mean_shifted ** 2))
-    stddev_val = math.sqrt(variance)
+    mean_val = float(acc.means[0])
+    stddev_val = float(acc.stds()[0])
     half_width = stretch_std_devs * stddev_val
     return mean_val - half_width, mean_val + half_width
 

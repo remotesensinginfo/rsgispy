@@ -13,10 +13,10 @@ import rasterio
 import rasterio.crs
 from rasterio.enums import Resampling
 from rasterio.transform import Affine
-from rasterio.vrt import _gdal_typename
 
 import rsgispy
-from rsgispy.imageutils._helpers import (
+from rsgispy import get_gdal_datatype_name as _gdal_typename
+from rsgispy.imageprocess import (
     normalise_creation_options as _normalise_creation_options,
     parse_epsg_crs as _parse_epsg_crs,
 )

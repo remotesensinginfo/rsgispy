@@ -22,7 +22,10 @@ from rsgispy._io import (
     WindowOp,
 )
 from rsgispy.imageprocess import (
+    build_valid_mask,
     ensure_file_exists,
+    resolve_out_nodata,
+    rsgis_dtype_from_np_dtype,
     run_window_halo_blocks,
     validate_odd_window_size,
 )
@@ -58,7 +61,7 @@ def _resolve_morph_datatype(
         return int(default_dtype)
     ensure_file_exists(input_img)
     with rasterio.open(input_img, "r") as src:
-        return rsgispy.get_rsgis_datatype(src.dtypes[0])
+        return rsgis_dtype_from_np_dtype(src.dtypes[0])
 
 
 def _resolve_input_nodata(
@@ -80,19 +83,12 @@ def _resolve_morph_nodata(
     eff_nd = _resolve_input_nodata(input_img, no_data_val)
     if eff_nd is None or not math.isfinite(float(eff_nd)):
         return None
-    nd_val = float(eff_nd)
-    if np.issubdtype(out_np_dtype, np.floating):
-        info = np.finfo(out_np_dtype)
-        if float(info.min) <= nd_val <= float(info.max):  # pylint: disable=no-member
-            return nd_val
-        return None
-    if np.issubdtype(out_np_dtype, np.integer):
-        if nd_val.is_integer():
-            info_i = np.iinfo(out_np_dtype)
-            if int(info_i.min) <= int(nd_val) <= int(info_i.max):
-                return nd_val
-        return None
-    return None
+    return resolve_out_nodata(
+        out_np_dtype,
+        fallback_nodata=float(eff_nd),
+        default_float=None,
+        default_int=None,
+    )
 
 
 def _resolve_fill_nodata(
@@ -110,10 +106,7 @@ def _valid_morph_mask(
     arr: np.ndarray, in_nd: Optional[float]
 ) -> np.ndarray:
     """Return boolean mask of finite, non-nodata pixels in ``arr``."""
-    valid = np.isfinite(arr)
-    if in_nd is not None and math.isfinite(float(in_nd)):
-        valid &= arr != float(in_nd)
-    return valid
+    return build_valid_mask(arr, in_nd)
 
 
 def _parse_morph_op_file(morph_op_file: str) -> np.ndarray:

@@ -77,6 +77,8 @@ from rsgispy.imageprocess import (
     cast_result_block,
     ensure_file_exists,
     open_output_dataset,
+    resolve_out_dtype,
+    resolve_out_nodata,
 )
 from rsgispy.imageutils.stats import pop_img_stats
 from rsgispy.vectorprocess import read_vec_gdf, write_vec_gdf
@@ -275,12 +277,7 @@ def _resolve_out_dtype(
     datatype: Optional[int], default_rsgis_dtype: int
 ) -> Tuple[int, str, np.dtype]:
     """Resolve ``(rsgis_dtype, rasterio_dtype_str, numpy_dtype)``."""
-    eff_dt = default_rsgis_dtype if datatype is None else int(datatype)
-    return (
-        eff_dt,
-        rsgispy.get_rasterio_datatype(eff_dt),
-        np.dtype(rsgispy.get_numpy_datatype(eff_dt)),
-    )
+    return resolve_out_dtype(datatype, default_dtype=default_rsgis_dtype)
 
 
 def _resolve_out_nodata(
@@ -289,18 +286,17 @@ def _resolve_out_nodata(
     default_nodata: Optional[float],
 ) -> Optional[float]:
     """Return output nodata scalar compatible with ``out_np_dtype``."""
-    cand = no_data_val if no_data_val is not None else default_nodata
-    if cand is None:
-        return None
-    if np.issubdtype(out_np_dtype, np.integer):
-        info = np.iinfo(out_np_dtype)
-        val = int(round(float(cand)))
-        if info.min <= val <= info.max:
-            return float(val)
-        if np.issubdtype(out_np_dtype, np.unsignedinteger):
-            return float(info.max)
-        return float(info.min)
-    return float(cand)
+    return resolve_out_nodata(
+        out_np_dtype,
+        out_no_data_val=no_data_val,
+        fallback_nodata=default_nodata,
+        default_float=None,
+        default_int=None,
+        clamp_int=True,
+        unsigned_clamp="max",
+        allow_round_int=True,
+        allow_nonfinite_float=True,
+    )
 
 
 def _write_raster_array(

@@ -666,46 +666,6 @@ def get_utm_zone(input_img: str) -> Optional[str]:
     return f"{zone_num:02d}{hemi}"
 
 
-_RIO_DTYPE_TO_GDAL_ENUM: Dict[str, int] = {
-    "uint8": 1,
-    "byte": 1,
-    "uint16": 2,
-    "int16": 3,
-    "uint32": 4,
-    "int32": 5,
-    "float32": 6,
-    "float64": 7,
-    "cint16": 8,
-    "cint32": 9,
-    "complex64": 10,
-    "cfloat32": 10,
-    "complex128": 11,
-    "cfloat64": 11,
-    "uint64": 12,
-    "int64": 13,
-    "int8": 14,
-}
-
-_RIO_DTYPE_TO_GDAL_NAME: Dict[str, str] = {
-    "uint8": "Byte",
-    "byte": "Byte",
-    "uint16": "UInt16",
-    "int16": "Int16",
-    "uint32": "UInt32",
-    "int32": "Int32",
-    "float32": "Float32",
-    "float64": "Float64",
-    "cint16": "CInt16",
-    "cint32": "CInt32",
-    "complex64": "CFloat32",
-    "cfloat32": "CFloat32",
-    "complex128": "CFloat64",
-    "cfloat64": "CFloat64",
-    "uint64": "UInt64",
-    "int64": "Int64",
-    "int8": "Int8",
-}
-
 _EXT_TO_GDAL_FORMAT: Dict[str, str] = {
     ".env": "ENVI",
     ".kea": "KEA",
@@ -793,11 +753,7 @@ def get_gdal_datatype_from_img(input_img: str) -> int:
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
         dtype_key = str(src.dtypes[0]).lower()
-    if dtype_key not in _RIO_DTYPE_TO_GDAL_ENUM:
-        raise rsgispy.RSGISPyException(
-            f"Unsupported raster data type '{dtype_key}' in '{input_img}'."
-        )
-    return _RIO_DTYPE_TO_GDAL_ENUM[dtype_key]
+    return rsgispy.get_gdal_datatype_enum(dtype_key)
 
 
 def get_rsgislib_datatype_from_img(input_img: str) -> int:
@@ -836,11 +792,7 @@ def get_gdal_datatype_name_from_img(input_img: str) -> str:
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r") as src:
         dtype_key = str(src.dtypes[0]).lower()
-    if dtype_key not in _RIO_DTYPE_TO_GDAL_NAME:
-        raise rsgispy.RSGISPyException(
-            f"Unsupported raster data type '{dtype_key}' in '{input_img}'."
-        )
-    return _RIO_DTYPE_TO_GDAL_NAME[dtype_key]
+    return rsgispy.get_gdal_datatype_name(dtype_key)
 
 
 def get_gdal_format_from_ext(input_img: str) -> str:

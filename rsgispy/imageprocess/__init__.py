@@ -252,6 +252,503 @@ def build_valid_mask(
     return valid_mask
 
 
+def build_valid_cube_mask(
+    arr_nd: np.ndarray,
+    no_data_val: Optional[Union[float, Sequence[Optional[float]]]] = None,
+    msk_arr: Optional[np.ndarray] = None,
+    valid_msk_val: Optional[Union[int, float]] = 1,
+    axis: int = 0,
+) -> np.ndarray:
+    """
+    Build a reduced boolean validity mask across bands/features along ``axis``
+    (default ``axis=0`` for ``(B, H, W)`` raster cubes, or ``axis=1`` for
+    ``(N, B)`` feature tables).
+
+    :param arr_nd: Input multi-band NumPy array (e.g. ``(B, H, W)`` or ``(N, B)``).
+    :param no_data_val: Optional scalar no-data value or per-band sequence of
+                        no-data values.
+    :param msk_arr: Optional external mask array matching the reduced spatial shape.
+    :param valid_msk_val: Value in ``msk_arr`` marking valid pixels (Default = ``1``).
+    :param axis: Axis indexing bands/features to reduce with logical AND
+                 (Default = ``0``).
+    :return: Reduced boolean validity mask.
+    """
+    if np.issubdtype(arr_nd.dtype, np.floating):
+        valid = np.all(np.isfinite(arr_nd), axis=axis)
+    else:
+        out_shape = tuple(
+            dim for idx, dim in enumerate(arr_nd.shape) if idx != (axis % arr_nd.ndim)
+        )
+        valid = np.ones(out_shape, dtype=bool)
+
+    if no_data_val is not None:
+        if isinstance(no_data_val, Sequence) and not isinstance(
+            no_data_val, (str, bytes)
+        ):
+            n_bands = arr_nd.shape[axis]
+            for b_idx in range(min(n_bands, len(no_data_val))):
+                nd = no_data_val[b_idx]
+                if nd is None or (
+                    isinstance(nd, (float, np.floating)) and math.isnan(float(nd))
+                ):
+                    continue
+                slc = [slice(None)] * arr_nd.ndim
+                slc[axis] = b_idx
+                valid &= arr_nd[tuple(slc)] != nd
+        else:
+            nd_scalar = float(no_data_val)
+            if not math.isnan(nd_scalar):
+                valid &= np.all(arr_nd != nd_scalar, axis=axis)
+
+    if msk_arr is not None and valid_msk_val is not None:
+        valid &= msk_arr == valid_msk_val
+    return valid
+
+
+def rsgis_dtype_from_np_dtype(
+    dtype_obj: Any, fallback: int = rsgispy.TYPE_32FLOAT
+) -> int:
+    """Resolve an ``rsgispy.TYPE_*`` constant from a NumPy/rasterio dtype."""
+    return rsgispy.rsgis_dtype_from_np_dtype(dtype_obj, fallback=fallback)
+
+
+def resolve_out_dtype(
+    datatype: Optional[int],
+    default_dtype: Optional[int] = rsgispy.TYPE_32FLOAT,
+    ref_np_dtype: Optional[Any] = None,
+    require_int: bool = False,
+) -> Tuple[int, str, np.dtype]:
+    """
+    Resolve an output ``(rsgis_dtype, rasterio_dtype_str, numpy_dtype)`` triplet.
+
+    :param datatype: Explicit ``rsgispy.TYPE_*`` constant, or ``None``.
+    :param default_dtype: Fallback ``rsgispy.TYPE_*`` constant when ``datatype``
+                          and ``ref_np_dtype`` are ``None``
+                          (Default = ``rsgispy.TYPE_32FLOAT``).
+    :param ref_np_dtype: Optional reference dataset/array dtype inspected when
+                         ``datatype is None``.
+    :param require_int: If ``True``, raise :class:`rsgispy.RSGISPyException`
+                        when the resolved dtype is not an integer type.
+    :return: Tuple ``(rsgis_dtype, out_rio_dtype, out_np_dtype)``.
+    """
+    if datatype is not None:
+        eff_dt = int(datatype)
+    elif ref_np_dtype is not None:
+        fb = rsgispy.TYPE_32FLOAT if default_dtype is None else int(default_dtype)
+        eff_dt = rsgis_dtype_from_np_dtype(ref_np_dtype, fallback=fb)
+    elif default_dtype is not None:
+        eff_dt = int(default_dtype)
+    else:
+        raise rsgispy.RSGISPyException(
+            "An explicit datatype, reference dtype, or default_dtype is required."
+        )
+    rio_dtype = rsgispy.get_rasterio_datatype(eff_dt)
+    np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dt))
+    if require_int and not np.issubdtype(np_dtype, np.integer):
+        raise rsgispy.RSGISPyException(
+            f"Output datatype must be an integer type, got '{rio_dtype}'."
+        )
+    return eff_dt, rio_dtype, np_dtype
+
+
+def fits_dtype_range(
+    value: float,
+    out_np_dtype: np.dtype,
+    allow_round_int: bool = False,
+) -> bool:
+    """
+    Return ``True`` if finite scalar ``value`` is representable in ``out_np_dtype``.
+    """
+    out_np_dtype = np.dtype(out_np_dtype)
+    f_val = float(value)
+    if not math.isfinite(f_val):
+        return False
+    if np.issubdtype(out_np_dtype, np.floating):
+        info = np.finfo(out_np_dtype)
+        return float(info.min) <= f_val <= float(info.max)  # pylint: disable=no-member
+    if np.issubdtype(out_np_dtype, np.integer):
+        if not allow_round_int and not f_val.is_integer():
+            return False
+        info_i = np.iinfo(out_np_dtype)
+        i_val = int(round(f_val)) if allow_round_int else int(f_val)
+        return int(info_i.min) <= i_val <= int(info_i.max)
+    return False
+
+
+def resolve_out_nodata(
+    out_np_dtype: np.dtype,
+    out_no_data_val: Optional[float] = None,
+    fallback_nodata: Optional[float] = None,
+    *,
+    default_float: Optional[float] = -9999.0,
+    default_int: Optional[float] = 0.0,
+    clamp_int: bool = False,
+    unsigned_clamp: str = "max",
+    strict_explicit: bool = False,
+    allow_round_int: bool = False,
+    allow_nonfinite_float: bool = False,
+) -> Optional[float]:
+    """
+    Resolve an output no-data value compatible with ``out_np_dtype``.
+
+    :param out_np_dtype: Target NumPy dtype of the output raster.
+    :param out_no_data_val: Explicit user-requested output no-data value.
+    :param fallback_nodata: Secondary candidate (e.g. input image header nodata).
+    :param default_float: Fallback for floating-point outputs when candidate is
+                          ``None`` or out of range (Default = ``-9999.0``).
+    :param default_int: Fallback for integer outputs when candidate is ``None``
+                        or out of range (Default = ``0.0``).
+    :param clamp_int: If ``True``, clamp out-of-range integer candidates to the
+                      target integer dtype's bounds.
+    :param unsigned_clamp: When ``clamp_int=True`` and ``out_np_dtype`` is an
+                           unsigned integer type, select ``'max'`` (``info.max``)
+                           or ``'zero'`` (``0.0``).
+    :param strict_explicit: If ``True`` and ``out_no_data_val`` is explicitly
+                            provided, raise :class:`rsgispy.RSGISPyException` if
+                            it is not representable in ``out_np_dtype``.
+    :param allow_round_int: If ``True``, round floating candidates to the nearest
+                            integer when checking integer range fit.
+    :param allow_nonfinite_float: If ``True``, preserve ``NaN``/``Inf`` candidates
+                                  for floating-point outputs.
+    :return: Resolved output no-data scalar, or ``None``.
+    """
+    # pylint: disable=too-many-arguments,too-many-locals,too-many-branches,too-many-return-statements
+    out_np_dtype = np.dtype(out_np_dtype)
+    is_int = np.issubdtype(out_np_dtype, np.integer)
+    is_flt = np.issubdtype(out_np_dtype, np.floating)
+
+    if out_no_data_val is not None:
+        f_exp = float(out_no_data_val)
+        if strict_explicit and is_int:
+            if not math.isfinite(f_exp):
+                raise rsgispy.RSGISPyException(
+                    "out_no_data_val must be finite for integer output datatypes."
+                )
+            info_i = np.iinfo(out_np_dtype)
+            if f_exp < info_i.min or f_exp > info_i.max:
+                raise rsgispy.RSGISPyException(
+                    f"out_no_data_val ({out_no_data_val}) is outside the valid range "
+                    f"[{info_i.min}, {info_i.max}] for dtype '{out_np_dtype.name}'."
+                )
+        if not clamp_int and not strict_explicit:
+            return f_exp
+        cand: Optional[float] = f_exp
+    else:
+        cand = float(fallback_nodata) if fallback_nodata is not None else None
+
+    if cand is None:
+        cand = default_int if is_int else default_float
+        if cand is None:
+            return None
+
+    f_cand = float(cand)
+    if not math.isfinite(f_cand):
+        if is_flt and allow_nonfinite_float:
+            return f_cand
+        return float(default_int) if (is_int and default_int is not None) else (
+            float(default_float) if (is_flt and default_float is not None) else None
+        )
+
+    if fits_dtype_range(f_cand, out_np_dtype, allow_round_int=allow_round_int):
+        if is_int and allow_round_int:
+            return float(int(round(f_cand)))
+        return f_cand
+
+    if is_int and clamp_int:
+        info_i = np.iinfo(out_np_dtype)
+        if np.issubdtype(out_np_dtype, np.unsignedinteger):
+            return 0.0 if unsigned_clamp == "zero" else float(info_i.max)
+        return float(info_i.min)
+
+    if is_flt:
+        return float(default_float) if default_float is not None else None
+    if is_int:
+        return float(default_int) if default_int is not None else None
+    return f_cand
+
+
+def resolve_nodata_and_fill(
+    eff_nd: Optional[float],
+    out_np_dtype: np.dtype,
+) -> Tuple[Optional[float], float]:
+    """
+    Return ``(dst_nodata_header, fill_value)`` compatible with ``out_np_dtype``.
+    """
+    out_np_dtype = np.dtype(out_np_dtype)
+    if np.issubdtype(out_np_dtype, np.floating):
+        if eff_nd is not None:
+            nd_val = float(eff_nd)
+            return nd_val, nd_val
+        return None, float("nan")
+
+    if np.issubdtype(out_np_dtype, np.integer):
+        if eff_nd is not None and fits_dtype_range(
+            float(eff_nd), out_np_dtype, allow_round_int=True
+        ):
+            nd_val = float(int(round(float(eff_nd))))
+            return nd_val, nd_val
+        if eff_nd is not None:
+            return 0.0, 0.0
+        return None, 0.0
+
+    return eff_nd, (float(eff_nd) if eff_nd is not None else 0.0)
+
+
+def normalise_creation_options(
+    options: Optional[Union[Sequence[str], Mapping[str, Any]]],
+) -> Optional[Dict[str, Any]]:
+    """
+    Convert ``options`` given as either a sequence of ``'KEY=VALUE'`` strings
+    or a dictionary into a ``Dict[str, Any]`` mapping, or ``None`` if empty.
+    """
+    if not options:
+        return None
+    if isinstance(options, Mapping):
+        return dict(options) if options else None
+    parsed: Dict[str, Any] = {}
+    for item in options:
+        item_str = str(item).strip()
+        if "=" in item_str:
+            key, val = item_str.split("=", 1)
+            parsed[key.strip()] = val.strip()
+    return parsed if parsed else None
+
+
+def parse_epsg_crs(epsg_code: Optional[int]) -> Optional[Any]:
+    """
+    Resolve a ``rasterio.crs.CRS`` from an integer ``epsg_code``.
+    """
+    # pylint: disable=c-extension-no-member
+    if epsg_code is None:
+        return None
+    try:
+        return rasterio.crs.CRS.from_epsg(int(epsg_code))
+    except Exception as err:
+        raise rsgispy.RSGISPyException(
+            f"Could not parse EPSG code '{epsg_code}': {err}"
+        ) from err
+
+
+def maybe_pop_stats(
+    output_img: str,
+    calc_stats: bool,
+    no_data_val: Optional[float] = None,
+    thematic: bool = False,
+    use_pbar: bool = True,
+    ignore_cog: bool = False,
+    gdalformat: Optional[str] = None,
+) -> None:
+    """Populate continuous or thematic image statistics if ``calc_stats`` is True."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    if not calc_stats:
+        return
+    eff_ignore_cog = bool(ignore_cog) or (
+        gdalformat is not None and gdalformat.upper().strip() == "COG"
+    )
+    if not eff_ignore_cog and os.path.exists(output_img):
+        try:
+            with rasterio.open(output_img, "r") as src_chk:
+                eff_ignore_cog = (
+                    src_chk.tags(ns="IMAGE_STRUCTURE").get("LAYOUT", "").upper()
+                    == "COG"
+                )
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+
+    # Lazy import avoids circular dependencies with stats -> imagecalc.
+    from rsgispy.imageutils.stats import (  # pylint: disable=import-outside-toplevel
+        pop_img_stats,
+        pop_thmt_img_stats,
+    )
+
+    if thematic:
+        pop_thmt_img_stats(
+            input_img=output_img,
+            add_clr_tab=True,
+            calc_pyramids=True,
+            ignore_zero=True,
+            use_pbar=use_pbar,
+            ignore_cog=eff_ignore_cog,
+        )
+    else:
+        pop_img_stats(
+            input_img=output_img,
+            no_data_val=no_data_val,
+            calc_pyramids=True,
+            ignore_cog=eff_ignore_cog,
+            use_pbar=use_pbar,
+        )
+
+
+def update_chan_moments(
+    count_a: int,
+    mean_a: Optional[np.ndarray],
+    m2_a: Optional[np.ndarray],
+    batch: np.ndarray,
+    track_covariance: bool = False,
+) -> Tuple[int, Optional[np.ndarray], Optional[np.ndarray]]:
+    """
+    Update running sample count, mean, and second central moment ``M2`` using
+    the parallel batch algorithm of Chan et al. (1979).
+
+    :param count_a: Running sample count before ``batch``.
+    :param mean_a: Running mean vector ``(D,)`` (or ``None`` if ``count_a == 0``).
+    :param m2_a: Running second central moment ``(D,)`` or scatter matrix
+                 ``(D, D)`` when ``track_covariance=True``.
+    :param batch: 1D ``(N,)`` or 2D ``(N, D)`` batch of finite valid observations.
+    :param track_covariance: If ``True``, maintain the full ``(D, D)`` centred
+                             scatter matrix ``M2``; otherwise maintain ``(D,)``
+                             element-wise sum of squared deviations.
+    :return: Updated ``(count_total, mean_new, m2_new)``.
+    """
+    arr = np.asarray(batch, dtype=np.float64)
+    if arr.ndim == 1:
+        arr = arr[:, np.newaxis]
+    n_b = int(arr.shape[0])
+    if n_b == 0:
+        return count_a, mean_a, m2_a
+    mean_b = np.mean(arr, axis=0)
+    centred_b = arr - mean_b
+    if track_covariance:
+        m2_b = centred_b.T @ centred_b
+    else:
+        m2_b = np.sum(centred_b * centred_b, axis=0)
+    if count_a == 0 or mean_a is None or m2_a is None:
+        return n_b, mean_b, m2_b
+    delta = mean_b - mean_a
+    n_total = count_a + n_b
+    weight = float(count_a) * float(n_b) / float(n_total)
+    mean_new = mean_a + delta * (float(n_b) / float(n_total))
+    if track_covariance:
+        m2_new = m2_a + m2_b + np.outer(delta, delta) * weight
+    else:
+        m2_new = m2_a + m2_b + (delta * delta) * weight
+    return n_total, mean_new, m2_new
+
+
+class OnlineStatsAccumulator:
+    """
+    Numerically stable streaming accumulator for per-band min, max, mean, and
+    variance/standard deviation using Chan et al. (1979) / Welford updates.
+
+    Supports both independent per-band 1D updates (:meth:`update_band`) and
+    joint multi-band ``(N, B)`` matrix updates (:meth:`update_matrix`).
+    """
+
+    def __init__(self, n_bands: int = 1) -> None:
+        self.n_bands = int(n_bands)
+        self.counts = np.zeros(self.n_bands, dtype=np.int64)
+        self.mins = np.full(self.n_bands, np.inf, dtype=np.float64)
+        self.maxs = np.full(self.n_bands, -np.inf, dtype=np.float64)
+        self.means = np.zeros(self.n_bands, dtype=np.float64)
+        self.m2s = np.zeros(self.n_bands, dtype=np.float64)
+
+    def update_band(self, band_idx: int, vals: np.ndarray) -> None:
+        """Update running statistics for 0-based ``band_idx`` with 1D finite ``vals``."""
+        arr = np.asarray(vals, dtype=np.float64).ravel()
+        k = int(arr.size)
+        if k == 0:
+            return
+        b_min = float(np.min(arr))
+        b_max = float(np.max(arr))
+        if b_min < self.mins[band_idx]:
+            self.mins[band_idx] = b_min
+        if b_max > self.maxs[band_idx]:
+            self.maxs[band_idx] = b_max
+
+        b_mean = float(np.mean(arr))
+        b_m2 = float(np.sum((arr - b_mean) ** 2))
+        n_prev = int(self.counts[band_idx])
+        if n_prev == 0:
+            self.means[band_idx] = b_mean
+            self.m2s[band_idx] = b_m2
+            self.counts[band_idx] = k
+        else:
+            n_new = n_prev + k
+            delta = b_mean - self.means[band_idx]
+            self.means[band_idx] += delta * (float(k) / float(n_new))
+            self.m2s[band_idx] += b_m2 + (delta * delta) * (
+                float(n_prev) * float(k) / float(n_new)
+            )
+            self.counts[band_idx] = n_new
+
+    def update_matrix(self, flat_valid: np.ndarray) -> None:
+        """Update all bands simultaneously from a 2D ``(n_samples, n_bands)`` matrix."""
+        mat = np.asarray(flat_valid, dtype=np.float64)
+        k = int(mat.shape[0])
+        if k == 0:
+            return
+        self.mins = np.minimum(self.mins, np.min(mat, axis=0))
+        self.maxs = np.maximum(self.maxs, np.max(mat, axis=0))
+        b_mean = np.mean(mat, axis=0)
+        b_m2 = np.sum(np.square(mat - b_mean), axis=0)
+        n_prev = int(self.counts[0])
+        if n_prev == 0:
+            self.means = b_mean
+            self.m2s = b_m2
+            self.counts[:] = k
+        else:
+            n_new = n_prev + k
+            delta = b_mean - self.means
+            self.means += delta * (float(k) / float(n_new))
+            self.m2s += b_m2 + np.square(delta) * (
+                float(n_prev) * float(k) / float(n_new)
+            )
+            self.counts[:] = n_new
+
+    def stds(self, ddof: int = 0) -> np.ndarray:
+        """Return per-band standard deviations (``0.0`` where ``count <= ddof``)."""
+        denom = np.maximum(self.counts - int(ddof), 1)
+        return np.where(
+            self.counts > int(ddof),
+            np.sqrt(np.maximum(self.m2s / denom, 0.0)),
+            0.0,
+        )
+
+
+def compute_dataset_band_stats(
+    ds: DatasetReader,
+    bidx: int,
+    nodata: Optional[float] = None,
+) -> Dict[str, Optional[float]]:
+    """
+    Stream blocks of 1-based band ``bidx`` from ``ds`` using
+    :class:`OnlineStatsAccumulator` and return a dictionary of summary metrics.
+    """
+    acc = OnlineStatsAccumulator(n_bands=1)
+    for _, window in ds.block_windows(bidx):
+        block = ds.read(bidx, window=window, masked=False).astype(
+            np.float64, copy=False
+        )
+        valid = build_valid_mask(block, nodata)
+        if np.any(valid):
+            acc.update_band(0, block[valid])
+
+    count = int(acc.counts[0])
+    if count == 0:
+        return {
+            "min": None,
+            "max": None,
+            "mean": None,
+            "std": None,
+            "median": None,
+            "mode": None,
+            "valid_percent": 0.0,
+        }
+
+    total_px = ds.width * ds.height
+    valid_pct = 100.0 * float(count) / float(total_px) if total_px > 0 else 0.0
+    return {
+        "min": float(acc.mins[0]),
+        "max": float(acc.maxs[0]),
+        "mean": float(acc.means[0]),
+        "std": float(acc.stds()[0]),
+        "median": None,
+        "mode": None,
+        "valid_percent": valid_pct,
+    }
+
+
 def read_raster_band(
     input_img: Union[str, os.PathLike],
     img_band: int = 1,
@@ -598,23 +1095,20 @@ def extract_overlap_arrays(
         flt_win_transform = ov_transform
         same_grid = False
 
-    ref_valid = np.isfinite(ref_arr)
-    for idx, b_idx in enumerate(ref_bands):
-        nd = ref_no_data if ref_no_data is not None else ref_src.nodatavals[b_idx - 1]
-        if nd is not None and not (isinstance(nd, float) and np.isnan(nd)):
-            ref_valid[idx] &= ref_arr[idx] != nd
-
-    flt_valid = np.isfinite(flt_arr)
-    for idx, b_idx in enumerate(flt_bands):
-        nd = flt_no_data if flt_no_data is not None else flt_src.nodatavals[b_idx - 1]
-        if nd is not None and not (isinstance(nd, float) and np.isnan(nd)):
-            flt_valid[idx] &= flt_arr[idx] != nd
+    ref_nds = [
+        ref_no_data if ref_no_data is not None else ref_src.nodatavals[b_idx - 1]
+        for b_idx in ref_bands
+    ]
+    flt_nds = [
+        flt_no_data if flt_no_data is not None else flt_src.nodatavals[b_idx - 1]
+        for b_idx in flt_bands
+    ]
 
     return {
         "ref_arr": ref_arr,
         "flt_arr": flt_arr,
-        "ref_valid": np.all(ref_valid, axis=0),
-        "flt_valid": np.all(flt_valid, axis=0),
+        "ref_valid": build_valid_cube_mask(ref_arr, ref_nds),
+        "flt_valid": build_valid_cube_mask(flt_arr, flt_nds),
         "ov_transform": ov_transform,
         "flt_win_transform": flt_win_transform,
         "same_grid": same_grid,
@@ -1123,7 +1617,10 @@ def open_output_dataset(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     if output_exists and os.path.exists(output_img):
-        dst = stack.enter_context(rasterio.open(output_img, "r+"))
+        open_opts: Dict[str, Any] = {}
+        if gdalformat.upper().strip() == "COG":
+            open_opts["IGNORE_COG_LAYOUT_BREAK"] = "YES"
+        dst = stack.enter_context(rasterio.open(output_img, "r+", **open_opts))
         if dst.width != grid.width or dst.height != grid.height:
             raise rsgispy.RSGISPyException(
                 f"Existing output image '{output_img}' dimensions "
@@ -1459,13 +1956,8 @@ def extract_roi_feature_matrix(
     valid_mask = np.ones(roi_idx.size, dtype=bool)
     for col_idx, (band_arr, band_nd) in enumerate(band_arrays):
         vals = band_arr.ravel()[roi_idx].astype(np.float64, copy=False)
-        valid_col = np.isfinite(vals)
-        if band_nd is not None and not (
-            isinstance(band_nd, (float, np.floating)) and math.isnan(float(band_nd))
-        ):
-            valid_col &= vals != float(band_nd)
         feat_mat[:, col_idx] = vals
-        valid_mask &= valid_col
+        valid_mask &= build_valid_mask(vals, band_nd)
 
     return feat_mat[valid_mask], roi_idx[valid_mask]
 

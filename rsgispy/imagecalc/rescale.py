@@ -198,12 +198,9 @@ def calc_img_rescale(
                 in_block = ds.read(window=src_win, out_dtype=np.float64)
                 for b_idx in range(ds.count):
                     band_arr = in_block[b_idx]
-                    if c_nd_is_nan:
-                        nodata_mask = ~np.isfinite(band_arr)
-                    else:
-                        nodata_mask = (band_arr == c_no_data_val) | ~np.isfinite(
-                            band_arr
-                        )
+                    nodata_mask = ~build_valid_mask(
+                        band_arr, no_data_val=float(c_no_data_val)
+                    )
                     rescaled = ((band_arr - c_off) * scale) + n_off
                     res = np.where(nodata_mask, n_no_data_val, rescaled)
                     out_block = cast_result_block(res, win_h, win_w, out_np_dtype)
@@ -315,12 +312,9 @@ def rescale_img_pxl_vals(
             for b_idx in range(n_bands):
                 cfg = rescale_dict[b_idx]
                 band_arr = in_block[b_idx]
-                if np.isnan(cfg.no_data_val):
-                    nodata_mask = ~np.isfinite(band_arr)
-                else:
-                    nodata_mask = (band_arr == cfg.no_data_val) | ~np.isfinite(
-                        band_arr
-                    )
+                nodata_mask = ~build_valid_mask(
+                    band_arr, no_data_val=float(cfg.no_data_val)
+                )
 
                 scaled = (
                     ((band_arr - cfg.in_min) / (cfg.in_max - cfg.in_min))

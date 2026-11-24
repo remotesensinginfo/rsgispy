@@ -17,106 +17,27 @@ from rsgispy.imageprocess import (
     cast_result_block,
     ensure_file_exists,
     iter_dataset_windows,
+    maybe_pop_stats,
+    normalise_creation_options,
     open_output_dataset,
+    parse_epsg_crs,
+    resolve_out_dtype,
+    rsgis_dtype_from_np_dtype,
 )
+
+__all__ = [
+    "ensure_img_exists",
+    "normalise_creation_options",
+    "parse_epsg_crs",
+    "rsgis_dtype_from_np_dtype",
+    "maybe_pop_stats",
+    "copy_raster_window",
+]
 
 
 def ensure_img_exists(img_path: str) -> None:
     """Raise :class:`rsgispy.RSGISPyException` if ``img_path`` does not exist."""
     ensure_file_exists(img_path, label="Input image")
-
-
-def normalise_creation_options(
-    options: Optional[Union[Sequence[str], Mapping[str, Any]]],
-) -> Optional[Dict[str, Any]]:
-    """
-    Convert ``options`` given as either a sequence of ``'KEY=VALUE'`` strings
-    or a dictionary into a ``Dict[str, Any]`` mapping, or ``None`` if empty.
-    """
-    if not options:
-        return None
-    if isinstance(options, Mapping):
-        return dict(options) if options else None
-    parsed: Dict[str, Any] = {}
-    for item in options:
-        item_str = str(item).strip()
-        if "=" in item_str:
-            key, val = item_str.split("=", 1)
-            parsed[key.strip()] = val.strip()
-    return parsed if parsed else None
-
-
-def parse_epsg_crs(epsg_code: Optional[int]) -> Optional[Any]:
-    """
-    Resolve a ``rasterio.crs.CRS`` from an integer ``epsg_code``.
-    """
-    # pylint: disable=c-extension-no-member
-    if epsg_code is None:
-        return None
-    try:
-        return rasterio.crs.CRS.from_epsg(int(epsg_code))
-    except Exception as err:
-        raise rsgispy.RSGISPyException(
-            f"Could not parse EPSG code '{epsg_code}': {err}"
-        ) from err
-
-
-def get_epsg_from_dataset(src: Any, input_img: str) -> int:
-    """
-    Extract the integer EPSG code from an opened rasterio dataset ``src``.
-    """
-    epsg_code = src.crs.to_epsg() if src.crs is not None else None
-    if epsg_code is None:
-        raise rsgispy.RSGISPyException(
-            f"Could not determine EPSG code from input image '{input_img}'."
-        )
-    return int(epsg_code)
-
-
-def rsgis_dtype_from_np_dtype(
-    dtype_obj: Any, fallback: int = rsgispy.TYPE_32FLOAT
-) -> int:
-    """Resolve an ``rsgispy.TYPE_*`` constant from a NumPy/rasterio dtype."""
-    dtype_str = str(np.dtype(dtype_obj))
-    try:
-        return rsgispy.get_rsgis_datatype(dtype_str)
-    except rsgispy.RSGISPyException:
-        if dtype_str == "bool":
-            return rsgispy.TYPE_8UINT
-        return fallback
-
-
-def maybe_pop_stats(
-    output_img: str,
-    calc_stats: bool,
-    no_data_val: Optional[float] = None,
-    thematic: bool = False,
-    use_pbar: bool = True,
-) -> None:
-    """Populate continuous or thematic image statistics if ``calc_stats`` is True."""
-    if not calc_stats:
-        return
-    # Lazy import avoids circular dependencies with stats -> imagecalc.
-    from rsgispy.imageutils.stats import (  # pylint: disable=import-outside-toplevel
-        pop_img_stats,
-        pop_thmt_img_stats,
-    )
-
-    if thematic:
-        pop_thmt_img_stats(
-            input_img=output_img,
-            add_clr_tab=True,
-            calc_pyramids=True,
-            ignore_zero=True,
-            use_pbar=use_pbar,
-        )
-    else:
-        pop_img_stats(
-            input_img=output_img,
-            no_data_val=no_data_val,
-            calc_pyramids=True,
-            use_pbar=use_pbar,
-        )
 
 
 def copy_raster_window(
@@ -140,13 +61,9 @@ def copy_raster_window(
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
-        eff_dtype = (
-            rsgis_dtype_from_np_dtype(src.dtypes[0])
-            if datatype is None
-            else datatype
+        _, out_rio_dtype, out_np_dtype = resolve_out_dtype(
+            datatype, ref_np_dtype=src.dtypes[0]
         )
-        out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
-        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
 
         roi_win = Window(col_off, row_off, width, height)
         out_transform = window_transform(roi_win, src.transform)
@@ -193,4 +110,5 @@ def copy_raster_window(
         calc_stats=calc_stats,
         no_data_val=eff_nd,
         use_pbar=use_pbar,
+        gdalformat=gdalformat,
     )

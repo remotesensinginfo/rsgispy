@@ -45,7 +45,7 @@ from rsgispy.imageprocess import (
     open_output_dataset,
     validate_band_index,
 )
-from rsgispy.imageutils._helpers import normalise_creation_options
+from rsgispy.imageprocess import normalise_creation_options
 from rsgispy.imageutils.masking import ImageBandInfo
 from rsgispy.ml.scaling import FeatureScaler
 from rsgispy.tools._ml_data import read_feature_block

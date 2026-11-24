@@ -46,7 +46,7 @@ from rsgispy.imageprocess import (
     iter_dataset_windows,
     open_output_dataset,
 )
-from rsgispy.imageutils._helpers import normalise_creation_options
+from rsgispy.imageprocess import normalise_creation_options
 from rsgispy.imageutils.colourtable import set_img_not_thematic
 from rsgispy.imageutils.stats import pop_img_stats
 from rsgispy.tools._ml_data import (

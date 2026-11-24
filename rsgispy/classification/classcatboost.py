@@ -31,7 +31,6 @@ from rsgispy.tools._gbdt_common import (
     load_xgb_or_cb_model,
     prepare_cb_predict_estimator as _prepare_cb_predict_estimator,
     safe_import_optional,
-    sample_extended_cb_optuna_params as _tools_sample_extended_cb_optuna_params,
     save_xgb_or_cb_model,
     validate_gpu_device_id,
 )
@@ -88,13 +87,6 @@ def is_catboost_gpu_available(gpu_device_id: Optional[int] = None) -> bool:
     if dev_idx is not None:
         return n_gpus > dev_idx
     return n_gpus > 0
-
-
-def _sample_extended_cb_optuna_params(trial: Any) -> Dict[str, Any]:
-    """Sample extended CatBoost parameters respecting conditional constraints."""
-    return _tools_sample_extended_cb_optuna_params(
-        trial, include_class_weights=True
-    )
 
 
 def get_catboost_optuna_param_space(
