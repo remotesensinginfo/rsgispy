@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 import numpy as np
 import rasterio
+from rasterio.io import DatasetWriter
 from rasterio.transform import Affine
 from rasterio.windows import Window
 
@@ -42,7 +43,7 @@ __all__ = [
 ]
 
 
-def _open_rw_dataset(stack: ExitStack, img_path: str) -> rasterio.DatasetWriter:
+def _open_rw_dataset(stack: ExitStack, img_path: str) -> DatasetWriter:
     """Open ``img_path`` in ``r+`` mode, passing ``IGNORE_COG_LAYOUT_BREAK=YES`` if COG."""
     is_cog = False
     with rasterio.open(img_path, "r") as probe_ds:
