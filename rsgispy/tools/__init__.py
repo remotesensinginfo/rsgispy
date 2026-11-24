@@ -20,6 +20,7 @@ networking, and visualisation utilities:
 * :mod:`rsgispy.tools.maths` — rounding, numeric bounds, powersets, and combinations
 * :mod:`rsgispy.tools.plotting` — scatter, histogram, ROC, and summary plots
 * :mod:`rsgispy.tools.projection` — CRS lookup, unit conversion, and distances
+* :mod:`rsgispy.tools.sensors` — Landsat MTL and Sentinel-2 L2A XML metadata parsers
 * :mod:`rsgispy.tools.stats` — masking, variograms, percentiles, and normalisation
 * :mod:`rsgispy.tools.strings` — UID generation, string parsing, and cleaning
 * :mod:`rsgispy.tools.system` — environment variables and CPU core count helpers

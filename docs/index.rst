@@ -157,6 +157,7 @@ Package Overview
 * :doc:`rsgispy_droneutils` — Drone photo organisation and metadata utilities.
 * :doc:`rsgispy_elevation` — Terrain derivatives, illumination, DEM filtering, fusion, and roughness.
 * :doc:`rsgispy_imagecalc` — Band maths, spectral indices, least-cost path, statistics, percentiles, comparison, encoding, and distance.
+* :doc:`rsgispy_imagecalibration` — Radiometric calibration, TOA reflectance, brightness temperature, DOS, solar angles, and Landsat/Sentinel-2 stacking.
 * :doc:`rsgispy_imagefilter` — Spatial moving-window statistical, edge, Gaussian, Kuwahara, Lee SAR, and kernel filters.
 * :doc:`rsgispy_imagemorphology` — Morphological raster filtering (dilation, erosion, opening, closing).
 * :doc:`rsgispy_imageprocess` — Block-processing engine, spatial intersection, and dataset validation.
@@ -191,6 +192,7 @@ Package Overview
    rsgispy_droneutils
    rsgispy_elevation
    rsgispy_imagecalc
+   rsgispy_imagecalibration
    rsgispy_imagefilter
    rsgispy_imagemorphology
    rsgispy_imageprocess

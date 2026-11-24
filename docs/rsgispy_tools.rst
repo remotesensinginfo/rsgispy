@@ -17,6 +17,7 @@ Files, Text, JSON, Archives & System
 * :doc:`tools/hashing` — SHA, MD5, BLAKE2, and SHA3 file/string hashing.
 * :doc:`tools/credentials` — Base64 encoding and username/password credential files.
 * :doc:`tools/system` — Environment variables and available CPU core count.
+* :doc:`tools/sensors` — Landsat MTL and Sentinel-2 L2A XML metadata header parsers.
 
 .. toctree::
    :maxdepth: 1
@@ -29,6 +30,7 @@ Files, Text, JSON, Archives & System
    tools/hashing
    tools/credentials
    tools/system
+   tools/sensors
 
 Geometry, Projections, UTM & Tile Caches
 ----------------------------------------
