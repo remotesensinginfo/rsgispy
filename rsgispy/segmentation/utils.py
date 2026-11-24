@@ -25,7 +25,9 @@ from rsgispy.imageprocess import (
 )
 from rsgispy._numba import (
     HAVE_NUMBA,
+    NUMBA_INSTALLED,
     make_njit,
+    numba_enabled,
     warn_numba_fallback,
 )
 from rsgispy.imageutils.stats import pop_img_stats
@@ -68,15 +70,18 @@ def call_kernel(kernel: Any, use_numba: bool, *args: Any) -> Any:
 
     Emits a :class:`RuntimeWarning` when ``use_numba=True`` is requested but
     ``numba`` is not installed; stays silent when ``use_numba=False`` is
-    explicitly passed.
+    explicitly passed or acceleration is disabled via
+    :func:`rsgispy._numba.disable_numba` / ``RSGISPY_DISABLE_NUMBA``.
     """
     if use_numba:
         if HAVE_NUMBA:
-            return kernel(*args)
-        warn_numba_fallback(
-            getattr(kernel, "__name__", "segmentation"),
-            stacklevel=3,
-        )
+            if numba_enabled():
+                return kernel(*args)
+        elif not NUMBA_INSTALLED:
+            warn_numba_fallback(
+                getattr(kernel, "__name__", "segmentation"),
+                stacklevel=3,
+            )
     py_fn = getattr(kernel, "py_func", kernel)
     return py_fn(*args)
 

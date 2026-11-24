@@ -12,6 +12,7 @@ from numpy.lib.stride_tricks import sliding_window_view
 import rasterio
 
 import rsgispy
+from rsgispy._numba import optional_njit, prange, use_compiled
 from rsgispy.imagefilter._helpers import (
     _apply_tile_nd,
     _resolve_out_nodata,
@@ -282,6 +283,152 @@ def _calc_freq_props_1d(
     return out
 
 
+@optional_njit(parallel=True, cache=True, warn=False)
+def _glcm_offset_kernel(
+    q_wins: np.ndarray,
+    v_wins: np.ndarray,
+    centre_valid: np.ndarray,
+    dr: int,
+    dc: int,
+    n_levels: int,
+    symmetric: bool,
+    want: np.ndarray,
+) -> np.ndarray:
+    """
+    Compiled per-pixel GLCM properties for a single ``(dr, dc)`` offset
+    (parallel over rows). Returns ``(10, H, W)`` ordered as
+    :data:`GLCM_ALL_PROPERTIES`; only properties flagged in ``want`` are
+    computed and pixels without valid pairs stay ``NaN``.
+
+    Pairs are visited in the same order as :func:`_extract_offset_pairs` and
+    frequency properties are accumulated over sorted pair codes exactly as
+    :func:`_calc_freq_props_1d`; moment sums are sequential, so results agree
+    with the NumPy path to within floating-point rounding.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+    # pylint: disable=too-many-nested-blocks
+    h, w, kh, kw = q_wins.shape
+    out = np.full((10, h, w), np.nan, dtype=np.float64)
+    r0 = max(0, -dr)
+    r1 = kh - max(0, dr)
+    c0 = max(0, -dc)
+    c1 = kw - max(0, dc)
+    n_dir = max(0, r1 - r0) * max(0, c1 - c0)
+    if n_dir == 0:
+        return out
+    n_pairs = 2 * n_dir if symmetric else n_dir
+    need_mom = want[0] or want[1] or want[2] or want[5] or want[7] or want[8]
+    need_freq = want[3] or want[4] or want[6] or want[9]
+    sentinel = n_levels * n_levels
+    for r in prange(h):
+        u_buf = np.empty(n_pairs, dtype=np.float64)
+        v_buf = np.empty(n_pairs, dtype=np.float64)
+        codes = np.empty(n_pairs, dtype=np.int64)
+        for c in range(w):
+            if not centre_valid[r, c]:
+                continue
+            m = 0
+            k = 0
+            for wr in range(r0, r1):
+                for wc in range(c0, c1):
+                    if v_wins[r, c, wr, wc] and v_wins[r, c, wr + dr, wc + dc]:
+                        u_val = q_wins[r, c, wr, wc]
+                        v_val = q_wins[r, c, wr + dr, wc + dc]
+                        u_buf[m] = u_val
+                        v_buf[m] = v_val
+                        codes[k] = u_val * n_levels + v_val
+                        m += 1
+                    else:
+                        codes[k] = sentinel
+                    k += 1
+            n_fwd = m
+            if symmetric:
+                for i in range(n_fwd):
+                    u_buf[n_fwd + i] = v_buf[i]
+                    v_buf[n_fwd + i] = u_buf[i]
+                for i in range(n_dir):
+                    if codes[i] < sentinel:
+                        u_q = codes[i] // n_levels
+                        v_q = codes[i] - u_q * n_levels
+                        codes[n_dir + i] = v_q * n_levels + u_q
+                    else:
+                        codes[n_dir + i] = sentinel
+                m = 2 * n_fwd
+            if m == 0:
+                continue
+            m_f = np.float64(m)
+
+            if need_mom:
+                s_con = 0.0
+                s_dis = 0.0
+                s_hom = 0.0
+                s_u = 0.0
+                s_v = 0.0
+                for i in range(m):
+                    d = u_buf[i] - v_buf[i]
+                    s_con += d * d
+                    s_dis += abs(d)
+                    s_hom += 1.0 / (1.0 + d * d)
+                    s_u += u_buf[i]
+                    s_v += v_buf[i]
+                if want[0]:
+                    out[0, r, c] = s_con / m_f
+                if want[1]:
+                    out[1, r, c] = s_dis / m_f
+                if want[2]:
+                    out[2, r, c] = s_hom / m_f
+                mu_i = s_u / m_f
+                if want[7]:
+                    out[7, r, c] = mu_i
+                if want[8] or want[5]:
+                    s_du = 0.0
+                    for i in range(m):
+                        du = u_buf[i] - mu_i
+                        s_du += du * du
+                    var_i = s_du / m_f
+                    if want[8]:
+                        out[8, r, c] = var_i
+                    if want[5]:
+                        mu_j = s_v / m_f
+                        s_dv = 0.0
+                        s_cov = 0.0
+                        for i in range(m):
+                            du = u_buf[i] - mu_i
+                            dv = v_buf[i] - mu_j
+                            s_dv += dv * dv
+                            s_cov += du * dv
+                        var_j = s_dv / m_f
+                        cov = s_cov / m_f
+                        denom = np.sqrt(max(var_i, 0.0) * max(var_j, 0.0))
+                        out[5, r, c] = cov / denom if denom > 0.0 else 1.0
+
+            if need_freq:
+                srt = np.sort(codes)
+                asm = 0.0
+                ent = 0.0
+                max_p = 0.0
+                i = 0
+                while i < n_pairs and srt[i] < sentinel:
+                    j = i + 1
+                    while j < n_pairs and srt[j] == srt[i]:
+                        j += 1
+                    prob = (j - i) / m_f
+                    asm += prob * prob
+                    ent += -prob * np.log(max(prob, 1e-300))
+                    max_p = max(max_p, prob)
+                    i = j
+                if want[3]:
+                    out[3, r, c] = asm
+                if want[4]:
+                    out[4, r, c] = np.sqrt(max(asm, 0.0))
+                if want[6]:
+                    out[6, r, c] = ent
+                if want[9]:
+                    out[9, r, c] = max_p
+    return out
+
+
 def compute_glcm_offset_tile(
     q_wins: np.ndarray,
     v_wins: np.ndarray,
@@ -292,7 +439,47 @@ def compute_glcm_offset_tile(
     symmetric: bool,
     props: Sequence[str],
 ) -> Dict[str, np.ndarray]:
-    """Compute requested GLCM properties for a single ``(dr, dc)`` offset on a tile."""
+    """
+    Compute requested GLCM properties for a single ``(dr, dc)`` offset on a
+    tile, using a ``numba``-compiled per-pixel kernel when available and the
+    vectorised NumPy implementation otherwise.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if use_compiled(
+        _glcm_offset_kernel,
+        "compute_glcm_offset_tile",
+        fallback_desc="the vectorised NumPy fallback",
+    ):
+        want = np.array([p in props for p in GLCM_ALL_PROPERTIES], dtype=np.bool_)
+        all_res = _glcm_offset_kernel(
+            q_wins,
+            v_wins,
+            centre_valid,
+            int(dr),
+            int(dc),
+            int(n_levels),
+            bool(symmetric),
+            want,
+        )
+        return {
+            p: all_res[GLCM_ALL_PROPERTIES.index(p)] for p in props
+        }
+    return _compute_glcm_offset_tile_numpy(
+        q_wins, v_wins, centre_valid, dr, dc, n_levels, symmetric, props
+    )
+
+
+def _compute_glcm_offset_tile_numpy(
+    q_wins: np.ndarray,
+    v_wins: np.ndarray,
+    centre_valid: np.ndarray,
+    dr: int,
+    dc: int,
+    n_levels: int,
+    symmetric: bool,
+    props: Sequence[str],
+) -> Dict[str, np.ndarray]:
+    """Vectorised NumPy GLCM properties for one offset (compiled-path fallback)."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     h, w = centre_valid.shape
     results: Dict[str, np.ndarray] = {

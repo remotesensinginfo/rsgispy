@@ -14,9 +14,9 @@ from shapely.geometry import LineString
 import rsgispy
 from rsgispy import RSGISPyException
 from rsgispy.elevation._hydro_common import (
-    _D8_DIR_TO_OFFSET,
     _call_topo_kernel,
     _has_numba,
+    _run_optional_kernel,
     _read_d8_grid,
     _resolve_out_dtype,
     _resolve_out_nodata,
@@ -27,10 +27,14 @@ from rsgispy.elevation._hydro_common import (
     _write_raster_array,
 )
 from rsgispy.elevation._hydro_kernels import (
+    D8_LUT_DC,
+    D8_LUT_DR,
+    D8_LUT_OK,
     extract_streams_njit,
     extract_streams_numpy,
     stream_link_kernel,
     stream_order_kernel,
+    trace_stream_reach_kernel,
 )
 from rsgispy.imageprocess import build_valid_mask, ensure_file_exists
 from rsgispy.vectorprocess import write_vec_gdf
@@ -375,7 +379,6 @@ def vectorise_streams(
         streams = str_src.read(1)
         valid &= build_valid_mask(streams, str_src.nodata)
         streams_bin = (streams == 1).astype(np.uint8)
-        height, width = fdir.shape
         transform = fdir_src.transform
 
         dem_arr: Optional[np.ndarray] = None
@@ -427,34 +430,36 @@ def vectorise_streams(
             lid = int(link_grid[r, c])
             ord_val = int(ord_grid[r, c])
 
-            coords: List[Tuple[float, float]] = []
-            reach_cells: List[Tuple[int, int]] = []
-            down_link_id = -1
-            end_r, end_c = r, c
-
-            while True:
-                px_x, px_y = rasterio.transform.xy(transform, r, c)
-                coords.append((float(px_x), float(px_y)))
-                reach_cells.append((r, c))
-                end_r, end_c = r, c
-
-                offset = _D8_DIR_TO_OFFSET.get(int(fdir[r, c]))
-                if offset is None:
-                    break
-                nr = r + offset[0]
-                nc = c + offset[1]
-                if not (0 <= nr < height and 0 <= nc < width and valid[nr, nc]):
-                    break
-                if streams_bin[nr, nc] != 1:
-                    break
-                if int(link_grid[nr, nc]) != lid:
-                    # Append downstream confluence vertex for exact topological snapping
-                    nx_x, nx_y = rasterio.transform.xy(transform, nr, nc)
-                    coords.append((float(nx_x), float(nx_y)))
-                    down_link_id = int(link_grid[nr, nc])
-                    end_r, end_c = nr, nc
-                    break
-                r, c = nr, nc
+            reach_r, reach_c, down_link_id, conf_r, conf_c = _run_optional_kernel(
+                trace_stream_reach_kernel,
+                fdir,
+                valid,
+                streams_bin,
+                link_grid,
+                r,
+                c,
+                D8_LUT_OK,
+                D8_LUT_DR,
+                D8_LUT_DC,
+            )
+            down_link_id = int(down_link_id)
+            if conf_r >= 0:
+                # Append downstream confluence vertex for exact topological snapping
+                pts_r = np.append(reach_r, conf_r)
+                pts_c = np.append(reach_c, conf_c)
+                end_r, end_c = int(conf_r), int(conf_c)
+            else:
+                pts_r = reach_r
+                pts_c = reach_c
+                end_r, end_c = int(reach_r[-1]), int(reach_c[-1])
+            # Pixel-centre -> map coordinates for the whole reach at once
+            xs, ys = rasterio.transform.xy(transform, pts_r, pts_c)
+            coords: List[Tuple[float, float]] = list(
+                zip(
+                    np.asarray(xs, dtype=np.float64).tolist(),
+                    np.asarray(ys, dtype=np.float64).tolist(),
+                )
+            )
 
             if len(coords) == 1:
                 coords.append(coords[0])
@@ -476,7 +481,7 @@ def vectorise_streams(
                 rec["drop_m"] = drop_m
                 rec["slope"] = float(drop_m / length_m) if length_m > 0.0 else 0.0
             if acc_arr is not None:
-                rec["max_acc"] = float(max(acc_arr[rr, cc] for rr, cc in reach_cells))
+                rec["max_acc"] = float(np.max(acc_arr[reach_r, reach_c]))
             rec["geometry"] = geom
             records.append(rec)
 

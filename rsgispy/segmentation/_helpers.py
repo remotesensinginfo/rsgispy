@@ -3,9 +3,9 @@ High-performance internal helpers for :mod:`rsgispy.segmentation`.
 
 Implements an :math:`O(N)` horizontal run-length-encoded (RLE) 4-connected
 component labelling engine backed by :mod:`scipy.sparse.csgraph` when available
-and a pure-NumPy/Python RLE union-find fallback when ``scipy`` is not
-installed, together with a two-pass tiled streaming pipeline for out-of-core
-rasters.
+and a ``numba``-accelerated (or pure-Python) RLE union-find fallback when
+``scipy`` is not installed, together with a two-pass tiled streaming pipeline
+for out-of-core rasters.
 """
 
 from contextlib import ExitStack
@@ -21,6 +21,11 @@ from rasterio.io import DatasetReader
 from rasterio.windows import Window
 
 import rsgispy
+from rsgispy._numba import use_compiled
+from rsgispy._unionfind import (
+    uf_first_appearance_labels_kernel,
+    uf_min_root_kernel,
+)
 from rsgispy.imageprocess import (
     IntersectionGrid,
     get_default_block_size,
@@ -61,6 +66,32 @@ def _nodata_match_mask(arr: np.ndarray, no_data_val: float) -> np.ndarray:
 
 
 def _rle_union_find_scanline(
+    u_arr: np.ndarray,
+    v_arr: np.ndarray,
+    n_nodes: int,
+) -> Tuple[int, np.ndarray]:
+    """
+    Solve connected components for nodes ``0 .. n_nodes - 1`` using
+    union-find that preserves scanline root order: a ``numba``-compiled
+    union-by-rank / path-halving kernel when available, otherwise
+    :func:`_rle_union_find_scanline_py`.
+
+    Returns ``(n_comp, labels)`` where ``labels`` has shape ``(n_nodes,)``
+    with component IDs ``0 .. n_comp - 1`` in first-appearance order.
+    """
+    if not use_compiled(uf_min_root_kernel, "_rle_union_find_scanline"):
+        return _rle_union_find_scanline_py(u_arr, v_arr, n_nodes)
+    lut = uf_min_root_kernel(
+        np.ascontiguousarray(u_arr, dtype=np.int64),
+        np.ascontiguousarray(v_arr, dtype=np.int64),
+        int(n_nodes),
+        0,
+    )
+    n_comp, labels = uf_first_appearance_labels_kernel(lut)
+    return int(n_comp), labels
+
+
+def _rle_union_find_scanline_py(
     u_arr: np.ndarray,
     v_arr: np.ndarray,
     n_nodes: int,

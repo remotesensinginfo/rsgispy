@@ -18,6 +18,7 @@ import numpy as np
 import rasterio
 
 import rsgispy
+from rsgispy._numba import optional_njit
 from rsgispy.segmentation._helpers import label_4connected
 from rsgispy.segmentation.tiling import (
     TileWindow,
@@ -240,6 +241,52 @@ def _absorb_small_slic_components_kernel(
     return parent, clump_seed
 
 
+@optional_njit(cache=True)
+def _perturb_seeds_kernel(
+    grad: np.ndarray,
+    halo_valid: np.ndarray,
+    nom_rows: np.ndarray,
+    nom_cols: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    For every nominal grid centre ``(nom_rows[i], nom_cols[j])`` (row-major
+    flattened), find the valid pixel with minimum gradient inside the clipped
+    3x3 neighbourhood (first minimum in ``dr``/``dc`` scan order). Returns
+    ``(best_r, best_c)`` with ``-1`` where no valid pixel exists.
+
+    Kept single-threaded (no ``prange``) because tile workers already run in
+    parallel processes.
+    """
+    halo_h, halo_w = grad.shape
+    n_r = nom_rows.shape[0]
+    n_c = nom_cols.shape[0]
+    best_r = np.full(n_r * n_c, -1, dtype=np.int64)
+    best_c = np.full(n_r * n_c, -1, dtype=np.int64)
+    for i in range(n_r):
+        nom_r = nom_rows[i]
+        for j in range(n_c):
+            nom_c = nom_cols[j]
+            b_r = -1
+            b_c = -1
+            best_g = 1e300
+            for dr in range(-1, 2):
+                rr = nom_r + dr
+                if rr < 0 or rr >= halo_h:
+                    continue
+                for dc in range(-1, 2):
+                    cc = nom_c + dc
+                    if cc < 0 or cc >= halo_w or not halo_valid[rr, cc]:
+                        continue
+                    g_val = grad[rr, cc]
+                    if g_val < best_g:
+                        best_g = g_val
+                        b_r = rr
+                        b_c = cc
+            best_r[i * n_c + j] = b_r
+            best_c[i * n_c + j] = b_c
+    return best_r, best_c
+
+
 def _initialise_global_aligned_seeds(
     std_halo: np.ndarray,
     halo_valid: np.ndarray,
@@ -272,44 +319,40 @@ def _initialise_global_aligned_seeds(
         math.ceil((float(tile.halo_col_off + halo_w) + grid_step) / grid_step)
     )
 
-    s_rows: List[float] = []
-    s_cols: List[float] = []
-    s_specs: List[np.ndarray] = []
-    s_ids: List[int] = []
+    # Nominal grid-centre rows/cols that fall within (or 1px outside) the
+    # halo; rows and columns are filtered independently.
+    gr_arr = np.arange(g_r_min, g_r_max + 1, dtype=np.int64)
+    gc_arr = np.arange(g_c_min, g_c_max + 1, dtype=np.int64)
+    nom_r_arr = np.array(
+        [int(round((float(gr) + 0.5) * grid_step)) for gr in gr_arr.tolist()],
+        dtype=np.int64,
+    ) - int(tile.halo_row_off)
+    nom_c_arr = np.array(
+        [int(round((float(gc) + 0.5) * grid_step)) for gc in gc_arr.tolist()],
+        dtype=np.int64,
+    ) - int(tile.halo_col_off)
+    keep_r = (nom_r_arr >= -1) & (nom_r_arr <= halo_h)
+    keep_c = (nom_c_arr >= -1) & (nom_c_arr <= halo_w)
+    gr_arr = gr_arr[keep_r]
+    nom_r_arr = nom_r_arr[keep_r]
+    gc_arr = gc_arr[keep_c]
+    nom_c_arr = nom_c_arr[keep_c]
 
-    for gr in range(g_r_min, g_r_max + 1):
-        nom_r = int(round((float(gr) + 0.5) * grid_step)) - tile.halo_row_off
-        if nom_r < -1 or nom_r > halo_h:
-            continue
-        for gc in range(g_c_min, g_c_max + 1):
-            nom_c = (
-                int(round((float(gc) + 0.5) * grid_step)) - tile.halo_col_off
-            )
-            if nom_c < -1 or nom_c > halo_w:
-                continue
+    best_r, best_c = _perturb_seeds_kernel(
+        np.ascontiguousarray(grad, dtype=np.float64),
+        np.ascontiguousarray(halo_valid, dtype=np.bool_),
+        nom_r_arr,
+        nom_c_arr,
+    )
+    found = best_r >= 0
+    sel_r = best_r[found]
+    sel_c = best_c[found]
+    grid_ids = (gr_arr[:, np.newaxis] * n_grid_cols + gc_arr[np.newaxis, :] + 1).ravel()
 
-            best_r = -1
-            best_c = -1
-            best_g = 1e300
-            for dr in (-1, 0, 1):
-                rr = nom_r + dr
-                if rr < 0 or rr >= halo_h:
-                    continue
-                for dc in (-1, 0, 1):
-                    cc = nom_c + dc
-                    if cc < 0 or cc >= halo_w or not halo_valid[rr, cc]:
-                        continue
-                    g_val = float(grad[rr, cc])
-                    if g_val < best_g:
-                        best_g = g_val
-                        best_r = rr
-                        best_c = cc
-
-            if best_r >= 0:
-                s_rows.append(float(best_r))
-                s_cols.append(float(best_c))
-                s_specs.append(std_halo[:, best_r, best_c].copy())
-                s_ids.append(gr * n_grid_cols + gc + 1)
+    s_rows: List[float] = sel_r.astype(np.float64).tolist()
+    s_cols: List[float] = sel_c.astype(np.float64).tolist()
+    s_specs: List[np.ndarray] = list(std_halo[:, sel_r, sel_c].T.copy())
+    s_ids: List[int] = grid_ids[found].tolist()
 
     if not s_rows:
         # Fallback: pick first valid pixel if grid is smaller than tile

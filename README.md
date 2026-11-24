@@ -96,6 +96,12 @@ pip install .
 
 Optional feature groups can be installed individually or all together via `pip` extras:
 
+- `numba`: `numba` JIT acceleration of pixel/graph loops (DEM filling, shadow
+  ray tracing, least-cost paths, hydrology tracing, segmentation union-find and
+  seeding, tie-point similarity search, mode and GLCM filters). Every
+  accelerated function has a pure-Python / NumPy fallback, so `numba` is never
+  required; set `RSGISPY_DISABLE_NUMBA=1` to force the fallbacks. Without it,
+  most hydrology topological tools need `allow_pure_python=True`.
 - `classification`: `optuna`, `pyarrow`, `scikit-learn`, `scipy`
 - `regression`: `optuna`, `pyarrow`, `scikit-learn`, `scipy`
 - `xgboost`: `optuna`, `scikit-learn`, `xgboost`
@@ -111,11 +117,12 @@ Optional feature groups can be installed individually or all together via `pip` 
 - `unmixing`: `cvxopt`, `pyMCR`, `pysptools`, `scikit-learn`, `scipy`
 - `jupyter`: `ipywidgets`
 - `all`: all optional runtime dependencies above
-- `test`: `flake8`, `pylint`, `pytest`, `pytest-cov`, `classification`, `regression`, and `stats`
+- `test`: `flake8`, `pylint`, `pytest`, `pytest-cov`, `numba`, `classification`, `regression`, and `stats`
 - `docs`: `sphinx`, `sphinx-rtd-theme`
 - `dev`: `all`, `test`, and `docs`
 
 ```bash
+pip install ".[numba]"
 pip install ".[vector]"
 pip install ".[all]"
 pip install -e ".[test]"

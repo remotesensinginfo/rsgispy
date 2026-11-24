@@ -12,6 +12,7 @@ import numpy as np
 import rasterio
 
 import rsgispy
+from rsgispy._numba import optional_njit, prange, use_compiled
 from rsgispy.elevation._helpers import (
     calc_slope_aspect_from_diffs as _calc_slope_aspect_from_diffs,
     prepare_3x3_horn_diffs as _prepare_3x3_horn_diffs,
@@ -242,6 +243,126 @@ def hillshade_pxl_res_img(
     )
 
 
+@optional_njit(parallel=True, cache=True, warn=False)
+def _shadow_ray_kernel(
+    dem: np.ndarray,
+    dem_valid: np.ndarray,
+    cand_mask: np.ndarray,
+    col_step: float,
+    row_step: float,
+    z_step: float,
+    max_height: float,
+    max_steps: int,
+) -> np.ndarray:
+    """
+    Compiled per-pixel solar ray-marching kernel (parallel over rows).
+
+    For each ``cand_mask`` pixel a ray starts at the pixel centre and its DEM
+    elevation and advances by ``(col_step, row_step, z_step)`` per step,
+    stopping early once it leaves the raster, rises above ``max_height``, or
+    passes beneath a valid DEM cell (an occluding hit). Returns a boolean hit
+    mask. Uses the same cumulative step arithmetic as
+    :func:`_shadow_ray_trace_numpy`, so results are identical.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,chained-comparison
+    height, width = dem.shape
+    hit = np.zeros((height, width), dtype=np.bool_)
+    for r in prange(height):
+        for c in range(width):
+            if not cand_mask[r, c]:
+                continue
+            col_f = np.float64(c) + 0.5
+            row_f = np.float64(r) + 0.5
+            z_f = dem[r, c]
+            for _ in range(max_steps):
+                col_f += col_step
+                row_f += row_step
+                z_f += z_step
+                if not (
+                    col_f >= 0.0
+                    and col_f < width
+                    and row_f >= 0.0
+                    and row_f < height
+                    and z_f <= max_height
+                ):
+                    break
+                rr = int(row_f)
+                cc = int(col_f)
+                if (rr != r or cc != c) and dem_valid[rr, cc] and z_f < dem[rr, cc]:
+                    hit[r, c] = True
+                    break
+    return hit
+
+
+def _shadow_ray_trace_numpy(
+    dem: np.ndarray,
+    dem_valid: np.ndarray,
+    cand_mask: np.ndarray,
+    col_step: float,
+    row_step: float,
+    z_step: float,
+    max_height: float,
+    max_steps: int,
+    use_pbar: bool,
+) -> np.ndarray:
+    """Vectorised NumPy fallback for :func:`_shadow_ray_kernel`."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    height, width = dem.shape
+    hit_mask = np.zeros((height, width), dtype=bool)
+    cand_r, cand_c = np.where(cand_mask)
+    if cand_r.size == 0:
+        return hit_mask
+    orig_r = cand_r.copy()
+    orig_c = cand_c.copy()
+    col_f = orig_c.astype(np.float64) + 0.5
+    row_f = orig_r.astype(np.float64) + 0.5
+    z_f = dem[orig_r, orig_c].copy()
+
+    tqdm_cls = rsgispy.get_tqdm()
+    for _ in tqdm_cls(
+        range(max_steps),
+        desc="Shadow mask",
+        unit="step",
+        disable=not use_pbar,
+    ):
+        col_f += col_step
+        row_f += row_step
+        z_f += z_step
+
+        in_bounds = (
+            (col_f >= 0.0)
+            & (col_f < width)
+            & (row_f >= 0.0)
+            & (row_f < height)
+            & (z_f <= max_height)
+        )
+        if not np.any(in_bounds):
+            break
+
+        orig_r = orig_r[in_bounds]
+        orig_c = orig_c[in_bounds]
+        col_f = col_f[in_bounds]
+        row_f = row_f[in_bounds]
+        z_f = z_f[in_bounds]
+
+        rr = row_f.astype(np.int64)
+        cc = col_f.astype(np.int64)
+        moved = (rr != orig_r) | (cc != orig_c)
+        hit = moved & dem_valid[rr, cc] & (z_f < dem[rr, cc])
+        if np.any(hit):
+            hit_mask[orig_r[hit], orig_c[hit]] = True
+            keep = ~hit
+            if not np.any(keep):
+                break
+            orig_r = orig_r[keep]
+            orig_c = orig_c[keep]
+            col_f = col_f[keep]
+            row_f = row_f[keep]
+            z_f = z_f[keep]
+    return hit_mask
+
+
 def shadow_mask(
     input_img: str,
     output_img: str,
@@ -334,64 +455,43 @@ def shadow_mask(
         row_step = -y_step / ns_res
 
         if abs(col_step) > 1e-12 or abs(row_step) > 1e-12:
-            cand_r, cand_c = np.where(dem_valid & (shadow == 0))
-            if cand_r.size > 0:
-                orig_r = cand_r.copy()
-                orig_c = cand_c.copy()
-                col_f = orig_c.astype(np.float64) + 0.5
-                row_f = orig_r.astype(np.float64) + 0.5
-                z_f = dem[orig_r, orig_c].copy()
-
-                max_steps = int(
-                    math.ceil(
-                        math.hypot(src.width, src.height)
-                        * 3.0
-                        * max(ew_res, ns_res)
-                        / step_range
-                    )
-                ) + 2
-
-                tqdm_cls = rsgispy.get_tqdm()
-                for _ in tqdm_cls(
-                    range(max_steps),
-                    desc="Shadow mask",
-                    unit="step",
-                    disable=not use_pbar,
-                ):
-                    col_f += col_step
-                    row_f += row_step
-                    z_f += z_step
-
-                    in_bounds = (
-                        (col_f >= 0.0)
-                        & (col_f < src.width)
-                        & (row_f >= 0.0)
-                        & (row_f < src.height)
-                        & (z_f <= max_height)
-                    )
-                    if not np.any(in_bounds):
-                        break
-
-                    orig_r = orig_r[in_bounds]
-                    orig_c = orig_c[in_bounds]
-                    col_f = col_f[in_bounds]
-                    row_f = row_f[in_bounds]
-                    z_f = z_f[in_bounds]
-
-                    rr = row_f.astype(np.int64)
-                    cc = col_f.astype(np.int64)
-                    moved = (rr != orig_r) | (cc != orig_c)
-                    hit = moved & dem_valid[rr, cc] & (z_f < dem[rr, cc])
-                    if np.any(hit):
-                        shadow[orig_r[hit], orig_c[hit]] = 1
-                        keep = ~hit
-                        if not np.any(keep):
-                            break
-                        orig_r = orig_r[keep]
-                        orig_c = orig_c[keep]
-                        col_f = col_f[keep]
-                        row_f = row_f[keep]
-                        z_f = z_f[keep]
+            max_steps = int(
+                math.ceil(
+                    math.hypot(src.width, src.height)
+                    * 3.0
+                    * max(ew_res, ns_res)
+                    / step_range
+                )
+            ) + 2
+            cand_mask = dem_valid & (shadow == 0)
+            if use_compiled(
+                _shadow_ray_kernel,
+                "shadow_mask",
+                fallback_desc="the vectorised NumPy ray tracer",
+            ):
+                hit = _shadow_ray_kernel(
+                    np.ascontiguousarray(dem, dtype=np.float64),
+                    np.ascontiguousarray(dem_valid),
+                    np.ascontiguousarray(cand_mask),
+                    float(col_step),
+                    float(row_step),
+                    float(z_step),
+                    float(max_height),
+                    int(max_steps),
+                )
+            else:
+                hit = _shadow_ray_trace_numpy(
+                    dem,
+                    dem_valid,
+                    cand_mask,
+                    col_step,
+                    row_step,
+                    z_step,
+                    float(max_height),
+                    max_steps,
+                    use_pbar,
+                )
+            shadow[hit] = 1
 
         dst = open_output_dataset(
             stack=stack,

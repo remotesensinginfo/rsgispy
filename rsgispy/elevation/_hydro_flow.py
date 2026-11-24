@@ -15,11 +15,9 @@ from shapely.geometry import LineString
 import rsgispy
 from rsgispy import RSGISPyException
 from rsgispy.elevation._hydro_common import (
-    _D8_CODE_TO_ANGLE,
-    _D8_CODE_TO_IDX,
-    _D8_DIR_TO_OFFSET,
     _call_topo_kernel,
     _d8_flat_resolve_in_memory,
+    _run_optional_kernel,
     _detect_flow_dir_mode,
     _has_numba,
     _read_d8_grid,
@@ -32,8 +30,11 @@ from rsgispy.elevation._hydro_common import (
     _write_raster_array,
 )
 from rsgispy.elevation._hydro_kernels import (
-    D8_DC,
-    D8_DR,
+    D8_LUT_ANGLE,
+    D8_LUT_DC,
+    D8_LUT_DR,
+    D8_LUT_IDX,
+    D8_LUT_OK,
     apply_flat_routing_d8_kernel,
     flow_acc_d8_kernel,
     flow_acc_dinf_kernel,
@@ -49,9 +50,22 @@ from rsgispy.elevation._hydro_kernels import (
     flow_length_downstream_kernel,
     flow_length_upstream_kernel,
     resolve_flats_kernel,
+    trace_d8_path_kernel,
 )
 from rsgispy.imageprocess import build_valid_mask, ensure_file_exists
 from rsgispy.vectorprocess import read_vec_gdf, write_vec_gdf
+
+
+def _check_d8_codes(codes: np.ndarray) -> None:
+    """Raise if ``codes`` contains values that are not D8 direction codes."""
+    bad = (codes < 0) | (codes > 255)
+    if not np.any(bad):
+        bad = ~D8_LUT_OK[codes]
+    if np.any(bad):
+        raise RSGISPyException(
+            f"Invalid D8 direction code {int(codes[np.argmax(bad)])} "
+            "encountered during flat routing."
+        )
 
 
 def flow_direction(
@@ -188,11 +202,9 @@ def flow_direction(
                     )
                     flat_pts = valid & (out_arr == -1.0) & (fdir_d8 > 0)
                     if np.any(flat_pts):
-                        rr, cc = np.where(flat_pts)
-                        for r_i, c_i in zip(rr, cc):
-                            out_arr[r_i, c_i] = np.float32(
-                                _D8_CODE_TO_ANGLE[int(fdir_d8[r_i, c_i])]
-                            )
+                        codes = fdir_d8[flat_pts].astype(np.int64)
+                        _check_d8_codes(codes)
+                        out_arr[flat_pts] = D8_LUT_ANGLE[codes].astype(np.float32)
                 elif not _has_numba():
                     _warn_numpy_fallback("flow_direction")
 
@@ -228,10 +240,10 @@ def flow_direction(
                         )
                         flat_pts = unresolved & (fdir_d8 > 0)
                         if np.any(flat_pts):
-                            rr, cc = np.where(flat_pts)
-                            for r_i, c_i in zip(rr, cc):
-                                k_idx = _D8_CODE_TO_IDX[int(fdir_d8[r_i, c_i])]
-                                out_arr[k_idx, r_i, c_i] = np.float32(1.0)
+                            rr, cc = np.nonzero(flat_pts)
+                            codes = fdir_d8[rr, cc].astype(np.int64)
+                            _check_d8_codes(codes)
+                            out_arr[D8_LUT_IDX[codes], rr, cc] = np.float32(1.0)
                 if not needs_flat and not _has_numba():
                     _warn_numpy_fallback("flow_direction")
 
@@ -664,7 +676,7 @@ def trace_flow_path(
     use_pbar : bool, optional
         Display a progress bar (Default = ``True``).
     """
-    # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
+    # pylint: disable=too-many-arguments,too-many-locals,too-many-branches,too-many-statements
     dir_norm = direction.strip().lower()
     if dir_norm not in ("downstream", "upstream"):
         raise RSGISPyException(
@@ -705,7 +717,10 @@ def trace_flow_path(
             ):
                 pts_gdf = pts_gdf.to_crs(fdir_src.crs)
 
-        rev_map = np.array([16, 32, 64, 128, 1, 2, 4, 8], dtype=np.uint8)
+        if acc_arr is None or acc_valid is None:
+            acc_arr = np.zeros((1, 1), dtype=np.float64)
+            acc_valid = np.zeros((1, 1), dtype=np.bool_)
+        visited_scratch = np.zeros((height, width), dtype=np.uint8)
         records: List[Dict[str, Any]] = []
         tqdm_cls = rsgispy.get_tqdm()
         attr_cols = [c for c in pts_gdf.columns if c != pts_gdf.active_geometry_name]
@@ -725,44 +740,28 @@ def trace_flow_path(
             if not (0 <= r0 < height and 0 <= c0 < width and valid[r0, c0]):
                 continue
 
-            visited = set()
-            coords: List[Tuple[float, float]] = []
-            curr_r, curr_c = int(r0), int(c0)
-            while True:
-                if (curr_r, curr_c) in visited:
-                    break
-                visited.add((curr_r, curr_c))
-                px_x, px_y = rasterio.transform.xy(transform, curr_r, curr_c)
-                coords.append((float(px_x), float(px_y)))
-
-                if dir_norm == "downstream":
-                    code = int(fdir[curr_r, curr_c])
-                    offset = _D8_DIR_TO_OFFSET.get(code)
-                    if offset is None:
-                        break
-                    nr = curr_r + offset[0]
-                    nc = curr_c + offset[1]
-                    if not (0 <= nr < height and 0 <= nc < width and valid[nr, nc]):
-                        break
-                    curr_r, curr_c = nr, nc
-                else:
-                    assert acc_arr is not None and acc_valid is not None
-                    best_acc = -1.0
-                    best_r = -1
-                    best_c = -1
-                    for k in range(8):
-                        nr = curr_r + int(D8_DR[k])
-                        nc = curr_c + int(D8_DC[k])
-                        if 0 <= nr < height and 0 <= nc < width:
-                            if valid[nr, nc] and acc_valid[nr, nc]:
-                                if (nr, nc) not in visited and fdir[nr, nc] == rev_map[k]:
-                                    if acc_arr[nr, nc] > best_acc:
-                                        best_acc = float(acc_arr[nr, nc])
-                                        best_r = nr
-                                        best_c = nc
-                    if best_r < 0:
-                        break
-                    curr_r, curr_c = best_r, best_c
+            path_r, path_c = _run_optional_kernel(
+                trace_d8_path_kernel,
+                fdir,
+                valid,
+                acc_arr,
+                acc_valid,
+                int(r0),
+                int(c0),
+                dir_norm == "upstream",
+                visited_scratch,
+                D8_LUT_OK,
+                D8_LUT_DR,
+                D8_LUT_DC,
+            )
+            # Pixel-centre -> map coordinates for the whole path at once
+            xs, ys = rasterio.transform.xy(transform, path_r, path_c)
+            coords: List[Tuple[float, float]] = list(
+                zip(
+                    np.asarray(xs, dtype=np.float64).tolist(),
+                    np.asarray(ys, dtype=np.float64).tolist(),
+                )
+            )
 
             if len(coords) == 1:
                 coords.append(coords[0])
