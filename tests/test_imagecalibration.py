@@ -122,6 +122,7 @@ def _build_sen2_mtd_xml(
         )
 
     phys_bands = [
+        (0, "B1", 60, 443),
         (1, "B02", 10, 490),
         (2, "B03", 10, 560),
         (3, "B04", 10, 665),
@@ -130,6 +131,7 @@ def _build_sen2_mtd_xml(
         (6, "B07", 20, 783),
         (7, "B8", 10, 842),
         (8, "B8A", 20, 865),
+        (9, "B9", 60, 945),
         (11, "B11", 20, 1610),
         (12, "B12", 20, 2190),
     ]
@@ -682,10 +684,12 @@ def test_create_stacked_sen2_esa_l2a_img(tmp_path, out_res_10m, sharpen_10m):
     safe_dir = os.path.join(tmp_path, "S2A_MSIL2A_TEST.SAFE")
     r10_dir = os.path.join(safe_dir, "GRANULE", "GR1", "IMG_DATA", "R10m")
     r20_dir = os.path.join(safe_dir, "GRANULE", "GR1", "IMG_DATA", "R20m")
+    r60_dir = os.path.join(safe_dir, "GRANULE", "GR1", "IMG_DATA", "R60m")
     out_dir = os.path.join(tmp_path, "out")
     tmp_work = os.path.join(tmp_path, "work")
     os.makedirs(r10_dir)
     os.makedirs(r20_dir)
+    os.makedirs(r60_dir)
 
     # SCL appears BEFORE B02_20m..B12_20m to verify the early-break regression is fixed
     image_entries = [
@@ -703,6 +707,10 @@ def test_create_stacked_sen2_esa_l2a_img(tmp_path, out_res_10m, sharpen_10m):
         "GRANULE/GR1/IMG_DATA/R20m/T_B8A_20m",
         "GRANULE/GR1/IMG_DATA/R20m/T_B11_20m",
         "GRANULE/GR1/IMG_DATA/R20m/T_B12_20m",
+        # B01 at both 60 m and 20 m (20 m should be preferred); B09 at 60 m only
+        "GRANULE/GR1/IMG_DATA/R60m/T_B01_60m",
+        "GRANULE/GR1/IMG_DATA/R20m/T_B01_20m",
+        "GRANULE/GR1/IMG_DATA/R60m/T_B09_60m",
     ]
 
     # 10m grid (16x16), 20m grid (8x8)
@@ -732,6 +740,25 @@ def test_create_stacked_sen2_esa_l2a_img(tmp_path, out_res_10m, sharpen_10m):
             nodata=0,
         )
 
+    # B01 20 m uses a constant so the selection (20 m over 60 m) is testable.
+    b01_grid_20 = np.full((8, 8), 1500, dtype=np.uint16)
+    b01_grid_20[0, 0] = 0
+    _write_gtiff(
+        os.path.join(r20_dir, "T_B01_20m.tif"), b01_grid_20, res=20.0, nodata=0
+    )
+    _write_gtiff(
+        os.path.join(r60_dir, "T_B01_60m.tif"),
+        np.full((3, 3), 9000, dtype=np.uint16),
+        res=60.0,
+        nodata=0,
+    )
+    _write_gtiff(
+        os.path.join(r60_dir, "T_B09_60m.tif"),
+        np.full((3, 3), 2000, dtype=np.uint16),
+        res=60.0,
+        nodata=0,
+    )
+
     scl_grid = np.full((8, 8), 4, dtype=np.uint8)  # 4 = vegetation (valid)
     scl_grid[0, 0] = 0  # NO_DATA
     scl_grid[0, 1] = 8  # Cloud medium prob -> cloud mask 1
@@ -744,7 +771,7 @@ def test_create_stacked_sen2_esa_l2a_img(tmp_path, out_res_10m, sharpen_10m):
     )
 
     # Include Baseline 04+ BOA_ADD_OFFSET = -1000 on all bands
-    boa_offsets = {bid: -1000 for bid in (1, 2, 3, 4, 5, 6, 7, 8, 11, 12)}
+    boa_offsets = {bid: -1000 for bid in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12)}
     with open(os.path.join(safe_dir, "MTD_MSIL2A.xml"), "w", encoding="utf-8") as fobj:
         fobj.write(
             _build_sen2_mtd_xml(
@@ -764,6 +791,7 @@ def test_create_stacked_sen2_esa_l2a_img(tmp_path, out_res_10m, sharpen_10m):
         scale_factor=10000,
         gdalformat="GTIFF",
         resample_10m_method=rsgispy.INTERP_BILINEAR,
+        inc_cloudsen12_img=True,
         calc_stats=False,
         use_pbar=False,
     )
@@ -812,6 +840,66 @@ def test_create_stacked_sen2_esa_l2a_img(tmp_path, out_res_10m, sharpen_10m):
 
     # Categorical SCL must NEVER be interpolated into non-source values
     assert set(np.unique(scl_arr).tolist()).issubset({0, 3, 4, 8})
+
+    # CloudSEN12 12-band stack for the cloud masking functions
+    cld12_path = os.path.join(
+        out_dir, f"S2A_MSIL2A_TEST_{res_tag}_cloudsen12_sref.tif"
+    )
+    with rasterio.open(cld12_path) as csrc:
+        assert csrc.count == 12
+        assert csrc.descriptions == (
+            "Coastal",
+            "Blue",
+            "Green",
+            "Red",
+            "RE_B5",
+            "RE_B6",
+            "RE_B7",
+            "NIR_B8",
+            "NIR_B8A",
+            "WV_B9",
+            "SWIR1",
+            "SWIR2",
+        )
+        assert csrc.nodata == 0.0
+        carr = csrc.read()
+    assert carr.shape[1:] == sarr.shape[1:]
+    # Bands shared with the 10-band stack are identical (B02..B08, B8A, B11, B12)
+    np.testing.assert_array_equal(carr[1:9], sarr[0:8])
+    np.testing.assert_array_equal(carr[10:12], sarr[8:10])
+    # B01 from the 20 m (not 60 m) file and B09 from 60 m, offsets applied
+    centre = (carr.shape[1] // 2, carr.shape[2] // 2)
+    assert carr[0][centre] == 1500 - 1000
+    assert carr[9][centre] == 2000 - 1000
+
+    # The stack is accepted directly by the CloudSEN12 SREF cloud masking.
+    import rsgispy.imagecalibration.cloudmasking as cldmsk
+
+    cld_mask_path = os.path.join(out_dir, "cloudsen12_mask.tif")
+    cldmsk._apply_cloudsen12_cloud_mask(
+        input_img=cld12_path,
+        output_img=cld_mask_path,
+        product="sref",
+        model_name="cloudsen12l2a",
+        img_bands=None,
+        weights_dir=None,
+        download_weights=False,
+        device="cpu",
+        scale_factor=10000.0,
+        add_offset=0.0,
+        no_data_val=None,
+        tile_size=32,
+        tile_overlap=8,
+        gdalformat="GTIFF",
+        calc_stats=False,
+        use_pbar=False,
+        creation_opts=None,
+        predict_fn=lambda arr: np.zeros(arr.shape[1:], dtype=np.uint8),
+    )
+    with rasterio.open(cld_mask_path) as msrc:
+        marr = msrc.read(1)
+    assert marr[0, 0] == cldmsk.CLOUDSEN12_NO_DATA
+    assert marr[centre] == cldmsk.CLOUDSEN12_CLEAR
     assert cld_arr[0, 0] == 0
     assert vld_arr[0, 0] == 0
     assert vld_arr[-1, -1] == 1

@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 """
 The imagecalibration.sensorlvl2data module provides utilities for ingesting
 Level-2 surface reflectance products (USGS Landsat Collection 2 Level-2 and
@@ -74,6 +75,38 @@ _SEN2_OUT_BAND_NAMES: Tuple[str, ...] = (
     "RE_B7",
     "NIR_B8",
     "NIR_B8A",
+    "SWIR1",
+    "SWIR2",
+)
+
+# Band order expected by the CloudSEN12 L2A cloud masking model
+# (see :mod:`rsgispy.imagecalibration.cloudmasking`).
+_SEN2_CLDSEN12_BAND_ORDER: Tuple[str, ...] = (
+    "B01",
+    "B02",
+    "B03",
+    "B04",
+    "B05",
+    "B06",
+    "B07",
+    "B08",
+    "B8A",
+    "B09",
+    "B11",
+    "B12",
+)
+
+_SEN2_CLDSEN12_BAND_NAMES: Tuple[str, ...] = (
+    "Coastal",
+    "Blue",
+    "Green",
+    "Red",
+    "RE_B5",
+    "RE_B6",
+    "RE_B7",
+    "NIR_B8",
+    "NIR_B8A",
+    "WV_B9",
     "SWIR1",
     "SWIR2",
 )
@@ -283,8 +316,20 @@ def _match_band_token(img_entry: str, band_code: str) -> bool:
 
 def _collect_sen2_band_paths(
     input_safe_abs: str, img_files: Sequence[str]
-) -> Tuple[Dict[str, Optional[str]], Dict[str, Optional[str]], Optional[str]]:
-    """Map Sentinel-2 10 m, 20 m, and SCL ``IMAGE_FILE`` paths without stopping early."""
+) -> Tuple[
+    Dict[str, Optional[str]],
+    Dict[str, Optional[str]],
+    Optional[str],
+    Dict[str, Optional[str]],
+]:
+    """
+    Map Sentinel-2 10 m, 20 m, SCL and coarse (B01/B09) ``IMAGE_FILE`` paths
+    without stopping early. For B01 and B09 the finest available resolution
+    (20 m, then 60 m) is selected.
+    """
+    # pylint: disable=too-many-branches
+    coarse_imgs: Dict[str, Optional[str]] = {"B01": None, "B09": None}
+    coarse_res: Dict[str, int] = {}
     imgs_10m: Dict[str, Optional[str]] = {
         b: None for b in ("B02", "B03", "B04", "B08")
     }
@@ -299,6 +344,15 @@ def _collect_sen2_band_paths(
         fname_tokens = set(os.path.splitext(os.path.basename(norm_img))[0].split("_"))
         is_10m = "10m" in fname_tokens or "/R10m/" in norm_img
         is_20m = "20m" in fname_tokens or "/R20m/" in norm_img
+        is_60m = "60m" in fname_tokens or "/R60m/" in norm_img
+        if is_20m or is_60m:
+            img_res = 20 if is_20m else 60
+            for band in coarse_imgs:
+                if _match_band_token(norm_img, band) and img_res < coarse_res.get(
+                    band, 999
+                ):
+                    coarse_imgs[band] = _resolve_s2_img_path(input_safe_abs, img)
+                    coarse_res[band] = img_res
         if is_10m:
             for band in imgs_10m:
                 if _match_band_token(norm_img, band):
@@ -313,7 +367,7 @@ def _collect_sen2_band_paths(
                     all_20m_imgs[band] = _resolve_s2_img_path(input_safe_abs, img)
                     break
 
-    return imgs_10m, all_20m_imgs, scl_20m_img
+    return imgs_10m, all_20m_imgs, scl_20m_img, coarse_imgs
 
 
 def _write_sen2_scl_derivatives(
@@ -413,9 +467,10 @@ def _write_sen2_scl_derivatives(
 
 
 def _finalise_sen2_sref_output(
-    src_stacked_img: str,
+    band_sources: Sequence[Tuple[str, int]],
     out_sref_img: str,
     band_offsets: Sequence[float],
+    band_names: Sequence[str],
     quant_boa_val: float,
     scale_factor: float,
     no_data_val: float,
@@ -425,32 +480,59 @@ def _finalise_sen2_sref_output(
     use_pbar: bool,
     creation_opts: Optional[Dict[str, str]],
 ) -> None:
-    """Apply Sentinel-2 quantification scaling & BOA offsets and set metadata."""
+    """
+    Apply Sentinel-2 quantification scaling & BOA offsets and set metadata.
+
+    ``band_sources`` gives, for each output band, the ``(image_path, band_index)``
+    to read; all source images must share the same pixel grid.
+    """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     _, out_rio_dtype, out_np_dtype = resolve_out_dtype(
         datatype, default_dtype=rsgispy.TYPE_32INT
     )
     scale_ratio = float(scale_factor) / float(quant_boa_val)
+    if not len(band_sources) == len(band_offsets) == len(band_names):
+        raise rsgispy.RSGISPyException(
+            "band_sources, band_offsets and band_names must have the same length."
+        )
 
     with ExitStack() as stack:
-        src = stack.enter_context(rasterio.open(src_stacked_img, "r"))
-        grid = compute_spatial_intersection({src_stacked_img: src})
+        srcs: Dict[str, Any] = {}
+        for img_path, _ in band_sources:
+            if img_path not in srcs:
+                srcs[img_path] = stack.enter_context(rasterio.open(img_path, "r"))
+        ref_src = srcs[band_sources[0][0]]
+        for img_path, img_src in srcs.items():
+            if (img_src.height, img_src.width) != (ref_src.height, ref_src.width):
+                raise rsgispy.RSGISPyException(
+                    f"Image '{img_path}' does not match the pixel grid of "
+                    f"'{band_sources[0][0]}'."
+                )
+        grid = compute_spatial_intersection({band_sources[0][0]: ref_src})
         dst = open_output_dataset(
             stack=stack,
             output_img=out_sref_img,
             gdalformat=gdalformat,
             out_rio_dtype=out_rio_dtype,
             grid=grid,
-            count=src.count,
+            count=len(band_sources),
             output_exists=False,
             creation_opts=creation_opts,
         )
         dst.nodata = no_data_val
-        for bidx, bname in enumerate(_SEN2_OUT_BAND_NAMES, start=1):
+        for bidx, bname in enumerate(band_names, start=1):
             dst.set_band_description(bidx, bname)
 
-        for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
-            blk = src.read(window=win, out_dtype=np.float64)
+        for win in iter_dataset_windows(
+            ref_src.height, ref_src.width, use_pbar=use_pbar
+        ):
+            blk = np.stack(
+                [
+                    srcs[img_path].read(band, window=win, out_dtype=np.float64)
+                    for img_path, band in band_sources
+                ],
+                axis=0,
+            )
             out_blk = np.empty_like(blk, dtype=np.float64)
             for b_i, add_offset in enumerate(band_offsets):
                 arr = blk[b_i]
@@ -492,6 +574,7 @@ def create_stacked_sen2_esa_l2a_img(
     resample_20m_method: Union[int, Resampling] = rsgispy.INTERP_AVERAGE,
     use_multi_core: bool = False,
     *,
+    inc_cloudsen12_img: bool = False,
     calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Union[Sequence[str], Mapping[str, Any]]] = None,
@@ -500,6 +583,12 @@ def create_stacked_sen2_esa_l2a_img(
     Create a stacked multi-band Sentinel-2 Level-2A surface reflectance image and
     accompanying SCL, cloud, and valid-pixel masks from an ESA ``.SAFE``
     directory.
+
+    Optionally (``inc_cloudsen12_img=True``) also create a 12-band surface
+    reflectance stack (``*_cloudsen12_sref``) with the bands
+    ``B01, B02, B03, B04, B05, B06, B07, B08, B8A, B09, B11, B12`` in the order
+    required as input to
+    :func:`rsgispy.imagecalibration.cloudmasking.apply_cloudsen12_s2_sref_cloud_mask`.
 
     Resamples 20 m bands to 10 m (with optional Shepherd & Dymond band
     sharpening using B02, B03, B04, B08 when ``sharpen_10m=True``) when
@@ -529,6 +618,18 @@ def create_stacked_sen2_esa_l2a_img(
                                 (Default = :data:`rsgispy.INTERP_AVERAGE`).
     :param use_multi_core: If ``True``, use multiple threads during resampling
                            (Default = ``False``).
+    :param inc_cloudsen12_img: If ``True``, also output a 12-band image
+                               (``<scene>_<res>_cloudsen12_sref``) suitable
+                               as input to the CloudSEN12 SREF cloud masking
+                               (``apply_cloudsen12_s2_sref_cloud_mask`` in
+                               :mod:`rsgispy.imagecalibration.cloudmasking`).
+                               Bands B01 and B09 are resampled to the output
+                               resolution using ``resample_10m_method`` (and
+                               are not sharpened). The same ``scale_factor``,
+                               BOA offsets, ``datatype`` and no-data value as
+                               the main stack are used, so pass the same
+                               ``scale_factor`` (and ``add_offset=0``) to the
+                               cloud masking function (Default = ``False``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display tqdm progress bars (Default = ``True``).
@@ -544,6 +645,26 @@ def create_stacked_sen2_esa_l2a_img(
             "outputs",
             "tmp",
             gdalformat="GTIFF",
+        )
+
+    To also create the input for the CloudSEN12 cloud masking:
+
+    .. code:: python
+
+        import rsgispy.imagecalibration.cloudmasking as cldmsk
+        import rsgispy.imagecalibration.sensorlvl2data as l2
+
+        l2.create_stacked_sen2_esa_l2a_img(
+            "S2A_MSIL2A_20200621T112119.SAFE",
+            "outputs",
+            "tmp",
+            inc_cloudsen12_img=True,
+        )
+        cldmsk.apply_cloudsen12_s2_sref_cloud_mask(
+            "outputs/S2A_MSIL2A_20200621T112119_10m_cloudsen12_sref.tif",
+            "outputs/S2A_MSIL2A_20200621T112119_10m_cloudsen12.tif",
+            scale_factor=10000,
+            device="auto",
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -611,22 +732,31 @@ def create_stacked_sen2_esa_l2a_img(
 
         boa_offsets_by_id = img_char.get("BOA_Add_Offsets", {})
         phys_band_lut = s2_hdr_info.get("Band_LUT", {}).get("Physical_Band", {})
-        band_offsets: List[float] = []
-        for bcode in _SEN2_OUT_BAND_ORDER:
+        offsets_by_band: Dict[str, float] = {}
+        for bcode in _SEN2_CLDSEN12_BAND_ORDER:
             # Physical band key in S2 MTD may be 'B8' for 'B08'
             b_id = phys_band_lut.get(bcode)
             if b_id is None and bcode.startswith("B0"):
                 b_id = phys_band_lut.get(f"B{bcode[2:]}")
-            offset_val = (
+            offsets_by_band[bcode] = (
                 float(boa_offsets_by_id.get(b_id, 0.0))
                 if b_id is not None
                 else 0.0
             )
-            band_offsets.append(offset_val)
+        band_offsets: List[float] = [
+            offsets_by_band[b] for b in _SEN2_OUT_BAND_ORDER
+        ]
 
-        imgs_10m, all_20m_imgs, scl_20m_img = _collect_sen2_band_paths(
-            input_safe_abs, granules[0]["IMAGE_FILES"]
+        imgs_10m, all_20m_imgs, scl_20m_img, coarse_imgs = (
+            _collect_sen2_band_paths(input_safe_abs, granules[0]["IMAGE_FILES"])
         )
+        if inc_cloudsen12_img:
+            missing_coarse = [b for b, p in coarse_imgs.items() if p is None]
+            if missing_coarse:
+                raise rsgispy.RSGISPyException(
+                    f"Missing Sentinel-2 band file(s) {missing_coarse} required "
+                    "for the CloudSEN12 stack (inc_cloudsen12_img=True)."
+                )
         if scl_20m_img is None:
             raise rsgispy.RSGISPyException(
                 "Could not find Sentinel-2 20 m SCL image in MTD_MSIL2A.xml."
@@ -644,6 +774,9 @@ def create_stacked_sen2_esa_l2a_img(
         )
         out_vld_img = os.path.join(
             out_dir_abs, f"{scn_file_name}_{res_tag}_vld.{out_img_ext}"
+        )
+        out_cldsen12_img = os.path.join(
+            out_dir_abs, f"{scn_file_name}_{res_tag}_cloudsen12_sref.{out_img_ext}"
         )
         tmp_sref_img = os.path.join(
             uid_tmp_dir, f"{scn_file_name}_{res_tag}_raw_sref.tif"
@@ -814,9 +947,13 @@ def create_stacked_sen2_esa_l2a_img(
             )
 
         _finalise_sen2_sref_output(
-            src_stacked_img=tmp_sref_img,
+            band_sources=[
+                (tmp_sref_img, bidx)
+                for bidx in range(1, len(_SEN2_OUT_BAND_ORDER) + 1)
+            ],
             out_sref_img=out_sref_img,
             band_offsets=band_offsets,
+            band_names=_SEN2_OUT_BAND_NAMES,
             quant_boa_val=quant_boa_val,
             scale_factor=sf_val,
             no_data_val=no_data_val,
@@ -826,6 +963,52 @@ def create_stacked_sen2_esa_l2a_img(
             use_pbar=use_pbar,
             creation_opts=norm_opts,
         )
+
+        if inc_cloudsen12_img:
+            coarse_srcs: Dict[str, str] = {}
+            for bcode, coarse_img in coarse_imgs.items():
+                assert coarse_img is not None
+                out_coarse = os.path.join(
+                    uid_tmp_dir, f"{scn_file_name}_{bcode}_{res_tag}.tif"
+                )
+                resample_img_to_match(
+                    ref_img,
+                    coarse_img,
+                    out_coarse,
+                    interp_method=resample_10m_method,
+                    multicore=use_multi_core,
+                    gdalformat="GTIFF",
+                    datatype=rsgispy.TYPE_32FLOAT,
+                    no_data_val=no_data_val,
+                    calc_stats=False,
+                    use_pbar=False,
+                )
+                coarse_srcs[bcode] = out_coarse
+
+            cldsen12_sources: List[Tuple[str, int]] = []
+            for bcode in _SEN2_CLDSEN12_BAND_ORDER:
+                if bcode in coarse_srcs:
+                    cldsen12_sources.append((coarse_srcs[bcode], 1))
+                else:
+                    cldsen12_sources.append(
+                        (tmp_sref_img, _SEN2_OUT_BAND_ORDER.index(bcode) + 1)
+                    )
+            _finalise_sen2_sref_output(
+                band_sources=cldsen12_sources,
+                out_sref_img=out_cldsen12_img,
+                band_offsets=[
+                    offsets_by_band[b] for b in _SEN2_CLDSEN12_BAND_ORDER
+                ],
+                band_names=_SEN2_CLDSEN12_BAND_NAMES,
+                quant_boa_val=quant_boa_val,
+                scale_factor=sf_val,
+                no_data_val=no_data_val,
+                gdalformat=gdalformat,
+                datatype=datatype,
+                calc_stats=calc_stats,
+                use_pbar=use_pbar,
+                creation_opts=norm_opts,
+            )
     finally:
         if delete_inter_data and os.path.exists(uid_tmp_dir):
             shutil.rmtree(uid_tmp_dir, ignore_errors=True)

@@ -44,3 +44,17 @@ Sensor Level-1 & Level-2 Data
 
    imagecalibration/sensorlvl1data
    imagecalibration/sensorlvl2data
+
+Cloud Masking
+-------------
+
+* :doc:`imagecalibration/cloudmasking` — Sentinel-2 cloud and cloud shadow
+  masking for TOA (Level-1C) and surface reflectance (Level-2A) imagery using
+  the CloudSEN12 / CloudSEN12+ deep learning models on the CPU or GPU, with
+  model weight download and local caching. Requires the optional
+  ``cloudmask`` dependencies (``pip install "rsgispy[cloudmask]"``).
+
+.. toctree::
+   :maxdepth: 1
+
+   imagecalibration/cloudmasking
