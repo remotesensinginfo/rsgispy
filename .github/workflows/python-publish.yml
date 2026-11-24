@@ -28,7 +28,7 @@ jobs:
 
       - name: Verify release tag matches package version
         run: |
-          PKG_VER=$(python -c "import rsgispy; print(rsgispy.__version__)")
+          PKG_VER=$(python -c "import ast; tree = ast.parse(open('rsgispy/__init__.py', encoding='utf-8').read()); print(next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign) and any(getattr(t, 'id', None) == '__version__' for t in n.targets)))")
           TAG="${GITHUB_REF_NAME#v}"
           if [ "$TAG" != "$PKG_VER" ]; then
             echo "Release tag '$GITHUB_REF_NAME' does not match rsgispy.__version__ ('$PKG_VER')" >&2
