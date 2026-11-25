@@ -112,8 +112,8 @@ The expression ``10^(vv / 10)`` reverses ``10 * log10(vv)``. The ternary
 (``condition ? a : b``) keeps no data pixels as no data: without it, the dB
 no data value -9999 would become a tiny but valid power. One sub-expression
 per band, separated by commas, writes a multi-band output in one pass.
-:func:`~rsgispy.imageutils.stats.pop_img_stats` then sets the output no data
-value (0) and computes statistics and pyramids.
+``no_data_val=0.0`` records 0 as the output no data value and
+``calc_stats=True`` computes statistics and pyramids.
 
 If your data are amplitude rather than power (e.g. some older products),
 square them first (``vv * vv``). If your file uses ``NaN`` as no data, use
@@ -245,8 +245,7 @@ powers):
 
 ``log10`` of zero or a negative value is undefined, so the ternary writes
 -9999 for those pixels (which includes the no data value 0), and
-:func:`~rsgispy.imageutils.stats.pop_img_stats` records -9999 as the no data
-value. The output has two bands, ``VV_dB`` and ``VH_dB``; for Sentinel-1,
+``no_data_val=-9999.0`` records -9999 as the output no data value. The output has two bands, ``VV_dB`` and ``VH_dB``; for Sentinel-1,
 typical values are about -25 dB or lower for calm water, -15 to -5 dB for
 vegetation, and above -5 dB for built-up areas (VH is usually 5–10 dB lower
 than VV).

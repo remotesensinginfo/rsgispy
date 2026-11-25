@@ -568,8 +568,8 @@ All three use the **specific catchment area** :math:`a`, the upslope area
 per unit width of contour (m²/m), not the contributing area. It is the
 contributing area in m² (``out_units='area'``) divided by the width the flow
 crosses, usually taken as the pixel size; the example computes it with
-:func:`~rsgispy.imagecalc.maths.band_maths` and sets the no data value on
-the result so the index functions skip those pixels. Passing the flow
+:func:`~rsgispy.imagecalc.maths.band_maths`, passing ``no_data_val`` so the
+index functions skip the no data pixels. Passing the flow
 accumulation itself raises an exception.
 :func:`~rsgispy.elevation.hydrology.calc_twi` also raises :math:`a` to at
 least the pixel size, so the values on ridges are not extreme. Use
@@ -671,7 +671,7 @@ Common problems
   a huge flat that everything drains into. Set the value with
   :func:`rsgispy.imageutils.metadata.set_img_no_data_value` before
   conditioning. Outputs of :func:`~rsgispy.imagecalc.maths.band_maths` have
-  no no data value unless you set one, as the example does.
+  no no data value unless you pass ``no_data_val``, as the example does.
 * **Streams everywhere, or none** — adjust ``threshold`` and check
   ``threshold_units`` (Step 5). An accumulation raster in m² that was not
   made by :func:`~rsgispy.elevation.hydrology.flow_accumulation` has no

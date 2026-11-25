@@ -237,7 +237,6 @@ def run_workflow(  # noqa: C901
         calc_imgs_pxl_percentiles,
     )
     from rsgispy.imageutils.metadata import get_band_names, set_band_names
-    from rsgispy.imageutils.stats import pop_img_stats
 
     comp_dir = os.path.join(out_dir, "composites")
     os.makedirs(comp_dir, exist_ok=True)
@@ -248,16 +247,12 @@ def run_workflow(  # noqa: C901
         calc_img_band_pxl_percentiles(imgs, med_img, [50], no_data_val=0,
                                       use_pbar=use_pbar)
         set_band_names(med_img, get_band_names(imgs[0]))  # 'Blue', 'Green', ...
-        pop_img_stats(med_img, no_data_val=0, calc_pyramids=True,
-                      use_pbar=use_pbar)
 
         ndvi_pcts_img = os.path.join(comp_dir, f"{tile}_ndvi_p10_p50_p90.tif")
         # All the bands of all the inputs are pooled: one band per percentile
         calc_imgs_pxl_percentiles(ndvi_imgs[tile], ndvi_pcts_img, [10, 50, 90],
                                   no_data_val=-999, use_pbar=use_pbar)
         set_band_names(ndvi_pcts_img, ["NDVI_P10", "NDVI_P50", "NDVI_P90"])
-        pop_img_stats(ndvi_pcts_img, no_data_val=-999, calc_pyramids=True,
-                      use_pbar=use_pbar)
 
         # Number of clear-sky observations contributing to each pixel
         n_obs_img = os.path.join(comp_dir, f"{tile}_n_clear_obs.tif")

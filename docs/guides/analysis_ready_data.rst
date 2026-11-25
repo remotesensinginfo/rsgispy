@@ -368,11 +368,14 @@ clear observations only:
   that describe seasonality (a crop field and a forest can have the same
   median NDVI but very different 10th percentiles).
 
-The outputs take the data type of the first input. The percentile functions
-do not set band names or statistics, so these are added with
-:func:`rsgispy.imageutils.metadata.set_band_names` and
-:func:`rsgispy.imageutils.stats.pop_img_stats` (which also builds overview
-pyramids for fast display).
+The outputs take the data type of the first input. The percentile
+functions set the no data value, calculate statistics and overview pyramids
+(``calc_stats=True``), and name the output bands after the percentile
+(``p10``, ...) and, for
+:func:`~rsgispy.imagecalc.percentiles.calc_img_band_pxl_percentiles`, the
+input band (``Blue_p50``, ...). The example renames them with
+:func:`rsgispy.imageutils.metadata.set_band_names`, to the input band names
+for the median composite and to ``NDVI_P10``, ... for the NDVI percentiles.
 
 The number of clear observations per pixel is calculated with
 :func:`rsgispy.imagecalc.maths.band_maths` (the expression
@@ -479,10 +482,11 @@ Performance and large datasets
   loop. ``use_multi_core=True`` in
   :func:`~rsgispy.imagecalibration.sensorlvl2data.create_stacked_sen2_esa_l2a_img`
   uses several threads for the resampling.
-* **Compositing time** — the percentile functions read the images block by
-  block, so memory use is small, but computing percentiles that ignore no
-  data is slow (NumPy's ``nanpercentile``). For a large area, composite each
-  tile separately (in parallel), and only calculate the percentiles you need.
+* **Compositing time** — the percentile functions read and process the
+  images block by block, so memory use is small, and the per-pixel
+  percentiles are vectorised (about 1 s for 10 dates of 2048 × 2048 pixels
+  and five percentiles on an Apple M2 Max). For a large area, composite each
+  tile separately (in parallel).
 * **CloudSEN12** — use a GPU (``device='cuda'`` or ``'mps'``). ``tile_size``
   (default 512) sets the size of the blocks passed to the model; larger tiles
   are faster on a GPU with enough memory. ``tile_overlap`` (default 32)
