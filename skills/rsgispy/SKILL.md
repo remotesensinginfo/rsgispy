@@ -24,7 +24,10 @@ description: Generate idiomatic Python code using rsgispy (v0.3.x), the pure-Pyt
    - **Top-level converters & exceptions**: `rsgispy.RSGISPyException`, `get_rsgis_datatype`, `rsgis_dtype_from_np_dtype`, `get_gdal_datatype_name`, `get_gdal_datatype_enum`, `get_rasterio_datatype`, `get_numpy_datatype`, `get_rsgis_datatype_str`, `get_rasterio_interp_type`, `get_tqdm`, `is_notebook`, `check_optional_dep`, `get_rsgispy_version`.
 4. **Standardised keyword-only raster output options**: Most raster-writing functions accept keyword-only options after `*`:
    `*, gdalformat="GTIFF", datatype=..., no_data_val=..., calc_stats=..., use_pbar=..., creation_opts=...`
-   (Note: `band_maths` and `image_band_math` take `gdalformat`, `datatype`, `use_pbar`, `creation_opts`, `band_names`; `calc_indices` / `calc_sar_indices` take `no_data_val` and `out_no_data_val`; `elevation` and `segmentation` functions omit `creation_opts`; default `gdalformat` is `"GTIFF"`, **not** `"KEA"`).
+   (Note: `band_maths` and `image_band_math` take `gdalformat`, `datatype`, `use_pbar`, `creation_opts`, `band_names`, `no_data_val` (written to every output band) and `calc_stats` (default `False`); `calc_indices` / `calc_sar_indices` take `no_data_val` and `out_no_data_val`; `elevation` and `segmentation` functions omit `creation_opts`; default `gdalformat` is `"GTIFF"`, **not** `"KEA"`).
+   **Default GeoTIFF creation options**: with nothing configured, GeoTIFFs are written tiled and DEFLATE-compressed (`rsgispy.imageprocess.DEFAULT_IMG_CREATION_OPTS["GTIFF"]` = `TILED=YES`, `COMPRESS=DEFLATE`, `INTERLEAVE=BAND`, `BIGTIFF=IF_SAFER`). The environment variables `RSGISPY_IMG_CRT_OPTS_<FORMAT>` / `RSGISLIB_IMG_CRT_OPTS_<FORMAT>` (set with the `rsgispy.imageutils.envopts.set_env_vars_*` functions or `set_img_creation_opts`) replace the defaults; an empty value means no options; `envopts.reset_img_creation_opts()` restores the defaults; explicit `creation_opts` are merged on top. rsgispy never sets these variables itself. Use `"GTIFF"` in examples.
+   **COG outputs** (`gdalformat="COG"`) are written block by block to a temporary tiled GeoTIFF and converted when the writer closes, with statistics calculated before the conversion; in custom block loops, open outputs with `rsgispy.imageprocess.open_output_dataset` and register statistics with `pop_stats_on_close(dst, calc_stats, ...)` inside the `with` block. `pop_img_stats` on an existing COG rebuilds it (`update_cog`) instead of editing it in place.
+   **No-data values on open datasets**: use `rsgispy.imageprocess.set_dataset_nodata(dst, value)` rather than `dst.nodata = value`; setting the current value is a no-op, and KEA files cannot change an existing no-data value (a clear `RSGISPyException` is raised).
 5. **Dual path / `GeoDataFrame` vector API**: Most functions in `rsgispy.vector.*`, `rsgispy.zonalstats.*`, and `rsgispy.elevation.roughness` accept either a file path (`str | os.PathLike`) or a `geopandas.GeoDataFrame`. Passing `out_vec_file=None` returns an in-memory `GeoDataFrame` instead of writing to disk. GeoParquet (`.parquet` / `.geoparquet`) is supported with `out_compress` (`"snappy"`, `"gzip"`, `"zstd"`, etc.).
 6. **Optional extras (`pip install "rsgispy[<extra>]"`)**:
    - Core install covers raster/vector I/O, `imagecalc`, `imagecalibration` (radiometry, solar angles, Landsat C2, Sentinel-2 L2A), `imageregistration`, `imageutils`, `imagefilter` (except GLCM), `imagemorphology`, `elevation`, `changedetect`, `zonalstats`, `droneutils`, and `cli`.
@@ -197,11 +200,12 @@ For multi-step analyses, follow the step order of the matching guide in the rsgi
 | Map figures, legends, scale bars, insets | `making_maps` |
 | Block processing, `TileGraph`, VRTs, tiling, `n_jobs` | `large_rasters` |
 
-Workflow gotchas documented in the guides:
-- `band_maths` does not set an output nodata value; call `rsgispy.imageutils.metadata.set_img_no_data_value` (or `pop_img_stats(..., no_data_val=...)`) afterwards.
-- `hydrology.extract_streams(threshold_units="area")` expects a flow accumulation in **cells** (`flow_accumulation(out_units="cells")`).
-- `changedetect.image_difference` / `image_ratio`: pass a `vld_msk_img` that is valid on **both** dates.
-- Pixel sample extraction cannot read a VRT that mixes data types (e.g. uint16 reflectance + float32 indices); use separate `ImageBandInfo` entries per data type.
+Workflow notes from the guides:
+- Pass `no_data_val=` (and `calc_stats=True` if wanted) to `band_maths`; the expression must still produce the no-data value (e.g. `"b1 == 0 ? -9999 : b1 * 2"`).
+- `hydrology.flow_accumulation` records its units in the raster (tag `RSGISPY_FLOW_ACC_UNITS`); `extract_streams(..., threshold_units=..., acc_units="auto")` converts the threshold, so cells and m² accumulations both work. For an untagged accumulation in m², pass `acc_units="area"`. `calc_twi` / `calc_spi` / `calc_ls_factor` need specific catchment area (m²/m), not a raw accumulation, and raise if given a tagged accumulation.
+- `changedetect` functions treat a pixel as valid only when **both** dates have data; pass `vld_msk_img` to add cloud masks.
+- Pixel samples: images/VRTs that mix data types can be sampled. Pass `group_col="train_grp"` to `extract_and_split_class_samples` / `extract_and_split_reg_samples` so whole polygons go to train/test/valid, and pass `rsgispy.ml.cv` splitters to `perform_sklearn_*_param_search` with `groups=` / `coords=`.
+- Unmixing outputs use `out_no_data_val=-9999.0` (a fraction of 0 is valid); pixels with any band ≤ 0 are not unmixed. `ImageBandRescale.no_data_val=None` uses the input band's no-data value.
 
 ## Detailed Reference Documentation
 

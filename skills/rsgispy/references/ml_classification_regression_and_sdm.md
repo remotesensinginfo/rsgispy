@@ -55,10 +55,10 @@ Covers `rsgispy.ml.*`, `rsgispy.classification.*`, `rsgispy.regression.*`, and `
 - `ImageBandInfo` (from `imageutils.masking`): `(file_name, name=None, bands=None, band_names=None)`
 - `ClassInfoObj(out_id, vec_file=None, vec_lyr=None, red=None, green=None, blue=None, internal_id=None, name=None, colour=None)`
 - `ClassificationConfig(img_band_info, class_info, out_id_col='out_cls_id', internal_id_col='internal_cls_id', class_name_col='class_name', seg_info=None)` (`.save()`, `.load()`, `.to_feature_stack()`, `.get_colour_table()`, `.get_class_names_lut()`, `.get_internal_to_out_lut()`, `.get_out_to_internal_lut()`).
-- Functions: `normalise_class_info`, `resolve_img_band_info`, `write_cls_config`, `read_cls_config`, `write_cls_samples`, `read_cls_samples`, `extract_class_training_samples`, `split_class_samples`, `extract_and_split_class_samples`, `get_cls_id_luts`, `recode_internal_to_out_ids`, `recode_cls_img_to_out_ids`.
+- Functions: `normalise_class_info`, `resolve_img_band_info`, `write_cls_config`, `read_cls_config`, `write_cls_samples`, `read_cls_samples`, `extract_class_training_samples(..., *, poly_id_col=None)`, `split_class_samples(..., *, group_col=None)`, `extract_and_split_class_samples(..., *, poly_id_col=None, group_col=None)` (`group_col='train_grp'` records `'<class>:poly<n>'` IDs and sends whole polygons to train/test/valid, stratified by class), `get_cls_id_luts`, `recode_internal_to_out_ids`, `recode_cls_img_to_out_ids`.
 
 ### Classifiers (`classsklearn`, `classxgboost`, `classlightgbm`, `classcatboost`)
-- **scikit-learn (`classsklearn`)**: `get_sklearn_classifier_param_space`, `save_sklearn_classifier`, `load_sklearn_classifier`, `perform_sklearn_classifier_param_search`, `train_sklearn_classifier`, `apply_sklearn_classifier`.
+- **scikit-learn (`classsklearn`)**: `get_sklearn_classifier_param_space`, `save_sklearn_classifier`, `load_sklearn_classifier`, `perform_sklearn_classifier_param_search(..., *, groups=None, coords=None)` (pass a column name / labels for `groups` and `('x', 'y')` or an (n, 2) array for `coords` so `rsgispy.ml.cv` splitters such as `SpatialBlockKFold` / `PolygonGroupKFold` can be the `cv`), `train_sklearn_classifier`, `apply_sklearn_classifier`.
 - **GBDTs (`class{xgboost,lightgbm,catboost}`)**: each provides:
   - `is_{xgboost,lightgbm,catboost}_gpu_available`
   - `save_*_classifier`, `load_*_classifier`
@@ -89,7 +89,7 @@ Covers `rsgispy.ml.*`, `rsgispy.classification.*`, `rsgispy.regression.*`, and `
 
 ## 3. `rsgispy.regression.*`
 
-- **`regdata`**: `RegressionConfig(img_band_info, target_cols, vec_file=None, vec_lyr=None, seg_info=None)`, `normalise_target_cols`, `write_reg_config`, `read_reg_config`, `write_reg_samples`, `read_reg_samples`, `extract_reg_training_samples`, `split_reg_samples`, `extract_and_split_reg_samples`.
+- **`regdata`**: `RegressionConfig(img_band_info, target_cols, vec_file=None, vec_lyr=None, seg_info=None)`, `normalise_target_cols`, `write_reg_config`, `read_reg_config`, `write_reg_samples`, `read_reg_samples`, `extract_reg_training_samples(..., *, poly_id_col=None)`, `split_reg_samples(..., *, group_col=None)`, `extract_and_split_reg_samples(..., *, poly_id_col=None, group_col=None)`; `regsklearn.perform_sklearn_regressor_param_search(..., *, groups=None, coords=None)`.
 - **`regsklearn`**: `get_sklearn_regressor_param_space`, `save_sklearn_regressor`, `load_sklearn_regressor`, `perform_sklearn_regressor_param_search`, `train_sklearn_regressor`, `apply_sklearn_regressor`.
 - **GBDTs (`reg{xgboost,lightgbm,catboost}`)**: each provides `is_*_gpu_available`, `save_*_regressor`, `load_*_regressor`, `get_*_optuna_param_space`, `optimise_*_regressor`, `train_*_regressor`, `apply_*_regressor`.
 - **`regfeatures`**: `target_scatter_plots`, `correlation_matrix`, `calc_vif_multicollinearity`, `select_features_{cqv,corr,vif,univariate,rfe,from_model,boruta_shap}`, `calc_feature_importance`, `calc_jackknife_feature_importance`, `calc_feature_response_curves`, `calc_shap_feature_contributions`, `calc_salib_feature_sensitivity`.
@@ -107,4 +107,6 @@ Covers `rsgispy.ml.*`, `rsgispy.classification.*`, `rsgispy.regression.*`, and `
   - `search_mdl_params`, `fit_sklearn_mdl`, `fit_kfold_sklearn_mdls`
   - **Single-class SDM naming** (note `sgl_cls`): `fit_sklearn_sgl_cls_mdl`, `fit_kfold_sklearn_sgl_cls_mdls`
   - `shap_sklearn_mdl_explainer`, `salib_sklearn_mdl_sensitivity`, `sklearn_mdl_variable_response_curves`, `sklearn_jackknife_var_importance`
+- **Evaluation & thresholds**: `calc_binary_roc_auc(y_true, scores) -> (fpr, tpr, auc)`, `calc_binary_threshold(y_true, scores, *, method='max_tss')` (`'sens_eq_spec'` also available), `plot_roc_curve(fpr, tpr, roc_auc, out_file=None, *, label='ROC Curve', title=..., dpi=150)`, `get_positive_class_probs(est_cls_obj, x_data, pos_label=1)`, `calc_single_class_predictions(est_cls_obj, x_data)`.
+- **Raster prediction with a custom function**: `predict_raster_from_env_vars(in_msk_img, img_msk_val, env_vars, analysis_vars, output_img, predict_fn, *, gdalformat='GTIFF', datatype=None, no_data_val=-1.0, fill_val=None, normalise_data=False, thematic=False, calc_stats=True, block_size=None, use_pbar=True)`.
 - **Prediction**: `pred_sklearn_mdl_prob`, `pred_sklearn_mdl_cls`, `pred_sklearn_sgl_cls_mdl_prob`, `pred_sklearn_sgl_cls_mdl_cls`, `pred_ensemble_sklearn_mdls_prob`, `pred_ensemble_sklearn_mdls_cls`, `pred_ensemble_sklearn_sgl_cls_mdls_prob`, `pred_ensemble_sklearn_sgl_cls_mdls_cls`.

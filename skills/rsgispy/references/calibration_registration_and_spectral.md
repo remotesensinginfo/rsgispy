@@ -74,6 +74,7 @@ Covers `rsgispy.imagecalibration.*`, `rsgispy.imageregistration.*`, `rsgispy.cha
 
 - **`imgchngmthds`**:
   - `image_difference(in_base_img, in_chng_img, out_diff_img, vld_msk_img=None, vld_msk_val=1, apply_std=False, img_base_bands=None, img_chng_bands=None, *, gdalformat='GTIFF', datatype=None, no_data_val=None, base_img_no_data=0, chng_img_no_data=0, calc_stats=True, use_pbar=True)`
+  - With no `vld_msk_img`, every change-detection function treats a pixel as valid only when **both** dates have data (any band finite and not no data); pass `vld_msk_img` to add cloud masks.
   - `image_ratio(...)` (same signature except `out_ratio_img`)
   - `change_vector_analysis(in_base_img, in_chng_img, out_chng_img, out_chng_dist_img, ..., use_kmeans=False, *)`
   - `slow_feature_analysis(in_base_img, in_chng_img, out_chng_img, out_chng_dist_img, ..., sfa_max_iter=50, sfa_epsilon=1e-6, sfa_norm_trans=False, sfa_regular=False, use_kmeans=False, *)`
@@ -100,7 +101,7 @@ Covers `rsgispy.imagecalibration.*`, `rsgispy.imageregistration.*`, `rsgispy.cha
 - **`endmembers`**: `ImageEndmemberInfo(in_unmix_img, endmembers, endmember_names=None, file_format=None)`, `extract_avg_endmembers(input_img, vec_file, vec_lyr=None, out_file=None, class_col=None, endmember_names=None, file_format=None, pxl_in_poly_method=1) -> pd.DataFrame`, `read_endmembers_df`, `write_endmembers_df`, `coerce_endmembers_df`, `prepare_endmembers_array`, `convert_mtxt_to_df`, `plot_endmembers`, `are_endmembers_equal`, `calc_ppi(input_img, output_img, niters=1000, lthres=0, uthres=0, img_gain=1, rnd_seed=None, *, ...)`
 - **`classification`**: `spectral_angle_mapper(input_img, output_img, endmembers, out_class_img=None, out_min_angle_img=None, img_gain=1, endmembers_gain=1, file_format=None, degrees=False, max_angle=None, valid_msk_img=None, valid_msk_val=1, *, ...)`, `spectral_correlation_mapper(..., out_class_img=None, out_max_corr_img=None, ..., min_corr=None, ...)`
 - **`unmixing`** (note `unmixing` extra needed for `pyMCR` / `pysptools` variants):
-  - Built-in / NumPy+SciPy: `exhcon_linear_spec_unmix`, `spec_unmix_ucls`, `spec_unmix_nnls`, `spec_unmix_fcls`
+  - Built-in / NumPy+SciPy: `exhcon_linear_spec_unmix`, `spec_unmix_ucls`, `spec_unmix_nnls`, `spec_unmix_fcls` — all unmixing and post-unmixing functions take keyword-only `out_no_data_val` (default `-9999.0`; a fraction of 0 is valid). Pixels outside the mask, non-finite, equal to the input no data, or with any band ≤ 0 are not unmixed and are written as no data.
   - `pysptools`: `spec_unmix_spts_{ucls,nnls,fcls}`
   - `pyMCR`: `spec_unmix_pymcr_{nnls,fcls}`
   - Post-unmixing: `rescale_unmixing_results`, `predict_refl_linear_unmixing`, `calc_unmixing_rmse_residual_err`, `summarise_multi_endmember_linear_unmixing(input_img, out_unmix_img, out_ref_img, in_unmixed_datasets: Sequence[ImageEndmemberInfo], tmp_dir='tmp', *, ...)`
