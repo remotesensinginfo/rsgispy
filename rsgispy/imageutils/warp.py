@@ -665,7 +665,11 @@ def gdal_warp(
     ``rasterio.warp.reproject`` with ``gdalwarp`` CLI option support.
 
     CLI flags from ``gdalwarp`` are accepted both as Python keyword arguments
-    and inside a CLI string or token sequence passed to ``options``.
+    and inside a CLI string or token sequence passed to ``options``. New
+    outputs get the creation options of
+    :func:`rsgispy.imageprocess.get_gdal_img_creation_opts` (tiled,
+    DEFLATE-compressed GeoTIFF unless configured otherwise), with any creation
+    options given in ``options`` (``-co``) merged on top.
 
     :param input_img: Path (or sequence of paths) to input raster file(s).
     :param output_img: Path to the output warped raster file.
@@ -1218,8 +1222,12 @@ def gdal_translate(
     Convert ``input_img`` to another GDAL/rasterio format, subset, resample,
     rescale, and/or update spatial and band metadata without ``osgeo.gdal``.
 
-    When ``gdalformat='GTIFF'`` and no creation options are provided via
-    ``options``, tiled LZW BigTIFF creation options are applied automatically.
+    The output gets the creation options of
+    :func:`rsgispy.imageprocess.get_gdal_img_creation_opts` (tiled,
+    DEFLATE-compressed GeoTIFF unless configured otherwise), with any creation
+    options given in ``options`` (``-co``) merged on top. When
+    ``gdalformat='GTIFF'`` and no creation options are given, the source
+    overview levels are also rebuilt on the output (``COPY_SRC_OVERVIEWS``).
     CLI flags from ``gdal_translate`` are supported both as Python keyword
     arguments and inside a CLI string/list passed to ``options``.
 

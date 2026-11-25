@@ -129,6 +129,10 @@ def build_img_pyramids_multi_core(
     :param tmp_dir: Optional scratch directory for temporary scale/tile files
                     (e.g., fast local SSD). Automatically cleaned up on exit.
     :param compress: Compression algorithm for overview TIFFs (Default = ``'LZW'``).
+                     When ``external=False`` the rewritten base image instead
+                     takes the GeoTIFF creation options of
+                     :func:`rsgispy.imageprocess.get_gdal_img_creation_opts`
+                     (tiled and DEFLATE-compressed by default).
     :param ovr_block_size: Internal TIFF tile block size (power of 2 between
                            ``64`` and ``4096``, Default = ``128``).
     :param cascade: If ``True`` (default), generate scale ``lvl`` from the

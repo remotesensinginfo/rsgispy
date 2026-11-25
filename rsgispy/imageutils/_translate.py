@@ -50,13 +50,11 @@ _COLOUR_INTERP_MAP: Dict[str, ColorInterp] = {
     c.name.lower(): c for c in ColorInterp
 }
 
+# Tiling, compression, interleave and BigTIFF come from
+# rsgispy.imageprocess.get_gdal_img_creation_opts (built-in defaults or the
+# RSGISPY_/RSGISLIB_IMG_CRT_OPTS_GTIFF environment variables); gdal_translate
+# only adds the copy of the source overview levels.
 _DEFAULT_GTIFF_CO: Dict[str, Any] = {
-    "TILED": "YES",
-    "INTERLEAVE": "PIXEL",
-    "BLOCKXSIZE": "256",
-    "BLOCKYSIZE": "256",
-    "COMPRESS": "LZW",
-    "BIGTIFF": "YES",
     "COPY_SRC_OVERVIEWS": "YES",
 }
 

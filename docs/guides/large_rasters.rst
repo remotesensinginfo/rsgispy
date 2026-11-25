@@ -133,22 +133,32 @@ How to choose it:
   because their memory grows with the square of both the block size and the
   window size.
 * Keep the block size a multiple of the internal tile size of your files
-  (usually 256 or 512) so each block reads whole tiles.
+  (usually 256 or 512) so each block reads whole tiles. GeoTIFF outputs are
+  tiled with GDAL's default 256 x 256 tiles (see below), so the default 512
+  pixel block covers exactly four tiles; pass ``BLOCKXSIZE`` and
+  ``BLOCKYSIZE`` in the creation options for other tile sizes (multiples of
+  16).
 
-**Creation options.** Outputs are written with the GDAL creation options in
-the ``RSGISPY_IMG_CRT_OPTS_<FORMAT>`` environment variable (colon-separated
-``KEY=VALUE`` pairs), plus any ``creation_opts`` passed to a function. The
-helpers in :mod:`rsgispy.imageutils.envopts` set common choices:
+**Creation options.** GeoTIFF outputs are tiled and DEFLATE-compressed by
+default: ``TILED=YES``, ``COMPRESS=DEFLATE``, ``INTERLEAVE=BAND`` and
+``BIGTIFF=IF_SAFER``. Tiled files are fast to read in blocks, compression
+typically makes files several times smaller, and ``BIGTIFF=IF_SAFER``
+switches to BigTIFF when a file may exceed the 4 GB limit of classic TIFF.
+Other formats (KEA, COG, ...) use their GDAL driver defaults. To change the
+options, set the ``RSGISPY_IMG_CRT_OPTS_<FORMAT>`` environment variable
+(colon-separated ``KEY=VALUE`` pairs; ``RSGISLIB_IMG_CRT_OPTS_<FORMAT>`` is
+also read), which replaces the default, or pass ``creation_opts`` to a
+function, which is merged on top. The helpers in
+:mod:`rsgispy.imageutils.envopts` set common choices:
 
-* :func:`~rsgispy.imageutils.envopts.set_env_vars_deflate_gtiff_outs`
-  (``TILED=YES``, ``COMPRESS=DEFLATE``, ``BIGTIFF=IF_SAFER``), or the LZW
-  and ZSTD variants. Always use tiled, compressed GeoTIFFs for large outputs:
-  tiled files are fast to read in blocks, and compression typically makes
-  files several times smaller. ``BIGTIFF=IF_SAFER`` switches to BigTIFF when
-  a file may exceed the 4 GB limit of classic TIFF (use ``bigtiff=True`` to
-  force it).
+* :func:`~rsgispy.imageutils.envopts.set_env_vars_zstd_gtiff_outs` or
+  :func:`~rsgispy.imageutils.envopts.set_env_vars_lzw_gtiff_outs` for other
+  compression; ``bigtiff=True`` forces BigTIFF.
 * :func:`~rsgispy.imageutils.envopts.set_img_creation_opts` for any other
-  set of options and format.
+  set of options and format; ``set_img_creation_opts("GTIFF", {})`` gives
+  plain striped, uncompressed GeoTIFFs.
+* :func:`~rsgispy.imageutils.envopts.reset_img_creation_opts` restores the
+  defaults.
 
 .. literalinclude:: ../examples/large_rasters.py
    :language: python
@@ -158,9 +168,10 @@ helpers in :mod:`rsgispy.imageutils.envopts` set common choices:
 
 This prints the block size and
 ``{'TILED': 'YES', 'COMPRESS': 'DEFLATE', 'INTERLEAVE': 'BAND', 'BIGTIFF': 'IF_SAFER'}``.
-These settings are environment variables, so they also apply to every rsgispy
-function called later in the same process (and to worker processes started
-from it).
+The block size and the ``set_*`` helpers use environment variables, so they
+also apply to every rsgispy function called later in the same process (and
+to worker processes started from it). The built-in defaults do not: rsgispy
+does not set any environment variables itself.
 
 Step 3 — Virtual rasters instead of copies
 ------------------------------------------
@@ -379,8 +390,9 @@ that write ``gdalformat='COG'`` directly.
 
 **Choosing output formats**
 
-* **GeoTIFF (tiled, compressed)** for intermediate and working files: fast
-  block-wise reading and writing, readable by everything.
+* **GeoTIFF** (``gdalformat='GTIFF'``, tiled and DEFLATE-compressed by
+  default) for intermediate and working files: fast block-wise reading and
+  writing, readable by everything.
 * **COG** for final, shared or cloud-hosted products.
 * **KEA** (``gdalformat='KEA'``; an HDF5-based format) supports raster
   attribute tables with many columns, compression and large files, and is

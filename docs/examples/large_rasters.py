@@ -75,10 +75,12 @@ def run_workflow(
 
     # Block size used by band_maths, the filters, zonal statistics, ...
     rsgispy.imageprocess.set_default_block_size(block_size)
-    # Tiled, DEFLATE compressed GeoTIFF outputs (BigTIFF if needed).
-    rsgispy.imageutils.envopts.set_env_vars_deflate_gtiff_outs()
     print(rsgispy.imageprocess.get_default_block_size())
-    print(rsgispy.imageprocess.get_gdal_img_creation_opts("GTIFF"))
+    # GeoTIFF outputs are tiled and DEFLATE compressed (BigTIFF if needed) by
+    # default; set_img_creation_opts / set_env_vars_*_gtiff_outs change this
+    # and reset_img_creation_opts restores the default.
+    rsgispy.imageutils.envopts.reset_img_creation_opts("GTIFF")
+    print(rsgispy.imageutils.envopts.get_gdal_img_creation_opts("GTIFF"))
     # [end-step-2-settings]
 
     # [step-3-vrt]

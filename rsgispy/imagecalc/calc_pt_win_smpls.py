@@ -18,7 +18,11 @@ from rasterio.warp import reproject
 from rasterio.windows import Window
 
 import rsgispy
-from rsgispy.imageprocess import bbox_from_dataset, ensure_file_exists
+from rsgispy.imageprocess import (
+    bbox_from_dataset,
+    ensure_file_exists,
+    get_gdal_img_creation_opts,
+)
 import rsgispy.tools.geometry
 from rsgispy.vectorprocess import VectorInput, finish_vec_output, read_vec_gdf
 
@@ -357,7 +361,9 @@ class RSGISDebugExportImg(RSGISCalcSumVals):
         self, smpl_idx: int, in_img_ds_obj: rasterio.DatasetReader
     ) -> Dict[str, float]:
         """
-        Write ``in_img_ds_obj`` to ``{out_path}/{smpl_idx}_{img_name}.tif``.
+        Write ``in_img_ds_obj`` to ``{out_path}/{smpl_idx}_{img_name}.tif``
+        using the GeoTIFF creation options of
+        :func:`rsgispy.imageprocess.get_gdal_img_creation_opts`.
 
         :param smpl_idx: Unique index for the point sample being processed.
         :param in_img_ds_obj: Open ``rasterio.DatasetReader`` for the sample window.
@@ -365,7 +371,10 @@ class RSGISDebugExportImg(RSGISCalcSumVals):
         """
         out_img = os.path.join(self.out_path, f"{smpl_idx}_{self.img_name}.tif")
         profile = in_img_ds_obj.profile.copy()
+        for layout_key in ("tiled", "blockxsize", "blockysize", "compress", "interleave"):
+            profile.pop(layout_key, None)
         profile["driver"] = "GTiff"
+        profile.update(get_gdal_img_creation_opts("GTIFF"))
         with rasterio.open(out_img, "w", **profile) as dst:
             dst.write(in_img_ds_obj.read())
         return {"debug": 0.0}

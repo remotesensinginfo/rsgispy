@@ -32,8 +32,11 @@ from rsgispy.imageprocess._arrays import (
 from rsgispy.imageprocess._dtype_nodata import _INT_DTYPES  # noqa: F401
 from rsgispy.imageprocess._dtype_nodata import (
     DEFAULT_BLOCK_SIZE,
+    DEFAULT_IMG_CREATION_OPTS,
     ENV_VAR_BLOCK_SIZE,
+    ENV_VAR_IMG_CRT_OPTS_PREFIX,
     ENV_VAR_RSGISLIB_BLOCK_SIZE,
+    ENV_VAR_RSGISLIB_IMG_CRT_OPTS_PREFIX,
     cast_result_block,
     fits_dtype_range,
     get_default_block_size,
@@ -79,8 +82,11 @@ from rsgispy.imageprocess._windows import (
 
 __all__ = [
     "DEFAULT_BLOCK_SIZE",
+    "DEFAULT_IMG_CREATION_OPTS",
     "ENV_VAR_BLOCK_SIZE",
     "ENV_VAR_RSGISLIB_BLOCK_SIZE",
+    "ENV_VAR_IMG_CRT_OPTS_PREFIX",
+    "ENV_VAR_RSGISLIB_IMG_CRT_OPTS_PREFIX",
     "get_default_block_size",
     "set_default_block_size",
     "reset_default_block_size",

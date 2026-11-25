@@ -17,6 +17,7 @@ from rasterio.windows import Window
 
 import rsgispy
 from rsgispy import get_gdal_datatype_name as _gdal_typename
+from rsgispy.imageprocess import get_gdal_img_creation_opts
 from rsgispy.imageutils.vrt import (
     _resampling_to_vrt_name,
     _write_vrt_xml,
@@ -483,6 +484,17 @@ def finalise_internal_ovr(
         os.path.dirname(os.path.abspath(dest_path)),
         f".tmp_{os.getpid()}_{os.path.basename(dest_path)}",
     )
+    # The rewritten base image is a user-facing GeoTIFF, so it takes the
+    # resolved GTIFF creation options (built-in tiled DEFLATE default or the
+    # RSGISPY_/RSGISLIB_IMG_CRT_OPTS_GTIFF variables).
+    base_opts: Dict[str, Any] = {
+        "TILED": "YES",
+        "COMPRESS": comp_val,
+        "INTERLEAVE": "BAND",
+        "BIGTIFF": "IF_SAFER",
+    }
+    base_opts.update(get_gdal_img_creation_opts("GTIFF"))
+    base_opts["COPY_SRC_OVERVIEWS"] = "YES"
     try:
         with rasterio.Env(
             COMPRESS_OVERVIEW=comp_val,
@@ -492,11 +504,7 @@ def finalise_internal_ovr(
                 full_vrt,
                 staging_img,
                 driver="GTiff",
-                COPY_SRC_OVERVIEWS="YES",
-                TILED="YES",
-                COMPRESS=comp_val,
-                INTERLEAVE="BAND",
-                BIGTIFF="IF_SAFER",
+                **base_opts,
             )
         with rasterio.open(
             staging_img, "r+", IGNORE_COG_LAYOUT_BREAK="YES"

@@ -399,7 +399,8 @@ def copy_raster_with_updates(
     """
     Stream-copy ``in_path`` to ``out_path`` with optional updated transform,
     output datatype, nodata value, or embedded GCPs. Returns the output
-    nodata value.
+    nodata value. The output uses the creation options of
+    :func:`rsgispy.imageprocess.get_gdal_img_creation_opts` for ``gdalformat``.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if (
@@ -426,17 +427,19 @@ def copy_raster_with_updates(
             else src.dtypes[0]
         )
         np_dtype = np.dtype(out_dtype)
-        profile = src.profile.copy()
+        # The output layout (tiling, compression, interleave) comes from the
+        # resolved creation options for ``gdalformat``, not from the source.
+        profile = {
+            key: val
+            for key, val in src.profile.items()
+            if key
+            not in ("tiled", "blockxsize", "blockysize", "compress", "interleave")
+        }
         profile.update(driver=gdalformat, dtype=out_dtype, **creation_opts)
         if new_transform is not None:
             profile["transform"] = new_transform
         if no_data_val is not None:
             profile["nodata"] = no_data_val
-        if gdalformat.upper() == "GTIFF" and "tiled" not in profile:
-            profile["tiled"] = True
-        if not profile.get("tiled", False):
-            profile.pop("blockxsize", None)
-            profile.pop("blockysize", None)
 
         with rasterio.open(out_path, "w", **profile) as dst:
             for _, win in src.block_windows(1):

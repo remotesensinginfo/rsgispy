@@ -177,14 +177,28 @@ used. KEA in particular needs a GDAL with the KEA driver (for example from
 conda-forge with ``kealib``); the GDAL in the rasterio wheels from PyPI may
 not include it. GeoTIFF or COG is recommended for new work.
 
-**Creation options and block size.** Creation options set with environment
-variables are still read: ``RSGISPY_IMG_CRT_OPTS_<FORMAT>`` first, then the
-RSGISLib name ``RSGISLIB_IMG_CRT_OPTS_<FORMAT>`` (for example
-``RSGISLIB_IMG_CRT_OPTS_GTIFF="TILED=YES:COMPRESS=LZW"``). The helper
-functions keep their RSGISLib names, e.g.
-:func:`rsgispy.imageutils.envopts.set_env_vars_lzw_gtiff_outs`. Many
-functions also take ``creation_opts={"COMPRESS": "DEFLATE"}`` for a single
-output. The processing block size is read from ``RSGISPY_BLOCK_SIZE`` or
+**Creation options and block size.** The default GeoTIFF creation options
+differ from RSGISLib's. With no environment variable set, RSGISLib writes
+GDAL's default GeoTIFF (striped and uncompressed), whereas rsgispy writes
+tiled, DEFLATE-compressed GeoTIFFs (``TILED=YES``, ``COMPRESS=DEFLATE``,
+``INTERLEAVE=BAND``, ``BIGTIFF=IF_SAFER``; see
+:data:`rsgispy.imageprocess.DEFAULT_IMG_CREATION_OPTS`). rsgispy builds this
+default into :func:`rsgispy.imageprocess.get_gdal_img_creation_opts` and does
+not set any environment variables, so importing rsgispy does not change the
+output of RSGISLib functions in the same script. Creation options set with
+environment variables are still read and replace the default:
+``RSGISPY_IMG_CRT_OPTS_<FORMAT>`` first, then the RSGISLib name
+``RSGISLIB_IMG_CRT_OPTS_<FORMAT>`` (for example
+``RSGISLIB_IMG_CRT_OPTS_GTIFF="TILED=YES:COMPRESS=LZW"``); an empty variable
+means no creation options, as in RSGISLib. The helper functions keep their
+RSGISLib names, e.g.
+:func:`rsgispy.imageutils.envopts.set_env_vars_lzw_gtiff_outs`, and set both
+variables; :func:`rsgispy.imageutils.envopts.set_img_creation_opts` with an
+empty dictionary gives plain GeoTIFFs and
+:func:`rsgispy.imageutils.envopts.reset_img_creation_opts` restores the
+rsgispy default. Many functions also take
+``creation_opts={"COMPRESS": "LZW"}`` for a single output, merged on top.
+The processing block size is read from ``RSGISPY_BLOCK_SIZE`` or
 ``RSGISLIB_BLOCK_SIZE`` (:data:`rsgispy.imageprocess.ENV_VAR_BLOCK_SIZE`,
 :data:`rsgispy.imageprocess.ENV_VAR_RSGISLIB_BLOCK_SIZE`), or set with
 :func:`rsgispy.imageprocess.set_default_block_size`.

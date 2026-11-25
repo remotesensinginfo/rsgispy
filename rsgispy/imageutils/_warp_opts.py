@@ -35,7 +35,6 @@ import rsgispy
 from rsgispy.imageprocess import iter_dataset_windows, validate_band_index
 from rsgispy.imageutils._helpers import normalise_creation_options, parse_epsg_crs
 from rsgispy.imageutils._translate import (
-    _DEFAULT_GTIFF_CO,
     _consume_args,
     _is_cli_flag,
     _parse_crs_input,
@@ -526,8 +525,9 @@ def build_warp_config(
     if gdalformat != "GTIFF" or cfg.gdalformat == "GTIFF":
         if gdalformat != "GTIFF":
             cfg.gdalformat = gdalformat
-    if not cfg.creation_opts and cfg.gdalformat.upper().strip() == "GTIFF":
-        cfg.creation_opts = dict(_DEFAULT_GTIFF_CO)
+    # With no explicit creation options the output gets those of
+    # rsgispy.imageprocess.get_gdal_img_creation_opts (tiled DEFLATE GeoTIFF by
+    # default, or the RSGISPY_/RSGISLIB_IMG_CRT_OPTS_<FORMAT> variables).
 
     if out_epsg is not None:
         if isinstance(out_epsg, (int, np.integer)) and not isinstance(
