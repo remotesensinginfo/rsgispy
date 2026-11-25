@@ -155,16 +155,16 @@ def run_workflow(
     import rsgispy.imagespectral.unmixing as unmix
 
     def unmix_pct(refl_img: str, out_base: str) -> str:
-        """FCLS unmixing, then fractions as % with no data -999."""
+        """FCLS unmixing (no data -9999), then fractions as % (no data -999)."""
         frac_img = f"{out_base}_fcls.tif"
         unmix.spec_unmix_fcls(refl_img, frac_img, em_df, use_pbar=use_pbar)
         pct_img = f"{out_base}_pct.tif"
         img_maths.band_maths(
             pct_img,
-            ", ".join(f"b1 > 0 ? 100 * {name} : -999" for name in em_df.columns),
-            [img_maths.BandDefn("b1", refl_img, 1)]
-            + [img_maths.BandDefn(name, frac_img, idx)
-               for idx, name in enumerate(em_df.columns, start=1)],
+            ", ".join(f"{name} == -9999 ? -999 : 100 * {name}"
+                      for name in em_df.columns),
+            [img_maths.BandDefn(name, frac_img, idx)
+             for idx, name in enumerate(em_df.columns, start=1)],
             band_names=list(em_df.columns), no_data_val=-999, use_pbar=use_pbar,
         )
         return pct_img
@@ -184,9 +184,9 @@ def run_workflow(
                                               use_pbar=use_pbar)
         with rasterio.open(frac_img) as src:
             fracs = src.read().reshape(src.count, -1)
+            vld = fracs[0] != src.nodata  # the pixels that were unmixed
         with rasterio.open(err_img) as src:
             rmse = src.read(1).ravel()
-        vld = np.any(fracs != 0, axis=0)
         err[method] = {"neg_pct": 100 * np.mean(np.any(fracs[:, vld] < 0, axis=0)),
                        "sum_min": fracs[:, vld].sum(axis=0).min(),
                        "sum_max": fracs[:, vld].sum(axis=0).max(),

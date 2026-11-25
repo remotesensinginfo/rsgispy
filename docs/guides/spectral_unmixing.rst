@@ -181,7 +181,7 @@ The function ``prep_refl`` then sets the no data value and band names, and
 clips valid values to a minimum of 1. This matters for water: dark water
 often has SWIR reflectance of zero or slightly below after atmospheric
 correction, and the unmixing functions skip any pixel with a band ``<= 0``
-(see `Common problems`_), which would leave holes in the lakes.
+(see `Common problems`_), which would leave no data holes in the lakes.
 
 .. literalinclude:: ../examples/spectral_unmixing.py
    :language: python
@@ -305,10 +305,10 @@ only in the constraints:
   TropWet assumes.
 
 The local function ``unmix_pct`` runs FCLS and converts the fractions to
-percentages with no data −999 (the unmixing output uses 0 for pixels it did
-not unmix, which is also a valid fraction; see `Common problems`_). It is
-reused for every date in Step 8, so all dates are unmixed with the same
-endmembers.
+percentages with no data −999. The unmixing functions write the pixels they
+did not unmix as no data (−9999 by default, set with ``out_no_data_val``), so
+a fraction of 0 is a valid result. ``unmix_pct`` is reused for every date in
+Step 8, so all dates are unmixed with the same endmembers.
 
 As a quality check, the script compares FCLS with the unconstrained model
 and calculates the model error with
@@ -616,15 +616,10 @@ Common problems
   needed, or choose the sand endmember another way (see
   `Other ways to choose endmembers`_).
 * **Holes in water bodies** — pixels with any band ``<= 0`` (common for
-  water in the SWIR, or partial no data) are not unmixed and are 0 in every
-  band. Clip valid values to a small positive value as ``prep_refl`` does,
-  and make sure masked pixels are no data in *every* band.
-* **Fractions of 0 shown as no data** — the unmixing outputs (and
-  :func:`~rsgispy.imagespectral.unmixing.rescale_unmixing_results`) set the
-  image no data value to 0, which is also a valid fraction, so a fraction of
-  exactly 0 is treated as no data by statistics and the mapping functions.
-  Convert to percentages with a separate no data value, as ``unmix_pct``
-  does, before summarising or mapping.
+  water in the SWIR, or partial no data) are not unmixed and are no data in
+  every band of the output. Clip valid values to a small positive value as
+  ``prep_refl`` does, and make sure masked pixels are no data in *every*
+  band.
 * **"Input image … has N bands, expected M"** — the endmember table must
   have one row per image band, in the same order. Subset the image (e.g.
   with :func:`rsgispy.imageutils.bands.select_img_bands`) or the table.

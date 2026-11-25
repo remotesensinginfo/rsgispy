@@ -314,7 +314,8 @@ def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
     assert out_exh.shape == (3, 2, 2)
     np.testing.assert_allclose(out_exh[:, 0, 0], [1.0, 0.0, 0.0], atol=1e-5)
     np.testing.assert_allclose(out_exh[:, 0, 1], [0.0, 1.0, 0.0], atol=1e-5)
-    np.testing.assert_allclose(out_exh[:, 1, 1], [0.0, 0.0, 0.0], atol=1e-6)
+    # The all-zero (zero-norm) pixel is not unmixed: no data.
+    np.testing.assert_allclose(out_exh[:, 1, 1], [-9999.0] * 3)
     assert abs((out_exh[0, 1, 0] + out_exh[1, 1, 0]) - 1.0) < 1e-5
 
     raw_coef_path = tmp_path / "raw_coef.tif"
@@ -330,7 +331,8 @@ def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
         resc = src.read()
     np.testing.assert_allclose(resc[:, 0, 0], [0.5, 0.5], atol=1e-6)
     np.testing.assert_allclose(resc[:, 0, 1], [0.0, 1.0], atol=1e-6)
-    np.testing.assert_allclose(resc[:, 1, 1], [0.0, 0.0], atol=1e-6)
+    # No positive fraction: cannot be normalised, so no data.
+    np.testing.assert_allclose(resc[:, 1, 1], [-9999.0, -9999.0])
 
     exact_coef = np.array(
         [[[1.0, 0.0], [0.5, 0.0]], [[0.0, 1.0], [0.5, 0.0]]],
@@ -362,7 +364,11 @@ def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
     with rasterio.open(err_path) as src:
         err = src.read()
         assert list(src.descriptions) == ["RMSE", "RMSPE", "Residual"]
-    np.testing.assert_allclose(err, 0.0, atol=1e-5)
+        assert src.nodata == -9999.0
+    np.testing.assert_allclose(err[:, 0, :], 0.0, atol=1e-5)
+    np.testing.assert_allclose(err[:, 1, 0], 0.0, atol=1e-5)
+    # The all-zero input pixel has no error estimate.
+    np.testing.assert_allclose(err[:, 1, 1], [-9999.0] * 3)
 
     em.calc_ppi(
         str(img_path),
@@ -588,8 +594,9 @@ def test_recommended_numpy_ucls_unmixer(tmp_path):
         assert list(src.descriptions) == ["Soil", "Veg", "Water"]
     np.testing.assert_allclose(res[:, 0, 0], [0.2, 0.5, 0.3], atol=1e-5)
     np.testing.assert_allclose(res[:, 0, 1], [0.8, 0.2, 0.0], atol=1e-5)
-    np.testing.assert_allclose(res[:, 1, 0], [0.0, 0.0, 0.0], atol=1e-6)
-    np.testing.assert_allclose(res[:, 1, 1], [0.0, 0.0, 0.0], atol=1e-6)
+    # Masked out and all-zero pixels are not unmixed: no data.
+    np.testing.assert_allclose(res[:, 1, 0], [-9999.0] * 3)
+    np.testing.assert_allclose(res[:, 1, 1], [-9999.0] * 3)
 
     out_nomask = tmp_path / "numpy_ucls_nomask.tif"
     su.spec_unmix_ucls(
@@ -606,7 +613,7 @@ def test_recommended_numpy_ucls_unmixer(tmp_path):
         res_nm = src.read()
         assert list(src.descriptions) == ["Soil", "Veg", "Water"]
     np.testing.assert_allclose(res_nm[:, 1, 0], [0.0, 0.0, 1.0], atol=1e-5)
-    np.testing.assert_allclose(res_nm[:, 1, 1], [0.0, 0.0, 0.0], atol=1e-6)
+    np.testing.assert_allclose(res_nm[:, 1, 1], [-9999.0] * 3)
 
 
 @pytest.mark.skipif(not su.HAVE_SCIPY, reason="scipy not installed")
@@ -687,6 +694,159 @@ def test_recommended_scipy_nnls_fcls_unmixers(tmp_path):
     with rasterio.open(out_fcls_scaled) as src:
         fcls_scaled = src.read()
     np.testing.assert_allclose(fcls_scaled, fcls_arr, atol=1e-5)
+
+
+@pytest.mark.skipif(not su.HAVE_SCIPY, reason="scipy not installed")
+def test_unmixing_no_data_outputs(tmp_path):
+    """Unmixing outputs use a distinct no data value; fractions of 0 are valid."""
+    # pylint: disable=too-many-locals,too-many-statements
+    img_path = tmp_path / "refl.tif"
+    msk_path = tmp_path / "msk.tif"
+    em1 = np.array([0.2, 0.4, 0.8], dtype=np.float64)
+    em2 = np.array([0.6, 0.2, 0.1], dtype=np.float64)
+    em_df = pd.DataFrame({"Soil": em1, "Veg": em2})
+
+    in_nd = 7.0
+    arr = np.zeros((3, 3, 3), dtype=np.float32)
+    arr[:, 0, 0] = em1  # pure: fractions [1, 0]
+    arr[:, 0, 1] = em2  # pure: fractions [0, 1]
+    arr[:, 0, 2] = 0.5 * em1 + 0.5 * em2
+    arr[:, 1, 0] = [0.3, 0.3, 0.0]  # a band <= 0: skipped
+    arr[:, 1, 1] = em1  # outside the valid mask: skipped
+    arr[:, 1, 2] = in_nd  # input no data: skipped
+    arr[:, 2, 0] = [np.nan, 0.3, 0.3]  # non-finite: skipped
+    arr[:, 2, 1] = [0.3, -0.1, 0.3]  # negative: skipped
+    arr[:, 2, 2] = em1
+    _write_raster(img_path, arr, origin=(0.0, 30.0), res=10.0, nodata=in_nd)
+    msk = np.ones((1, 3, 3), dtype=np.uint8)
+    msk[0, 1, 1] = 0
+    _write_raster(msk_path, msk, origin=(0.0, 30.0), res=10.0)
+    skipped = np.zeros((3, 3), dtype=bool)
+    skipped[1, :] = True
+    skipped[2, :2] = True
+
+    fcls_path = tmp_path / "fcls.tif"
+    su.spec_unmix_fcls(
+        str(img_path), str(fcls_path), em_df, str(msk_path), 1,
+        calc_stats=True, use_pbar=False,
+    )
+    with rasterio.open(fcls_path) as src:
+        assert src.nodatavals == (-9999.0, -9999.0)
+        fcls = src.read()
+        veg_min = float(src.tags(2)["STATISTICS_MINIMUM"])
+        soil_min = float(src.tags(1)["STATISTICS_MINIMUM"])
+    np.testing.assert_allclose(fcls[:, 0, 0], [1.0, 0.0], atol=1e-6)
+    np.testing.assert_allclose(fcls[:, 0, 1], [0.0, 1.0], atol=1e-6)
+    np.testing.assert_allclose(fcls[:, 0, 2], [0.5, 0.5], atol=1e-6)
+    assert np.all(fcls[:, skipped] == -9999.0)
+    # Fractions of exactly 0 are valid data and included in the statistics.
+    assert veg_min == pytest.approx(0.0, abs=1e-6)
+    assert soil_min == pytest.approx(0.0, abs=1e-6)
+
+    ucls_path = tmp_path / "ucls.tif"
+    su.spec_unmix_ucls(
+        str(img_path), str(ucls_path), em_df, out_no_data_val=-1.0,
+        calc_stats=False, use_pbar=False,
+    )
+    with rasterio.open(ucls_path) as src:
+        assert src.nodatavals == (-1.0, -1.0)
+        ucls = src.read()
+    no_msk_skip = skipped.copy()
+    no_msk_skip[1, 1] = False
+    assert np.all(ucls[:, no_msk_skip] == -1.0)
+    np.testing.assert_allclose(ucls[:, 1, 1], [1.0, 0.0], atol=1e-6)
+
+    # Rescaling: input no data and pixels without a positive fraction are no
+    # data; a clamped fraction of 0 stays valid.
+    raw_path = tmp_path / "raw.tif"
+    raw = np.array(
+        [[[0.6, 0.0, -9999.0, 0.3]], [[-0.2, 0.0, -9999.0, 0.9]]],
+        dtype=np.float32,
+    )
+    _write_raster(raw_path, raw, origin=(0.0, 10.0), res=10.0, nodata=-9999.0)
+    resc_path = tmp_path / "resc.tif"
+    su.rescale_unmixing_results(
+        str(raw_path), str(resc_path), calc_stats=True, use_pbar=False
+    )
+    with rasterio.open(resc_path) as src:
+        assert src.nodata == -9999.0
+        resc = src.read()
+        assert float(src.tags(2)["STATISTICS_MINIMUM"]) == pytest.approx(0.0)
+    np.testing.assert_allclose(
+        resc[:, 0, :],
+        [[1.0, -9999.0, -9999.0, 0.25], [0.0, -9999.0, -9999.0, 0.75]],
+        atol=1e-6,
+    )
+
+    # Predicted reflectance and errors are no data where unmixing was skipped.
+    pred_path = tmp_path / "pred.tif"
+    su.predict_refl_linear_unmixing(
+        str(fcls_path), str(pred_path), em_df, calc_stats=True, use_pbar=False
+    )
+    with rasterio.open(pred_path) as src:
+        assert src.nodata == -9999.0
+        pred = src.read()
+    np.testing.assert_allclose(pred[:, 0, 0], em1, atol=1e-6)
+    assert np.all(pred[:, skipped] == -9999.0)
+
+    err_path = tmp_path / "err.tif"
+    su.calc_unmixing_rmse_residual_err(
+        str(img_path), str(fcls_path), str(err_path), em_df,
+        calc_stats=True, use_pbar=False,
+    )
+    with rasterio.open(err_path) as src:
+        assert src.nodata == -9999.0
+        err = src.read()
+    np.testing.assert_allclose(err[:, 0, 0], 0.0, atol=1e-5)
+    assert np.all(err[:, skipped] == -9999.0)
+
+    # Multi-model summary: a model's no data pixels are never selected.
+    alt_path = tmp_path / "alt.tif"
+    alt = fcls.copy()
+    alt[:, 0, 0] = -9999.0
+    _write_raster(alt_path, alt, origin=(0.0, 30.0), res=10.0, nodata=-9999.0)
+    best_path = tmp_path / "best.tif"
+    ref_path = tmp_path / "best_ref.tif"
+    su.summarise_multi_endmember_linear_unmixing(
+        str(img_path), str(best_path), str(ref_path),
+        [em.ImageEndmemberInfo(str(alt_path), em_df),
+         em.ImageEndmemberInfo(str(fcls_path), em_df)],
+        out_no_data_val=-9999.0, calc_stats=True, use_pbar=False,
+    )
+    with rasterio.open(best_path) as src:
+        assert src.nodata == -9999.0
+        best = src.read()
+    with rasterio.open(ref_path) as src:
+        ref = src.read(1)
+    assert ref[0, 0] == 2 and ref[0, 1] == 1
+    np.testing.assert_allclose(best[:, 0, 0], [1.0, 0.0], atol=1e-6)
+    assert np.all(ref[skipped] == 0)
+    assert np.all(best[:, skipped] == -9999.0)
+
+    # Exhaustive search: no data where not unmixed, sized to the data type.
+    exh_path = tmp_path / "exh.tif"
+    su.exhcon_linear_spec_unmix(
+        str(img_path), str(exh_path), em_df, step_res=0.1, use_pbar=False
+    )
+    with rasterio.open(exh_path) as src:
+        assert src.nodata == -9999.0
+        exh = src.read()
+    np.testing.assert_allclose(exh[:2, 0, 0], [1.0, 0.0], atol=1e-5)
+    assert np.all(exh[:, 1, 2] == -9999.0)  # input no data
+    assert np.all(exh[:, 2, 0] == -9999.0)  # non-finite
+    exh_u8 = tmp_path / "exh_u8.tif"
+    su.exhcon_linear_spec_unmix(
+        str(img_path), str(exh_u8), em_df, step_res=0.1, gain=100.0,
+        datatype=rsgispy.TYPE_8UINT, use_pbar=False,
+    )
+    with rasterio.open(exh_u8) as src:
+        assert src.nodata == 255.0
+        assert np.all(src.read()[:, 1, 2] == 255)
+    with pytest.raises(rsgispy.RSGISPyException):
+        su.exhcon_linear_spec_unmix(
+            str(img_path), str(exh_u8), em_df, datatype=rsgispy.TYPE_8UINT,
+            out_no_data_val=-9999.0, use_pbar=False,
+        )
 
 
 @pytest.mark.skipif(not su.HAVE_SCIPY, reason="scipy not installed")

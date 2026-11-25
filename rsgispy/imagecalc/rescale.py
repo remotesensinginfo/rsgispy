@@ -4,6 +4,7 @@ pixel rescaling utilities using ``rasterio``.
 """
 
 from contextlib import ExitStack
+import math
 import os
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
@@ -32,11 +33,13 @@ from rsgispy.imageprocess import (
     cast_result_block,
     compute_spatial_intersection,
     ensure_file_exists,
+    fits_dtype_range,
     iter_dataset_windows,
     open_multi_image_datasets,
     open_output_dataset,
     validate_band_index,
 )
+from rsgispy.imageprocess import resolve_out_nodata as _ip_resolve_out_nodata
 from rsgispy.imageutils.metadata import get_band_names, set_band_names
 from rsgispy.tools.files import ensure_parent_dir
 from rsgispy.tools.jsonio import read_json_to_dict, write_dict_to_json
@@ -60,10 +63,19 @@ class ImageBandRescale:
     :param band: 1-based image band index.
     :param in_min: Input image band minimum value for rescaling.
     :param in_max: Input image band maximum value for rescaling.
-    :param no_data_val: No-data value in the input image band.
+    :param no_data_val: No-data value of the input image band. If ``None``
+                        (the default), the input band's own no-data value is
+                        used; if the band has none, no value is masked
+                        (non-finite values are always masked). Give a value
+                        only to override the band's no-data value.
     :param out_min: Output image band minimum value after rescaling.
     :param out_max: Output image band maximum value after rescaling.
-    :param out_no_data: No-data value in the output image band.
+    :param out_no_data: Value written to the output for masked pixels and
+                        recorded as the output band's no-data value. If
+                        ``None`` (the default), ``-9999`` is used, or for
+                        integer outputs that cannot hold it, the data type's
+                        maximum (unsigned) or minimum (signed) value. Choose a
+                        value outside ``[out_min, out_max]``.
     """
 
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-few-public-methods
@@ -72,10 +84,10 @@ class ImageBandRescale:
         band: int = 0,
         in_min: float = 0.0,
         in_max: float = 0.0,
-        no_data_val: float = 0.0,
+        no_data_val: Optional[float] = None,
         out_min: float = 0.0,
         out_max: float = 0.0,
-        out_no_data: float = 0.0,
+        out_no_data: Optional[float] = None,
     ) -> None:
         self.band = band
         self.in_min = in_min
@@ -93,6 +105,39 @@ class ImageBandRescale:
 
     def __repr__(self) -> str:
         return self.__str__()
+
+
+def _resolve_rescale_out_nodata(
+    out_no_data: Optional[float], out_np_dtype: np.dtype, band: int
+) -> float:
+    """
+    Resolve the output no-data value of one band for :func:`rescale_img_pxl_vals`.
+
+    ``None`` gives ``-9999`` (or, for integer data types that cannot hold it,
+    the type's maximum for unsigned and minimum for signed types). An explicit
+    value must be representable by ``out_np_dtype``.
+    """
+    out_np_dtype = np.dtype(out_np_dtype)
+    if out_no_data is None:
+        # -9999, clamped to the max (unsigned) or min (signed) integer value.
+        dflt_nd = _ip_resolve_out_nodata(
+            out_np_dtype, -9999.0, clamp_int=True, unsigned_clamp="max"
+        )
+        return float(dflt_nd)
+    nd_val = float(out_no_data)
+    if math.isnan(nd_val) and np.issubdtype(out_np_dtype, np.floating):
+        return nd_val
+    if not fits_dtype_range(nd_val, out_np_dtype):
+        raise rsgispy.RSGISPyException(
+            f"out_no_data ({out_no_data}) for band {band} cannot be represented "
+            f"by the output data type '{out_np_dtype.name}'."
+        )
+    return nd_val
+
+
+def _same_nodata(val_a: float, val_b: float) -> bool:
+    """Return ``True`` if two no-data values are equal (``NaN`` equals ``NaN``)."""
+    return val_a == val_b or (math.isnan(val_a) and math.isnan(val_b))
 
 
 def calc_img_rescale(
@@ -222,6 +267,13 @@ def rescale_img_pxl_vals(
     Rescale image pixel values per band using a sequence of
     :class:`ImageBandRescale` specifications.
 
+    Pixels equal to a band's input no-data value (by default the value stored
+    in ``input_img``) or non-finite are written as that band's
+    ``out_no_data``, which is also recorded as the output no-data value.
+    Formats such as GeoTIFF store one no-data value for all bands, so they
+    need the same ``out_no_data`` for every band; an exception is raised
+    otherwise.
+
     :param input_img: Path to the input image file.
     :param output_img: Path to the output image file.
     :param band_rescale_objs: Sequence of :class:`ImageBandRescale` objects
@@ -240,15 +292,15 @@ def rescale_img_pxl_vals(
         import rsgispy
         import rsgispy.imagecalc.rescale
 
+        # Reflectance x 10000 to 0-1; masks the image's own no-data value
+        # and writes -9999 (the default out_no_data) as the output no data
         rescale_objs = [
             rsgispy.imagecalc.rescale.ImageBandRescale(
                 band=1,
                 in_min=0.0,
                 in_max=10000.0,
-                no_data_val=0.0,
                 out_min=0.0,
                 out_max=1.0,
-                out_no_data=-9999.0,
             ),
         ]
         rsgispy.imagecalc.rescale.rescale_img_pxl_vals(
@@ -279,6 +331,10 @@ def rescale_img_pxl_vals(
                 f"Band {rescale_obj.band} has in_max == in_min ({rescale_obj.in_min})."
             )
         rescale_dict[rescale_obj.band - 1] = rescale_obj
+    out_nds = {
+        b_idx: _resolve_rescale_out_nodata(cfg.out_no_data, out_np_dtype, b_idx + 1)
+        for b_idx, cfg in rescale_dict.items()
+    }
 
     with ExitStack() as stack:
         datasets, _ = open_multi_image_datasets(stack, [input_img])
@@ -289,6 +345,20 @@ def rescale_img_pxl_vals(
                 raise rsgispy.RSGISPyException(
                     f"Missing ImageBandRescale specification for band {b_idx + 1}."
                 )
+        band_out_nds = [out_nds[b_idx] for b_idx in range(n_bands)]
+        single_nd = all(_same_nodata(nd, band_out_nds[0]) for nd in band_out_nds)
+        if not single_nd and gdalformat.upper().strip() in ("GTIFF", "COG"):
+            raise rsgispy.RSGISPyException(
+                f"The bands have different out_no_data values ({band_out_nds}), "
+                f"but {gdalformat} stores one no-data value for all bands: use "
+                "the same out_no_data for every band or another format."
+            )
+        in_nds = [
+            float(rescale_dict[b_idx].no_data_val)
+            if rescale_dict[b_idx].no_data_val is not None
+            else src.nodatavals[b_idx]
+            for b_idx in range(n_bands)
+        ]
 
         grid = compute_spatial_intersection(datasets)
         dst = open_output_dataset(
@@ -300,6 +370,10 @@ def rescale_img_pxl_vals(
             count=n_bands,
             creation_opts=creation_opts,
         )
+        if single_nd:
+            dst.nodata = band_out_nds[0]
+        else:
+            dst._set_nodatavals(band_out_nds)  # pylint: disable=protected-access
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
@@ -312,7 +386,7 @@ def rescale_img_pxl_vals(
                 cfg = rescale_dict[b_idx]
                 band_arr = in_block[b_idx]
                 nodata_mask = ~build_valid_mask(
-                    band_arr, no_data_val=float(cfg.no_data_val)
+                    band_arr, no_data_val=in_nds[b_idx]
                 )
 
                 scaled = (
@@ -324,7 +398,7 @@ def rescale_img_pxl_vals(
                     high = max(cfg.out_min, cfg.out_max)
                     scaled = np.clip(scaled, low, high)
 
-                res = np.where(nodata_mask, cfg.out_no_data, scaled)
+                res = np.where(nodata_mask, band_out_nds[b_idx], scaled)
                 out_bands.append(
                     cast_result_block(res, win_h, win_w, out_np_dtype)
                 )
