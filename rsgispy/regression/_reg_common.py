@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 """
 Shared internal configuration coercion, univariate/multivariate sample
 preparation, regression metric calculation, block-wise raster regression, and
@@ -54,6 +55,8 @@ from rsgispy.tools._ml_data import (
     resolve_apply_band_specs_from_seq,
     resolve_estimator_feature_cols as _resolve_estimator_feature_cols,
     resolve_feature_cols as _tools_resolve_feature_cols,
+    seg_allows_nan,
+    seg_model_features,
 )
 from rsgispy.tools._ml_tune import HAVE_OPTUNA
 from rsgispy.tools._sklearn import (
@@ -177,7 +180,12 @@ def resolve_reg_feature_cols(
     feature_cols: Optional[Sequence[str]],
     excluded_cols: Sequence[str],
 ) -> List[str]:
-    """Determine and validate ordered feature columns for regression tables."""
+    """
+    Determine and validate ordered feature columns for regression tables
+    (for segment-based configs, the ``seg_info`` model features by default).
+    """
+    if feature_cols is None:
+        feature_cols = seg_model_features(cfg)
     return _tools_resolve_feature_cols(
         cfg_img_band_info=cfg.img_band_info if cfg is not None else None,
         df=df,
@@ -191,11 +199,13 @@ def extract_reg_xy(
     feature_cols: Sequence[str],
     target_cols: Sequence[str],
     label: str,
+    allow_nan: bool = False,
 ) -> Tuple[pd.DataFrame, np.ndarray]:
     """
     Extract feature DataFrame ``X`` and finite float target array ``y``
     (1D for univariate regression, 2D ``(n_samples, n_targets)`` for
-    multivariate regression).
+    multivariate regression). NaN feature values are only accepted when
+    ``allow_nan=True``.
     """
     if len(df) == 0:
         raise rsgispy.RSGISPyException(f"{label} sample table is empty.")
@@ -213,7 +223,8 @@ def extract_reg_xy(
 
     x_df = df[list(feature_cols)].copy()
     x_vals = x_df.to_numpy(dtype=np.float64)
-    if not np.all(np.isfinite(x_vals)):
+    bad_vals = np.isinf(x_vals) if allow_nan else ~np.isfinite(x_vals)
+    if np.any(bad_vals):
         raise rsgispy.RSGISPyException(
             f"{label} contains NaN or infinite values in feature columns."
         )
@@ -271,7 +282,9 @@ def prepare_reg_data(
             )
         return df, feat_cols, eff_targets, x_df, None
 
-    x_df, y_arr = extract_reg_xy(df, feat_cols, eff_targets, label)
+    x_df, y_arr = extract_reg_xy(
+        df, feat_cols, eff_targets, label, allow_nan=seg_allows_nan(cfg)
+    )
     return df, feat_cols, eff_targets, x_df, y_arr
 
 
@@ -293,6 +306,7 @@ def prepare_reg_splits(
 ]:
     """Load config, resolve feature/target columns, and extract splits."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals
     cfg, cfg_targets = coerce_reg_config(
         reg_cfg, target_cols=target_cols, allow_none=False
     )
@@ -304,19 +318,22 @@ def prepare_reg_splits(
         cfg, train_df, feature_cols, excluded_cols=eff_targets
     )
     train_x, train_y = extract_reg_xy(
-        train_df, feat_cols, eff_targets, "train_data"
+        train_df, feat_cols, eff_targets, "train_data", allow_nan=seg_allows_nan(cfg)
     )
 
     test_xy: Optional[Tuple[pd.DataFrame, np.ndarray]] = None
     if test_data is not None:
         test_df = load_samples_df(test_data, "test_data")
-        test_xy = extract_reg_xy(test_df, feat_cols, eff_targets, "test_data")
+        test_xy = extract_reg_xy(
+            test_df, feat_cols, eff_targets, "test_data", allow_nan=seg_allows_nan(cfg)
+        )
 
     valid_xy: Optional[Tuple[pd.DataFrame, np.ndarray]] = None
     if valid_data is not None:
         valid_df = load_samples_df(valid_data, "valid_data")
         valid_xy = extract_reg_xy(
-            valid_df, feat_cols, eff_targets, "valid_data"
+            valid_df, feat_cols, eff_targets, "valid_data",
+            allow_nan=seg_allows_nan(cfg),
         )
 
     return cfg, eff_targets, feat_cols, train_x, train_y, test_xy, valid_xy
@@ -1023,4 +1040,168 @@ def apply_gbdt_regressor(
             creation_opts=creation_opts,
             use_pbar=use_pbar,
             predict_kwargs=predict_kwargs,
+        )
+
+
+def apply_regressor_vector(
+    reg_cfg: RegConfigInput,
+    estimator: Any,
+    out_vec_file: Union[str, os.PathLike],
+    *,
+    target_cols: TargetColsInput = None,
+    seg_info: Optional[Any] = None,
+    in_vec_file: Optional[Union[str, os.PathLike]] = None,
+    in_vec_lyr: Optional[str] = None,
+    geom_vec_file: Optional[Union[str, os.PathLike]] = None,
+    geom_vec_lyr: Optional[str] = None,
+    out_vec_lyr: Optional[str] = None,
+    out_format: Optional[str] = None,
+    out_compress: Optional[Union[str, bool]] = "snappy",
+    copy_cols: Optional[Sequence[str]] = None,
+    out_prefix: str = "pred_",
+    out_quantiles: Optional[Sequence[float]] = None,
+    out_no_data_val: float = np.nan,
+    missing: Optional[str] = None,
+    fill_value: Optional[float] = None,
+    scaler: Optional[Any] = None,
+    chunk_size: int = 100_000,
+    predict_kwargs: Optional[Mapping[str, Any]] = None,
+    model_file: Optional[Union[str, os.PathLike]] = None,
+    overwrite: bool = False,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Shared chunked engine applying a fitted (univariate or multi-target)
+    regressor to a segment feature layer (or attribute table) and writing a
+    vector layer with one ``<prefix><target>`` column per target, plus
+    optional ``<prefix><target>_q<quantile>`` columns from the per-tree
+    predictions of tree ensembles (e.g. random forests). Only the ID, valid
+    flag and model feature columns are read for prediction.
+    """
+    # pylint: disable=too-many-arguments,too-many-locals,too-many-statements
+    # pylint: disable=import-outside-toplevel
+    from rsgispy.ml.segments import resolve_seg_info
+    from rsgispy.ml.vector import (
+        build_provenance,
+        map_vector_chunks,
+        model_input,
+        prepare_feature_matrix,
+    )
+
+    p_kwargs = dict(predict_kwargs) if predict_kwargs else {}
+    check_sklearn_estimator_fitted(estimator, label="regressor")
+    cfg, cfg_targets = coerce_reg_config(reg_cfg, target_cols=target_cols)
+    targets = list(cfg_targets or [])
+    if not targets:
+        raise rsgispy.RSGISPyException("No target columns are defined.")
+    seg = resolve_seg_info(cfg, seg_info)
+    q_list = [float(q) for q in (out_quantiles or [])]
+    if q_list:
+        if any(not 0.0 < q < 1.0 for q in q_list):
+            raise rsgispy.RSGISPyException("out_quantiles must be in (0, 1).")
+        if not hasattr(estimator, "estimators_") or len(targets) != 1:
+            raise rsgispy.RSGISPyException(
+                "out_quantiles requires a univariate tree ensemble exposing "
+                "estimators_ (e.g. RandomForestRegressor, ExtraTreesRegressor)."
+            )
+    est_names = getattr(estimator, "feature_names_in_", None)
+    feat_cols = (
+        [str(c) for c in est_names] if est_names is not None else seg.model_features
+    )
+    eff_missing = seg.missing if missing is None else missing
+    eff_fill = seg.fill_value if fill_value is None else float(fill_value)
+    if in_vec_file is None:
+        in_path, in_lyr = seg.feature_source
+        if seg.feat_table_file is not None and geom_vec_file is None:
+            geom_vec_file, geom_vec_lyr = seg.seg_vec_file, seg.seg_vec_lyr
+    else:
+        in_path, in_lyr = os.fspath(in_vec_file), in_vec_lyr
+    out_names = [f"{out_prefix}{t}" for t in targets]
+    q_names = [f"{out_prefix}{targets[0]}_q{q:g}" for q in q_list]
+
+    def _chunk(df: pd.DataFrame) -> pd.DataFrame:
+        x_df, row_ok = prepare_feature_matrix(
+            df, feat_cols, seg.valid_col, eff_missing, eff_fill,
+            seg.feat_no_data_val, scaler,
+        )
+        out = np.full((len(df), len(out_names)), out_no_data_val, dtype=np.float64)
+        q_out = np.full((len(df), len(q_names)), out_no_data_val, dtype=np.float64)
+        if np.any(row_ok):
+            x_in = model_input(estimator, x_df)
+            pred = np.asarray(estimator.predict(x_in, **p_kwargs), dtype=np.float64)
+            pred = pred.reshape(pred.shape[0], -1)
+            if pred.shape[1] != len(out_names):
+                raise rsgispy.RSGISPyException(
+                    f"The regressor returned {pred.shape[1]} outputs for "
+                    f"{len(out_names)} target(s)."
+                )
+            out[row_ok] = pred
+            if q_list:
+                x_arr = np.asarray(x_df.to_numpy())
+                tree_preds = np.stack(
+                    [np.asarray(t.predict(x_arr)).ravel() for t in estimator.estimators_]
+                )
+                q_out[row_ok] = np.quantile(tree_preds, q_list, axis=0).T
+        res = pd.DataFrame(out, columns=out_names)
+        for q_idx, q_name in enumerate(q_names):
+            res[q_name] = q_out[:, q_idx]
+        return res
+
+    meta = build_provenance(
+        model=estimator,
+        model_file=model_file,
+        config_file=reg_cfg if isinstance(reg_cfg, (str, os.PathLike)) else None,
+        feature_cols=feat_cols,
+        extra={"task": "regression", "targets": targets},
+    )
+    map_vector_chunks(
+        in_path,
+        out_vec_file,
+        list(dict.fromkeys([seg.valid_col] + feat_cols)),
+        _chunk,
+        in_vec_lyr=in_lyr,
+        geom_vec_file=geom_vec_file,
+        geom_vec_lyr=geom_vec_lyr,
+        id_col=seg.id_col,
+        copy_cols=copy_cols,
+        chunk_size=chunk_size,
+        out_vec_lyr=out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+        metadata=meta,
+        overwrite=overwrite,
+        use_pbar=use_pbar,
+    )
+
+
+def apply_gbdt_regressor_segments(
+    backend: GBDTRegBackendSpec,
+    func_name: str,
+    reg_cfg: RegConfigInput,
+    regressor: Union[Any, str, os.PathLike],
+    out_vec_file: Union[str, os.PathLike],
+    *,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
+    **kwargs: Any,
+) -> None:
+    """
+    Apply a trained GBDT regressor to a segment feature layer in chunks (see
+    :func:`apply_regressor_vector`).
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    _check_reg_backend_available(backend, func_name)
+    check_sklearn_available(func_name)
+    gpu_active, eff_gpu_id = _tools_resolve_gbdt_gpu(
+        backend.name, backend.gpu_available, use_gpu, gpu_device_id
+    )
+    is_path = isinstance(regressor, (str, os.PathLike))
+    estimator = backend.load_model(regressor) if is_path else regressor
+    if is_path and kwargs.get("model_file") is None:
+        kwargs["model_file"] = regressor
+    with _prepared_gbdt_predict_estimator(
+        backend, estimator, gpu_active, eff_gpu_id
+    ) as (eval_est, predict_kwargs):
+        apply_regressor_vector(
+            reg_cfg, eval_est, out_vec_file, predict_kwargs=predict_kwargs, **kwargs
         )

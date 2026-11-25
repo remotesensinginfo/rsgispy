@@ -490,6 +490,31 @@ def test_polygonise_and_extract_segment_stats(tmp_path):
     assert os.path.exists(vec_out)
 
 
+def test_polygonise_segments_tiled_options(tmp_path):
+    """Tiled / multi-core polygonisation gives the same segments, sorted by ID."""
+    rng = np.random.default_rng(0)
+    lbl = np.kron(rng.integers(0, 40, size=(9, 11)), np.ones((5, 5), dtype=np.int64))
+    seg_img = str(tmp_path / "segs.tif")
+    _write_multiband_raster(seg_img, lbl.astype(np.uint32), nodata=0)
+    ref = rseg.polygonise_segments(seg_img, tile_size=4096)
+    assert ref["seg_id"].is_monotonic_increasing
+    assert 0 not in set(ref["seg_id"])
+    for opts in ({"tile_size": 7}, {"tile_size": 6, "n_jobs": 2, "backend": "rasterio"}):
+        gdf = rseg.polygonise_segments(seg_img, **opts)
+        assert gdf["seg_id"].tolist() == ref["seg_id"].tolist()
+        assert all(a.equals(b) for a, b in zip(gdf.geometry, ref.geometry))
+
+    # A new file is streamed to disk; an existing GPKG gets an extra layer.
+    out_gpkg = str(tmp_path / "segs.gpkg")
+    rseg.polygonise_segments(seg_img, out_gpkg, out_vec_lyr="a", tile_size=8)
+    rseg.polygonise_segments(seg_img, out_gpkg, out_vec_lyr="b", tile_size=8)
+    for lyr in ("a", "b"):
+        gdf = gpd.read_file(out_gpkg, layer=lyr)
+        assert gdf["seg_id"].tolist() == ref["seg_id"].tolist()
+    with pytest.raises(rsgispy.RSGISPyException):
+        rseg.polygonise_segments(seg_img, out_gpkg, out_vec_lyr="a")
+
+
 def test_polygonise_uint32_legacy_rasterio_compat(tmp_path, monkeypatch):
     """Verify uint32 label rasters polygonise cleanly even under rasterio < 1.4 dtype rules."""
     orig_shapes = rasterio.features.shapes

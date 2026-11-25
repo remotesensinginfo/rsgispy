@@ -264,6 +264,28 @@ def load_samples_df(samples: SamplesInput, label: str) -> pd.DataFrame:
     )
 
 
+def seg_model_features(cfg: Any) -> Optional[List[str]]:
+    """
+    Return the ordered model feature columns from a config's segmentation
+    settings (``cfg.seg_info``), or ``None`` for pixel-based configs.
+    """
+    seg_info = getattr(cfg, "seg_info", None)
+    if seg_info is None:
+        return None
+    feats = seg_info.model_features
+    return list(feats) if feats else None
+
+
+def seg_allows_nan(cfg: Any) -> bool:
+    """
+    Return ``True`` when a config's segmentation settings use the ``'nan'``
+    missing feature policy (NaN features are passed to the model, e.g. for
+    XGBoost, LightGBM and CatBoost which handle missing values natively).
+    """
+    seg_info = getattr(cfg, "seg_info", None)
+    return seg_info is not None and getattr(seg_info, "missing", None) == "nan"
+
+
 def resolve_feature_cols(
     cfg_img_band_info: Optional[Sequence[ImageBandInfo]],
     df: pd.DataFrame,

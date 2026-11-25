@@ -83,6 +83,17 @@ Submodules:
   :func:`~rsgispy.regression.regfeatures.calc_feature_response_curves`,
   :func:`~rsgispy.regression.regfeatures.calc_shap_feature_contributions`,
   :func:`~rsgispy.regression.regfeatures.calc_salib_feature_sensitivity`).
+* :mod:`rsgispy.regression.regsegments` — Object-based (segment) regression:
+  segment features
+  (:func:`~rsgispy.regression.regsegments.create_reg_segment_features`),
+  per-segment reference value aggregation and group-aware splitting
+  (:func:`~rsgispy.regression.regsegments.extract_reg_segment_samples`,
+  :func:`~rsgispy.regression.regsegments.split_reg_segment_samples`,
+  :func:`~rsgispy.regression.regsegments.extract_and_split_reg_segment_samples`),
+  chunked regressor application to segment vector layers
+  (:func:`~rsgispy.regression.regsegments.apply_sklearn_regressor_segments`
+  and the XGBoost, LightGBM and CatBoost equivalents) and rasterising
+  (:func:`~rsgispy.regression.regsegments.rasterise_segment_regression`).
 * :mod:`rsgispy.regression.regmetrics` — Regression accuracy metrics, predicted
   raster point sampling, bootstrap confidence intervals, and predicted vs
   observed / residual diagnostic plots

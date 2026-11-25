@@ -111,8 +111,10 @@ def synthetic_stack_files(tmp_path):
 
 
 def test_ml_package_exports_submodules_only():
-    """rsgispy.ml exports only its 5 submodules."""
-    assert ml.__all__ == ["stack", "scaling", "predict", "cv", "tune"]
+    """rsgispy.ml exports only its 7 submodules."""
+    assert ml.__all__ == [
+        "stack", "scaling", "predict", "cv", "tune", "vector", "segments"
+    ]
     for sub in ml.__all__:
         assert hasattr(ml, sub)
 

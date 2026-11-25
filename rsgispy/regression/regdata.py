@@ -138,6 +138,10 @@ class RegressionConfig:
     :param vec_file: Optional vector file path (points or polygons) containing
                      reference target attribute values.
     :param vec_lyr: Optional vector layer name within ``vec_file``.
+    :param seg_info: Optional segmentation settings for object-based
+                     (segment) regression
+                     (:class:`~rsgispy.ml.segments.SegmentFeatureConfig` or
+                     its dictionary form). Omitted from the JSON when ``None``.
     """
 
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -147,6 +151,7 @@ class RegressionConfig:
         target_cols: Union[str, Sequence[str]],
         vec_file: Optional[Union[str, os.PathLike]] = None,
         vec_lyr: Optional[str] = None,
+        seg_info: Optional[Any] = None,
     ):
         self.img_band_info: List[ImageBandInfo] = _normalise_img_band_info_list(
             img_band_info
@@ -156,6 +161,10 @@ class RegressionConfig:
             os.fspath(vec_file) if vec_file is not None else None
         )
         self.vec_lyr: Optional[str] = vec_lyr
+        # pylint: disable=import-outside-toplevel
+        from rsgispy.ml.segments import coerce_seg_info
+
+        self.seg_info: Optional[Any] = coerce_seg_info(seg_info)
 
     @property
     def n_targets(self) -> int:
@@ -195,13 +204,16 @@ class RegressionConfig:
 
     def to_dict(self) -> Dict[str, Any]:
         """Return a JSON-serialisable dictionary representation."""
-        return {
+        out: Dict[str, Any] = {
             "version": 1,
             "target_cols": list(self.target_cols),
             "vec_file": self.vec_file,
             "vec_lyr": self.vec_lyr,
             "img_band_info": [info.to_dict() for info in self.img_band_info],
         }
+        if self.seg_info is not None:
+            out["seg_info"] = self.seg_info.to_dict()
+        return out
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "RegressionConfig":
@@ -220,6 +232,7 @@ class RegressionConfig:
             target_cols=data["target_cols"],
             vec_file=data.get("vec_file"),
             vec_lyr=data.get("vec_lyr"),
+            seg_info=data.get("seg_info"),
         )
 
     def save(self, out_json_file: Union[str, os.PathLike]) -> None:
@@ -239,13 +252,14 @@ class RegressionConfig:
             and self.target_cols == other.target_cols
             and self.vec_file == other.vec_file
             and self.vec_lyr == other.vec_lyr
+            and self.seg_info == other.seg_info
         )
 
     def __repr__(self) -> str:
         return (
             f"RegressionConfig(img_band_info={self.img_band_info!r}, "
             f"target_cols={self.target_cols!r}, vec_file={self.vec_file!r}, "
-            f"vec_lyr={self.vec_lyr!r})"
+            f"vec_lyr={self.vec_lyr!r}, seg_info={self.seg_info!r})"
         )
 
 
@@ -271,6 +285,7 @@ def _coerce_config(
                 else img_band_info.vec_file
             ),
             vec_lyr=vec_lyr if vec_lyr is not None else img_band_info.vec_lyr,
+            seg_info=img_band_info.seg_info,
         )
     if target_cols is None:
         raise rsgispy.RSGISPyException(
