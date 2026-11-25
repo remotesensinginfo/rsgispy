@@ -19,6 +19,7 @@ import pandas as pd
 
 import rsgispy
 from rsgispy.classification._helpers import (
+    seg_allows_nan,
     ClsConfigInput,
     SamplesInput,
     calc_split_metrics,
@@ -154,7 +155,8 @@ def _prepare_classification_data(
         valid_ids = None
 
     x_df, y_arr = extract_xy(
-        df, feat_cols, target_col, label, valid_ids=valid_ids
+        df, feat_cols, target_col, label, valid_ids=valid_ids,
+        allow_nan=seg_allows_nan(cfg),
     )
     return (
         df,

@@ -368,6 +368,16 @@ def resolve_img_band_info(
     return _shared_resolve_img_band_info(img_band_info)
 
 
+def _coerce_seg_info(seg_info: Optional[Any]) -> Optional[Any]:
+    """Coerce a ``seg_info`` mapping into a ``SegmentFeatureConfig`` (or ``None``)."""
+    if seg_info is None:
+        return None
+    # pylint: disable=import-outside-toplevel
+    from rsgispy.ml.segments import coerce_seg_info
+
+    return coerce_seg_info(seg_info)
+
+
 class ClassificationConfig:
     """
     Container storing image/band definitions (:class:`ImageBandInfo`) and
@@ -385,6 +395,10 @@ class ClassificationConfig:
                             (Default = ``'internal_cls_id'``).
     :param class_name_col: Column name for class names in sample tables
                            (Default = ``'class_name'``).
+    :param seg_info: Optional segmentation settings for object-based
+                     (segment) classification
+                     (:class:`~rsgispy.ml.segments.SegmentFeatureConfig` or
+                     its dictionary form). Omitted from the JSON when ``None``.
     """
 
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -395,6 +409,7 @@ class ClassificationConfig:
         out_id_col: str = "out_cls_id",
         internal_id_col: str = "internal_cls_id",
         class_name_col: str = "class_name",
+        seg_info: Optional[Any] = None,
     ):
         self.img_band_info: List[ImageBandInfo] = _normalise_img_band_info_list(
             img_band_info
@@ -415,6 +430,7 @@ class ClassificationConfig:
         self.out_id_col: str = str(out_id_col)
         self.internal_id_col: str = str(internal_id_col)
         self.class_name_col: str = str(class_name_col)
+        self.seg_info: Optional[Any] = _coerce_seg_info(seg_info)
 
     def get_internal_to_out_lut(self) -> Dict[int, int]:
         """Return mapping ``{internal_id: out_id}`` across all classes."""
@@ -492,7 +508,7 @@ class ClassificationConfig:
 
     def to_dict(self) -> Dict[str, Any]:
         """Return a JSON-serialisable dictionary representation."""
-        return {
+        out: Dict[str, Any] = {
             "version": 1,
             "out_id_col": self.out_id_col,
             "internal_id_col": self.internal_id_col,
@@ -503,6 +519,9 @@ class ClassificationConfig:
                 for cls_name, obj in self.class_info.items()
             },
         }
+        if self.seg_info is not None:
+            out["seg_info"] = self.seg_info.to_dict()
+        return out
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ClassificationConfig":
@@ -522,6 +541,7 @@ class ClassificationConfig:
             out_id_col=data.get("out_id_col", "out_cls_id"),
             internal_id_col=data.get("internal_id_col", "internal_cls_id"),
             class_name_col=data.get("class_name_col", "class_name"),
+            seg_info=data.get("seg_info"),
         )
 
     def save(self, out_json_file: Union[str, os.PathLike]) -> None:
@@ -544,6 +564,7 @@ class ClassificationConfig:
             and self.out_id_col == other.out_id_col
             and self.internal_id_col == other.internal_id_col
             and self.class_name_col == other.class_name_col
+            and self.seg_info == other.seg_info
         )
 
     def __repr__(self) -> str:
@@ -552,7 +573,8 @@ class ClassificationConfig:
             f"class_info={self.class_info!r}, "
             f"out_id_col={self.out_id_col!r}, "
             f"internal_id_col={self.internal_id_col!r}, "
-            f"class_name_col={self.class_name_col!r})"
+            f"class_name_col={self.class_name_col!r}, "
+            f"seg_info={self.seg_info!r})"
         )
 
 
@@ -588,6 +610,7 @@ def _coerce_config(
                 if class_name_col is not None
                 else img_band_info.class_name_col
             ),
+            seg_info=img_band_info.seg_info,
         )
     if class_info is None:
         raise rsgispy.RSGISPyException(

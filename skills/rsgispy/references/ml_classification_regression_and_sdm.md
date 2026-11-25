@@ -35,6 +35,18 @@ Covers `rsgispy.ml.*`, `rsgispy.classification.*`, `rsgispy.regression.*`, and `
 - `predict_proba_raster(estimator, feature_stack, output_img, ..., class_names=None, out_class_img=None, out_entropy_img=None, lut=None, scale_to_pct=False, ...)`
 - `predict_quantiles_raster(estimators_or_model, feature_stack, output_img, quantiles=(0.05, 0.5, 0.95), ..., conformal_residuals=None, alpha=0.1, ...)`
 
+### Chunked Vector I/O & Prediction (`rsgispy.ml.vector`)
+- `read_vec_layer_info(vec_file, vec_lyr=None) -> VecLayerInfo`, `iter_vec_batches(vec_file, columns=None, vec_lyr=None, read_geometry=False, chunk_size=100_000)` (Arrow), `iter_vec_chunks(...)` (pandas, never geometry).
+- `ChunkedVecWriter(out_file, out_vec_lyr=None, out_format=None, out_compress='snappy', geom_col='geometry', crs=None, geometry_type='Unknown', geo_metadata=None, metadata=None, overwrite=False)` — GeoParquet via pyarrow / OGR via pyogrio Arrow, WKB pass-through, temp file + atomic move, provenance metadata.
+- `map_vector_chunks(in_vec_file, out_vec_file, read_cols, chunk_fn, *, in_vec_lyr=None, geom_vec_file=None, geom_vec_lyr=None, id_col=None, copy_cols=None, chunk_size=100_000, ...)`, `prepare_feature_matrix(df, feature_cols, valid_col=None, missing='nan'|'drop'|'fill', fill_value=0.0, feat_no_data_val=None, scaler=None)`, `predict_vector(estimator, in_vec_file, out_vec_file, feature_cols, *, out_col='prediction', ...)`, `build_provenance(...)`.
+
+### Segment Features & Config (`rsgispy.ml.segments`)
+- `SegmentFeatureConfig` (stored as `seg_info` in `ClassificationConfig`/`RegressionConfig` JSON; omitted when `None`): label_img, seg_vec_file, feat_table_file, band_specs, id_col='seg_id', valid_col='valid', stats, percentiles, shape_metrics, categories, feature_cols, selected_features (`.model_features`), feat_no_data_val=-9999, min_seg_pxls, missing='drop' ('nan' for GBDT, 'fill'), poly_assign='overlap'|'centroid', min_overlap=0.5, conflict='drop'|'majority', reg_agg='mean'|'median'.
+- `create_segment_features(label_img, band_specs, out_vec_file, out_vec_lyr=None, out_table_file=None, vec_inc_features=True, stats=None, percentiles=None, shape_metrics=None, shape_proj_epsg=None, band_opts=None, template=None, *, ...) -> SegmentFeatureConfig` — columns `<feat>_<stat>`, `shp_<metric>`, `pxl_count`, `valid`; GeoParquet default.
+- `substitute_scene(cfg, img_files: {name: path}, label_img=None, seg_vec_file=None, ...)` + `create_segment_features(..., template=new_cfg.seg_info)` to apply a model to a new scene.
+- `assign_vectors_to_segments`, `read_segment_features`, `apply_missing_policy`.
+- With `seg_info`, training functions default `feature_cols` to `seg_info.model_features` and accept NaN features when `missing='nan'`.
+
 ---
 
 ## 2. `rsgispy.classification.*`
@@ -42,7 +54,7 @@ Covers `rsgispy.ml.*`, `rsgispy.classification.*`, `rsgispy.regression.*`, and `
 ### Config & Training Samples (`rsgispy.classification.classdata`)
 - `ImageBandInfo` (from `imageutils.masking`): `(file_name, name=None, bands=None, band_names=None)`
 - `ClassInfoObj(out_id, vec_file=None, vec_lyr=None, red=None, green=None, blue=None, internal_id=None, name=None, colour=None)`
-- `ClassificationConfig(img_band_info, class_info, out_id_col='out_cls_id', internal_id_col='internal_cls_id', class_name_col='class_name')` (`.save()`, `.load()`, `.to_feature_stack()`, `.get_colour_table()`, `.get_class_names_lut()`, `.get_internal_to_out_lut()`, `.get_out_to_internal_lut()`).
+- `ClassificationConfig(img_band_info, class_info, out_id_col='out_cls_id', internal_id_col='internal_cls_id', class_name_col='class_name', seg_info=None)` (`.save()`, `.load()`, `.to_feature_stack()`, `.get_colour_table()`, `.get_class_names_lut()`, `.get_internal_to_out_lut()`, `.get_out_to_internal_lut()`).
 - Functions: `normalise_class_info`, `resolve_img_band_info`, `write_cls_config`, `read_cls_config`, `write_cls_samples`, `read_cls_samples`, `extract_class_training_samples`, `split_class_samples`, `extract_and_split_class_samples`, `get_cls_id_luts`, `recode_internal_to_out_ids`, `recode_cls_img_to_out_ids`.
 
 ### Classifiers (`classsklearn`, `classxgboost`, `classlightgbm`, `classcatboost`)
@@ -54,6 +66,14 @@ Covers `rsgispy.ml.*`, `rsgispy.classification.*`, `rsgispy.regression.*`, and `
   - `optimise_*_binary_classifier` & `optimise_*_multiclass_classifier` (note British spelling: `optimise_*`)
   - `train_*_binary_classifier` & `train_*_multiclass_classifier`
   - `apply_*_binary_classifier` & `apply_*_multiclass_classifier`
+
+### Object-based / Segment Classification (`classsegments`)
+- `create_cls_segment_features(cls_cfg, label_img, out_vec_file, out_cfg_file=None, **create_segment_features_kwargs) -> ClassificationConfig`
+- `extract_class_segment_samples(cls_cfg, out_file=None, poly_assign=None, min_overlap=None, conflict=None, min_seg_pxls=None, reproj_vec=False, vec_def_epsg=None, *, seg_info=None, ...)` — one sample per segment, columns out_cls_id/internal_cls_id/class_name/seg_id/train_grp/n_hits + features; `df.attrs['report']`.
+- `split_class_segment_samples(samples_df, train_prop=None, test_prop=0.2, valid_prop=0.2, ..., group_col='train_grp', rnd_seed=None)` (group-aware, stratified), `extract_and_split_class_segment_samples(cls_cfg, out_train_file, out_test_file, out_valid_file, ...)`.
+- Train with the existing `train_*`/`optimise_*`/`perform_sklearn_classifier_param_search` (pass the config + segment sample tables).
+- `apply_sklearn_classifier_segments(cls_cfg, sk_classifier, out_vec_file, out_probs=None|'all'|'max'|'pos', **kw)`, `apply_{xgboost,lightgbm,catboost}_{binary,multiclass}_classifier_segments(cls_cfg, classifier, out_vec_file, out_probs=None, pos_class=None, pred_threshold=None, *, use_gpu=False, ...)` — chunked (`chunk_size`), reads only ID/valid/features, writes `cls_id`, `cls_name`, `cls_colour`, `cls_red/green/blue`, `cls_prob_*`; `copy_cols=[]` keeps only seg_id.
+- `rasterise_segment_classification(cls_cfg_or_None, cls_vec_file, output_img, cls_col='cls_id', out_score_img=None, score_cols=None, label_img=None, clr_lut=None, *, ...)`, `cluster_segments(cfg_or_seg_info, clusterer, out_vec_file, n_sample=None, scaler=None, out_col='cluster_id', ...)`, `pop_segment_cls_accuracy_pts(cls_cfg, cls_vec_file, acc_pts_vec_file, ...)` (then `calc_acc_stats_ptonly` / `calc_acc_stats_img`).
 
 ### Unsupervised Clustering (`clustersklearn`)
 - `img_pixel_cluster(img_band_info, output_img, clusterer=None, in_msk_img=None, img_msk_val=1, no_data_val=None, *, gdalformat='GTIFF', datatype=None, out_no_data_val=None, out_id_offset=1, use_mean_shift_est_band_width=False, ...)`
@@ -69,10 +89,11 @@ Covers `rsgispy.ml.*`, `rsgispy.classification.*`, `rsgispy.regression.*`, and `
 
 ## 3. `rsgispy.regression.*`
 
-- **`regdata`**: `RegressionConfig(img_band_info, target_cols, vec_file=None, vec_lyr=None)`, `normalise_target_cols`, `write_reg_config`, `read_reg_config`, `write_reg_samples`, `read_reg_samples`, `extract_reg_training_samples`, `split_reg_samples`, `extract_and_split_reg_samples`.
+- **`regdata`**: `RegressionConfig(img_band_info, target_cols, vec_file=None, vec_lyr=None, seg_info=None)`, `normalise_target_cols`, `write_reg_config`, `read_reg_config`, `write_reg_samples`, `read_reg_samples`, `extract_reg_training_samples`, `split_reg_samples`, `extract_and_split_reg_samples`.
 - **`regsklearn`**: `get_sklearn_regressor_param_space`, `save_sklearn_regressor`, `load_sklearn_regressor`, `perform_sklearn_regressor_param_search`, `train_sklearn_regressor`, `apply_sklearn_regressor`.
 - **GBDTs (`reg{xgboost,lightgbm,catboost}`)**: each provides `is_*_gpu_available`, `save_*_regressor`, `load_*_regressor`, `get_*_optuna_param_space`, `optimise_*_regressor`, `train_*_regressor`, `apply_*_regressor`.
 - **`regfeatures`**: `target_scatter_plots`, `correlation_matrix`, `calc_vif_multicollinearity`, `select_features_{cqv,corr,vif,univariate,rfe,from_model,boruta_shap}`, `calc_feature_importance`, `calc_jackknife_feature_importance`, `calc_feature_response_curves`, `calc_shap_feature_contributions`, `calc_salib_feature_sensitivity`.
+- **`regsegments`** (object-based): `create_reg_segment_features`, `extract_reg_segment_samples(reg_cfg, out_file=None, vec_file=None, ..., reg_agg=None)` (mean/median per segment, `n_ref`), `split_reg_segment_samples`, `extract_and_split_reg_segment_samples`, `apply_sklearn_regressor_segments(reg_cfg, sk_regressor, out_vec_file, out_quantiles=None, **kw)` (`pred_<target>`, tree-ensemble quantiles), `apply_{xgboost,lightgbm,catboost}_regressor_segments`, `rasterise_segment_regression(reg_cfg, reg_vec_file, output_img, pred_cols=None, ...)`.
 - **`regmetrics`**: `calc_reg_metrics`, `pop_reg_img_pred_pts`, `calc_reg_stats_ptonly_bootstrap_conf`, `plot_pred_vs_obs`, `plot_residuals`.
 
 ---

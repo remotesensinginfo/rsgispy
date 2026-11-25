@@ -178,6 +178,7 @@ Package Overview
    :maxdepth: 2
    :caption: Guides & AI Tooling
 
+   guides/segment_ml_workflow
    gemini_skill
 
 .. toctree::

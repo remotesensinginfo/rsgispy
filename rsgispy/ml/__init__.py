@@ -24,9 +24,19 @@ Submodules:
 * :mod:`rsgispy.ml.tune` — Unified Optuna hyperparameter tuning
   (:func:`~rsgispy.ml.tune.tune_estimator`) with spatial CV, fold-local
   scaling, and ``tqdm`` progress reporting.
+* :mod:`rsgispy.ml.vector` — Chunked vector/table I/O (column-subset,
+  geometry-free reading; GeoParquet/OGR writing with WKB geometry
+  pass-through and provenance metadata) and chunked vector prediction
+  (:func:`~rsgispy.ml.vector.predict_vector`,
+  :func:`~rsgispy.ml.vector.map_vector_chunks`).
+* :mod:`rsgispy.ml.segments` — Segment (object) feature creation from a
+  segment label raster (:func:`~rsgispy.ml.segments.create_segment_features`),
+  the :class:`~rsgispy.ml.segments.SegmentFeatureConfig` stored in
+  classification/regression configs, and scene substitution
+  (:func:`~rsgispy.ml.segments.substitute_scene`).
 """
 
-from rsgispy.ml import cv, predict, scaling, stack, tune
+from rsgispy.ml import cv, predict, scaling, segments, stack, tune, vector
 
 __all__ = [
     "stack",
@@ -34,4 +44,6 @@ __all__ = [
     "predict",
     "cv",
     "tune",
+    "vector",
+    "segments",
 ]

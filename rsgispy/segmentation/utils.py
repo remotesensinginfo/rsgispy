@@ -1106,8 +1106,15 @@ def extract_segment_stats(
 ) -> Optional[gpd.GeoDataFrame]:
     """
     Polygonise ``segments_img`` and extract per-object band summary statistics
-    (mean, stddev, min, max, count) from ``feature_img`` via
-    :func:`rsgispy.zonalstats.polygon.calc_zonal_band_stats_file`.
+    (mean, stddev, min, max, count) from ``feature_img``.
+
+    When ``feature_img`` is on the same pixel grid as ``segments_img`` the
+    statistics are computed per segment ID directly from the label raster with
+    :func:`rsgispy.zonalstats.labels.calc_label_zonal_stats` (much faster for
+    large numbers of segments); otherwise the polygon zonal statistics in
+    :func:`rsgispy.zonalstats.polygon.calc_zonal_band_stats_file` are used. In
+    the fast path a segment ID made up of several disconnected parts receives
+    the statistics of the whole segment on each of its polygons.
 
     Parameters
     ----------
@@ -1149,6 +1156,14 @@ def extract_segment_stats(
         calc_zonal_band_stats_file,
     )
 
+    from rsgispy.ml.stack import (  # pylint: disable=import-outside-toplevel
+        BandSpec,
+    )
+    from rsgispy.zonalstats.labels import (  # pylint: disable=import-outside-toplevel
+        _label_is_grid_compatible,
+        calc_label_zonal_stats,
+    )
+
     feat_path = os.fspath(feature_img)
     ensure_file_exists(feat_path, label="Feature image")
     with rasterio.open(feat_path, "r") as feat_src:
@@ -1160,6 +1175,36 @@ def extract_segment_stats(
         segment_id_field=segment_id_field,
     )
     assert gdf is not None
+
+    seg_path = os.fspath(segments_img)
+    if _label_is_grid_compatible(seg_path, feat_path):
+        # Fast path: one streamed pass over the label raster.
+        stats_df = calc_label_zonal_stats(
+            seg_path,
+            BandSpec(
+                file_name=feat_path,
+                bands=tuple(sel_bands),
+                band_names=tuple(f"b{b_idx}" for b_idx in sel_bands),
+                min_vld_val=min_thres,
+                max_vld_val=max_thres,
+            ),
+            stats=["min", "max", "mean", "stddev", "count"],
+            label_no_data_val=0,
+            out_no_data_val=out_no_data_val,
+            id_col=segment_id_field,
+            pxl_count_col=None,
+            use_pbar=use_pbar,
+        )
+        rename = {}
+        for b_idx in sel_bands:
+            rename[f"b{b_idx}_stddev"] = f"b{b_idx}_std"
+            rename[f"b{b_idx}_count"] = f"b{b_idx}_cnt"
+        stats_df = stats_df.rename(columns=rename)
+        for b_idx in sel_bands:
+            stats_df[f"b{b_idx}_cnt"] = stats_df[f"b{b_idx}_cnt"].astype(np.float64)
+        stats_df = stats_df.astype({segment_id_field: gdf[segment_id_field].dtype})
+        gdf = gdf.merge(stats_df, on=segment_id_field, how="left")
+        sel_bands = []
 
     for b_idx in sel_bands:
         gdf = calc_zonal_band_stats_file(

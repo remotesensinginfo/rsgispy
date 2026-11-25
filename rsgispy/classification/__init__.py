@@ -111,6 +111,21 @@ Submodules:
   :func:`~rsgispy.classification.classaccuracymetrics.calc_acc_stats_ptonly`,
   :func:`~rsgispy.classification.classaccuracymetrics.calc_acc_stats_img_bootstrap_conf`,
   :func:`~rsgispy.classification.classaccuracymetrics.calc_acc_stats_ptonly_bootstrap_conf`).
+* :mod:`rsgispy.classification.classsegments` — Object-based (segment)
+  classification: segment features
+  (:func:`~rsgispy.classification.classsegments.create_cls_segment_features`),
+  one-sample-per-segment training data extraction and group-aware splitting
+  (:func:`~rsgispy.classification.classsegments.extract_class_segment_samples`,
+  :func:`~rsgispy.classification.classsegments.split_class_segment_samples`,
+  :func:`~rsgispy.classification.classsegments.extract_and_split_class_segment_samples`),
+  chunked classifier application to segment vector layers
+  (:func:`~rsgispy.classification.classsegments.apply_sklearn_classifier_segments`
+  and the XGBoost, LightGBM and CatBoost equivalents), rasterising
+  (:func:`~rsgispy.classification.classsegments.rasterise_segment_classification`),
+  segment clustering
+  (:func:`~rsgispy.classification.classsegments.cluster_segments`) and
+  accuracy points
+  (:func:`~rsgispy.classification.classsegments.pop_segment_cls_accuracy_pts`).
 * :mod:`rsgispy.classification.classpostprocess` — Thematic classification
   post-processing filters for boundary smoothing and minimum-mapping-unit
   clump elimination

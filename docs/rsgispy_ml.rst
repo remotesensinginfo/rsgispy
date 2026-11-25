@@ -85,3 +85,5 @@ Submodules
    ml/predict
    ml/cv
    ml/tune
+   ml/vector
+   ml/segments

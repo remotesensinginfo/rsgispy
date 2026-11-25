@@ -23,6 +23,7 @@ import pandas as pd
 
 import rsgispy
 from rsgispy.classification._helpers import (
+    seg_allows_nan,
     ClsConfigInput,
     SamplesInput,
     calc_split_metrics,
@@ -197,21 +198,24 @@ def prepare_cls_splits(
         excluded_cols=[eff_out_col, eff_int_col, cls_name_col],
     )
     train_x, train_y = extract_xy(
-        train_df, feat_cols, target_col, "train_data", valid_ids=valid_ids
+        train_df, feat_cols, target_col, "train_data", valid_ids=valid_ids,
+        allow_nan=seg_allows_nan(cfg),
     )
 
     test_xy: Optional[Tuple[pd.DataFrame, np.ndarray]] = None
     if test_data is not None:
         test_df = load_samples_df(test_data, "test_data")
         test_xy = extract_xy(
-            test_df, feat_cols, target_col, "test_data", valid_ids=valid_ids
+            test_df, feat_cols, target_col, "test_data", valid_ids=valid_ids,
+            allow_nan=seg_allows_nan(cfg),
         )
 
     valid_xy: Optional[Tuple[pd.DataFrame, np.ndarray]] = None
     if valid_data is not None:
         valid_df = load_samples_df(valid_data, "valid_data")
         valid_xy = extract_xy(
-            valid_df, feat_cols, target_col, "valid_data", valid_ids=valid_ids
+            valid_df, feat_cols, target_col, "valid_data", valid_ids=valid_ids,
+            allow_nan=seg_allows_nan(cfg),
         )
 
     return cfg, class_info, feat_cols, train_x, train_y, test_xy, valid_xy
@@ -609,3 +613,241 @@ def apply_classifier_raster(
                 calc_pyramids=True,
                 use_pbar=use_pbar,
             )
+
+
+def _rgb_hex(obj: ClassInfoObj) -> str:
+    """Return a ``#rrggbb`` colour string for a class."""
+    return f"#{int(obj.red):02x}{int(obj.green):02x}{int(obj.blue):02x}"
+
+
+def apply_classifier_vector(
+    cls_cfg: ClsConfigInput,
+    estimator: Any,
+    out_vec_file: Union[str, os.PathLike],
+    *,
+    seg_info: Optional[Any] = None,
+    in_vec_file: Optional[Union[str, os.PathLike]] = None,
+    in_vec_lyr: Optional[str] = None,
+    geom_vec_file: Optional[Union[str, os.PathLike]] = None,
+    geom_vec_lyr: Optional[str] = None,
+    out_vec_lyr: Optional[str] = None,
+    out_format: Optional[str] = None,
+    out_compress: Optional[Union[str, bool]] = "snappy",
+    copy_cols: Optional[Sequence[str]] = None,
+    out_prefix: str = "cls_",
+    out_probs: Optional[str] = None,
+    use_internal_id: bool = True,
+    recode_to_out_ids: bool = True,
+    out_no_data_val: Optional[int] = None,
+    missing: Optional[str] = None,
+    fill_value: Optional[float] = None,
+    scaler: Optional[Any] = None,
+    chunk_size: int = 100_000,
+    binary: bool = False,
+    pos_class: Optional[Union[str, int]] = None,
+    pred_threshold: Optional[float] = None,
+    predict_kwargs: Optional[Mapping[str, Any]] = None,
+    model_file: Optional[Union[str, os.PathLike]] = None,
+    overwrite: bool = False,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Shared chunked engine applying a fitted classifier to a segment feature
+    layer (or attribute table) and writing a vector layer with the class
+    output columns (``<prefix>id``, ``<prefix>name``, ``<prefix>colour``,
+    ``<prefix>red``/``green``/``blue`` and optional probability columns).
+    Only the ID, valid flag and model feature columns are read for
+    prediction; geometry is passed through without being decoded.
+    """
+    # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
+    # pylint: disable=too-many-statements,import-outside-toplevel
+    from rsgispy.ml.segments import resolve_seg_info
+    from rsgispy.ml.vector import (
+        build_provenance,
+        map_vector_chunks,
+        model_input,
+        prepare_feature_matrix,
+    )
+
+    p_kwargs = dict(predict_kwargs) if predict_kwargs else {}
+    check_sklearn_estimator_fitted(estimator, label="classifier")
+    probs_opt = None if out_probs is None else str(out_probs).lower()
+    if probs_opt not in (None, "max", "all", "pos"):
+        raise rsgispy.RSGISPyException(
+            f"out_probs must be None, 'max', 'all' or 'pos', got {out_probs!r}."
+        )
+    if probs_opt == "pos" and not binary:
+        raise rsgispy.RSGISPyException("out_probs='pos' requires a binary classifier.")
+    if pred_threshold is not None and not 0.0 < float(pred_threshold) < 1.0:
+        raise rsgispy.RSGISPyException(
+            f"pred_threshold must be strictly between 0 and 1, got {pred_threshold}."
+        )
+    need_probs = probs_opt is not None or (binary and pred_threshold is not None)
+    if need_probs and not hasattr(estimator, "predict_proba"):
+        raise rsgispy.RSGISPyException(
+            "Classifier does not support predict_proba(), which is required for "
+            "probability outputs or pred_threshold."
+        )
+
+    cfg, class_info, _, _, _ = coerce_cls_config(cls_cfg)
+    seg = resolve_seg_info(cfg, seg_info)
+    ordered_classes = resolve_ordered_classes(class_info, use_internal_id)
+    pos_train_id = neg_train_id = -1
+    if binary:
+        neg_entry, pos_entry = resolve_binary_classes(
+            class_info, use_internal_id, pos_class=pos_class
+        )
+        pos_train_id, neg_train_id = pos_entry[2], neg_entry[2]
+    elif len(ordered_classes) < 2:
+        raise rsgispy.RSGISPyException(
+            "Multi-class classification requires at least 2 classes in cls_cfg."
+        )
+    ordered_names = [entry[0] for entry in ordered_classes]
+    ordered_train_ids = [entry[2] for entry in ordered_classes]
+    pos_col_idx = ordered_train_ids.index(pos_train_id) if binary else 0
+    should_recode = bool(use_internal_id and recode_to_out_ids)
+    lut = {
+        entry[2]: (
+            int(entry[1].out_id) if should_recode else int(entry[2]),
+            entry[0],
+            entry[1],
+        )
+        for entry in ordered_classes
+    }
+    output_ids = [val[0] for val in lut.values()]
+    eff_nodata = resolve_out_nodata(out_no_data_val, output_ids)
+
+    est_classes = getattr(estimator, "classes_", None)
+    if est_classes is not None:
+        unknown = {int(c) for c in est_classes} - set(ordered_train_ids)
+        if unknown:
+            raise rsgispy.RSGISPyException(
+                f"Classifier trained class IDs {sorted(unknown)} are not defined in "
+                f"cls_cfg (use_internal_id={use_internal_id})."
+            )
+
+    est_names = getattr(estimator, "feature_names_in_", None)
+    feat_cols = (
+        [str(c) for c in est_names] if est_names is not None else seg.model_features
+    )
+    if not feat_cols:
+        raise rsgispy.RSGISPyException("No model feature columns are defined.")
+    eff_missing = seg.missing if missing is None else missing
+    eff_fill = seg.fill_value if fill_value is None else float(fill_value)
+
+    if in_vec_file is None:
+        in_path, in_lyr = seg.feature_source
+        if seg.feat_table_file is not None and geom_vec_file is None:
+            geom_vec_file, geom_vec_lyr = seg.seg_vec_file, seg.seg_vec_lyr
+    else:
+        in_path, in_lyr = os.fspath(in_vec_file), in_vec_lyr
+
+    read_cols = list(dict.fromkeys([seg.valid_col] + feat_cols))
+    prob_names: List[str] = []
+    if probs_opt == "max":
+        prob_names = [f"{out_prefix}prob_max"]
+    elif probs_opt == "pos":
+        prob_names = [f"{out_prefix}prob_{ordered_names[pos_col_idx]}"]
+    elif probs_opt == "all":
+        prob_names = [f"{out_prefix}prob_{name}" for name in ordered_names]
+    id_dtype = select_out_int_dtype(output_ids + [eff_nodata])[1]
+
+    def _chunk(df: pd.DataFrame) -> pd.DataFrame:
+        n_rows = len(df)
+        x_df, row_ok = prepare_feature_matrix(
+            df,
+            feat_cols,
+            seg.valid_col,
+            eff_missing,
+            eff_fill,
+            seg.feat_no_data_val,
+            scaler,
+        )
+        train_pred = np.full(n_rows, -1, dtype=np.int64)
+        probs: Optional[np.ndarray] = None
+        if np.any(row_ok):
+            x_in = model_input(estimator, x_df)
+            if need_probs:
+                raw = np.asarray(
+                    estimator.predict_proba(x_in, **p_kwargs), dtype=np.float32
+                )
+                probs = align_proba_columns(raw, est_classes, ordered_train_ids)
+            if binary and pred_threshold is not None and probs is not None:
+                preds = np.where(
+                    probs[:, pos_col_idx] >= float(pred_threshold),
+                    pos_train_id,
+                    neg_train_id,
+                )
+            else:
+                preds = np.asarray(
+                    estimator.predict(x_in, **p_kwargs), dtype=np.int64
+                ).ravel()
+            train_pred[row_ok] = preds
+        out_ids = np.full(n_rows, eff_nodata, dtype=np.int64)
+        names: List[Optional[str]] = [None] * n_rows
+        colours: List[Optional[str]] = [None] * n_rows
+        rgb = np.zeros((n_rows, 3), dtype=np.uint8)
+        for t_id, (o_id, c_name, c_obj) in lut.items():
+            sel = train_pred == t_id
+            if not np.any(sel):
+                continue
+            out_ids[sel] = o_id
+            rgb[sel] = (int(c_obj.red), int(c_obj.green), int(c_obj.blue))
+            hex_clr = _rgb_hex(c_obj)
+            for idx in np.flatnonzero(sel):
+                names[idx] = c_name
+                colours[idx] = hex_clr
+        out = pd.DataFrame(
+            {
+                f"{out_prefix}id": out_ids.astype(id_dtype),
+                f"{out_prefix}name": pd.Series(names, dtype=object),
+                f"{out_prefix}colour": pd.Series(colours, dtype=object),
+                f"{out_prefix}red": rgb[:, 0],
+                f"{out_prefix}green": rgb[:, 1],
+                f"{out_prefix}blue": rgb[:, 2],
+            }
+        )
+        if prob_names:
+            pvals = np.full((n_rows, len(prob_names)), np.nan, dtype=np.float32)
+            if probs is not None:
+                if probs_opt == "max":
+                    pvals[row_ok, 0] = probs.max(axis=1)
+                elif probs_opt == "pos":
+                    pvals[row_ok, 0] = probs[:, pos_col_idx]
+                else:
+                    pvals[row_ok] = probs
+            for p_idx, p_name in enumerate(prob_names):
+                out[p_name] = pvals[:, p_idx]
+        return out
+
+    meta = build_provenance(
+        model=estimator,
+        model_file=model_file,
+        config_file=cls_cfg if isinstance(cls_cfg, (str, os.PathLike)) else None,
+        feature_cols=feat_cols,
+        extra={
+            "task": "classification",
+            "classes": {name: int(lut[tid][0]) for name, tid in zip(
+                ordered_names, ordered_train_ids
+            )},
+            "cls_no_data_val": int(eff_nodata),
+        },
+    )
+    map_vector_chunks(
+        in_path,
+        out_vec_file,
+        read_cols,
+        _chunk,
+        in_vec_lyr=in_lyr,
+        geom_vec_file=geom_vec_file,
+        geom_vec_lyr=geom_vec_lyr,
+        id_col=seg.id_col,
+        copy_cols=copy_cols,
+        chunk_size=chunk_size,
+        out_vec_lyr=out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+        metadata=meta,
+        overwrite=overwrite,
+        use_pbar=use_pbar,
+    )

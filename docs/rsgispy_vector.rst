@@ -37,6 +37,21 @@ Create footprints, enrich attributes, and compute spatial metrics in memory:
    fp_gdf = rsgispy.vector.attrs.add_fid_col(fp_gdf, None, out_col="fid")
    fp_gdf = rsgispy.vector.stats.calc_vec_area(fp_gdf, None, "area_m2")
 
+Calculate polygon shape metrics (compactness, solidity, elongation,
+orientation, etc.) in a projected CRS, e.g. for segment-based classification:
+
+.. code-block:: python
+
+   import rsgispy.vector.stats
+
+   seg_gdf = rsgispy.vector.stats.calc_poly_shape_metrics(
+       "segments.parquet",
+       None,
+       metrics=["area", "compactness", "solidity", "elongation", "orientation"],
+       col_prefix="shp_",
+       proj_epsg="utm",
+   )
+
 Calculate multiple new attribute columns in one pass using comma-separated
 ``pymu-eval`` expressions with :func:`~rsgispy.vector.attrs.vector_maths`
 (each top-level comma-separated sub-expression maps positionally to the

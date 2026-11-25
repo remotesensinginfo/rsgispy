@@ -23,6 +23,7 @@ from rsgispy.classification._cls_common import (
     apply_classifier_raster as _apply_classifier_raster,
 )
 from rsgispy.classification._helpers import (
+    seg_allows_nan,
     ClsConfigInput,
     SamplesInput,
     calc_split_metrics as _calc_split_metrics,
@@ -327,7 +328,8 @@ def perform_sklearn_classifier_param_search(
         excluded_cols=[eff_out_col, eff_int_col, cls_name_col],
     )
     train_x, train_y = _extract_xy(
-        train_df, feat_cols, target_col, "train_data", valid_ids=valid_ids
+        train_df, feat_cols, target_col, "train_data", valid_ids=valid_ids,
+        allow_nan=seg_allows_nan(cfg),
     )
 
     valid_x: Optional[pd.DataFrame] = None
@@ -335,7 +337,8 @@ def perform_sklearn_classifier_param_search(
     if valid_data is not None:
         valid_df = _load_samples_df(valid_data, "valid_data")
         valid_x, valid_y = _extract_xy(
-            valid_df, feat_cols, target_col, "valid_data", valid_ids=valid_ids
+            valid_df, feat_cols, target_col, "valid_data", valid_ids=valid_ids,
+            allow_nan=seg_allows_nan(cfg),
         )
 
     if method == "optuna":
@@ -492,7 +495,8 @@ def train_sklearn_classifier(
         excluded_cols=[eff_out_col, eff_int_col, cls_name_col],
     )
     train_x, train_y = _extract_xy(
-        train_df, feat_cols, target_col, "train_data", valid_ids=valid_ids
+        train_df, feat_cols, target_col, "train_data", valid_ids=valid_ids,
+        allow_nan=seg_allows_nan(cfg),
     )
 
     fitted_est = fit_clean_sklearn_estimator(
@@ -507,13 +511,15 @@ def train_sklearn_classifier(
     if test_data is not None:
         test_df = _load_samples_df(test_data, "test_data")
         test_x, test_y = _extract_xy(
-            test_df, feat_cols, target_col, "test_data", valid_ids=valid_ids
+            test_df, feat_cols, target_col, "test_data", valid_ids=valid_ids,
+            allow_nan=seg_allows_nan(cfg),
         )
         metrics.update(_calc_split_metrics(fitted_est, test_x, test_y, "test"))
     if valid_data is not None:
         valid_df = _load_samples_df(valid_data, "valid_data")
         valid_x, valid_y = _extract_xy(
-            valid_df, feat_cols, target_col, "valid_data", valid_ids=valid_ids
+            valid_df, feat_cols, target_col, "valid_data", valid_ids=valid_ids,
+            allow_nan=seg_allows_nan(cfg),
         )
         metrics.update(
             _calc_split_metrics(fitted_est, valid_x, valid_y, "valid")

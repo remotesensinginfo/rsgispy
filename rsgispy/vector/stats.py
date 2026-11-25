@@ -1,6 +1,6 @@
 """
-Spatial statistics, geometric measurements, feature counts, nearest-neighbour
-metrics, and empirical semi-variogram calculation for
+Spatial statistics, geometric measurements, polygon shape metrics, feature
+counts, nearest-neighbour metrics, and empirical semi-variogram calculation for
 :mod:`rsgispy.vector.stats`.
 """
 
@@ -15,6 +15,11 @@ from rsgispy.vector._stats_metrics import (
     count_pt_intersects,
     get_poly_hole_area,
 )
+from rsgispy.vector._shape_metrics import (
+    SHAPE_METRICS,
+    calc_poly_shape_metrics,
+    calc_shape_metrics_geoseries,
+)
 from rsgispy.vector._stats_variogram import calc_empirical_semivariogram
 
 __all__ = [
@@ -22,6 +27,9 @@ __all__ = [
     "calc_vec_area",
     "calc_vec_length",
     "get_poly_hole_area",
+    "SHAPE_METRICS",
+    "calc_shape_metrics_geoseries",
+    "calc_poly_shape_metrics",
     "calc_vec_pt_dist_angle",
     "calc_near_dist_to_feats",
     "count_pt_intersects",

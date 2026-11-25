@@ -34,6 +34,10 @@ from rsgispy.imageutils.stats import build_img_pyramids, pop_thmt_img_stats
 from rsgispy.tools._ml_data import (
     resolve_apply_band_specs_from_seq,
     resolve_feature_cols as _tools_resolve_feature_cols,
+    seg_model_features,
+)
+from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
+    seg_allows_nan,
 )
 from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
     load_samples_df,
@@ -783,7 +787,12 @@ def resolve_feature_cols(
     feature_cols: Optional[Sequence[str]],
     excluded_cols: Sequence[str],
 ) -> List[str]:
-    """Determine and validate ordered feature column names for sample tables."""
+    """
+    Determine and validate ordered feature column names for sample tables
+    (for segment-based configs, the ``seg_info`` model features by default).
+    """
+    if feature_cols is None:
+        feature_cols = seg_model_features(cfg)
     img_info = cfg.img_band_info if cfg is not None else None
     return _tools_resolve_feature_cols(
         cfg_img_band_info=img_info,
@@ -799,8 +808,12 @@ def extract_xy(
     target_col: str,
     label: str,
     valid_ids: Optional[Sequence[int]] = None,
+    allow_nan: bool = False,
 ) -> Tuple[pd.DataFrame, np.ndarray]:
-    """Extract validated ``(X_df, y_arr)`` arrays from a sample DataFrame."""
+    """
+    Extract validated ``(X_df, y_arr)`` arrays from a sample DataFrame (NaN
+    feature values are only accepted when ``allow_nan=True``).
+    """
     if len(df) == 0:
         raise rsgispy.RSGISPyException(f"{label} sample table is empty.")
     missing_feats = [col for col in feature_cols if col not in df.columns]
@@ -815,7 +828,8 @@ def extract_xy(
 
     x_df = df[list(feature_cols)].copy()
     x_vals = x_df.to_numpy(dtype=np.float64)
-    if not np.all(np.isfinite(x_vals)):
+    bad_vals = np.isinf(x_vals) if allow_nan else ~np.isfinite(x_vals)
+    if np.any(bad_vals):
         raise rsgispy.RSGISPyException(
             f"{label} contains NaN or infinite values in feature columns."
         )

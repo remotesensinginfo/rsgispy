@@ -1,6 +1,6 @@
 # Vector Operations & Zonal Statistics
 
-Covers `rsgispy.vectorprocess`, `rsgispy.vector.{io,create,geoms,attrs,stats,selection}`, and `rsgispy.zonalstats.{polygon,point}` in `rsgispy` v0.3.1.
+Covers `rsgispy.vectorprocess`, `rsgispy.vector.{io,create,geoms,attrs,stats,selection}`, and `rsgispy.zonalstats.{polygon,point,labels}` in `rsgispy` v0.3.1.
 
 > **Dual Path / `GeoDataFrame` API**: Almost every vector and zonalstats function accepts `str | os.PathLike | geopandas.GeoDataFrame`. Pass `out_vec_file=None` to return an in-memory `GeoDataFrame` instead of writing to disk. GeoParquet (`.parquet` / `.geoparquet`) is supported directly via `out_compress` (`'snappy'`, `'gzip'`, `'zstd'`, etc.).
 
@@ -45,6 +45,7 @@ Covers `rsgispy.vectorprocess`, `rsgispy.vector.{io,create,geoms,attrs,stats,sel
 - `does_vmsk_img_intersect`, `spatial_select(..., predicate='intersects')`, `spatial_select_bbox`, `subset_vec_lyr_to_feat_bboxs`, `get_att_lst_select_feats`, `get_att_lst_select_bbox_feats`, `subset_by_attribute(..., match_type='equals')`, `select_feats_str_search`, `drop_rows_by_attribute`, `drop_rows_by_multi_attributes`, `rm_attrib_duplicates(..., keep_rows='First')`, `match_closest_vec_pts(..., tolerance=None, cp_match_atts=False, ...)`, `split_vec_lyr_random_subset`, `vec_lyr_random_subset`, `create_train_test_smpls`, `create_train_test_valid_smpls`, `create_n_random_subsets`.
 
 ### `rsgispy.vector.stats`
+- **Shape metrics**: `calc_poly_shape_metrics(vec_file, vec_lyr, metrics=None, col_prefix='', out_vec_file=None, out_vec_lyr=None, proj_epsg=None, allow_geographic=False, make_valid=False, *, out_format='GPKG', out_compress=None, overwrite=False)` and the vectorised chunk-level `calc_shape_metrics_geoseries(geoms, metrics=None, col_prefix='', make_valid=False) -> DataFrame`. `SHAPE_METRICS`: area, perimeter, n_parts, n_holes, hole_area, n_vertices, compactness (Polsby-Popper), shape_index, fractal_dim, convexity, solidity, rectangularity, mrr_length, mrr_width, elongation, orientation, roundness, equiv_diameter. Geographic CRS raises unless `proj_epsg` (EPSG or `'utm'`) or `allow_geographic=True`; empty/invalid/non-polygon geometries give NaN.
 - `calc_vec_area`, `calc_vec_length`, `get_poly_hole_area`, `calc_vec_pt_dist_angle`, `calc_near_dist_to_feats`, `count_pt_intersects`, `calc_npts_in_radius(..., n_cores=1)`, `count_feats_per_att_val`, `calc_empirical_semivariogram`.
 
 ---
@@ -74,6 +75,12 @@ Each operation provides a file/in-memory entrypoint (`*_file`, returning `GeoDat
 - `calc_zonal_band_stats_test_poly_pts_file(..., percentile=None, percentile_field=None, ...)` & `calc_zonal_band_stats_test_poly_pts(...)`
 - `calc_zonal_band_pxl_counts_file(vec_file, vec_lyr, input_img, img_band, vals_lut: Dict[int, str], total_field='pxl_count', vec_def_epsg=None, *, ...)` & `calc_zonal_band_pxl_counts(...)`
 - `export_poly_pxls_to_df(vec_gdf, input_img, img_bands=None, out_file=None, out_format=None, out_compress=None, band_names=None, attr_cols=None, mask_nodata=True, all_touched=False, include_coords=False, reproj_vec=False, vec_def_epsg=None, *, vec_lyr=None, use_pbar=True) -> pd.DataFrame | None`
+
+### Label Raster Zonal Stats (`rsgispy.zonalstats.labels`, also exported from `rsgispy.zonalstats`)
+One streamed pass over a label (segment/clump) raster; ~90x faster than polygon zonal stats at 40k zones; memory bounded by the number of labels. Value images must be on the label raster's grid.
+- `calc_label_zonal_stats(label_img, band_specs, stats=None, percentiles=None, label_band=1, label_no_data_val=0, out_no_data_val=-9999.0, id_col='seg_id', col_pattern='{feat}_{stat}', quantile_method='auto', hist_bins=1000, categories=None, cat_props=True, pxl_count_col='pxl_count', inc_bbox=False, inc_centroid=False, dense_max_labels=50_000_000, *, block_size=None, out_file=None, out_format=None, out_compress='snappy', use_pbar=True) -> DataFrame` — `band_specs`: `BandSpec`/`ImageBandInfo`/paths (BandSpec gives `no_data_val`, `min_vld_val`, `max_vld_val`, `data_type`); stats: count, sum, mean, stddev, min, max, median, mode (+ percentiles). Categorical bands (`data_type=rsgispy.VAR_TYPE_CATEGORICAL`) give mode + `<feat>_prop_<cat>`; categories in `df.attrs['categories']`. uint64/sparse IDs use a compact mapping.
+- `join_label_stats_to_vec(vec_file, stats_df, vec_lyr=None, id_col='seg_id', vec_id_col=None, out_vec_file=None, out_vec_lyr=None, *, out_format=None, out_compress=None, overwrite=False)`
+- `rasterise_label_values(label_img, ids, values, output_img, label_band=1, label_no_data_val=0, out_no_data_val=0, band_names=None, thematic=False, clr_tab=None, dense_max_labels=..., *, gdalformat='GTIFF', datatype=None, calc_stats=True, block_size=None, use_pbar=True, creation_opts=None)` — label->value lookup, no geometry burning.
 
 ### Point Value Extraction (`rsgispy.zonalstats.point`)
 - `ext_point_band_values_file(vec_file, vec_lyr, input_img, img_band: int | Sequence[int] | None, min_thres, max_thres, out_no_data_val, out_field: str | Sequence[str] | None = None, reproj_vec=False, vec_def_epsg=None, *, use_pbar=True, out_compress=None, out_vec_file=None, out_vec_lyr=None)` & `ext_point_band_values(...)`

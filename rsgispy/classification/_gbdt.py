@@ -24,6 +24,7 @@ import pandas as pd
 import rsgispy
 from rsgispy.classification._cls_common import (
     apply_classifier_raster,
+    apply_classifier_vector,
     calc_cls_split_metrics,
     prepare_cls_splits,
     resolve_binary_classes,
@@ -581,4 +582,42 @@ def apply_gbdt_classifier(
             pred_threshold=pred_threshold,
             score_all_classes=score_all_classes,
             predict_kwargs=predict_kwargs,
+        )
+
+
+def apply_gbdt_classifier_segments(
+    backend: GBDTBackendSpec,
+    func_name: str,
+    cls_cfg: ClsConfigInput,
+    classifier: Union[Any, str, os.PathLike],
+    out_vec_file: Union[str, os.PathLike],
+    binary: bool,
+    *,
+    use_gpu: bool = False,
+    gpu_device_id: Optional[int] = None,
+    **kwargs: Any,
+) -> None:
+    """
+    Apply a trained GBDT binary or multi-class classifier to a segment feature
+    layer in chunks (see
+    :func:`rsgispy.classification._cls_common.apply_classifier_vector`).
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    _check_backend_available(backend, func_name)
+    check_sklearn_available(func_name)
+    gpu_active, eff_gpu_id = resolve_gbdt_gpu(backend, use_gpu, gpu_device_id)
+    is_path = isinstance(classifier, (str, os.PathLike))
+    estimator = backend.load_model(classifier) if is_path else classifier
+    if is_path and kwargs.get("model_file") is None:
+        kwargs["model_file"] = classifier
+    with _prepared_gbdt_predict_estimator(
+        backend, estimator, gpu_active, eff_gpu_id
+    ) as (eval_est, predict_kwargs):
+        apply_classifier_vector(
+            cls_cfg,
+            eval_est,
+            out_vec_file,
+            binary=binary,
+            predict_kwargs=predict_kwargs,
+            **kwargs,
         )

@@ -86,7 +86,8 @@ All major algorithms provide both file-based (`*_segmentation`) and NumPy array 
   - `relabel_segments(input_img, output_img, contiguous=True, *, ...)` + `relabel_segments_array(...)`
   - `eliminate_small_segments(input_img, output_img, ref_img=None, min_pixels=10, bands=None, use_numba=True, *, ...)` + `eliminate_small_segments_array(...)`
   - `polygonise_segments(input_img, out_vec_file=None, out_vec_lyr=None, out_format='GPKG', img_band=1, no_data_val=0, segment_id_field='seg_id', use_8_conn=False, out_compress=None) -> GeoDataFrame | None`
-  - `extract_segment_stats(segments_img, feature_img, out_vec_file=None, out_vec_lyr=None, out_format='GPKG', bands=None, min_thres=-1e12, max_thres=1e12, out_no_data_val=-9999.0, segment_id_field='seg_id', use_pbar=True, out_compress=None) -> GeoDataFrame | None`
+  - `extract_segment_stats(segments_img, feature_img, out_vec_file=None, out_vec_lyr=None, out_format='GPKG', bands=None, min_thres=-1e12, max_thres=1e12, out_no_data_val=-9999.0, segment_id_field='seg_id', use_pbar=True, out_compress=None) -> GeoDataFrame | None` (uses the fast `zonalstats.labels.calc_label_zonal_stats` when the feature image is on the segment grid).
+  - For object-based classification/regression with segments use `rsgispy.classification.classsegments` / `rsgispy.regression.regsegments` (see `ml_classification_regression_and_sdm.md`).
 - **Tiling primitives (`rsgispy.segmentation.tiling`)**: `TileWindow`, `plan_tiles`, `normalise_tile_size`, `extract_halo_tile`, `crop_halo_labels`, `offset_tile_labels`, `reconcile_seam_equivalences`, `run_tiled_array_pipeline`, `run_tiled_raster_pipeline`.
 
 ---

@@ -7,6 +7,11 @@ rsgispy.segmentation
 Overview
 --------
 
+.. seealso::
+
+   The :doc:`guides/segment_ml_workflow` guide shows how to use the segments
+   for object-based classification and regression.
+
 The :mod:`rsgispy.segmentation` package provides pure-Python image segmentation
 algorithms designed for multi-band remote sensing imagery (e.g., Sentinel-2,
 Landsat, and multi-spectral orthomosaics) with:
