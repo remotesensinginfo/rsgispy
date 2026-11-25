@@ -122,6 +122,64 @@ def test_multipart_segments_are_dissolved(tmp_path):
     assert gdf.loc[0, "pxl_count"] == 80
 
 
+def test_segment_features_tiled_and_parallel_match(tmp_path):
+    """Polygons cut by tiles and built on several cores give the same layer."""
+    from seg_ml_scene import _write  # pylint: disable=import-outside-toplevel
+    import shapely  # pylint: disable=import-outside-toplevel
+
+    rng = np.random.default_rng(3)
+    lab = np.kron(rng.integers(1, 30, size=(12, 14)), np.ones((4, 4), dtype=np.int64))
+    lab[rng.random(lab.shape) < 0.1] = 0
+    lab_p = _write(str(tmp_path / "l.tif"), lab.astype(np.uint32))
+    img_p = _write(str(tmp_path / "i.tif"), rng.normal(10, 2, lab.shape).astype(np.float32))
+    outs = []
+    for name, opts in (
+        ("one", {"tile_size": 4096}),
+        ("tiled", {"tile_size": 7}),
+        ("multi", {"tile_size": 9, "n_jobs": 2}),
+    ):
+        seg_info = mseg.create_segment_features(
+            lab_p,
+            [img_p],
+            str(tmp_path / f"{name}.parquet"),
+            out_table_file=str(tmp_path / f"{name}_tbl.parquet"),
+            use_pbar=False,
+            **opts,
+        )
+        outs.append(
+            (
+                gpd.read_parquet(seg_info.seg_vec_file),
+                pd.read_parquet(seg_info.feat_table_file),
+            )
+        )
+    ref_gdf, ref_tbl = outs[0]
+    ids = np.unique(lab[lab > 0])
+    assert ref_gdf["seg_id"].tolist() == ids.tolist()
+    assert ref_gdf["pxl_count"].tolist() == np.bincount(lab.ravel())[ids].tolist()
+    for gdf, tbl in outs[1:]:
+        pd.testing.assert_frame_equal(
+            gdf.drop(columns="geometry"), ref_gdf.drop(columns="geometry")
+        )
+        assert shapely.equals(gdf.geometry.values, ref_gdf.geometry.values).all()
+        pd.testing.assert_frame_equal(tbl, ref_tbl)
+    assert shapely.is_valid(ref_gdf.geometry.values).all()
+
+
+def test_existing_outputs_raise_before_processing(scene, tmp_path):
+    out = tmp_path / "segs.parquet"
+    out.write_bytes(b"x")
+    with pytest.raises(rsgispy.RSGISPyException, match="already exists"):
+        _features(scene, tmp_path)
+    tbl = tmp_path / "t.parquet"
+    tbl.write_bytes(b"x")
+    with pytest.raises(rsgispy.RSGISPyException, match="already exists"):
+        mseg.create_segment_features(
+            scene["segs"], _img_info(scene), str(tmp_path / "other.parquet"),
+            out_table_file=str(tbl), use_pbar=False,
+        )
+    assert not (tmp_path / "other.parquet").exists()
+
+
 def test_config_json_round_trip(scene, tmp_path):
     cls_info = {"Water": ClassInfoObj(out_id=1, vec_file=scene["train_water"])}
     cfg = ClassificationConfig(_img_info(scene), cls_info)

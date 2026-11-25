@@ -386,6 +386,15 @@ Performance and large datasets
   with the number of segments, not the image size. Median, percentiles and
   mode of float bands use a histogram (``quantile_method='hist'``) unless
   ``quantile_method='exact'`` is set.
+* **Segment polygons** — the segment layer is polygonised with
+  :func:`~rsgispy.vector.create.polygonise_raster_tiled` (one
+  (Multi)Polygon per segment, sorted by ID), in tiles of ``tile_size`` pixels
+  and on ``n_jobs`` cores (options of
+  :func:`~rsgispy.ml.segments.create_segment_features` and
+  :func:`~rsgispy.classification.classsegments.create_cls_segment_features`).
+  The polygons are streamed to disk and joined to the statistics chunk by
+  chunk, so they are never all held in memory. See
+  :ref:`polygonise-benchmark` for timings.
 * **Large or sparse segment IDs** — label rasters with very large IDs (e.g.
   ``uint64`` IDs from tiled segmentation) are handled with a compact ID
   mapping, so memory is not proportional to the largest ID.

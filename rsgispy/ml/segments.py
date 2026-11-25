@@ -14,17 +14,21 @@ classification and regression (:mod:`rsgispy.classification.classsegments`,
   segment label raster: per-band statistics with
   :func:`rsgispy.zonalstats.labels.calc_label_zonal_stats`, polygon shape
   metrics with :func:`rsgispy.vector.stats.calc_shape_metrics_geoseries`, and
-  polygons from :func:`rsgispy.segmentation.polygonise_segments`, written as a
-  GeoParquet (default) or any vector format, plus an optional attribute-only
-  feature table.
+  one polygon per segment from
+  :func:`rsgispy.vector.create.polygonise_raster_tiled` (tiled, optionally
+  multi-core, streamed to disk and joined to the statistics chunk by chunk,
+  so the polygons are never all held in memory), written as a GeoParquet
+  (default) or any vector format, plus an optional attribute-only feature
+  table.
 * :func:`substitute_scene` — reuse a trained model's configuration on another
   scene (date or tile) by substituting the image and label raster paths.
 """
 
 import copy
 import os
+import tempfile
 from dataclasses import dataclass, field, fields
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -278,29 +282,84 @@ def _resolve_band_specs(
     return specs
 
 
-def _polygonise_sorted(
-    label_img: str,
-    label_band: int,
-    label_no_data_val: Optional[int],
+def _write_segment_layer(
+    seg_pq: str,
+    stats_df: pd.DataFrame,
     id_col: str,
-) -> Any:
-    """Polygonise a label raster to one (Multi)Polygon per ID, sorted by ID."""
-    # pylint: disable=import-outside-toplevel
-    from rsgispy.segmentation.utils import polygonise_segments
+    vec_cols: Sequence[str],
+    shape_metrics: Sequence[str],
+    shape_prefix: str,
+    shape_proj_epsg: Optional[Union[int, str]],
+    crs: Any,
+    writer: Any,
+    chunk_size: int,
+) -> Tuple[np.ndarray, Optional[pd.DataFrame]]:
+    """
+    Stream the sorted segment polygons in ``seg_pq`` chunk by chunk, join the
+    rows of ``stats_df`` (sorted by ID) and the shape metrics, and write them
+    with ``writer``.
 
-    gdf = polygonise_segments(
-        label_img,
-        out_vec_file=None,
-        img_band=label_band,
-        no_data_val=0 if label_no_data_val is None else int(label_no_data_val),
-        segment_id_field=id_col,
+    Shape metric columns not yet in ``stats_df`` are calculated here, so
+    ``vec_cols`` may name them. Returns a boolean mask of the ``stats_df``
+    rows that have a polygon and the shape metrics (one row per ``stats_df``
+    row, or ``None`` if there are no metrics).
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=import-outside-toplevel
+    import geopandas as gpd
+    import pyarrow as pa  # pylint: disable=import-error
+    import pyarrow.parquet as pq  # pylint: disable=import-error
+    import shapely
+
+    stats_ids = stats_df[id_col].to_numpy()
+    has_poly = np.zeros(len(stats_df), dtype=bool)
+    shp_cols = [f"{shape_prefix}{m}" for m in shape_metrics]
+    shp_vals = (
+        np.full((len(stats_df), len(shp_cols)), np.nan, dtype=np.float64)
+        if shp_cols
+        else None
     )
-    assert gdf is not None
-    dup = gdf[id_col].duplicated(keep=False)
-    if dup.any():
-        multi = gdf[dup].dissolve(by=id_col, as_index=False)
-        gdf = pd.concat([gdf[~dup], multi[gdf.columns]], ignore_index=True)
-    return gdf.sort_values(id_col, kind="stable").reset_index(drop=True)
+    pq_file = pq.ParquetFile(seg_pq)
+    n_written = 0
+    for batch in pq_file.iter_batches(batch_size=int(chunk_size)):
+        ids = batch.column(id_col).to_numpy()
+        pos = np.searchsorted(stats_ids, ids.astype(stats_ids.dtype, copy=False))
+        pos = np.minimum(pos, max(len(stats_ids) - 1, 0))
+        keep = (
+            stats_ids[pos] == ids if len(stats_ids) else np.zeros(len(ids), dtype=bool)
+        )
+        if not keep.all():
+            batch = batch.filter(pa.array(keep))
+            pos = pos[keep]
+        if batch.num_rows == 0:
+            continue
+        has_poly[pos] = True
+        wkb = batch.column("geometry")
+        chunk_df = stats_df.iloc[pos].reset_index(drop=True)
+        if shp_vals is not None:
+            geoms = gpd.GeoSeries(
+                shapely.from_wkb(wkb.to_numpy(zero_copy_only=False)), crs=crs
+            )
+            shp_df = _calc_shape_cols(
+                geoms, shape_metrics, shape_prefix, shape_proj_epsg, chunk_size
+            )
+            shp_vals[pos] = shp_df[shp_cols].to_numpy(dtype=np.float64)
+            for col in shp_cols:
+                chunk_df[col] = shp_df[col].to_numpy()
+        out_df = chunk_df[[id_col] + list(vec_cols)]
+        tbl = pa.Table.from_pandas(out_df, preserve_index=False)
+        writer.write(tbl.append_column("geometry", wkb))
+        n_written += tbl.num_rows
+    if n_written == 0:
+        empty = stats_df.iloc[:0].copy()
+        for col in shp_cols:
+            empty[col] = pd.Series(dtype=np.float64)
+        tbl = pa.Table.from_pandas(empty[[id_col] + list(vec_cols)], preserve_index=False)
+        writer.write(tbl.append_column("geometry", pa.array([], type=pa.binary())))
+    shp_out = (
+        pd.DataFrame(shp_vals, columns=shp_cols) if shp_vals is not None else None
+    )
+    return has_poly, shp_out
 
 
 def _calc_shape_cols(
@@ -382,6 +441,8 @@ def create_segment_features(
     overwrite: bool = False,
     chunk_size: int = 100_000,
     block_size: Optional[int] = None,
+    tile_size: Union[int, Tuple[int, int]] = 2048,
+    n_jobs: int = 1,
     use_pbar: bool = True,
 ) -> SegmentFeatureConfig:
     """
@@ -450,8 +511,14 @@ def create_segment_features(
     :param out_format: Optional output vector format (inferred from extension).
     :param out_compress: GeoParquet/Parquet compression (Default = ``'snappy'``).
     :param overwrite: If ``True``, overwrite existing outputs.
-    :param chunk_size: Polygons per chunk for the shape metrics.
+    :param chunk_size: Segments per chunk when writing the vector layer and
+                       calculating the shape metrics.
     :param block_size: Optional raster processing block size.
+    :param tile_size: Tile size (pixels) for polygonising the segments with
+                      :func:`rsgispy.vector.create.polygonise_raster_tiled`
+                      (Default = ``2048``).
+    :param n_jobs: Number of worker processes for the polygonisation
+                   (Default = ``1``).
     :param use_pbar: If ``True``, display progress bars.
     :return: :class:`SegmentFeatureConfig` describing the outputs (store it
              as the ``seg_info`` of a classification/regression config).
@@ -472,8 +539,9 @@ def create_segment_features(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     # pylint: disable=import-outside-toplevel
+    from rsgispy.ml.vector import ChunkedVecWriter
     from rsgispy.tools.tables import write_dataframe_table
-    from rsgispy.vectorprocess import write_vec_gdf
+    from rsgispy.vector.create import polygonise_raster_tiled
     from rsgispy.zonalstats.labels import calc_label_zonal_stats
 
     lab_path = os.path.abspath(os.fspath(label_img))
@@ -482,6 +550,18 @@ def create_segment_features(
         raise rsgispy.RSGISPyException(
             "out_table_file is required when vec_inc_features=False."
         )
+    out_vec_path = os.path.abspath(os.fspath(out_vec_file))
+    if os.path.exists(out_vec_path) and not overwrite:
+        raise rsgispy.RSGISPyException(
+            f"Output file '{out_vec_path}' already exists and overwrite=False."
+        )
+    out_tbl_path: Optional[str] = None
+    if out_table_file is not None:
+        out_tbl_path = os.path.abspath(os.fspath(out_table_file))
+        if os.path.exists(out_tbl_path) and not overwrite:
+            raise rsgispy.RSGISPyException(
+                f"Output table '{out_tbl_path}' already exists and overwrite=False."
+            )
     if template is not None:
         specs = list(template.band_specs)
         stats = list(template.stats)
@@ -536,21 +616,7 @@ def create_segment_features(
         (stats_df[pxl_col].to_numpy() >= int(min_seg_pxls)) & any_valid
     ).astype(np.uint8)
 
-    gdf = _polygonise_sorted(lab_path, label_band, label_no_data_val, id_col)
-    gdf = gdf.astype({id_col: stats_df[id_col].dtype})
-    if not np.array_equal(gdf[id_col].to_numpy(), stats_df[id_col].to_numpy()):
-        gdf = gdf.merge(stats_df[[id_col]], on=id_col, how="inner")
-        stats_df = stats_df[stats_df[id_col].isin(gdf[id_col])].reset_index(drop=True)
-
-    shape_cols: List[str] = []
-    if shp_l:
-        shp_df = _calc_shape_cols(
-            gdf.geometry, shp_l, shape_prefix, shape_proj_epsg, chunk_size
-        )
-        shape_cols = list(shp_df.columns)
-        for col in shape_cols:
-            stats_df[col] = shp_df[col].to_numpy()
-
+    shape_cols = [f"{shape_prefix}{m}" for m in shp_l]
     feature_cols = stat_cols + shape_cols
     if template is not None:
         missing = [c for c in template.model_features if c not in feature_cols]
@@ -559,30 +625,65 @@ def create_segment_features(
                 f"The new scene does not produce the model feature column(s) "
                 f"{missing}; check the image names, bands and band names."
             )
-
     table_cols = [id_col, pxl_col, valid_col] + feature_cols
-    out_gdf = gdf[[id_col, gdf.geometry.name]].copy()
     vec_cols = table_cols[1:] if vec_inc_features else [pxl_col, valid_col]
-    for col in vec_cols:
-        out_gdf[col] = stats_df[col].to_numpy()
-    out_gdf = out_gdf[[id_col] + vec_cols + [gdf.geometry.name]]
 
-    out_vec_path = os.path.abspath(os.fspath(out_vec_file))
-    write_vec_gdf(
-        out_gdf,
+    # One (Multi)Polygon per segment ID, sorted by ID, streamed to a temporary
+    # GeoParquet file, then joined to the statistics chunk by chunk.
+    out_dir = os.path.dirname(out_vec_path)
+    os.makedirs(out_dir, exist_ok=True)
+    with rasterio.open(lab_path, "r") as lab_src:
+        lab_crs = lab_src.crs
+    writer = ChunkedVecWriter(
         out_vec_path,
         out_vec_lyr=out_vec_lyr,
         out_format=out_format,
-        overwrite=overwrite,
         out_compress=out_compress,
+        geom_col="geometry",
+        crs=lab_crs.to_wkt() if lab_crs is not None else None,
+        overwrite=overwrite,
     )
-    out_tbl_path: Optional[str] = None
-    if out_table_file is not None:
-        out_tbl_path = os.path.abspath(os.fspath(out_table_file))
-        if os.path.exists(out_tbl_path) and not overwrite:
-            raise rsgispy.RSGISPyException(
-                f"Output table '{out_tbl_path}' already exists and overwrite=False."
+    try:
+        with tempfile.TemporaryDirectory(prefix=".rsgispy_segs_", dir=out_dir) as tmp:
+            seg_pq = os.path.join(tmp, "segs.parquet")
+            polygonise_raster_tiled(
+                lab_path,
+                seg_pq,
+                img_band=label_band,
+                no_data_val=0 if label_no_data_val is None else label_no_data_val,
+                pxl_val_fieldname=id_col,
+                dissolve_by_value=True,
+                sort_by_value=True,
+                tile_size=tile_size,
+                n_jobs=n_jobs,
+                out_compress=None,
+                chunk_size=chunk_size,
+                tmp_dir=tmp,
+                use_pbar=use_pbar,
             )
+            has_poly, shp_df = _write_segment_layer(
+                seg_pq,
+                stats_df,
+                id_col,
+                vec_cols,
+                shp_l,
+                shape_prefix,
+                shape_proj_epsg,
+                lab_crs,
+                writer,
+                chunk_size,
+            )
+    except BaseException:
+        writer.close(success=False)
+        raise
+    writer.close(success=True)
+    if shp_df is not None:
+        for col in shape_cols:
+            stats_df[col] = shp_df[col].to_numpy()
+    if not has_poly.all():
+        stats_df = stats_df[has_poly].reset_index(drop=True)
+
+    if out_tbl_path is not None:
         write_dataframe_table(
             stats_df[table_cols], out_tbl_path, out_compress=out_compress
         )

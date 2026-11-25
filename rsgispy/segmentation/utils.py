@@ -4,8 +4,7 @@ Core utilities, optional ``numba`` acceleration, post-processing, and downstream
 """
 
 import os
-import tempfile
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
@@ -17,7 +16,6 @@ from rsgispy.imageprocess import (
     OnlineStatsAccumulator,
     build_valid_cube_mask,
     ensure_file_exists,
-    get_default_block_size,
     iter_dataset_windows,
     open_output_dataset,
     resolve_out_dtype,
@@ -999,11 +997,22 @@ def polygonise_segments(
     segment_id_field: str = "seg_id",
     use_8_conn: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
+    *,
+    tile_size: Union[int, Tuple[int, int]] = 2048,
+    n_jobs: int = 1,
+    backend: str = "auto",
+    use_pbar: bool = False,
 ) -> Optional[gpd.GeoDataFrame]:
     """
-    Polygonise a segmentation label raster into a vector layer using
-    :func:`rsgispy.vector.create.polygonise_raster_to_vec_lyr`, excluding
-    ``no_data_val`` pixels.
+    Polygonise a segmentation label raster into a vector layer (one feature
+    per connected region, sorted by segment ID), excluding ``no_data_val``
+    pixels.
+
+    Uses :func:`rsgispy.vector.create.polygonise_raster_tiled`: the raster is
+    processed in tiles (optionally on several cores) and a new output file is
+    streamed to disk, so very large segmentations can be polygonised with
+    bounded memory. The polygons are the same as those from
+    :func:`rsgispy.vector.create.polygonise_raster_to_vec_lyr`.
 
     Parameters
     ----------
@@ -1011,7 +1020,10 @@ def polygonise_segments(
         Path to the segmentation label raster.
     out_vec_file : str or os.PathLike or None, optional
         Output vector path, or ``None`` (Default) to return an in-memory
-        :class:`geopandas.GeoDataFrame`.
+        :class:`geopandas.GeoDataFrame`. If the file already exists, the layer
+        is added to it (multi-layer formats) as with
+        :func:`rsgispy.vectorprocess.write_vec_gdf` (an existing layer of the
+        same name raises an exception).
     out_vec_lyr : str or None, optional
         Output layer name.
     out_format : str, optional
@@ -1026,68 +1038,66 @@ def polygonise_segments(
         Use 8-connectivity instead of 4-connectivity (Default = ``False``).
     out_compress : str or bool or None, optional
         Optional GeoParquet compression setting.
+    tile_size : int or tuple of int, optional
+        Processing tile size in pixels (Default = ``2048``).
+    n_jobs : int, optional
+        Number of worker processes (Default = ``1``).
+    backend : str, optional
+        Polygonisation backend: ``'auto'`` (default), ``'numba'`` or
+        ``'rasterio'`` (see :func:`rsgispy.vector.create.polygonise_raster_tiled`).
+    use_pbar : bool, optional
+        Show a progress bar over the tiles (Default = ``False``).
 
     Returns
     -------
     geopandas.GeoDataFrame or None
         In-memory GeoDataFrame when ``out_vec_file`` is ``None``, else ``None``.
+
+    Examples
+    --------
+    .. code:: python
+
+        import rsgispy.segmentation
+
+        rsgispy.segmentation.polygonise_segments(
+            "s2_segs.kea", "s2_segs.gpkg", out_vec_lyr="segs", n_jobs=4
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    from rsgispy.vector.create import (  # pylint: disable=import-outside-toplevel
-        polygonise_raster_to_vec_lyr,
-    )
-    from rsgispy.vectorprocess import (  # pylint: disable=import-outside-toplevel
-        write_vec_gdf,
-    )
+    # pylint: disable=import-outside-toplevel
+    from rsgispy.vector.create import polygonise_raster_tiled
+    from rsgispy.vectorprocess import infer_parquet_compression, write_vec_gdf
 
     in_path = os.fspath(input_img)
     ensure_file_exists(in_path, label="Input segmentation image")
-
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        mask_path = os.path.join(tmp_dir, "seg_mask.tif")
-        with rasterio.open(in_path, "r") as src:
-            grid = IntersectionGrid.from_dataset(src)
-            from contextlib import ExitStack  # pylint: disable=import-outside-toplevel
-
-            with ExitStack() as stack:
-                msk_dst = open_output_dataset(
-                    stack=stack,
-                    output_img=mask_path,
-                    gdalformat="GTIFF",
-                    out_rio_dtype="uint8",
-                    grid=grid,
-                    count=1,
-                )
-                msk_dst.nodata = 0
-                for win in iter_dataset_windows(
-                    src.height, src.width, block_size=get_default_block_size(), use_pbar=False
-                ):
-                    blk = src.read(img_band, window=win)
-                    msk_dst.write((blk != no_data_val).astype(np.uint8), 1, window=win)
-
-        gdf = polygonise_raster_to_vec_lyr(
-            out_vec_file=None,
+    opts: Dict[str, Any] = {
+        "img_band": img_band,
+        "no_data_val": no_data_val,
+        "pxl_val_fieldname": segment_id_field,
+        "use_8_conn": use_8_conn,
+        "sort_by_value": True,
+        "tile_size": tile_size,
+        "n_jobs": n_jobs,
+        "backend": backend,
+        "use_pbar": use_pbar,
+    }
+    if out_vec_file is not None and not os.path.exists(os.fspath(out_vec_file)):
+        out_path = os.fspath(out_vec_file)
+        polygonise_raster_tiled(
+            in_path,
+            out_path,
             out_vec_lyr=out_vec_lyr,
             out_format=out_format,
-            input_img=in_path,
-            img_band=img_band,
-            mask_img=mask_path,
-            mask_band=1,
-            pxl_val_fieldname=segment_id_field,
-            use_8_conn=use_8_conn,
+            out_compress=infer_parquet_compression(out_path, out_compress=out_compress),
+            **opts,
         )
-
-    assert gdf is not None
-    if out_vec_file is None:
-        return gdf
-    write_vec_gdf(
-        gdf,
-        out_vec_file=out_vec_file,
-        out_vec_lyr=out_vec_lyr,
-        out_format=out_format,
-        out_compress=out_compress,
-    )
-    return None
+        return None
+    gdf = polygonise_raster_tiled(in_path, None, **opts)
+    if out_vec_file is not None:
+        # Existing file: add the layer (or raise) as write_vec_gdf does.
+        write_vec_gdf(gdf, out_vec_file, out_vec_lyr, out_format, out_compress=out_compress)
+        gdf = None
+    return gdf
 
 
 def extract_segment_stats(

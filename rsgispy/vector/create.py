@@ -59,6 +59,7 @@ from rsgispy.vectorprocess import (
 
 __all__ = [
     "polygonise_raster_to_vec_lyr",
+    "polygonise_raster_tiled",
     "vectorise_pxls_to_pts",
     "extract_img_footprint",
     "create_poly_vec_for_lst_bboxs",
@@ -109,6 +110,12 @@ def polygonise_raster_to_vec_lyr(
     """
     Polygonise connected pixel regions in ``input_img`` into a vector layer
     using ``rasterio.features.shapes``.
+
+    The whole band, every polygon and the output GeoDataFrame are held in
+    memory and a single core is used. For rasters producing many polygons
+    (e.g., segmentation label rasters) use
+    :func:`polygonise_raster_tiled`, which processes the raster in tiles on
+    several cores, streams the output to disk and is much faster.
 
     :param out_vec_file: Output vector file path, or ``None`` to return an
                          in-memory :class:`geopandas.GeoDataFrame`.
@@ -281,6 +288,303 @@ def polygonise_raster_to_vec_lyr(
         out_compress=out_compress,
         replace_layer=replace_lyr,
     )
+    return None
+
+
+def polygonise_raster_tiled(
+    input_img: Union[str, os.PathLike],
+    out_vec_file: Optional[Union[str, os.PathLike]],
+    out_vec_lyr: Optional[str] = None,
+    img_band: int = 1,
+    mask_img: Optional[Union[str, os.PathLike]] = None,
+    mask_band: int = 1,
+    no_data_val: Optional[float] = None,
+    pxl_val_fieldname: str = "PXLVAL",
+    use_8_conn: bool = False,
+    dissolve_by_value: bool = False,
+    sort_by_value: bool = False,
+    inc_pxl_count: bool = False,
+    tile_size: Union[int, Tuple[int, int]] = 2048,
+    n_jobs: int = 1,
+    backend: str = "auto",
+    *,
+    out_format: Optional[str] = None,
+    out_compress: Optional[Union[str, bool]] = "snappy",
+    chunk_size: int = 100_000,
+    pxl_count_fieldname: str = "pxl_count",
+    tmp_dir: Optional[Union[str, os.PathLike]] = None,
+    overwrite: bool = False,
+    use_pbar: bool = True,
+) -> Optional[gpd.GeoDataFrame]:
+    """
+    Polygonise connected pixel regions in ``input_img`` for rasters producing
+    very large numbers of polygons (e.g., segment label rasters from
+    :mod:`rsgispy.segmentation` or fine-scale classifications).
+
+    The raster is processed in tiles of ``tile_size`` pixels, optionally in
+    ``n_jobs`` worker processes, so memory use does not depend on the image
+    size, and the output is streamed to disk in chunks (GeoParquet with
+    compression by default, or any OGR vector format). The polygons are the
+    same as those from :func:`polygonise_raster_to_vec_lyr` (same coverage,
+    values, holes and connectivity) whatever the tile size and number of
+    cores, and the output is identical for any ``n_jobs``.
+
+    Polygons that do not touch an internal tile edge are written as soon as
+    their tile is processed. Polygons cut by tile edges are merged at the end
+    (pieces of the same value sharing an edge, or any contact for
+    8-connectivity, are unioned in exact pixel coordinates), so only these
+    *seam pieces* are held in memory; their number grows with the total
+    length of the tile edges, not with the image area.
+
+    Backends:
+
+    * ``'numba'``: a custom polygonisation kernel (4-connected component
+      labelling, then boundary tracing along pixel edges) compiled with
+      ``numba``, producing coordinate arrays and WKB directly without
+      creating Python objects per polygon. Without ``numba`` the same
+      algorithm runs in pure Python (correct, but slow).
+    * ``'rasterio'``: :func:`rasterio.features.shapes` (GDAL) for each tile.
+    * ``'auto'`` (default): ``'numba'`` when ``numba`` is available,
+      otherwise ``'rasterio'``.
+
+    Notes:
+
+    * The output geometries are always valid (:func:`shapely.is_valid`).
+      With ``use_8_conn=True``, regions whose parts touch only diagonally
+      (at a pixel corner) are written as MultiPolygons with the parts
+      touching at that corner. GDAL writes these as a single self-touching
+      ring, which is invalid, so in this case the geometries equal
+      ``shapely.make_valid`` of GDAL's.
+    * Vertices are only written at polygon corners. Map coordinates are
+      calculated from the pixel corner coordinates with the image
+      geotransform (``x = c + col * a + row * b``), as GDAL does; for
+      awkward (e.g., geographic) pixel sizes they can differ from GDAL's in
+      the last bit (GDAL builds using fused multiply-add on some platforms).
+      Exteriors are counter-clockwise and holes clockwise (north-up
+      images).
+    * Integer rasters of any type (including ``uint32``, ``int64`` and
+      ``uint64``) are supported. Float rasters are polygonised on exact
+      value equality (as GDAL does) with ``NaN`` pixels ignored.
+    * ``dissolve_by_value=True`` writes one feature per pixel value (a
+      MultiPolygon when the value has several disconnected parts), as needed
+      for segment label rasters (one row per segment ID). Without
+      ``sort_by_value`` the features are in order of each value's first
+      polygon.
+    * ``sort_by_value`` / ``dissolve_by_value`` work for outputs larger than
+      memory: the rows are staged in a temporary Arrow file and sorted with
+      a bucket sort (one ``int64`` key per row is held in memory).
+    * Memory: each worker (or the main process when ``n_jobs=1``) holds
+      the tile it is processing; for a dense segmentation the peak was about
+      0.8 GB per worker with ``tile_size=1024`` and 1.9 GB with ``2048``.
+      The main process holds the seam pieces of about one row of tiles.
+    * Worker processes take 1-2 s to start, so ``n_jobs > 1`` only helps
+      for large rasters (tens of millions of pixels).
+
+    Measured with ``benchmarks/polygonise_benchmark.py`` (Apple M2 Max, 8
+    performance + 4 efficiency cores) on a 10,000 x 10,000 segmentation-like
+    label raster with 16.2 million polygons, writing GeoParquet:
+    :func:`polygonise_raster_to_vec_lyr` took 311 s and 38 GB of memory;
+    this function took 18.5 s on one core and 8.1 s with ``n_jobs=4``
+    (``'numba'`` backend, ``tile_size=2048``), and 107 s / 17 s with the
+    ``'rasterio'`` backend on 1 / 8 cores (``tile_size=1024``). A
+    ``tile_size`` of 1024-2048 and ``n_jobs`` of about the number of
+    performance cores are good defaults (the ``'rasterio'`` backend gains
+    more from extra cores).
+
+    :param input_img: Path to the input raster.
+    :param out_vec_file: Output vector file (e.g., ``'segs.parquet'``), or
+                         ``None`` to return an in-memory
+                         :class:`geopandas.GeoDataFrame` (which holds every
+                         polygon in memory).
+    :param out_vec_lyr: Optional output layer name (multi-layer formats).
+    :param img_band: 1-based band to polygonise (Default = ``1``).
+    :param mask_img: Optional mask raster (same size as ``input_img``); only
+                     pixels where it is non-zero are polygonised.
+    :param mask_band: 1-based band of ``mask_img`` (Default = ``1``).
+    :param no_data_val: Optional pixel value not polygonised (Default =
+                        ``None``: every pixel is polygonised, as in
+                        :func:`polygonise_raster_to_vec_lyr`).
+    :param pxl_val_fieldname: Column holding the pixel value (Default =
+                              ``'PXLVAL'``).
+    :param use_8_conn: If ``True``, group pixels with 8-connectivity,
+                       otherwise 4-connectivity (Default = ``False``).
+    :param dissolve_by_value: If ``True``, write one feature per pixel value.
+    :param sort_by_value: If ``True``, write the features sorted by value.
+    :param inc_pxl_count: If ``True``, add the number of pixels in each
+                          feature (column ``pxl_count_fieldname``).
+    :param tile_size: Tile size in pixels, ``int`` or ``(rows, cols)``
+                      (Default = ``2048``).
+    :param n_jobs: Number of worker processes (Default = ``1``).
+    :param backend: ``'auto'`` (default), ``'numba'`` or ``'rasterio'``.
+    :param out_format: Output format (``'GeoParquet'`` or an OGR driver name;
+                       Default = inferred from the file extension).
+    :param out_compress: GeoParquet compression (Default = ``'snappy'``).
+    :param chunk_size: Rows per written chunk (Default = ``100000``).
+    :param pxl_count_fieldname: Pixel count column (Default =
+                                ``'pxl_count'``).
+    :param tmp_dir: Directory for temporary files when sorting/dissolving
+                    (Default = the output directory).
+    :param overwrite: If ``True``, replace an existing output file.
+    :param use_pbar: If ``True``, show a progress bar over the tiles.
+    :return: :class:`geopandas.GeoDataFrame` if ``out_vec_file`` is ``None``,
+             otherwise ``None``.
+
+    .. code:: python
+
+        import rsgispy.vector.create
+
+        # One feature per segment, sorted by segment ID, using 8 cores.
+        rsgispy.vector.create.polygonise_raster_tiled(
+            "s2_segs.kea",
+            "s2_segs.parquet",
+            pxl_val_fieldname="seg_id",
+            no_data_val=0,
+            dissolve_by_value=True,
+            sort_by_value=True,
+            n_jobs=8,
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+    # pylint: disable=import-outside-toplevel
+    from rsgispy._numba import numba_enabled
+    from rsgispy._polygonise import (
+        PolygoniseParams,
+        _TableBuilder,
+        check_n_jobs,
+        plan_tile_specs,
+        run_tiled_polygonise,
+    )
+    from rsgispy._polygonise_kernels import _label4_kernel
+    from rsgispy.ml.vector import ChunkedVecWriter
+
+    in_path = os.path.abspath(os.fspath(input_img))
+    ensure_file_exists(in_path)
+    backend_l = str(backend).strip().lower()
+    if backend_l not in ("auto", "numba", "rasterio"):
+        raise rsgispy.RSGISPyException(
+            f"backend must be 'auto', 'numba' or 'rasterio', got {backend!r}."
+        )
+    if backend_l == "auto":
+        backend_l = (
+            "numba"
+            if numba_enabled() and _label4_kernel.jit_func is not None
+            else "rasterio"
+        )
+    jobs = check_n_jobs(n_jobs)
+    plan_tile_specs(1, 1, tile_size)  # validate tile_size before reading
+    if int(chunk_size) < 1:
+        raise rsgispy.RSGISPyException(f"chunk_size must be >= 1, got {chunk_size}.")
+    if not pxl_val_fieldname:
+        raise rsgispy.RSGISPyException("pxl_val_fieldname must not be empty.")
+    count_col = pxl_count_fieldname if inc_pxl_count else None
+    if count_col is not None and count_col == pxl_val_fieldname:
+        raise rsgispy.RSGISPyException(
+            "pxl_count_fieldname and pxl_val_fieldname must be different."
+        )
+
+    with rasterio.open(in_path, "r") as src:
+        validate_band_index(img_band, src.count, in_path)
+        height, width = int(src.height), int(src.width)
+        src_dtype = np.dtype(src.dtypes[img_band - 1])
+        crs = src.crs
+        tr = src.transform
+    if np.issubdtype(src_dtype, np.complexfloating):
+        raise rsgispy.RSGISPyException("Complex rasters cannot be polygonised.")
+    mask_path: Optional[str] = None
+    if mask_img is not None:
+        mask_path = os.path.abspath(os.fspath(mask_img))
+        ensure_file_exists(mask_path, label="Mask image")
+        with rasterio.open(mask_path, "r") as msk:
+            validate_band_index(mask_band, msk.count, mask_path)
+            if (msk.height, msk.width) != (height, width):
+                raise rsgispy.RSGISPyException(
+                    f"Mask image '{mask_path}' is {msk.height} x {msk.width} pixels "
+                    f"but '{in_path}' is {height} x {width}."
+                )
+    if np.issubdtype(src_dtype, np.floating):
+        val_dtype = np.dtype(np.float64)
+    elif src_dtype == np.uint64:
+        val_dtype = np.dtype(np.uint64)
+    else:
+        val_dtype = np.dtype(np.int64)
+
+    params = PolygoniseParams(
+        input_img=in_path,
+        img_band=int(img_band),
+        mask_img=mask_path,
+        mask_band=int(mask_band),
+        no_data_val=None if no_data_val is None else no_data_val,
+        use_8_conn=bool(use_8_conn),
+        backend=backend_l,
+        use_numba=numba_enabled(),
+        img_height=height,
+        img_width=width,
+        geotransform=(tr.c, tr.a, tr.b, tr.f, tr.d, tr.e),
+        flip=(tr.a * tr.e - tr.b * tr.d) > 0,
+    )
+    tiles = plan_tile_specs(height, width, tile_size)
+    builder = _TableBuilder(pxl_val_fieldname, val_dtype, count_col)
+    pa_mod = builder.pa
+
+    if out_vec_file is None:
+        tables: List[Any] = []
+        run_tiled_polygonise(
+            params,
+            tiles,
+            jobs,
+            builder,
+            tables.append,
+            int(chunk_size),
+            bool(sort_by_value),
+            bool(dissolve_by_value),
+            None,
+            use_pbar,
+        )
+        tbl = pa_mod.concat_tables(tables) if tables else builder.empty()
+        geoms = shapely.from_wkb(tbl.column("geometry").to_numpy(zero_copy_only=False))
+        attrs = tbl.drop_columns(["geometry"]).to_pandas()
+        return gpd.GeoDataFrame(attrs, geometry=gpd.GeoSeries(geoms, crs=crs), crs=crs)
+
+    out_path = os.path.abspath(os.fspath(out_vec_file))
+    work_dir = os.fspath(tmp_dir) if tmp_dir is not None else os.path.dirname(out_path)
+    os.makedirs(work_dir, exist_ok=True)
+    geom_type = (
+        "Polygon"
+        if (not use_8_conn and not dissolve_by_value)
+        or (out_format is not None and check_format_name(out_format) == "ESRI Shapefile")
+        or out_path.lower().endswith(".shp")
+        else "Unknown"
+    )
+    writer = ChunkedVecWriter(
+        out_path,
+        out_vec_lyr=out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+        geom_col="geometry",
+        crs=crs.to_wkt() if crs is not None else None,
+        geometry_type=geom_type,
+        overwrite=overwrite,
+    )
+    try:
+        n_written = run_tiled_polygonise(
+            params,
+            tiles,
+            jobs,
+            builder,
+            writer.write,
+            int(chunk_size),
+            bool(sort_by_value),
+            bool(dissolve_by_value),
+            work_dir,
+            use_pbar,
+        )
+        if n_written == 0:
+            writer.write(builder.empty())
+    except BaseException:
+        writer.close(success=False)
+        raise
+    writer.close(success=True)
     return None
 
 

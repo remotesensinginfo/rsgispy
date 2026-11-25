@@ -26,8 +26,11 @@ Landsat, and multi-spectral orthomosaics) with:
 * **Downstream GEOBIA integration**: Segment clean-up
   (:func:`~rsgispy.segmentation.utils.eliminate_small_segments`,
   :func:`~rsgispy.segmentation.utils.relabel_segments`), polygonisation
-  (:func:`~rsgispy.segmentation.utils.polygonise_segments`), and zonal band
-  statistics (:func:`~rsgispy.segmentation.utils.extract_segment_stats`).
+  (:func:`~rsgispy.segmentation.utils.polygonise_segments`, which uses the
+  tiled, multi-core
+  :func:`~rsgispy.vector.create.polygonise_raster_tiled`; see
+  :ref:`polygonise-benchmark`), and zonal band statistics
+  (:func:`~rsgispy.segmentation.utils.extract_segment_stats`).
 
 GEOBIA Workflow Example
 -----------------------
@@ -54,7 +57,11 @@ GEOBIA Workflow Example
        datatype=rsgispy.TYPE_32UINT,
    )
 
-   # 2. Polygonise segments and summarise mean/stddev/min/max per band
+   # 2. Polygonise the segments (tiled, 4 worker processes), one feature per
+   #    connected region sorted by segment ID
+   polygonise_segments("segments.tif", "segments.gpkg", n_jobs=4)
+
+   # 3. Polygonise segments and summarise mean/stddev/min/max per band
    extract_segment_stats(
        segments_img="segments.tif",
        feature_img="sentinel2_4band.tif",
