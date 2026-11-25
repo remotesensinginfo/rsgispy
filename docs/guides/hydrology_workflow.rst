@@ -599,9 +599,9 @@ A hillshade (:func:`rsgispy.elevation.illumination.hillshade`; the sun at
 background for hydrological maps. Draw it with
 :func:`rsgispy.mapping.raster.create_raster_img_map` and add the vector
 layers on top with :func:`rsgispy.mapping.vector.create_vec_lyr_map`. The
-vector layers are drawn in order with the ``plot_zorders`` given. Note that
-lines are coloured with the *fill* colour, and that a fill colour of
-``'none'`` draws polygons as outlines only.
+vector layers are drawn in order with the ``plot_zorders`` given. Lines are
+drawn in the line colour, and a fill colour of ``'none'`` draws polygons as
+outlines only.
 
 .. literalinclude:: ../examples/hydrology_workflow.py
    :language: python

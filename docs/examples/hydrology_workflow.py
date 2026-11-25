@@ -375,8 +375,9 @@ def run_workflow(
          wsheds_gdf, streams_gdf, gpd.read_file(gauges_snap)],
         bbox,
         title_str="Streams, subcatchments and gauged watersheds",
-        # Lines are drawn with the fill colour; polygons with "none" are hollow.
-        vec_fill_clrs=["none", "none", "#1f78b4", "#e31a1c"],
+        # Polygons with the fill colour "none" are drawn as outlines; lines
+        # (the streams) are drawn in the line colour.
+        vec_fill_clrs=["none", "none", "none", "#e31a1c"],
         vec_line_clrs=["#666666", "#e31a1c", "#1f78b4", "#000000"],
         vec_line_widths=[0.5, 1.5, 1.5, 0.5],
         vec_markersize=30,

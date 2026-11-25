@@ -8,9 +8,11 @@ from typing import Any, List, Optional, Sequence, Tuple, Union
 import geopandas as gpd
 import matplotlib
 import matplotlib.axes
+import matplotlib.collections
 import matplotlib.colors
 
 import rsgispy
+from rsgispy.mapping._common import plot_vec_lyr_by_geom_type
 from rsgispy.mapping.elements import (
     NORTH_ARROW_STYLE_TRIANGLE,
     SCALEBAR_STYLE_SOLID,
@@ -84,12 +86,20 @@ def create_vec_lyr_map(
     """
     Add one or more GeoPandas vector layers to ``ax``.
 
+    Polygons and points are filled with the fill colour and outlined with the
+    line colour; lines are drawn in the line colour. A layer that mixes
+    geometry types is split by type, so each part gets the right colours.
+
     :param ax: Matplotlib axis to which the vector layer(s) are added.
     :param gp_vecs: GeoDataFrame/GeoSeries or list of layers sharing the same CRS.
     :param bbox: Bounding box ``(MinX, MaxX, MinY, MaxY)`` for the display extent.
     :param title_str: Optional title for the map (Default = None).
-    :param vec_fill_clrs: Fill colour string or list of colours (Default = ``'grey'``).
-    :param vec_line_clrs: Edge colour string or list of colours (Default = ``'black'``).
+    :param vec_fill_clrs: Fill colour string or list of colours for polygons and
+                          point markers; ``'none'`` draws polygons as outlines
+                          only. Not used for lines (Default = ``'grey'``).
+    :param vec_line_clrs: Line colour string or list of colours: the colour of
+                          line features and of polygon and point outlines
+                          (Default = ``'black'``).
     :param vec_line_widths: Line width float or list of widths (Default = 0.25).
     :param vec_fill_alphas: Alpha value or list of alpha values (Default = 1.0).
     :param vec_markersize: Constant marker size or column name for point layers.
@@ -159,16 +169,16 @@ def create_vec_lyr_map(
             "Number of zorders not same as number of vector layers",
         )
 
-        if not gp_vec_sub.empty:
-            gp_vec_sub.plot(
-                ax=ax,
-                color=vec_fill_clr,
-                edgecolor=vec_line_clr,
-                linewidth=vec_line_width,
-                alpha=vec_fill_alpha,
-                markersize=vec_markersize,
-                zorder=plot_zorder,
-            )
+        plot_vec_lyr_by_geom_type(
+            ax,
+            gp_vec_sub,
+            fill_clr=vec_fill_clr,
+            line_clr=vec_line_clr,
+            line_width=vec_line_width,
+            alpha=vec_fill_alpha,
+            markersize=vec_markersize,
+            zorder=plot_zorder,
+        )
 
     ax.set_aspect("equal")
     ax.set_xlim([bbox[0], bbox[1]])
@@ -220,6 +230,10 @@ def create_choropleth_vec_lyr_map(
     """
     Display a choropleth vector map coloured by ``vec_col`` on ``ax``.
 
+    Polygons and point markers are filled with the colour of their value and
+    outlined with ``vec_line_clr``; lines are drawn in the colour of their
+    value.
+
     :param ax: Matplotlib axis to which the vector layer is added.
     :param gp_vec: GeoDataFrame containing features and attribute column ``vec_col``.
     :param vec_col: Column name used to colour features.
@@ -227,8 +241,9 @@ def create_choropleth_vec_lyr_map(
     :param title_str: Optional map title (Default = None).
     :param vec_fill_cmap: Matplotlib colour map name or object (Default = ``'viridis'``).
     :param vec_var_norm: Optional Matplotlib Normalize instance.
-    :param vec_line_clr: Edge line colour (Default = ``'black'``).
-    :param vec_line_width: Edge line width (Default = 0.25).
+    :param vec_line_clr: Outline colour of polygons and point markers
+                         (Default = ``'black'``).
+    :param vec_line_width: Line width of lines and outlines (Default = 0.25).
     :param vec_fill_alpha: Fill alpha transparency (Default = 1.0).
     :param vec_markersize: Constant marker size or column name for point layers.
     :param show_scale_bar: Whether to add a scale bar (Default = True).
@@ -267,17 +282,23 @@ def create_choropleth_vec_lyr_map(
     gp_vec_sub = _subset_vec_bbox(gp_vec, bbox) if sub_in_vec else gp_vec
 
     if not gp_vec_sub.empty:
+        n_colls = len(ax.collections)
+        # One plot call, so all geometry types share one colour mapping; no
+        # edgecolor here, since it would override the colours of the lines.
         gp_vec_sub.plot(
             column=vec_col,
             ax=ax,
             cmap=vec_fill_cmap,
             norm=vec_var_norm,
-            edgecolor=vec_line_clr,
             linewidth=vec_line_width,
             alpha=vec_fill_alpha,
             markersize=vec_markersize,
             zorder=plot_zorder,
         )
+        # Outline the polygons and point markers; lines keep their value colour.
+        for coll in ax.collections[n_colls:]:
+            if not isinstance(coll, matplotlib.collections.LineCollection):
+                coll.set_edgecolor(vec_line_clr)
 
     ax.set_aspect("equal")
     ax.set_xlim([bbox[0], bbox[1]])

@@ -1,12 +1,19 @@
 """
-Internal shared placement and validation helpers for :mod:`rsgispy.mapping`.
+Internal shared placement, validation and vector plotting helpers for
+:mod:`rsgispy.mapping`.
 """
 
-from typing import Union
+from typing import Any, Dict, Optional, Union
 
+import geopandas as gpd
+import matplotlib.axes
 from matplotlib.offsetbox import AnchoredOffsetbox
 
 import rsgispy
+
+_POLY_GEOM_TYPES = ("Polygon", "MultiPolygon")
+_LINE_GEOM_TYPES = ("LineString", "MultiLineString", "LinearRing")
+_POINT_GEOM_TYPES = ("Point", "MultiPoint")
 
 _LOC_ALIASES = {
     "top right": "upper right",
@@ -50,3 +57,46 @@ def resolve_mpl_location(loc: Union[str, int]) -> str:
             f"Invalid placement location '{loc}'. Valid options are: {valid}."
         )
     return norm_loc
+
+
+def plot_vec_lyr_by_geom_type(
+    ax: matplotlib.axes.Axes,
+    gp_vec: Union[gpd.GeoDataFrame, gpd.GeoSeries],
+    fill_clr: Any,
+    line_clr: Any,
+    line_width: float,
+    *,
+    alpha: float = 1.0,
+    markersize: Optional[Union[str, float]] = None,
+    zorder: Optional[float] = None,
+) -> None:
+    """
+    Plot a GeoPandas layer on ``ax``, split by geometry type so each type uses
+    the right colours: polygons and points are filled with ``fill_clr`` and
+    outlined with ``line_clr``; lines are drawn in ``line_clr`` (GeoPandas
+    draws lines in its ``color`` argument, which would otherwise be the fill
+    colour). Geometry collections are exploded into their parts first.
+    """
+    # pylint: disable=too-many-arguments
+    if gp_vec.empty:
+        return
+    geom_types = gp_vec.geom_type
+    if (geom_types == "GeometryCollection").any():
+        gp_vec = gp_vec.explode(index_parts=False)
+        geom_types = gp_vec.geom_type
+
+    common: Dict[str, Any] = {"ax": ax, "linewidth": line_width, "alpha": alpha}
+    if zorder is not None:
+        common["zorder"] = zorder
+
+    polys = gp_vec[geom_types.isin(_POLY_GEOM_TYPES)]
+    if not polys.empty:
+        polys.plot(color=fill_clr, edgecolor=line_clr, **common)
+    lines = gp_vec[geom_types.isin(_LINE_GEOM_TYPES)]
+    if not lines.empty:
+        lines.plot(color=line_clr, **common)
+    points = gp_vec[geom_types.isin(_POINT_GEOM_TYPES)]
+    if not points.empty:
+        points.plot(
+            color=fill_clr, edgecolor=line_clr, markersize=markersize, **common
+        )

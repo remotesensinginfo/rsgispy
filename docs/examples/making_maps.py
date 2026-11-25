@@ -179,9 +179,9 @@ def run_workflow(
     )
     map_vector.create_vec_lyr_map(
         ax, [regions, rivers], bbox,
-        # Polygons: fill and outline colours. Lines are drawn in the *fill*
-        # colour (matplotlib draws a line's colour with ``color``).
-        vec_fill_clrs=["none", "deepskyblue"],
+        # Polygons: fill and outline colours ("none": outlines only).
+        # Lines (the rivers) are drawn in the line colour.
+        vec_fill_clrs=["none", "none"],
         vec_line_clrs=["yellow", "deepskyblue"],
         vec_line_widths=[1.0, 2.0],
         plot_zorders=[2, 3],  # above the image (z-order 1)
@@ -223,7 +223,7 @@ def run_workflow(
         ax, cls_img, show_scale_bar=False,  # added below with more control
     )
     map_vector.create_vec_lyr_map(
-        ax, rivers, bbox, vec_fill_clrs="navy", vec_line_widths=1.5,
+        ax, rivers, bbox, vec_line_clrs="navy", vec_line_widths=1.5,
         plot_zorders=2, show_scale_bar=False,
     )
     map_elements.add_scale_bar(
@@ -252,13 +252,11 @@ def run_workflow(
     over_bbox, centre_pt = map_layout.get_overview_info(
         bbox, roi_epsg=img_epsg, overview_buf=5.0, out_epsg=over_epsg,
     )
-    ax_inset = map_layout.add_overview_maps(
+    map_layout.add_overview_maps(
         ax, overview, over_bbox, overview_pt=centre_pt,
         over_size_x=0.28, over_size_y=0.28, loc="upper right",
         fill_clr="whitesmoke", line_clr="grey", pt_clr="red", pt_size=20,
     )
-    ax_inset.set_xlabel("")  # geopandas adds CRS axis labels; not wanted here
-    ax_inset.set_ylabel("")
     # [end-step-7-overview]
 
     # [step-8-export]
