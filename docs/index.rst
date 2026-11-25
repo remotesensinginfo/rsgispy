@@ -135,8 +135,8 @@ Evaluating a mathematical expression across image bands with
    import rsgispy.imagecalc.maths
 
    band_defns = [
-       rsgispy.imagecalc.maths.BandDefn(band_name="b1", input_img="img.kea", img_band=1),
-       rsgispy.imagecalc.maths.BandDefn(band_name="b2", input_img="img.kea", img_band=2),
+       rsgispy.imagecalc.maths.BandDefn(band_name="b1", input_img="img.tif", img_band=1),
+       rsgispy.imagecalc.maths.BandDefn(band_name="b2", input_img="img.tif", img_band=2),
    ]
    rsgispy.imagecalc.maths.band_maths(
        output_img="out.tif",

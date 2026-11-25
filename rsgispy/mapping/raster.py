@@ -278,7 +278,7 @@ def create_thematic_raster_map(
         fig, ax = plt.subplots()
         map_raster.create_thematic_raster_map(
             ax=ax,
-            input_img="landcover.kea",
+            input_img="landcover.tif",
             title_str="Land Cover",
             show_legend=True,
             classes_info={1: "Forest", 2: "Grassland", 3: "Water"},

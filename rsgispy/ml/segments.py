@@ -529,7 +529,7 @@ def create_segment_features(
         from rsgispy.ml.segments import create_segment_features
 
         seg_info = create_segment_features(
-            "s2_segs.kea",
+            "s2_segs.tif",
             [ImageBandInfo("s2_sref.tif", name="s2", bands=[1, 2, 3, 7, 9],
                            band_names=["Blue", "Green", "Red", "NIR", "SWIR1"])],
             "s2_segs.parquet",
@@ -749,7 +749,7 @@ def substitute_scene(
         from rsgispy.ml.segments import substitute_scene, create_segment_features
 
         new_cfg = substitute_scene(
-            cls_cfg, {"s2": "s2_2024_sref.tif"}, label_img="s2_2024_segs.kea"
+            cls_cfg, {"s2": "s2_2024_sref.tif"}, label_img="s2_2024_segs.tif"
         )
         new_cfg.seg_info = create_segment_features(
             new_cfg.seg_info.label_img, None, "s2_2024_segs.parquet",

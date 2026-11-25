@@ -22,7 +22,7 @@ how that works and which choices affect speed, memory use and file sizes:
   mosaicking the results;
 * the ``n_jobs`` and ``numba`` options of the segmentation, zonal statistics
   and polygonisation functions;
-* choosing output formats: Cloud Optimised GeoTIFF (COG), KEA and
+* choosing output formats: GeoTIFF, Cloud Optimised GeoTIFF (COG), KEA and
   GeoParquet.
 
 The example script runs each technique on a small image so that it can be
@@ -61,7 +61,7 @@ Overview
             ├─► 6. Filter chain: median → Sobel on NDVI
             ├─► 7. Tiles (parallel) → per-tile NDVI → mosaic VRT
             │            │
-            │            └─► 8. Cloud Optimised GeoTIFF
+            │            └─► 8. Final GeoTIFF (or COG)
             └─► 9. Tiled multi-core segmentation → zonal statistics
                     (Parquet) → polygons (GeoParquet)
 
@@ -347,33 +347,40 @@ processing time — typically a few thousand pixels across (e.g. 5,000 x
 workers. With ``n_cores > 1``, call the function from inside an
 ``if __name__ == "__main__":`` block (see its documentation).
 
-Step 8 — Cloud Optimised GeoTIFF outputs
-----------------------------------------
+Step 8 — Writing the final product
+----------------------------------
 
-A COG is a GeoTIFF with internal tiles, overviews and a layout that lets
-programs read just the part and resolution they need, including over HTTP
-from cloud storage. It is the best format for final products that are shared,
-served or displayed. Create it at the end with
-:func:`~rsgispy.imageutils.warp.gdal_translate` (``gdalformat='COG'``),
-here directly from the tile mosaic VRT, and check the file with
+The VRT mosaic from step 7 refers to every tile file. Write the final
+product as a single GeoTIFF with
+:func:`~rsgispy.imageutils.warp.gdal_translate`, here directly from the tile
+mosaic VRT, and check the file with
 :func:`~rsgispy.tools.checkdatasets.check_gdal_image_file`:
 
 .. literalinclude:: ../examples/large_rasters.py
    :language: python
-   :start-after: # [step-8-cog]
-   :end-before: # [end-step-8-cog]
+   :start-after: # [step-8-final]
+   :end-before: # [end-step-8-final]
    :dedent: 4
 
-``check_gdal_image_file`` returns ``(True, '')`` for a valid file. Useful
-COG options: ``COMPRESS`` (``DEFLATE``, ``ZSTD``, or ``LZW``; ``JPEG`` or
-``WEBP`` for lossy RGB previews), ``PREDICTOR=YES`` (helps compression of
-continuous data), ``OVERVIEW_RESAMPLING`` (``AVERAGE`` or ``CUBIC`` for
-continuous data, ``NEAREST`` or ``MODE`` for classes) and ``BLOCKSIZE``
-(default 512). The ``rsgisbatchconvert2cog`` command line tool converts many
-files at once. The ``set_env_vars_*_cog_outs`` functions in
+``check_gdal_image_file`` returns ``(True, '')`` for a valid file. rsgispy
+writes GeoTIFFs tiled and DEFLATE-compressed by default; options passed to a
+function (here ``PREDICTOR=3``, which helps the compression of floating-point
+data) are added to the defaults, and the ``envopts`` functions change the
+defaults for every later output in the same process.
+
+For products that are shared, served or read over HTTP from cloud storage,
+write a Cloud Optimised GeoTIFF (COG) instead, with ``gdalformat="COG"``. A
+COG is a GeoTIFF with internal tiles, overviews and a layout that lets
+programs read just the part and resolution they need. Useful COG options:
+``COMPRESS`` (``DEFLATE``, ``ZSTD``, or ``LZW``; ``JPEG`` or ``WEBP`` for
+lossy RGB previews), ``PREDICTOR=YES`` (helps compression of continuous
+data), ``OVERVIEW_RESAMPLING`` (``AVERAGE`` or ``CUBIC`` for continuous
+data, ``NEAREST`` or ``MODE`` for classes) and ``BLOCKSIZE`` (default 512).
+The ``rsgisbatchconvert2cog`` command line tool converts many files at once.
+The ``set_env_vars_*_cog_outs`` functions in
 :mod:`rsgispy.imageutils.envopts` set COG creation options for functions
-that write ``gdalformat='COG'`` directly; the GeoTIFF defaults are never
-applied to COGs.
+that write ``gdalformat='COG'``; the GeoTIFF defaults are never applied to
+COGs.
 
 **How rsgispy writes COGs.** GDAL can only create a COG by copying a
 complete image, so when an rsgispy function writes ``gdalformat='COG'``

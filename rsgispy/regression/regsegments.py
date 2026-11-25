@@ -99,7 +99,7 @@ def create_reg_segment_features(
         import rsgispy.regression.regsegments as rseg
 
         cfg = rseg.create_reg_segment_features(
-            "reg_config.json", "s2_segs.kea", "s2_segs.parquet",
+            "reg_config.json", "s2_segs.tif", "s2_segs.parquet",
             out_cfg_file="reg_seg_config.json",
         )
     """

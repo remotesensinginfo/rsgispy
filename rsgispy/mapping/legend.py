@@ -399,11 +399,11 @@ def add_categorical_legend_axis(
         fig, (ax_map, ax_leg) = plt.subplots(
             1, 2, figsize=(9, 5), gridspec_kw={"width_ratios": [4, 1]}
         )
-        map_raster.create_thematic_raster_map(ax=ax_map, input_img="landcover.kea")
+        map_raster.create_thematic_raster_map(ax=ax_map, input_img="landcover.tif")
         lgd = legend.add_categorical_legend_axis(
             ax=ax_leg,
             classes_info={1: "Forest", 2: "Grassland", 3: "Water"},
-            input_img="landcover.kea",
+            input_img="landcover.tif",
             title="Classes",
         )
     """

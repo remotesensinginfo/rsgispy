@@ -435,7 +435,7 @@ def polygonise_raster_tiled(
 
         # One feature per segment, sorted by segment ID, using 8 cores.
         rsgispy.vector.create.polygonise_raster_tiled(
-            "s2_segs.kea",
+            "s2_segs.tif",
             "s2_segs.parquet",
             pxl_val_fieldname="seg_id",
             no_data_val=0,

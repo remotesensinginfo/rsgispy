@@ -130,7 +130,7 @@ outputs larger than memory.
    # One (Multi)Polygon per segment ID, sorted by ID, with pixel counts,
    # using 8 worker processes.
    rsgispy.vector.create.polygonise_raster_tiled(
-       "segments.kea",
+       "segments.tif",
        "segments.parquet",
        pxl_val_fieldname="seg_id",
        no_data_val=0,

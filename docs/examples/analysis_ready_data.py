@@ -267,12 +267,9 @@ def run_workflow(  # noqa: C901
     out["composites"] = composites
 
     # [step-7-mosaic]
-    import rsgispy.imageutils.envopts
     import rsgispy.imageutils.mosaic
     import rsgispy.imageutils.vrt
 
-    # Deflate-compressed Cloud Optimised GeoTIFF outputs (set once per process)
-    rsgispy.imageutils.envopts.set_env_vars_deflate_cog_outs()
     mosaics: Dict[str, str] = {}
     for product, no_data in (("sref", 0), ("ndvi", -999)):
         tile_imgs = [comp[product] for comp in composites.values()]
@@ -280,14 +277,14 @@ def run_workflow(  # noqa: C901
         rsgispy.imageutils.vrt.create_mosaic_images_vrt(
             tile_imgs, vrt_file, src_nodata=no_data, vrt_nodata=no_data
         )
-        mosaic_img = os.path.join(out_dir, f"{product}_mosaic_cog.tif")
+        mosaic_img = os.path.join(out_dir, f"{product}_mosaic.tif")
         rsgispy.imageutils.mosaic.create_img_mosaic(
             tile_imgs,
             mosaic_img,
             background_val=no_data,
             skip_val=no_data,  # ignore no data pixels (in band 1)
             overlap_behaviour=0,  # overlaps: later images overwrite earlier
-            gdalformat="COG",  # statistics are written into the COG
+            gdalformat="GTIFF",  # tiled, DEFLATE-compressed, with statistics
             use_pbar=use_pbar,
         )
         mosaics[product] = mosaic_img

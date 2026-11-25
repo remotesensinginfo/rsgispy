@@ -31,7 +31,7 @@ custom scale bar:
    fig, ax = plt.subplots(figsize=(8, 6))
    map_raster.create_thematic_raster_map(
        ax=ax,
-       input_img="landcover.kea",
+       input_img="landcover.tif",
        title_str="Land Cover Classification",
        scale_bar_style=elements.SCALEBAR_STYLE_ALTERNATING,
        show_north_arrow=True,

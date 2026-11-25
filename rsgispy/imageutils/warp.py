@@ -1324,7 +1324,7 @@ def gdal_translate(
 
         import rsgispy.imageutils.warp
         rsgispy.imageutils.warp.gdal_translate(
-            "input_img.kea",
+            "input_img.tif",
             "output_img.tif",
             gdalformat="GTIFF",
             bands=[3, 2, 1],

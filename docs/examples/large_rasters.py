@@ -214,23 +214,22 @@ def run_workflow(
     out["n_tiles"] = len(tile_ndvi_imgs)
     out["ndvi_mosaic_vrt"] = ndvi_mosaic_vrt
 
-    # [step-8-cog]
+    # [step-8-final]
     from rsgispy.imageutils.warp import gdal_translate
     from rsgispy.tools.checkdatasets import check_gdal_image_file
 
-    ndvi_cog = os.path.join(out_dir, "ndvi_cog.tif")
+    ndvi_final = os.path.join(out_dir, "ndvi_final.tif")
     gdal_translate(
         ndvi_mosaic_vrt,
-        ndvi_cog,
-        options={"COMPRESS": "DEFLATE", "PREDICTOR": "YES",
-                 "OVERVIEW_RESAMPLING": "AVERAGE", "BIGTIFF": "IF_SAFER"},
-        gdalformat="COG",  # written via a temporary tiled GeoTIFF
+        ndvi_final,
+        options={"PREDICTOR": "3"},  # added to the default GeoTIFF options
+        gdalformat="GTIFF",  # tiled and DEFLATE-compressed by default
         use_pbar=use_pbar,
     )
-    print(check_gdal_image_file(ndvi_cog, n_bands=1, chk_proj=True,
+    print(check_gdal_image_file(ndvi_final, n_bands=1, chk_proj=True,
                                 read_img=True))
-    # [end-step-8-cog]
-    out["ndvi_cog"] = ndvi_cog
+    # [end-step-8-final]
+    out["ndvi_final"] = ndvi_final
 
     # [step-9-segments]
     import rsgispy.segmentation

@@ -1060,7 +1060,7 @@ def polygonise_segments(
         import rsgispy.segmentation
 
         rsgispy.segmentation.polygonise_segments(
-            "s2_segs.kea", "s2_segs.gpkg", out_vec_lyr="segs", n_jobs=4
+            "s2_segs.tif", "s2_segs.gpkg", out_vec_lyr="segs", n_jobs=4
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments

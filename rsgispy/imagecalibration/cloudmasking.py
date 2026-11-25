@@ -869,7 +869,7 @@ def apply_cloudsen12_s2_sref_cloud_mask(
             "s2_l2a_clouds.tif",
             device="auto",
             weights_dir="./cloudsen12_weights",
-            gdalformat="KEA",
+            gdalformat="GTIFF",
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments

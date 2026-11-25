@@ -85,10 +85,12 @@ def test_worked_example_runs(tmp_path, restore_env):
     np.testing.assert_allclose(mosaic, ndvi, atol=1e-6)
     assert out["n_tiles"] == 6
 
-    cog, _ = _read(out["ndvi_cog"])
-    np.testing.assert_allclose(cog, ndvi, atol=1e-6)
-    with rasterio.open(out["ndvi_cog"]) as src:
-        assert src.tags(ns="IMAGE_STRUCTURE").get("LAYOUT") == "COG"
+    final, _ = _read(out["ndvi_final"])
+    np.testing.assert_allclose(final, ndvi, atol=1e-6)
+    with rasterio.open(out["ndvi_final"]) as src:
+        assert src.profile.get("tiled")
+        assert src.tags(ns="IMAGE_STRUCTURE").get("COMPRESSION") == "DEFLATE"
+        assert src.tags(ns="IMAGE_STRUCTURE").get("PREDICTOR") == "3"
         assert "STATISTICS_MEAN" in src.tags(1)
 
     hp_img, _ = _read(out["tg_hp_img"])

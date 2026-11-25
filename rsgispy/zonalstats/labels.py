@@ -826,7 +826,7 @@ def calc_label_zonal_stats(
         import rsgispy.zonalstats.labels as zs_lbl
 
         df = zs_lbl.calc_label_zonal_stats(
-            "segments.kea",
+            "segments.tif",
             [
                 BandSpec("s2_sref.tif", name="s2", bands=(3, 4, 8),
                          band_names=("Red", "NIR", "SWIR1"), no_data_val=0),
@@ -1127,7 +1127,7 @@ def rasterise_label_values(
         import rsgispy.zonalstats.labels as zs_lbl
 
         zs_lbl.rasterise_label_values(
-            "segments.kea", [1, 2, 3], np.array([10, 20, 10], dtype=np.uint8),
+            "segments.tif", [1, 2, 3], np.array([10, 20, 10], dtype=np.uint8),
             "seg_classes.tif", thematic=True,
         )
     """

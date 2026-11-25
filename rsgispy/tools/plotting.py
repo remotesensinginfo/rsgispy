@@ -178,7 +178,7 @@ def get_thematic_raster_mpl_imshow(
 
         img_rgba, extent, patches = (
             rsgispy.tools.plotting.get_thematic_raster_mpl_imshow(
-                "landcover.kea", out_patches=True, cls_names_lut={1: "Forest"}
+                "landcover.tif", out_patches=True, cls_names_lut={1: "Forest"}
             )
         )
     """

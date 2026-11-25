@@ -7,8 +7,8 @@ scene, with clouds and their shadows removed, on a common pixel grid, and
 usually combined into a single cloud-free composite for the period of
 interest. Data prepared like this is called *analysis-ready data* (ARD). This
 guide walks through that preparation in rsgispy for Sentinel-2 Level-2A data,
-from searching for and downloading scenes to a checked, Cloud Optimised
-GeoTIFF (COG) composite. The same steps apply to Landsat Collection 2
+from searching for and downloading scenes to a checked, compressed GeoTIFF
+composite. The same steps apply to Landsat Collection 2
 Level-2 data (see the notes in each step).
 
 Why each stage matters:
@@ -27,9 +27,9 @@ Why each stage matters:
 * **Compositing** — no single date is cloud-free everywhere; a per-pixel
   median or percentile of the clear observations gives a complete image that
   is also robust to undetected clouds and shadows.
-* **Checked outputs** — COGs with internal overviews open quickly in
-  GIS software and can be read efficiently from object storage; checking the
-  files catches truncated or corrupt outputs before they reach later stages.
+* **Checked outputs** — tiled, compressed GeoTIFFs with statistics and
+  overviews open quickly in GIS software; checking the files catches
+  truncated or corrupt outputs before they reach later stages.
 
 The outputs of this guide are the inputs of the other guides: for example the
 :doc:`object-based classification <segment_ml_workflow>`, the
@@ -79,7 +79,7 @@ Overview
    6. Composite ──────► <tile>_sref_median.tif, <tile>_ndvi_p10_p50_p90.tif,
         │               <tile>_n_clear_obs.tif
         ▼
-   7. Mosaic tiles ───► sref_mosaic_cog.tif, ndvi_mosaic_cog.tif (+ VRTs)
+   7. Mosaic tiles ───► sref_mosaic.tif, ndvi_mosaic.tif (+ VRTs)
         ▼
    8. Check outputs
 
@@ -395,8 +395,8 @@ the ``n_clear_obs`` image. Remaining bright or dark blobs coincide with low
 observation counts; extend the date range or improve the cloud mask there.
 Reflectance values should be in the same range as the individual dates.
 
-Step 7 — Mosaicking tiles and writing COGs
-------------------------------------------
+Step 7 — Mosaicking tiles
+-------------------------
 
 Sentinel-2 tiles overlap by about 10 km, and an area of interest often covers
 several tiles. Two ways of combining the per-tile composites:
@@ -411,26 +411,19 @@ several tiles. Two ways of combining the per-tile composites:
   happens where tiles overlap (``0``: the later image wins; ``1``/``2``: keep
   the minimum/maximum of ``skip_band``).
 
-The final mosaics are written as Cloud Optimised GeoTIFFs
-(``gdalformat='COG'``). :mod:`rsgispy.imageutils.envopts` sets the creation
-options used by all rsgispy functions through environment variables; here
-:func:`~rsgispy.imageutils.envopts.set_env_vars_deflate_cog_outs` selects
-Deflate compression (use
-:func:`~rsgispy.imageutils.envopts.set_env_vars_zstd_cog_outs` for faster
-compression where ZSTD is supported, or
+The final mosaics are written as GeoTIFFs, which rsgispy creates tiled and
+DEFLATE-compressed by default. :mod:`rsgispy.imageutils.envopts` changes the
+creation options used by all rsgispy functions in the same Python process:
+for example :func:`~rsgispy.imageutils.envopts.set_env_vars_zstd_gtiff_outs`
+for faster ZSTD compression where it is supported, or
 :func:`~rsgispy.imageutils.envopts.set_img_creation_opts` for any other
-options, e.g. ``{"COMPRESS": "DEFLATE", "PREDICTOR": "2"}``). Call it once at
-the start of your processing; it applies to every later output of that
-format in the same Python process. Band names are copied from the
-composites, and the statistics (``calc_stats=True``, the default) are stored
-in the COG.
+options, e.g. ``{"COMPRESS": "DEFLATE", "PREDICTOR": "2"}``. Band names are
+copied from the composites, and statistics and overviews are calculated
+(``calc_stats=True``, the default).
 
-GDAL can only create a COG by copying a complete image, so rsgispy writes a
-``gdalformat='COG'`` output block by block to a temporary tiled GeoTIFF next
-to it, calculates the statistics on that file, and then converts it to the
-COG (the COG driver builds the overviews) and deletes it. Memory use stays
-small, but the output directory needs free space for the temporary file as
-well as the COG.
+To publish a final product as a Cloud Optimised GeoTIFF (COG), pass
+``gdalformat="COG"`` instead (see :doc:`large_rasters` for how rsgispy writes
+COGs).
 
 .. literalinclude:: ../examples/analysis_ready_data.py
    :language: python
@@ -496,7 +489,8 @@ Performance and large datasets
   (:func:`rsgispy.imageutils.vrt.create_stack_images_vrt`) can be VRTs until
   the final product is written.
 * **Output formats and compression** — write intermediate files as GeoTIFFs
-  (tiled and DEFLATE-compressed by default) and final products as COGs.
+  (tiled and DEFLATE-compressed by default), and use COGs
+  (``gdalformat="COG"``) for final products that are shared or served.
   ZSTD compresses and decompresses faster than Deflate where GDAL supports
   it. For outputs larger than 4 GB, pass
   ``bigtiff=True`` to the ``envopts`` functions.
@@ -544,7 +538,7 @@ Common problems
   masks and classes, bilinear or cubic for reflectance).
 * **Memory** — the functions in this guide process images in blocks, so
   memory is rarely a problem (``gdalformat='COG'`` outputs are also written
-  block by block, through a temporary GeoTIFF; see step 7); disk space for the
+  block by block, through a temporary GeoTIFF); disk space for the
   intermediate files usually is.
 
 Related guides
