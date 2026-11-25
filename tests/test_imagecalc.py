@@ -820,3 +820,124 @@ def test_band_maths_intermediate_variables(tmp_path):
                 band_defs=band_defs,
                 use_pbar=False,
             )
+
+
+def test_band_maths_no_data_val_and_calc_stats(tmp_path):
+    """band_maths, image_band_math and image_math write no_data_val and stats."""
+    in_img = tmp_path / "nd_in.tif"
+    b1 = np.array([[0.0, 2.0, 4.0], [6.0, 0.0, 10.0]], dtype=np.float32)
+    b2 = np.array([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]], dtype=np.float32)
+    _create_test_raster(in_img, np.stack([b1, b2]))
+    band_defs = [
+        rsgispy.imagecalc.maths.BandDefn("b1", str(in_img), 1),
+        rsgispy.imagecalc.maths.BandDefn("b2", str(in_img), 2),
+    ]
+
+    # Defaults are unchanged: no output no data value and no statistics.
+    out_def = tmp_path / "nd_default.tif"
+    rsgispy.imagecalc.maths.band_maths(
+        str(out_def), "b1 == 0 ? -9999 : b1 * b2", band_defs, use_pbar=False
+    )
+    with rasterio.open(out_def) as src:
+        assert src.nodata is None
+        assert "STATISTICS_MINIMUM" not in src.tags(1)
+
+    # Single output band: no data written and excluded from the statistics.
+    out_single = tmp_path / "nd_single.tif"
+    rsgispy.imagecalc.maths.band_maths(
+        str(out_single),
+        "b1 == 0 ? -9999 : b1 * b2",
+        band_defs,
+        no_data_val=-9999,
+        calc_stats=True,
+        use_pbar=False,
+    )
+    with rasterio.open(out_single) as src:
+        assert src.nodata == -9999.0
+        tags = src.tags(1)
+        np.testing.assert_allclose(
+            src.read(1), np.where(b1 == 0, -9999.0, b1 * b2)
+        )
+    assert float(tags["STATISTICS_MINIMUM"]) == pytest.approx(2.0)
+    assert float(tags["STATISTICS_MAXIMUM"]) == pytest.approx(20.0)
+
+    # Updating an existing output can change its no data value.
+    rsgispy.imagecalc.maths.band_maths(
+        str(out_single),
+        "b1 == 0 ? -1 : b1 * b2",
+        band_defs,
+        output_exists=True,
+        no_data_val=-1,
+        use_pbar=False,
+    )
+    with rasterio.open(out_single) as src:
+        assert src.nodata == -1.0
+
+    # Multi-output expression: every band gets the no data value.
+    out_multi = tmp_path / "nd_multi.tif"
+    rsgispy.imagecalc.maths.band_maths(
+        str(out_multi),
+        "b1 == 0 ? 255 : b1, b1 == 0 ? 255 : b2 * 10",
+        band_defs,
+        band_names=["b1_vld", "b2_x10"],
+        datatype=rsgispy.TYPE_8UINT,
+        no_data_val=255,
+        calc_stats=True,
+        use_pbar=False,
+    )
+    with rasterio.open(out_multi) as src:
+        assert src.nodatavals == (255.0, 255.0)
+        assert float(src.tags(1)["STATISTICS_MINIMUM"]) == pytest.approx(2.0)
+        assert float(src.tags(1)["STATISTICS_MAXIMUM"]) == pytest.approx(10.0)
+        assert float(src.tags(2)["STATISTICS_MINIMUM"]) == pytest.approx(10.0)
+        assert float(src.tags(2)["STATISTICS_MAXIMUM"]) == pytest.approx(20.0)
+
+    # image_band_math forwards both options.
+    out_ibm = tmp_path / "nd_ibm.tif"
+    rsgispy.imagecalc.maths.image_band_math(
+        str(in_img),
+        str(out_ibm),
+        "b1 == 0 ? -9999 : b1 / b2, b1 == 0 ? -9999 : b2",
+        no_data_val=-9999,
+        calc_stats=True,
+        use_pbar=False,
+    )
+    with rasterio.open(out_ibm) as src:
+        assert src.nodatavals == (-9999.0, -9999.0)
+        assert float(src.tags(1)["STATISTICS_MINIMUM"]) == pytest.approx(2.0)
+        assert float(src.tags(2)["STATISTICS_MAXIMUM"]) == pytest.approx(2.0)
+
+    # image_math applies the expression and the no data value to every band.
+    out_im = tmp_path / "nd_im.tif"
+    rsgispy.imagecalc.maths.image_math(
+        str(in_img),
+        str(out_im),
+        "b1 == 0 ? -1 : b1 + 1",
+        no_data_val=-1,
+        calc_stats=True,
+        use_pbar=False,
+    )
+    with rasterio.open(out_im) as src:
+        assert src.nodatavals == (-1.0, -1.0)
+        assert float(src.tags(1)["STATISTICS_MINIMUM"]) == pytest.approx(3.0)
+        assert float(src.tags(2)["STATISTICS_MINIMUM"]) == pytest.approx(2.0)
+
+    # A no data value that the output data type cannot hold is an error.
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imagecalc.maths.band_maths(
+            str(tmp_path / "nd_bad.tif"),
+            "b1",
+            band_defs,
+            datatype=rsgispy.TYPE_8UINT,
+            no_data_val=-9999,
+            use_pbar=False,
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rsgispy.imagecalc.maths.image_math(
+            str(in_img),
+            str(tmp_path / "nd_bad_im.tif"),
+            "b1",
+            datatype=rsgispy.TYPE_16UINT,
+            no_data_val=0.5,
+            use_pbar=False,
+        )

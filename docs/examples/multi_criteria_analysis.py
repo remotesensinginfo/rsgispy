@@ -289,7 +289,6 @@ def run_workflow(
 
     # [step-5-combine]
     import rsgispy.imageutils.colourtable
-    import rsgispy.imageutils.metadata
 
     def calc_potential(wgts: Mapping[str, float], out_img: str) -> None:
         """Weighted linear combination x constraint -> class + score."""
@@ -311,9 +310,9 @@ def run_workflow(
             comb_defs,
             band_names=["potential", "score"],
             datatype=rsgispy.TYPE_8UINT,
+            no_data_val=255,
             use_pbar=use_pbar,
         )
-        rsgispy.imageutils.metadata.set_img_no_data_value(out_img, 255)
 
     potential_img = opath("restoration_potential.tif")
     calc_potential(weights, potential_img)
@@ -359,6 +358,7 @@ def run_workflow(
     out["sensitivity"] = sens_df
 
     # [step-7-summaries]
+    import rsgispy.imageutils.metadata
     import rsgispy.vector.create
     import rsgispy.vector.geoms
     import rsgispy.zonalstats.polygon as zonal

@@ -112,6 +112,35 @@ reuse in later sub-expressions:
        band_names=["nir_refl", "red_refl", "NDVI"],
    )
 
+Output No-Data Values and Statistics
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The input bands are read without masking, so the expression must test for
+input no-data values and write the output no-data value itself. Passing the
+same value as ``no_data_val`` records it as the no-data value of every output
+band, and ``calc_stats=True`` calculates statistics and pyramids that exclude
+it (both are also accepted by
+:func:`~rsgispy.imagecalc.maths.image_math` and
+:func:`~rsgispy.imagecalc.maths.image_band_math`):
+
+.. code-block:: python
+
+   import rsgispy
+   import rsgispy.imagecalc.maths
+
+   band_defns = [
+       rsgispy.imagecalc.maths.BandDefn(band_name="red", input_img="s2.tif", img_band=3),
+       rsgispy.imagecalc.maths.BandDefn(band_name="nir", input_img="s2.tif", img_band=4),
+   ]
+   rsgispy.imagecalc.maths.band_maths(
+       output_img="ndvi.tif",
+       exp="(red == 0 || nir == 0) ? -9999 : (nir - red) / (nir + red)",
+       band_defs=band_defns,
+       band_names=["NDVI"],
+       no_data_val=-9999,
+       calc_stats=True,
+   )
+
 Image Histograms (Continuous & Categorical Integer)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -62,7 +62,6 @@ def run_workflow(
     import rsgispy
     import rsgispy.imagecalc.maths as img_maths
     import rsgispy.imagecalc.percentiles as img_pcts
-    import rsgispy.imageutils.metadata as img_meta
 
     band_names = ["Blue", "Green", "Red", "NIR", "SWIR1", "SWIR2"]
     nd = no_data_val
@@ -74,8 +73,8 @@ def run_workflow(
         exp = ", ".join([f"(vld = {vld}) ? max(b1, 1) : 0"]
                         + [f"vld ? max(b{idx}, 1) : 0" for idx in range(2, 7)])
         img_maths.band_maths(out_img, exp, defs, datatype=rsgispy.TYPE_16UINT,
-                             band_names=band_names, use_pbar=use_pbar)
-        img_meta.set_img_no_data_value(out_img, 0)
+                             band_names=band_names, no_data_val=0,
+                             use_pbar=use_pbar)
         return out_img
 
     if len(sref_imgs) > 1:
@@ -166,9 +165,8 @@ def run_workflow(
             [img_maths.BandDefn("b1", refl_img, 1)]
             + [img_maths.BandDefn(name, frac_img, idx)
                for idx, name in enumerate(em_df.columns, start=1)],
-            band_names=list(em_df.columns), use_pbar=use_pbar,
+            band_names=list(em_df.columns), no_data_val=-999, use_pbar=use_pbar,
         )
-        img_meta.set_img_no_data_value(pct_img, -999)
         return pct_img
 
     pct_img = unmix_pct(comp_img, os.path.join(out_dir, "composite"))
@@ -236,9 +234,8 @@ def run_workflow(
     img_maths.band_maths(
         corr_img, "burn ? 0 : W, V, burn ? S + W : S",
         pct_defs + [img_maths.BandDefn("burn", burn_img, 1)],
-        band_names=list(em_df.columns), use_pbar=use_pbar,
+        band_names=list(em_df.columns), no_data_val=-999, use_pbar=use_pbar,
     )
-    img_meta.set_img_no_data_value(corr_img, -999)
     n_burn = count_pxls_of_val(burn_img, [1], img_band=1, use_pbar=use_pbar)[0]
     print(f"{n_burn} pixels corrected for burn scars")
     # [end-step-5-burn]
@@ -285,9 +282,8 @@ def run_workflow(
          for idx, name in enumerate(["W", "V", "S"], start=1)]
         + [img_maths.BandDefn("slope", slope_img, 1)],
         datatype=rsgispy.TYPE_8UINT, band_names=["tropwet_class"],
-        use_pbar=use_pbar,
+        no_data_val=0, use_pbar=use_pbar,
     )
-    img_meta.set_img_no_data_value(cls_img, 0)
     define_colour_table(cls_img, {code: clr for code, (_, clr)
                                   in TROPWET_CLASSES.items()})
     set_img_thematic(cls_img)
@@ -331,9 +327,8 @@ def run_workflow(
         freq_img,
         f"nobs = {n_obs}, nwat = {n_wat}, nobs > 0 ? 100 * nwat / nobs : -1",
         obs_defs, band_names=["n_obs", "n_water", "water_freq_pct"],
-        use_pbar=use_pbar,
+        no_data_val=-1, use_pbar=use_pbar,
     )
-    img_meta.set_img_no_data_value(freq_img, -1)
     # [end-step-8-water-freq]
     out["freq_img"] = freq_img
 

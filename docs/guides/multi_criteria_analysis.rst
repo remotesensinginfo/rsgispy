@@ -381,8 +381,8 @@ sub-expression:
 
 The output is 8-bit so that the class band can have a colour table
 (:func:`~rsgispy.imageutils.colourtable.define_colour_table`) for the
-thematic map, and :func:`~rsgispy.imageutils.metadata.set_img_no_data_value`
-sets 255 as the no data value. The combination is wrapped in a small
+thematic map, and ``no_data_val=255`` records 255 as the no data value of
+the output. The combination is wrapped in a small
 function, ``calc_potential``, so it can be re-run with other weights in
 Step 6.
 
@@ -560,9 +560,11 @@ write the output no data value:
 
 NaN propagates through arithmetic and ``min``/``max``, and every comparison
 with NaN is false, so a NaN input falls into the *else* branch of a ternary.
-Remember to set the output no data value afterwards
-(:func:`~rsgispy.imageutils.metadata.set_img_no_data_value`); ``band_maths``
-does not set it.
+Pass the value the expression writes as ``no_data_val`` (e.g.
+``no_data_val=-999``) so it is recorded as the output no data value;
+``band_maths`` does not change the expression, so the expression must still
+write that value. ``calc_stats=True`` also calculates the output statistics,
+excluding the no data value.
 
 **Clamping and memberships.** ``min`` and ``max`` take any number of
 arguments:
