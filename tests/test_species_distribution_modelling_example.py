@@ -66,6 +66,7 @@ def test_worked_example_runs(tmp_path):
     assert out["n_mdls"] == 4
     assert out["test_auc"] > 0.8
     assert out["ens_metrics"]["Test AUC"] > 0.8
+    assert out["ens_auc"] == pytest.approx(out["ens_metrics"]["Test AUC"], abs=1e-6)
     # Random CV is optimistic relative to spatial block CV (usually).
     assert 0.5 < out["blk_cv_auc"] <= 1.0
     assert set(out["jk_df"].index) == {"temp", "precip", "ndvi"}
