@@ -239,3 +239,97 @@ def test_split_and_extract_and_split_reg_samples(tmp_path: Path):
         rrd.split_reg_samples(train_df, test_prop=0.6, valid_prop=0.5)
     with pytest.raises(rsgispy.RSGISPyException):
         rrd.split_reg_samples(train_df, stratify_col="missing_col")
+
+
+def _reg_polys_fixture(tmp_path: Path):
+    """Ten 2 x 2 pixel plots with a canopy cover value each."""
+    band_info, _, _ = _create_landsat_fixture(tmp_path)
+    polys, covers = [], []
+    for idx in range(10):
+        row0, col0 = 4 * (idx // 4) + 1, 4 * (idx % 4) + 1
+        x0 = 500000.0 + col0 * 10.0
+        y1 = 5600000.0 - row0 * 10.0
+        polys.append(box(x0, y1 - 20.0, x0 + 20.0, y1))
+        covers.append(10.0 * idx)
+    poly_vec = str(tmp_path / "plots.gpkg")
+    gpd.GeoDataFrame(
+        {"canopy_cover": covers}, geometry=polys, crs="EPSG:32630"
+    ).to_file(poly_vec, layer="plots", driver="GPKG")
+    return rrd.RegressionConfig(
+        img_band_info=band_info, target_cols="canopy_cover",
+        vec_file=poly_vec, vec_lyr="plots",
+    )
+
+
+def _groups_disjoint(parts, col):
+    sets = [set(part[col]) for part in parts]
+    return all(
+        sets[i].isdisjoint(sets[j])
+        for i in range(len(sets)) for j in range(i + 1, len(sets))
+    )
+
+
+def test_reg_poly_id_col_and_grouped_split(tmp_path: Path):
+    """Plot IDs are recorded and persisted, and the grouped split keeps plots whole."""
+    cfg = _reg_polys_fixture(tmp_path)
+    df = rrd.extract_reg_training_samples(
+        cfg, include_coords=True, poly_id_col="plot_id", use_pbar=False
+    )
+    # (2, 2) is no data in the red band: plot 0 keeps 3 of its 4 pixels.
+    assert len(df) == 10 * 4 - 1
+    assert list(df.columns) == ["canopy_cover", "plot_id", "x", "y",
+                                "red", "nir", "swir1"]
+    assert df.groupby("plot_id")["canopy_cover"].nunique().max() == 1
+    assert sorted(df["plot_id"].unique()) == sorted(f"poly{i}" for i in range(10))
+
+    formats = ["csv", "pkl"] + (["parquet"] if _HAS_PARQUET else [])
+    for ext in formats:
+        out_path = tmp_path / f"reg_samples.{ext}"
+        rrd.write_reg_samples(df, out_path)
+        assert rrd.read_reg_samples(out_path)["plot_id"].tolist() == df[
+            "plot_id"
+        ].tolist()
+
+    for kwargs in ({}, {"stratify_col": "canopy_cover", "n_bins": 2}):
+        for seed in range(5):
+            parts = rrd.split_reg_samples(
+                df, group_col="plot_id", rnd_seed=seed, **kwargs
+            )
+            assert _groups_disjoint(parts, "plot_id")
+            assert sum(len(p) for p in parts) == len(df)
+            assert all(len(p) > 0 for p in parts)
+    # Exact counts are upper limits made of whole plots.
+    parts = rrd.split_reg_samples(
+        df, group_col="plot_id", n_train=20, n_test=8, n_valid=8, rnd_seed=2
+    )
+    assert _groups_disjoint(parts, "plot_id")
+    assert len(parts[0]) <= 20 and len(parts[1]) <= 8
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        rrd.split_reg_samples(df, group_col="missing")
+    with pytest.raises(rsgispy.RSGISPyException):
+        rrd.extract_reg_training_samples(cfg, poly_id_col="red", use_pbar=False)
+    with pytest.raises(rsgispy.RSGISPyException):
+        rrd.extract_reg_training_samples(
+            cfg, poly_id_col="canopy_cover", use_pbar=False
+        )
+
+    tr_df, te_df, va_df = rrd.extract_and_split_reg_samples(
+        cfg, group_col="plot_id", rnd_seed=1, use_pbar=False
+    )
+    assert _groups_disjoint((tr_df, te_df, va_df), "plot_id")
+    with pytest.raises(rsgispy.RSGISPyException):
+        rrd.extract_and_split_reg_samples(
+            cfg, poly_id_col="a", group_col="b", use_pbar=False
+        )
+
+
+def test_reg_poly_id_col_points(tmp_path: Path):
+    """Each reference point is its own group."""
+    band_info, pts_vec, _ = _create_landsat_fixture(tmp_path)
+    df = rrd.extract_reg_training_samples(
+        band_info, target_cols="canopy_cover", vec_file=pts_vec,
+        vec_lyr="canopy", poly_id_col="train_grp", use_pbar=False,
+    )
+    assert df["train_grp"].is_unique
+    assert df["train_grp"].iloc[0] == "pt0"

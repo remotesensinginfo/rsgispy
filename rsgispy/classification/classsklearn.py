@@ -38,6 +38,7 @@ from rsgispy.imageprocess import ensure_file_exists
 from rsgispy.tools._gbdt_common import load_joblib_model, save_joblib_model
 from rsgispy.tools._ml_tune import (
     normalise_search_method as _normalise_search_method,
+    resolve_cv_groups_coords as _resolve_cv_groups_coords,
     resolve_sklearn_param_space as _tools_resolve_sklearn_param_space,
     run_optuna_search as _tools_run_optuna_search,
     run_sklearn_search_cv as _tools_run_sklearn_search_cv,
@@ -204,6 +205,9 @@ def perform_sklearn_classifier_param_search(
     verbose: int = 0,
     extended_param_space: bool = False,
     use_pbar: bool = True,
+    *,
+    groups: Optional[Union[str, Sequence[Any], np.ndarray]] = None,
+    coords: Optional[Union[Sequence[str], np.ndarray]] = None,
 ) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
     """
     Optimise hyperparameters for a ``scikit-learn`` (or compatible) classifier
@@ -224,6 +228,23 @@ def perform_sklearn_classifier_param_search(
     estimator refit only on ``train_data`` when ``refit=True``). When
     ``valid_data`` is ``None``, stratified ``cv``-fold cross-validation is
     performed on ``train_data``.
+
+    Random folds put neighbouring pixels (e.g. from the same training
+    polygon) in both the training and validation folds, which favours
+    parameters that memorise the training polygons. The spatial and group
+    splitters of :mod:`rsgispy.ml.cv` can be passed directly as ``cv`` with
+    the sample coordinates (``coords``, for
+    :class:`~rsgispy.ml.cv.SpatialBlockKFold` and
+    :class:`~rsgispy.ml.cv.SpatialBufferCV`) or groups (``groups``, e.g. the
+    ``poly_id_col`` column of
+    :func:`~rsgispy.classification.classdata.extract_class_training_samples`,
+    for :class:`~rsgispy.ml.cv.PolygonGroupKFold`); scikit-learn group
+    splitters (e.g. ``StratifiedGroupKFold``) receive ``groups``. With
+    ``groups`` or ``coords`` an integer ``cv`` gives a class-stratified
+    ``SpatialBlockKFold`` (``coords``) or ``PolygonGroupKFold`` (``groups``)
+    with ``cv`` folds. The folds are made once and used for every candidate
+    (they are in ``results_dict['search_obj'].cv`` for grid and random
+    searches).
 
     For ``search_method='optuna'``, a custom ``param_space`` may be either:
 
@@ -282,6 +303,15 @@ def perform_sklearn_classifier_param_search(
                                  space for ``sk_classifier`` (Default = ``False``).
     :param use_pbar: Display a ``tqdm`` progress bar during Optuna trials
                      (Default = ``True``).
+    :param groups: Optional group of each training sample for the
+                   cross-validation folds: a column name of ``train_data``
+                   (e.g. ``'train_grp'``) or one label per row. Used only
+                   when ``valid_data`` is ``None`` (Default = ``None``).
+    :param coords: Optional coordinates of each training sample for spatial
+                   cross-validation folds: two column names of
+                   ``train_data`` (e.g. ``('x', 'y')``) or an
+                   ``(n_samples, 2)`` array. Used only when ``valid_data`` is
+                   ``None`` (Default = ``None``).
     :return: Optimised classifier estimator, or ``(best_estimator, results_dict)``
              when ``return_results=True``.
 
@@ -289,6 +319,7 @@ def perform_sklearn_classifier_param_search(
 
         from sklearn.ensemble import RandomForestClassifier
         import rsgispy.classification.classsklearn as csk
+        from rsgispy.ml.cv import SpatialBlockKFold
 
         # Automatically uses built-in RandomForestClassifier Optuna space
         best_clf = csk.perform_sklearn_classifier_param_search(
@@ -298,6 +329,15 @@ def perform_sklearn_classifier_param_search(
             search_method="optuna",
             n_trials=25,
             rnd_seed=42,
+        )
+        # Spatially blocked folds (train.parquet has x and y columns)
+        best_clf = csk.perform_sklearn_classifier_param_search(
+            "cls_config.json",
+            RandomForestClassifier(),
+            "train.parquet",
+            param_space={"min_samples_leaf": [1, 5, 20]},
+            cv=SpatialBlockKFold(n_splits=4, block_size=2000.0, stratify=True),
+            coords=("x", "y"),
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -331,6 +371,7 @@ def perform_sklearn_classifier_param_search(
         train_df, feat_cols, target_col, "train_data", valid_ids=valid_ids,
         allow_nan=seg_allows_nan(cfg),
     )
+    cv_groups, cv_coords = _resolve_cv_groups_coords(train_df, groups, coords)
 
     valid_x: Optional[pd.DataFrame] = None
     valid_y: Optional[np.ndarray] = None
@@ -363,6 +404,8 @@ def perform_sklearn_classifier_param_search(
                 func_name="perform_sklearn_classifier_param_search",
                 extra="classification",
                 use_pbar=use_pbar,
+                groups=cv_groups,
+                coords=cv_coords,
             )
         )
     else:
@@ -384,6 +427,8 @@ def perform_sklearn_classifier_param_search(
                 verbose=verbose,
                 stratified=True,
                 extra="classification",
+                groups=cv_groups,
+                coords=cv_coords,
             )
         )
 

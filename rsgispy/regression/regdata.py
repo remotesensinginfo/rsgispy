@@ -5,7 +5,10 @@ Snappy-compressed Parquet with support for other pandas-supported tabular
 formats).
 """
 
+# pylint: disable=too-many-lines
+
 import os
+import warnings
 from typing import (
     Any,
     Dict,
@@ -25,13 +28,17 @@ from rsgispy.imageprocess import ensure_file_exists
 from rsgispy.imageutils.masking import ImageBandInfo
 from rsgispy.tools._ml_data import (
     allocate_split_counts,
+    check_poly_id_col,
     extract_vector_samples_from_gdf,
+    get_group_labels,
     load_samples_df,
     normalise_img_band_info_list as _normalise_img_band_info_list,
     read_ml_samples,
+    resolve_extract_split_group_col,
     resolve_img_band_info as _shared_resolve_img_band_info,
     resolve_rng,
     resolve_split_proportions,
+    split_groups_stratified,
     write_ml_samples,
 )
 from rsgispy.tools.files import ensure_parent_dir
@@ -375,7 +382,10 @@ def write_reg_samples(
     """
     Write a regression sample :class:`pandas.DataFrame` to disk in Parquet
     (using Snappy compression by default) or any other pandas-supported format
-    handled by :func:`rsgispy.tools.tables.write_dataframe_table`.
+    handled by :func:`rsgispy.tools.tables.write_dataframe_table`. Every
+    column is written, including a group column (``poly_id_col`` of
+    :func:`extract_reg_training_samples`, e.g. ``'train_grp'``), so the
+    grouped split and group cross-validation also work on the files.
 
     :param samples_df: Sample :class:`pandas.DataFrame` to save.
     :param out_file: Output table file path (e.g., ``'train.parquet'``,
@@ -444,6 +454,8 @@ def extract_reg_training_samples(
     target_min: Optional[float] = None,
     target_max: Optional[float] = None,
     use_pbar: bool = True,
+    *,
+    poly_id_col: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Extract raster predictor band values and continuous target attribute(s) from
@@ -451,7 +463,20 @@ def extract_reg_training_samples(
     :class:`pandas.DataFrame` and optionally saving to Parquet or CSV.
 
     Supports both univariate (single target column) and multivariate (multiple
-    target columns) regression workflows.
+    target columns) regression workflows. The images may have bands of
+    different data types (e.g. one VRT stacking ``uint16`` reflectance and
+    ``float32`` indices).
+
+    With ``poly_id_col``, the source of each sample is recorded in that column:
+    ``'poly<n>'`` for the ``n``-th (0-based) polygon of the reference layer
+    and ``'pt<n>'`` for points (as the segment workflow's ``train_grp``
+    column). All pixels of a polygon share its target value and are strongly
+    correlated, so pass the column as ``group_col`` to
+    :func:`split_reg_samples` and as ``groups`` to
+    :func:`~rsgispy.regression.regsklearn.perform_sklearn_regressor_param_search`
+    with :class:`~rsgispy.ml.cv.PolygonGroupKFold`. It is a string column, so
+    it is never used as a feature, and is kept by :func:`write_reg_samples`
+    and :func:`read_reg_samples` in every table format.
 
     :param img_band_info: Either a :class:`RegressionConfig` instance or a
                           sequence of :class:`ImageBandInfo` objects.
@@ -485,8 +510,13 @@ def extract_reg_training_samples(
     :param target_max: Optional inclusive upper filter bound applied to all
                        target columns.
     :param use_pbar: Display progress bars during extraction (Default = ``True``).
-    :return: :class:`pandas.DataFrame` containing target columns, optional
-             coordinates, and extracted band feature columns.
+    :param poly_id_col: Optional name of a column recording the source polygon
+                        (or point) of each sample (e.g. ``'train_grp'``; it
+                        follows the target columns). When ``None`` (default)
+                        no column is added.
+    :return: :class:`pandas.DataFrame` containing target columns, the optional
+             ``poly_id_col`` and coordinate columns, and extracted band
+             feature columns.
 
     .. code:: python
 
@@ -494,7 +524,7 @@ def extract_reg_training_samples(
 
         cfg = rd.read_reg_config("reg_config.json")
         samples_df = rd.extract_reg_training_samples(
-            cfg, out_file="all_samples.parquet"
+            cfg, out_file="all_samples.parquet", poly_id_col="train_grp"
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -519,6 +549,9 @@ def extract_reg_training_samples(
 
     resolved_imgs = resolve_img_band_info(cfg.img_band_info)
     all_feature_cols = [col for _, _, cols in resolved_imgs for col in cols]
+    check_poly_id_col(
+        poly_id_col, list(cfg.target_cols) + ["x", "y"] + all_feature_cols
+    )
 
     out_df = extract_vector_samples_from_gdf(
         vec_gdf=vec_gdf,
@@ -534,6 +567,7 @@ def extract_reg_training_samples(
         vec_def_epsg=vec_def_epsg,
         use_pbar=use_pbar,
         label="regression targets",
+        group_col=poly_id_col,
     )
 
     for t_col in cfg.target_cols:
@@ -560,8 +594,9 @@ def extract_reg_training_samples(
                 valid &= t_vals <= float(target_max)
         out_df = out_df.loc[valid].reset_index(drop=True)
 
+    grp_cols = [poly_id_col] if poly_id_col is not None else []
     coord_cols = ["x", "y"] if include_coords else []
-    ordered_cols = list(cfg.target_cols) + coord_cols + all_feature_cols
+    ordered_cols = list(cfg.target_cols) + grp_cols + coord_cols + all_feature_cols
     out_df = out_df[ordered_cols].reset_index(drop=True)
 
     if out_file is not None:
@@ -611,6 +646,48 @@ def _split_index_group(
     )
 
 
+def _split_reg_groups(
+    work_df: pd.DataFrame,
+    group_col: str,
+    props: Tuple[float, float, float],
+    counts: Tuple[Optional[int], Optional[int], Optional[int]],
+    stratify_col: Optional[str],
+    n_bins: int,
+    rng: np.random.Generator,
+) -> Tuple[List[int], List[int], List[int]]:
+    """Group-aware split (optionally within quantile bins of ``stratify_col``)."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    grp_labels = get_group_labels(work_df, group_col)
+    strata = np.zeros(len(work_df), dtype=np.int64)
+    if stratify_col is not None:
+        bins = pd.qcut(
+            work_df[stratify_col], q=n_bins, labels=False, duplicates="drop"
+        )
+        if bins.notna().all() and int(bins.nunique()) >= 2:
+            strata = bins.to_numpy(dtype=np.int64)
+    exact = any(c is not None for c in counts)
+
+    def _counts(_key: Any, rows: np.ndarray) -> Tuple[int, int, int, bool]:
+        n_tr, n_te, n_va = allocate_split_counts(
+            len(rows), *props, *counts, group_label="regression samples"
+        )
+        return n_tr, n_te, n_va, exact
+
+    n_sets = sum(
+        1 for n_set in _counts(None, np.arange(len(work_df)))[:3] if n_set > 0
+    )
+    n_groups = int(pd.Series(grp_labels).nunique())
+    if n_groups < n_sets:
+        warnings.warn(
+            f"The samples have {n_groups} group(s) in '{group_col}', fewer "
+            f"than the {n_sets} sets requested, so some sets are empty; add "
+            "reference plots or reduce test_prop / valid_prop.",
+            UserWarning,
+            stacklevel=3,
+        )
+    return split_groups_stratified(strata, grp_labels, _counts, rng)
+
+
 def split_reg_samples(
     samples_df: Union[pd.DataFrame, str, os.PathLike],
     train_prop: Optional[float] = None,
@@ -628,11 +705,24 @@ def split_reg_samples(
     stratify_col: Optional[str] = None,
     n_bins: int = 5,
     rnd_seed: Optional[int] = None,
+    *,
+    group_col: Optional[str] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Split a regression sample table into training, testing, and validation
     DataFrames, optionally stratifying across quantile bins of a continuous
     target column and saving each split to disk.
+
+    With ``group_col`` (e.g. the ``poly_id_col`` column from
+    :func:`extract_reg_training_samples`), all samples of a group (the pixels
+    of one reference polygon) are put in the same set. The groups are taken in
+    random order and each is put in the set furthest below its target number
+    of samples (within each quantile bin of ``stratify_col`` when it is used;
+    a group belongs to the bin of most of its samples), so the proportions are
+    met as closely as the group sizes allow, and a warning is issued if there
+    are fewer groups than sets. ``max_smpls`` subsamples rows at random before
+    the split, and ``n_train`` / ``n_test`` / ``n_valid`` become upper limits
+    (sets above them are randomly subsampled).
 
     :param samples_df: Input sample :class:`pandas.DataFrame` or table path.
     :param train_prop: Proportion for training (defaults to
@@ -654,6 +744,10 @@ def split_reg_samples(
     :param n_bins: Number of quantile bins when ``stratify_col`` is specified
                    (Default = ``5``).
     :param rnd_seed: Optional random seed for reproducible splits.
+    :param group_col: Optional column of group labels (e.g. the source
+                      polygon of each pixel, ``'train_grp'``); all samples of
+                      a group are put in the same set. When ``None``
+                      (default) the samples are split at random.
     :return: Tuple ``(train_df, test_df, valid_df)`` of split DataFrames.
 
     .. code:: python
@@ -669,11 +763,14 @@ def split_reg_samples(
             out_test_file="test.parquet",
             out_valid_file="valid.parquet",
             rnd_seed=42,
+            group_col="train_grp",  # whole plots per set
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-locals,too-many-branches
     df = load_samples_df(samples_df, "samples_df")
+    if group_col is not None:
+        get_group_labels(df, group_col)
     train_p, test_p, valid_p = resolve_split_proportions(
         train_prop, test_prop, valid_prop
     )
@@ -710,7 +807,17 @@ def split_reg_samples(
         )
 
     work_pos = np.arange(len(work_df), dtype=np.intp)
-    if use_binned and stratify_col is not None:
+    if group_col is not None:
+        train_idx, test_idx, valid_idx = _split_reg_groups(
+            work_df,
+            group_col,
+            (train_p, test_p, valid_p),
+            (n_train, n_test, n_valid),
+            stratify_col if use_binned else None,
+            int(n_bins),
+            rng,
+        )
+    elif use_binned and stratify_col is not None:
         bins = pd.qcut(
             work_df[stratify_col],
             q=int(n_bins),
@@ -814,11 +921,20 @@ def extract_and_split_reg_samples(
     n_bins: int = 5,
     rnd_seed: Optional[int] = None,
     use_pbar: bool = True,
+    *,
+    poly_id_col: Optional[str] = None,
+    group_col: Optional[str] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Extract regression training samples across configured raster bands and
     vector targets, split them into training, testing, and validation
     DataFrames, and optionally save each split to disk.
+
+    With ``group_col``, the source polygon (or point) of each sample is
+    recorded in that column (see :func:`extract_reg_training_samples`) and
+    all pixels of a reference polygon are put in the same set (see
+    :func:`split_reg_samples`). ``poly_id_col`` alone records the polygons but
+    keeps the random split.
 
     :param img_band_info: Either a :class:`RegressionConfig` instance or a
                           sequence of :class:`ImageBandInfo` objects.
@@ -858,6 +974,12 @@ def extract_and_split_reg_samples(
     :param n_bins: Number of quantile bins when ``stratify_col`` is set.
     :param rnd_seed: Optional random seed for reproducible splits.
     :param use_pbar: Display progress bars during extraction (Default = ``True``).
+    :param poly_id_col: Optional column recording the source polygon (or
+                        point) of each sample (Default = ``None``; set to
+                        ``group_col`` when only that is given).
+    :param group_col: Optional column by which the samples are grouped in the
+                      split (the polygons are recorded in it). When ``None``
+                      (default) the samples are split at random.
     :return: Tuple ``(train_df, test_df, valid_df)``.
 
     .. code:: python
@@ -870,6 +992,7 @@ def extract_and_split_reg_samples(
             out_train_file="train.parquet",
             out_test_file="test.parquet",
             out_valid_file="valid.parquet",
+            group_col="train_grp",  # whole plots per set
             rnd_seed=42,
         )
     """
@@ -881,6 +1004,7 @@ def extract_and_split_reg_samples(
         vec_file=vec_file if isinstance(vec_file, (str, os.PathLike)) else None,
         vec_lyr=vec_lyr,
     )
+    rec_col = resolve_extract_split_group_col(poly_id_col, group_col)
     samples_df = extract_reg_training_samples(
         cfg,
         vec_file=vec_file,
@@ -900,6 +1024,7 @@ def extract_and_split_reg_samples(
         target_min=target_min,
         target_max=target_max,
         use_pbar=use_pbar,
+        poly_id_col=rec_col,
     )
     return split_reg_samples(
         samples_df=samples_df,
@@ -918,4 +1043,5 @@ def extract_and_split_reg_samples(
         stratify_col=stratify_col,
         n_bins=n_bins,
         rnd_seed=rnd_seed,
+        group_col=group_col,
     )

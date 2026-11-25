@@ -5,12 +5,16 @@ I/O, splitting, and block-reading helpers reused across
 :mod:`rsgispy.modelling`.
 """
 
+# pylint: disable=too-many-lines
+
 from contextlib import ExitStack
 import math
 import os
 import secrets
+import warnings
 from typing import (
     Any,
+    Callable,
     Dict,
     List,
     Mapping,
@@ -521,13 +525,17 @@ def extract_points_samples(
     reproj_vec: bool = False,
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
+    group_col: Optional[str] = None,
+    group_prefix: str = "",
 ) -> pd.DataFrame:
     """
     Extract band values at point samples using ``ext_point_band_values_file``,
-    optionally preserving vector attribute columns ``attr_cols``.
+    optionally preserving vector attribute columns ``attr_cols`` and recording
+    the source point of each sample in ``group_col``
+    (``'<group_prefix>pt<index>'``, the 0-based row of the point layer).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,too-many-branches
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     work_gdf = pts_gdf.copy()
     eff_min = -math.inf if min_thres is None else float(min_thres)
     eff_max = math.inf if max_thres is None else float(max_thres)
@@ -576,6 +584,8 @@ def extract_points_samples(
     data: Dict[str, Any] = {}
     for col in keep_attrs:
         data[col] = work_gdf[col].to_numpy()
+    if group_col is not None:
+        data[group_col] = [f"{group_prefix}pt{idx}" for idx in range(len(work_gdf))]
 
     if include_coords:
         first_img_path = resolved_imgs[0][0]
@@ -624,13 +634,17 @@ def extract_polygons_samples(
     reproj_vec: bool = False,
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
+    group_col: Optional[str] = None,
+    group_prefix: str = "",
 ) -> pd.DataFrame:
     """
     Extract polygon pixel samples using ``export_poly_pxls_to_df``,
-    optionally preserving vector attribute columns ``attr_cols``.
+    optionally preserving vector attribute columns ``attr_cols`` and recording
+    the source polygon of each pixel in ``group_col``
+    (``'<group_prefix>poly<index>'``, the 0-based row of the polygon layer).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,too-many-branches
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     keep_attrs = [str(c) for c in attr_cols] if attr_cols else []
     missing_attrs = [c for c in keep_attrs if c not in poly_gdf.columns]
     if missing_attrs:
@@ -741,6 +755,10 @@ def extract_polygons_samples(
         base_df = base_df.loc[valid].reset_index(drop=True)
 
     keep_cols: List[str] = list(keep_attrs)
+    if group_col is not None:
+        grp_vals = [f"{group_prefix}poly{int(fid)}" for fid in base_df["poly_fid"]]
+        base_df = base_df.assign(**{group_col: grp_vals})
+        keep_cols.append(group_col)
     if include_coords:
         keep_cols.extend(["x", "y"])
     keep_cols.extend(all_feature_cols)
@@ -761,9 +779,14 @@ def extract_vector_samples_from_gdf(
     vec_def_epsg: Optional[int] = None,
     use_pbar: bool = True,
     label: str = "training vector",
+    group_col: Optional[str] = None,
+    group_prefix: str = "",
 ) -> pd.DataFrame:
-    """Dispatch Point vs Polygon/MultiPolygon pixel sample extraction."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    """
+    Dispatch Point vs Polygon/MultiPolygon pixel sample extraction, optionally
+    recording the source point or polygon of each sample in ``group_col``.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     geom_types = set(vec_gdf.geom_type.dropna().unique())
     if len(vec_gdf) == 0 or not geom_types:
         raise rsgispy.RSGISPyException(
@@ -783,6 +806,8 @@ def extract_vector_samples_from_gdf(
             reproj_vec=reproj_vec,
             vec_def_epsg=vec_def_epsg,
             use_pbar=use_pbar,
+            group_col=group_col,
+            group_prefix=group_prefix,
         )
     if geom_types.issubset({"Polygon", "MultiPolygon"}):
         return extract_polygons_samples(
@@ -798,6 +823,8 @@ def extract_vector_samples_from_gdf(
             reproj_vec=reproj_vec,
             vec_def_epsg=vec_def_epsg,
             use_pbar=use_pbar,
+            group_col=group_col,
+            group_prefix=group_prefix,
         )
     raise rsgispy.RSGISPyException(
         f"Unsupported geometry type(s) for {label}: "
@@ -896,6 +923,155 @@ def allocate_split_counts(
         n_tr = min(int(round(n_total * train_p)), n_total - n_te - n_va)
 
     return n_tr, n_te, n_va
+
+
+def check_poly_id_col(
+    poly_id_col: Optional[str],
+    reserved_cols: Sequence[str],
+) -> None:
+    """
+    Validate the name of a column recording the source polygon (or point) of
+    each sample: a non-empty string that is not one of ``reserved_cols``.
+    """
+    if poly_id_col is None:
+        return
+    if not isinstance(poly_id_col, str) or not poly_id_col.strip():
+        raise rsgispy.RSGISPyException(
+            f"poly_id_col must be a non-empty string, got {poly_id_col!r}."
+        )
+    if poly_id_col in set(reserved_cols):
+        raise rsgispy.RSGISPyException(
+            f"poly_id_col '{poly_id_col}' clashes with another column of the "
+            f"sample table ({list(reserved_cols)}); choose another name."
+        )
+
+
+def resolve_extract_split_group_col(
+    poly_id_col: Optional[str],
+    group_col: Optional[str],
+) -> Optional[str]:
+    """
+    Return the column in which the extract-and-split functions record the
+    source polygons: ``poly_id_col``, or ``group_col`` when only that is given.
+    """
+    if group_col is None:
+        return poly_id_col
+    if poly_id_col is not None and poly_id_col != group_col:
+        raise rsgispy.RSGISPyException(
+            f"group_col ('{group_col}') must be the poly_id_col column "
+            f"('{poly_id_col}') in which the polygons are recorded; pass one "
+            "of them or the same name for both."
+        )
+    return group_col
+
+
+def get_group_labels(samples_df: pd.DataFrame, group_col: str) -> np.ndarray:
+    """Return the validated group label of each row of ``samples_df``."""
+    if group_col not in samples_df.columns:
+        raise rsgispy.RSGISPyException(
+            f"Group column '{group_col}' was not found in samples_df columns "
+            f"{list(samples_df.columns)}. Record the polygons with "
+            "poly_id_col when extracting the samples."
+        )
+    grp = samples_df[group_col]
+    if grp.isna().any():
+        raise rsgispy.RSGISPyException(
+            f"Group column '{group_col}' contains missing values."
+        )
+    return grp.to_numpy()
+
+
+def _factorize(values: np.ndarray) -> Tuple[np.ndarray, Any]:
+    """Integer codes and sorted unique keys of ``values`` (unsorted if mixed types)."""
+    try:
+        return pd.factorize(pd.Series(values), sort=True)
+    except TypeError:
+        return pd.factorize(pd.Series(values), sort=False)
+
+
+def split_groups_stratified(
+    strata: np.ndarray,
+    groups: np.ndarray,
+    stratum_counts: Callable[[Any, np.ndarray], Tuple[int, int, int, bool]],
+    rng: np.random.Generator,
+    describe_stratum: Optional[Callable[[Any], str]] = None,
+) -> Tuple[List[int], List[int], List[int]]:
+    """
+    Split row positions into training, testing and validation sets so that all
+    rows of a group (e.g. the pixels of one training polygon) are in the same
+    set, stratified by ``strata`` (e.g. the class) as far as the number of
+    groups allows.
+
+    Each group belongs to the stratum of most of its rows. For each stratum,
+    ``stratum_counts(key, rows)`` returns the target ``(n_train, n_test,
+    n_valid, exact)`` sample counts; the groups are taken in random order and
+    each is assigned to the set furthest below its target (any samples left
+    over form an unused set), making sure first that every set with a
+    non-zero target gets at least one group if there are enough. With
+    ``exact=True`` sets above their target are randomly subsampled to it, so
+    the counts are upper limits. When ``describe_stratum`` is given, a
+    warning is issued for strata with fewer groups than sets.
+
+    :return: ``(train_rows, test_rows, valid_rows)`` lists of row positions,
+             in random order.
+    """
+    # pylint: disable=too-many-locals
+    grp_codes, _ = _factorize(groups)
+    strat_codes, strat_keys = _factorize(strata)
+    n_grps = int(grp_codes.max()) + 1 if grp_codes.size else 0
+    n_strata = len(strat_keys)
+    out: Tuple[List[int], List[int], List[int]] = ([], [], [])
+    if n_grps == 0:
+        return out
+
+    pair_counts = np.bincount(
+        grp_codes * n_strata + strat_codes, minlength=n_grps * n_strata
+    ).reshape(n_grps, n_strata)
+    grp_stratum = pair_counts.argmax(axis=1)
+    grp_size = pair_counts.sum(axis=1)
+    row_stratum = grp_stratum[grp_codes]
+    grp_set = np.full(n_grps, -1, dtype=np.int64)
+
+    for s_idx in range(n_strata):
+        s_grps = np.flatnonzero(grp_stratum == s_idx)
+        if s_grps.size == 0:
+            continue
+        s_rows = np.flatnonzero(row_stratum == s_idx)
+        n_tr, n_te, n_va, exact = stratum_counts(strat_keys[s_idx], s_rows)
+        targets = np.array(
+            [n_tr, n_te, n_va, max(0, s_rows.size - n_tr - n_te - n_va)],
+            dtype=np.float64,
+        )
+        active = [i for i in range(3) if targets[i] > 0]
+        if describe_stratum is not None and s_grps.size < len(active):
+            warnings.warn(
+                f"{describe_stratum(strat_keys[s_idx])} has {s_grps.size} "
+                f"sample group(s), fewer than the {len(active)} sets requested, "
+                "so some sets have no samples of it; add training polygons or "
+                "reduce test_prop / valid_prop.",
+                UserWarning,
+                stacklevel=3,
+            )
+        counts = np.zeros(4, dtype=np.float64)
+        order = rng.permutation(s_grps)
+        for g_pos, grp in enumerate(order):
+            empty_needed = [i for i in active if counts[i] == 0]
+            if empty_needed and len(empty_needed) >= order.size - g_pos:
+                tgt = empty_needed[0]
+            else:
+                deficit = np.where(targets > 0, targets - counts, -np.inf)
+                tgt = int(np.argmax(deficit))
+            grp_set[grp] = tgt
+            counts[tgt] += grp_size[grp]
+
+        row_sets = grp_set[grp_codes[s_rows]]
+        for set_idx in range(3):
+            sel = s_rows[row_sets == set_idx]
+            rng.shuffle(sel)
+            if exact:
+                sel = sel[: int(targets[set_idx])]
+            out[set_idx].extend(sel.tolist())
+    return out
 
 
 def read_valid_roi_block(

@@ -482,6 +482,176 @@ def test_split_counts_and_caps():
     assert set(te["feat"]).isdisjoint(set(va["feat"]))
 
 
+def _grouped_cls_scene(tmp_path):
+    """
+    20 x 20 raster with two classes of six 3 x 3 pixel polygons each and a
+    third class of eight points. Returns the ClassificationConfig.
+    """
+    arr = np.stack(
+        [
+            np.arange(400, dtype=np.float32).reshape(20, 20),
+            np.arange(400, dtype=np.float32).reshape(20, 20) * 0.5,
+        ]
+    )
+    img = _write_raster(tmp_path / "img.tif", arr)
+
+    def _poly_bounds(row0, col0):
+        x0 = 500000.0 + col0 * 10.0
+        y1 = 5600000.0 - row0 * 10.0
+        return (x0, y1 - 30.0, x0 + 30.0, y1)
+
+    poly_a = _write_polygons(
+        tmp_path / "a.gpkg", "a", [_poly_bounds(1, c) for c in (0, 4, 8, 12, 16)]
+        + [_poly_bounds(5, 0)],
+    )
+    poly_b = _write_polygons(
+        tmp_path / "b.gpkg", "b", [_poly_bounds(10, c) for c in (0, 4, 8, 12, 16)]
+        + [_poly_bounds(15, 0)],
+    )
+    pts_c = _write_points(
+        tmp_path / "c.gpkg", "c",
+        [(500105.0 + i * 10.0, 5599945.0) for i in range(8)],
+    )
+    return rcd.ClassificationConfig(
+        img_band_info=[rcd.ImageBandInfo(img, name="img", band_names=["f1", "f2"])],
+        class_info={
+            "A": rcd.ClassInfoObj(out_id=1, vec_file=poly_a, vec_lyr="a"),
+            "B": rcd.ClassInfoObj(out_id=2, vec_file=poly_b, vec_lyr="b"),
+            "C": rcd.ClassInfoObj(out_id=3, vec_file=pts_c, vec_lyr="c"),
+        },
+    )
+
+
+def _assert_groups_disjoint(parts, group_col):
+    """No group may appear in more than one of the split tables."""
+    sets = [set(part[group_col]) for part in parts]
+    for idx, grp_set in enumerate(sets):
+        for other in sets[idx + 1:]:
+            assert grp_set.isdisjoint(other)
+
+
+def test_poly_id_col_extraction_and_persistence(tmp_path):
+    """The source polygon (or point) of each pixel is recorded and persisted."""
+    cfg = _grouped_cls_scene(tmp_path)
+    df_none = rcd.extract_class_training_samples(cfg, use_pbar=False)
+    assert "train_grp" not in df_none.columns  # off by default
+
+    df = rcd.extract_class_training_samples(
+        cfg, include_coords=True, poly_id_col="train_grp", use_pbar=False
+    )
+    assert list(df.columns) == [
+        "class_name", "out_cls_id", "internal_cls_id", "train_grp", "x", "y",
+        "f1", "f2",
+    ]
+    assert len(df) == 2 * 6 * 9 + 8
+    counts = df.groupby("train_grp").size()
+    assert counts.loc["A:poly0"] == 9 and counts.loc["B:poly5"] == 9
+    assert counts.loc["C:pt0"] == 1 and len(counts) == 6 + 6 + 8
+    # Polygon 1 of class A covers rows 1-3, columns 4-6.
+    poly1 = df[df["train_grp"] == "A:poly1"]
+    assert sorted(poly1["f1"].tolist()) == sorted(
+        float(r * 20 + c) for r in range(1, 4) for c in range(4, 7)
+    )
+    # The group column survives every sample table format.
+    formats = ["csv", "tsv", "json", "pkl"]
+    if importlib.util.find_spec("pyarrow") is not None:
+        formats += ["parquet", "feather"]
+    for ext in formats:
+        out_path = tmp_path / f"samples.{ext}"
+        rcd.write_cls_samples(df, out_path)
+        loaded = rcd.read_cls_samples(out_path)
+        assert loaded["train_grp"].tolist() == df["train_grp"].tolist()
+        tr_df, te_df, va_df = rcd.split_class_samples(
+            loaded, group_col="train_grp", rnd_seed=3
+        )
+        _assert_groups_disjoint((tr_df, te_df, va_df), "train_grp")
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        rcd.extract_class_training_samples(cfg, poly_id_col="f1", use_pbar=False)
+    with pytest.raises(rsgispy.RSGISPyException):
+        rcd.extract_class_training_samples(
+            cfg, poly_id_col="x", include_coords=True, use_pbar=False
+        )
+
+
+def test_grouped_class_split(tmp_path):
+    """Whole polygons go to train, test or valid, stratified by class."""
+    cfg = _grouped_cls_scene(tmp_path)
+    df = rcd.extract_class_training_samples(
+        cfg, poly_id_col="poly_id", use_pbar=False
+    )
+    for seed in range(10):
+        tr_df, te_df, va_df = rcd.split_class_samples(
+            df, group_col="poly_id", rnd_seed=seed
+        )
+        _assert_groups_disjoint((tr_df, te_df, va_df), "poly_id")
+        assert len(tr_df) + len(te_df) + len(va_df) == len(df)
+        for part in (tr_df, te_df, va_df):
+            assert set(part["class_name"]) == {"A", "B", "C"}
+        # Six polygons per class: 4/1/1 for the 0.6/0.2/0.2 proportions.
+        for cls in ("A", "B"):
+            assert (tr_df["class_name"] == cls).sum() == 4 * 9
+            assert (te_df["class_name"] == cls).sum() == 9
+    tr1, te1, va1 = rcd.split_class_samples(df, group_col="poly_id", rnd_seed=4)
+    tr2, te2, va2 = rcd.split_class_samples(df, group_col="poly_id", rnd_seed=4)
+    assert tr1.equals(tr2) and te1.equals(te2) and va1.equals(va2)
+
+    # Explicit counts are upper limits made of whole groups.
+    tr_n, te_n, va_n = rcd.split_class_samples(
+        df, group_col="poly_id",
+        n_train={"A": 20, "B": 20, "C": 4},
+        n_test={"A": 9, "B": 9, "C": 2},
+        n_valid={"A": 9, "B": 9, "C": 2},
+        max_cls_smpls=50, rnd_seed=1,
+    )
+    _assert_groups_disjoint((tr_n, te_n, va_n), "poly_id")
+    for part, n_max in ((tr_n, 20), (te_n, 9), (va_n, 9)):
+        assert 0 < (part["class_name"] == "A").sum() <= n_max
+        assert 0 < (part["class_name"] == "B").sum() <= n_max
+    assert (tr_n["class_name"] == "C").sum() == 4
+
+    # Fewer polygons than sets: a warning, and no polygon is split.
+    small = df[df["poly_id"].isin(["A:poly0", "A:poly1", "B:poly0", "B:poly1",
+                                   "B:poly2"])]
+    with pytest.warns(UserWarning, match="fewer than the 3 sets"):
+        tr_s, te_s, va_s = rcd.split_class_samples(
+            small, group_col="poly_id", rnd_seed=0
+        )
+    _assert_groups_disjoint((tr_s, te_s, va_s), "poly_id")
+    assert set(tr_s["class_name"]) == {"A", "B"}
+    assert set(te_s["class_name"]) == {"A", "B"}
+    assert set(va_s["class_name"]) == {"B"}
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        rcd.split_class_samples(df, group_col="missing")
+
+
+def test_extract_and_split_grouped(tmp_path):
+    """extract_and_split_class_samples records and splits by polygon."""
+    cfg = _grouped_cls_scene(tmp_path)
+    tr_df, te_df, va_df = rcd.extract_and_split_class_samples(
+        cfg,
+        out_train_file=tmp_path / "train.csv",
+        out_test_file=tmp_path / "test.csv",
+        out_valid_file=tmp_path / "valid.csv",
+        group_col="train_grp",
+        rnd_seed=5,
+        use_pbar=False,
+    )
+    _assert_groups_disjoint((tr_df, te_df, va_df), "train_grp")
+    assert rcd.read_cls_samples(tmp_path / "train.csv").equals(tr_df)
+    # poly_id_col only records the polygons; the split stays random.
+    tr_r, te_r, va_r = rcd.extract_and_split_class_samples(
+        cfg, poly_id_col="poly_fid", rnd_seed=5, use_pbar=False
+    )
+    assert "poly_fid" in tr_r.columns
+    assert set(tr_r["poly_fid"]) & set(te_r["poly_fid"])
+    with pytest.raises(rsgispy.RSGISPyException):
+        rcd.extract_and_split_class_samples(
+            cfg, poly_id_col="a", group_col="b", use_pbar=False
+        )
+
+
 def test_recode_internal_to_output_ids_and_raster(tmp_path):
     """Test array/Series and classified raster recoding from 0..N-1 to out_ids."""
     class_info = {
