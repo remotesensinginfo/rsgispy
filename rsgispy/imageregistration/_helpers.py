@@ -15,7 +15,11 @@ from rasterio.transform import Affine
 
 import rsgispy
 from rsgispy._numba import use_compiled
-from rsgispy.imageprocess import ensure_file_exists, get_gdal_img_creation_opts
+from rsgispy.imageprocess import (
+    ensure_file_exists,
+    get_gdal_img_creation_opts,
+    set_dataset_nodata,
+)
 from rsgispy.imageregistration import (
     TYPE_ENVI_IMG2IMG,
     TYPE_ENVI_IMG2MAP,
@@ -412,7 +416,7 @@ def copy_raster_with_updates(
         with rasterio.open(out_path, "r+") as dst:
             dst.gcps = gcps
             if no_data_val is not None:
-                dst.nodata = no_data_val
+                set_dataset_nodata(dst, no_data_val)
             return dst.nodata
 
     out_dir = os.path.dirname(os.path.abspath(out_path))

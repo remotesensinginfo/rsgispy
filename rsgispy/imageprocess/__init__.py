@@ -48,6 +48,7 @@ from rsgispy.imageprocess._dtype_nodata import (
     resolve_out_dtype,
     resolve_out_nodata,
     rsgis_dtype_from_np_dtype,
+    set_dataset_nodata,
     set_default_block_size,
 )
 from rsgispy.imageprocess._io import (
@@ -101,6 +102,7 @@ __all__ = [
     "fits_dtype_range",
     "resolve_out_nodata",
     "resolve_nodata_and_fill",
+    "set_dataset_nodata",
     "normalise_creation_options",
     "parse_epsg_crs",
     "maybe_pop_stats",

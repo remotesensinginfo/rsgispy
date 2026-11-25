@@ -17,6 +17,7 @@ from rasterio.transform import Affine
 import rsgispy
 from rsgispy.imageprocess import (
     bbox_from_dataset,
+    set_dataset_nodata,
     validate_band_index as _validate_band_index,
 )
 from rsgispy.imageutils._helpers import (
@@ -101,6 +102,11 @@ def set_img_no_data_value(
     """
     Set the no-data value on ``input_img`` (for a specific band or all bands).
 
+    Nothing is written if the band(s) already have ``no_data_val``. KEA files
+    cannot have an existing no-data value replaced (a limitation of GDAL's KEA
+    driver); this raises :class:`rsgispy.RSGISPyException`, see
+    :func:`rsgispy.imageprocess.set_dataset_nodata`.
+
     :param input_img: Path to the input image file.
     :param no_data_val: No-data value to assign.
     :param img_band: Optional 1-based band index. If ``None``, assigns to all
@@ -114,16 +120,10 @@ def set_img_no_data_value(
     _ensure_img_exists(input_img)
     with rasterio.open(input_img, "r+") as dst:
         if img_band is None:
-            dst.nodata = no_data_val
+            set_dataset_nodata(dst, no_data_val)
         else:
             _validate_band_index(img_band, dst.count, input_img)
-            if dst.count == 1:
-                dst.nodata = no_data_val
-            else:
-                vals = list(dst.nodatavals)
-                vals[img_band - 1] = no_data_val
-                # pylint: disable=protected-access
-                dst._set_nodatavals(vals)
+            set_dataset_nodata(dst, no_data_val, img_band=img_band)
 
 
 def get_img_res(

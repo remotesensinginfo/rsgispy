@@ -489,10 +489,12 @@ Common problems
   across the swath; terrain-flattened gamma0 reduces this. Compare dates from
   the same relative orbit, or normalise the backscatter, before change
   detection.
-* **KEA outputs** — in this version, writing a KEA file that has a no data
-  value with ``calc_stats=True`` fails with "Invalid nodata value" (the
-  statistics step sets the no data value again); write GeoTIFF or pass
-  ``calc_stats=False``.
+* **KEA outputs** — ``gdalformat="KEA"`` works with ``calc_stats=True``, but
+  GDAL's KEA driver cannot replace a no data value once a file has one, so
+  calling :func:`~rsgispy.imageutils.stats.pop_img_stats` or
+  :func:`~rsgispy.imageutils.metadata.set_img_no_data_value` with a
+  *different* value on an existing KEA file raises an error. Pass the no data
+  value you want (``no_data_val``) when the file is written.
 
 Related guides
 --------------

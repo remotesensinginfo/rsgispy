@@ -558,13 +558,18 @@ Common problems
   the call is not inside ``if __name__ == "__main__":``.
 * **Slow first call** — numba is compiling; later calls (and later runs,
   for cached kernels) are fast.
-* **"Invalid nodata value" when writing KEA** — in this version, functions
-  that write a KEA file with a no data value and then calculate statistics
-  (``calc_stats=True``) fail when the statistics step sets the no data value
-  again. Write GeoTIFF and convert at the end, or pass ``calc_stats=False``.
+* **Changing the no data value of a KEA file fails** — GDAL's KEA driver
+  cannot replace a no data value once a file has one, so
+  :func:`~rsgispy.imageutils.stats.pop_img_stats` or
+  :func:`~rsgispy.imageutils.metadata.set_img_no_data_value` with a
+  *different* value raises an error naming the old and new values (setting
+  the same value again, as the ``calc_stats=True`` step does, is fine). Pass
+  the right ``no_data_val`` when the KEA file is written.
 * **Environment settings leak between steps** — the block size and creation
-  options are environment variables; reset them with
-  :func:`~rsgispy.imageprocess.reset_default_block_size` or set them again.
+  options set with the ``set_*`` helpers are environment variables; reset them
+  with :func:`~rsgispy.imageprocess.reset_default_block_size` and
+  :func:`~rsgispy.imageutils.envopts.reset_img_creation_opts`, or set them
+  again.
 
 Related guides
 --------------

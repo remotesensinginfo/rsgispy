@@ -22,6 +22,7 @@ from rsgispy.imageprocess import (
     build_valid_mask,
     ensure_file_exists,
     iter_single_image_band_blocks,
+    set_dataset_nodata,
 )
 from rsgispy.imageutils._overviews import (
     finalise_external_ovr,
@@ -535,7 +536,11 @@ def pop_thmt_img_stats(
     :param input_img: Path to the input thematic image file.
     :param add_clr_tab: Whether to compute statistics and add a colour table (Default = True).
     :param calc_pyramids: Whether to build overview pyramids (Default = True).
-    :param ignore_zero: Whether to treat pixel value 0 as no-data (Default = True).
+    :param ignore_zero: Whether to treat pixel value 0 as no-data and set it as
+                        the image no-data value (Default = True). For a KEA file
+                        that already has a different no-data value this raises
+                        :class:`rsgispy.RSGISPyException` (see
+                        :func:`rsgispy.imageprocess.set_dataset_nodata`).
     :param use_pbar: Whether to display a tqdm progress bar (Default = True).
     :param use_multi_core_pyramids: If ``True``, use
                                     :func:`build_img_pyramids_multi_core` instead
@@ -596,7 +601,7 @@ def pop_thmt_img_stats(
         )
         with rasterio.open(input_img, "r+", **open_opts) as dst:
             if ignore_zero:
-                dst.nodata = 0
+                set_dataset_nodata(dst, 0)
 
             for idx, (hist, h_min, h_max) in enumerate(hist_info):
                 bidx = idx + 1
@@ -727,7 +732,14 @@ def pop_img_stats(
     pyramids on ``input_img`` using ``rasterio`` and :mod:`rsgispy.imagecalc`.
 
     :param input_img: Path to the input image file.
-    :param no_data_val: Optional no-data value to set and exclude from statistics.
+    :param no_data_val: Optional no-data value to set and exclude from
+                        statistics (if ``None``, the image's own no-data value
+                        is excluded). Setting the value the image already has
+                        writes nothing, so this works for KEA files; a KEA file
+                        whose existing no-data value differs raises
+                        :class:`rsgispy.RSGISPyException` because GDAL's KEA
+                        driver cannot replace it (see
+                        :func:`rsgispy.imageprocess.set_dataset_nodata`).
     :param calc_pyramids: Whether to build overview pyramids (Default = True).
     :param ignore_cog: Whether to ignore breaking COG layout when modifying a COG
                        file in place (Default = False).
@@ -797,7 +809,7 @@ def pop_img_stats(
 
     with rasterio.open(input_img, "r+", **open_opts) as dst:
         if no_data_val is not None:
-            dst.nodata = no_data_val
+            set_dataset_nodata(dst, no_data_val)
 
         for idx in range(dst.count):
             bidx = idx + 1
