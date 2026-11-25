@@ -1,6 +1,10 @@
 rsgispy.classification
 ======================
 
+.. seealso::
+
+   Guides: :doc:`guides/pixel_classification_workflow`, :doc:`guides/segment_ml_workflow`, :doc:`guides/change_detection`
+
 .. automodule:: rsgispy.classification
    :no-index:
 

@@ -5,6 +5,10 @@ The :mod:`rsgispy.dataaccess` subpackage provides clients for searching and
 downloading geospatial and Earth observation datasets from Copernicus Data Space
 Ecosystem (OData), NASA CMR, OpenStreetMap, Planet Data/Orders API, and USGS M2M.
 
+.. seealso::
+
+   Guide: :doc:`guides/analysis_ready_data`
+
 Satellite & Earth Observation Catalogues
 ----------------------------------------
 

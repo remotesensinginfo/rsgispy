@@ -1,6 +1,10 @@
 rsgispy.imageregistration
 =========================
 
+.. seealso::
+
+   Guide: :doc:`guides/image_coregistration`
+
 .. automodule:: rsgispy.imageregistration
    :no-index:
 

@@ -175,6 +175,34 @@ vector_maths(
 - **Vector ops**: Under `rsgispy.vector.{io,create,geoms,attrs,stats,selection}` (not `vectorutils` or `vectorattrs`).
 - **Optical index disambiguation**: Use `NDWI_McFeeters` for `(green - nir) / (green + nir)`, `NDWI_Gao` (or `NDMI`) for `(nir - swir1) / (nir + swir1)`, and `NDMaI` for `(swir2 - green) / (swir2 + green)`.
 
+## Workflow Guides
+
+For multi-step analyses, follow the step order of the matching guide in the rsgispy docs (`docs/guides/<name>.rst`). Each guide's code comes from a tested script in `docs/examples/<name>.py` with a `run_workflow(...)` function, so the call sequences there are known to work:
+
+| Task | Guide |
+| --- | --- |
+| Port RSGISLib scripts | `migrating_from_rsgislib` |
+| Download, stack, cloud-mask Sentinel-2; composites; COGs | `analysis_ready_data` |
+| Shift / tie-point / GCP co-registration | `image_coregistration` |
+| Pixel classification: feature selection, model interpretation, accuracy | `pixel_classification_workflow` |
+| Pixel regression with prediction intervals | `pixel_regression_workflow` |
+| Object-based (segment) classification / regression | `segment_ml_workflow` |
+| Differencing, CVA, IR-MAD, class outliers | `change_detection` |
+| Species distribution modelling | `species_distribution_modelling` |
+| Linear unmixing with automatic endmembers; TropWet wetland mapping | `spectral_unmixing` |
+| SAR speckle filters, SAR indices, texture | `sar_processing` |
+| DEM conditioning, flow, streams, catchments, HAND, TWI | `hydrology_workflow` |
+| Multi-criteria analysis with `band_maths` | `multi_criteria_analysis` |
+| Polygon / point / label-raster zonal stats, hex grids | `zonal_stats_and_vectors` |
+| Map figures, legends, scale bars, insets | `making_maps` |
+| Block processing, `TileGraph`, VRTs, tiling, `n_jobs` | `large_rasters` |
+
+Workflow gotchas documented in the guides:
+- `band_maths` does not set an output nodata value; call `rsgispy.imageutils.metadata.set_img_no_data_value` (or `pop_img_stats(..., no_data_val=...)`) afterwards.
+- `hydrology.extract_streams(threshold_units="area")` expects a flow accumulation in **cells** (`flow_accumulation(out_units="cells")`).
+- `changedetect.image_difference` / `image_ratio`: pass a `vld_msk_img` that is valid on **both** dates.
+- Pixel sample extraction cannot read a VRT that mixes data types (e.g. uint16 reflectance + float32 indices); use separate `ImageBandInfo` entries per data type.
+
 ## Detailed Reference Documentation
 
 Read the relevant reference file(s) in `references/` when writing non-trivial workflows:

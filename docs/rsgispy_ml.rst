@@ -5,6 +5,10 @@ The :mod:`rsgispy.ml` subpackage provides a shared machine-learning core
 unifying :mod:`rsgispy.classification`, :mod:`rsgispy.regression`, and
 :mod:`rsgispy.modelling`:
 
+.. seealso::
+
+   Guides: :doc:`guides/pixel_classification_workflow`, :doc:`guides/pixel_regression_workflow`, :doc:`guides/segment_ml_workflow`
+
 * :mod:`rsgispy.ml.stack` — :class:`~rsgispy.ml.stack.ImageFeatureStack` and
   :class:`~rsgispy.ml.stack.BandSpec` for managing multi-image feature stacks,
   valid-mask generation, tiled block iteration, and coordinate-preserving
