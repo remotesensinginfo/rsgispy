@@ -4,7 +4,15 @@ distribution modelling workflows built on ``scikit-learn``, ``geopandas``,
 ``numpy``, ``pandas``, and ``rasterio`` via :mod:`rsgispy.imageprocess`.
 """
 
-from rsgispy.modelling._helpers import EnvVarInfo
+from rsgispy.modelling._helpers import (
+    EnvVarInfo,
+    calc_binary_roc_auc,
+    calc_binary_threshold,
+    calc_single_class_predictions,
+    get_positive_class_probs,
+    plot_roc_curve,
+    predict_raster_from_env_vars,
+)
 from rsgispy.modelling._sdm_data import (
     apply_normalise_coeffs,
     calc_vif_multicollinearity,
@@ -57,6 +65,11 @@ __all__ = [
     "fit_sklearn_sgl_cls_mdl",
     "fit_kfold_sklearn_mdls",
     "fit_kfold_sklearn_sgl_cls_mdls",
+    "get_positive_class_probs",
+    "calc_single_class_predictions",
+    "calc_binary_roc_auc",
+    "calc_binary_threshold",
+    "plot_roc_curve",
     "shap_sklearn_mdl_explainer",
     "salib_sklearn_mdl_sensitivity",
     "sklearn_mdl_variable_response_curves",
@@ -69,4 +82,5 @@ __all__ = [
     "pred_ensemble_sklearn_mdls_cls",
     "pred_ensemble_sklearn_sgl_cls_mdls_prob",
     "pred_ensemble_sklearn_sgl_cls_mdls_cls",
+    "predict_raster_from_env_vars",
 ]

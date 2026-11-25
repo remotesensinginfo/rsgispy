@@ -6,6 +6,12 @@ table preparation helpers, isolated ``scikit-learn`` estimator cloning/fitting
 utilities, safe matplotlib figure lifecycle management, and a streaming
 :mod:`rsgispy.imageprocess` block-prediction engine shared across single-model
 and ensemble raster inference functions.
+
+The user-facing helpers (:class:`EnvVarInfo`, :func:`get_positive_class_probs`,
+:func:`calc_single_class_predictions`, :func:`calc_binary_roc_auc`,
+:func:`calc_binary_threshold`, :func:`plot_roc_curve` and
+:func:`predict_raster_from_env_vars`) are public through
+:mod:`rsgispy.modelling.species_distribution`; import them from there.
 """
 
 from contextlib import ExitStack
@@ -60,6 +66,7 @@ __all__ = [
     "EnvVarInfo",
     "build_env_block_matrix",
     "calc_binary_roc_auc",
+    "calc_binary_threshold",
     "calc_single_class_predictions",
     "check_sklearn_available",
     "clone_estimator",
@@ -300,12 +307,45 @@ def normalise_array_with_info(
 
 def get_positive_class_probs(
     est_cls_obj: Any,
-    x_data: pd.DataFrame,
-    pos_label: int = 1,
+    x_data: Union[pd.DataFrame, np.ndarray],
+    pos_label: Any = 1,
 ) -> np.ndarray:
     """
-    Extract positive-class probability scores robustly using
-    ``est_cls_obj.classes_`` so class ordering never causes column-index mismatches.
+    Return the probability of the positive (presence) class predicted by a
+    fitted ``scikit-learn`` classifier for each row of ``x_data``.
+
+    The column of ``est_cls_obj.predict_proba(x_data)`` is chosen by looking up
+    ``pos_label`` in ``est_cls_obj.classes_``, so the result does not depend on
+    the order of the classes (indexing ``predict_proba(...)[:, 1]`` is only
+    correct when the classes are exactly ``[0, 1]``). Special cases:
+
+    * a 1D ``predict_proba`` result is returned unchanged;
+    * a model fitted on a single class other than ``pos_label`` (one
+      probability column) gives zeros, as it can never predict ``pos_label``;
+    * if the estimator has no ``classes_`` attribute, or ``pos_label`` is not
+      one of its classes, the last column is used (for scikit-learn's sorted
+      classes, the largest label).
+
+    :param est_cls_obj: Fitted ``scikit-learn`` classifier with ``predict_proba``.
+    :param x_data: Feature table, one row per sample, with the columns in the
+                   order used for training (a :class:`pandas.DataFrame` with
+                   the training column names, or a 2D array).
+    :param pos_label: Label of the positive (presence) class (Default = ``1``).
+    :return: 1D ``float64`` array of positive class probabilities, one per row
+             of ``x_data``.
+
+    .. code:: python
+
+        import geopandas as gpd
+        import numpy as np
+        import rsgispy.modelling.species_distribution as sdm
+
+        test_gdf = gpd.read_file("sdm_test.gpkg", layer="test")
+        # Median presence probability of an ensemble from fit_kfold_sklearn_mdls.
+        test_prob = np.median(
+            [sdm.get_positive_class_probs(mdl, test_gdf[analysis_vars]) for mdl in mdls],
+            axis=0,
+        )
     """
     probs = np.asarray(est_cls_obj.predict_proba(x_data), dtype=np.float64)
     if probs.ndim == 1:
@@ -323,53 +363,236 @@ def get_positive_class_probs(
 
 def calc_single_class_predictions(
     est_cls_obj: Any,
-    x_data: pd.DataFrame,
+    x_data: Union[pd.DataFrame, np.ndarray],
 ) -> np.ndarray:
     """
-    Predict binary presence (``1``) vs absence/outlier (``0``) from a
-    ``scikit-learn`` single-class/outlier estimator returning ``+1`` / ``-1``.
+    Predict presence (``1``) or absence (``0``) with a fitted single-class
+    (one-class or outlier detection) ``scikit-learn`` estimator, such as
+    ``IsolationForest`` or ``OneClassSVM``.
+
+    These estimators return ``+1`` for samples similar to the training data
+    (inliers, here presences) and ``-1`` for outliers. This function maps
+    ``-1`` to ``0`` so the result can be compared directly with ``0``/``1``
+    presence/absence labels, e.g. with
+    :func:`rsgispy.tools.accuracy.accuracy_scores_binary`.
+
+    :param est_cls_obj: Fitted single-class estimator with ``predict``.
+    :param x_data: Feature table, one row per sample, with the columns in the
+                   order used for training.
+    :return: 1D ``uint8`` array of ``0`` (absence) and ``1`` (presence).
+
+    .. code:: python
+
+        from sklearn.ensemble import IsolationForest
+        import rsgispy.modelling.species_distribution as sdm
+        from rsgispy.tools.accuracy import accuracy_scores_binary
+
+        oc_mdl, test_acc, test_auc = sdm.fit_sklearn_sgl_cls_mdl(
+            IsolationForest(random_state=42), pres_train_gdf, None,
+            test_gdf, None, analysis_vars, return_model=True,
+        )
+        test_pred = sdm.calc_single_class_predictions(oc_mdl, test_gdf[analysis_vars])
+        names, scores = accuracy_scores_binary(test_gdf["clsid"].to_numpy(), test_pred)
     """
     pred = np.asarray(est_cls_obj.predict(x_data), dtype=np.int16)
     pred = np.where(pred < 0, 0, pred)
     return pred.astype(np.uint8)
 
 
+def _check_label_score_arrays(
+    y_true: Union[np.ndarray, Sequence[Any]],
+    scores: Union[np.ndarray, Sequence[float]],
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Validate and return 1D ``(y_true, scores)`` arrays of equal length."""
+    y_arr = np.asarray(y_true)
+    s_arr = np.asarray(scores, dtype=np.float64)
+    if y_arr.ndim != 1 or s_arr.ndim != 1:
+        raise rsgispy.RSGISPyException(
+            "y_true and scores must be 1D arrays (one value per sample)."
+        )
+    if y_arr.size != s_arr.size:
+        raise rsgispy.RSGISPyException(
+            f"y_true ({y_arr.size} values) and scores ({s_arr.size} values) "
+            "must have the same length."
+        )
+    if y_arr.size == 0:
+        raise rsgispy.RSGISPyException("y_true and scores are empty.")
+    if not np.all(np.isfinite(s_arr)):
+        raise rsgispy.RSGISPyException(
+            "scores contain NaN or infinite values; remove those samples first."
+        )
+    n_labels = np.unique(y_arr).size
+    if n_labels > 2:
+        raise rsgispy.RSGISPyException(
+            "y_true must be binary (e.g. 1 = presence, 0 = absence) but has "
+            f"{n_labels} distinct values."
+        )
+    return y_arr, s_arr
+
+
 def calc_binary_roc_auc(
-    y_true: np.ndarray,
-    scores: np.ndarray,
+    y_true: Union[np.ndarray, Sequence[Any]],
+    scores: Union[np.ndarray, Sequence[float]],
 ) -> Tuple[np.ndarray, np.ndarray, float]:
-    """Compute ROC curve ``(fpr, tpr, roc_auc)`` for binary ground truth."""
+    """
+    Calculate the receiver operating characteristic (ROC) curve and the area
+    under it (AUC) for binary presence/absence labels and continuous scores,
+    using ``sklearn.metrics.roc_curve`` and ``sklearn.metrics.auc``.
+
+    The AUC is the probability that a randomly chosen presence gets a higher
+    score than a randomly chosen absence: ``0.5`` is no better than random,
+    ``1`` is perfect. The curve can be plotted with :func:`plot_roc_curve` and
+    a presence/absence threshold chosen with :func:`calc_binary_threshold`.
+
+    :param y_true: 1D binary labels with ``1`` (or ``True``) for presence and
+                   ``0`` (or ``-1``, ``False``) for absence.
+    :param scores: 1D continuous scores, higher for presence (e.g. presence
+                   probabilities from :func:`get_positive_class_probs`, or the
+                   ``decision_function`` of a single-class model).
+    :return: Tuple ``(fpr, tpr, roc_auc)``: the false positive rates
+             (1 − specificity) and true positive rates (sensitivity) of the
+             ROC curve for decreasing thresholds, and the AUC as a ``float``.
+             If ``y_true`` contains only one class the curve is undefined:
+             ``scikit-learn`` warns and the AUC is ``nan``.
+
+    .. code:: python
+
+        import rsgispy.modelling.species_distribution as sdm
+
+        test_y = test_gdf["clsid"].to_numpy()
+        test_prob = sdm.get_positive_class_probs(rf_mdl, test_gdf[analysis_vars])
+        fpr, tpr, test_auc = sdm.calc_binary_roc_auc(test_y, test_prob)
+        sdm.plot_roc_curve(fpr, tpr, test_auc, "roc_curve.png")
+    """
     check_sklearn_available("calc_binary_roc_auc")
-    fpr, tpr, _ = sklearn.metrics.roc_curve(y_true, scores)
+    y_arr, s_arr = _check_label_score_arrays(y_true, scores)
+    fpr, tpr, _ = sklearn.metrics.roc_curve(y_arr, s_arr)
     roc_auc = float(sklearn.metrics.auc(fpr, tpr))
     return fpr, tpr, roc_auc
 
 
+_THRESHOLD_METHODS = ("max_tss", "sens_eq_spec")
+
+
+def calc_binary_threshold(
+    y_true: Union[np.ndarray, Sequence[Any]],
+    scores: Union[np.ndarray, Sequence[float]],
+    *,
+    method: str = "max_tss",
+) -> float:
+    """
+    Choose the threshold that converts continuous scores (e.g. presence
+    probabilities) into presence/absence, from labelled samples. A sample is
+    predicted present when ``score >= threshold``.
+
+    Methods:
+
+    * ``"max_tss"`` — maximise the true skill statistic (TSS = sensitivity +
+      specificity − 1, also called Youden's J or the Hanssen-Kuiper skill
+      score). This is the point of the ROC curve furthest above the diagonal.
+      Unlike kappa, the TSS does not depend on prevalence.
+    * ``"sens_eq_spec"`` — the threshold at which sensitivity and specificity
+      are equal (as nearly as the samples allow), balancing omission and
+      commission errors.
+
+    The candidate thresholds are the distinct values of ``scores`` (the
+    thresholds of ``sklearn.metrics.roc_curve``), so the result is always one
+    of the scores; when several thresholds are equally good the highest is
+    returned. Choose the threshold on one set of samples and report the
+    accuracy on another, otherwise the accuracy is slightly optimistic.
+
+    :param y_true: 1D binary labels with ``1`` (or ``True``) for presence and
+                   ``0`` (or ``-1``, ``False``) for absence. Both classes must
+                   be present.
+    :param scores: 1D continuous scores, higher for presence.
+    :param method: ``"max_tss"`` (Default) or ``"sens_eq_spec"``.
+    :return: The threshold as a ``float``.
+
+    .. code:: python
+
+        import rsgispy.modelling.species_distribution as sdm
+        from rsgispy.tools.accuracy import accuracy_scores_binary
+
+        prob_thres = sdm.calc_binary_threshold(test_y, test_prob, method="max_tss")
+        names, scores = accuracy_scores_binary(test_y, (test_prob >= prob_thres) * 1)
+    """
+    check_sklearn_available("calc_binary_threshold")
+    if method not in _THRESHOLD_METHODS:
+        raise rsgispy.RSGISPyException(
+            f"method must be one of {_THRESHOLD_METHODS}, got {method!r}."
+        )
+    y_arr, s_arr = _check_label_score_arrays(y_true, scores)
+    if np.unique(y_arr).size != 2:
+        raise rsgispy.RSGISPyException(
+            "y_true must contain both presences and absences to choose a threshold."
+        )
+    fpr, tpr, thresholds = sklearn.metrics.roc_curve(
+        y_arr, s_arr, drop_intermediate=False
+    )
+    # The first ROC point is a threshold above every score (nothing predicted
+    # present); skip it so the threshold is always one of the scores.
+    fpr, tpr, thresholds = fpr[1:], tpr[1:], thresholds[1:]
+    if method == "max_tss":
+        best_idx = int(np.argmax(tpr - fpr))
+    else:
+        # Sensitivity is tpr and specificity is 1 - fpr.
+        best_idx = int(np.argmin(np.abs(tpr + fpr - 1.0)))
+    return float(thresholds[best_idx])
+
+
 def plot_roc_curve(
-    fpr: np.ndarray,
-    tpr: np.ndarray,
+    fpr: Union[np.ndarray, Sequence[float]],
+    tpr: Union[np.ndarray, Sequence[float]],
     roc_auc: float,
-    out_file: Optional[Union[str, os.PathLike]],
+    out_file: Optional[Union[str, os.PathLike]] = None,
+    *,
     label: str = "ROC Curve",
+    title: str = "Receiver Operating Characteristic",
+    dpi: int = 150,
 ) -> None:
     """
-    Plot a binary ROC curve cleanly using Matplotlib so behaviour is identical
-    across all ``scikit-learn`` versions and figures are always closed.
+    Plot a binary ROC curve (true positive rate against false positive rate),
+    with the AUC in the legend and the 1:1 line of a random model, and save it
+    to ``out_file``. The Matplotlib figure is always closed afterwards.
+
+    :param fpr: False positive rates (1 − specificity), e.g. from
+                :func:`calc_binary_roc_auc`.
+    :param tpr: True positive rates (sensitivity), the same length as ``fpr``.
+    :param roc_auc: Area under the curve, shown in the legend.
+    :param out_file: Output image file (format from the extension, e.g.
+                     ``.png``); parent directories are created. If ``None``
+                     the plot is displayed when running in a Jupyter notebook
+                     and is otherwise discarded.
+    :param label: Legend label of the curve (Default = ``'ROC Curve'``).
+    :param title: Plot title (Default = ``'Receiver Operating Characteristic'``).
+    :param dpi: Resolution of the saved image (Default = ``150``).
+
+    .. code:: python
+
+        import rsgispy.modelling.species_distribution as sdm
+
+        fpr, tpr, test_auc = sdm.calc_binary_roc_auc(test_y, test_prob)
+        sdm.plot_roc_curve(fpr, tpr, test_auc, "plots/roc_curve.png", label="Ensemble")
     """
-    if out_file is None:
-        return
+    # pylint: disable=too-many-arguments
+    fpr_arr = np.asarray(fpr, dtype=np.float64)
+    tpr_arr = np.asarray(tpr, dtype=np.float64)
+    if fpr_arr.ndim != 1 or fpr_arr.shape != tpr_arr.shape:
+        raise rsgispy.RSGISPyException(
+            "fpr and tpr must be 1D arrays of the same length."
+        )
     fig, ax = plt.subplots()
     try:
-        ax.plot(fpr, tpr, label=f"{label} (AUC = {roc_auc:.3f})")
+        ax.plot(fpr_arr, tpr_arr, label=f"{label} (AUC = {roc_auc:.3f})")
         ax.plot([0.0, 1.0], [0.0, 1.0], linestyle="--", color="grey")
         ax.set_xlim([0.0, 1.0])
         ax.set_ylim([0.0, 1.05])
         ax.set_xlabel("False Positive Rate")
         ax.set_ylabel("True Positive Rate")
-        ax.set_title("Receiver Operating Characteristic")
+        ax.set_title(title)
         ax.legend(loc="lower right")
     finally:
-        finalise_plot(fig, out_file=out_file)
+        finalise_plot(fig, out_file=out_file, dpi=dpi)
 
 
 def env_vars_to_band_defs(
@@ -564,28 +787,139 @@ def run_env_block_pipeline(
             )
 
 
+def _resolve_pred_rio_dtype(
+    datatype: Optional[int],
+    out_rio_dtype: Optional[str],
+    thematic: bool,
+) -> str:
+    """Resolve the output rasterio dtype from ``datatype`` / ``out_rio_dtype``."""
+    if datatype is not None:
+        rio_dtype = rsgispy.get_rasterio_datatype(int(datatype))
+        if out_rio_dtype is not None and np.dtype(out_rio_dtype) != np.dtype(rio_dtype):
+            raise rsgispy.RSGISPyException(
+                f"datatype ({rio_dtype}) and out_rio_dtype ({out_rio_dtype}) "
+                "disagree; pass only one of them."
+            )
+        return rio_dtype
+    if out_rio_dtype is not None:
+        return str(np.dtype(out_rio_dtype))
+    return "uint8" if thematic else "float32"
+
+
+def _check_value_fits_dtype(value: float, rio_dtype: str, arg_name: str) -> None:
+    """Raise if ``value`` cannot be stored exactly in integer ``rio_dtype``."""
+    np_dtype = np.dtype(rio_dtype)
+    if not np.issubdtype(np_dtype, np.integer):
+        return
+    info = np.iinfo(np_dtype)
+    val = float(value)
+    if not np.isfinite(val) or val != np.floor(val) or not info.min <= val <= info.max:
+        raise rsgispy.RSGISPyException(
+            f"{arg_name}={value!r} cannot be stored in a {rio_dtype} raster; "
+            f"use an integer between {info.min} and {info.max}."
+        )
+
+
 def predict_raster_from_env_vars(
-    in_msk_img: str,
+    in_msk_img: Union[str, os.PathLike],
     img_msk_val: int,
     env_vars: Mapping[str, EnvVarInfo],
     analysis_vars: Sequence[str],
-    output_img: str,
-    predict_fn: Callable[[pd.DataFrame], np.ndarray],
+    output_img: Union[str, os.PathLike],
+    predict_fn: Callable[[pd.DataFrame], Union[np.ndarray, pd.Series]],
+    *,
     gdalformat: str = "GTIFF",
-    out_rio_dtype: str = "float32",
-    fill_val: float = -1.0,
-    normalise_data: bool = False,
-    calc_stats: bool = True,
-    thematic: bool = False,
+    datatype: Optional[int] = None,
     no_data_val: Optional[float] = -1.0,
+    fill_val: Optional[float] = None,
+    normalise_data: bool = False,
+    thematic: bool = False,
+    calc_stats: bool = True,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
+    out_rio_dtype: Optional[str] = None,
 ) -> None:
     """
-    Execute block-wise spatial prediction across environmental raster layers
-    using :mod:`rsgispy.imageprocess` and write the output raster.
+    Apply any prediction function to the environmental variables of every
+    valid pixel and write the result as a single-band raster. This is the
+    engine behind the ``pred_*`` functions of this module; use it directly to
+    apply a model or rule that they do not cover, e.g. a mean instead of a
+    median ensemble, a regression model, a model wrapped in a pipeline, or a
+    hand-written suitability index.
+
+    The rasters are read block by block. For each block, the pixels where
+    ``in_msk_img == img_msk_val`` and every variable is finite, not the
+    raster's no data value and within the ``min_vld_val`` / ``max_vld_val``
+    range of its :class:`EnvVarInfo` are collected into a
+    :class:`pandas.DataFrame` with one column per variable, named and ordered
+    as ``analysis_vars``. ``predict_fn`` is called with that table and must
+    return one value per row. All other pixels get ``fill_val``.
+
+    :param in_msk_img: Mask raster defining the area to predict (e.g. from
+                       :func:`create_finite_mask`).
+    :param img_msk_val: Value of the pixels in ``in_msk_img`` to predict.
+    :param env_vars: Environmental variable descriptors (:class:`EnvVarInfo`),
+                     keyed by variable name. All rasters must be on the same
+                     grid as ``in_msk_img``.
+    :param analysis_vars: Variable names, in the order the model expects
+                          (the order used for training).
+    :param output_img: Output raster path; parent directories are created.
+    :param predict_fn: Function taking a :class:`pandas.DataFrame` of variable
+                       values (one row per valid pixel) and returning a 1D
+                       array or Series of the same length, e.g.
+                       ``lambda df: sdm.get_positive_class_probs(mdl, df)``.
+    :param gdalformat: Output GDAL format (Default = ``'GTIFF'``).
+    :param datatype: Output data type as an ``rsgispy.TYPE_*`` constant.
+                     Default: :data:`rsgispy.TYPE_8UINT` if ``thematic`` is
+                     ``True``, otherwise :data:`rsgispy.TYPE_32FLOAT`.
+                     Predictions are cast to this type (truncated for integer
+                     types).
+    :param no_data_val: No data value written to the output raster
+                        (Default = ``-1.0``, which suits probabilities); use
+                        ``None`` for none. For integer outputs it must fit the
+                        data type (e.g. ``0`` or ``255`` for ``uint8``).
+    :param fill_val: Value of the pixels outside the mask or with invalid
+                     variables (Default = ``None``: ``no_data_val``, or ``0``
+                     if that is ``None``).
+    :param normalise_data: Apply the z-score normalisation stored in
+                           ``env_vars`` (see :func:`pop_normalise_coeffs`)
+                           before calling ``predict_fn`` (Default = ``False``).
+    :param thematic: Treat the output as a thematic (class) raster: statistics
+                     are calculated with a colour table
+                     (Default = ``False``).
+    :param calc_stats: Calculate image statistics and pyramids for the output
+                       (Default = ``True``).
+    :param block_size: Processing block size in pixels (Default = ``None``:
+                       :func:`rsgispy.imageprocess.get_default_block_size`).
+    :param use_pbar: Show a progress bar (Default = ``True``).
+    :param out_rio_dtype: Output data type as a rasterio/NumPy name (e.g.
+                          ``'float32'``), an alternative to ``datatype`` kept
+                          for compatibility. Pass only one of the two.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.modelling.species_distribution as sdm
+
+        # Mean (rather than median) presence probability of an ensemble.
+        def ens_mean_prob(env_df):
+            return np.mean(
+                [sdm.get_positive_class_probs(mdl, env_df) for mdl in mdls], axis=0
+            )
+
+        sdm.predict_raster_from_env_vars(
+            "valid_mask.tif", 1, env_vars, analysis_vars, "sdm_mean_prob.tif",
+            ens_mean_prob, no_data_val=-1.0,
+        )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    rio_dtype = _resolve_pred_rio_dtype(datatype, out_rio_dtype, thematic)
+    if fill_val is None:
+        fill_val = no_data_val if no_data_val is not None else 0
+    if no_data_val is not None:
+        _check_value_fits_dtype(no_data_val, rio_dtype, "no_data_val")
+    _check_value_fits_dtype(fill_val, rio_dtype, "fill_val")
+    fill_val = float(fill_val)
 
     def _eval_block(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         resolved_vars: List[str],
@@ -608,17 +942,22 @@ def predict_raster_from_env_vars(
         if valid_idx.size > 0:
             env_pxl_df = pd.DataFrame(data=env_mat, columns=resolved_vars)
             preds = np.asarray(predict_fn(env_pxl_df), dtype=np.float64).ravel()
+            if preds.size != valid_idx.size:
+                raise rsgispy.RSGISPyException(
+                    f"predict_fn returned {preds.size} values for "
+                    f"{valid_idx.size} pixels; it must return one value per row."
+                )
             out_flat[valid_idx] = preds
         return out_flat.reshape((win_h, win_w))
 
     run_env_block_pipeline(
-        in_msk_img=in_msk_img,
+        in_msk_img=os.fspath(in_msk_img),
         env_vars=env_vars,
         analysis_vars=analysis_vars,
-        output_img=output_img,
+        output_img=os.fspath(output_img),
         block_eval_fn=_eval_block,
         gdalformat=gdalformat,
-        out_rio_dtype=out_rio_dtype,
+        out_rio_dtype=rio_dtype,
         calc_stats=calc_stats,
         thematic=thematic,
         no_data_val=no_data_val,
