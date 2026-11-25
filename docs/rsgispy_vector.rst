@@ -7,6 +7,10 @@ selection into six focused submodules.  Every function accepts either a vector
 file path (``str`` / :class:`os.PathLike`) or an in-memory
 :class:`geopandas.GeoDataFrame`.
 
+.. seealso::
+
+   Guide: :doc:`guides/zonal_stats_and_vectors`
+
 Examples
 --------
 

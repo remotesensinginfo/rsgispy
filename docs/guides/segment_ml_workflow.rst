@@ -317,6 +317,14 @@ functions in :mod:`~rsgispy.classification.classaccuracymetrics` then give
 point-based accuracy, and area-weighted accuracy using the class areas of the
 rasterised classification.
 
+In the output of
+:func:`~rsgispy.classification.classaccuracymetrics.calc_acc_stats_img`,
+``accuracy``, the user's and producer's accuracies, F1 and kappa are still
+computed from the point counts. The area-weighted results are
+``norm_confusion_matrix``, ``est_prop_cls_area`` (the estimated proportion of
+the map in each class) and ``quantity_metrics["Proportion Correct (C)"]``.
+:doc:`pixel_classification_workflow` explains these outputs in more detail.
+
 .. literalinclude:: ../examples/segment_ml_workflow.py
    :language: python
    :start-after: # [step-9-accuracy]
@@ -432,3 +440,10 @@ Common problems
 * **A model predicts a single class** — with few samples, GBDT models may not
   split at all because of their default minimum leaf sizes; reduce them (e.g.
   LightGBM ``min_child_samples``) or add training data.
+
+Related guides
+--------------
+
+* :doc:`pixel_classification_workflow`
+* :doc:`pixel_regression_workflow`
+* :doc:`large_rasters`

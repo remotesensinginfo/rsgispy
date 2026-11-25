@@ -6,6 +6,10 @@ classification, linear spectral unmixing, endmember table management, spectral
 feature transformations, and pre-processing using ``rasterio``, ``numpy``, and
 ``pandas``.
 
+.. seealso::
+
+   Guide: :doc:`guides/spectral_unmixing`
+
 Submodules
 ----------
 

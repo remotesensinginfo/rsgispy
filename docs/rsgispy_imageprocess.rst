@@ -3,6 +3,10 @@ rsgispy.imageprocess
 
 The :mod:`rsgispy.imageprocess` module provides reusable utilities for validating raster metadata, computing spatial intersections across multiple input rasters, opening input/output datasets safely, and applying custom block-processing functions over raster windows.
 
+.. seealso::
+
+   Guide: :doc:`guides/large_rasters`
+
 Custom Block Processing Example
 -------------------------------
 
@@ -62,11 +66,12 @@ avoiding intermediate disk writes:
        RasterSource,
        TileGraph,
    )
-   from rsgispy.imagefilter._helpers import window_stat_node
+   from rsgispy.imagefilter.chained import FilterStep, build_filter_chain_node
 
    src = RasterSource("input.tif")
-   med = window_stat_node(src, stat="median", filter_size=3)
-   smooth = window_stat_node(med, stat="mean", filter_size=5)
+   smooth = build_filter_chain_node(
+       src, [FilterStep("median", filter_size=3), FilterStep("mean", filter_size=5)]
+   )
    diff = BandMathOp({"smooth": smooth, "orig": src}, "smooth - orig")
    sink = DiskSink(diff, "highpass.tif", datatype=rsgispy.TYPE_32FLOAT)
    TileGraph(sink).run()

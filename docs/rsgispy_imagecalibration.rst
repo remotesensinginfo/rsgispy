@@ -7,6 +7,10 @@ correction, and Level-1/Level-2 satellite product ingestion for Landsat
 Collection 2 and ESA Sentinel-2 L2A SAFE archives using ``rasterio`` and
 ``numpy``.
 
+.. seealso::
+
+   Guide: :doc:`guides/analysis_ready_data`
+
 Radiometry & DOS
 ----------------
 

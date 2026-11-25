@@ -1,6 +1,10 @@
 rsgispy.modelling
 =================
 
+.. seealso::
+
+   Guide: :doc:`guides/species_distribution_modelling`
+
 .. automodule:: rsgispy.modelling
    :no-index:
 

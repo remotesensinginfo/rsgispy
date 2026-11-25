@@ -5,6 +5,10 @@ The :mod:`rsgispy.changedetect` subpackage provides multi-temporal change
 detection methods and per-class pixel outlier change detection using
 ``rasterio`` and ``numpy``.
 
+.. seealso::
+
+   Guide: :doc:`guides/change_detection`
+
 Submodules
 ----------
 

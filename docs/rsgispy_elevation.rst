@@ -4,6 +4,10 @@ rsgispy.elevation
 The :mod:`rsgispy.elevation` subpackage provides terrain and digital elevation
 model (DEM) analysis utilities using ``rasterio`` and ``numpy``.
 
+.. seealso::
+
+   Guide: :doc:`guides/hydrology_workflow`
+
 Terrain Derivatives & Illumination
 ----------------------------------
 

@@ -5,6 +5,10 @@ The :mod:`rsgispy.imagefilter` subpackage provides spatial moving-window and
 convolution filters for raster images using ``rasterio`` and ``numpy``,
 organised into thematic submodules:
 
+.. seealso::
+
+   Guides: :doc:`guides/sar_processing`, :doc:`guides/large_rasters`
+
 * :doc:`imagefilter/stats` — Statistical, dispersion, and local-difference moving-window filters.
 * :doc:`imagefilter/smooth` — Edge-preserving Kuwahara, Gaussian smoothing, and custom 2D convolution kernel filters.
 * :doc:`imagefilter/edge` — Sobel, Prewitt, Gaussian derivative, and Laplacian edge-detection filters.

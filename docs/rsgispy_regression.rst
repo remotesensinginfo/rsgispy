@@ -1,6 +1,10 @@
 rsgispy.regression
 ==================
 
+.. seealso::
+
+   Guides: :doc:`guides/pixel_regression_workflow`, :doc:`guides/segment_ml_workflow`
+
 .. automodule:: rsgispy.regression
    :no-index:
 

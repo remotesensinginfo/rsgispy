@@ -201,7 +201,9 @@ def run_workflow(
         class_names_lut=cls_cfg.get_class_names_lut(),
         use_pbar=use_pbar,
     )
-    print(pt_stats["accuracy"], area_stats["accuracy"])
+    # Unweighted point accuracy, then the area-weighted proportion correct
+    print(pt_stats["accuracy"],
+          area_stats["quantity_metrics"]["Proportion Correct (C)"])
     # [end-step-9-accuracy]
     out["pt_stats"] = pt_stats
 

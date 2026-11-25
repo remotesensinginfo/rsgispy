@@ -146,6 +146,30 @@ Evaluating a mathematical expression across image bands with
        datatype=rsgispy.TYPE_32FLOAT,
    )
 
+Guides
+------
+
+The guides walk through complete analyses, from input data to final
+products, and show how functions from several subpackages fit together.
+Each guide's code is taken from a runnable example script in
+``docs/examples/`` that is tested on small synthetic data.
+
+* :doc:`guides/migrating_from_rsgislib` — Moving existing RSGISLib scripts to rsgispy.
+* :doc:`guides/analysis_ready_data` — Downloading, stacking and cloud masking Sentinel-2, and building cloud-free composites.
+* :doc:`guides/image_coregistration` — Measuring and correcting misregistration with shifts, tie points and GCPs.
+* :doc:`guides/pixel_classification_workflow` — Pixel-based land cover classification, from feature selection and model interpretation to accuracy assessment.
+* :doc:`guides/pixel_regression_workflow` — Mapping a continuous variable from field plots, with prediction intervals.
+* :doc:`guides/segment_ml_workflow` — Object-based (segment) classification and regression.
+* :doc:`guides/change_detection` — Image differencing, change vector analysis, IR-MAD and class-based change.
+* :doc:`guides/species_distribution_modelling` — Presence/pseudo-absence models, spatial cross-validation and habitat suitability maps.
+* :doc:`guides/spectral_unmixing` — Wetland mapping with automatic endmember selection and linear unmixing, following the TropWet method.
+* :doc:`guides/sar_processing` — Speckle filtering, SAR indices and texture for SAR backscatter.
+* :doc:`guides/hydrology_workflow` — DEM conditioning, flow routing, streams, catchments, HAND and terrain indices.
+* :doc:`guides/multi_criteria_analysis` — A multi-criteria analysis with ``band_maths``: mangrove restoration potential.
+* :doc:`guides/zonal_stats_and_vectors` — Summarising rasters by polygons, points, label rasters and hexagon grids.
+* :doc:`guides/making_maps` — Publication-quality maps with legends, scale bars and inset maps.
+* :doc:`guides/large_rasters` — Block processing, tile graphs, VRTs, tiling and parallel processing for large data.
+
 Package Overview
 ----------------
 
@@ -176,9 +200,28 @@ Package Overview
 
 .. toctree::
    :maxdepth: 2
-   :caption: Guides & AI Tooling
+   :caption: Guides
 
+   guides/migrating_from_rsgislib
+   guides/analysis_ready_data
+   guides/image_coregistration
+   guides/pixel_classification_workflow
+   guides/pixel_regression_workflow
    guides/segment_ml_workflow
+   guides/change_detection
+   guides/species_distribution_modelling
+   guides/spectral_unmixing
+   guides/sar_processing
+   guides/hydrology_workflow
+   guides/multi_criteria_analysis
+   guides/zonal_stats_and_vectors
+   guides/making_maps
+   guides/large_rasters
+
+.. toctree::
+   :maxdepth: 2
+   :caption: AI Tooling
+
    gemini_skill
 
 .. toctree::

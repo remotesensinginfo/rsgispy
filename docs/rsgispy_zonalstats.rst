@@ -5,6 +5,10 @@ The :mod:`rsgispy.zonalstats` subpackage provides zonal statistics extraction
 modules for polygon and point vector datasets and for zones defined by a
 label raster (e.g., segments) using ``rasterio`` and ``geopandas``.
 
+.. seealso::
+
+   Guide: :doc:`guides/zonal_stats_and_vectors`
+
 Modules
 -------
 

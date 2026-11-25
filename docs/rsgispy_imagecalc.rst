@@ -7,6 +7,10 @@ encoding, rescaling, distance/buffering, region filling, and windowed sampling
 on raster image bands using `pymu-eval <https://github.com/remotesensinginfo/pymu-eval>`_
 and `rasterio <https://rasterio.readthedocs.io/>`_.
 
+.. seealso::
+
+   Guides: :doc:`guides/multi_criteria_analysis`, :doc:`guides/large_rasters`
+
 Examples
 --------
 

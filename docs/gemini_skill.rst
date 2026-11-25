@@ -14,6 +14,11 @@ What the Skill Provides
   ``osgeo`` or ``rsgislib``), 1-based band indexing, ``rsgispy.TYPE_*`` and
   ``INTERP_*`` constants, keyword-only output options, and RSGISLib migration
   guidance.
+- **Workflow guides** (``SKILL.md``): a table mapping common analyses to the
+  guides in this documentation (for example
+  :doc:`guides/pixel_classification_workflow` and
+  :doc:`guides/hydrology_workflow`), so generated code follows the same
+  tested step order, plus workflow pitfalls found while writing the guides.
 - **Progressive-disclosure references** (``skills/rsgispy/references/``):
 
   - ``raster_and_indices.md`` — ``rsgispy.BBox``, ``rsgispy.imageprocess``
