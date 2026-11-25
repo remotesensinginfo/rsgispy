@@ -665,6 +665,150 @@ def test_export_poly_pxls_to_df(tmp_path):
         zs_poly.export_poly_pxls_to_df(pts_only, tif_path)
 
 
+def _write_mixed_dtype_vrt(tmp_path):
+    """
+    Write a uint16 reflectance image (no data 0), a float32 index image (no
+    data -9999, plus a float32-only no data value of 0.1 in a second band)
+    and a VRT stacking both (bands of different data types).
+    """
+    from rsgispy.imageutils.vrt import create_stack_images_vrt
+
+    refl = (np.arange(2 * 6 * 6, dtype=np.uint16).reshape(2, 6, 6) * 7) + 1
+    refl[:, 0, 0] = 0  # no data in both reflectance bands
+    refl[1, 2, 3] = 0  # no data in reflectance band 2 only
+    refl_img = str(tmp_path / "refl_u16.tif")
+    _write_multiband_test_raster(refl_img, refl, nodata=0)
+
+    idx = (np.arange(6 * 6, dtype=np.float32).reshape(6, 6) / 7.0 - 2.0).astype(
+        np.float32
+    )
+    idx[4, 4] = -9999.0
+    idx_img = str(tmp_path / "idx_f32.tif")
+    _write_test_raster(idx_img, idx, nodata=-9999.0)
+
+    # 0.1 is not exactly representable as float32: the comparison with the
+    # band's no data value must be made in the band's own data type.
+    nd01 = np.full((6, 6), 5.0, dtype=np.float32)
+    nd01[3, 1] = np.float32(0.1)
+    nd01_img = str(tmp_path / "nd01_f32.tif")
+    _write_test_raster(nd01_img, nd01, nodata=0.1)
+
+    vrt = str(tmp_path / "mixed_stack.vrt")
+    create_stack_images_vrt([refl_img, idx_img, nd01_img], vrt)
+    with rasterio.open(vrt) as src:
+        assert len(set(src.dtypes)) == 2
+    return vrt, refl_img, idx_img, nd01_img
+
+
+def test_mixed_dtype_vrt_poly_pxls_and_points(tmp_path):
+    """
+    Pixel and point sampling of a VRT mixing uint16 and float32 bands gives the
+    same values, data types and no data masking as the separate images.
+    """
+    vrt, refl_img, idx_img, nd01_img = _write_mixed_dtype_vrt(tmp_path)
+    polys = gpd.GeoDataFrame(
+        {"cls": ["a", "b"]},
+        geometry=[
+            box(500000.0, 5199960.0, 500040.0, 5200000.0),
+            box(500020.0, 5199940.0, 500060.0, 5199980.0),
+        ],
+        crs="EPSG:32630",
+    )
+
+    for mask_nodata in (True, False):
+        df_vrt = zs_poly.export_poly_pxls_to_df(
+            polys, vrt, include_coords=True, mask_nodata=mask_nodata,
+            band_names=["r1", "r2", "idx", "nd01"], use_pbar=False,
+        )
+        parts = [
+            zs_poly.export_poly_pxls_to_df(
+                polys, img, include_coords=True, mask_nodata=False,
+                band_names=names, use_pbar=False,
+            )
+            for img, names in (
+                (refl_img, ["r1", "r2"]),
+                (idx_img, ["idx"]),
+                (nd01_img, ["nd01"]),
+            )
+        ]
+        df_sep = parts[0]
+        for part in parts[1:]:
+            df_sep = df_sep.merge(part, on=["poly_fid", "x", "y"])
+        if mask_nodata:
+            keep = (
+                (df_sep["r1"] != 0)
+                & (df_sep["r2"] != 0)
+                & (df_sep["idx"] != -9999.0)
+                & (df_sep["nd01"] != np.float32(0.1))
+            )
+            df_sep = df_sep[keep].reset_index(drop=True)
+        assert len(df_vrt) == len(df_sep)
+        if mask_nodata:
+            # 5 of the 32 polygon pixels are no data in at least one band
+            assert len(df_vrt) == 32 - 5
+        pd.testing.assert_frame_equal(df_vrt, df_sep)
+        assert df_vrt["r1"].dtype == np.uint16
+        assert df_vrt["idx"].dtype == np.float32
+
+    # Point sampling: one block read for all bands of the VRT.
+    pts = gpd.GeoDataFrame(
+        geometry=[
+            Point(500005.0, 5199995.0),  # no data in r1 and r2
+            Point(500035.0, 5199975.0),  # no data in r2 only
+            Point(500045.0, 5199955.0),  # no data in idx only
+            Point(500015.0, 5199965.0),  # no data (0.1) in nd01 only
+            Point(500025.0, 5199985.0),  # valid in every band
+        ],
+        crs="EPSG:32630",
+    )
+    out_vrt = zs_pt.ext_point_band_values(
+        pts.copy(), vrt, None, -1e9, 1e9, -1.0,
+        out_field=["r1", "r2", "idx", "nd01"], use_pbar=False,
+    )
+    out_r = zs_pt.ext_point_band_values(
+        pts.copy(), refl_img, None, -1e9, 1e9, -1.0, out_field=["r1", "r2"],
+        use_pbar=False,
+    )
+    out_i = zs_pt.ext_point_band_values(
+        pts.copy(), idx_img, 1, -1e9, 1e9, -1.0, out_field="idx", use_pbar=False
+    )
+    out_n = zs_pt.ext_point_band_values(
+        pts.copy(), nd01_img, 1, -1e9, 1e9, -1.0, out_field="nd01", use_pbar=False
+    )
+    for col, ref in (("r1", out_r), ("r2", out_r), ("idx", out_i), ("nd01", out_n)):
+        assert out_vrt[col].tolist() == ref[col].tolist()
+    assert out_vrt["r1"].tolist()[0] == -1.0
+    assert out_vrt["r2"].tolist()[:2] == [-1.0, -1.0]
+    assert out_vrt["idx"].tolist()[2] == -1.0
+    assert out_vrt["nd01"].tolist()[3] == -1.0
+    assert all(out_vrt[col].tolist()[4] != -1.0 for col in ("r1", "r2", "idx", "nd01"))
+
+
+def test_read_bands_native_mixed_dtypes(tmp_path):
+    """Bands of a mixed-type VRT are returned in request order and own types."""
+    from rasterio.windows import Window
+
+    from rsgispy.zonalstats._helpers import read_bands_native
+
+    vrt, refl_img, idx_img, _ = _write_mixed_dtype_vrt(tmp_path)
+    win = Window(1, 2, 3, 2)
+    with rasterio.open(vrt) as v_src:
+        arrs_vrt = read_bands_native(v_src, [3, 1, 4, 2], window=win)
+    with rasterio.open(refl_img) as r_src, rasterio.open(idx_img) as i_src:
+        expected = [
+            i_src.read(1, window=win),
+            r_src.read(1, window=win),
+            None,
+            r_src.read(2, window=win),
+        ]
+    assert [a.dtype for a in arrs_vrt] == [
+        np.float32, np.uint16, np.float32, np.uint16
+    ]
+    for arr, exp in zip(arrs_vrt, expected):
+        if exp is not None:
+            np.testing.assert_array_equal(arr, exp)
+
+
 def test_zonalstats_constants_helpers_and_kwonly(tmp_path):
     """Test canonical *CENTRE constants, aliases, normalise_band_list, and kw-only args."""
     import rsgispy.zonalstats as zs

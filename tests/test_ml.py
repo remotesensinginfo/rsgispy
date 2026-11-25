@@ -228,6 +228,47 @@ def test_feature_stack_extract_points_and_polygons(synthetic_stack_files):
     )
 
 
+def test_feature_stack_mixed_dtype_vrt(synthetic_stack_files, tmp_path):
+    """Points and polygons from a VRT mixing uint16 and float32 bands."""
+    from rsgispy.imageutils.vrt import create_stack_images_vrt
+
+    h, w = synthetic_stack_files["shape"]
+    refl = (np.arange(h * w, dtype=np.uint16).reshape(h, w) + 1).astype(np.uint16)
+    refl[5, 5] = 0
+    refl_img = _write_test_raster(str(tmp_path / "refl.tif"), refl, nodata=0)
+    vrt = str(tmp_path / "mixed.vrt")
+    create_stack_images_vrt([refl_img, synthetic_stack_files["img2"]], vrt)
+    names = ("refl", "elev")
+    vrt_stack = ImageFeatureStack([BandSpec(vrt, name="v", band_names=names)])
+    sep_stack = ImageFeatureStack(
+        [
+            BandSpec(refl_img, name="r", band_names=("refl",)),
+            BandSpec(synthetic_stack_files["img2"], name="e", band_names=("elev",)),
+        ]
+    )
+    pts = gpd.GeoDataFrame(
+        geometry=[
+            Point(500055.0, 5799945.0),  # (row 5, col 5) -> refl no data
+            Point(500125.0, 5799875.0),
+            Point(500235.0, 5799765.0),  # (row 23, col 23) -> elev no data
+            Point(500185.0, 5799815.0),
+        ],
+        crs="EPSG:32630",
+    )
+    pt_vrt = vrt_stack.extract_points(pts, keep_cols=[])
+    pt_sep = sep_stack.extract_points(pts, keep_cols=[])
+    assert len(pt_vrt) == 2
+    pd.testing.assert_frame_equal(pt_vrt, pt_sep)
+
+    polys = gpd.GeoDataFrame(
+        geometry=[box(500020.0, 5799940.0, 500060.0, 5799980.0)], crs="EPSG:32630"
+    )
+    pd.testing.assert_frame_equal(
+        vrt_stack.extract_polygons(polys, keep_cols=[]),
+        sep_stack.extract_polygons(polys, keep_cols=[]),
+    )
+
+
 @pytest.mark.parametrize(
     "method",
     [

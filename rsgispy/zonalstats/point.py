@@ -17,6 +17,7 @@ from rsgispy.vectorprocess import VectorInput
 from rsgispy.zonalstats._helpers import (
     load_zonal_vec_gdf as _load_zonal_vec_gdf,
     open_validated_zonal_multiband_inputs as _open_validated_zonal_multiband_inputs,
+    read_bands_native as _read_bands_native,
     run_zonal_file_op as _run_zonal_file_op,
 )
 
@@ -137,17 +138,21 @@ def _sample_points_by_block(
             c0 = int(g_cols.min())
             c1 = int(g_cols.max()) + 1
             win = Window(c0, r0, c1 - c0, r1 - r0)
-            block_data = src.read(bands_list, window=win)
-            sampled = block_data[:, g_rows - r0, g_cols - c0]
+            # Each band in its own data type (bands of different types, e.g.
+            # from a VRT stack, cannot be read together).
+            block_data = _read_bands_native(src, bands_list, window=win)
 
             for b_idx in range(n_bands):
-                b_vals = sampled[b_idx].astype(np.float64, copy=False)
+                b_native = block_data[b_idx][g_rows - r0, g_cols - c0]
+                b_vals = b_native.astype(np.float64, copy=False)
                 valid = ~np.isnan(b_vals)
                 nd = nodata_vals[b_idx]
                 if nd is not None and not (
                     isinstance(nd, float) and math.isnan(nd)
                 ):
-                    valid &= b_vals != nd
+                    # Compare in the band's data type (e.g. a float32 no
+                    # data value of 0.1 is not 0.1 in float64).
+                    valid &= b_native != nd
                 valid &= (b_vals >= min_thres) & (b_vals <= max_thres)
                 out_arr[b_idx, g_orig[valid]] = b_vals[valid]
             pbar.update(int(pos_arr.size))
@@ -272,7 +277,10 @@ def ext_point_band_values(
     :class:`geopandas.GeoDataFrame` or vector file path.
 
     Supports either a single 1-based band index or a sequence of band indices
-    (or ``None`` for all bands), writing one attribute column per band.
+    (or ``None`` for all bands), writing one attribute column per band. The
+    bands may have different data types (e.g. a VRT stacking ``uint16`` and
+    ``float32`` images); each is compared with its own no data value in its
+    own data type.
 
     When given a :class:`geopandas.GeoDataFrame`, it is updated in-place and
     returned (original CRS and geometries are preserved even when

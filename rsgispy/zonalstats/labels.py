@@ -50,6 +50,7 @@ from rsgispy.imageprocess import (
 )
 from rsgispy.tools.tables import write_dataframe_table
 from rsgispy.vectorprocess import VectorInput, finish_vec_output, read_vec_gdf
+from rsgispy.zonalstats._helpers import read_bands_native
 
 __all__ = [
     "LABEL_ZONAL_STATS",
@@ -515,12 +516,15 @@ def _block_reads(
     file_bands: Mapping[str, List[int]],
     win: Any,
 ) -> Dict[Tuple[str, int], np.ndarray]:
-    """Read all the needed bands for a window, one read per file."""
+    """
+    Read all the needed bands for a window, one read per file, each band in
+    its own data type (a file such as a VRT stack may mix data types).
+    """
     out: Dict[Tuple[str, int], np.ndarray] = {}
     for path, bands in file_bands.items():
-        arr = srcs[path].read(indexes=bands, window=win)
-        for b_i, band in enumerate(bands):
-            out[(path, band)] = arr[b_i].ravel()
+        arrs = read_bands_native(srcs[path], bands, window=win)
+        for band, arr in zip(bands, arrs):
+            out[(path, band)] = arr.ravel()
     return out
 
 

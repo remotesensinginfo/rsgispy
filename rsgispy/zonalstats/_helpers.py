@@ -5,7 +5,7 @@ Internal shared vector/raster helpers for :mod:`rsgispy.zonalstats`.
 from contextlib import contextmanager
 import math
 import os
-from typing import Callable, Iterator, List, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
@@ -32,6 +32,7 @@ __all__ = [
     "normalise_band_list",
     "open_validated_zonal_inputs",
     "open_validated_zonal_multiband_inputs",
+    "read_bands_native",
     "read_vec_file",
     "resolve_vector_crs",
     "run_zonal_file_op",
@@ -211,6 +212,37 @@ def open_validated_zonal_multiband_inputs(
 
         check_bbox_overlap(img_bbox, vec_bbox)
         yield src, nodata_vals, bands_list, geom_series
+
+
+def read_bands_native(
+    src: rasterio.DatasetReader,
+    bands: Sequence[int],
+    window: Optional[Window] = None,
+) -> List[np.ndarray]:
+    """
+    Read ``bands`` of ``src`` (in ``window``) and return one 2D array per
+    band, in the order of ``bands`` and each in the band's own data type.
+
+    ``rasterio`` cannot read bands of different data types in one call
+    (``ValueError: more than one 'dtype' found``, even with ``out_dtype``),
+    for example from a VRT made by
+    :func:`rsgispy.imageutils.vrt.create_stack_images_vrt` that stacks
+    ``uint16`` reflectance with ``float32`` indices. The bands are therefore
+    read with one call per data type (one call in total for the usual
+    single-type image). No band is converted, so the values and the
+    comparisons with each band's no data value are exactly those of reading
+    each band on its own.
+    """
+    band_list = [int(b) for b in bands]
+    by_dtype: Dict[str, List[int]] = {}
+    for pos, band in enumerate(band_list):
+        by_dtype.setdefault(src.dtypes[band - 1], []).append(pos)
+    out: List[Optional[np.ndarray]] = [None] * len(band_list)
+    for positions in by_dtype.values():
+        arr = src.read([band_list[pos] for pos in positions], window=window)
+        for arr_idx, pos in enumerate(positions):
+            out[pos] = arr[arr_idx]
+    return out  # type: ignore[return-value]
 
 
 def sample_point_pixel(

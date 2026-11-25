@@ -336,6 +336,56 @@ def test_extract_point_and_polygon_samples_snappy_parquet(tmp_path):
     assert va2.equals(valid_df)
 
 
+def test_extract_samples_mixed_dtype_vrt(tmp_path):
+    """
+    A VRT stacking uint16 reflectance and float32 index images can be sampled,
+    giving the same values as the separate images.
+    """
+    from rsgispy.imageutils.vrt import create_stack_images_vrt
+
+    refl = (np.arange(200, dtype=np.uint16).reshape(2, 10, 10) * 3 + 1).astype(
+        np.uint16
+    )
+    refl[:, 6, 1] = 0  # no data inside the polygon
+    refl_img = _write_raster(tmp_path / "refl.tif", refl, nodata=0)
+    idx = (np.arange(100, dtype=np.float32).reshape(10, 10) / 50.0 - 1.0).astype(
+        np.float32
+    )
+    idx[5, 3] = -999.0  # no data inside the polygon
+    idx_img = _write_raster(tmp_path / "idx.tif", idx, nodata=-999.0)
+    vrt = str(tmp_path / "stack.vrt")
+    create_stack_images_vrt([refl_img, idx_img], vrt)
+
+    pt_vec = _write_points(
+        tmp_path / "pts.gpkg", "pts", [(500005.0 + c * 10.0, 5599995.0) for c in range(10)]
+    )
+    poly_vec = _write_polygons(
+        tmp_path / "polys.gpkg", "polys", [(500000.0, 5599920.0, 500050.0, 5599950.0)]
+    )
+    class_info = {
+        "A": rcd.ClassInfoObj(out_id=1, vec_file=pt_vec, vec_lyr="pts"),
+        "B": rcd.ClassInfoObj(out_id=2, vec_file=poly_vec, vec_lyr="polys"),
+    }
+    names = ["Red", "NIR", "NDVI"]
+    vrt_df = rcd.extract_class_training_samples(
+        [rcd.ImageBandInfo(vrt, name="stack", band_names=names)],
+        class_info,
+        include_coords=True,
+        use_pbar=False,
+    )
+    sep_df = rcd.extract_class_training_samples(
+        [
+            rcd.ImageBandInfo(refl_img, name="refl", band_names=names[:2]),
+            rcd.ImageBandInfo(idx_img, name="idx", band_names=names[2:]),
+        ],
+        class_info,
+        include_coords=True,
+        use_pbar=False,
+    )
+    assert len(vrt_df) == 10 + 15 - 2
+    pd.testing.assert_frame_equal(vrt_df, sep_df)
+
+
 def test_sample_formats_other_than_parquet(tmp_path):
     """Test write_cls_samples/read_cls_samples and extraction with non-Parquet formats."""
     df = pd.DataFrame(

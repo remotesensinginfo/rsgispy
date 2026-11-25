@@ -206,6 +206,26 @@ def _coerce_band_spec(item: Any) -> BandSpec:
     )
 
 
+def _sample_all_bands(
+    ds: DatasetReader, coords: Sequence[Tuple[float, float]]
+) -> np.ndarray:
+    """
+    Sample every band of ``ds`` at ``coords`` into a float64
+    ``(n_points, n_bands)`` array, with one pass per band data type (rasterio
+    cannot read bands of different types, e.g. from a VRT stack, together).
+    """
+    sampled = np.empty((len(coords), ds.count), dtype=np.float64)
+    by_dtype: Dict[str, List[int]] = {}
+    for band in ds.indexes:
+        by_dtype.setdefault(ds.dtypes[band - 1], []).append(band)
+    for dt_bands in by_dtype.values():
+        vals = np.asarray(
+            list(ds.sample(coords, indexes=dt_bands)), dtype=np.float64
+        ).reshape(len(coords), len(dt_bands))
+        sampled[:, [b - 1 for b in dt_bands]] = vals
+    return sampled
+
+
 class ImageFeatureStack:
     """
     Unified multi-raster feature stack combining band definitions, valid-mask
@@ -637,7 +657,9 @@ class ImageFeatureStack:
     ) -> pd.DataFrame:
         """
         Extract feature values at point locations while preserving spatial
-        coordinates ``coord_cols`` for spatial cross-validation.
+        coordinates ``coord_cols`` for spatial cross-validation. An image may
+        have bands of different data types (e.g. a VRT stacking ``uint16``
+        and ``float32`` images).
 
         :param vec_file: Input point vector file path or GeoDataFrame.
         :param vec_lyr: Optional layer name when ``vec_file`` is a file path.
@@ -695,10 +717,7 @@ class ImageFeatureStack:
                     )
                 else:
                     ds_coords = coords_list
-                sampled = np.asarray(
-                    list(ds.sample(ds_coords)), dtype=np.float64
-                )
-                sampled_cache[path] = sampled
+                sampled_cache[path] = _sample_all_bands(ds, ds_coords)
 
         valid_rows = np.ones(len(gdf), dtype=bool)
         for (path, b_idx, col_name), nd_val, (lo_v, hi_v) in zip(
