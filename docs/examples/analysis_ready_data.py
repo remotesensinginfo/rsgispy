@@ -292,8 +292,7 @@ def run_workflow(  # noqa: C901
             background_val=no_data,
             skip_val=no_data,  # ignore no data pixels (in band 1)
             overlap_behaviour=0,  # overlaps: later images overwrite earlier
-            gdalformat="COG",
-            calc_stats=False,  # writing statistics would break the COG layout
+            gdalformat="COG",  # statistics are written into the COG
             use_pbar=use_pbar,
         )
         mosaics[product] = mosaic_img

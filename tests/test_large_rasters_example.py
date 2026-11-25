@@ -89,6 +89,7 @@ def test_worked_example_runs(tmp_path, restore_env):
     np.testing.assert_allclose(cog, ndvi, atol=1e-6)
     with rasterio.open(out["ndvi_cog"]) as src:
         assert src.tags(ns="IMAGE_STRUCTURE").get("LAYOUT") == "COG"
+        assert "STATISTICS_MEAN" in src.tags(1)
 
     hp_img, _ = _read(out["tg_hp_img"])
     assert hp_img.shape == (HEIGHT, WIDTH)

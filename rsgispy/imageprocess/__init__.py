@@ -52,10 +52,18 @@ from rsgispy.imageprocess._dtype_nodata import (
     set_default_block_size,
 )
 from rsgispy.imageprocess._io import (
+    StagedOutput,
+    cog_creation_opts_from_file,
     create_output_from_dataset,
+    get_output_stage,
+    is_cog_layout,
+    on_output_close,
     open_input_datasets,
     open_multi_image_datasets,
     open_output_dataset,
+    resolve_cog_creation_opts,
+    update_cog,
+    write_cog,
 )
 from rsgispy.imageprocess._masks import (
     build_valid_cube_mask,
@@ -70,6 +78,7 @@ from rsgispy.imageprocess._stats import (
     OnlineStatsAccumulator,
     compute_dataset_band_stats,
     maybe_pop_stats,
+    pop_stats_on_close,
     update_chan_moments,
 )
 from rsgispy.imageprocess._windows import (
@@ -106,6 +115,7 @@ __all__ = [
     "normalise_creation_options",
     "parse_epsg_crs",
     "maybe_pop_stats",
+    "pop_stats_on_close",
     "update_chan_moments",
     "OnlineStatsAccumulator",
     "compute_dataset_band_stats",
@@ -126,6 +136,14 @@ __all__ = [
     "open_multi_image_datasets",
     "open_output_dataset",
     "create_output_from_dataset",
+    "StagedOutput",
+    "on_output_close",
+    "get_output_stage",
+    "is_cog_layout",
+    "resolve_cog_creation_opts",
+    "cog_creation_opts_from_file",
+    "write_cog",
+    "update_cog",
     "iter_dataset_windows",
     "iter_image_blocks",
     "iter_single_image_band_blocks",

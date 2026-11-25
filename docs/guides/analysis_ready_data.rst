@@ -419,18 +419,15 @@ compression where ZSTD is supported, or
 options, e.g. ``{"COMPRESS": "DEFLATE", "PREDICTOR": "2"}``). Call it once at
 the start of your processing; it applies to every later output of that
 format in the same Python process. Band names are copied from the
-composites. ``calc_stats=False`` is passed because adding statistics and
-pyramids to a COG after it has been written breaks its layout (the file is
-then no longer a valid COG).
+composites, and the statistics (``calc_stats=True``, the default) are stored
+in the COG.
 
-.. warning::
-
-   GDAL can only create a COG from a complete image, so a function that writes
-   ``gdalformat='COG'`` builds the whole output in memory first (see the
-   :doc:`large rasters guide <large_rasters>`). This is fine for the mosaic of
-   a few tiles, but for outputs larger than the available memory write a tiled
-   GeoTIFF (or use the VRT) and convert it with GDAL's own tools, e.g.
-   ``gdal_translate -of COG mosaic.vrt mosaic_cog.tif``.
+GDAL can only create a COG by copying a complete image, so rsgispy writes a
+``gdalformat='COG'`` output block by block to a temporary tiled GeoTIFF next
+to it, calculates the statistics on that file, and then converts it to the
+COG (the COG driver builds the overviews) and deletes it. Memory use stays
+small, but the output directory needs free space for the temporary file as
+well as the COG.
 
 .. literalinclude:: ../examples/analysis_ready_data.py
    :language: python
@@ -542,8 +539,8 @@ Common problems
   :func:`rsgispy.imageutils.warp.resample_img_to_match` (nearest neighbour for
   masks and classes, bilinear or cubic for reflectance).
 * **Memory** — the functions in this guide process images in blocks, so
-  memory is rarely a problem (the exception is writing ``gdalformat='COG'``,
-  which builds the whole output in memory; see step 7); disk space for the
+  memory is rarely a problem (``gdalformat='COG'`` outputs are also written
+  block by block, through a temporary GeoTIFF; see step 7); disk space for the
   intermediate files usually is.
 
 Related guides

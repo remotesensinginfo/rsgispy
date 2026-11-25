@@ -224,8 +224,7 @@ def run_workflow(
         ndvi_cog,
         options={"COMPRESS": "DEFLATE", "PREDICTOR": "YES",
                  "OVERVIEW_RESAMPLING": "AVERAGE", "BIGTIFF": "IF_SAFER"},
-        gdalformat="COG",
-        calc_stats=False,  # writing statistics would break the COG layout
+        gdalformat="COG",  # written via a temporary tiled GeoTIFF
         use_pbar=use_pbar,
     )
     print(check_gdal_image_file(ndvi_cog, n_bands=1, chk_proj=True,

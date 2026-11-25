@@ -20,9 +20,12 @@ from rasterio.windows import Window
 import rsgispy
 from rsgispy.imageprocess import (
     IntersectionGrid,
+    StagedOutput,
     cast_result_block,
     ensure_file_exists,
     iter_dataset_windows,
+    normalise_creation_options,
+    on_output_close,
     open_output_dataset,
     validate_band_index,
 )
@@ -116,41 +119,45 @@ def resample_img_to_match(
 
     back_val = float(no_data_val) if no_data_val is not None else 0.0
 
-    create_copy_img(
-        input_img=in_ref_img,
-        output_img=output_img,
-        n_bands=num_bands,
-        pxl_val=back_val,
-        gdalformat=gdalformat,
-        datatype=datatype,
-        no_data_val=no_data_val,
-        calc_stats=False,
-        use_pbar=False,
-        creation_opts=creation_opts,
-    )
-
-    num_threads = (os.cpu_count() or 1) if multicore else 1
-    band_indices = list(range(1, num_bands + 1))
-
-    with rasterio.open(in_process_img, "r") as src_proc, rasterio.open(
-        output_img, "r+"
-    ) as dst:
-        rio_reproject(
-            source=rasterio.band(src_proc, band_indices),
-            destination=rasterio.band(dst, band_indices),
-            resampling=resampling_alg,
-            src_nodata=no_data_val,
-            dst_nodata=no_data_val,
-            num_threads=num_threads,
-        )
-
-    if calc_stats:
-        pop_img_stats(
-            output_img,
+    # COG outputs are built in a temporary GeoTIFF and converted at the end.
+    with StagedOutput(
+        output_img, gdalformat, normalise_creation_options(creation_opts)
+    ) as stage:
+        create_copy_img(
+            input_img=in_ref_img,
+            output_img=stage.path,
+            n_bands=num_bands,
+            pxl_val=back_val,
+            gdalformat=stage.write_format,
+            datatype=datatype,
             no_data_val=no_data_val,
-            calc_pyramids=True,
+            calc_stats=False,
             use_pbar=False,
+            creation_opts=stage.write_opts,
         )
+
+        num_threads = (os.cpu_count() or 1) if multicore else 1
+        band_indices = list(range(1, num_bands + 1))
+
+        with rasterio.open(in_process_img, "r") as src_proc, rasterio.open(
+            stage.path, "r+"
+        ) as dst:
+            rio_reproject(
+                source=rasterio.band(src_proc, band_indices),
+                destination=rasterio.band(dst, band_indices),
+                resampling=resampling_alg,
+                src_nodata=no_data_val,
+                dst_nodata=no_data_val,
+                num_threads=num_threads,
+            )
+
+        if calc_stats:
+            pop_img_stats(
+                stage.path,
+                no_data_val=no_data_val,
+                calc_pyramids=not stage.is_cog,
+                use_pbar=False,
+            )
 
 
 def _resolve_reproject_res(
@@ -316,49 +323,53 @@ def reproject_image(
         out_width = int(round((x_max - x_min) / out_res)) + 10
         out_height = int(round((y_max - y_min) / out_res)) + 10
 
-    create_blank_img(
-        output_img=output_img,
-        n_bands=num_bands,
-        width=out_width,
-        height=out_height,
-        tl_x=out_tl_x,
-        tl_y=out_tl_y,
-        res_x=out_res,
-        res_y=-out_res,
-        pxl_val=eff_nd,
-        epsg_code=int(out_epsg),
-        gdalformat=gdalformat,
-        datatype=rsgis_dtype,
-        no_data_val=eff_nd,
-        calc_stats=False,
-        use_pbar=False,
-        creation_opts=creation_opts,
-    )
-
-    num_threads = (os.cpu_count() or 1) if multicore else 1
-    band_indices = list(range(1, num_bands + 1))
-
-    with rasterio.open(input_img, "r") as src, rasterio.open(
-        output_img, "r+"
-    ) as dst:
-        rio_reproject(
-            source=rasterio.band(src, band_indices),
-            destination=rasterio.band(dst, band_indices),
-            src_crs=in_crs,
-            dst_crs=out_crs,
-            resampling=resampling_alg,
-            src_nodata=src_nd,
-            dst_nodata=eff_nd,
-            num_threads=num_threads,
-        )
-
-    if calc_stats:
-        pop_img_stats(
-            output_img,
+    # COG outputs are built in a temporary GeoTIFF and converted at the end.
+    with StagedOutput(
+        output_img, gdalformat, normalise_creation_options(creation_opts)
+    ) as stage:
+        create_blank_img(
+            output_img=stage.path,
+            n_bands=num_bands,
+            width=out_width,
+            height=out_height,
+            tl_x=out_tl_x,
+            tl_y=out_tl_y,
+            res_x=out_res,
+            res_y=-out_res,
+            pxl_val=eff_nd,
+            epsg_code=int(out_epsg),
+            gdalformat=stage.write_format,
+            datatype=rsgis_dtype,
             no_data_val=eff_nd,
-            calc_pyramids=True,
+            calc_stats=False,
             use_pbar=False,
+            creation_opts=stage.write_opts,
         )
+
+        num_threads = (os.cpu_count() or 1) if multicore else 1
+        band_indices = list(range(1, num_bands + 1))
+
+        with rasterio.open(input_img, "r") as src, rasterio.open(
+            stage.path, "r+"
+        ) as dst:
+            rio_reproject(
+                source=rasterio.band(src, band_indices),
+                destination=rasterio.band(dst, band_indices),
+                src_crs=in_crs,
+                dst_crs=out_crs,
+                resampling=resampling_alg,
+                src_nodata=src_nd,
+                dst_nodata=eff_nd,
+                num_threads=num_threads,
+            )
+
+        if calc_stats:
+            pop_img_stats(
+                stage.path,
+                no_data_val=eff_nd,
+                calc_pyramids=not stage.is_cog,
+                use_pbar=False,
+            )
 
 
 def _resolve_warp_bands_and_alpha(
@@ -820,6 +831,7 @@ def gdal_warp(
     cutline_geoms: Optional[List[Any]] = None
     cutline_fill: List[float] = [0.0]
     dst_alpha_band = 0
+    update_existing = False
 
     with ExitStack() as stack:
         src_datasets = [
@@ -913,6 +925,15 @@ def gdal_warp(
             init_first = True
 
         cutline_fill = out_nd_vals if out_nd_vals else [0.0]
+        if cutline_geoms is not None and not update_existing:
+            # Applied once the writer has closed (for a COG output, on the
+            # temporary GeoTIFF before it is converted).
+            on_output_close(
+                dst,
+                lambda img_path: _apply_warp_cutline(
+                    img_path, cutline_geoms, cutline_fill, dst_alpha_band, cfg
+                ),
+            )
 
         for s_idx, (src, s_crs, gref) in enumerate(
             zip(src_datasets, grid_res.src_crs_list, grid_res.src_georef_list)
@@ -932,16 +953,29 @@ def gdal_warp(
                 extra_kw=extra_kw,
             )
 
-    if cutline_geoms is not None:
-        with rasterio.open(out_path, "r+", **cfg.dst_open_opts) as dst_cut:
-            apply_cutline_to_dataset(
-                dst=dst_cut,
-                cutline_geoms=cutline_geoms,
-                fill_values=cutline_fill,
-                dst_alpha_band=dst_alpha_band,
-                blend_dist=cfg.cutline_blend,
-                use_pbar=cfg.use_pbar,
-            )
+    if cutline_geoms is not None and update_existing:
+        _apply_warp_cutline(
+            out_path, cutline_geoms, cutline_fill, dst_alpha_band, cfg
+        )
+
+
+def _apply_warp_cutline(
+    img_path: str,
+    cutline_geoms: List[Any],
+    fill_values: List[float],
+    dst_alpha_band: int,
+    cfg: WarpConfig,
+) -> None:
+    """Open ``img_path`` for update and mask it outside the cutline."""
+    with rasterio.open(img_path, "r+", **cfg.dst_open_opts) as dst_cut:
+        apply_cutline_to_dataset(
+            dst=dst_cut,
+            cutline_geoms=cutline_geoms,
+            fill_values=fill_values,
+            dst_alpha_band=dst_alpha_band,
+            blend_dist=cfg.cutline_blend,
+            use_pbar=cfg.use_pbar,
+        )
 
 
 def _apply_scale_and_unscale(
@@ -1274,7 +1308,9 @@ def gdal_translate(
     :param gcps: Sequence of GCP tuples ``(pixel, line, easting, northing[, z])``
                  (``-gcp``).
     :param calc_stats: Compute and write band statistics tags (``-stats``,
-                       Default = ``True``).
+                       Default = ``True``). For ``gdalformat='COG'`` they are
+                       calculated on the temporary GeoTIFF the COG is made
+                       from, so they are stored in the COG.
     :param approx_stats: Write statistics marked as approximate (``-approx_stats``).
     :param metadata: Dataset metadata tags ``KEY=VALUE`` or dict (``-mo``).
     :param domain_metadata: Domain-namespaced tags ``{domain: {key: val}}`` (``-dmo``).
@@ -1415,6 +1451,19 @@ def gdal_translate(
             count=out_count,
             creation_opts=cfg.creation_opts if cfg.creation_opts else None,
         )
+        if cfg.calc_stats or cfg.approx_stats:
+            # Runs once the writer has closed (for COG, on the temporary
+            # GeoTIFF before the conversion, so the statistics are kept).
+            on_output_close(
+                dst,
+                lambda out_path: pop_img_stats(
+                    out_path,
+                    no_data_val=out_nodata,
+                    calc_pyramids=False,
+                    use_approx=cfg.approx_stats,
+                    use_pbar=cfg.use_pbar,
+                ),
+            )
 
         _write_translate_metadata(
             dst=dst,
@@ -1522,14 +1571,3 @@ def gdal_translate(
             ]
             if valid_ovrs:
                 dst.build_overviews(valid_ovrs, cfg.resampling)
-
-    if (
-        cfg.calc_stats or cfg.approx_stats
-    ) and cfg.gdalformat.upper().strip() != "COG":
-        pop_img_stats(
-            output_img,
-            no_data_val=out_nodata,
-            calc_pyramids=False,
-            use_approx=cfg.approx_stats,
-            use_pbar=cfg.use_pbar,
-        )

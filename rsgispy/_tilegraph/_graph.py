@@ -37,6 +37,19 @@ from rsgispy._tilegraph._nodes import (
 )
 
 
+def _set_sink_band_names(dst: rasterio.io.DatasetWriter, sink: DiskSink) -> None:
+    """Set the band descriptions of an open :class:`DiskSink` writer."""
+    if sink.band_names is None:
+        return
+    if len(sink.band_names) > dst.count:
+        raise rsgispy.RSGISPyException(
+            f"Cannot set {len(sink.band_names)} band names on image "
+            f"'{sink.output_img}' with {dst.count} band(s)."
+        )
+    for b_idx, b_name in enumerate(sink.band_names, start=1):
+        dst.set_band_description(b_idx, str(b_name))
+
+
 class TileGraph:
     """
     Directed acyclic graph of raster tile operations executed tile-by-tile
@@ -196,6 +209,7 @@ class TileGraph:
             ensure_file_exists,
             iter_dataset_windows,
             open_output_dataset,
+            pop_stats_on_close,
         )
         from rsgispy.imageprocess import normalise_creation_options
 
@@ -326,6 +340,15 @@ class TileGraph:
                             )
                             if node.nodata is not None:
                                 dst.nodata = node.nodata
+                            _set_sink_band_names(dst, node)
+                            # Statistics run once the writer has closed (for
+                            # COG, before the temporary GeoTIFF is converted).
+                            pop_stats_on_close(
+                                dst,
+                                node.calc_stats,
+                                no_data_val=node.nodata,
+                                use_pbar=use_pbar,
+                            )
                             open_sinks[node] = dst
                         out_np_dt = np.dtype(
                             rsgispy.get_numpy_datatype(node.datatype)
@@ -365,27 +388,6 @@ class TileGraph:
                         remaining_uses[parent] -= 1
                         if remaining_uses[parent] <= 0:
                             tensors.pop(parent, None)
-
-        # Post-close metadata / statistics for DiskSinks
-        for sink in self.sinks:
-            if isinstance(sink, DiskSink):
-                if sink.band_names is not None:
-                    # pylint: disable=import-outside-toplevel
-                    from rsgispy.imageutils.metadata import set_band_names
-
-                    set_band_names(
-                        sink.output_img, sink.band_names, feedback=False
-                    )
-                if sink.calc_stats:
-                    # pylint: disable=import-outside-toplevel
-                    from rsgispy.imageutils.stats import pop_img_stats
-
-                    pop_img_stats(
-                        sink.output_img,
-                        no_data_val=sink.nodata,
-                        calc_pyramids=True,
-                        use_pbar=use_pbar,
-                    )
 
         mem_results: Dict[str, np.ndarray] = {}
         mem_idx = 0

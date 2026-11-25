@@ -3,13 +3,12 @@ Online streaming band statistics and post-write statistics helpers for
 :mod:`rsgispy.imageprocess`.
 """
 
-import os
 from typing import Dict, Optional, Tuple
 
 import numpy as np
-import rasterio
-from rasterio.io import DatasetReader
+from rasterio.io import DatasetReader, DatasetWriter
 
+from rsgispy.imageprocess._io import get_output_stage, on_output_close
 from rsgispy.imageprocess._masks import build_valid_mask
 
 
@@ -21,23 +20,45 @@ def maybe_pop_stats(
     use_pbar: bool = True,
     ignore_cog: bool = False,
     gdalformat: Optional[str] = None,
+    *,
+    calc_pyramids: bool = True,
 ) -> None:
-    """Populate continuous or thematic image statistics if ``calc_stats`` is True."""
+    """
+    Populate continuous (:func:`rsgispy.imageutils.stats.pop_img_stats`) or
+    thematic (:func:`rsgispy.imageutils.stats.pop_thmt_img_stats`) image
+    statistics and pyramids on a closed image if ``calc_stats`` is True.
+
+    An existing Cloud Optimised GeoTIFF is never edited in place: the
+    statistics functions rebuild it through a temporary GeoTIFF, which costs
+    an extra copy and COG conversion. For outputs written with
+    :func:`rsgispy.imageprocess.open_output_dataset`, prefer
+    :func:`pop_stats_on_close`, which calculates the statistics on the
+    temporary GeoTIFF before the COG is created.
+
+    :param output_img: Path to the image file.
+    :param calc_stats: If ``False``, do nothing.
+    :param no_data_val: Optional no-data value to set and exclude from
+                        continuous statistics.
+    :param thematic: If ``True``, calculate thematic statistics and a colour
+                     table (0 is no data).
+    :param use_pbar: Whether to display a tqdm progress bar (Default = True).
+    :param ignore_cog: Kept for compatibility; COGs are detected and rebuilt
+                       automatically.
+    :param gdalformat: Kept for compatibility; COGs are detected from the file.
+    :param calc_pyramids: Whether to build rsgispy's overview pyramids
+                          (Default = True; not done for COGs, whose overviews
+                          are built by the COG driver).
+
+    .. code:: python
+
+        import rsgispy.imageprocess
+
+        rsgispy.imageprocess.maybe_pop_stats("out.tif", True, no_data_val=0)
+    """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=unused-argument
     if not calc_stats:
         return
-    eff_ignore_cog = bool(ignore_cog) or (
-        gdalformat is not None and gdalformat.upper().strip() == "COG"
-    )
-    if not eff_ignore_cog and os.path.exists(output_img):
-        try:
-            with rasterio.open(output_img, "r") as src_chk:
-                eff_ignore_cog = (
-                    src_chk.tags(ns="IMAGE_STRUCTURE").get("LAYOUT", "").upper()
-                    == "COG"
-                )
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
 
     # Lazy import avoids circular dependencies with stats -> imagecalc.
     from rsgispy.imageutils.stats import (  # pylint: disable=import-outside-toplevel
@@ -49,19 +70,78 @@ def maybe_pop_stats(
         pop_thmt_img_stats(
             input_img=output_img,
             add_clr_tab=True,
-            calc_pyramids=True,
+            calc_pyramids=calc_pyramids,
             ignore_zero=True,
             use_pbar=use_pbar,
-            ignore_cog=eff_ignore_cog,
         )
     else:
         pop_img_stats(
             input_img=output_img,
             no_data_val=no_data_val,
-            calc_pyramids=True,
-            ignore_cog=eff_ignore_cog,
+            calc_pyramids=calc_pyramids,
             use_pbar=use_pbar,
         )
+
+
+def pop_stats_on_close(
+    dst: DatasetWriter,
+    calc_stats: bool,
+    no_data_val: Optional[float] = None,
+    thematic: bool = False,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Schedule :func:`maybe_pop_stats` to run on the output of the open writer
+    ``dst`` (returned by :func:`rsgispy.imageprocess.open_output_dataset`)
+    once its ``ExitStack`` has closed it. Call this inside the ``with`` block
+    instead of calling :func:`maybe_pop_stats` after it.
+
+    For GeoTIFF, KEA and other formats this is the same as calling
+    :func:`maybe_pop_stats` after the ``with`` block. For COG outputs, the
+    statistics are calculated on the temporary tiled GeoTIFF before it is
+    converted, so they are stored in the COG without rewriting it, and
+    rsgispy's own pyramids are skipped because the COG driver builds the
+    overviews.
+
+    :param dst: Open writer returned by
+                :func:`rsgispy.imageprocess.open_output_dataset` or
+                :func:`rsgispy.imageprocess.create_output_from_dataset`.
+    :param calc_stats: If ``False``, do nothing.
+    :param no_data_val: Optional no-data value to set and exclude from
+                        continuous statistics.
+    :param thematic: If ``True``, calculate thematic statistics and a colour
+                     table (0 is no data).
+    :param use_pbar: Whether to display a tqdm progress bar (Default = True).
+
+    .. code:: python
+
+        from contextlib import ExitStack
+        import rsgispy.imageprocess
+
+        with ExitStack() as stack:
+            dst = rsgispy.imageprocess.open_output_dataset(
+                stack, "out_cog.tif", "COG", "float32", grid
+            )
+            rsgispy.imageprocess.pop_stats_on_close(dst, True, no_data_val=0)
+            ...  # write blocks
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    if not calc_stats:
+        return
+    stage = get_output_stage(dst)
+    is_cog = stage is not None and stage.is_cog
+
+    def _pop_stats(path: str) -> None:
+        maybe_pop_stats(
+            path,
+            True,
+            no_data_val=no_data_val,
+            thematic=thematic,
+            use_pbar=use_pbar,
+            calc_pyramids=not is_cog,
+        )
+
+    on_output_close(dst, _pop_stats)
 
 
 def update_chan_moments(

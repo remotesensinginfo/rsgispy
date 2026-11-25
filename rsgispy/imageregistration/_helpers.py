@@ -16,9 +16,11 @@ from rasterio.transform import Affine
 import rsgispy
 from rsgispy._numba import use_compiled
 from rsgispy.imageprocess import (
+    StagedOutput,
     ensure_file_exists,
-    get_gdal_img_creation_opts,
+    is_cog_layout,
     set_dataset_nodata,
+    update_cog,
 )
 from rsgispy.imageregistration import (
     TYPE_ENVI_IMG2IMG,
@@ -404,7 +406,10 @@ def copy_raster_with_updates(
     Stream-copy ``in_path`` to ``out_path`` with optional updated transform,
     output datatype, nodata value, or embedded GCPs. Returns the output
     nodata value. The output uses the creation options of
-    :func:`rsgispy.imageprocess.get_gdal_img_creation_opts` for ``gdalformat``.
+    :func:`rsgispy.imageprocess.get_gdal_img_creation_opts` for ``gdalformat``;
+    a COG output is written through a temporary GeoTIFF
+    (:class:`rsgispy.imageprocess.StagedOutput`), and an existing COG that
+    only gets GCPs is rebuilt (:func:`rsgispy.imageprocess.update_cog`).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if (
@@ -413,18 +418,27 @@ def copy_raster_with_updates(
         and new_transform is None
         and gcps is not None
     ):
-        with rasterio.open(out_path, "r+") as dst:
-            dst.gcps = gcps
-            if no_data_val is not None:
-                set_dataset_nodata(dst, no_data_val)
-            return dst.nodata
+
+        def _set_gcps(img_path: str) -> None:
+            with rasterio.open(img_path, "r+") as dst:
+                dst.gcps = gcps
+                if no_data_val is not None:
+                    set_dataset_nodata(dst, no_data_val)
+
+        if is_cog_layout(out_path):
+            update_cog(out_path, _set_gcps)
+        else:
+            _set_gcps(out_path)
+        with rasterio.open(out_path, "r") as out_src:
+            return out_src.nodata
 
     out_dir = os.path.dirname(os.path.abspath(out_path))
     if out_dir and not os.path.exists(out_dir):
         os.makedirs(out_dir, exist_ok=True)
 
-    creation_opts = get_gdal_img_creation_opts(gdalformat)
-    with rasterio.open(in_path, "r") as src:
+    with StagedOutput(out_path, gdalformat) as stage, rasterio.open(
+        in_path, "r"
+    ) as src:
         out_dtype = (
             rsgispy.get_rasterio_datatype(datatype)
             if datatype is not None
@@ -439,13 +453,15 @@ def copy_raster_with_updates(
             if key
             not in ("tiled", "blockxsize", "blockysize", "compress", "interleave")
         }
-        profile.update(driver=gdalformat, dtype=out_dtype, **creation_opts)
+        profile.update(
+            driver=stage.write_format, dtype=out_dtype, **stage.write_opts
+        )
         if new_transform is not None:
             profile["transform"] = new_transform
         if no_data_val is not None:
             profile["nodata"] = no_data_val
 
-        with rasterio.open(out_path, "w", **profile) as dst:
+        with rasterio.open(stage.path, "w", **profile) as dst:
             for _, win in src.block_windows(1):
                 arr = src.read(window=win)
                 if arr.dtype != np_dtype:

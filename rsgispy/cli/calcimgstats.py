@@ -83,7 +83,10 @@ def build_calcimgstats_parser() -> argparse.ArgumentParser:
         "--ignore-cog",
         action="store_true",
         default=False,
-        help="Ignore COG layout check when populating continuous statistics.",
+        help=(
+            "Kept for compatibility; has no effect. Cloud Optimised GeoTIFFs "
+            "are rebuilt (not edited in place) so they stay valid COGs."
+        ),
     )
     add_n_cores_arg(
         parser,

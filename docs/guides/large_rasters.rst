@@ -369,24 +369,30 @@ COG options: ``COMPRESS`` (``DEFLATE``, ``ZSTD``, or ``LZW``; ``JPEG`` or
 ``WEBP`` for lossy RGB previews), ``PREDICTOR=YES`` (helps compression of
 continuous data), ``OVERVIEW_RESAMPLING`` (``AVERAGE`` or ``CUBIC`` for
 continuous data, ``NEAREST`` or ``MODE`` for classes) and ``BLOCKSIZE``
-(default 512). Do not add statistics to a COG afterwards
-(``calc_stats=False``): writing them breaks the COG layout. The
-``rsgisbatchconvert2cog`` command line tool converts many files at once.
-The ``set_env_vars_*_cog_outs`` functions in
+(default 512). The ``rsgisbatchconvert2cog`` command line tool converts many
+files at once. The ``set_env_vars_*_cog_outs`` functions in
 :mod:`rsgispy.imageutils.envopts` set COG creation options for functions
-that write ``gdalformat='COG'`` directly.
+that write ``gdalformat='COG'`` directly; the GeoTIFF defaults are never
+applied to COGs.
 
-.. warning::
-
-   GDAL can only create a COG from a complete image, so when an rsgispy
-   function writes ``gdalformat='COG'`` (including
-   :func:`~rsgispy.imageutils.warp.gdal_translate`), rasterio may build the
-   whole output in memory first (its ``BufferedDatasetWriter``, used for the
-   ``COG`` driver with the GDAL 3.13 releases tested here). For outputs that
-   do not fit in memory, write a tiled GeoTIFF (or a VRT) first and convert
-   it with GDAL's own tools, for example ``gdal_translate -of COG in.tif
-   out.tif`` or ``rasterio.shutil.copy("in.tif", "out.tif", driver="COG")``,
-   which copy from disk.
+**How rsgispy writes COGs.** GDAL can only create a COG by copying a
+complete image, so when an rsgispy function writes ``gdalformat='COG'``
+(including :func:`~rsgispy.imageutils.warp.gdal_translate`), it writes the
+data block by block to a temporary tiled GeoTIFF next to the output, adds the
+statistics to it (``calc_stats=True``), and only then converts it with
+GDAL's COG driver, which builds the overviews; the temporary file is deleted,
+also when an error occurs. Memory use is the same as for a GeoTIFF output,
+but the output directory needs free space for the temporary file as well as
+the COG, and the conversion adds roughly the time of one more read and write
+of the image. The statistics are stored in the COG without breaking its
+layout. Your own block loops get the same behaviour from
+:func:`~rsgispy.imageprocess.open_output_dataset`; register statistics with
+:func:`~rsgispy.imageprocess.pop_stats_on_close` inside the ``with`` block.
+Calling :func:`~rsgispy.imageutils.stats.pop_img_stats` (or another function
+that edits the file) on an existing COG never edits it in place: the COG is
+rebuilt through a temporary GeoTIFF
+(:func:`~rsgispy.imageprocess.update_cog`), which keeps it valid but costs a
+full re-encode, so prefer ``calc_stats=True`` when the COG is written.
 
 **Choosing output formats**
 
@@ -547,10 +553,15 @@ Common problems
   CRS and pixel size; resample with
   :func:`~rsgispy.imageutils.warp.resample_img_to_match` first.
 * **Files larger than 4 GB fail to write** — use ``BIGTIFF=IF_SAFER`` or
-  ``BIGTIFF=YES`` (the ``set_env_vars_*`` helpers set it).
-* **A COG is "not a valid COG" after processing** — statistics or pyramids
-  were added after it was created; create it last with
-  ``calc_stats=False``.
+  ``BIGTIFF=YES`` (the GeoTIFF default and the ``set_env_vars_*`` helpers
+  set ``IF_SAFER``; for COGs set it with the ``set_env_vars_*_cog_outs``
+  helpers).
+* **A COG is "not a valid COG" after processing** — it was edited in place
+  by a tool other than rsgispy (for example with
+  ``IGNORE_COG_LAYOUT_BREAK=YES``, or by building overviews with
+  :func:`~rsgispy.imageutils.stats.build_img_pyramids`). rsgispy's statistics
+  functions rebuild a COG instead; to repair a file, convert it again with
+  ``rasterio.shutil.copy("in.tif", "out.tif", driver="COG")``.
 * **No data in outputs** — custom block functions must handle no data
   themselves and set the output no data value; check with
   ``rasterio.open(path).nodata`` and the image statistics.

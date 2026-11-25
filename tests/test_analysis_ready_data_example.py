@@ -135,6 +135,7 @@ def test_worked_example_runs(tmp_path, monkeypatch):
         assert src.width == 160 and src.count == 10
         assert src.tags(ns="IMAGE_STRUCTURE").get("COMPRESSION") == "DEFLATE"
         assert src.tags(ns="IMAGE_STRUCTURE").get("LAYOUT") == "COG"
+        assert "STATISTICS_MEAN" in src.tags(1)  # calc_stats=True kept the COG
     assert out["sref_ok"] and out["ndvi_ok"]
 
 
