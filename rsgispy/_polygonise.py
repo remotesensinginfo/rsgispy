@@ -694,7 +694,8 @@ def sort_dissolve(
             for tbl in stage_tables:
                 yield from tbl.to_batches()
         else:
-            with pyarrow.ipc.open_file(stage_path) as reader:
+            with pa_mod.OSFile(stage_path, "rb") as src:
+                reader = pyarrow.ipc.open_file(src)
                 for b_i in range(reader.num_record_batches):
                     yield reader.get_batch(b_i)
 
@@ -717,7 +718,16 @@ def sort_dissolve(
         pa_mod.field(_FIRST_COL, pa_mod.int64())
     )
     bucket_dir = tempfile.mkdtemp(prefix="rsgispy_sort_", dir=tmp_dir)
-    writers: Dict[int, Any] = {}
+    writers: Dict[int, Tuple[Any, Any]] = {}
+
+    def _close_writers() -> None:
+        for sink_file, wrt in writers.values():
+            try:
+                wrt.close()
+            finally:
+                sink_file.close()
+        writers.clear()
+
     try:
         row0 = 0
         for batch in iter_batches():
@@ -741,28 +751,31 @@ def sort_dissolve(
                 b_id = int(s_bucket[s_0])
                 part = tbl.take(pa_mod.array(order[s_0:s_1]))
                 if b_id not in writers:
-                    writers[b_id] = pyarrow.ipc.new_file(
-                        os.path.join(bucket_dir, f"bucket_{b_id}.arrow"), bucket_schema
+                    sink_file = pa_mod.OSFile(
+                        os.path.join(bucket_dir, f"bucket_{b_id}.arrow"), "wb"
                     )
-                writers[b_id].write_table(part)
-        for wrt in writers.values():
-            wrt.close()
-        writers = {}
+                    try:
+                        wrt = pyarrow.ipc.new_file(sink_file, bucket_schema)
+                    except Exception:
+                        sink_file.close()
+                        raise
+                    writers[b_id] = (sink_file, wrt)
+                writers[b_id][1].write_table(part)
+        _close_writers()
         for b_id in range(n_buckets):
             path = os.path.join(bucket_dir, f"bucket_{b_id}.arrow")
             if not os.path.exists(path):
                 continue
-            with pyarrow.ipc.open_file(path) as reader:
-                table = reader.read_all()
+            with pa_mod.OSFile(path, "rb") as src:
+                table = pyarrow.ipc.open_file(src).read_all()
+            os.remove(path)
             b_keys = table.column(_KEY_COL).to_numpy()
             b_first = table.column(_FIRST_COL).to_numpy()
             table = table.drop_columns([_KEY_COL, _FIRST_COL])
             _process_bucket(table, b_keys, b_first, dissolve, builder, sink)
             del table
-            os.remove(path)
     finally:
-        for wrt in writers.values():
-            wrt.close()
+        _close_writers()
         shutil.rmtree(bucket_dir, ignore_errors=True)
 
 
@@ -793,16 +806,24 @@ def run_tiled_polygonise(
     in_memory = tmp_dir is None
     stage_tables: Optional[List[Any]] = [] if (post and in_memory) else None
     stage_path: Optional[str] = None
+    stage_file: Any = None
     stage_writer: Any = None
     work_dir: Optional[str] = None
     if post and not in_memory:
         work_dir = tempfile.mkdtemp(prefix="rsgispy_poly_", dir=tmp_dir)
         stage_path = os.path.join(work_dir, "stage.arrow")
-        stage_writer = pyarrow.ipc.new_file(
-            stage_path,
-            builder.schema,
-            options=pyarrow.ipc.IpcWriteOptions(compression="lz4"),
-        )
+        try:
+            stage_file = pa_mod.OSFile(stage_path, "wb")
+            stage_writer = pyarrow.ipc.new_file(
+                stage_file,
+                builder.schema,
+                options=pyarrow.ipc.IpcWriteOptions(compression="lz4"),
+            )
+        except Exception:
+            if stage_file is not None:
+                stage_file.close()
+            shutil.rmtree(work_dir, ignore_errors=True)
+            raise
 
     vals_parts: List[np.ndarray] = []
     first_parts: List[np.ndarray] = []
@@ -852,6 +873,9 @@ def run_tiled_polygonise(
             if stage_writer is not None:
                 stage_writer.close()
                 stage_writer = None
+            if stage_file is not None:
+                stage_file.close()
+                stage_file = None
             values = (
                 np.concatenate(vals_parts) if vals_parts else np.zeros(0, dtype=builder.val_dtype)
             )
@@ -871,7 +895,15 @@ def run_tiled_polygonise(
         LAST_RUN_TIMINGS["total"] = time.perf_counter() - t_start
     finally:
         if stage_writer is not None:
-            stage_writer.close()
+            try:
+                stage_writer.close()
+            finally:
+                stage_writer = None
+        if stage_file is not None:
+            try:
+                stage_file.close()
+            finally:
+                stage_file = None
         if work_dir is not None:
             shutil.rmtree(work_dir, ignore_errors=True)
     return final_sink.n_written
