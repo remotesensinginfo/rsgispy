@@ -494,11 +494,10 @@ Performance and large datasets
   (:func:`rsgispy.imageutils.vrt.create_vrt_band_subset`) and stacks
   (:func:`rsgispy.imageutils.vrt.create_stack_images_vrt`) can be VRTs until
   the final product is written.
-* **Output formats and compression** — write intermediate files as tiled,
-  compressed GeoTIFFs
-  (:func:`~rsgispy.imageutils.envopts.set_env_vars_deflate_gtiff_outs`) and
-  final products as COGs. ZSTD compresses and decompresses faster than
-  Deflate where GDAL supports it. For outputs larger than 4 GB, pass
+* **Output formats and compression** — write intermediate files as GeoTIFFs
+  (tiled and DEFLATE-compressed by default) and final products as COGs.
+  ZSTD compresses and decompresses faster than Deflate where GDAL supports
+  it. For outputs larger than 4 GB, pass
   ``bigtiff=True`` to the ``envopts`` functions.
 * **Statistics and pyramids** — :func:`~rsgispy.imageutils.stats.pop_img_stats`
   with ``use_multi_core_pyramids=True`` and ``n_cores`` builds the overviews
