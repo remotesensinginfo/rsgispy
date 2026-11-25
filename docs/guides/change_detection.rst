@@ -97,12 +97,17 @@ creates false change along every edge (field boundaries, roads, rivers).
 Step 1 — Valid data and spectral indices
 ----------------------------------------
 
-Change can only be measured where **both** images have valid data, so the
-first step is a valid-data mask (``1`` where both dates have data, ``0``
-elsewhere) made with :func:`rsgispy.imagecalc.maths.band_maths`. In real data,
-combine it with the cloud and shadow masks of both dates (e.g. by adding
+Change can only be measured where **both** images have valid data. Without a
+mask, the change functions skip any pixel that is no data on either date
+(``base_img_no_data`` / ``chng_img_no_data``, default ``0``), but an explicit
+valid-data mask (``1`` where both dates have data, ``0`` elsewhere) made with
+:func:`rsgispy.imagecalc.maths.band_maths` is still the first step: it is where
+the cloud and shadow masks go, and the same mask is reused below to extract
+the values for the threshold and to mark no data in the change maps. In real
+data, combine it with the cloud and shadow masks of both dates (e.g. by adding
 ``&& (cloud1 == 0) && (cloud2 == 0)`` with the cloud masks as extra bands),
-because clouds and shadows are the main source of false change.
+because clouds and shadows that are not set to no data are the main source of
+false change.
 
 Spectral indices concentrate the change of interest into one band.
 :func:`rsgispy.imagecalc.calcindices.calc_indices` computes them for each date
@@ -406,10 +411,12 @@ Common problems
 * **"Input base and change images do not match"** — the two images differ in
   size, extent or CRS. Resample one to the other with
   :func:`rsgispy.imageutils.warp.resample_img_to_match`.
-* **Huge change values in cloud or no data areas** — always pass a valid mask
-  (``vld_msk_img``) that requires valid data on *both* dates: without it, a
-  pixel is processed when it has valid data in either date, so a pixel that
-  is no data (0) on one date gets a very large difference.
+* **Huge change values in cloud or no data areas** — without a valid mask, a
+  pixel is processed only where both dates have data, but "data" is judged
+  with ``base_img_no_data`` / ``chng_img_no_data`` (default ``0``): set them to
+  the images' real no data values, and pass a valid mask (``vld_msk_img``)
+  that includes the cloud and shadow masks, since clouds that still have
+  reflectance values give large false changes.
 * **Change along edges** — misregistration; co-register the images, or apply
   a minimum mapping unit to the change map
   (:func:`rsgispy.classification.classpostprocess.apply_sieve_filter`).

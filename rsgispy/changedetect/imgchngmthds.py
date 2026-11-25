@@ -129,6 +129,27 @@ def _validate_change_inputs(
     return base_bands, chng_bands, img_size_x, img_size_y
 
 
+def _both_dates_valid(
+    base_arr: np.ndarray,
+    chng_arr: np.ndarray,
+    base_img_no_data: float,
+    chng_img_no_data: float,
+) -> np.ndarray:
+    """
+    Return the valid-pixel mask used when no ``vld_msk_img`` is given: a pixel
+    is valid only when **both** dates have data, i.e. at least one band of the
+    base image and at least one band of the change image are finite and not
+    equal to that image's no-data value. Arrays are ``(n_bands, ...)``.
+    """
+    base_vld = np.any(
+        (base_arr != base_img_no_data) & np.isfinite(base_arr), axis=0
+    )
+    chng_vld = np.any(
+        (chng_arr != chng_img_no_data) & np.isfinite(chng_arr), axis=0
+    )
+    return base_vld & chng_vld
+
+
 def _prepare_change_inputs(
     in_base_img: str,
     in_chng_img: str,
@@ -185,13 +206,11 @@ def _prepare_change_inputs(
     if vld_msk_img is not None:
         vld_msk_arr = get_img_data_as_arr(vld_msk_img, img_bands=[1])[0]
     else:
-        base_vld = np.any(
-            (base_arr != base_img_no_data) & np.isfinite(base_arr), axis=0
+        vld_msk_arr = np.where(
+            _both_dates_valid(base_arr, chng_arr, base_img_no_data, chng_img_no_data),
+            int(vld_msk_val),
+            0,
         )
-        chng_vld = np.any(
-            (chng_arr != chng_img_no_data) & np.isfinite(chng_arr), axis=0
-        )
-        vld_msk_arr = np.where(base_vld | chng_vld, int(vld_msk_val), 0)
 
     vld_flat = vld_msk_arr.reshape(n_pxls) == vld_msk_val
     pxl_ids = np.flatnonzero(vld_flat)
@@ -267,13 +286,9 @@ def _read_change_window(
     if msk_src is not None:
         vld_2d = msk_src.read(1, window=win) == vld_msk_val
     else:
-        base_vld = np.any(
-            (base_blk != base_img_no_data) & np.isfinite(base_blk), axis=0
+        vld_2d = _both_dates_valid(
+            base_blk, chng_blk, base_img_no_data, chng_img_no_data
         )
-        chng_vld = np.any(
-            (chng_blk != chng_img_no_data) & np.isfinite(chng_blk), axis=0
-        )
-        vld_2d = base_vld | chng_vld
     return base_blk, chng_blk, vld_2d
 
 
@@ -482,6 +497,11 @@ def image_difference(
     :param in_chng_img: Path to the input change image file.
     :param out_diff_img: Path to the output difference image file.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
+                        If ``None`` (Default), a pixel is valid only where
+                        **both** images have data: at least one selected band
+                        of each image is finite and not equal to
+                        ``base_img_no_data`` / ``chng_img_no_data``. Pixels
+                        with data on one date only are written as no data.
     :param vld_msk_val: Pixel value in ``vld_msk_img`` indicating valid pixels
                         (Default = ``1``).
     :param apply_std: If ``True``, standardise each band prior to differencing
@@ -492,7 +512,9 @@ def image_difference(
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type
                      (Default = ``None``, which uses
                      :data:`rsgispy.TYPE_32FLOAT`).
-    :param no_data_val: Optional output no-data value (Default = ``None``).
+    :param no_data_val: Optional output no-data value, written to invalid
+                        pixels (Default = ``None``: invalid pixels are
+                        written as ``0`` and no no-data value is set).
     :param base_img_no_data: No-data value in ``in_base_img`` (Default = ``0``).
     :param chng_img_no_data: No-data value in ``in_chng_img`` (Default = ``0``).
     :param calc_stats: If ``True``, compute output image statistics and pyramids
@@ -553,6 +575,11 @@ def image_ratio(
     :param in_chng_img: Path to the input change image file.
     :param out_ratio_img: Path to the output ratio image file.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
+                        If ``None`` (Default), a pixel is valid only where
+                        **both** images have data: at least one selected band
+                        of each image is finite and not equal to
+                        ``base_img_no_data`` / ``chng_img_no_data``. Pixels
+                        with data on one date only are written as no data.
     :param vld_msk_val: Pixel value in ``vld_msk_img`` indicating valid pixels
                         (Default = ``1``).
     :param apply_std: If ``True``, standardise each band prior to ratioing
@@ -563,7 +590,9 @@ def image_ratio(
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type
                      (Default = ``None``, which uses
                      :data:`rsgispy.TYPE_32FLOAT`).
-    :param no_data_val: Optional output no-data value (Default = ``None``).
+    :param no_data_val: Optional output no-data value, written to invalid
+                        pixels (Default = ``None``: invalid pixels are
+                        written as ``0`` and no no-data value is set).
     :param base_img_no_data: No-data value in ``in_base_img`` (Default = ``0``).
     :param chng_img_no_data: No-data value in ``in_chng_img`` (Default = ``0``).
     :param calc_stats: If ``True``, compute output image statistics and pyramids
@@ -632,6 +661,11 @@ def change_vector_analysis(
     :param out_chng_dist_img: Path to the output threshold-centred change
                               distance image file.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
+                        If ``None`` (Default), a pixel is valid only where
+                        **both** images have data: at least one selected band
+                        of each image is finite and not equal to
+                        ``base_img_no_data`` / ``chng_img_no_data``. Pixels
+                        with data on one date only are written as no data.
     :param vld_msk_val: Pixel value in ``vld_msk_img`` indicating valid pixels
                         (Default = ``1``).
     :param apply_std: If ``True``, standardise each band prior to CVA
@@ -644,8 +678,10 @@ def change_vector_analysis(
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type for
                      ``out_chng_dist_img`` (Default = ``None``, which uses
                      :data:`rsgispy.TYPE_32FLOAT`).
-    :param no_data_val: Optional output no-data value for ``out_chng_dist_img``
-                        (Default = ``None``).
+    :param no_data_val: Optional output no-data value for ``out_chng_dist_img``,
+                        written to invalid pixels (Default = ``None``:
+                        invalid pixels are written as ``0``). Invalid
+                        pixels are ``255`` (no data) in ``out_chng_img``.
     :param base_img_no_data: No-data value in ``in_base_img`` (Default = ``0``).
     :param chng_img_no_data: No-data value in ``in_chng_img`` (Default = ``0``).
     :param calc_stats: If ``True``, compute output image statistics and pyramids
@@ -702,6 +738,8 @@ def change_vector_analysis(
         gdalformat=gdalformat,
         datatype=out_dtype,
         no_data_val=no_data_val,
+        calc_stats=False,
+        use_pbar=use_pbar,
     )
 
     chng_bin_flat = np.full(n_pxls, 255, dtype=np.uint8)
@@ -718,6 +756,8 @@ def change_vector_analysis(
         gdalformat=gdalformat,
         datatype=rsgispy.TYPE_8UINT,
         no_data_val=255,
+        calc_stats=False,
+        use_pbar=use_pbar,
     )
 
     if calc_stats:
@@ -770,6 +810,11 @@ def slow_feature_analysis(
     :param out_chng_dist_img: Path to the output threshold-centred chi-square
                               distance image.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
+                        If ``None`` (Default), a pixel is valid only where
+                        **both** images have data: at least one selected band
+                        of each image is finite and not equal to
+                        ``base_img_no_data`` / ``chng_img_no_data``. Pixels
+                        with data on one date only are written as no data.
     :param vld_msk_val: Pixel value in ``vld_msk_img`` indicating valid pixels
                         (Default = ``1``).
     :param apply_std: If ``True``, standardise each band prior to SFA
@@ -789,8 +834,10 @@ def slow_feature_analysis(
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type for
                      ``out_chng_dist_img`` (Default = ``None``, which uses
                      :data:`rsgispy.TYPE_32FLOAT`).
-    :param no_data_val: Optional output no-data value for ``out_chng_dist_img``
-                        (Default = ``None``).
+    :param no_data_val: Optional output no-data value for ``out_chng_dist_img``,
+                        written to invalid pixels (Default = ``None``:
+                        invalid pixels are written as ``0``). Invalid
+                        pixels are ``255`` (no data) in ``out_chng_img``.
     :param base_img_no_data: No-data value in ``in_base_img`` (Default = ``0``).
     :param chng_img_no_data: No-data value in ``in_chng_img`` (Default = ``0``).
     :param calc_stats: If ``True``, compute output image statistics and pyramids
@@ -925,6 +972,8 @@ def slow_feature_analysis(
         gdalformat=gdalformat,
         datatype=out_dtype,
         no_data_val=no_data_val,
+        calc_stats=False,
+        use_pbar=use_pbar,
     )
 
     bin_flat = np.full(n_pxls, 255, dtype=np.uint8)
@@ -940,6 +989,8 @@ def slow_feature_analysis(
         gdalformat=gdalformat,
         datatype=rsgispy.TYPE_8UINT,
         no_data_val=255,
+        calc_stats=False,
+        use_pbar=use_pbar,
     )
 
     if calc_stats:
@@ -1003,6 +1054,11 @@ def multivariate_alteration_detection(
                               distance image.
     :param out_chng_mads_img: Path to the output MAD variates multi-band image.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
+                        If ``None`` (Default), a pixel is valid only where
+                        **both** images have data: at least one selected band
+                        of each image is finite and not equal to
+                        ``base_img_no_data`` / ``chng_img_no_data``. Pixels
+                        with data on one date only are written as no data.
     :param vld_msk_val: Pixel value in ``vld_msk_img`` indicating valid pixels
                         (Default = ``1``).
     :param apply_std: If ``True``, standardise each band prior to MAD
@@ -1019,8 +1075,10 @@ def multivariate_alteration_detection(
                      ``out_chng_dist_img`` and ``out_chng_mads_img``
                      (Default = ``None``, which uses
                      :data:`rsgispy.TYPE_32FLOAT`).
-    :param no_data_val: Optional output no-data value for continuous outputs
-                        (Default = ``None``).
+    :param no_data_val: Optional output no-data value for continuous outputs,
+                        written to invalid pixels (Default = ``None``:
+                        invalid pixels are written as ``0``). Invalid
+                        pixels are ``255`` (no data) in ``out_chng_img``.
     :param base_img_no_data: No-data value in ``in_base_img`` (Default = ``0``).
     :param chng_img_no_data: No-data value in ``in_chng_img`` (Default = ``0``).
     :param calc_stats: If ``True``, compute output image statistics and pyramids
@@ -1140,6 +1198,8 @@ def multivariate_alteration_detection(
         gdalformat=gdalformat,
         datatype=out_dtype,
         no_data_val=no_data_val,
+        calc_stats=False,
+        use_pbar=use_pbar,
     )
 
     mads_flat = np.full((n_bands, n_pxls), fill_val, dtype=np.float32)
@@ -1151,6 +1211,8 @@ def multivariate_alteration_detection(
         gdalformat=gdalformat,
         datatype=out_dtype,
         no_data_val=no_data_val,
+        calc_stats=False,
+        use_pbar=use_pbar,
     )
 
     bin_flat = np.full(n_pxls, 255, dtype=np.uint8)
@@ -1167,6 +1229,8 @@ def multivariate_alteration_detection(
         gdalformat=gdalformat,
         datatype=rsgispy.TYPE_8UINT,
         no_data_val=255,
+        calc_stats=False,
+        use_pbar=use_pbar,
     )
 
     if calc_stats:
