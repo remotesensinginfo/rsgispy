@@ -5,7 +5,7 @@ percentile calculation functions using ``rasterio``.
 
 from contextlib import ExitStack
 import math
-from typing import Any, List, Mapping, Optional, Sequence
+from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import rasterio
@@ -17,8 +17,10 @@ from rsgispy.imageprocess import (
     IntersectionGrid,
     compute_spatial_intersection,
     ensure_file_exists,
+    fits_dtype_range,
     iter_dataset_windows,
     iter_image_blocks,
+    maybe_pop_stats,
     open_input_datasets,
     open_multi_image_datasets,
     open_output_dataset,
@@ -41,8 +43,9 @@ def _read_grid_blocks(
     img_paths: Sequence[str],
     grid: IntersectionGrid,
     out_win: Window,
+    read_dtype: Any = np.float32,
 ) -> List[np.ndarray]:
-    """Read float32 blocks aligned to ``out_win`` for each image in ``img_paths``."""
+    """Read ``read_dtype`` blocks aligned to ``out_win`` for each image in ``img_paths``."""
     col_off = int(out_win.col_off)
     row_off = int(out_win.row_off)
     win_w = int(out_win.width)
@@ -55,10 +58,45 @@ def _read_grid_blocks(
                 win_w,
                 win_h,
             ),
-            out_dtype=np.float32,
+            out_dtype=read_dtype,
         )
         for path in img_paths
     ]
+
+
+def _pct_label(percentile: float) -> str:
+    """Return the band name suffix for ``percentile`` (e.g. ``'p10'``, ``'p2.5'``)."""
+    return f"p{float(percentile):g}"
+
+
+def _resolve_pct_output(
+    datasets: Mapping[str, Any],
+    img_paths: Sequence[str],
+    no_data_val: Optional[float],
+) -> Tuple[str, np.dtype, Any]:
+    """
+    Return the output rasterio dtype, NumPy dtype and the dtype used to read
+    the inputs, and check that ``no_data_val`` can be stored in the output.
+    """
+    rsgis_dt = rsgispy.get_rsgis_datatype(datasets[img_paths[0]].dtypes[0])
+    out_rio_dtype = rsgispy.get_rasterio_datatype(rsgis_dt)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(rsgis_dt))
+    if no_data_val is not None:
+        nd_is_nan = math.isnan(float(no_data_val))
+        if (nd_is_nan and not np.issubdtype(out_np_dtype, np.floating)) or (
+            not nd_is_nan and not fits_dtype_range(float(no_data_val), out_np_dtype)
+        ):
+            raise rsgispy.RSGISPyException(
+                f"no_data_val ({no_data_val}) cannot be stored in the output data "
+                f"type '{out_np_dtype.name}' (the data type of the first input "
+                "image)."
+            )
+    # Read in float32 unless an input needs more precision (e.g. float64, int32).
+    read_dtype = np.result_type(
+        np.float32,
+        *[np.dtype(dt) for path in img_paths for dt in datasets[path].dtypes],
+    )
+    return out_rio_dtype, out_np_dtype, read_dtype
 
 
 def calc_band_percentile(
@@ -206,22 +244,35 @@ def calc_imgs_pxl_percentiles(
     percentiles: Sequence[float],
     *,
     gdalformat: str = "GTIFF",
-    no_data_val: float = 0.0,
+    no_data_val: Optional[float] = 0.0,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """
     Calculate percentiles on a per-pixel basis across all bands of ``input_imgs``.
 
-    The output image has ``len(percentiles)`` bands and matches the spatial
-    intersection and data type of the first input image.
+    The output image has ``len(percentiles)`` bands, named ``p<percentile>``
+    (e.g. ``p10``, ``p50``, ``p2.5``), and matches the spatial intersection
+    and data type of the first input image. The images are read and
+    processed block by block (:func:`rsgispy.imageprocess.get_default_block_size`),
+    so memory use does not depend on the image size. The percentiles match
+    ``numpy.nanpercentile`` (linear interpolation) and are cast to the output
+    data type (truncated for integer types).
 
     :param input_imgs: Sequence of input image paths (all bands are stacked).
     :param output_img: Path to the output image file.
     :param percentiles: Sequence of percentiles in ``[0, 100]``.
     :param gdalformat: GDAL/rasterio driver format for the output file
                        (Default = ``'GTIFF'``).
-    :param no_data_val: No-data value to ignore during percentile calculation (Default = 0).
+    :param no_data_val: No-data value of the inputs, ignored when calculating
+                        the percentiles. It is written to the pixels with no
+                        valid values and set as the no-data value of the
+                        output, so it must be representable in the output data
+                        type (Default = 0). ``None`` ignores only ``NaN``.
+    :param calc_stats: If ``True``, calculate image statistics and pyramids
+                       for the output, ignoring ``no_data_val``
+                       (Default = ``True``).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
 
@@ -239,13 +290,14 @@ def calc_imgs_pxl_percentiles(
     """
     # pylint: disable=too-many-arguments,too-many-locals
     validate_percentiles_0_100(percentiles)
+    pcts = [float(pct) for pct in np.atleast_1d(np.asarray(percentiles, dtype=np.float64))]
 
     with ExitStack() as stack:
         datasets, img_paths = open_multi_image_datasets(stack, input_imgs)
         grid = compute_spatial_intersection(datasets)
-        rsgis_dt = rsgispy.get_rsgis_datatype(datasets[img_paths[0]].dtypes[0])
-        out_rio_dtype = rsgispy.get_rasterio_datatype(rsgis_dt)
-        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(rsgis_dt))
+        out_rio_dtype, out_np_dtype, read_dtype = _resolve_pct_output(
+            datasets, img_paths, no_data_val
+        )
 
         dst = open_output_dataset(
             stack=stack,
@@ -253,22 +305,36 @@ def calc_imgs_pxl_percentiles(
             gdalformat=gdalformat,
             out_rio_dtype=out_rio_dtype,
             grid=grid,
-            count=len(percentiles),
+            count=len(pcts),
             creation_opts=creation_opts,
         )
+        if no_data_val is not None:
+            dst.nodata = no_data_val
+        for band_idx, pct in enumerate(pcts, start=1):
+            dst.set_band_description(band_idx, _pct_label(pct))
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
         ):
-            img_blocks = _read_grid_blocks(datasets, img_paths, grid, out_win)
+            img_blocks = _read_grid_blocks(
+                datasets, img_paths, grid, out_win, read_dtype=read_dtype
+            )
             pct_arr = compute_nanpercentiles(
                 np.concatenate(img_blocks, axis=0),
-                percentiles,
+                pcts,
                 no_data_val,
             )
             dst.write(
                 pct_arr.astype(out_np_dtype, copy=False), window=out_win
             )
+
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        use_pbar=use_pbar,
+        gdalformat=gdalformat,
+    )
 
 
 def calc_img_band_pxl_percentiles(
@@ -277,7 +343,8 @@ def calc_img_band_pxl_percentiles(
     percentiles: Sequence[float],
     *,
     gdalformat: str = "GTIFF",
-    no_data_val: float = 0.0,
+    no_data_val: Optional[float] = 0.0,
+    calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
 ) -> None:
@@ -286,14 +353,30 @@ def calc_img_band_pxl_percentiles(
 
     All input images must have the same band count ``n_bands``. The output
     image contains ``n_bands * len(percentiles)`` bands ordered as band 1
-    percentiles, band 2 percentiles, ..., band ``n`` percentiles.
+    percentiles, band 2 percentiles, ..., band ``n`` percentiles. The output
+    bands are named ``<band name>_p<percentile>`` (e.g. ``Blue_p50``), using
+    the band names of the first input image, or ``b<band>_p<percentile>``
+    (e.g. ``b1_p50``) for bands without a name. The output matches the
+    spatial intersection and data type of the first input image. The images
+    are read and processed block by block
+    (:func:`rsgispy.imageprocess.get_default_block_size`), so memory use does
+    not depend on the image size. The percentiles match
+    ``numpy.nanpercentile`` (linear interpolation) and are cast to the output
+    data type (truncated for integer types).
 
     :param input_imgs: Sequence of input image paths with identical band counts.
     :param output_img: Path to the output image file.
     :param percentiles: Sequence of percentiles in ``[0, 100]``.
     :param gdalformat: GDAL/rasterio driver format for the output file
                        (Default = ``'GTIFF'``).
-    :param no_data_val: No-data value to ignore during percentile calculation (Default = 0).
+    :param no_data_val: No-data value of the inputs, ignored when calculating
+                        the percentiles. It is written to the pixels with no
+                        valid values and set as the no-data value of the
+                        output, so it must be representable in the output data
+                        type (Default = 0). ``None`` ignores only ``NaN``.
+    :param calc_stats: If ``True``, calculate image statistics and pyramids
+                       for the output, ignoring ``no_data_val``
+                       (Default = ``True``).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
 
@@ -311,6 +394,7 @@ def calc_img_band_pxl_percentiles(
     """
     # pylint: disable=too-many-arguments,too-many-locals
     validate_percentiles_0_100(percentiles)
+    pcts = [float(pct) for pct in np.atleast_1d(np.asarray(percentiles, dtype=np.float64))]
 
     with ExitStack() as stack:
         datasets, img_paths = open_multi_image_datasets(stack, input_imgs)
@@ -322,9 +406,10 @@ def calc_img_band_pxl_percentiles(
                 )
 
         grid = compute_spatial_intersection(datasets)
-        rsgis_dt = rsgispy.get_rsgis_datatype(datasets[img_paths[0]].dtypes[0])
-        out_rio_dtype = rsgispy.get_rasterio_datatype(rsgis_dt)
-        out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(rsgis_dt))
+        out_rio_dtype, out_np_dtype, read_dtype = _resolve_pct_output(
+            datasets, img_paths, no_data_val
+        )
+        in_names = datasets[img_paths[0]].descriptions
 
         dst = open_output_dataset(
             stack=stack,
@@ -332,18 +417,28 @@ def calc_img_band_pxl_percentiles(
             gdalformat=gdalformat,
             out_rio_dtype=out_rio_dtype,
             grid=grid,
-            count=n_bands * len(percentiles),
+            count=n_bands * len(pcts),
             creation_opts=creation_opts,
         )
+        if no_data_val is not None:
+            dst.nodata = no_data_val
+        out_band = 1
+        for b_idx in range(n_bands):
+            base_name = in_names[b_idx] if in_names[b_idx] else f"b{b_idx + 1}"
+            for pct in pcts:
+                dst.set_band_description(out_band, f"{base_name}_{_pct_label(pct)}")
+                out_band += 1
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
         ):
-            img_blocks = _read_grid_blocks(datasets, img_paths, grid, out_win)
+            img_blocks = _read_grid_blocks(
+                datasets, img_paths, grid, out_win, read_dtype=read_dtype
+            )
             out_percent_arrs = [
                 compute_nanpercentiles(
                     np.stack([blk[b_idx] for blk in img_blocks], axis=0),
-                    percentiles,
+                    pcts,
                     no_data_val,
                 )
                 for b_idx in range(n_bands)
@@ -352,3 +447,11 @@ def calc_img_band_pxl_percentiles(
                 out_np_dtype, copy=False
             )
             dst.write(out_arr, window=out_win)
+
+    maybe_pop_stats(
+        output_img=output_img,
+        calc_stats=calc_stats,
+        no_data_val=no_data_val,
+        use_pbar=use_pbar,
+        gdalformat=gdalformat,
+    )

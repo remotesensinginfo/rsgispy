@@ -5,7 +5,6 @@ variogram calculation, percentile computation, and data normalisation utilities.
 
 import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
-import warnings
 
 import numpy as np
 
@@ -343,17 +342,32 @@ def compute_nanpercentiles(
     no_data_val: Optional[float] = None,
 ) -> np.ndarray:
     """
-    Compute per-pixel percentiles along axis 0 while ignoring ``no_data_val``.
+    Compute per-pixel percentiles along axis 0 while ignoring ``NaN`` and
+    ``no_data_val``.
+
+    The result equals ``np.nanpercentile(stack_arr, percentiles, axis=0)``
+    (NumPy's default ``method="linear"``) to floating-point precision, but is
+    vectorised: the stack is sorted once along axis 0 (``NaN`` values sort to
+    the end), the number of valid values ``n`` is counted for each pixel, and
+    each percentile ``p`` is interpolated linearly between the sorted values
+    either side of position ``p / 100 * (n - 1)``. This is several hundred
+    times faster than ``np.nanpercentile`` with ``axis=0``, which loops over
+    the pixels in Python. Pixels with no valid values give ``NaN`` (or
+    ``no_data_val``).
 
     :param stack_arr: Input array stacked along axis 0 (e.g. ``(n_layers, height, width)``).
-                      Floating-point arrays may be modified in-place to replace
-                      ``no_data_val`` with ``NaN``.
+                      The array is not modified.
     :param percentiles: Percentile value or sequence of percentiles in ``[0, 100]``.
-    :param no_data_val: Optional no-data value to mask out before computing
-                        percentiles and restore where all values along axis 0
-                        are no-data/NaN (Default = None).
-    :return: NumPy array of computed percentiles along axis 0. For 3D inputs and
-             scalar ``percentiles``, the output is expanded to ``(1, height, width)``.
+    :param no_data_val: Optional no-data value to ignore when computing the
+                        percentiles (compared in the precision of
+                        ``stack_arr``); it is also written to the pixels where
+                        all values along axis 0 are no data or ``NaN``
+                        (Default = None, which ignores only ``NaN`` and leaves
+                        ``NaN`` in those pixels).
+    :return: ``float64`` NumPy array of percentiles with shape
+             ``(len(percentiles),) + stack_arr.shape[1:]``. For a scalar
+             ``percentiles`` the leading axis is dropped, except that 3D
+             inputs keep it (output shape ``(1, height, width)``).
 
     .. code:: python
 
@@ -362,25 +376,57 @@ def compute_nanpercentiles(
         stack = np.random.rand(5, 10, 10)
         pct = rsgispy.tools.stats.compute_nanpercentiles(stack, [25, 50, 75])
     """
-    if not np.issubdtype(stack_arr.dtype, np.floating):
-        stack_arr = stack_arr.astype(np.float64)
+    # pylint: disable=too-many-locals
+    arr = np.asarray(stack_arr)
+    if arr.ndim == 0:
+        raise rsgispy.RSGISPyException(
+            "stack_arr must have at least one dimension."
+        )
+    if np.issubdtype(arr.dtype, np.floating):
+        work = arr.copy()
+    else:
+        work = arr.astype(np.float64)
 
-    if no_data_val is not None:
-        if not (
-            isinstance(no_data_val, (float, np.floating))
-            and math.isnan(float(no_data_val))
-        ):
-            stack_arr[stack_arr == no_data_val] = np.nan
+    if no_data_val is not None and not math.isnan(float(no_data_val)):
+        with np.errstate(over="ignore"):
+            nd_val = work.dtype.type(no_data_val)
+        work[work == nd_val] = np.nan
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        pct_arr = np.nanpercentile(stack_arr, percentiles, axis=0)
+    q_arr = np.asarray(percentiles, dtype=np.float64)
+    q_flat = q_arr.reshape(-1) / 100.0
+    pct_arr = np.full((q_flat.size,) + work.shape[1:], np.nan, dtype=np.float64)
 
-    if pct_arr.ndim == 2:
-        pct_arr = np.expand_dims(pct_arr, axis=0)
+    if work.shape[0] > 0:
+        # NaN values sort to the end, so the valid values of each pixel are
+        # the first n_valid elements along axis 0.
+        work.sort(axis=0)
+        n_valid = work.shape[0] - np.count_nonzero(np.isnan(work), axis=0)
+        n_f = np.asarray(n_valid, dtype=np.float64)[np.newaxis, ...]
+        last_idx = np.maximum(n_f - 1.0, 0.0).astype(np.intp)
+        with np.errstate(invalid="ignore"):
+            for q_idx, q_val in enumerate(q_flat):
+                # Same virtual index as NumPy's 'linear' method: (n - 1) * q.
+                v_idx = n_f * q_val + (1.0 - q_val) - 1.0
+                lo_pos = np.floor(v_idx)
+                gamma = v_idx - lo_pos
+                lo_idx = np.minimum(np.maximum(lo_pos, 0.0).astype(np.intp), last_idx)
+                hi_idx = np.minimum(lo_idx + 1, last_idx)
+                lo_val = np.take_along_axis(work, lo_idx, axis=0)
+                hi_val = np.take_along_axis(work, hi_idx, axis=0)
+                # Linear interpolation, evaluated from the nearer end as
+                # NumPy does (pixels with n == 0 give NaN).
+                diff = hi_val - lo_val
+                res = lo_val + diff * gamma
+                np.subtract(hi_val, diff * (1.0 - gamma), out=res, where=gamma >= 0.5)
+                pct_arr[q_idx] = res[0]
 
-    if no_data_val is not None:
-        return np.nan_to_num(pct_arr, copy=False, nan=no_data_val)
+    if q_arr.ndim == 0:
+        pct_arr = pct_arr[0, ...]
+        if work.ndim == 3:
+            pct_arr = np.expand_dims(pct_arr, axis=0)
+
+    if no_data_val is not None and not math.isnan(float(no_data_val)):
+        pct_arr[np.isnan(pct_arr)] = no_data_val
     return pct_arr
 
 
