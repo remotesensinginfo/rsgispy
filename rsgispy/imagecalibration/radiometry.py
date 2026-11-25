@@ -21,8 +21,8 @@ from rsgispy.imageprocess import (
     create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
-    maybe_pop_stats,
     normalise_creation_options,
+    pop_stats_on_close,
     resolve_nodata_and_fill,
     resolve_out_dtype,
     validate_band_index,
@@ -367,6 +367,9 @@ def radiance_to_toa_refl(
         )
         if dst_nodata is not None:
             dst.nodata = dst_nodata
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=dst_nodata, use_pbar=use_pbar
+        )
         for bidx, desc in enumerate(src.descriptions, start=1):
             if desc:
                 dst.set_band_description(bidx, desc)
@@ -388,14 +391,6 @@ def radiance_to_toa_refl(
                 ),
                 window=win,
             )
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=dst_nodata,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )
 
 
 def landsat_thermal_rad_to_brightness(
@@ -477,6 +472,9 @@ def landsat_thermal_rad_to_brightness(
         )
         if dst_nodata is not None:
             dst.nodata = dst_nodata
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=dst_nodata, use_pbar=use_pbar
+        )
         for out_idx, (bname, _, _, _) in enumerate(coeffs, start=1):
             dst.set_band_description(out_idx, bname)
 
@@ -506,14 +504,6 @@ def landsat_thermal_rad_to_brightness(
                 ),
                 window=win,
             )
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=dst_nodata,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )
 
 
 def perform_dos_calc(
@@ -622,6 +612,9 @@ def perform_dos_calc(
         )
         if dst_nodata is not None:
             dst.nodata = dst_nodata
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=dst_nodata, use_pbar=use_pbar
+        )
         if copy_band_names:
             for bidx, desc in enumerate(src.descriptions, start=1):
                 if desc:
@@ -647,11 +640,3 @@ def perform_dos_calc(
                 ),
                 window=win,
             )
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=dst_nodata,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )

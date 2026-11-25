@@ -17,8 +17,8 @@ from rsgispy.imageprocess import (
     create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
-    maybe_pop_stats,
     normalise_creation_options,
+    pop_stats_on_close,
     resolve_out_dtype,
 )
 
@@ -231,6 +231,7 @@ def calc_solar_azimuth_zenith(
         )
         dst.set_band_description(1, "SolarAzimuth")
         dst.set_band_description(2, "SolarZenith")
+        pop_stats_on_close(dst, calc_stats, no_data_val=None, use_pbar=use_pbar)
 
         for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             rows = (
@@ -261,11 +262,3 @@ def calc_solar_azimuth_zenith(
                 ),
                 window=win,
             )
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=None,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )

@@ -148,7 +148,9 @@ Other formats (KEA, COG, ...) use their GDAL driver defaults. To change the
 options, set the ``RSGISPY_IMG_CRT_OPTS_<FORMAT>`` environment variable
 (colon-separated ``KEY=VALUE`` pairs; ``RSGISLIB_IMG_CRT_OPTS_<FORMAT>`` is
 also read), which replaces the default, or pass ``creation_opts`` to a
-function, which is merged on top. The helpers in
+function, which is merged on top (``creation_opts`` with ``BLOCKYSIZE`` but
+no ``TILED`` or ``BLOCKXSIZE``, e.g. ``{"BLOCKYSIZE": 1}``, give a striped
+GeoTIFF with that many rows per strip). The helpers in
 :mod:`rsgispy.imageutils.envopts` set common choices:
 
 * :func:`~rsgispy.imageutils.envopts.set_env_vars_zstd_gtiff_outs` or
@@ -385,10 +387,13 @@ COGs.
 **How rsgispy writes COGs.** GDAL can only create a COG by copying a
 complete image, so when an rsgispy function writes ``gdalformat='COG'``
 (including :func:`~rsgispy.imageutils.warp.gdal_translate`), it writes the
-data block by block to a temporary tiled GeoTIFF next to the output, adds the
-statistics to it (``calc_stats=True``), and only then converts it with
-GDAL's COG driver, which builds the overviews; the temporary file is deleted,
-also when an error occurs. Memory use is the same as for a GeoTIFF output,
+data block by block to a temporary tiled GeoTIFF next to the output (in the
+local temporary directory for GDAL virtual file system outputs such as
+``/vsis3/...`` or ``/vsimem/...``), adds the statistics to it
+(``calc_stats=True``), and only then converts it with GDAL's COG driver,
+which builds the overviews (with ``NEAREST`` resampling for thematic outputs
+unless ``OVERVIEW_RESAMPLING`` is set); the temporary file is deleted, also
+when an error occurs. Memory use is the same as for a GeoTIFF output,
 but the output directory needs free space for the temporary file as well as
 the COG, and the conversion adds roughly the time of one more read and write
 of the image. The statistics are stored in the COG without breaking its
@@ -398,8 +403,10 @@ layout. Your own block loops get the same behaviour from
 Calling :func:`~rsgispy.imageutils.stats.pop_img_stats` (or another function
 that edits the file) on an existing COG never edits it in place: the COG is
 rebuilt through a temporary GeoTIFF
-(:func:`~rsgispy.imageprocess.update_cog`), which keeps it valid but costs a
-full re-encode, so prefer ``calc_stats=True`` when the COG is written.
+(:func:`~rsgispy.imageprocess.update_cog`) with the compression, quality and
+layout settings recorded in the file, which keeps it valid but costs a full
+re-encode (and another round of lossy compression for JPEG or WEBP), so
+prefer ``calc_stats=True`` when the COG is written.
 
 **Choosing output formats**
 

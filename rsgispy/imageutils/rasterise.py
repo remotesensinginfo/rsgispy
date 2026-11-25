@@ -27,6 +27,7 @@ from rsgispy.imageprocess import (
     maybe_pop_stats,
     normalise_creation_options,
     open_output_dataset,
+    pop_stats_on_close,
 )
 from rsgispy.imageutils.blank import (
     create_blank_img_from_bbox,
@@ -790,11 +791,7 @@ def create_dist_zones_to_vec_lyr(
         )
         if no_data_val is not None:
             dst.nodata = float(no_data_val)
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=no_data_val, use_pbar=use_pbar
+        )
         dst.write(out_arr, 1)
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        use_pbar=use_pbar,
-    )

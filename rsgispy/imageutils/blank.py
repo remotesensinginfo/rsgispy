@@ -20,9 +20,9 @@ from rsgispy.imageprocess import (
     ensure_file_exists,
     iter_dataset_windows,
     open_output_dataset,
+    pop_stats_on_close,
 )
 from rsgispy.imageutils._helpers import (
-    maybe_pop_stats,
     normalise_creation_options,
     parse_epsg_crs,
     rsgis_dtype_from_np_dtype,
@@ -91,6 +91,9 @@ def _write_blank_grid_img(
         )
         if no_data_val is not None:
             dst.nodata = no_data_val
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=no_data_val, use_pbar=use_pbar
+        )
 
         for win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
@@ -101,13 +104,6 @@ def _write_blank_grid_img(
                 dtype=out_np_dtype,
             )
             dst.write(block, window=win)
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        use_pbar=use_pbar,
-    )
 
 
 def _bbox_to_grid_params(

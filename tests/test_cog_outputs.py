@@ -8,20 +8,29 @@ are left behind.
 
 from contextlib import ExitStack
 import os
+import uuid
 import warnings
+import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
 import rasterio
+from rasterio.crs import CRS
 from rasterio.enums import ColorInterp
 from rasterio.io import BufferedDatasetWriter
+import rasterio.shutil
 from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imagecalc.maths
+import rsgispy.imagecalc.percentiles
 import rsgispy.imageprocess
+import rsgispy.imageprocess._io as rsgis_io
+import rsgispy.imageutils.bands
 import rsgispy.imageutils.envopts
+import rsgispy.imageutils.masking
 import rsgispy.imageutils.mosaic
+import rsgispy.imageutils.rasterise
 import rsgispy.imageutils.stats
 import rsgispy.imageutils.warp
 
@@ -578,3 +587,317 @@ def test_cog_helpers(tmp_path, clean_crt_env):
     with open(cog, "rb") as fobj:
         assert fobj.read() == before
     _assert_no_temp_files(tmp_path, ["cog.tif", "small.tif", "tiled_small.tif"])
+
+
+def _rgb_uint8(height=HEIGHT, width=WIDTH):
+    """Smooth 3-band 8-bit image (JPEG-compressible)."""
+    rows, cols = np.mgrid[0:height, 0:width]
+    base = (np.sin(cols / 37.0) + np.cos(rows / 23.0)) * 60.0 + 128.0
+    return np.stack(
+        [base, np.roll(base, 50, axis=0), np.roll(base, 90, axis=1)]
+    ).astype(np.uint8)
+
+
+def _count_cog_conversions(monkeypatch):
+    """Count the COG conversions (write_cog calls, also made by update_cog)."""
+    counts = {"write_cog": 0, "update_cog": 0}
+    orig_write = rsgis_io.write_cog
+    orig_update = rsgispy.imageutils.stats.update_cog
+
+    def _write_cog(*args, **kwargs):
+        counts["write_cog"] += 1
+        return orig_write(*args, **kwargs)
+
+    def _update_cog(*args, **kwargs):
+        counts["update_cog"] += 1
+        return orig_update(*args, **kwargs)
+
+    monkeypatch.setattr(rsgis_io, "write_cog", _write_cog)
+    monkeypatch.setattr(rsgispy.imageutils.stats, "update_cog", _update_cog)
+    return counts
+
+
+def _try_cog_copy(src_path, dst_path, **opts):
+    """Create a COG, returning False if GDAL lacks the requested codec."""
+    try:
+        rasterio.shutil.copy(str(src_path), str(dst_path), driver="COG", **opts)
+    except Exception:  # pylint: disable=broad-except
+        return False
+    return True
+
+
+def test_cog_rebuild_keeps_lossy_compression_settings(tmp_path, clean_crt_env):
+    """Rebuilding a COG keeps JPEG/WEBP quality and the LERC maximum error."""
+    _ = clean_crt_env
+    rgb_img = tmp_path / "rgb.tif"
+    _write_raster(rgb_img, _rgb_uint8(), dtype="uint8")
+    jpeg_cog = tmp_path / "jpeg.tif"
+    rasterio.shutil.copy(
+        str(rgb_img), str(jpeg_cog), driver="COG", COMPRESS="JPEG", QUALITY="98"
+    )
+    opts = rsgispy.imageprocess.cog_creation_opts_from_file(jpeg_cog)
+    assert opts["COMPRESS"] == "JPEG"
+    assert opts["QUALITY"] == "98"
+    rsgispy.imageutils.stats.pop_img_stats(str(jpeg_cog), use_pbar=False)
+    _assert_valid_cog(jpeg_cog, stats=True, n_bands=3)
+    with rasterio.open(jpeg_cog) as src:
+        assert src.tags(ns="IMAGE_STRUCTURE").get("JPEG_QUALITY") == "98"
+
+    # WEBP: QUALITY from WEBP_LEVEL, QUALITY=100 (lossless) when no level.
+    for quality, lossless in (("60", False), ("100", True)):
+        webp_cog = tmp_path / f"webp_{quality}.tif"
+        if not _try_cog_copy(rgb_img, webp_cog, COMPRESS="WEBP", QUALITY=quality):
+            continue
+        opts = rsgispy.imageprocess.cog_creation_opts_from_file(webp_cog)
+        assert opts["COMPRESS"] == "WEBP"
+        assert opts["QUALITY"] == quality
+        rsgispy.imageutils.stats.pop_img_stats(str(webp_cog), use_pbar=False)
+        with rasterio.open(webp_cog) as src:
+            struct = src.tags(ns="IMAGE_STRUCTURE")
+            if lossless:
+                assert struct.get("COMPRESSION_REVERSIBILITY") == "LOSSLESS"
+                np.testing.assert_array_equal(src.read(), _rgb_uint8())
+            else:
+                assert struct.get("WEBP_LEVEL") == quality
+
+    flt_img = tmp_path / "flt.tif"
+    _write_raster(flt_img, _ramp())
+    lerc_cog = tmp_path / "lerc.tif"
+    if _try_cog_copy(
+        flt_img, lerc_cog, COMPRESS="LERC_DEFLATE", MAX_Z_ERROR="0.5"
+    ):
+        opts = rsgispy.imageprocess.cog_creation_opts_from_file(lerc_cog)
+        assert opts["COMPRESS"] == "LERC_DEFLATE"
+        assert opts["MAX_Z_ERROR"] == "0.5"
+        rsgispy.imageutils.stats.pop_img_stats(str(lerc_cog), use_pbar=False)
+        with rasterio.open(lerc_cog) as src:
+            assert src.tags(ns="IMAGE_STRUCTURE").get("MAX_Z_ERROR") == "0.5"
+
+
+def test_cog_outputs_with_stats_are_converted_once(tmp_path, clean_crt_env):
+    """Functions writing COGs with calc_stats=True convert once and keep QUALITY."""
+    # pylint: disable=import-outside-toplevel
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    monkeypatch = clean_crt_env
+    counts = _count_cog_conversions(monkeypatch)
+    jpeg_opts = {"COMPRESS": "JPEG", "QUALITY": "98"}
+    in_img = tmp_path / "rgb.tif"
+    _write_raster(in_img, _rgb_uint8(), dtype="uint8")
+    msk_img = tmp_path / "msk.tif"
+    msk = np.zeros((HEIGHT, WIDTH), dtype=np.uint8)
+    msk[:100, :150] = 1
+    _write_raster(msk_img, msk, dtype="uint8")
+    vec_file = tmp_path / "zones.gpkg"
+    gpd.GeoDataFrame(
+        geometry=[box(501000.0, 5197000.0, 502000.0, 5198000.0)], crs="EPSG:32630"
+    ).to_file(vec_file, layer="zones")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    def _check(out_img, n_bands):
+        assert counts == {"write_cog": 1, "update_cog": 0}
+        _assert_valid_cog(out_img, stats=True, n_bands=n_bands)
+        with rasterio.open(out_img) as src:
+            assert src.tags(ns="IMAGE_STRUCTURE").get("JPEG_QUALITY") == "98"
+        counts.update(write_cog=0, update_cog=0)
+
+    out_sel = out_dir / "sel.tif"
+    rsgispy.imageutils.bands.select_img_bands(
+        str(in_img), str(out_sel), [1, 2, 3], gdalformat="COG",
+        calc_stats=True, use_pbar=False, creation_opts=jpeg_opts,
+    )
+    _check(out_sel, 3)
+
+    out_msk = out_dir / "masked.tif"
+    rsgispy.imageutils.masking.mask_img(
+        str(in_img), str(msk_img), str(out_msk), 0, 1, gdalformat="COG",
+        calc_stats=True, use_pbar=False, creation_opts=jpeg_opts,
+    )
+    _check(out_msk, 3)
+
+    out_pct = out_dir / "pct.tif"
+    rsgispy.imagecalc.percentiles.calc_imgs_pxl_percentiles(
+        [str(in_img)], str(out_pct), [50.0], gdalformat="COG",
+        no_data_val=0, calc_stats=True, use_pbar=False, creation_opts=jpeg_opts,
+    )
+    _check(out_pct, 1)
+
+    out_zones = out_dir / "zones.tif"
+    rsgispy.imageutils.rasterise.create_dist_zones_to_vec_lyr(
+        str(vec_file), "zones", str(in_img), str(out_zones),
+        recode_lut=[(1, (0.0, 500.0)), (2, (500.0, 2000.0))], gdalformat="COG",
+        calc_stats=True, use_pbar=False, creation_opts=jpeg_opts,
+    )
+    _check(out_zones, 1)
+
+    # Thematic output: LAYER_TYPE and thematic statistics are added before
+    # the conversion (set_img_thematic on the COG used to fail) and the
+    # overviews use nearest neighbour.
+    nan_img = tmp_path / "nan.tif"
+    nan_data = _ramp()
+    nan_data[0, :50, :] = np.nan
+    _write_raster(nan_img, nan_data)
+    out_fin = out_dir / "finite.tif"
+    rsgispy.imageutils.masking.gen_finite_mask(
+        str(nan_img), str(out_fin), gdalformat="COG", calc_stats=True,
+        use_pbar=False,
+    )
+    assert counts == {"write_cog": 1, "update_cog": 0}
+    _assert_valid_cog(out_fin, stats=False)
+    with rasterio.open(out_fin) as src:
+        assert src.tags(1).get("LAYER_TYPE") == "thematic"
+        assert "STATISTICS_MAXIMUM" in src.tags(1)
+        assert src.tags(ns="IMAGE_STRUCTURE").get("OVERVIEW_RESAMPLING") == "NEAREST"
+    _assert_no_temp_files(
+        out_dir, ["finite.tif", "masked.tif", "pct.tif", "sel.tif", "zones.tif"]
+    )
+
+
+def _write_pam_category_names(img_path, names):
+    """Write band 1 category names to the PAM sidecar of ``img_path``."""
+    root = ET.Element("PAMDataset")
+    band = ET.SubElement(root, "PAMRasterBand", band="1")
+    cats = ET.SubElement(band, "CategoryNames")
+    for name in names:
+        ET.SubElement(cats, "Category").text = name
+    ET.ElementTree(root).write(f"{img_path}.aux.xml")
+
+
+def _read_pam_category_names(img_path):
+    root = ET.parse(f"{img_path}.aux.xml").getroot()
+    return [cat.text for cat in root.iter("Category")]
+
+
+def test_cog_rebuild_keeps_pam_sidecar(tmp_path, clean_crt_env):
+    """Metadata GDAL keeps in the .aux.xml sidecar (category names) survives a rebuild."""
+    _ = clean_crt_env
+    cls_img = tmp_path / "cls.tif"
+    cls = (np.add.outer(np.arange(HEIGHT), np.arange(WIDTH)) // 100 % 3 + 1)
+    _write_raster(cls_img, cls, dtype="uint8")
+    cog = tmp_path / "cls_cog.tif"
+    rasterio.shutil.copy(str(cls_img), str(cog), driver="COG")
+    names = ["nd", "water", "forest", "urban"]
+    _write_pam_category_names(cog, names)
+
+    rsgispy.imageutils.stats.pop_img_stats(str(cog), use_pbar=False)
+    _assert_valid_cog(cog, stats=True)
+    _assert_no_temp_files(tmp_path, ["cls.tif", "cls_cog.tif", "cls_cog.tif.aux.xml"])
+    assert _read_pam_category_names(cog) == names
+
+    # A stale sidecar is still removed when the new COG has none.
+    rsgispy.imageprocess.write_cog(str(cls_img), str(cog))
+    _assert_no_temp_files(tmp_path, ["cls.tif", "cls_cog.tif"])
+
+
+def _class_grid(dtype):
+    classes = np.array([1, 100, 1000])
+    idx = np.add.outer(np.arange(HEIGHT) // 7, np.arange(WIDTH) // 5) % 3
+    return classes[idx].astype(dtype)
+
+
+def _cog_grid():
+    return rsgispy.imageprocess.IntersectionGrid(
+        width=WIDTH,
+        height=HEIGHT,
+        transform=from_origin(500000.0, 5200000.0, 10.0, 10.0),
+        crs=CRS.from_epsg(32630),
+        offsets={},
+    )
+
+
+@pytest.mark.parametrize("dtype", ["int16", "int32"])
+def test_thematic_cog_overviews_use_nearest(tmp_path, clean_crt_env, dtype):
+    """Thematic COGs without a colour table get nearest-neighbour overviews."""
+    _ = clean_crt_env
+    cls = _class_grid(dtype)
+    cases = (
+        ("stats", True, None, "NEAREST"),
+        ("no_stats", False, None, "NEAREST"),
+        ("mode", True, {"OVERVIEW_RESAMPLING": "MODE"}, "MODE"),
+    )
+    for name, calc_stats, opts, exp_resamp in cases:
+        out_cog = tmp_path / f"cls_{name}.tif"
+        with ExitStack() as stack:
+            dst = rsgispy.imageprocess.open_output_dataset(
+                stack, str(out_cog), "COG", dtype, _cog_grid(), creation_opts=opts
+            )
+            rsgispy.imageprocess.pop_stats_on_close(
+                dst, calc_stats, thematic=True, use_pbar=False
+            )
+            dst.write(cls, 1)
+        _assert_valid_cog(out_cog, stats=False)
+        with rasterio.open(out_cog) as src:
+            assert src.tags(ns="IMAGE_STRUCTURE")["OVERVIEW_RESAMPLING"] == exp_resamp
+            assert ("STATISTICS_MAXIMUM" in src.tags(1)) == calc_stats
+        with rasterio.open(out_cog, overview_level=0) as ovr:
+            assert set(np.unique(ovr.read(1)).tolist()) <= {1, 100, 1000}
+
+    # write_cog uses NEAREST for a GeoTIFF whose bands are all thematic.
+    thm_img = tmp_path / "thm.tif"
+    _write_raster(thm_img, cls, dtype=dtype)
+    with rasterio.open(thm_img, "r+") as dst:
+        dst.update_tags(1, LAYER_TYPE="thematic")
+    thm_cog = tmp_path / "thm_cog.tif"
+    rsgispy.imageprocess.write_cog(str(thm_img), str(thm_cog))
+    with rasterio.open(thm_cog) as src:
+        assert src.tags(ns="IMAGE_STRUCTURE")["OVERVIEW_RESAMPLING"] == "NEAREST"
+
+
+def test_cog_output_to_gdal_virtual_path(tmp_path, clean_crt_env):
+    """COG outputs to /vsimem/ paths are staged locally and leave no temporary files."""
+    monkeypatch = clean_crt_env
+    staged = []
+    orig_staging_path = rsgis_io._staging_path  # pylint: disable=protected-access
+
+    def _record_staging_path(output_img):
+        path = orig_staging_path(output_img)
+        staged.append(path)
+        return path
+
+    monkeypatch.setattr(rsgis_io, "_staging_path", _record_staging_path)
+    in_img = tmp_path / "in.tif"
+    _write_raster(in_img, _ramp())
+    vsi_dir = f"/vsimem/rsgispy_test_{uuid.uuid4().hex}"
+    out_cog = f"{vsi_dir}/out_cog.tif"
+    direct_cog = f"{vsi_dir}/direct_cog.tif"
+    band_defs = [rsgispy.imageprocess.BandDefn("b1", str(in_img), 1)]
+    try:
+        for factor in (2, 3):  # the second call replaces the output
+            rsgispy.imagecalc.maths.band_maths(
+                output_img=out_cog,
+                exp=f"b1 * {factor}",
+                band_defs=band_defs,
+                gdalformat="COG",
+                datatype=rsgispy.TYPE_32FLOAT,
+                calc_stats=True,
+                use_pbar=False,
+            )
+        with rasterio.open(out_cog) as src:
+            assert src.tags(ns="IMAGE_STRUCTURE").get("LAYOUT") == "COG"
+            assert src.overviews(1)
+            assert "STATISTICS_MEAN" in src.tags(1)
+            np.testing.assert_array_equal(src.read(1), _ramp()[0] * 3)
+        rsgispy.imageprocess.write_cog(str(in_img), direct_cog)
+        with rasterio.open(direct_cog) as src:
+            assert src.tags(ns="IMAGE_STRUCTURE").get("LAYOUT") == "COG"
+
+        # The temporary GeoTIFFs were local files and have been deleted.
+        assert staged
+        for path in staged:
+            assert not path.startswith("/vsi")
+            assert not any(
+                os.path.exists(path + ext) for ext in ("", ".aux.xml", ".ovr", ".msk")
+            )
+        try:
+            from osgeo import gdal  # pylint: disable=import-outside-toplevel
+        except ImportError:  # pragma: no cover - GDAL Python bindings are optional
+            gdal = None
+        # Only check the listing when osgeo shares rasterio's GDAL (/vsimem/).
+        if gdal is not None and gdal.VSIStatL(out_cog) is not None:
+            assert sorted(gdal.ReadDir(vsi_dir)) == ["direct_cog.tif", "out_cog.tif"]
+    finally:
+        for path in (out_cog, direct_cog):
+            if rasterio.shutil.exists(path):
+                rasterio.shutil.delete(path)

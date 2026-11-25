@@ -20,10 +20,10 @@ from rsgispy.imageprocess import (
     fits_dtype_range,
     iter_dataset_windows,
     iter_image_blocks,
-    maybe_pop_stats,
     open_input_datasets,
     open_multi_image_datasets,
     open_output_dataset,
+    pop_stats_on_close,
 )
 from rsgispy.tools.stats import (
     compute_nanpercentiles,
@@ -310,6 +310,9 @@ def calc_imgs_pxl_percentiles(
         )
         if no_data_val is not None:
             dst.nodata = no_data_val
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=no_data_val, use_pbar=use_pbar
+        )
         for band_idx, pct in enumerate(pcts, start=1):
             dst.set_band_description(band_idx, _pct_label(pct))
 
@@ -327,14 +330,6 @@ def calc_imgs_pxl_percentiles(
             dst.write(
                 pct_arr.astype(out_np_dtype, copy=False), window=out_win
             )
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )
 
 
 def calc_img_band_pxl_percentiles(
@@ -422,6 +417,9 @@ def calc_img_band_pxl_percentiles(
         )
         if no_data_val is not None:
             dst.nodata = no_data_val
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=no_data_val, use_pbar=use_pbar
+        )
         out_band = 1
         for b_idx in range(n_bands):
             base_name = in_names[b_idx] if in_names[b_idx] else f"b{b_idx + 1}"
@@ -447,11 +445,3 @@ def calc_img_band_pxl_percentiles(
                 out_np_dtype, copy=False
             )
             dst.write(out_arr, window=out_win)
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )

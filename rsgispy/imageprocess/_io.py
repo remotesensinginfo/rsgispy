@@ -13,6 +13,8 @@ place: :func:`update_cog` rebuilds them through a temporary GeoTIFF.
 
 from contextlib import ExitStack
 import os
+import posixpath
+import tempfile
 from types import TracebackType
 from typing import (
     Any,
@@ -22,6 +24,7 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Type,
     Union,
@@ -48,15 +51,78 @@ _COG_GHOST_MARKERS = (
     b"LAYOUT=IFDS_BEFORE_DATA",
     b"KNOWN_INCOMPATIBLE_EDITION=NO",
 )
+# Options of GDAL's COG driver that GDAL records under the same name in the
+# IMAGE_STRUCTURE metadata of a COG and that are carried over when one is
+# rebuilt (COMPRESS, PREDICTOR, INTERLEAVE and the quality settings are
+# translated separately in cog_creation_opts_from_file).
+_COG_RECORDED_OPTS = (
+    "OVERVIEW_RESAMPLING",
+    "MAX_Z_ERROR",
+    "MAX_Z_ERROR_OVERVIEW",
+    "JXL_EFFORT",
+    "JXL_DISTANCE",
+    "JXL_ALPHA_DISTANCE",
+)
+_RESAMPLING_OPTS = frozenset({"RESAMPLING", "OVERVIEW_RESAMPLING"})
 # id(writer) -> StagedOutput for writers opened by open_output_dataset.
 _WRITER_STAGES: Dict[int, "StagedOutput"] = {}
+# Absolute paths of the temporary GeoTIFFs of open StagedOutput contexts.
+_ACTIVE_STAGING_PATHS: Set[str] = set()
+
+
+def _is_vsi_path(img_path: str) -> bool:
+    """Return ``True`` for GDAL virtual file system paths (``/vsimem/`` etc.)."""
+    return str(img_path).startswith("/vsi")
 
 
 def _staging_path(output_img: str) -> str:
-    """Return a unique temporary file path in the directory of ``output_img``."""
-    out_abs = os.path.abspath(output_img)
-    out_dir, base = os.path.split(out_abs)
+    """
+    Return a unique temporary file path in the directory of ``output_img``,
+    or in the local temporary directory for GDAL virtual file system paths
+    (``/vsimem/``, ``/vsis3/``, ...), which cannot be written block by block or
+    renamed with ``os`` functions.
+    """
+    if _is_vsi_path(output_img):
+        out_dir = tempfile.gettempdir()
+        base = posixpath.basename(str(output_img).rstrip("/")) or "img"
+    else:
+        out_dir, base = os.path.split(os.path.abspath(output_img))
     return os.path.join(out_dir, f".{base}.{uuid.uuid4().hex[:12]}{_STAGING_SUFFIX}")
+
+
+def _is_active_staging_path(img_path: str) -> bool:
+    """Return ``True`` if ``img_path`` is the temporary file of an open stage."""
+    return (not _is_vsi_path(img_path)) and (
+        os.path.abspath(img_path) in _ACTIVE_STAGING_PATHS
+    )
+
+
+def _merge_img_creation_opts(
+    default_opts: Mapping[str, Any],
+    creation_opts: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Merge explicit ``creation_opts`` on top of ``default_opts`` (the resolved
+    built-in or environment variable options), comparing keys
+    case-insensitively so an explicit option always replaces the default one.
+
+    If the explicit options set ``BLOCKYSIZE`` without ``TILED`` or
+    ``BLOCKXSIZE`` (i.e. a striped GeoTIFF with that many rows per strip),
+    the default ``TILED`` and ``BLOCKXSIZE`` are dropped so the output is
+    striped rather than failing or being tiled.
+    """
+    explicit = dict(creation_opts) if creation_opts else {}
+    explicit_keys = {str(key).upper().strip() for key in explicit}
+    drop_keys = set(explicit_keys)
+    if "BLOCKYSIZE" in explicit_keys and not explicit_keys & {"TILED", "BLOCKXSIZE"}:
+        drop_keys.update({"TILED", "BLOCKXSIZE"})
+    merged: Dict[str, Any] = {
+        key: val
+        for key, val in default_opts.items()
+        if str(key).upper().strip() not in drop_keys
+    }
+    merged.update(explicit)
+    return merged
 
 
 def _remove_raster_files(img_path: str) -> None:
@@ -166,11 +232,15 @@ def _staging_gtiff_opts(cog_opts: Mapping[str, Any]) -> Dict[str, Any]:
 
 def cog_creation_opts_from_file(input_img: Union[str, os.PathLike]) -> Dict[str, Any]:
     """
-    Return COG creation options that reproduce the layout of an existing COG:
-    its compression (``COMPRESS``, ``NONE`` if uncompressed), predictor,
-    block size, overview resampling and interleave. Other options (e.g.
-    ``LEVEL`` or ``QUALITY``, which are not recorded in the file) come from
-    :func:`resolve_cog_creation_opts`.
+    Return COG creation options that reproduce the layout of an existing COG
+    from the settings GDAL records in its ``IMAGE_STRUCTURE`` metadata: the
+    compression (``COMPRESS``, ``NONE`` if uncompressed), predictor, block
+    size, overview resampling, interleave, ``NBITS`` and the lossy
+    compression settings (``QUALITY`` from ``JPEG_QUALITY`` or
+    ``WEBP_LEVEL``, ``QUALITY=100`` for lossless WEBP, ``MAX_Z_ERROR`` for
+    LERC and the ``JXL_*`` options). Options that are not recorded in the
+    file (e.g. ``LEVEL``, or ``QUALITY`` if GDAL could not read it) come
+    from :func:`resolve_cog_creation_opts`.
 
     :param input_img: Path to an existing COG.
     :return: Dictionary of COG creation options.
@@ -186,6 +256,10 @@ def cog_creation_opts_from_file(input_img: Union[str, os.PathLike]) -> Dict[str,
         struct = {
             str(k).upper(): str(v) for k, v in src.tags(ns="IMAGE_STRUCTURE").items()
         }
+        band_struct = {
+            str(k).upper(): str(v)
+            for k, v in src.tags(1, ns="IMAGE_STRUCTURE").items()
+        }
         blk_h, blk_w = src.block_shapes[0]
     compression = struct.get("COMPRESSION", "NONE").upper()
     # e.g. 'YCbCr JPEG' for JPEG-compressed RGB images.
@@ -197,14 +271,37 @@ def cog_creation_opts_from_file(input_img: Union[str, os.PathLike]) -> Dict[str,
         cog_opts["PREDICTOR"] = predictor
     else:
         cog_opts.pop("PREDICTOR", None)
-    if "OVERVIEW_RESAMPLING" in struct:
-        cog_opts["OVERVIEW_RESAMPLING"] = struct["OVERVIEW_RESAMPLING"]
+    for opt_name in _COG_RECORDED_OPTS:
+        if opt_name in struct:
+            cog_opts[opt_name] = struct[opt_name]
+    reversibility = struct.get("COMPRESSION_REVERSIBILITY", "").upper()
+    if cog_opts["COMPRESS"] == "JPEG" and "JPEG_QUALITY" in struct:
+        cog_opts["QUALITY"] = struct["JPEG_QUALITY"]
+    elif cog_opts["COMPRESS"] == "WEBP":
+        if "WEBP_LEVEL" in struct:
+            cog_opts["QUALITY"] = struct["WEBP_LEVEL"]
+        elif reversibility == "LOSSLESS":
+            # The COG driver writes lossless WEBP for QUALITY=100.
+            cog_opts["QUALITY"] = "100"
+    elif cog_opts["COMPRESS"] == "JXL" and reversibility in ("LOSSLESS", "LOSSY"):
+        cog_opts["JXL_LOSSLESS"] = "YES" if reversibility == "LOSSLESS" else "NO"
+    if "NBITS" in band_struct:
+        cog_opts["NBITS"] = band_struct["NBITS"]
     if blk_w == blk_h:
         cog_opts["BLOCKSIZE"] = int(blk_w)
     if struct.get("INTERLEAVE", "PIXEL").upper() in ("BAND", "TILE"):
         cog_opts["INTERLEAVE"] = struct["INTERLEAVE"].upper()
     cog_opts.setdefault("BIGTIFF", "IF_SAFER")
     return cog_opts
+
+
+def _is_thematic_img(img_path: str) -> bool:
+    """Return ``True`` if every band of ``img_path`` has ``LAYER_TYPE=thematic``."""
+    with rasterio.open(img_path, "r") as src:
+        return src.count > 0 and all(
+            str(src.tags(bidx).get("LAYER_TYPE", "")).lower() == "thematic"
+            for bidx in src.indexes
+        )
 
 
 def write_cog(
@@ -220,8 +317,15 @@ def write_cog(
     The COG is written to a temporary file next to ``output_img`` and then
     moved into place, so an existing ``output_img`` (which may be
     ``input_img``'s source) is only replaced once the conversion has
-    succeeded. Stale ``.aux.xml``/``.ovr``/``.msk`` sidecars of
-    ``output_img`` are removed.
+    succeeded. Sidecars written by GDAL with the COG (e.g. an ``.aux.xml``
+    holding a raster attribute table or category names) are moved with it,
+    and stale ``.aux.xml``/``.ovr``/``.msk`` sidecars of ``output_img`` that
+    have no replacement are removed. A GDAL virtual file system path
+    (``/vsimem/``, ``/vsis3/``, ...) is written directly by GDAL.
+
+    If every band of ``input_img`` is thematic (``LAYER_TYPE=thematic``) and
+    ``cog_opts`` set neither ``OVERVIEW_RESAMPLING`` nor ``RESAMPLING``, the
+    overviews are built with ``NEAREST`` resampling.
 
     :param input_img: Path to the image to convert (read from disk).
     :param output_img: Path to the output COG.
@@ -236,16 +340,23 @@ def write_cog(
             "mosaic_tiled.tif", "mosaic_cog.tif", {"COMPRESS": "DEFLATE"}
         )
     """
+    in_path = os.fspath(input_img)
     out_path = os.fspath(output_img)
     eff_opts = resolve_cog_creation_opts() if cog_opts is None else dict(cog_opts)
+    if not {str(key).upper() for key in eff_opts} & _RESAMPLING_OPTS:
+        if _is_thematic_img(in_path):
+            eff_opts["OVERVIEW_RESAMPLING"] = "NEAREST"
+    if _is_vsi_path(out_path):
+        rasterio.shutil.copy(in_path, out_path, driver="COG", **eff_opts)
+        return
     tmp_cog = _staging_path(out_path)
     try:
-        rasterio.shutil.copy(
-            os.fspath(input_img), tmp_cog, driver="COG", **eff_opts
-        )
+        rasterio.shutil.copy(in_path, tmp_cog, driver="COG", **eff_opts)
         os.replace(tmp_cog, out_path)
         for ext in _SIDECAR_EXTS:
-            if os.path.exists(out_path + ext):
+            if os.path.exists(tmp_cog + ext):
+                os.replace(tmp_cog + ext, out_path + ext)
+            elif os.path.exists(out_path + ext):
                 os.remove(out_path + ext)
     finally:
         _remove_raster_files(tmp_cog)
@@ -266,14 +377,17 @@ def update_cog(
     a temporary tiled GeoTIFF next to it, ``update_func(tmp_path)`` edits that
     copy (e.g. adds statistics, a colour table or band names), and the copy is
     converted back to a COG with the original compression, predictor, block
-    size and overview resampling (:func:`cog_creation_opts_from_file`), which
-    replaces ``input_img``. If anything fails, ``input_img`` is left unchanged
-    and the temporary files are removed.
+    size, overview resampling and lossy compression settings (e.g. JPEG or
+    WEBP quality, LERC maximum error; see :func:`cog_creation_opts_from_file`),
+    which replaces ``input_img``. Metadata GDAL keeps in an ``.aux.xml``
+    sidecar (e.g. a raster attribute table or category names) is kept. If
+    anything fails, ``input_img`` is left unchanged and the temporary files
+    are removed.
 
     This decodes and re-encodes the whole image and rebuilds the overviews,
     so it needs temporary disk space for one (fast-compressed) copy of the
     image and takes roughly as long as creating the COG did. Lossy
-    compression (JPEG, WEBP) is applied again.
+    compression (JPEG, WEBP) is applied again, with the same quality.
 
     :param input_img: Path to an existing COG.
     :param update_func: Callable receiving the path of the temporary GeoTIFF.
@@ -297,6 +411,7 @@ def update_cog(
     if overview_resampling is not None:
         cog_opts["OVERVIEW_RESAMPLING"] = str(overview_resampling).upper()
     staging = _staging_path(img_path)
+    _ACTIVE_STAGING_PATHS.add(staging)
     try:
         rasterio.shutil.copy(
             img_path, staging, driver="GTiff", **_staging_gtiff_opts(cog_opts)
@@ -304,6 +419,7 @@ def update_cog(
         update_func(staging)
         write_cog(staging, img_path, cog_opts)
     finally:
+        _ACTIVE_STAGING_PATHS.discard(staging)
         _remove_raster_files(staging)
 
 
@@ -314,8 +430,13 @@ class StagedOutput:
     written block by block on disk instead of in memory.
 
     * For ``gdalformat='COG'`` the data is written to a temporary tiled
-      GeoTIFF next to ``output_img`` (:attr:`path`, :attr:`write_format`
-      ``'GTIFF'`` and :attr:`write_opts`). When the context exits without an
+      GeoTIFF (:attr:`path`, :attr:`write_format` ``'GTIFF'``) next to
+      ``output_img``, or in the local temporary directory for GDAL virtual
+      file system paths such as ``/vsimem/`` or ``/vsis3/``. Its
+      :attr:`write_opts` are fixed staging options; the ``GTIFF`` defaults
+      and environment variables do not apply to it, also when :attr:`path`
+      is passed on to a helper that creates it with
+      :func:`open_output_dataset`. When the context exits without an
       exception, the functions registered with :meth:`add_close_action` are
       called with :attr:`path` (e.g. to add statistics, which are then carried
       into the COG), the file is converted with :func:`write_cog` and the
@@ -326,7 +447,10 @@ class StagedOutput:
       layout (:func:`cog_creation_opts_from_file`).
     * For other formats :attr:`path` is ``output_img``, :attr:`write_opts`
       are the resolved creation options (:func:`get_gdal_img_creation_opts`
-      plus ``creation_opts``) and the close actions run on the output itself.
+      with ``creation_opts`` merged on top, see :func:`open_output_dataset`)
+      and the close actions run on the output itself. If ``output_img`` is
+      the temporary file of another open stage (e.g. passed on to a helper
+      that writes it), :attr:`write_opts` are ``creation_opts`` only.
 
     An existing output that has the COG layout is also staged when
     ``output_exists=True``, whatever ``gdalformat`` is, so updating it keeps
@@ -372,6 +496,8 @@ class StagedOutput:
             self.output_img
         )
         existing_cog = self.update_existing and is_cog_layout(self.output_img)
+        # True if cog_opts were read from an existing COG being updated.
+        self.existing_cog: bool = existing_cog
         self.is_cog: bool = existing_cog or (
             self.gdalformat.upper().strip() == "COG"
         )
@@ -390,9 +516,14 @@ class StagedOutput:
             self.cog_opts = None
             self.path = self.output_img
             self.write_format = self.gdalformat
-            self.write_opts = dict(get_gdal_img_creation_opts(self.gdalformat))
-            if creation_opts:
-                self.write_opts.update(creation_opts)
+            if _is_active_staging_path(self.output_img):
+                # The temporary GeoTIFF of a COG output only gets the staging
+                # options, never the user's GTIFF defaults or variables.
+                self.write_opts = dict(creation_opts) if creation_opts else {}
+            else:
+                self.write_opts = _merge_img_creation_opts(
+                    get_gdal_img_creation_opts(self.gdalformat), creation_opts
+                )
 
     def add_close_action(self, action: Callable[[str], None]) -> None:
         """
@@ -417,12 +548,15 @@ class StagedOutput:
         self._writer_ids.append(id(dst))
 
     def __enter__(self) -> "StagedOutput":
+        if self.is_cog:
+            _ACTIVE_STAGING_PATHS.add(self.path)
         if self.is_cog and self.update_existing:
             try:
                 rasterio.shutil.copy(
                     self.output_img, self.path, driver="GTiff", **self.write_opts
                 )
             except BaseException:
+                _ACTIVE_STAGING_PATHS.discard(self.path)
                 _remove_raster_files(self.path)
                 raise
         return self
@@ -443,6 +577,7 @@ class StagedOutput:
                     write_cog(self.path, self.output_img, self.cog_opts)
         finally:
             if self.is_cog:
+                _ACTIVE_STAGING_PATHS.discard(self.path)
                 _remove_raster_files(self.path)
         return False
 
@@ -606,16 +741,23 @@ def open_output_dataset(
     (tiled, DEFLATE-compressed GeoTIFF unless configured otherwise with the
     ``RSGISPY_IMG_CRT_OPTS_<GDAL_FORMAT>`` or
     ``RSGISLIB_IMG_CRT_OPTS_<GDAL_FORMAT>`` environment variables), with any
-    explicit ``creation_opts`` merged on top.
+    explicit ``creation_opts`` merged on top (keys compared
+    case-insensitively, so an explicit option replaces the default one). If
+    ``creation_opts`` set ``BLOCKYSIZE`` but neither ``TILED`` nor
+    ``BLOCKXSIZE`` (e.g. ``{'BLOCKYSIZE': 1}`` for one row per strip), the
+    default ``TILED`` and ``BLOCKXSIZE`` are dropped and a striped GeoTIFF is
+    written.
 
     For ``gdalformat='COG'`` the returned writer is a temporary tiled GeoTIFF
-    next to ``output_img``, so the raster is written block by block on disk
-    rather than in memory. When ``stack`` exits without an exception, the
-    temporary file is converted to the COG (``creation_opts`` and the
-    ``*_IMG_CRT_OPTS_COG`` variables are passed to the COG driver, which also
-    builds the overviews) and deleted; on an exception it is deleted and the
-    output is not created. Metadata set on the writer (no-data value, band
-    descriptions, tags, colour tables) is carried into the COG. Use
+    next to ``output_img`` (in the local temporary directory for GDAL virtual
+    file system paths such as ``/vsimem/`` or ``/vsis3/``), so the raster is
+    written block by block on disk rather than in memory. When ``stack``
+    exits without an exception, the temporary file is converted to the COG
+    (``creation_opts`` and the ``*_IMG_CRT_OPTS_COG`` variables are passed to
+    the COG driver, which also builds the overviews) and deleted; on an
+    exception it is deleted and the output is not created. Metadata set on
+    the writer (no-data value, band descriptions, tags, colour tables) is
+    carried into the COG. Use
     :func:`on_output_close` (or :func:`rsgispy.imageprocess.pop_stats_on_close`)
     for anything that has to be done on the closed file before the
     conversion, such as statistics. Existing COGs opened with

@@ -3,7 +3,7 @@ Online streaming band statistics and post-write statistics helpers for
 :mod:`rsgispy.imageprocess`.
 """
 
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 from rasterio.io import DatasetReader, DatasetWriter
@@ -101,7 +101,12 @@ def pop_stats_on_close(
     statistics are calculated on the temporary tiled GeoTIFF before it is
     converted, so they are stored in the COG without rewriting it, and
     rsgispy's own pyramids are skipped because the COG driver builds the
-    overviews.
+    overviews. With ``thematic=True`` (whether or not ``calc_stats`` is
+    ``True``) the COG overviews are built with ``NEAREST`` resampling unless
+    the COG creation options set ``OVERVIEW_RESAMPLING`` or ``RESAMPLING``
+    (an existing COG updated with ``output_exists=True`` keeps ``NEAREST``
+    or ``MODE`` overviews and otherwise gets ``NEAREST``), so the overviews
+    only contain class values.
 
     :param dst: Open writer returned by
                 :func:`rsgispy.imageprocess.open_output_dataset` or
@@ -126,10 +131,12 @@ def pop_stats_on_close(
             ...  # write blocks
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    if not calc_stats:
-        return
     stage = get_output_stage(dst)
     is_cog = stage is not None and stage.is_cog
+    if thematic and is_cog and stage is not None and stage.cog_opts is not None:
+        _use_nearest_overviews(stage.cog_opts, stage.existing_cog)
+    if not calc_stats:
+        return
 
     def _pop_stats(path: str) -> None:
         maybe_pop_stats(
@@ -142,6 +149,24 @@ def pop_stats_on_close(
         )
 
     on_output_close(dst, _pop_stats)
+
+
+def _use_nearest_overviews(cog_opts: Dict[str, Any], existing_cog: bool) -> None:
+    """
+    Make the COG driver build thematic overviews with ``NEAREST`` resampling:
+    for a new COG unless ``OVERVIEW_RESAMPLING`` or ``RESAMPLING`` is set, for
+    an existing one (options read from the file) unless it already uses
+    ``NEAREST`` or ``MODE``.
+    """
+    keys = {str(key).upper().strip(): key for key in cog_opts}
+    if existing_cog:
+        cur = str(cog_opts.get(keys.get("OVERVIEW_RESAMPLING", ""), "")).upper()
+        if cur in ("NEAREST", "MODE"):
+            return
+        cog_opts.pop(keys.get("OVERVIEW_RESAMPLING", ""), None)
+    elif "OVERVIEW_RESAMPLING" in keys or "RESAMPLING" in keys:
+        return
+    cog_opts["OVERVIEW_RESAMPLING"] = "NEAREST"
 
 
 def update_chan_moments(

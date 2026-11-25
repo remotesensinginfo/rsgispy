@@ -29,11 +29,9 @@ from rsgispy.imageprocess import (
     create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
+    pop_stats_on_close,
 )
-from rsgispy.imageutils._helpers import (
-    maybe_pop_stats,
-    normalise_creation_options,
-)
+from rsgispy.imageutils._helpers import normalise_creation_options
 from rsgispy.imageutils.metadata import get_img_res
 from rsgispy.tools.geometry import degrees_to_metres
 from rsgispy.vectorprocess import VectorInput, read_vec_gdf
@@ -126,6 +124,9 @@ def calc_wgs84_pixel_area(
         )
         if no_data_val is not None:
             dst.nodata = float(no_data_val)
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=no_data_val, use_pbar=use_pbar
+        )
         for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             _, y_grid = _block_centre_coords(
                 src.transform,
@@ -136,13 +137,6 @@ def calc_wgs84_pixel_area(
             )
             x_m, y_m = degrees_to_metres(y_grid, x_res, y_res)
             dst.write(((x_m * y_m) / scale_f).astype(out_np_dt, copy=False), 1, window=win)
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        use_pbar=use_pbar,
-    )
 
 
 def calc_wgs84_pixel_size(
@@ -199,6 +193,9 @@ def calc_wgs84_pixel_size(
         )
         if no_data_val is not None:
             dst.nodata = float(no_data_val)
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=no_data_val, use_pbar=use_pbar
+        )
         for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             _, y_grid = _block_centre_coords(
                 src.transform,
@@ -214,13 +211,6 @@ def calc_wgs84_pixel_size(
                 np.stack((x_m, y_m), axis=0).astype(out_np_dt, copy=False),
                 window=win,
             )
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        use_pbar=use_pbar,
-    )
 
 
 def calc_pixel_locations(
@@ -276,6 +266,9 @@ def calc_pixel_locations(
         )
         if no_data_val is not None:
             dst.nodata = float(no_data_val)
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=no_data_val, use_pbar=use_pbar
+        )
         for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             x_grid, y_grid = _block_centre_coords(
                 src.transform,
@@ -288,13 +281,6 @@ def calc_pixel_locations(
                 np.stack((x_grid, y_grid), axis=0).astype(out_np_dt, copy=False),
                 window=win,
             )
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        use_pbar=use_pbar,
-    )
 
 
 def calc_wgs84_pixel_locations(
@@ -360,6 +346,9 @@ def calc_wgs84_pixel_locations(
         )
         if no_data_val is not None:
             dst.nodata = float(no_data_val)
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=no_data_val, use_pbar=use_pbar
+        )
 
         for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             x_grid, y_grid = _block_centre_coords(
@@ -376,13 +365,6 @@ def calc_wgs84_pixel_locations(
                 ),
                 window=win,
             )
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        use_pbar=use_pbar,
-    )
 
 
 def _parse_grid_algorithm(
@@ -878,6 +860,9 @@ def grid_scattered_pts(
             creation_opts=norm_opts,
         )
         dst.nodata = out_nodata
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=out_nodata, use_pbar=use_pbar
+        )
         out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
 
         for win in iter_dataset_windows(
@@ -923,10 +908,3 @@ def grid_scattered_pts(
                 1,
                 window=win,
             )
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=out_nodata,
-        use_pbar=use_pbar,
-    )

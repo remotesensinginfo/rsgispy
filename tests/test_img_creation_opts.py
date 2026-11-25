@@ -19,6 +19,7 @@ from rasterio.transform import from_origin
 import rsgispy
 import rsgispy.imagecalc.maths
 import rsgispy.imageprocess
+import rsgispy.imageutils.blank
 import rsgispy.imageutils.envopts
 import rsgispy.imageutils.stats
 import rsgispy.imageutils.warp
@@ -299,3 +300,114 @@ def test_multi_core_internal_overviews_use_default_opts(tmp_path, clean_crt_env)
         assert src.overviews(1) == [2, 4]
         assert src.profile["tiled"] is True
         assert src.compression == Compression.deflate
+
+
+def test_cog_staging_ignores_gtiff_creation_opts(tmp_path, clean_crt_env):
+    """GTIFF env options never apply to the temporary GeoTIFF of a COG output."""
+    monkeypatch = clean_crt_env
+    monkeypatch.setenv(
+        "RSGISPY_IMG_CRT_OPTS_GTIFF", "TILED=YES:COMPRESS=JPEG:PHOTOMETRIC=YCBCR"
+    )
+    ref_img = tmp_path / "ref.tif"
+    proc_img = tmp_path / "proc.tif"
+    _write_raster(ref_img, np.zeros((520, 600), dtype=np.float32))
+    _write_raster(proc_img, np.full((260, 300), 42.0, dtype=np.float32))
+    with rasterio.open(proc_img, "r+") as dst:
+        dst.transform = from_origin(500000.0, 5200000.0, 20.0, 20.0)
+
+    resamp = tmp_path / "resamp.tif"
+    rsgispy.imageutils.warp.resample_img_to_match(
+        str(ref_img), str(proc_img), str(resamp), gdalformat="COG"
+    )
+    reproj = tmp_path / "reproj.tif"
+    rsgispy.imageutils.warp.reproject_image(
+        str(proc_img),
+        str(reproj),
+        out_epsg=3857,
+        gdalformat="COG",
+        no_data_val=-999.0,
+        out_pxl_res="auto",
+    )
+    for out_img in (resamp, reproj):
+        with rasterio.open(out_img) as src:
+            assert src.tags(ns="IMAGE_STRUCTURE").get("LAYOUT") == "COG"
+            assert src.compression != Compression.jpeg
+            assert "STATISTICS_MEAN" in src.tags(1)
+    assert sorted(os.listdir(tmp_path)) == [
+        "proc.tif",
+        "ref.tif",
+        "reproj.tif",
+        "resamp.tif",
+    ]
+
+    # A helper given the temporary path of a COG stage gets only the staging
+    # options; other GeoTIFF outputs still get the environment options.
+    out_cog = str(tmp_path / "out_cog.tif")
+    with rsgispy.imageprocess.StagedOutput(out_cog, "COG") as stage:
+        inner = rsgispy.imageprocess.StagedOutput(
+            stage.path, "GTIFF", creation_opts=stage.write_opts
+        )
+        assert inner.write_opts == stage.write_opts
+        assert "PHOTOMETRIC" not in inner.write_opts
+        rsgispy.imageutils.blank.create_copy_img(
+            str(ref_img),
+            stage.path,
+            gdalformat=stage.write_format,
+            calc_stats=False,
+            use_pbar=False,
+            creation_opts=stage.write_opts,
+        )
+    with rasterio.open(out_cog) as src:
+        assert src.tags(ns="IMAGE_STRUCTURE").get("LAYOUT") == "COG"
+    other = rsgispy.imageprocess.StagedOutput(str(tmp_path / "x.tif"), "GTIFF")
+    assert other.write_opts["PHOTOMETRIC"] == "YCBCR"
+
+
+def test_blockysize_without_tiled_gives_striped_gtiff(tmp_path, clean_crt_env):
+    """creation_opts with BLOCKYSIZE but no TILED/BLOCKXSIZE give a striped GeoTIFF."""
+    monkeypatch = clean_crt_env
+    in_img = tmp_path / "in.tif"
+    _write_raster(in_img, np.ones((64, 300), dtype=np.float32))
+
+    out_rows1 = tmp_path / "rows1.tif"
+    _band_maths(in_img, out_rows1, creation_opts={"BLOCKYSIZE": "1"})
+    with rasterio.open(out_rows1) as src:
+        assert src.profile["tiled"] is False
+        assert src.block_shapes[0] == (1, 300)
+        assert src.compression == Compression.deflate
+        np.testing.assert_allclose(src.read(1), 2.0)
+
+    # Keys are compared case-insensitively.
+    out_rows4 = tmp_path / "rows4.tif"
+    _band_maths(in_img, out_rows4, creation_opts={"blockysize": 4})
+    with rasterio.open(out_rows4) as src:
+        assert src.profile["tiled"] is False
+        assert src.block_shapes[0] == (4, 300)
+
+    # With TILED given explicitly the output stays tiled.
+    out_tiled = tmp_path / "tiled.tif"
+    _band_maths(in_img, out_tiled, creation_opts={"TILED": "YES", "BLOCKYSIZE": 32})
+    with rasterio.open(out_tiled) as src:
+        assert src.profile["tiled"] is True
+        assert src.block_shapes[0] == (32, 256)
+
+    # Tiling options from an environment variable are dropped as well.
+    monkeypatch.setenv(
+        "RSGISPY_IMG_CRT_OPTS_GTIFF",
+        "TILED=YES:BLOCKXSIZE=512:BLOCKYSIZE=512:COMPRESS=LZW",
+    )
+    out_env = tmp_path / "env.tif"
+    _band_maths(in_img, out_env, creation_opts={"BLOCKYSIZE": 2})
+    with rasterio.open(out_env) as src:
+        assert src.profile["tiled"] is False
+        assert src.block_shapes[0] == (2, 300)
+        assert src.compression == Compression.lzw
+
+    # An explicit option replaces the default whatever the case of its key.
+    monkeypatch.delenv("RSGISPY_IMG_CRT_OPTS_GTIFF")
+    stage = rsgispy.imageprocess.StagedOutput(
+        str(tmp_path / "x.tif"), "GTIFF", creation_opts={"compress": "LZW"}
+    )
+    assert "COMPRESS" not in stage.write_opts
+    assert stage.write_opts["compress"] == "LZW"
+    assert stage.write_opts["TILED"] == "YES"

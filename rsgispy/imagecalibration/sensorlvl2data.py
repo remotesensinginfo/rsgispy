@@ -28,9 +28,9 @@ from rsgispy.imageprocess import (
     cast_result_block,
     compute_spatial_intersection,
     iter_dataset_windows,
-    maybe_pop_stats,
     normalise_creation_options,
     open_output_dataset,
+    pop_stats_on_close,
     resolve_out_dtype,
 )
 from rsgispy.imageutils.bands import (
@@ -520,6 +520,13 @@ def _finalise_sen2_sref_output(
             creation_opts=creation_opts,
         )
         dst.nodata = no_data_val
+        pop_stats_on_close(
+            dst,
+            calc_stats,
+            no_data_val=no_data_val,
+            thematic=False,
+            use_pbar=use_pbar,
+        )
         for bidx, bname in enumerate(band_names, start=1):
             dst.set_band_description(bidx, bname)
 
@@ -549,15 +556,6 @@ def _finalise_sen2_sref_output(
                 ),
                 window=win,
             )
-
-    maybe_pop_stats(
-        output_img=out_sref_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        thematic=False,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )
 
 
 def create_stacked_sen2_esa_l2a_img(

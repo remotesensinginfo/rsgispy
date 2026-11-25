@@ -160,8 +160,12 @@ def get_gdal_img_creation_opts(gdalformat: str) -> Dict[str, str]:
     rather than being merged with it, and a variable set to an empty string
     means "no creation options", which gives a plain striped, uncompressed
     GeoTIFF. Explicit ``creation_opts`` passed to an rsgispy function are
-    merged on top of the resolved options. The environment is read on each
-    call, and rsgispy never sets these variables itself; use
+    merged on top of the resolved options (keys compared case-insensitively).
+    If they set ``BLOCKYSIZE`` but neither ``TILED`` nor ``BLOCKXSIZE`` (a
+    striped GeoTIFF, e.g. ``{'BLOCKYSIZE': 1}`` for one row per strip), the
+    resolved ``TILED`` and ``BLOCKXSIZE`` options are dropped, so the output
+    is striped rather than tiled. The environment is read on each call, and
+    rsgispy never sets these variables itself; use
     :mod:`rsgispy.imageutils.envopts` to change them at runtime.
 
     :param gdalformat: GDAL format string (e.g., 'GTIFF', 'COG', 'KEA').
