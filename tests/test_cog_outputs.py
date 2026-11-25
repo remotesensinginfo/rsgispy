@@ -201,6 +201,32 @@ def test_band_maths_cog_then_pop_img_stats(tmp_path, clean_crt_env):
         np.testing.assert_array_equal(src.read(1), _ramp()[0] * 2)
 
 
+def test_band_maths_cog_with_no_data_and_stats(tmp_path, clean_crt_env):
+    """band_maths(calc_stats=True, no_data_val=...) writes a valid COG with stats."""
+    _ = clean_crt_env
+    in_img = tmp_path / "in.tif"
+    _write_raster(in_img, _ramp())
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    out_cog = out_dir / "bm.tif"
+    band_defs = [rsgispy.imageprocess.BandDefn("b1", str(in_img), 1)]
+    rsgispy.imagecalc.maths.band_maths(
+        output_img=str(out_cog),
+        exp="b1 < 10 ? -1 : b1",
+        band_defs=band_defs,
+        gdalformat="COG",
+        datatype=rsgispy.TYPE_32FLOAT,
+        no_data_val=-1.0,
+        calc_stats=True,
+        use_pbar=False,
+    )
+    _assert_valid_cog(out_cog, stats=True)
+    _assert_no_temp_files(out_dir, ["bm.tif"])
+    with rasterio.open(out_cog) as src:
+        assert src.nodata == -1.0
+        assert float(src.tags(1)["STATISTICS_MINIMUM"]) == pytest.approx(10.0)
+
+
 def test_band_maths_cog_output_exists_update(tmp_path, clean_crt_env):
     """output_exists=True on an existing COG rewrites it as a valid COG."""
     _ = clean_crt_env

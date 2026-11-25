@@ -46,6 +46,7 @@ from rsgispy.imageprocess import (
     normalise_creation_options,
     resolve_out_dtype,
     rsgis_dtype_from_np_dtype,
+    set_dataset_nodata,
     validate_band_index,
 )
 from rsgispy.tools.tables import write_dataframe_table
@@ -1277,7 +1278,7 @@ def _finalise_label_raster(
             )
             if out_no_data_val is not None and out_no_data_val != 0 and not is_cog:
                 with rasterio.open(out_path, "r+") as dst:
-                    dst.nodata = out_no_data_val
+                    set_dataset_nodata(dst, out_no_data_val)
     else:
         if not is_cog:
             set_img_not_thematic(out_path)

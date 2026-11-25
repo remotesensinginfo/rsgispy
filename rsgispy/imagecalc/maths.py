@@ -22,11 +22,12 @@ from rsgispy.imageprocess import (
     fits_dtype_range,
     iter_dataset_windows,
     iter_image_blocks,
-    maybe_pop_stats,
     normalise_band_defs,
     open_input_datasets,
     open_output_dataset,
+    pop_stats_on_close,
     process_blocks,
+    set_dataset_nodata,
 )
 
 __all__ = [
@@ -134,12 +135,7 @@ def _set_out_no_data_val(dst: Any, no_data_val: Optional[float]) -> None:
     """Write ``no_data_val`` to every band of ``dst`` unless it is already set."""
     if no_data_val is None:
         return
-    cur_nd = dst.nodata
-    if cur_nd is not None and (
-        cur_nd == no_data_val or (math.isnan(cur_nd) and math.isnan(no_data_val))
-    ):
-        return
-    dst.nodata = no_data_val
+    set_dataset_nodata(dst, no_data_val)
 
 
 def _create_parser(exp: str, band_names: Sequence[str]) -> pymu_eval.Parser:
@@ -374,6 +370,9 @@ def band_maths(
                 f"but expression produces {n_outputs} output(s)."
             )
         _set_out_no_data_val(dst, out_no_data_val)
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=out_no_data_val, use_pbar=use_pbar
+        )
 
         if out_band_names is not None:
             for band_idx, band_name in enumerate(out_band_names, start=1):
@@ -396,14 +395,6 @@ def band_maths(
             out_np_dtype=out_np_dtype,
             use_pbar=use_pbar,
         )
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=out_no_data_val,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )
 
 
 def image_math(
@@ -488,6 +479,9 @@ def image_math(
             creation_opts=creation_opts,
         )
         _set_out_no_data_val(dst, out_no_data_val)
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=out_no_data_val, use_pbar=use_pbar
+        )
 
         if exp_band_name:
             for band_idx in range(1, n_bands + 1):
@@ -509,14 +503,6 @@ def image_math(
                 for band_idx in range(n_bands)
             ]
             dst.write(np.stack(out_bands, axis=0), window=out_win)
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=out_no_data_val,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )
 
 
 def image_band_math(
