@@ -130,7 +130,8 @@ that maximises the similarity, refined to ``1 / sub_pxl_res`` of a pixel.
 (``rsgispy.METRIC_CORRELATION``) for images from the same or similar sensors,
 mutual information (``rsgispy.METRIC_MUTUAL_INFO`` /
 ``METRIC_NORM_MUTUAL_INFO``) for different sensors, and phase correlation
-(``rsgispy.METRIC_PHASE_CORR``), which is fast for large shifts. With
+(``rsgispy.METRIC_PHASE_CORR``), which does not search (``x_search`` /
+``y_search`` are not used), so it is fast for large shifts. With
 ``return_details=True`` it returns the offset in map units and pixels, the
 metric value at the best shift and the number of pixels compared.
 
@@ -195,13 +196,21 @@ scores below ``threshold``. Two matching methods:
   refines the peak to ``1 / sub_pxl_res`` of a pixel. It is robust and
   accurate; its cost grows with ``search_area²``, so keep the search area
   close to the largest expected shift (e.g. twice the offset from step 1).
-* ``TIE_METHOD_PHASE_CORR`` uses FFT phase correlation of the two windows. It
-  is fast and does not search (the shift must be well below half the window
-  size); ``search_area`` is only used to reject matches with a larger shift
-  (set it to 0 to keep them all). It needs larger windows to be accurate: with
-  windows of 64 pixels or less it tends to underestimate the shift, so use
-  ``win_size`` of 128 or more, or template matching, when sub-pixel accuracy
-  matters.
+* ``TIE_METHOD_PHASE_CORR`` uses FFT phase correlation of the two windows,
+  refined to ``1 / sub_pxl_res`` of a pixel. It does not search, so it is
+  fast whatever the shift, but the shift must be less than about a quarter of
+  ``win_size`` (e.g. 8 pixels for 32-pixel windows); ``search_area`` is only
+  used to reject matches with a larger shift (set it to 0 to keep them all).
+  Windows of 32 pixels or more give unbiased offsets: for the synthetic pair
+  the mean tie point offset is within 0.5 m of the true 23 m with 32, 64 and
+  128 pixel windows. The match score (``metric``) is the height of the
+  correlation peak (1 for identical windows); unrelated windows of smooth
+  images can score 0.3–0.7 with 32-pixel windows (0.2–0.4 with 64), so
+  raise ``threshold`` (default 0.15) to 0.6–0.8 to reject poor matches.
+  Phase correlation is more sensitive to noise than template matching: for
+  noisy or weakly textured images (the individual tie points of the
+  synthetic pair are about twice as precise with template matching), or
+  images from different sensors, use template matching.
 
 Choosing the parameters:
 

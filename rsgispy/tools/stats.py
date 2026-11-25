@@ -595,6 +595,234 @@ def calc_similarity_metric(
     raise rsgispy.RSGISPyException(f"Unsupported similarity metric id: {metric_id}")
 
 
+# Regularisation of the cross-power spectrum normalisation (fraction of its
+# largest magnitude): frequencies with little energy are not whitened, which
+# keeps noise and numerical round-off from dominating the correlation.
+_PC_REG_FRAC = 0.01
+# Maximum number of integer re-centring and sub-pixel refinement iterations.
+_PC_MAX_INT_ITER = 3
+_PC_MAX_SUB_ITER = 8
+# Integer shift candidates: up to _PC_N_CANDS local peaks of the first
+# correlation, those at least _PC_CAND_RATIO times the highest peak.
+_PC_N_CANDS = 3
+_PC_CAND_RATIO = 0.5
+_PC_CAND_MARGIN = 0.1
+
+
+def _hann_taper(n_pxls: int, offset: float = 0.0) -> np.ndarray:
+    """
+    Hann taper of length ``n_pxls`` (zero at both ends, as ``np.hanning``)
+    evaluated at sample positions ``i + offset``; zero outside the window.
+    """
+    if n_pxls < 2:
+        return np.ones(n_pxls, dtype=np.float64)
+    pos = np.arange(n_pxls, dtype=np.float64) + offset
+    taper = 0.5 - 0.5 * np.cos(2.0 * np.pi * pos / (n_pxls - 1))
+    taper[(pos < 0.0) | (pos > n_pxls - 1)] = 0.0
+    return taper
+
+
+def _norm_cross_power(
+    ref_arr: np.ndarray, flt_arr: np.ndarray
+) -> Optional[Tuple[np.ndarray, float]]:
+    """
+    Regularised normalised cross-power spectrum of two equal-shape arrays and
+    the normalisation that makes the correlation peak 1 for identical arrays
+    (``None`` if both arrays are constant).
+    """
+    cross_power = np.fft.fft2(ref_arr) * np.conj(np.fft.fft2(flt_arr))
+    mag = np.abs(cross_power)
+    max_mag = float(np.max(mag))
+    if max_mag <= 1e-12:
+        return None
+    reg = _PC_REG_FRAC * max_mag
+    denom = max(float(np.sum(mag / (mag + reg))), 1e-12)
+    return cross_power / (mag + reg), denom
+
+
+def _corr_peaks(
+    norm_cross: np.ndarray, denom: float, n_peaks: int = 1
+) -> List[Tuple[int, int, float]]:
+    """
+    Integer shifts ``(dy, dx)`` and heights of the ``n_peaks`` highest local
+    maxima (3 x 3 neighbourhood, circular) of the correlation surface, the
+    highest first.
+    """
+    # pylint: disable=too-many-locals
+    h_px, w_px = norm_cross.shape
+    corr = np.real(np.fft.ifft2(norm_cross)) * float(h_px * w_px) / denom
+    if n_peaks <= 1:
+        flat_idxs = np.array([int(np.argmax(corr))])
+    else:
+        nbr_max = corr.copy()
+        for r_shift in (-1, 0, 1):
+            for c_shift in (-1, 0, 1):
+                if r_shift or c_shift:
+                    nbr_max = np.maximum(nbr_max, np.roll(corr, (r_shift, c_shift), axis=(0, 1)))
+        local_idxs = np.flatnonzero(corr >= nbr_max)
+        order = np.argsort(corr.ravel()[local_idxs])[::-1][:n_peaks]
+        flat_idxs = local_idxs[order]
+    peaks: List[Tuple[int, int, float]] = []
+    for flat_idx in flat_idxs:
+        i_y, i_x = divmod(int(flat_idx), w_px)
+        d_y = i_y - h_px if i_y > h_px // 2 else i_y
+        d_x = i_x - w_px if i_x > w_px // 2 else i_x
+        peaks.append((d_y, d_x, float(corr[i_y, i_x])))
+    return peaks
+
+
+def _upsampled_corr_peak(
+    norm_cross: np.ndarray,
+    denom: float,
+    centre_y: float,
+    centre_x: float,
+    upsample_factor: int,
+) -> Tuple[float, float, float]:
+    """
+    Locate the correlation peak to ``1 / upsample_factor`` pixel within 0.75
+    pixels of ``(centre_y, centre_x)`` with the matrix-multiply DFT of
+    Guizar-Sicairos et al. (2008), evaluating only that neighbourhood.
+    """
+    # pylint: disable=too-many-locals
+    h_px, w_px = norm_cross.shape
+    n_pts = int(np.ceil(upsample_factor * 1.5))
+    if n_pts % 2 == 0:
+        n_pts += 1
+    offs = (np.arange(n_pts) - (n_pts // 2)) / float(upsample_factor)
+    c_y = centre_y + offs
+    c_x = centre_x + offs
+    k_y = np.exp(2j * np.pi * c_y[:, None] * np.fft.fftfreq(h_px)[None, :])
+    k_x = np.exp(2j * np.pi * np.fft.fftfreq(w_px)[:, None] * c_x[None, :])
+    corr_up = np.real(k_y @ norm_cross @ k_x) / denom
+    u_y, u_x = divmod(int(np.argmax(corr_up)), n_pts)
+    return float(c_y[u_y]), float(c_x[u_x]), float(corr_up[u_y, u_x])
+
+
+def _overlap_cross_power(
+    ref_arr: np.ndarray,
+    flt_arr: np.ndarray,
+    shift_y: float,
+    shift_x: float,
+    apply_window: bool,
+) -> Optional[Tuple[np.ndarray, float]]:
+    """
+    Cross-power spectrum of the parts of the two windows that overlap when
+    ``flt_arr`` is offset by the integer part of ``(shift_y, shift_x)``. The
+    taper of the floating window is moved by the fractional part, so that
+    for a pure translation both tapered windows contain the same tapered
+    image content and the correlation peak is not pulled towards zero.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    h_px, w_px = ref_arr.shape
+    i_y = int(round(shift_y))
+    i_x = int(round(shift_x))
+    ov_h = h_px - abs(i_y)
+    ov_w = w_px - abs(i_x)
+    if ov_h < 4 or ov_w < 4:
+        return None
+    r_off = max(0, i_y)
+    c_off = max(0, i_x)
+    ref_ov = ref_arr[r_off:r_off + ov_h, c_off:c_off + ov_w]
+    flt_ov = flt_arr[r_off - i_y:r_off - i_y + ov_h, c_off - i_x:c_off - i_x + ov_w]
+    ref_ov = ref_ov - float(np.mean(ref_ov))
+    flt_ov = flt_ov - float(np.mean(flt_ov))
+    if apply_window:
+        ref_ov = ref_ov * (_hann_taper(ov_h)[:, None] * _hann_taper(ov_w)[None, :])
+        flt_ov = flt_ov * (
+            _hann_taper(ov_h, shift_y - i_y)[:, None]
+            * _hann_taper(ov_w, shift_x - i_x)[None, :]
+        )
+    return _norm_cross_power(ref_ov, flt_ov)
+
+
+def _recentre_int_shift(
+    ref_arr: np.ndarray,
+    flt_arr: np.ndarray,
+    shift: Tuple[int, int],
+    apply_window: bool,
+    cache: Dict[Tuple[int, int], Tuple[int, int, float]],
+) -> Optional[Tuple[int, int, float]]:
+    """
+    Correlate the overlap of the windows at the integer ``shift`` and move
+    the shift until the overlap's correlation peak is at zero (at most
+    ``_PC_MAX_INT_ITER`` moves). Returns ``(dy, dx, overlap_peak)`` or
+    ``None`` if the overlap is too small. ``cache`` stores the overlap
+    correlation of each shift already evaluated.
+    """
+    d_y, d_x = shift
+    for n_iter in range(_PC_MAX_INT_ITER + 1):
+        if (d_y, d_x) not in cache:
+            ncp = _overlap_cross_power(ref_arr, flt_arr, d_y, d_x, apply_window)
+            if ncp is None:
+                return None
+            cache[(d_y, d_x)] = _corr_peaks(*ncp)[0]
+        s_y, s_x, peak = cache[(d_y, d_x)]
+        if (s_y == 0 and s_x == 0) or n_iter == _PC_MAX_INT_ITER:
+            break
+        d_y += s_y
+        d_x += s_x
+    return d_y, d_x, peak
+
+
+def _select_int_shift(
+    ref_arr: np.ndarray,
+    flt_arr: np.ndarray,
+    cands: List[Tuple[int, int, float]],
+    apply_window: bool,
+) -> Tuple[int, int, float]:
+    """
+    Re-centre each candidate integer shift (highest correlation peak first)
+    on the overlap of the windows and return the one whose overlap correlates
+    best. Another candidate replaces the highest one only if its overlap
+    peak is higher by more than ``_PC_CAND_MARGIN`` (so a repeating texture
+    keeps the most likely shift), and only candidates at least
+    ``_PC_CAND_RATIO`` times as high as the highest peak are tried.
+    """
+    cache: Dict[Tuple[int, int], Tuple[int, int, float]] = {}
+    best = cands[0]
+    best_found = False
+    for c_y, c_x, c_height in cands:
+        if c_height < _PC_CAND_RATIO * cands[0][2]:
+            break
+        res = _recentre_int_shift(ref_arr, flt_arr, (c_y, c_x), apply_window, cache)
+        if res is not None and (not best_found or res[2] > best[2] + _PC_CAND_MARGIN):
+            best = res
+            best_found = True
+    return best
+
+
+def _refine_subpixel_shift(
+    ref_arr: np.ndarray,
+    flt_arr: np.ndarray,
+    int_shift: Tuple[int, int, float],
+    up_fac: int,
+    apply_window: bool,
+) -> Tuple[float, float, float]:
+    """
+    Refine the integer shift ``(dy, dx, peak)`` to ``1 / up_fac`` pixel by
+    upsampled DFT of the overlap correlation, moving the floating window's
+    taper by the current fractional estimate until the estimate is stable.
+    """
+    # pylint: disable=too-many-locals
+    est_y = float(int_shift[0])
+    est_x = float(int_shift[1])
+    peak = float(int_shift[2])
+    for _ in range(_PC_MAX_SUB_ITER):
+        i_y = int(round(est_y))
+        i_x = int(round(est_x))
+        ncp = _overlap_cross_power(ref_arr, flt_arr, est_y, est_x, apply_window)
+        if ncp is None:
+            break
+        s_y, s_x, peak = _upsampled_corr_peak(*ncp, est_y - i_y, est_x - i_x, up_fac)
+        new_y = round((i_y + s_y) * up_fac) / up_fac
+        new_x = round((i_x + s_x) * up_fac) / up_fac
+        converged = abs(new_y - est_y) < 0.5 / up_fac and abs(new_x - est_x) < 0.5 / up_fac
+        est_y, est_x = new_y, new_x
+        if converged or not apply_window:
+            break
+    return float(est_y), float(est_x), float(peak)
+
+
 def phase_cross_correlation_2d(
     ref_arr: np.ndarray,
     flt_arr: np.ndarray,
@@ -602,16 +830,54 @@ def phase_cross_correlation_2d(
     apply_window: bool = True,
 ) -> Tuple[float, float, float]:
     """
-    Estimate sub-pixel 2D translation between ``ref_arr`` and ``flt_arr`` via
-    FFT phase cross-correlation with upsampled DFT refinement.
+    Estimate the sub-pixel 2D translation between ``ref_arr`` and ``flt_arr``
+    by FFT phase cross-correlation.
 
     Returns ``(dy, dx, peak_response)`` where a feature at ``(r, c)`` in
     ``ref_arr`` appears at ``(r - dy, c - dx)`` in ``flt_arr``.
 
+    The estimate is made in three stages:
+
+    1. **Integer shift** — phase correlation of the two Hann-tapered
+       windows. The cross-power spectrum is normalised with a small
+       regularisation (1 % of its largest magnitude), so frequencies with
+       little energy are not amplified. The highest correlation peak, and up
+       to two more local peaks at least half as high, are candidates.
+    2. **Window offset** — for each candidate, the windows are cropped to
+       the part that overlaps at that integer shift and correlated again; if
+       the peak is not at zero the shift is corrected and the overlap cropped
+       again. The candidate whose overlap correlates best is kept.
+    3. **Sub-pixel refinement** — the correlation peak of the overlap is
+       located to ``1 / upsample_factor`` pixel by matrix-multiply DFT
+       upsampling (Guizar-Sicairos et al., 2008). The taper of the floating
+       window is moved by the current fractional estimate, so both tapered
+       windows contain the same image content, and the estimate is iterated
+       until it no longer changes.
+
+    Tapering both windows with the same fixed taper (a single-pass phase
+    correlation) multiplies the correlation by the taper's autocorrelation,
+    which pulls the peak towards zero shift; with windows of 64 pixels or
+    less this underestimated shifts by up to 25 %. Stages 2 and 3 remove this
+    bias: on noise-free smoothed random textures, shifts up to a quarter of
+    the window are recovered to 0.01 pixel (with ``upsample_factor=100``) for
+    windows of 32, 64 and 128 pixels. The shift must be well below half the
+    window size, and textures that repeat within the window (e.g. regular
+    field patterns) can give a shift that is wrong by one period.
+
+    ``peak_response`` is the height of the normalised correlation peak of
+    the overlapping parts of the windows: 1 for identical content and lower
+    for noisy or poorly matching windows. Unrelated smooth textures typically
+    give 0.3-0.7 with 32-pixel windows, 0.2-0.4 with 64 and 0.1-0.2 with 128.
+
     :param ref_arr: 2D reference array.
     :param flt_arr: 2D floating array of identical shape.
-    :param upsample_factor: Sub-pixel DFT refinement factor (Default = ``4``).
-    :param apply_window: Apply a 2D Hanning taper before FFT (Default = ``True``).
+    :param upsample_factor: Sub-pixel refinement factor: the shift is
+                            estimated to ``1 / upsample_factor`` pixels
+                            (Default = ``4``; ``1`` gives an integer shift).
+    :param apply_window: Apply a 2D Hann taper before the FFTs
+                         (Default = ``True``). With ``False`` no taper is
+                         applied and the sub-pixel estimate is not iterated,
+                         so edge effects can bias it.
     :return: Tuple ``(dy, dx, peak_response)``.
 
     .. code:: python
@@ -623,49 +889,29 @@ def phase_cross_correlation_2d(
         dy, dx, peak = rsgispy.tools.stats.phase_cross_correlation_2d(a, a)
     """
     # pylint: disable=too-many-locals
-    h, w = ref_arr.shape
-    if h < 4 or w < 4:
+    h_px, w_px = ref_arr.shape
+    if h_px < 4 or w_px < 4:
         return 0.0, 0.0, 0.0
+    ref_f = np.asarray(ref_arr, dtype=np.float64)
+    flt_f = np.asarray(flt_arr, dtype=np.float64)
 
-    r0 = ref_arr.astype(np.float64, copy=True) - float(np.mean(ref_arr))
-    f0 = flt_arr.astype(np.float64, copy=True) - float(np.mean(flt_arr))
+    # 1. Integer shift from the whole (tapered) windows.
+    ref_0 = ref_f - float(np.mean(ref_f))
+    flt_0 = flt_f - float(np.mean(flt_f))
     if apply_window:
-        win = np.hanning(h)[:, None] * np.hanning(w)[None, :]
-        r0 *= win
-        f0 *= win
-
-    f_r = np.fft.fft2(r0)
-    f_f = np.fft.fft2(f0)
-    cross_power = f_r * np.conj(f_f)
-    mag = np.abs(cross_power)
-    max_mag = float(np.max(mag))
-    if max_mag <= 1e-12:
+        taper = _hann_taper(h_px)[:, None] * _hann_taper(w_px)[None, :]
+        ref_0 = ref_0 * taper
+        flt_0 = flt_0 * taper
+    ncp = _norm_cross_power(ref_0, flt_0)
+    if ncp is None:
         return 0.0, 0.0, 0.0
-    reg = 0.01 * max_mag
-    norm_cross = cross_power / (mag + reg)
-    denom = max(float(np.sum(mag / (mag + reg))) / float(h * w), 1e-12)
-    cc = np.real(np.fft.ifft2(norm_cross)) / denom
-    iy, ix = np.unravel_index(np.argmax(cc), cc.shape)
-    dy = float(iy - h if iy > h // 2 else iy)
-    dx = float(ix - w if ix > w // 2 else ix)
-    peak = float(cc[iy, ix])
+    cands = _corr_peaks(*ncp, n_peaks=_PC_N_CANDS)
 
-    up = max(1, int(upsample_factor))
-    if up > 1:
-        n_pts = int(np.ceil(up * 1.5))
-        if n_pts % 2 == 0:
-            n_pts += 1
-        offs = (np.arange(n_pts) - (n_pts // 2)) / float(up)
-        cy = dy + offs
-        cx = dx + offs
-        fy = np.fft.fftfreq(h)
-        fx = np.fft.fftfreq(w)
-        ky = np.exp(2j * np.pi * cy[:, None] * fy[None, :])
-        kx = np.exp(2j * np.pi * fx[:, None] * cx[None, :])
-        cc_up = np.real(ky @ norm_cross @ kx) / (float(h * w) * denom)
-        uy, ux = np.unravel_index(np.argmax(cc_up), cc_up.shape)
-        dy = float(cy[uy])
-        dx = float(cx[ux])
-        peak = float(cc_up[uy, ux])
+    # 2. Re-centre the candidates on the overlap of the windows.
+    d_y, d_x, peak = _select_int_shift(ref_f, flt_f, cands, apply_window)
 
-    return dy, dx, peak
+    # 3. Iterative sub-pixel refinement with a matched floating taper.
+    up_fac = max(1, int(upsample_factor))
+    if up_fac == 1:
+        return float(d_y), float(d_x), float(peak)
+    return _refine_subpixel_shift(ref_f, flt_f, (d_y, d_x, peak), up_fac, apply_window)
