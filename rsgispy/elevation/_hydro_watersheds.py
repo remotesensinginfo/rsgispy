@@ -56,9 +56,13 @@ def snap_pour_points(
     pour_points_vec : str
         Path to the input pour points vector file.
     flow_acc_img : str
-        Path to the flow accumulation raster.
+        Path to the flow accumulation raster, in cells or m² (the snapping
+        only compares values, so the units do not matter).
     out_vec_file : str
-        Path to the output snapped pour points vector file.
+        Path to the output snapped pour points vector file, with the columns
+        ``snap_dist_m`` (distance moved) and ``snapped_acc`` (the accumulation
+        at the snapped pixel, in the units of ``flow_acc_img`` as recorded in
+        its ``RSGISPY_FLOW_ACC_UNITS`` tag).
     snap_dist : float
         Maximum snap search distance in CRS metres.
     streams_img : str or None, optional

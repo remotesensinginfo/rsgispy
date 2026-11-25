@@ -166,7 +166,8 @@ def run_workflow(
     fdir_d8 = os.path.join(out_dir, "flow_dir_d8.tif")
     facc_d8 = os.path.join(out_dir, "flow_acc_d8_cells.tif")
     hydro.flow_direction(cond_dem, fdir_d8, method="d8", use_pbar=use_pbar)
-    # In cells: extract_streams converts an area threshold to cells itself.
+    # In cells; the units are recorded in the file, so extract_streams can
+    # take its threshold in m2 or in cells.
     hydro.flow_accumulation(fdir_d8, facc_d8, out_units="cells", use_pbar=use_pbar)
 
     # Dispersive routing for wetness and erosion indices (Step 9).

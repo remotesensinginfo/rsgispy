@@ -333,9 +333,14 @@ Step 5 — Extracting the stream network
 pixel whose contributing area is at least ``threshold`` (``uint8``: ``1``
 stream, ``0`` hillslope, ``255`` no data). Give the threshold as an area in
 m² with ``threshold_units='area'`` so it does not depend on the pixel size.
-The accumulation raster must be in **cells** (``out_units='cells'`` in
-Step 4): :func:`~rsgispy.elevation.hydrology.extract_streams` converts an
-area threshold to a number of cells by dividing by the pixel area.
+The accumulation can be in cells or in m²:
+:func:`~rsgispy.elevation.hydrology.flow_accumulation` records its units in
+the output (the ``RSGISPY_FLOW_ACC_UNITS`` metadata tag and the band
+description), and :func:`~rsgispy.elevation.hydrology.extract_streams`
+converts the threshold with the pixel area when the units differ. An
+accumulation raster without the tag (written by an older version of rsgispy
+or by another program) is assumed to be in cells; give its units with
+``acc_units='cells'`` or ``acc_units='area'``.
 
 **Choosing the threshold.** The threshold sets where channels begin, and
 hence the drainage density. There is no single right value: small
@@ -564,7 +569,8 @@ per unit width of contour (m²/m), not the contributing area. It is the
 contributing area in m² (``out_units='area'``) divided by the width the flow
 crosses, usually taken as the pixel size; the example computes it with
 :func:`~rsgispy.imagecalc.maths.band_maths` and sets the no data value on
-the result so the index functions skip those pixels.
+the result so the index functions skip those pixels. Passing the flow
+accumulation itself raises an exception.
 :func:`~rsgispy.elevation.hydrology.calc_twi` also raises :math:`a` to at
 least the pixel size, so the values on ridges are not extreme. Use
 D-Infinity or MFD accumulation (Step 4) for these indices: with D8,
@@ -666,10 +672,11 @@ Common problems
   :func:`rsgispy.imageutils.metadata.set_img_no_data_value` before
   conditioning. Outputs of :func:`~rsgispy.imagecalc.maths.band_maths` have
   no no data value unless you set one, as the example does.
-* **Streams everywhere, or none** — check the units: an area threshold
-  (``threshold_units='area'``) must be used with an accumulation in cells
-  (``out_units='cells'``); using an accumulation in m² makes almost every
-  pixel a stream. Otherwise adjust ``threshold`` (Step 5).
+* **Streams everywhere, or none** — adjust ``threshold`` and check
+  ``threshold_units`` (Step 5). An accumulation raster in m² that was not
+  made by :func:`~rsgispy.elevation.hydrology.flow_accumulation` has no
+  units tag and is assumed to be in cells, which makes almost every pixel a
+  stream: pass ``acc_units='area'``.
 * **Streams that stop or run in straight parallel lines** — a sink was not
   removed (stops) or a large filled flat (straight lines): check the sink
   and difference images (Steps 2 and 3), and consider breaching with larger
