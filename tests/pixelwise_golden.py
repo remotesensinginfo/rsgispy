@@ -457,7 +457,7 @@ def case_calc_tasseled_cap(tmp: str) -> Dict[str, str]:
     outs = {"preset": os.path.join(tmp, "tc.tif"), "custom": os.path.join(tmp, "tc2.tif")}
     st.calc_tasseled_cap(img, outs["preset"], sensor="sentinel2_msi", gain=10000.0,
                          use_pbar=False)
-    st.calc_tasseled_cap(img, outs["custom"], coeffs=[[0.5, 0.5], [0.3, -0.7]],
+    st.calc_tasseled_cap(img, outs["custom"], coeffs=[[0.5, 0.5], [0.25, -0.75]],
                          bands=[3, 4], valid_msk_img=msk, component_names=["a", "b"],
                          datatype=rsgispy.TYPE_16INT, out_no_data_val=-1, use_pbar=False)
     return outs
