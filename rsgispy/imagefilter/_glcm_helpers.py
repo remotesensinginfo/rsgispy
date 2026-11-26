@@ -3,7 +3,6 @@ Internal Grey-Level Co-occurrence Matrix (GLCM) texture computation engine for
 :mod:`rsgispy.imagefilter.texture`.
 """
 
-from contextlib import ExitStack
 import math
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
@@ -14,25 +13,13 @@ import rasterio
 import rsgispy
 from rsgispy._io import HaloBorder, NodeMeta, TileNode, WindowOp
 from rsgispy._numba import optional_njit, prange, use_compiled
-from rsgispy.imagefilter._helpers import (
-    _apply_tile_nd,
-    _resolve_out_nodata,
-    validate_filter_size,
-)
+from rsgispy.imagefilter._helpers import validate_filter_size
 from rsgispy.imageprocess import (
     build_valid_mask,
-    cast_result_block,
-    create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
-    read_window_with_halo,
 )
-from rsgispy.imageutils.metadata import (
-    get_band_names,
-    get_img_no_data_value,
-    set_band_names,
-)
-from rsgispy.imageutils.stats import pop_img_stats
+from rsgispy.imageutils.metadata import get_img_no_data_value
 
 GLCM_CONTRAST = "contrast"
 GLCM_DISSIMILARITY = "dissimilarity"
@@ -833,193 +820,3 @@ class GlcmWindowOp(WindowOp):
                 out[out_b] = layer
                 out_b += 1
         return out
-
-
-def run_glcm_filter(
-    input_img: str,
-    output_img: str,
-    properties: Union[str, Sequence[str]] = GLCM_ALL_PROPERTIES,
-    filter_size: int = 5,
-    distances: Union[int, Sequence[int]] = (1,),
-    angles: Union[float, Sequence[float]] = (0.0, 45.0, 90.0, 135.0),
-    n_levels: int = 32,
-    min_val: Optional[float] = None,
-    max_val: Optional[float] = None,
-    symmetric: bool = True,
-    average_angles: bool = True,
-    *,
-    gdalformat: str = "GTIFF",
-    datatype: Optional[int] = None,
-    no_data_val: Optional[float] = None,
-    calc_stats: bool = True,
-    use_pbar: bool = True,
-) -> None:
-    """Execute windowed GLCM texture feature extraction across all bands."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,too-many-branches
-    ensure_file_exists(input_img, "Input image")
-    size = validate_filter_size(filter_size)
-    prop_list = validate_glcm_properties(properties)
-    dist_list = validate_glcm_distances(distances, size)
-    angle_list = validate_glcm_angles(angles)
-    if (
-        isinstance(n_levels, bool)
-        or not isinstance(n_levels, (int, np.integer))
-        or int(n_levels) < 2
-    ):
-        raise rsgispy.RSGISPyException(
-            f"n_levels must be an integer >= 2, got {n_levels!r}."
-        )
-    levels = int(n_levels)
-    if (min_val is None) != (max_val is None):
-        raise rsgispy.RSGISPyException(
-            "min_val and max_val must either both be specified or both be None."
-        )
-    if min_val is not None and max_val is not None and float(max_val) < float(min_val):
-        raise rsgispy.RSGISPyException("max_val must be >= min_val.")
-
-    offsets: List[Tuple[int, float, int, int]] = []
-    for dist in dist_list:
-        for ang in angle_list:
-            rad = math.radians(ang)
-            dr = int(round(math.sin(rad) * dist))
-            dc = int(round(math.cos(rad) * dist))
-            if dr == 0 and dc == 0:
-                continue
-            offsets.append((dist, ang, dr, dc))
-    if not offsets:
-        raise rsgispy.RSGISPyException("No non-zero GLCM offsets derived.")
-
-    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
-    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
-    out_np_dtype = rsgispy.get_numpy_datatype(eff_dtype)
-    eff_in_nd = (
-        float(no_data_val)
-        if no_data_val is not None
-        else get_img_no_data_value(input_img)
-    )
-    out_nd = _resolve_out_nodata(eff_in_nd, out_np_dtype)
-    in_band_names = get_band_names(input_img)
-
-    n_per_band = len(prop_list) if average_angles else len(prop_list) * len(offsets)
-    pad = (size // 2, size // 2)
-
-    out_names: List[str] = []
-    with ExitStack() as stack:
-        src = stack.enter_context(rasterio.open(input_img, "r"))
-        out_count = src.count * n_per_band
-        band_bounds: List[Tuple[float, float]] = []
-        for b_idx in range(1, src.count + 1):
-            if min_val is not None and max_val is not None:
-                band_bounds.append((float(min_val), float(max_val)))
-            else:
-                band_bounds.append(
-                    _compute_band_minmax(src, b_idx, eff_in_nd, use_pbar=use_pbar)
-                )
-            b_label = (
-                in_band_names[b_idx - 1]
-                if b_idx - 1 < len(in_band_names) and in_band_names[b_idx - 1]
-                else f"b{b_idx}"
-            )
-            if average_angles:
-                for p_name in prop_list:
-                    out_names.append(f"{b_label}_glcm_{p_name}")
-            else:
-                for p_name in prop_list:
-                    for dist, ang, _, _ in offsets:
-                        out_names.append(
-                            f"{b_label}_glcm_{p_name}_d{dist}_a{int(round(ang))}"
-                        )
-
-        dst = create_output_from_dataset(
-            stack=stack,
-            src=src,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            out_rio_dtype=out_rio_dtype,
-            count=out_count,
-        )
-        if out_nd is not None:
-            dst.nodata = out_nd
-
-        for out_win in iter_dataset_windows(
-            src.height, src.width, use_pbar=use_pbar
-        ):
-            win_h = int(out_win.height)
-            win_w = int(out_win.width)
-            y_end = pad[0] + win_h
-            x_end = pad[1] + win_w
-            out_b = 1
-            for b_idx in range(1, src.count + 1):
-                lo, hi = band_bounds[b_idx - 1]
-                halo = read_window_with_halo(
-                    src,
-                    b_idx,
-                    out_win,
-                    pad=pad,
-                    out_dtype=np.float64,
-                    pad_mode="edge",
-                )
-                valid_halo = build_valid_mask(halo, eff_in_nd)
-                centre_valid = valid_halo[pad[0]:y_end, pad[1]:x_end]
-                q_halo = _quantise_halo(halo, valid_halo, lo, hi, levels)
-                q_wins = sliding_window_view(q_halo, (size, size))
-                v_wins = sliding_window_view(valid_halo, (size, size))
-
-                per_offset = [
-                    compute_glcm_offset_tile(
-                        q_wins=q_wins,
-                        v_wins=v_wins,
-                        centre_valid=centre_valid,
-                        dr=dr,
-                        dc=dc,
-                        n_levels=levels,
-                        symmetric=symmetric,
-                        props=prop_list,
-                    )
-                    for _, _, dr, dc in offsets
-                ]
-
-                if average_angles:
-                    for p_name in prop_list:
-                        stacked = np.stack([d[p_name] for d in per_offset], axis=0)
-                        valid_any = np.any(np.isfinite(stacked), axis=0)
-                        avg = np.full((win_h, win_w), np.nan, dtype=np.float64)
-                        if np.any(valid_any):
-                            cnt = np.sum(np.isfinite(stacked), axis=0)
-                            s_val = np.sum(
-                                np.where(np.isfinite(stacked), stacked, 0.0), axis=0
-                            )
-                            avg[valid_any] = s_val[valid_any] / cnt[valid_any]
-                        tile_res = _apply_tile_nd(avg, out_nd, out_np_dtype)
-                        dst.write(
-                            cast_result_block(
-                                tile_res, win_h, win_w, out_np_dtype, clamp_int=True
-                            ),
-                            out_b,
-                            window=out_win,
-                        )
-                        out_b += 1
-                else:
-                    for p_name in prop_list:
-                        for off_dict in per_offset:
-                            tile_res = _apply_tile_nd(
-                                off_dict[p_name], out_nd, out_np_dtype
-                            )
-                            dst.write(
-                                cast_result_block(
-                                    tile_res, win_h, win_w, out_np_dtype, clamp_int=True
-                                ),
-                                out_b,
-                                window=out_win,
-                            )
-                            out_b += 1
-
-    set_band_names(output_img, out_names, feedback=False)
-    if calc_stats:
-        pop_img_stats(
-            output_img,
-            no_data_val=out_nd,
-            calc_pyramids=True,
-            use_pbar=use_pbar,
-        )

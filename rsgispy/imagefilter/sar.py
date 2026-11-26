@@ -4,10 +4,10 @@ SAR backscatter adaptive speckle filters for raster imagery.
 
 from typing import List, Optional
 
-from rsgispy._io import TileNode
+from rsgispy._io import RasterSource, TileNode
 from rsgispy.imagefilter._helpers import (
     make_lee_stat_fn,
-    run_window_stat_filter,
+    run_filter_node,
     validate_positive,
     window_stat_node,
 )
@@ -77,12 +77,15 @@ def apply_lee_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    looks = validate_positive(n_looks, "n_looks")
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=make_lee_stat_fn(looks),
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        lee_filter_node(
+            src,
+            filter_size=filter_size,
+            n_looks=n_looks,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -132,13 +135,16 @@ def apply_enhanced_lee_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    looks = validate_positive(n_looks, "n_looks")
-    damp = validate_positive(damping, "damping")
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=make_enhanced_lee_stat_fn(looks, damping=damp),
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        enhanced_lee_filter_node(
+            src,
+            filter_size=filter_size,
+            n_looks=n_looks,
+            damping=damping,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -186,12 +192,15 @@ def apply_frost_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    damp = validate_positive(damping, "damping")
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=make_frost_stat_fn(damping=damp),
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        frost_filter_node(
+            src,
+            filter_size=filter_size,
+            damping=damping,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -240,13 +249,16 @@ def apply_enhanced_frost_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    looks = validate_positive(n_looks, "n_looks")
-    damp = validate_positive(damping, "damping")
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=make_enhanced_frost_stat_fn(looks, damping=damp),
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        enhanced_frost_filter_node(
+            src,
+            filter_size=filter_size,
+            n_looks=n_looks,
+            damping=damping,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -293,12 +305,15 @@ def apply_kuan_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    looks = validate_positive(n_looks, "n_looks")
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=make_kuan_stat_fn(looks),
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        kuan_filter_node(
+            src,
+            filter_size=filter_size,
+            n_looks=n_looks,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -346,12 +361,15 @@ def apply_gamma_map_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    looks = validate_positive(n_looks, "n_looks")
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=make_gamma_map_stat_fn(looks),
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        gamma_map_filter_node(
+            src,
+            filter_size=filter_size,
+            n_looks=n_looks,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -399,12 +417,15 @@ def apply_refined_lee_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    looks = validate_positive(n_looks, "n_looks")
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=make_refined_lee_stat_fn(looks),
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        refined_lee_filter_node(
+            src,
+            filter_size=filter_size,
+            n_looks=n_looks,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,

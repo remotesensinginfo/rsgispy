@@ -6,15 +6,14 @@ from typing import List, Optional
 
 import numpy as np
 
-from rsgispy._io import TileNode
+from rsgispy._io import RasterSource, TileNode
 from rsgispy.imagefilter._helpers import (
     gaussian_kernel,
     gradient_magnitude_node,
     kernel_conv_node,
     laplacian_kernel,
     prewitt_kernels,
-    run_gradient_magnitude_filter,
-    run_kernel_filter,
+    run_filter_node,
     sobel_kernels,
 )
 
@@ -69,12 +68,11 @@ def apply_sobel_filter(
         rsgispy.imagefilter.edge.apply_sobel_filter("in.tif", "out_sobel.tif")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    kx, ky = sobel_kernels()
-    run_gradient_magnitude_filter(
-        input_img=input_img,
-        output_img=output_img,
-        kernel_x=kx,
-        kernel_y=ky,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        sobel_filter_node(src),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -112,12 +110,11 @@ def apply_sobel_x_filter(
         rsgispy.imagefilter.edge.apply_sobel_x_filter("in.tif", "out_sobel_x.tif")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    kx, _ = sobel_kernels()
-    run_kernel_filter(
-        input_img=input_img,
-        output_img=output_img,
-        kernel=kx,
-        zero_dc=True,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        sobel_x_filter_node(src),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -155,12 +152,11 @@ def apply_sobel_y_filter(
         rsgispy.imagefilter.edge.apply_sobel_y_filter("in.tif", "out_sobel_y.tif")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    _, ky = sobel_kernels()
-    run_kernel_filter(
-        input_img=input_img,
-        output_img=output_img,
-        kernel=ky,
-        zero_dc=True,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        sobel_y_filter_node(src),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -198,12 +194,11 @@ def apply_prewitt_filter(
         rsgispy.imagefilter.edge.apply_prewitt_filter("in.tif", "out_prewitt.tif")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    kx, ky = prewitt_kernels()
-    run_gradient_magnitude_filter(
-        input_img=input_img,
-        output_img=output_img,
-        kernel_x=kx,
-        kernel_y=ky,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        prewitt_filter_node(src),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -241,12 +236,11 @@ def apply_prewitt_x_filter(
         rsgispy.imagefilter.edge.apply_prewitt_x_filter("in.tif", "out_prewitt_x.tif")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    kx, _ = prewitt_kernels()
-    run_kernel_filter(
-        input_img=input_img,
-        output_img=output_img,
-        kernel=kx,
-        zero_dc=True,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        prewitt_x_filter_node(src),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -284,12 +278,11 @@ def apply_prewitt_y_filter(
         rsgispy.imagefilter.edge.apply_prewitt_y_filter("in.tif", "out_prewitt_y.tif")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    _, ky = prewitt_kernels()
-    run_kernel_filter(
-        input_img=input_img,
-        output_img=output_img,
-        kernel=ky,
-        zero_dc=True,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        prewitt_y_filter_node(src),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -337,14 +330,17 @@ def apply_gaussian_1st_deriv_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    kernel = gaussian_kernel(
-        filter_size, stddev_x, stddev_y, filter_angle, deriv_order=1
-    )
-    run_kernel_filter(
-        input_img=input_img,
-        output_img=output_img,
-        kernel=kernel,
-        zero_dc=True,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        gaussian_1st_deriv_filter_node(
+            src,
+            filter_size=filter_size,
+            stddev_x=stddev_x,
+            stddev_y=stddev_y,
+            filter_angle=filter_angle,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -392,14 +388,17 @@ def apply_gaussian_2nd_deriv_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    kernel = gaussian_kernel(
-        filter_size, stddev_x, stddev_y, filter_angle, deriv_order=2
-    )
-    run_kernel_filter(
-        input_img=input_img,
-        output_img=output_img,
-        kernel=kernel,
-        zero_dc=True,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        gaussian_2nd_deriv_filter_node(
+            src,
+            filter_size=filter_size,
+            stddev_x=stddev_x,
+            stddev_y=stddev_y,
+            filter_angle=filter_angle,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -443,12 +442,15 @@ def apply_laplacian_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    kernel = laplacian_kernel(filter_size, stddev)
-    run_kernel_filter(
-        input_img=input_img,
-        output_img=output_img,
-        kernel=kernel,
-        zero_dc=True,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        laplacian_filter_node(
+            src,
+            filter_size=filter_size,
+            stddev=stddev,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,

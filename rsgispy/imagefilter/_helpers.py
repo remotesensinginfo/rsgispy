@@ -12,20 +12,23 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 import rsgispy
 from rsgispy._numba import optional_njit, prange, use_compiled
-from rsgispy._io import HaloBorder, NodeMeta, TileNode, WindowOp, same_bands_meta
+from rsgispy._io import (
+    DiskSink,
+    HaloBorder,
+    NodeMeta,
+    RasterSource,
+    TileGraph,
+    TileNode,
+    WindowOp,
+    same_bands_meta,
+)
 from rsgispy.imageprocess import (
     build_valid_mask,
     ensure_file_exists,
     resolve_out_nodata as _ip_resolve_out_nodata,
-    run_window_halo_blocks,
     validate_odd_window_size,
 )
-from rsgispy.imageutils.metadata import (
-    get_band_names,
-    get_img_no_data_value,
-    set_band_names,
-)
-from rsgispy.imageutils.stats import pop_img_stats
+from rsgispy.imageutils.metadata import get_band_names, get_img_no_data_value
 
 StatFunc = Callable[
     [np.ndarray, np.ndarray, np.ndarray, np.ndarray],
@@ -676,191 +679,57 @@ def _apply_tile_nd(
     return np.where(np.isfinite(out_blk), out_blk, 0.0)
 
 
-def _run_halo_filter(
-    input_img: str,
+def run_filter_node(
+    source: RasterSource,
+    node: TileNode,
     output_img: str,
-    win_shape: Tuple[int, int],
-    tile_fn: Callable[
-        [np.ndarray, np.ndarray, np.ndarray, np.ndarray],
-        np.ndarray,
-    ],
     *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
+    band_names: Optional[Sequence[str]] = None,
 ) -> None:
-    """Shared windowed halo filter runner processing all bands of ``input_img``."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    ensure_file_exists(input_img, "Input image")
-    band_names = get_band_names(input_img)
-    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
-    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
-    out_np_dtype = rsgispy.get_numpy_datatype(eff_dtype)
+    """
+    Run ``source -> node -> DiskSink`` for a file-based filter function.
 
+    ``node`` is a :class:`FilterWindowOp` or
+    :class:`~rsgispy.imagefilter._glcm_helpers.GlcmWindowOp` built on
+    ``source``. The input no-data value (``no_data_val``, or the image's) is
+    set on ``source`` and ``node``; the output no-data value is the input one
+    when the output type can store it (else ``-9999`` for float and ``0`` for
+    integer outputs), and filter pixels without a value get that value (NaN
+    for float outputs and ``0`` for integer outputs when there is none). The
+    output band names are ``band_names`` or those of the input image, and the
+    graph runs with the package default block size.
+    """
+    # pylint: disable=too-many-arguments,too-many-locals
+    input_img = source.path
+    ensure_file_exists(input_img, "Input image")
+    eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
+    out_np_dtype = rsgispy.get_numpy_datatype(eff_dtype)
     eff_in_nd = (
         float(no_data_val)
         if no_data_val is not None
         else get_img_no_data_value(input_img)
     )
     out_nd = _resolve_out_nodata(eff_in_nd, out_np_dtype)
-
-    kh, kw = win_shape
-    pad_y, pad_x = kh // 2, kw // 2
-
-    def _tile_cb(halo: np.ndarray) -> np.ndarray:
-        win_h = halo.shape[0] - 2 * pad_y
-        win_w = halo.shape[1] - 2 * pad_x
-        y_end = pad_y + win_h
-        x_end = pad_x + win_w
-        valid_halo = build_valid_mask(halo, eff_in_nd)
-        centre = halo[pad_y:y_end, pad_x:x_end]
-        centre_valid = valid_halo[pad_y:y_end, pad_x:x_end]
-        wins = sliding_window_view(halo, (kh, kw))
-        v_wins = sliding_window_view(valid_halo, (kh, kw))
-        res = tile_fn(wins, centre, v_wins, centre_valid)
-        return _apply_tile_nd(res, out_nd, out_np_dtype)
-
-    run_window_halo_blocks(
-        input_img=input_img,
-        output_img=output_img,
-        win_shape=win_shape,
-        block_fn=_tile_cb,
+    source.nodata = eff_in_nd
+    node.set_nodata(eff_in_nd, out_nd)  # type: ignore[attr-defined]
+    names = list(band_names) if band_names is not None else get_band_names(input_img)
+    sink = DiskSink(
+        node,
+        output_img,
         gdalformat=gdalformat,
-        out_rio_dtype=out_rio_dtype,
-        out_np_dtype=out_np_dtype,
-        per_band=True,
-        read_dtype=np.float64,
-        pad_mode="edge",
-        out_no_data_val=out_nd,
+        datatype=eff_dtype,
+        nodata=out_nd,
         clamp_int=True,
-        use_pbar=use_pbar,
-    )
-
-    set_band_names(output_img, band_names, feedback=False)
-    if calc_stats:
-        pop_img_stats(
-            output_img,
-            no_data_val=out_nd,
-            calc_pyramids=True,
-            use_pbar=use_pbar,
-        )
-
-
-def run_window_stat_filter(
-    input_img: str,
-    output_img: str,
-    filter_size: int,
-    stat_fn: StatFunc,
-    *,
-    gdalformat: str = "GTIFF",
-    datatype: Optional[int] = None,
-    no_data_val: Optional[float] = None,
-    calc_stats: bool = True,
-    use_pbar: bool = True,
-) -> None:
-    """Apply a windowed neighbourhood statistical filter to all bands of a raster."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    size = validate_filter_size(filter_size)
-    _run_halo_filter(
-        input_img=input_img,
-        output_img=output_img,
-        win_shape=(size, size),
-        tile_fn=stat_fn,
-        gdalformat=gdalformat,
-        datatype=datatype,
-        no_data_val=no_data_val,
+        band_names=names,
         calc_stats=calc_stats,
-        use_pbar=use_pbar,
+        inherit_meta=False,
     )
-
-
-def run_kernel_filter(
-    input_img: str,
-    output_img: str,
-    kernel: np.ndarray,
-    zero_dc: bool = False,
-    *,
-    gdalformat: str = "GTIFF",
-    datatype: Optional[int] = None,
-    no_data_val: Optional[float] = None,
-    calc_stats: bool = True,
-    use_pbar: bool = True,
-) -> None:
-    """Apply a 2D convolution kernel filter window-by-window to all bands."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    k_arr = validate_kernel(kernel)
-
-    def _tile_conv(
-        wins: np.ndarray,
-        centre: np.ndarray,
-        valid: np.ndarray,
-        centre_valid: np.ndarray,
-    ) -> np.ndarray:
-        return _convolve_tile_with_mask(
-            wins, centre, valid, centre_valid, k_arr, zero_dc=zero_dc
-        )
-
-    _run_halo_filter(
-        input_img=input_img,
-        output_img=output_img,
-        win_shape=(int(k_arr.shape[0]), int(k_arr.shape[1])),
-        tile_fn=_tile_conv,
-        gdalformat=gdalformat,
-        datatype=datatype,
-        no_data_val=no_data_val,
-        calc_stats=calc_stats,
-        use_pbar=use_pbar,
-    )
-
-
-def run_gradient_magnitude_filter(
-    input_img: str,
-    output_img: str,
-    kernel_x: np.ndarray,
-    kernel_y: np.ndarray,
-    *,
-    gdalformat: str = "GTIFF",
-    datatype: Optional[int] = None,
-    no_data_val: Optional[float] = None,
-    calc_stats: bool = True,
-    use_pbar: bool = True,
-) -> None:
-    """Compute single-pass gradient magnitude ``sqrt(Gx^2 + Gy^2)``."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    kx = validate_kernel(kernel_x)
-    ky = validate_kernel(kernel_y)
-    if kx.shape != ky.shape:
-        raise rsgispy.RSGISPyException(
-            f"kernel_x shape {kx.shape} must match kernel_y shape {ky.shape}."
-        )
-
-    def _tile_grad(
-        wins: np.ndarray,
-        centre: np.ndarray,
-        valid: np.ndarray,
-        centre_valid: np.ndarray,
-    ) -> np.ndarray:
-        gx = _convolve_tile_with_mask(
-            wins, centre, valid, centre_valid, kx, zero_dc=True
-        )
-        gy = _convolve_tile_with_mask(
-            wins, centre, valid, centre_valid, ky, zero_dc=True
-        )
-        return np.hypot(gx, gy)
-
-    _run_halo_filter(
-        input_img=input_img,
-        output_img=output_img,
-        win_shape=(int(kx.shape[0]), int(kx.shape[1])),
-        tile_fn=_tile_grad,
-        gdalformat=gdalformat,
-        datatype=datatype,
-        no_data_val=no_data_val,
-        calc_stats=calc_stats,
-        use_pbar=use_pbar,
-    )
+    TileGraph(sink, block_size=None).run(use_pbar=use_pbar)
 
 
 class FilterWindowOp(WindowOp):

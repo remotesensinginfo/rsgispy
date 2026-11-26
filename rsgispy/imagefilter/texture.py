@@ -5,7 +5,7 @@ Grey-Level Co-occurrence Matrix (GLCM) spatial texture filters for raster images
 from typing import List, Optional, Sequence, Tuple, Union
 
 import rsgispy
-from rsgispy._io import TileNode
+from rsgispy._io import RasterSource, TileNode
 from rsgispy.imagefilter._glcm_helpers import (
     GLCM_ALL_PROPERTIES,
     GLCM_ASM,
@@ -20,9 +20,12 @@ from rsgispy.imagefilter._glcm_helpers import (
     GLCM_VARIANCE,
     GlcmWindowOp,
     calc_band_bounds,
-    run_glcm_filter,
+    glcm_band_names,
     validate_glcm_params,
 )
+from rsgispy.imagefilter._helpers import run_filter_node
+from rsgispy.imageprocess import ensure_file_exists
+from rsgispy.imageutils.metadata import get_band_names
 
 __all__: List[str] = [
     "GLCM_CONTRAST",
@@ -112,10 +115,19 @@ def apply_glcm_filter(
             n_levels=32,
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_glcm_filter(
-        input_img=input_img,
-        output_img=output_img,
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    ensure_file_exists(input_img, "Input image")
+    _, prop_list, offsets, _ = validate_glcm_params(
+        properties, filter_size, distances, angles, n_levels, min_val, max_val
+    )
+    band_bounds = None
+    if min_val is None or max_val is None:
+        band_bounds = calc_band_bounds(
+            input_img, no_data_val=no_data_val, use_pbar=use_pbar
+        )
+    src = RasterSource(input_img)
+    node = glcm_filter_node(
+        src,
         properties=properties,
         filter_size=filter_size,
         distances=distances,
@@ -125,11 +137,20 @@ def apply_glcm_filter(
         max_val=max_val,
         symmetric=symmetric,
         average_angles=average_angles,
+        band_bounds=band_bounds,
+    )
+    run_filter_node(
+        src,
+        node,
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        band_names=glcm_band_names(
+            get_band_names(input_img), prop_list, offsets, bool(average_angles)
+        ),
     )
 
 
