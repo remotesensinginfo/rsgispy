@@ -311,9 +311,29 @@ def test_golden_outputs(case, variant, golden_inputs, tmp_path):
                     if same_platform or not tag_key.startswith("STATISTICS_"):
                         assert out_val == ref_val, (key, tag_key)
                     else:
-                        assert float(out_val) == pytest.approx(
-                            float(ref_val), rel=1e-5, abs=1e-5
-                        ), (key, tag_key)
+                        _assert_stat_tag_close(out_val, ref_val, (key, tag_key))
+
+
+def _assert_stat_tag_close(out_val, ref_val, label):
+    """
+    Compare a STATISTICS_* tag from another platform: numbers within 1e-5,
+    '|'-separated histogram counts value by value (a pixel may fall in a
+    neighbouring bin when the min/max differ in the last digits), and text
+    values such as STATISTICS_HISTOBINFUNCTION ('Linear') exactly.
+    """
+    if "|" in ref_val:
+        out_cnts = [float(v) for v in out_val.strip("|").split("|")]
+        ref_cnts = [float(v) for v in ref_val.strip("|").split("|")]
+        assert len(out_cnts) == len(ref_cnts), label
+        assert sum(out_cnts) == sum(ref_cnts), label
+        assert out_cnts == pytest.approx(ref_cnts, rel=1e-5, abs=1.0), label
+        return
+    try:
+        ref_num = float(ref_val)
+    except ValueError:
+        assert out_val == ref_val, label
+        return
+    assert float(out_val) == pytest.approx(ref_num, rel=1e-5, abs=1e-5), label
 
 
 def test_golden_files_are_small():
