@@ -21,14 +21,24 @@ installation instructions if their optional dependencies are not installed.
 
 from contextlib import ExitStack
 import math
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import rasterio
 from rasterio.windows import Window
 
 import rsgispy
+from rsgispy._tilegraph._wrap import (
+    GridRasterSource,
+    WrapperDiskSink,
+    run_wrapper_graph,
+)
 from rsgispy.imageprocess import (
+    NodeMeta,
+    RasterSource,
+    TileContext,
+    TileNode,
+    TileTensor,
     cast_result_block,
     compute_spatial_intersection,
     create_output_from_dataset,
@@ -90,8 +100,11 @@ except ImportError:
 __all__: List[str] = [
     "exhcon_linear_spec_unmix",
     "spec_unmix_ucls",
+    "spec_unmix_ucls_node",
     "spec_unmix_nnls",
+    "spec_unmix_nnls_node",
     "spec_unmix_fcls",
+    "spec_unmix_fcls_node",
     "spec_unmix_spts_ucls",
     "spec_unmix_spts_nnls",
     "spec_unmix_spts_fcls",
@@ -99,6 +112,7 @@ __all__: List[str] = [
     "spec_unmix_pymcr_fcls",
     "rescale_unmixing_results",
     "predict_refl_linear_unmixing",
+    "predict_refl_linear_unmixing_node",
     "calc_unmixing_rmse_residual_err",
     "summarise_multi_endmember_linear_unmixing",
 ]
@@ -359,6 +373,132 @@ def exhcon_linear_spec_unmix(
             )
 
 
+class _UnmixNode(TileNode):
+    """
+    Linear spectral unmixing of the first input with ``solver_fn``; pixels
+    outside the optional mask input (``valid_msk_val``), non-finite, equal to
+    their band's no-data value or ``<= 0`` in any band are set to
+    ``out_nd`` in every band. Output ``float32`` blocks, one band per
+    endmember.
+    """
+
+    # pylint: disable=too-many-instance-attributes
+
+    def __init__(
+        self,
+        inputs: Sequence[TileNode],
+        solver_fn: Callable[[np.ndarray, np.ndarray], np.ndarray],
+        endmembers: Tuple[List[str], np.ndarray, Optional[float]],
+        settings: Tuple[float, int, float],
+        *,
+        band_nodata: Optional[Sequence[Optional[float]]] = None,
+        no_data_val: Optional[float] = None,
+        img_label: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> None:
+        super().__init__(inputs=tuple(inputs), name=name or "spec_unmix")
+        self.solver_fn = solver_fn
+        self.em_names, self.endmembers_arr, self.weight = endmembers
+        self.gain, self.valid_msk_val, self.out_nd = settings
+        self.band_nodata = list(band_nodata) if band_nodata is not None else None
+        self.no_data_val = no_data_val
+        self.img_label = img_label
+        self._nodatavals: List[Optional[float]] = []
+
+    def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+        expected_bands = self.endmembers_arr.shape[1] - (
+            1 if self.weight is not None else 0
+        )
+        n_in = inputs[0].n_bands
+        if n_in is not None and int(n_in) != expected_bands:
+            label = self.img_label if self.img_label else f"input of {self.label}"
+            raise rsgispy.RSGISPyException(
+                f"Input image '{label}' has {n_in} bands, expected {expected_bands}."
+            )
+        if self.band_nodata is not None:
+            self._nodatavals = list(self.band_nodata)
+        else:
+            nodata = self.no_data_val if self.no_data_val is not None else inputs[0].nodata
+            self._nodatavals = [nodata] * expected_bands
+        return NodeMeta(
+            n_bands=len(self.em_names),
+            band_names=tuple(self.em_names),
+            dtype=np.float32,
+            nodata=self.out_nd,
+        )
+
+    def evaluate(
+        self,
+        inputs: Sequence[TileTensor],
+        halo_y: int,
+        halo_x: int,
+        ctx: TileContext,
+        state: Any = None,
+    ) -> TileTensor:
+        # pylint: disable=too-many-locals
+        aligned = [t.crop(halo_y, halo_x) for t in inputs]
+        img = aligned[0].data
+        n_bands, win_h, win_w = (int(v) for v in img.shape)
+        n_em = len(self.em_names)
+        out_flat = np.full((win_h * win_w, n_em), self.out_nd, dtype=np.float32)
+        if len(aligned) > 1:
+            msk_vld = aligned[1].data[0].ravel() == self.valid_msk_val
+        else:
+            msk_vld = np.ones(win_h * win_w, dtype=bool)
+        if np.any(msk_vld):
+            img_blk = np.asarray(img, dtype=np.float64)
+            img_flat = np.moveaxis(img_blk, 0, -1).reshape(-1, n_bands)
+            vld = (
+                msk_vld
+                & _valid_pxls(img_flat, self._nodatavals)
+                & np.all(img_flat > 0.0, axis=1)
+            )
+            if np.any(vld):
+                vld_pxls = img_flat[vld]
+                if self.gain > 1:
+                    vld_pxls = vld_pxls / float(self.gain)
+                if self.weight is not None:
+                    w_col = np.full(
+                        (vld_pxls.shape[0], 1), float(self.weight), dtype=np.float64
+                    )
+                    vld_pxls = np.hstack([vld_pxls, w_col])
+                abundances = self.solver_fn(vld_pxls, self.endmembers_arr)
+                out_flat[vld] = abundances.astype(np.float32, copy=False)
+        out_blk = np.moveaxis(out_flat.reshape((win_h, win_w, n_em)), -1, 0)
+        return aligned[0].with_data(out_blk)
+
+
+def _unmix_node(
+    source: TileNode,
+    vld_msk: Optional[TileNode],
+    solver_fn: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    params: Tuple[EndmemberInput, float, Optional[float], Optional[str]],
+    settings: Tuple[int, Optional[float], Optional[float]],
+    name: str,
+) -> TileNode:
+    """
+    Build an unmixing node; ``params`` is ``(endmembers, gain, weight,
+    file_format)`` and ``settings`` ``(valid_msk_val, out_no_data_val,
+    no_data_val)``.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    endmembers, gain, weight, file_format = params
+    valid_msk_val, out_no_data_val, no_data_val = settings
+    out_nd = _check_out_no_data_val(out_no_data_val)
+    em_names, _, _, endmembers_arr = prepare_endmembers_array(
+        endmembers, gain=gain, weight=weight, file_format=file_format
+    )
+    inputs = [source] + ([vld_msk] if vld_msk is not None else [])
+    return _UnmixNode(
+        inputs,
+        solver_fn,
+        (em_names, endmembers_arr, weight),
+        (gain, valid_msk_val, out_nd),
+        no_data_val=no_data_val,
+        name=name,
+    )
+
+
 def _run_windowed_unmixer(
     input_img: str,
     valid_msk_img: Optional[str],
@@ -375,19 +515,18 @@ def _run_windowed_unmixer(
     out_no_data_val: float = -9999.0,
 ) -> None:
     """
-    Shared windowed linear spectral unmixing runner.
+    Shared linear spectral unmixing runner (a tile graph).
 
     Pixels outside the valid mask, with a non-finite value, the input image's
     no-data value or a value ``<= 0`` in any band are not unmixed and are
     written as ``out_no_data_val`` in every band.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,too-many-branches
+    # pylint: disable=too-many-locals
     out_nd = _check_out_no_data_val(out_no_data_val)
-    em_names, m, _, endmembers_arr = prepare_endmembers_array(
+    em_names, _, _, endmembers_arr = prepare_endmembers_array(
         endmembers, gain=gain, weight=weight, file_format=file_format
     )
-
     in_paths = (
         [input_img] if valid_msk_img is None else [input_img, valid_msk_img]
     )
@@ -396,7 +535,6 @@ def _run_windowed_unmixer(
         src_img = datasets[paths[0]]
         src_msk = datasets[paths[1]] if valid_msk_img is not None else None
         grid = compute_spatial_intersection(datasets)
-
         expected_bands = endmembers_arr.shape[1] - (
             1 if weight is not None else 0
         )
@@ -405,88 +543,36 @@ def _run_windowed_unmixer(
                 f"Input image '{input_img}' has {src_img.count} bands, expected "
                 f"{expected_bands}."
             )
+        nodatavals = list(src_img.nodatavals)
+        msk_dtype = src_msk.dtypes[0] if src_msk is not None else None
 
-        dst = open_output_dataset(
-            stack=stack,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            out_rio_dtype="float32",
-            grid=grid,
-            count=m,
-        )
-        dst.nodata = out_nd
-        for b_idx, b_name in enumerate(em_names, start=1):
-            dst.set_band_description(b_idx, b_name)
-
-        img_xoff, img_yoff = grid.offsets[paths[0]]
-        msk_xoff, msk_yoff = (
-            grid.offsets[paths[1]] if valid_msk_img is not None else (0, 0)
-        )
-
-        for win in iter_dataset_windows(
-            grid.height, grid.width, use_pbar=use_pbar
-        ):
-            win_h = int(win.height)
-            win_w = int(win.width)
-            img_win = Window(
-                int(win.col_off) + img_xoff,
-                int(win.row_off) + img_yoff,
-                win_w,
-                win_h,
+    inputs: List[TileNode] = [
+        GridRasterSource(paths[0], grid, grid.offsets[paths[0]])
+    ]
+    if valid_msk_img is not None:
+        inputs.append(
+            GridRasterSource(
+                paths[1], grid, grid.offsets[paths[1]], bands=1, dtype=msk_dtype
             )
-
-            out_flat = np.full((win_h * win_w, m), out_nd, dtype=np.float32)
-            if src_msk is not None:
-                msk_win = Window(
-                    int(win.col_off) + msk_xoff,
-                    int(win.row_off) + msk_yoff,
-                    win_w,
-                    win_h,
-                )
-                msk_vld = (
-                    src_msk.read(1, window=msk_win).ravel() == valid_msk_val
-                )
-            else:
-                msk_vld = np.ones(win_h * win_w, dtype=bool)
-
-            if np.any(msk_vld):
-                img_blk = src_img.read(window=img_win).astype(
-                    np.float64, copy=False
-                )
-                img_flat = np.moveaxis(img_blk, 0, -1).reshape(
-                    -1, src_img.count
-                )
-
-                vld = (
-                    msk_vld
-                    & _valid_pxls(img_flat, src_img.nodatavals)
-                    & np.all(img_flat > 0.0, axis=1)
-                )
-                if np.any(vld):
-                    vld_pxls = img_flat[vld]
-                    if gain > 1:
-                        vld_pxls = vld_pxls / float(gain)
-                    if weight is not None:
-                        w_col = np.full(
-                            (vld_pxls.shape[0], 1),
-                            float(weight),
-                            dtype=np.float64,
-                        )
-                        vld_pxls = np.hstack([vld_pxls, w_col])
-
-                    abundances = solver_fn(vld_pxls, endmembers_arr)
-                    out_flat[vld] = abundances.astype(np.float32, copy=False)
-
-            out_blk = np.moveaxis(out_flat.reshape((win_h, win_w, m)), -1, 0)
-            dst.write(out_blk, window=win)
-
-    if calc_stats:
-        pop_img_stats(
-            output_img,
-            no_data_val=out_nd,
-            calc_pyramids=True,
-            use_pbar=use_pbar,
         )
+    node = _UnmixNode(
+        inputs,
+        solver_fn,
+        (em_names, endmembers_arr, weight),
+        (gain, valid_msk_val, out_nd),
+        band_nodata=nodatavals,
+        img_label=input_img,
+    )
+    sink = WrapperDiskSink(
+        node,
+        output_img,
+        gdalformat=gdalformat,
+        datatype=rsgispy.TYPE_32FLOAT,
+        nodata=out_nd,
+        band_names=em_names,
+        calc_stats=calc_stats,
+    )
+    run_wrapper_graph(sink, use_pbar=use_pbar)
 
 
 def _numpy_ucls_solver(
@@ -575,6 +661,70 @@ def spec_unmix_ucls(
         calc_stats=calc_stats,
         use_pbar=use_pbar,
         out_no_data_val=out_no_data_val,
+    )
+
+
+def spec_unmix_ucls_node(
+    source: TileNode,
+    endmembers: EndmemberInput,
+    vld_msk: Optional[TileNode] = None,
+    valid_msk_val: int = 1,
+    gain: float = 1,
+    weight: Optional[float] = None,
+    file_format: Optional[str] = None,
+    *,
+    out_no_data_val: float = -9999.0,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`spec_unmix_ucls` (unconstrained least-squares
+    unmixing with given endmembers), for chaining in a
+    :class:`~rsgispy.imageprocess.TileGraph`.
+
+    The node outputs ``float32`` blocks with one band per endmember (named
+    after it) and ``out_no_data_val`` as no-data value. Pixels outside
+    ``vld_msk`` (a node whose first band is compared with ``valid_msk_val``),
+    non-finite, equal to the input no-data value (``no_data_val``, by default
+    that of ``source``) or ``<= 0`` in any band are not unmixed. The solver
+    works on the valid pixels of each block together, so when a downstream
+    window filter makes the node also compute a halo, the results can differ
+    from :func:`spec_unmix_ucls` in the last bits.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode` with the
+                   endmembers' bands.
+    :param endmembers: Endmembers table or file (bands as rows).
+    :param vld_msk: Optional node whose first band is a valid-pixel mask.
+    :param valid_msk_val: Valid value in ``vld_msk`` (Default = ``1``).
+    :param gain: Gain divisor of image and endmembers when ``> 1``
+                 (Default = ``1``).
+    :param weight: Optional Scarth et al. (2010) sum-to-one weight.
+    :param file_format: Optional table format of an endmembers file.
+    :param out_no_data_val: Output no-data value (Default = ``-9999.0``).
+    :param no_data_val: Optional input no-data value.
+    :param name: Optional node name (Default = ``'spec_unmix_ucls'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagespectral.unmixing import (
+            predict_refl_linear_unmixing_node, spec_unmix_ucls_node,
+        )
+
+        img = RasterSource("img.tif")
+        fracs = spec_unmix_ucls_node(img, "endmembers.csv")
+        pred = predict_refl_linear_unmixing_node(fracs, "endmembers.csv")
+        TileGraph([DiskSink(fracs, "fracs.tif"), DiskSink(pred, "pred.tif")]).run()
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    return _unmix_node(
+        source,
+        vld_msk,
+        _numpy_ucls_solver,
+        (endmembers, gain, weight, file_format),
+        (valid_msk_val, out_no_data_val, no_data_val),
+        name or "spec_unmix_ucls",
     )
 
 
@@ -883,6 +1033,58 @@ def _scipy_fcls_solver(
     return out
 
 
+def spec_unmix_nnls_node(
+    source: TileNode,
+    endmembers: EndmemberInput,
+    vld_msk: Optional[TileNode] = None,
+    valid_msk_val: int = 1,
+    gain: float = 1,
+    weight: Optional[float] = None,
+    file_format: Optional[str] = None,
+    *,
+    out_no_data_val: float = -9999.0,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`spec_unmix_nnls` (non-negative least-squares
+    unmixing with given endmembers; requires ``scipy``), with the same
+    parameters and outputs as :func:`spec_unmix_ucls_node`.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode` with the
+                   endmembers' bands.
+    :param endmembers: Endmembers table or file (bands as rows).
+    :param vld_msk: Optional node whose first band is a valid-pixel mask.
+    :param valid_msk_val: Valid value in ``vld_msk`` (Default = ``1``).
+    :param gain: Gain divisor of image and endmembers when ``> 1``
+                 (Default = ``1``).
+    :param weight: Optional Scarth et al. (2010) sum-to-one weight.
+    :param file_format: Optional table format of an endmembers file.
+    :param out_no_data_val: Output no-data value (Default = ``-9999.0``).
+    :param no_data_val: Optional input no-data value.
+    :param name: Optional node name (Default = ``'spec_unmix_nnls'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagespectral.unmixing import spec_unmix_nnls_node
+
+        fracs = spec_unmix_nnls_node(RasterSource("img.tif"), "endmembers.csv")
+        TileGraph(DiskSink(fracs, "fracs_nnls.tif")).run()
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    rsgispy.check_optional_dep(HAVE_SCIPY, "spec_unmix_nnls_node", "scipy", "unmixing")
+    return _unmix_node(
+        source,
+        vld_msk,
+        _scipy_nnls_solver,
+        (endmembers, gain, weight, file_format),
+        (valid_msk_val, out_no_data_val, no_data_val),
+        name or "spec_unmix_nnls",
+    )
+
+
 def spec_unmix_nnls(
     input_img: str,
     output_img: str,
@@ -968,6 +1170,59 @@ def spec_unmix_nnls(
         calc_stats=calc_stats,
         use_pbar=use_pbar,
         out_no_data_val=out_no_data_val,
+    )
+
+
+def spec_unmix_fcls_node(
+    source: TileNode,
+    endmembers: EndmemberInput,
+    vld_msk: Optional[TileNode] = None,
+    valid_msk_val: int = 1,
+    gain: float = 1,
+    file_format: Optional[str] = None,
+    *,
+    out_no_data_val: float = -9999.0,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`spec_unmix_fcls` (fully constrained
+    least-squares unmixing, non-negative and sum-to-one, with given
+    endmembers; requires ``scipy``), with the same outputs as
+    :func:`spec_unmix_ucls_node`.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode` with the
+                   endmembers' bands.
+    :param endmembers: Endmembers table or file (bands as rows).
+    :param vld_msk: Optional node whose first band is a valid-pixel mask.
+    :param valid_msk_val: Valid value in ``vld_msk`` (Default = ``1``).
+    :param gain: Gain divisor of image and endmembers when ``> 1``
+                 (Default = ``1``).
+    :param file_format: Optional table format of an endmembers file.
+    :param out_no_data_val: Output no-data value (Default = ``-9999.0``).
+    :param no_data_val: Optional input no-data value.
+    :param name: Optional node name (Default = ``'spec_unmix_fcls'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagespectral.unmixing import spec_unmix_fcls_node
+        from rsgispy.imageutils.masking import gen_valid_mask_node
+
+        img = RasterSource("img.tif")
+        fracs = spec_unmix_fcls_node(img, "endmembers.csv", gen_valid_mask_node(img))
+        TileGraph(DiskSink(fracs, "fracs_fcls.tif")).run()
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    rsgispy.check_optional_dep(HAVE_SCIPY, "spec_unmix_fcls_node", "scipy", "unmixing")
+    return _unmix_node(
+        source,
+        vld_msk,
+        _scipy_fcls_solver,
+        (endmembers, gain, None, file_format),
+        (valid_msk_val, out_no_data_val, no_data_val),
+        name or "spec_unmix_fcls",
     )
 
 
@@ -1594,6 +1849,123 @@ def rescale_unmixing_results(
         )
 
 
+def _predict_refl_endmembers(
+    endmembers: EndmemberInput, file_format: Optional[str]
+) -> Tuple[np.ndarray, List[str]]:
+    """Return the ``(m, n_bands)`` endmember matrix and the band names."""
+    em_df = coerce_endmembers_df(endmembers, file_format=file_format)
+    return em_df.to_numpy(dtype=np.float64).T, [str(idx) for idx in em_df.index]
+
+
+class _PredictReflNode(TileNode):
+    """Predicted reflectance ``coefs @ endmembers`` (``float32`` blocks)."""
+
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+
+    def __init__(
+        self,
+        source: TileNode,
+        endmembers_arr: np.ndarray,
+        band_names: Sequence[str],
+        out_nd: float,
+        *,
+        band_nodata: Optional[Sequence[Optional[float]]] = None,
+        no_data_val: Optional[float] = None,
+        name: Optional[str] = None,
+    ) -> None:
+        super().__init__(inputs=(source,), name=name or "predict_refl_linear_unmixing")
+        self.endmembers_arr = endmembers_arr
+        self.band_names = [str(n) for n in band_names]
+        self.out_nd = out_nd
+        self.band_nodata = list(band_nodata) if band_nodata is not None else None
+        self.no_data_val = no_data_val
+        self._nodatavals: List[Optional[float]] = []
+
+    def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+        m = int(self.endmembers_arr.shape[0])
+        n_in = inputs[0].n_bands
+        if n_in is not None and int(n_in) < m:
+            raise rsgispy.RSGISPyException(
+                f"Unmixing input of {self.label} has {n_in} bands, but "
+                f"endmembers define {m}."
+            )
+        if self.band_nodata is not None:
+            self._nodatavals = list(self.band_nodata)
+        else:
+            nodata = self.no_data_val if self.no_data_val is not None else inputs[0].nodata
+            self._nodatavals = [nodata] * m
+        return NodeMeta(
+            n_bands=int(self.endmembers_arr.shape[1]),
+            band_names=tuple(self.band_names),
+            dtype=np.float32,
+            nodata=self.out_nd,
+        )
+
+    def evaluate(
+        self,
+        inputs: Sequence[TileTensor],
+        halo_y: int,
+        halo_x: int,
+        ctx: TileContext,
+        state: Any = None,
+    ) -> TileTensor:
+        aligned = inputs[0].crop(halo_y, halo_x)
+        m, n_bands = (int(v) for v in self.endmembers_arr.shape)
+        blk = np.asarray(aligned.data[:m], dtype=np.float64)
+        win_h, win_w = int(blk.shape[1]), int(blk.shape[2])
+        coefs_flat = np.moveaxis(blk, 0, -1).reshape(-1, m)
+        vld = _valid_pxls(coefs_flat, self._nodatavals)
+        pred_flat = np.full((coefs_flat.shape[0], n_bands), self.out_nd, dtype=np.float32)
+        pred_flat[vld] = coefs_flat[vld] @ self.endmembers_arr
+        out_blk = np.moveaxis(pred_flat.reshape((win_h, win_w, n_bands)), -1, 0)
+        return aligned.with_data(out_blk)
+
+
+def predict_refl_linear_unmixing_node(
+    source: TileNode,
+    endmembers: EndmemberInput,
+    file_format: Optional[str] = None,
+    *,
+    out_no_data_val: float = -9999.0,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`predict_refl_linear_unmixing`: the reflectance
+    predicted from the abundances in the first ``n_endmembers`` bands of
+    ``source`` (e.g. an unmixing node) and the endmembers, one ``float32``
+    band per endmember band (named after the table's rows). Pixels where a
+    coefficient is non-finite or no data (``no_data_val``, by default that of
+    ``source``) are set to ``out_no_data_val``.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode` with the
+                   abundances.
+    :param endmembers: Endmembers table or file (bands as rows).
+    :param file_format: Optional table format of an endmembers file.
+    :param out_no_data_val: Output no-data value (Default = ``-9999.0``).
+    :param no_data_val: Optional no-data value of the abundances.
+    :param name: Optional node name
+                 (Default = ``'predict_refl_linear_unmixing'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagespectral.unmixing import (
+            predict_refl_linear_unmixing_node, spec_unmix_fcls_node,
+        )
+
+        fracs = spec_unmix_fcls_node(RasterSource("img.tif"), "endmembers.csv")
+        pred = predict_refl_linear_unmixing_node(fracs, "endmembers.csv")
+        TileGraph(DiskSink(pred, "pred_refl.tif")).run()
+    """
+    out_nd = _check_out_no_data_val(out_no_data_val)
+    endmembers_arr, band_names = _predict_refl_endmembers(endmembers, file_format)
+    return _PredictReflNode(
+        source, endmembers_arr, band_names, out_nd, no_data_val=no_data_val, name=name
+    )
+
+
 def predict_refl_linear_unmixing(
     in_unmix_coefs_img: str,
     output_img: str,
@@ -1636,58 +2008,35 @@ def predict_refl_linear_unmixing(
             "unmix.tif", "pred_refl.tif", "endmembers.csv"
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     ensure_file_exists(in_unmix_coefs_img, "Input unmixing coefficients image")
     out_nd = _check_out_no_data_val(out_no_data_val)
-    em_df = coerce_endmembers_df(endmembers, file_format=file_format)
-    endmembers_arr = em_df.to_numpy(dtype=np.float64).T
-    m, n_bands = endmembers_arr.shape
-    band_names = [str(idx) for idx in em_df.index]
-
-    with ExitStack() as stack:
-        src = stack.enter_context(rasterio.open(in_unmix_coefs_img, "r"))
+    endmembers_arr, band_names = _predict_refl_endmembers(endmembers, file_format)
+    m = int(endmembers_arr.shape[0])
+    with rasterio.open(in_unmix_coefs_img, "r") as src:
         if src.count < m:
             raise rsgispy.RSGISPyException(
                 f"Unmixing image '{in_unmix_coefs_img}' has {src.count} bands, "
                 f"but endmembers define {m}."
             )
-
-        dst = create_output_from_dataset(
-            stack=stack,
-            src=src,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            out_rio_dtype="float32",
-            count=n_bands,
-        )
-        dst.nodata = out_nd
-        for b_idx, b_name in enumerate(band_names, start=1):
-            dst.set_band_description(b_idx, b_name)
-
-        for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
-            win_h = int(win.height)
-            win_w = int(win.width)
-            blk = src.read(list(range(1, m + 1)), window=win).astype(
-                np.float64, copy=False
-            )
-            coefs_flat = np.moveaxis(blk, 0, -1).reshape(-1, m)
-            vld = _valid_pxls(coefs_flat, src.nodatavals)
-            pred_flat = np.full(
-                (coefs_flat.shape[0], n_bands), out_nd, dtype=np.float32
-            )
-            pred_flat[vld] = coefs_flat[vld] @ endmembers_arr
-            out_blk = np.moveaxis(
-                pred_flat.reshape((win_h, win_w, n_bands)), -1, 0
-            )
-            dst.write(out_blk, window=win)
-
-    if calc_stats:
-        pop_img_stats(
-            output_img,
-            no_data_val=out_nd,
-            calc_pyramids=True,
-            use_pbar=use_pbar,
-        )
+        nodatavals = list(src.nodatavals)[:m]
+    node = _PredictReflNode(
+        RasterSource(in_unmix_coefs_img, bands=list(range(1, m + 1))),
+        endmembers_arr,
+        band_names,
+        out_nd,
+        band_nodata=nodatavals,
+    )
+    sink = WrapperDiskSink(
+        node,
+        output_img,
+        gdalformat=gdalformat,
+        datatype=rsgispy.TYPE_32FLOAT,
+        nodata=out_nd,
+        band_names=band_names,
+        calc_stats=calc_stats,
+    )
+    run_wrapper_graph(sink, use_pbar=use_pbar)
 
 
 def calc_unmixing_rmse_residual_err(

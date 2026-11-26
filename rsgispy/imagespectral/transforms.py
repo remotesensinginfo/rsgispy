@@ -10,7 +10,7 @@ from contextlib import ExitStack
 import json
 import math
 import os
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -18,12 +18,22 @@ import rasterio
 from rasterio.windows import Window
 
 import rsgispy
+from rsgispy._tilegraph._wrap import (
+    GridRasterSource,
+    WrapperDiskSink,
+    run_wrapper_graph,
+)
 from rsgispy.imageprocess import (
+    NodeMeta,
+    TileContext,
+    TileNode,
+    TileTensor,
     build_valid_mask,
     cast_result_block,
     ensure_file_exists,
     iter_dataset_windows,
     open_output_dataset,
+    resolve_out_nodata,
     update_chan_moments,
 )
 from rsgispy.imagespectral._helpers import (
@@ -32,15 +42,18 @@ from rsgispy.imagespectral._helpers import (
     resolve_selected_bands,
     valid_cube_mask,
 )
-from rsgispy.imageutils.metadata import get_img_no_data_value, set_band_names
+from rsgispy.imageutils.metadata import get_img_no_data_value
 from rsgispy.imageutils.stats import pop_img_stats
 
 __all__: List[str] = [
     "whiten_image",
     "calc_pca",
+    "pca_projection_node",
     "calc_mnf",
+    "mnf_projection_node",
     "get_tasseled_cap_sensors",
     "calc_tasseled_cap",
+    "calc_tasseled_cap_node",
     "histogram_matching",
 ]
 
@@ -269,6 +282,265 @@ def _canonicalise_eigenvector_signs(vecs: np.ndarray) -> np.ndarray:
     return out
 
 
+class _LinearProjectionNode(TileNode):
+    """
+    ``((X - mean) / scale) @ proj_matrix`` for the valid pixels of the first
+    input (finite, not no data, and valid in the optional mask input);
+    other pixels are set to the output no-data value.
+    """
+
+    # pylint: disable=too-many-instance-attributes
+
+    def __init__(
+        self,
+        inputs: Sequence[TileNode],
+        proj: Tuple[np.ndarray, Optional[np.ndarray], Optional[np.ndarray]],
+        nodata_fn: Callable[[Optional[float]], Tuple[Optional[float], float]],
+        valid_msk_val: int,
+        out_np_dtype: np.dtype,
+        out_band_names: Optional[Sequence[str]] = None,
+        name: Optional[str] = None,
+    ) -> None:
+        super().__init__(inputs=tuple(inputs), name=name or "linear_projection")
+        self.proj_matrix = np.asarray(proj[0], dtype=np.float64)
+        self.mean_vec = proj[1]
+        self.scale_vec = proj[2]
+        self.nodata_fn = nodata_fn
+        self.valid_msk_val = valid_msk_val
+        self.out_np_dtype = np.dtype(out_np_dtype)
+        self.out_band_names = (
+            [str(n) for n in out_band_names] if out_band_names is not None else None
+        )
+        self.eff_in_nd: Optional[float] = None
+        self.eff_out_nd = 0.0
+
+    def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+        n_req = int(self.proj_matrix.shape[0])
+        n_in = inputs[0].n_bands
+        if n_in is not None and n_in != n_req:
+            raise rsgispy.RSGISPyException(
+                f"Expected {n_req} input bands for the projection, got {n_in}."
+            )
+        self.eff_in_nd, self.eff_out_nd = self.nodata_fn(inputs[0].nodata)
+        return NodeMeta(
+            n_bands=int(self.proj_matrix.shape[1]),
+            band_names=self.out_band_names,
+            dtype=self.out_np_dtype,
+            nodata=self.eff_out_nd,
+        )
+
+    def evaluate(
+        self,
+        inputs: Sequence[TileTensor],
+        halo_y: int,
+        halo_x: int,
+        ctx: TileContext,
+        state: Any = None,
+    ) -> TileTensor:
+        aligned = [t.crop(halo_y, halo_x) for t in inputs]
+        blk = np.asarray(aligned[0].data, dtype=np.float64)
+        n_in_bands = int(blk.shape[0])
+        win_h, win_w = int(blk.shape[1]), int(blk.shape[2])
+        n_out_bands = int(self.proj_matrix.shape[1])
+        msk_blk = aligned[1].data[0] if len(aligned) > 1 else None
+        valid = valid_cube_mask(blk, self.eff_in_nd, msk_blk, self.valid_msk_val)
+        valid_flat = valid.ravel()
+        out_flat = np.full(
+            (win_h * win_w, n_out_bands), self.eff_out_nd, dtype=np.float64
+        )
+        if np.any(valid_flat):
+            pxls = np.moveaxis(blk, 0, 2).reshape(-1, n_in_bands)[valid_flat]
+            if self.mean_vec is not None:
+                pxls = pxls - self.mean_vec
+            if self.scale_vec is not None:
+                pxls = pxls / self.scale_vec
+            out_flat[valid_flat] = pxls @ self.proj_matrix
+        out_blk = np.moveaxis(out_flat.reshape((win_h, win_w, n_out_bands)), 2, 0)
+        return aligned[0].with_data(
+            cast_result_block(out_blk, win_h, win_w, self.out_np_dtype)
+        )
+
+
+def _projection_nodata_fn(
+    no_data_val: Optional[float],
+    out_no_data_val: Optional[float],
+    out_np_dtype: np.dtype,
+) -> Callable[[Optional[float]], Tuple[Optional[float], float]]:
+    """
+    No-data values of a projection node from the input's no-data value,
+    resolved as by :func:`rsgispy.imagespectral._helpers.resolve_eff_nodata`.
+    """
+
+    def _resolve(in_nodata: Optional[float]) -> Tuple[Optional[float], float]:
+        eff_in_nd = no_data_val if no_data_val is not None else in_nodata
+        resolved_out = resolve_out_nodata(
+            out_np_dtype,
+            out_no_data_val=out_no_data_val,
+            fallback_nodata=eff_in_nd,
+            default_float=-9999.0,
+            default_int=0.0,
+        )
+        return eff_in_nd, 0.0 if resolved_out is None else float(resolved_out)
+
+    return _resolve
+
+
+def _projection_node(
+    source: TileNode,
+    vld_msk: Optional[TileNode],
+    proj: Tuple[np.ndarray, Optional[np.ndarray], Optional[np.ndarray]],
+    settings: Tuple[int, Optional[float], Optional[float], Any],
+    out_band_names: Optional[Sequence[str]],
+    name: str,
+) -> TileNode:
+    """
+    Build a projection node; ``settings`` is ``(valid_msk_val, no_data_val,
+    out_no_data_val, out_dtype)``.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    valid_msk_val, no_data_val, out_no_data_val, out_dtype = settings
+    out_np_dtype = np.dtype(out_dtype)
+    inputs = [source] + ([vld_msk] if vld_msk is not None else [])
+    return _LinearProjectionNode(
+        inputs,
+        proj,
+        _projection_nodata_fn(no_data_val, out_no_data_val, out_np_dtype),
+        valid_msk_val,
+        out_np_dtype,
+        out_band_names,
+        name=name,
+    )
+
+
+def _info_vector(info: Dict[str, Any], key: str) -> Optional[np.ndarray]:
+    """Return ``info[key]`` as a ``float64`` vector (``None`` if missing)."""
+    val = info.get(key)
+    return None if val is None else np.asarray(val, dtype=np.float64)
+
+
+def pca_projection_node(
+    source: TileNode,
+    pca_info: Dict[str, Any],
+    vld_msk: Optional[TileNode] = None,
+    valid_msk_val: int = 1,
+    *,
+    no_data_val: Optional[float] = None,
+    out_no_data_val: Optional[float] = None,
+    out_dtype: Any = np.float32,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node applying a principal component transformation fitted by
+    :func:`calc_pca` (its returned dictionary, or the ``out_stats_json`` file
+    loaded with ``json``) to the bands of ``source``: the bands are centred
+    (and scaled when the PCA was ``standardised``) and projected onto the
+    loadings, giving one band per component named ``PC_<n>``.
+
+    Fitting a PCA needs whole-image statistics (pass 1); applying it is
+    tile-local, so it can be chained in a
+    :class:`~rsgispy.imageprocess.TileGraph`. ``source`` must have the bands
+    the PCA was fitted on, in the same order. Invalid pixels (non-finite,
+    ``no_data_val`` or the no-data value of ``source``, or not
+    ``valid_msk_val`` in ``vld_msk``) are set to the output no-data value
+    (``out_no_data_val``, else the input no-data value, else ``-9999`` for
+    float or ``0`` for integer ``out_dtype``).
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param pca_info: Dictionary returned by :func:`calc_pca`.
+    :param vld_msk: Optional node whose first band is a valid-pixel mask.
+    :param valid_msk_val: Valid value in ``vld_msk`` (Default = ``1``).
+    :param no_data_val: Optional input no-data value.
+    :param out_no_data_val: Optional output no-data value.
+    :param out_dtype: NumPy dtype of the output blocks
+                      (Default = ``numpy.float32``).
+    :param name: Optional node name (Default = ``'pca_projection'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagespectral.transforms import calc_pca, pca_projection_node
+
+        info = calc_pca("s2_t1.tif", "s2_t1_pca.tif", n_components=3)
+        # Apply the same transformation to another date, in one pass.
+        pcs = pca_projection_node(RasterSource("s2_t2.tif"), info)
+        TileGraph(DiskSink(pcs, "s2_t2_pca.tif")).run()
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    loadings = _info_vector(pca_info, "loadings")
+    if loadings is None or loadings.ndim != 2:
+        raise rsgispy.RSGISPyException(
+            "pca_info must be the dictionary returned by calc_pca ('loadings')."
+        )
+    scale = _info_vector(pca_info, "scale") if pca_info.get("standardised") else None
+    n_comp = int(loadings.shape[1])
+    return _projection_node(
+        source,
+        vld_msk,
+        (loadings, _info_vector(pca_info, "mean"), scale),
+        (valid_msk_val, no_data_val, out_no_data_val, out_dtype),
+        [f"PC_{idx + 1}" for idx in range(n_comp)],
+        name or "pca_projection",
+    )
+
+
+def mnf_projection_node(
+    source: TileNode,
+    mnf_info: Dict[str, Any],
+    vld_msk: Optional[TileNode] = None,
+    valid_msk_val: int = 1,
+    *,
+    no_data_val: Optional[float] = None,
+    out_no_data_val: Optional[float] = None,
+    out_dtype: Any = np.float32,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node applying a Minimum Noise Fraction transformation fitted
+    by :func:`calc_mnf` (its returned dictionary) to the bands of
+    ``source``: the bands are centred and projected with the MNF
+    ``transform_matrix``, giving one band per component named ``MNF_<n>``.
+    No data and the valid mask are handled as in
+    :func:`pca_projection_node`.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param mnf_info: Dictionary returned by :func:`calc_mnf`.
+    :param vld_msk: Optional node whose first band is a valid-pixel mask.
+    :param valid_msk_val: Valid value in ``vld_msk`` (Default = ``1``).
+    :param no_data_val: Optional input no-data value.
+    :param out_no_data_val: Optional output no-data value.
+    :param out_dtype: NumPy dtype of the output blocks
+                      (Default = ``numpy.float32``).
+    :param name: Optional node name (Default = ``'mnf_projection'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagespectral.transforms import calc_mnf, mnf_projection_node
+
+        info = calc_mnf("hyper.tif", "hyper_mnf.tif", n_components=10)
+        mnf = mnf_projection_node(RasterSource("hyper_scene2.tif"), info)
+        TileGraph(DiskSink(mnf, "hyper_scene2_mnf.tif")).run()
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    proj = _info_vector(mnf_info, "transform_matrix")
+    if proj is None or proj.ndim != 2:
+        raise rsgispy.RSGISPyException(
+            "mnf_info must be the dictionary returned by calc_mnf "
+            "('transform_matrix')."
+        )
+    n_comp = int(proj.shape[1])
+    return _projection_node(
+        source,
+        vld_msk,
+        (proj, _info_vector(mnf_info, "mean"), None),
+        (valid_msk_val, no_data_val, out_no_data_val, out_dtype),
+        [f"MNF_{idx + 1}" for idx in range(n_comp)],
+        name or "mnf_projection",
+    )
+
+
 def _stream_linear_projection(
     input_img: str,
     output_img: str,
@@ -286,78 +558,40 @@ def _stream_linear_projection(
     calc_stats: bool,
     use_pbar: bool,
 ) -> None:
-    """Apply ``((X - mean) / scale) @ proj_matrix`` across raster windows."""
+    """Apply ``((X - mean) / scale) @ proj_matrix`` as a tile graph."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
-    n_in_bands = len(band_indices)
-    n_out_bands = int(proj_matrix.shape[1])
-
     with ExitStack() as stack:
-        img_ds, msk_ds, grid, img_off, msk_off = open_spectral_inputs(
+        _, msk_ds, grid, img_off, msk_off = open_spectral_inputs(
             stack, input_img, valid_msk_img
         )
-        dst = open_output_dataset(
-            stack=stack,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            out_rio_dtype=out_rio_dtype,
-            grid=grid,
-            count=n_out_bands,
-            output_exists=False,
+        msk_dtype = msk_ds.dtypes[0] if msk_ds is not None else None
+    inputs: List[TileNode] = [
+        GridRasterSource(input_img, grid, img_off, bands=list(band_indices))
+    ]
+    if valid_msk_img is not None and msk_off is not None:
+        inputs.append(
+            GridRasterSource(valid_msk_img, grid, msk_off, bands=1, dtype=msk_dtype)
         )
-        dst.nodata = eff_out_nd
-
-        for dst_win in iter_dataset_windows(
-            grid.height, grid.width, use_pbar=use_pbar
-        ):
-            col_off, row_off = int(dst_win.col_off), int(dst_win.row_off)
-            win_w, win_h = int(dst_win.width), int(dst_win.height)
-            img_win = Window(
-                img_off[0] + col_off, img_off[1] + row_off, win_w, win_h
-            )
-            blk = img_ds.read(
-                band_indices, window=img_win, out_dtype=np.float64
-            )
-            msk_blk: Optional[np.ndarray] = None
-            if msk_ds is not None and msk_off is not None:
-                msk_win = Window(
-                    msk_off[0] + col_off, msk_off[1] + row_off, win_w, win_h
-                )
-                msk_blk = msk_ds.read(1, window=msk_win)
-
-            valid = valid_cube_mask(blk, eff_in_nd, msk_blk, valid_msk_val)
-            valid_flat = valid.ravel()
-            out_flat = np.full(
-                (win_h * win_w, n_out_bands), eff_out_nd, dtype=np.float64
-            )
-            if np.any(valid_flat):
-                pxls = np.moveaxis(blk, 0, 2).reshape(-1, n_in_bands)[
-                    valid_flat
-                ]
-                if mean_vec is not None:
-                    pxls = pxls - mean_vec
-                if scale_vec is not None:
-                    pxls = pxls / scale_vec
-                out_flat[valid_flat] = pxls @ proj_matrix
-
-            out_blk = np.moveaxis(
-                out_flat.reshape((win_h, win_w, n_out_bands)), 2, 0
-            )
-            dst.write(
-                cast_result_block(out_blk, win_h, win_w, out_np_dtype),
-                window=dst_win,
-            )
-
-    if out_band_names is not None:
-        set_band_names(output_img, list(out_band_names), feedback=False)
-    if calc_stats:
-        pop_img_stats(
-            output_img,
-            no_data_val=eff_out_nd,
-            calc_pyramids=True,
-            use_pbar=use_pbar,
-        )
+    node = _LinearProjectionNode(
+        inputs,
+        (proj_matrix, mean_vec, scale_vec),
+        lambda _nd: (eff_in_nd, eff_out_nd),
+        valid_msk_val,
+        out_np_dtype,
+        out_band_names,
+    )
+    sink = WrapperDiskSink(
+        node,
+        output_img,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        nodata=eff_out_nd,
+        clamp_int=False,
+        band_names=list(out_band_names) if out_band_names is not None else None,
+        calc_stats=calc_stats,
+    )
+    run_wrapper_graph(sink, use_pbar=use_pbar)
 
 
 def calc_pca(
@@ -799,6 +1033,153 @@ def get_tasseled_cap_sensors() -> List[str]:
     return sorted(_TASSELED_CAP_PRESETS.keys())
 
 
+def _tasseled_cap_matrix(
+    sensor: Optional[str],
+    coeffs: Optional[Union[pd.DataFrame, Sequence[Sequence[float]], np.ndarray]],
+    component_names: Optional[Sequence[str]],
+) -> Tuple[np.ndarray, List[str], int]:
+    """
+    Return the ``(n_bands, n_components)`` Tasseled Cap projection matrix,
+    the component names and the number of input bands required.
+    """
+    if coeffs is not None:
+        if isinstance(coeffs, pd.DataFrame):
+            if coeffs.empty:
+                raise rsgispy.RSGISPyException(
+                    "coeffs DataFrame must not be empty."
+                )
+            proj_mat = coeffs.to_numpy(dtype=np.float64)
+            default_names = [str(col) for col in coeffs.columns]
+            req_n_bands, n_comp = proj_mat.shape
+        else:
+            raw_arr = np.asarray(coeffs, dtype=np.float64)
+            if raw_arr.ndim != 2 or raw_arr.shape[0] < 1 or raw_arr.shape[1] < 1:
+                raise rsgispy.RSGISPyException(
+                    "coeffs array must be 2D with shape (n_components, n_bands)."
+                )
+            n_comp, req_n_bands = raw_arr.shape
+            proj_mat = raw_arr.T
+            default_names = [f"TC_{idx + 1}" for idx in range(n_comp)]
+    else:
+        if sensor is None:
+            raise rsgispy.RSGISPyException(
+                "Provide either a supported sensor name or custom coeffs."
+            )
+        sensor_key = sensor.strip().lower()
+        if sensor_key not in _TASSELED_CAP_PRESETS:
+            raise rsgispy.RSGISPyException(
+                f"Unknown Tasseled Cap sensor '{sensor}'. Supported presets: "
+                f"{get_tasseled_cap_sensors()}."
+            )
+        preset = _TASSELED_CAP_PRESETS[sensor_key]
+        raw_preset = preset["coeffs"]
+        n_comp, req_n_bands = raw_preset.shape
+        proj_mat = raw_preset.T
+        default_names = list(preset["components"])
+
+    if component_names is not None:
+        out_names = [str(name) for name in component_names]
+        if len(out_names) != n_comp:
+            raise rsgispy.RSGISPyException(
+                f"Length of component_names ({len(out_names)}) does not match "
+                f"component count ({n_comp})."
+            )
+    else:
+        out_names = default_names
+    return proj_mat, out_names, int(req_n_bands)
+
+
+def _tc_gain_offset(
+    gain: float, offset: float, req_n_bands: int
+) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    """Per-band ``(mean_vec, scale_vec)`` of the Tasseled Cap offset and gain."""
+    mean_vec = (
+        np.full(req_n_bands, float(offset), dtype=np.float64)
+        if offset != 0.0
+        else None
+    )
+    scale_vec = (
+        np.full(req_n_bands, float(gain), dtype=np.float64)
+        if gain != 1.0
+        else None
+    )
+    return mean_vec, scale_vec
+
+
+def calc_tasseled_cap_node(
+    source: TileNode,
+    sensor: Optional[str] = "landsat8_oli",
+    coeffs: Optional[
+        Union[pd.DataFrame, Sequence[Sequence[float]], np.ndarray]
+    ] = None,
+    component_names: Optional[Sequence[str]] = None,
+    gain: float = 1.0,
+    offset: float = 0.0,
+    vld_msk: Optional[TileNode] = None,
+    valid_msk_val: int = 1,
+    *,
+    no_data_val: Optional[float] = None,
+    out_no_data_val: Optional[float] = None,
+    out_dtype: Any = np.float32,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`calc_tasseled_cap`: the Tasseled Cap
+    transformation of the bands of ``source`` (in the order the sensor preset
+    or ``coeffs`` expect; select them with
+    :class:`~rsgispy.imageprocess.SelectBands` or ``RasterSource(bands=...)``),
+    one output band per component, for chaining in a
+    :class:`~rsgispy.imageprocess.TileGraph`.
+
+    The parameters are those of :func:`calc_tasseled_cap`, with the valid
+    mask as an optional node ``vld_msk``. Invalid pixels are set to the
+    output no-data value (``out_no_data_val``, else the input no-data value,
+    else ``-9999`` for float or ``0`` for integer ``out_dtype``).
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param sensor: Sensor preset (see :func:`get_tasseled_cap_sensors`;
+                   Default = ``'landsat8_oli'``).
+    :param coeffs: Optional custom coefficients (overrides ``sensor``).
+    :param component_names: Optional output band names.
+    :param gain: Scale divisor applied first, ``(pixel - offset) / gain``
+                 (Default = ``1.0``).
+    :param offset: Offset subtracted first (Default = ``0.0``).
+    :param vld_msk: Optional node whose first band is a valid-pixel mask.
+    :param valid_msk_val: Valid value in ``vld_msk`` (Default = ``1``).
+    :param no_data_val: Optional input no-data value (Default = ``None``: the
+                        no-data value of ``source``).
+    :param out_no_data_val: Optional output no-data value.
+    :param out_dtype: NumPy dtype of the output blocks
+                      (Default = ``numpy.float32``).
+    :param name: Optional node name (Default = ``'calc_tasseled_cap'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagespectral.transforms import calc_tasseled_cap_node
+
+        s2 = RasterSource("s2_10band.tif", bands=[1, 2, 3, 7, 9, 10])
+        tc = calc_tasseled_cap_node(s2, sensor="sentinel2_msi", gain=10000.0)
+        TileGraph(DiskSink(tc, "s2_tc.tif")).run()
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    if gain == 0.0:
+        raise rsgispy.RSGISPyException("gain must not be zero.")
+    proj_mat, out_names, req_n_bands = _tasseled_cap_matrix(
+        sensor, coeffs, component_names
+    )
+    mean_vec, scale_vec = _tc_gain_offset(gain, offset, req_n_bands)
+    return _projection_node(
+        source,
+        vld_msk,
+        (proj_mat, mean_vec, scale_vec),
+        (valid_msk_val, no_data_val, out_no_data_val, out_dtype),
+        out_names,
+        name or "calc_tasseled_cap",
+    )
+
+
 def calc_tasseled_cap(
     input_img: str,
     output_img: str,
@@ -888,54 +1269,11 @@ def calc_tasseled_cap(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    # pylint: disable=too-many-branches
     if gain == 0.0:
         raise rsgispy.RSGISPyException("gain must not be zero.")
-
-    if coeffs is not None:
-        if isinstance(coeffs, pd.DataFrame):
-            if coeffs.empty:
-                raise rsgispy.RSGISPyException(
-                    "coeffs DataFrame must not be empty."
-                )
-            proj_mat = coeffs.to_numpy(dtype=np.float64)
-            default_names = [str(col) for col in coeffs.columns]
-            req_n_bands, n_comp = proj_mat.shape
-        else:
-            raw_arr = np.asarray(coeffs, dtype=np.float64)
-            if raw_arr.ndim != 2 or raw_arr.shape[0] < 1 or raw_arr.shape[1] < 1:
-                raise rsgispy.RSGISPyException(
-                    "coeffs array must be 2D with shape (n_components, n_bands)."
-                )
-            n_comp, req_n_bands = raw_arr.shape
-            proj_mat = raw_arr.T
-            default_names = [f"TC_{idx + 1}" for idx in range(n_comp)]
-    else:
-        if sensor is None:
-            raise rsgispy.RSGISPyException(
-                "Provide either a supported sensor name or custom coeffs."
-            )
-        sensor_key = sensor.strip().lower()
-        if sensor_key not in _TASSELED_CAP_PRESETS:
-            raise rsgispy.RSGISPyException(
-                f"Unknown Tasseled Cap sensor '{sensor}'. Supported presets: "
-                f"{get_tasseled_cap_sensors()}."
-            )
-        preset = _TASSELED_CAP_PRESETS[sensor_key]
-        raw_preset = preset["coeffs"]
-        n_comp, req_n_bands = raw_preset.shape
-        proj_mat = raw_preset.T
-        default_names = list(preset["components"])
-
-    if component_names is not None:
-        out_names = [str(name) for name in component_names]
-        if len(out_names) != n_comp:
-            raise rsgispy.RSGISPyException(
-                f"Length of component_names ({len(out_names)}) does not match "
-                f"component count ({n_comp})."
-            )
-    else:
-        out_names = default_names
+    proj_mat, out_names, req_n_bands = _tasseled_cap_matrix(
+        sensor, coeffs, component_names
+    )
 
     ensure_file_exists(input_img)
     with rasterio.open(input_img, "r") as src:
@@ -952,16 +1290,7 @@ def calc_tasseled_cap(
         input_img, no_data_val, out_no_data_val, out_np_dtype
     )
 
-    mean_vec = (
-        np.full(req_n_bands, float(offset), dtype=np.float64)
-        if offset != 0.0
-        else None
-    )
-    scale_vec = (
-        np.full(req_n_bands, float(gain), dtype=np.float64)
-        if gain != 1.0
-        else None
-    )
+    mean_vec, scale_vec = _tc_gain_offset(gain, offset, req_n_bands)
 
     _stream_linear_projection(
         input_img=input_img,

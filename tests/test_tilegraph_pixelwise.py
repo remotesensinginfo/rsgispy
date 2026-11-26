@@ -372,3 +372,108 @@ def test_index_median_composite_chain_matches_files(tmp_path):
             [RasterSource(imgs[0]), RasterSource(imgs[1], bands=1)], [50])))
     with pytest.raises(rsgispy.RSGISPyException):
         ic_pct.calc_imgs_pxl_percentiles_node(nodes, [150])
+
+
+# --------------------------------------------------------------------------
+# Spectral transforms, SAM / SCM and unmixing
+# --------------------------------------------------------------------------
+
+
+def test_tasseled_cap_and_pca_nodes_match_files(tmp_path):
+    import rsgispy.imagespectral.transforms as st  # pylint: disable=import-outside-toplevel
+    from rsgispy.imageprocess import SelectBands  # pylint: disable=import-outside-toplevel
+
+    img = pg._s2_cube(str(tmp_path))  # pylint: disable=protected-access
+    msk = pg._mask_img(str(tmp_path))  # pylint: disable=protected-access
+    tc_file = str(tmp_path / "tc.tif")
+    st.calc_tasseled_cap(img, tc_file, coeffs=[[0.5, 0.5], [0.3, -0.7]], bands=[4, 3],
+                         valid_msk_img=msk, gain=10000.0, calc_stats=False, use_pbar=False)
+    tc = st.calc_tasseled_cap_node(SelectBands(RasterSource(img), [4, 3]),
+                                   coeffs=[[0.5, 0.5], [0.3, -0.7]], gain=10000.0,
+                                   vld_msk=RasterSource(msk, dtype=np.uint8))
+    meta = _meta(tc)
+    assert (meta.band_names, meta.dtype, meta.nodata) == (("TC_1", "TC_2"), np.float32, 0.0)
+    np.testing.assert_array_equal(_run_mem(tc), _read(tc_file))
+    with pytest.raises(rsgispy.RSGISPyException, match="Expected 6 input bands"):
+        TileGraph(MemorySink(st.calc_tasseled_cap_node(RasterSource(img, bands=[1, 2]))))
+    with pytest.raises(rsgispy.RSGISPyException, match="Unknown Tasseled Cap sensor"):
+        st.calc_tasseled_cap_node(RasterSource(img), sensor="hubble")
+
+    pca_file = str(tmp_path / "pca.tif")
+    info = st.calc_pca(img, pca_file, n_components=2, standardise=True, calc_stats=False,
+                       use_pbar=False)
+    pcs = st.pca_projection_node(RasterSource(img), info)
+    assert _meta(pcs).band_names == ("PC_1", "PC_2")
+    np.testing.assert_array_equal(_run_mem(pcs, 23), _read(pca_file))
+    mnf_file = str(tmp_path / "mnf.tif")
+    info = st.calc_mnf(img, mnf_file, n_components=2, valid_msk_img=msk, calc_stats=False,
+                       use_pbar=False)
+    mnf = st.mnf_projection_node(RasterSource(img), info, RasterSource(msk, dtype=np.uint8))
+    np.testing.assert_array_equal(_run_mem(mnf), _read(mnf_file))
+    with pytest.raises(rsgispy.RSGISPyException, match="calc_pca"):
+        st.pca_projection_node(RasterSource(img), {})
+
+
+def test_sam_scm_nodes_match_files(tmp_path):
+    import rsgispy.imagespectral.classification as sc  # pylint: disable=import-outside-toplevel
+
+    img = pg._s2_cube(str(tmp_path))  # pylint: disable=protected-access
+    ems = pg._endmembers()  # pylint: disable=protected-access
+    files = {k: str(tmp_path / f"{k}.tif") for k in ("ang", "cls", "min", "corr", "ccls")}
+    sc.spectral_angle_mapper(img, files["ang"], ems, out_class_img=files["cls"],
+                             out_min_angle_img=files["min"], img_gain=10000.0,
+                             max_angle=0.3, calc_stats=False, use_pbar=False)
+    sc.spectral_correlation_mapper(img, files["corr"], ems, out_class_img=files["ccls"],
+                                   min_corr=0.5, calc_stats=False, use_pbar=False)
+    src = RasterSource(img)
+    for output, key in (("scores", "ang"), ("class", "cls"), ("best", "min")):
+        node = sc.spectral_angle_mapper_node(src, ems, img_gain=10000.0, max_angle=0.3,
+                                             output=output)
+        np.testing.assert_array_equal(_run_mem(node), _read(files[key]), err_msg=output)
+    meta = _meta(sc.spectral_angle_mapper_node(src, ems, output="class"))
+    assert (meta.dtype, meta.nodata) == (np.uint8, 0.0)
+    assert _meta(sc.spectral_angle_mapper_node(src, ems, output="all")).band_names == (
+        "veg", "soil", "water", "min_angle", "class")
+    for output, key in (("scores", "corr"), ("class", "ccls")):
+        node = sc.spectral_correlation_mapper_node(src, ems, min_corr=0.5, output=output)
+        np.testing.assert_array_equal(_run_mem(node, 23), _read(files[key]), err_msg=output)
+    with pytest.raises(rsgispy.RSGISPyException, match="does not match"):
+        TileGraph(MemorySink(sc.spectral_angle_mapper_node(RasterSource(img, bands=[1]), ems)))
+    with pytest.raises(rsgispy.RSGISPyException, match="min_corr"):
+        sc.spectral_correlation_mapper_node(src, ems, min_corr=2.0)
+    with pytest.raises(rsgispy.RSGISPyException, match="output must be"):
+        sc.spectral_angle_mapper_node(src, ems, output="angles")
+
+
+def test_unmixing_then_prediction_chain_matches_files(tmp_path):
+    import rsgispy.imagespectral.unmixing as su  # pylint: disable=import-outside-toplevel
+
+    img = pg._mix_cube(str(tmp_path))  # pylint: disable=protected-access
+    msk = pg._mask_img(str(tmp_path))  # pylint: disable=protected-access
+    ems = pg._endmembers() * 10000.0  # pylint: disable=protected-access
+    files = {k: str(tmp_path / f"{k}.tif") for k in ("fcls", "pred", "ucls")}
+    su.spec_unmix_fcls(img, files["fcls"], ems, valid_msk_img=msk, gain=10000.0,
+                       calc_stats=False, use_pbar=False)
+    su.predict_refl_linear_unmixing(files["fcls"], files["pred"], ems, calc_stats=False,
+                                    use_pbar=False)
+    su.spec_unmix_ucls(img, files["ucls"], ems, gain=10000.0, weight=0.5, calc_stats=False,
+                       use_pbar=False)
+
+    fcls = su.spec_unmix_fcls_node(RasterSource(img), ems,
+                                   RasterSource(msk, dtype=np.uint8), gain=10000.0)
+    meta = _meta(fcls)
+    assert (meta.band_names, meta.dtype, meta.nodata) == (
+        ("veg", "soil", "water"), np.float32, -9999.0)
+    pred = su.predict_refl_linear_unmixing_node(fcls, ems)
+    # Same tiles as the file-based runs (package default block size).
+    with_bs = TileGraph([MemorySink(fcls, name="f"), MemorySink(pred, name="p")]).run(
+        use_pbar=False)
+    np.testing.assert_array_equal(with_bs["f"], _read(files["fcls"]))
+    np.testing.assert_array_equal(with_bs["p"], _read(files["pred"]))
+    ucls = su.spec_unmix_ucls_node(RasterSource(img), ems, gain=10000.0, weight=0.5)
+    np.testing.assert_array_equal(_run_mem(ucls, 256), _read(files["ucls"]))
+    with pytest.raises(rsgispy.RSGISPyException, match="expected 6"):
+        TileGraph(MemorySink(su.spec_unmix_nnls_node(RasterSource(img, bands=[1, 2]), ems)))
+    with pytest.raises(rsgispy.RSGISPyException, match="endmembers define 3"):
+        TileGraph(MemorySink(su.predict_refl_linear_unmixing_node(
+            RasterSource(img, bands=[1, 2]), ems)))
