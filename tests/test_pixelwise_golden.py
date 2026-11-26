@@ -21,7 +21,10 @@ def test_pixelwise_golden(case, block_size):
     assert os.path.exists(golden.golden_path(case)), f"missing golden file for {case}"
     arrays, meta = golden.load_golden(case)
     outputs = golden.run_case(case, block_size)
-    assert sorted(outputs) == sorted(meta)
+    expected_labels = set(meta)
+    if not golden.HAS_KEA:
+        expected_labels -= golden.KEA_OUTPUTS.get(case, frozenset())
+    assert sorted(outputs) == sorted(expected_labels)
     for label, out in outputs.items():
         key = f"{label}__all"
         expected = arrays[key] if key in arrays else arrays[f"{label}__bs{block_size}"]
