@@ -14,13 +14,17 @@ import rasterio
 
 import rsgispy
 import rsgispy.imagecalc.calcindices as ic_idx
+import rsgispy.imagecalc.encoding as ic_enc
+import rsgispy.imagecalc.rescale as ic_resc
 import rsgispy.imagefilter.sar as if_sar
 import rsgispy.imagefilter.stats as if_stats
 from rsgispy.imageprocess import (
     ArraySource,
+    Cast,
     DiskSink,
     MemorySink,
     RasterSource,
+    StackBands,
     TileGraph,
 )
 
@@ -108,8 +112,6 @@ def test_calc_sar_indices_node_after_speckle_filter(tmp_path):
                             use_pbar=False)
     lee = if_sar.lee_filter_node(RasterSource(img), 5)
     # The Lee node gives float64 blocks; the file is float32.
-    from rsgispy.imageprocess import Cast  # pylint: disable=import-outside-toplevel
-
     node = ic_idx.calc_sar_indices_node(Cast(lee, np.float32), {1: "VV", 2: "VH"}, names,
                                         "power", index_params={"DPSVI": {"vv_max": 0.6}})
     assert _meta(node).band_names == tuple(names)
@@ -126,3 +128,79 @@ def test_calc_indices_node_on_array_source():
     node = ic_idx.calc_indices_node(ArraySource(data), {1: "red", 2: "nir"}, ["NDVI"],
                                     out_dtype=np.float64)
     np.testing.assert_allclose(_run_mem(node), 0.5)
+
+
+# --------------------------------------------------------------------------
+# Value transforms
+# --------------------------------------------------------------------------
+
+
+def test_rescale_then_indices_chain_matches_files(tmp_path):
+    img = pg._s2_cube(str(tmp_path))  # pylint: disable=protected-access
+    objs = [ic_resc.ImageBandRescale(band=b, in_min=0.0, in_max=10000.0, out_min=0.0,
+                                     out_max=1.0) for b in range(1, 7)]
+    resc_file = str(tmp_path / "resc.tif")
+    ic_resc.rescale_img_pxl_vals(img, resc_file, objs, use_pbar=False)
+    idx_file = str(tmp_path / "idx.tif")
+    ic_idx.calc_indices(resc_file, idx_file, {3: "red", 4: "nir"}, ["NDVI"],
+                        calc_stats=False, use_pbar=False)
+
+    resc = ic_resc.rescale_img_pxl_vals_node(RasterSource(img), objs)
+    meta = _meta(resc)
+    assert (meta.n_bands, meta.dtype, meta.nodata) == (6, np.float32, -9999.0)
+    assert meta.band_names[0] == "Blue"
+    np.testing.assert_array_equal(_run_mem(resc), _read(resc_file))
+    ndvi = ic_idx.calc_indices_node(resc, {3: "red", 4: "nir"}, ["NDVI"])
+    np.testing.assert_array_equal(_run_mem(ndvi, 23), _read(idx_file))
+    with pytest.raises(rsgispy.RSGISPyException, match="Missing ImageBandRescale"):
+        TileGraph(MemorySink(ic_resc.rescale_img_pxl_vals_node(RasterSource(img), objs[:3])))
+    with pytest.raises(rsgispy.RSGISPyException, match="in_max == in_min"):
+        ic_resc.rescale_img_pxl_vals_node(RasterSource(img), [ic_resc.ImageBandRescale(band=1)])
+
+
+def test_calc_img_rescale_and_norm_nodes(tmp_path):
+    img = pg._s2_cube(str(tmp_path))  # pylint: disable=protected-access
+    other = pg._float_cube(str(tmp_path), "fl.tif", 2, 3)  # pylint: disable=protected-access
+    out_file = str(tmp_path / "cr.tif")
+    ic_resc.calc_img_rescale([img, other], out_file, c_no_data_val=0.0, c_gain=10000.0,
+                             n_no_data_val=-1.0, use_pbar=False)
+    node = ic_resc.calc_img_rescale_node(StackBands([RasterSource(img), RasterSource(other)]),
+                                         c_no_data_val=0.0, c_gain=10000.0, n_no_data_val=-1.0)
+    assert _meta(node).nodata == -1.0
+    np.testing.assert_array_equal(_run_mem(node), _read(out_file))
+    with pytest.raises(rsgispy.RSGISPyException, match="c_gain"):
+        ic_resc.calc_img_rescale_node(RasterSource(img), c_gain=0.0)
+
+    params = ic_resc.calc_img_norm_params(img, method="zscore", bands=[4, 2], use_pbar=False)
+    norm_file = str(tmp_path / "norm.tif")
+    ic_resc.apply_img_norm_params(img, norm_file, norm_params=params, use_pbar=False)
+    norm = ic_resc.img_norm_params_node(RasterSource(img), params)
+    assert _meta(norm).band_names == ("NIR", "Green")
+    np.testing.assert_array_equal(_run_mem(norm), _read(norm_file))
+    with pytest.raises(rsgispy.RSGISPyException, match="Either norm_params"):
+        ic_resc.img_norm_params_node(RasterSource(img))
+    with pytest.raises(rsgispy.RSGISPyException, match="out of range"):
+        TileGraph(MemorySink(ic_resc.img_norm_params_node(
+            RasterSource(img, bands=[1, 2]), params)))
+
+
+def test_recode_then_one_hot_chain_matches_files(tmp_path):
+    img = pg._class_img(str(tmp_path))  # pylint: disable=protected-access
+    rec_file = str(tmp_path / "rec.tif")
+    ic_enc.recode_int_raster(img, rec_file, {1: 2, 3: 5}, datatype=rsgispy.TYPE_8UINT,
+                             use_pbar=False)
+    oh_file = str(tmp_path / "oh.tif")
+    ic_enc.one_hot_category_encoding(rec_file, oh_file, {2: 1, 4: 2, 5: 3}, use_pbar=False)
+
+    rec = ic_enc.recode_int_raster_node(RasterSource(img, dtype=np.uint8), {1: 2, 3: 5},
+                                        out_dtype=np.uint8)
+    assert _meta(rec).nodata == 0.0
+    np.testing.assert_array_equal(_run_mem(rec), _read(rec_file))
+    onehot = ic_enc.one_hot_category_encoding_node(rec, {2: 1, 4: 2, 5: 3})
+    meta = _meta(onehot)
+    assert (meta.n_bands, meta.dtype) == (3, np.uint8)
+    np.testing.assert_array_equal(_run_mem(onehot, 23), _read(oh_file))
+    with pytest.raises(rsgispy.RSGISPyException, match="greater than or equal to 1"):
+        ic_enc.one_hot_category_encoding_node(rec, {2: 0})
+    with pytest.raises(rsgispy.RSGISPyException, match="must not be None"):
+        ic_enc.recode_int_raster_node(rec, None)
