@@ -16,6 +16,8 @@ import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 import rasterio  # noqa: E402
 
+from rsgispy.imageutils.colourtable import get_thematic_classes  # noqa: E402
+
 from unmix_scene import (  # noqa: E402
     ENDMEMBERS,
     EM_NAMES,
@@ -125,6 +127,8 @@ def test_classes(tropwet):
     assert np.all(cls[0, :, -NODATA_COLS:] == 0)
     with rasterio.open(out["cls_img"]) as src:
         assert src.colormap(1)[1][:3] == (8, 81, 156)
+    classes = get_thematic_classes(out["cls_img"])
+    assert classes[1][0] == "Open Water (OW)"
     assert out["cls_area"].loc[2, "area_ha"] == pytest.approx(400 * 0.09)
     assert os.path.getsize(out["map_file"]) > 0
 

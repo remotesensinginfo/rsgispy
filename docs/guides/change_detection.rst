@@ -183,7 +183,11 @@ the change map over areas you know, and check it against reference data
 dNDVI > 0.2 for clearing), or the no-change mean plus *k* standard deviations,
 are reasonable alternatives. The chosen threshold is then applied with
 :func:`~rsgispy.imagecalc.maths.band_maths` to give a ``uint8`` thematic map
-(``0`` no data, ``1`` no change, ``2`` vegetation loss), and
+(``0`` no data, ``1`` no change, ``2`` vegetation loss).
+:func:`~rsgispy.imageutils.colourtable.set_thematic_classes` then gives the
+classes their names and colours, marks the image thematic and calculates its
+thematic statistics and pyramids in one call (the names can be read back
+with :func:`~rsgispy.imageutils.colourtable.get_thematic_classes`), and
 :func:`~rsgispy.imagecalc.maths.calc_prop_true_exp` gives the proportion of
 the valid area that changed.
 
@@ -236,7 +240,10 @@ band counts. It writes two outputs:
 
 Choose bands that respond to the change of interest (for vegetation loss red,
 NIR and both SWIR bands) and leave out noisy or redundant ones; every band adds
-noise to the magnitude. The magnitude has no direction, so the example
+noise to the magnitude. The function returns a dictionary of diagnostics:
+the ``threshold`` on the magnitude, the ``threshold_method`` (``"otsu"`` or
+``"kmeans"``) and the numbers of valid (``n_valid``) and changed
+(``n_change``) pixels. The magnitude has no direction, so the example
 combines the CVA mask with the sign of dNDVI to separate vegetation loss
 (``2``) from other change (``3``).
 
@@ -245,6 +252,10 @@ combines the CVA mask with the sign of dNDVI to separate vegetation loss
    :start-after: # [step-4-cva]
    :end-before: # [end-step-4-cva]
    :dedent: 4
+
+.. code-block:: text
+
+   CVA otsu threshold 910.1: change in 4.4 %
 
 Step 5 — Slow feature analysis and IR-MAD
 -----------------------------------------
@@ -290,6 +301,16 @@ difference to label the type of change.
    :start-after: # [step-5-sfa-mad]
    :end-before: # [end-step-5-sfa-mad]
    :dedent: 4
+
+.. code-block:: text
+
+   IR-MAD: 50 iterations, converged False, change in 4.4 %
+
+On the synthetic scene neither method meets ``epsilon`` within 50 iterations
+(both warn), but the change in the transform at the last iteration is small
+and the change masks agree with the reference; with real data, look at the
+``last_change`` value and the change mask before trusting a run that did not
+converge.
 
 Step 6 — Class-based change with an earlier land cover map
 ----------------------------------------------------------

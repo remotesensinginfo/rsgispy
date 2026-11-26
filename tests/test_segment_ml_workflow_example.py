@@ -11,6 +11,8 @@ import geopandas as gpd
 import pytest
 import rasterio
 
+from rsgispy.imageutils.colourtable import get_thematic_classes
+
 from seg_ml_scene import CLASS_IDS, make_seg_scene
 
 pytest.importorskip("sklearn")
@@ -64,6 +66,8 @@ def test_worked_example_runs(tmp_path):
     assert {"seg_id", "cls_id", "cls_name", "cls_prob_max"} <= set(cls.columns)
     with rasterio.open(out["cls_img"]) as src:
         assert src.colormap(1) is not None
+    names = {name for name, _ in get_thematic_classes(out["cls_img"]).values()}
+    assert names == set(CLASS_IDS)
     assert os.path.exists(out["new_cls_vec"])
     assert "pred_canopy_cover" in gpd.read_parquet(out["reg_vec"]).columns
     assert "cluster_id" in gpd.read_parquet(out["clu_vec"]).columns

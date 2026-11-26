@@ -218,6 +218,16 @@ is in ``samples.attrs['report']``.
    exception when a class has fewer groups than sets requested, and warn when
    a class has fewer than ten samples.
 
+   Pixel samples can be added to the segment samples with
+   :func:`~rsgispy.classification.classdata.combine_cls_samples`, which
+   checks that the class names and IDs agree and writes one table in the
+   sample layout (``source_col`` records where each row came from). This is
+   only sound for features that mean the same for a pixel and a segment
+   (a band value and a segment's mean of that band), so name the pixel
+   features as the segment features
+   (``ImageBandInfo(..., band_names=cfg.seg_info.feature_cols)``) and leave
+   out the segment-only features (standard deviations, shape).
+
 Step 5 — Exploring and selecting features (optional)
 ----------------------------------------------------
 
@@ -297,7 +307,11 @@ maps each segment's class onto the label raster grid. It reads only the
 segment ID and class columns and streams the label raster through a lookup,
 so no geometry is burnt. Pixel values are the class ``out_id``\ s, the data
 type is the smallest unsigned integer type that fits them, and the class
-colours are written as a colour table. With ``out_score_img`` the
+colours are written as a colour table. GeoTIFF has no attribute table for
+the class names, so the example stores them (with the colours) as a band tag
+with :func:`~rsgispy.imageutils.colourtable.set_thematic_classes`; read them
+back with :func:`~rsgispy.imageutils.colourtable.get_thematic_classes`. With
+``out_score_img`` the
 probabilities are written to a float raster. The thematic post-processing in
 :mod:`~rsgispy.classification.classpostprocess` can be applied to the
 result if needed, but segment classifications rarely need it.

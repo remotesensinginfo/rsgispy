@@ -183,6 +183,11 @@ def run_workflow(
     cls_img = os.path.join(out_dir, "s2_segs_classified.tif")
     cseg.rasterise_segment_classification(cfg_file, cls_vec, cls_img,
                                           use_pbar=use_pbar)
+    # Store the class names (with the colours) in the GeoTIFF.
+    from rsgispy.imageutils.colourtable import set_thematic_classes
+
+    set_thematic_classes(cls_img, {out_id: (cls_name, colour) for cls_name,
+                                   (_, out_id, colour) in train_vecs.items()})
     # [end-step-8-rasterise]
     out["cls_img"] = cls_img
 

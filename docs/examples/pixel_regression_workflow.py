@@ -32,6 +32,7 @@ def run_workflow(
     cv_block_size: float = 2000.0,
     n_trees: int = 500,
     use_gbdt: bool = True,
+    n_kfold_repeats: int = 10,
     use_pbar: bool = True,
 ) -> Dict[str, Any]:
     """
@@ -197,6 +198,21 @@ def run_workflow(
     print(ncv.overall_metrics)  # r2, rmse and mae of the out-of-fold predictions
     # [end-step-6-spatial-cv]
     out["nested_cv"] = ncv
+
+    # [step-6-repeated-kfold]
+    kf_metrics, _ = rsk.perform_kfold_fit(
+        RandomForestRegressor(n_estimators=n_trees, n_jobs=-1, random_state=42),
+        all_df[feats],
+        all_df[target_col],
+        n_splits=5,
+        n_repeats=n_kfold_repeats,  # each repeat a different random split
+        groups=all_df["train_grp"],  # the pixels of a plot stay together
+        use_pbar=use_pbar,
+    )
+    kf_summary = rsk.summarise_kfold_metrics(kf_metrics)
+    print(kf_summary.loc[target_col].loc[["r2", "rmse", "nrmse"]].round(3))
+    # [end-step-6-repeated-kfold]
+    out["kfold_summary"] = kf_summary
 
     # [step-7-interpret]
     rf_fitted = rsk.load_sklearn_regressor(rf_file)
