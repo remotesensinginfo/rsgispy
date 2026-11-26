@@ -5,6 +5,8 @@ TileGraph.describe(), the default block size, and the public filter node
 builders (bit-exact against the file-based filters).
 """
 
+import os
+
 import numpy as np
 import pytest
 import rasterio
@@ -252,7 +254,7 @@ def test_grid_checks_transform_and_crs(tmp_path):
     for bad in (shifted, coarse):
         with pytest.raises(rsgispy.RSGISPyException, match="same pixel grid") as err:
             _graph(bad)
-        assert "a.tif" in str(err.value) and bad.split("/")[-1] in str(err.value)
+        assert "a.tif" in str(err.value) and os.path.basename(bad) in str(err.value)
     with pytest.raises(rsgispy.RSGISPyException, match="same CRS") as err:
         _graph(other_crs)
     assert "crs.tif" in str(err.value)
