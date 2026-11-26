@@ -120,13 +120,26 @@ def _stats_match(stats_a, stats_b, rel=1e-9):
 
 
 def assert_matches_golden(arr, expected):
-    """Integers exactly; floats within 1 ulp with the same NaN positions."""
+    """
+    Integers exactly; float32 within 1 ulp and float64 within a relative
+    1e-12, with the same NaN positions. The trigonometric functions (e.g.
+    ``np.arccos``) come from the platform's maths library and can differ by
+    a few ulp between platforms; rounding to float32 hides that, but a
+    float64 output keeps it.
+    """
     assert arr.dtype == expected.dtype
     assert arr.shape == expected.shape
     if np.issubdtype(expected.dtype, np.floating):
         nan_a = np.isnan(arr)
         np.testing.assert_array_equal(nan_a, np.isnan(expected))
-        np.testing.assert_array_max_ulp(arr[~nan_a], expected[~nan_a], maxulp=1)
+        if expected.dtype == np.float64:
+            np.testing.assert_allclose(
+                arr[~nan_a], expected[~nan_a], rtol=1e-12, atol=1e-12
+            )
+        else:
+            np.testing.assert_array_max_ulp(
+                arr[~nan_a], expected[~nan_a], maxulp=1
+            )
     else:
         np.testing.assert_array_equal(arr, expected)
 
