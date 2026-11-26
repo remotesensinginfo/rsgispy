@@ -109,7 +109,7 @@ Overview
             │
    2. Features: NDVI, NDWI → median 3x3 + std. dev. 5x5
             │
-   3. Train a decision tree (features and labels as arrays)
+   3. Train a decision tree (samples from a SampleSink)
             │
    4. One graph: classify → majority filter ─► s2_cls.tif
             │      features ─────────────────► s2_features.tif
@@ -220,7 +220,11 @@ Two **band nodes** connect builders: :class:`~rsgispy.imageprocess.SelectBands`
 picks bands of a node (1-based) and :class:`~rsgispy.imageprocess.StackBands`
 stacks the bands of several nodes, keeping their names. Here NDVI and NDWI
 are calculated once and used by two filters, and the four filtered bands are
-stacked as the features of a classifier:
+stacked as the features of a classifier. A filter keeps its input's band
+names, so the stack would have two bands called ``NDVI`` and two called
+``NDWI``; ``band_names`` gives them unique names, which the later sinks and
+the training samples use. (Both band nodes take ``band_names``, and
+:class:`~rsgispy.imageprocess.SetBandNames` renames the bands of any node.)
 
 .. literalinclude:: ../examples/tile_graph.py
    :language: python
@@ -231,15 +235,21 @@ stacked as the features of a classifier:
 Nothing has been read or calculated yet: these are only the nodes of a
 graph. Nodes can be used by several later nodes and in several graphs.
 
-Step 3 — Arrays for a model
----------------------------
+Step 3 — Training samples for a model
+-------------------------------------
 
-A :class:`~rsgispy.imageprocess.MemorySink` returns its node as a NumPy array
-from :meth:`~rsgispy.imageprocess.TileGraph.run` (under the sink's
-``name``). With one for the features and one for the training labels, the
-graph gives the training data directly, without writing the features. A
-decision tree is enough for this synthetic scene; with real data use the
-training and feature selection tools of :doc:`pixel_classification_workflow`.
+A :class:`~rsgispy.imageprocess.SampleSink` collects the feature values of the
+labelled pixels while the graph runs, tile by tile, without writing the
+features. It returns a table (a pandas ``DataFrame``, under the sink's
+``name``) with the class ID and name, the pixel coordinates and one column per
+feature band, the layout of the classification sample tables, so it also
+works with :func:`~rsgispy.classification.classdata.write_cls_samples` and
+the split functions of :mod:`rsgispy.classification.classdata`. With
+``max_per_class`` it keeps a random sample of at most that many pixels per
+class, so memory use stays small on any image, and the sample is the same
+for any block size and ``n_jobs`` (``rnd_seed`` chooses another). A decision
+tree is enough for this synthetic scene; with real data use the training and
+feature selection tools of :doc:`pixel_classification_workflow`.
 
 .. literalinclude:: ../examples/tile_graph.py
    :language: python
@@ -247,11 +257,12 @@ training and feature selection tools of :doc:`pixel_classification_workflow`.
    :end-before: # [end-step-3-train]
    :dedent: 4
 
-A ``MemorySink`` holds the whole image in memory, so use it for small images,
-subsets or debugging; on a large image, write the features with a
-``DiskSink`` and sample them (as the classification guides do), or reduce
-them with a statistics sink (`Step 9 — Statistics without writing a
-raster`_).
+To get whole arrays instead, a :class:`~rsgispy.imageprocess.MemorySink`
+returns its node as a NumPy array from
+:meth:`~rsgispy.imageprocess.TileGraph.run`. It holds the whole image in
+memory, so use it for small images, subsets or debugging, and a
+``SampleSink`` or a statistics sink (`Step 9 — Statistics without writing a
+raster`_) for large images.
 
 Step 4 — A worked chain
 -----------------------
@@ -269,18 +280,20 @@ the DEM: four outputs in one pass over the data.
 Points to note:
 
 * :func:`~rsgispy.ml.predict.predict_raster_node` predicts every pixel where
-  all features are valid; with ``thematic=True`` the other pixels are ``0``.
+  all features are valid; with ``thematic=True`` the other pixels are ``0``,
+  and the result is ``uint8`` when every class fits in it.
   :func:`~rsgispy.classification.classpostprocess.majority_filter_node` then
-  replaces each class by the most common class in a 3 x 3 window. Its
-  ``dtype`` is the type the result will be written as (it sets the default
-  no data value); the type of the file is set by the sink.
+  replaces each class by the most common class in a 3 x 3 window; with
+  ``dtype=np.uint8`` its result is ``uint8`` too.
 * :class:`~rsgispy.imageprocess.DiskSink` writes a tiled, DEFLATE-compressed
-  GeoTIFF by default (or a COG with ``gdalformat='COG'``). Its ``datatype``
-  defaults to ``rsgispy.TYPE_32FLOAT``, so set it for class maps and other
-  integer outputs. It takes the band names and no data value from its input
-  unless you give ``band_names`` or ``nodata``; the features are given names
-  here because the stack has two bands called ``NDVI`` and two called
-  ``NDWI``.
+  GeoTIFF by default (or a COG with ``gdalformat='COG'``). Without
+  ``datatype`` it writes the data type of its input node: integer and
+  ``float32`` nodes keep their type (the class map and the hillshade are
+  ``uint8`` here), and ``float64`` nodes, the type of most filters and
+  indices, are written as ``float32``. Pass ``datatype`` (e.g.
+  ``rsgispy.TYPE_64FLOAT``) to choose another. It also takes the band names
+  and no data value from its input unless you give ``band_names`` or
+  ``nodata``.
 * :meth:`~rsgispy.imageprocess.TileGraph.describe` prints the grid, the
   block size and every node with its inputs, parameters, halo and metadata.
   For this graph the Sentinel-2 source is read with a 3-pixel halo: 2 for the
@@ -432,8 +445,10 @@ fraction and the slope from step 4 flag steep, mostly vegetated land:
    :end-before: # [end-step-8-pointwiseop]
    :dedent: 4
 
+Its ``meta_fn`` declares the output as ``uint8`` with no data value 255, so
+the ``DiskSink`` writes a ``uint8`` file.
 :class:`~rsgispy.imageprocess.BandMathOp` evaluates a band maths expression
-over named inputs (see step 9).
+over named inputs.
 
 When an operation is worth reusing, subclass
 :class:`~rsgispy.imageprocess.TileNode`. A node overrides:
@@ -485,12 +500,18 @@ of each class of the map from step 4:
 
 Some operations need whole-image parameters, such as a mean and standard
 deviation for a z-score. These take **two passes**: calculate the
-statistics first, then give them to a node. The second pass can be a
-:class:`~rsgispy.imageprocess.BandMathOp`, as here, or a builder that takes
-the parameters, such as
-:func:`~rsgispy.imagecalc.rescale.img_norm_params_node` (with parameters
-from :func:`~rsgispy.imagecalc.rescale.calc_img_norm_params`) or the
-``std_params`` of :func:`~rsgispy.changedetect.imgchngmthds.image_difference_node`.
+statistics first, then give them to a node. Here
+:func:`~rsgispy.imagecalc.rescale.norm_params_from_stats` turns the
+``StatsSink`` result into normalisation parameters (the same as
+:func:`~rsgispy.imagecalc.rescale.calc_img_norm_params` calculates from a
+file) for :func:`~rsgispy.imagecalc.rescale.img_norm_params_node`. It supports
+the stretches, z-scores, decimal scaling and the standard, min-max and
+max-abs scalers exactly, and the percentile methods (``cumulative``,
+``robust_zscore``, ``robust_scaler``) approximately, from a histogram. A
+:class:`~rsgispy.imageprocess.BandMathOp` with the statistics in its
+expression, or a builder parameter such as the ``std_params`` of
+:func:`~rsgispy.changedetect.imgchngmthds.image_difference_node`, works in
+the same way.
 
 .. literalinclude:: ../examples/tile_graph.py
    :language: python
@@ -659,6 +680,19 @@ keeps per-run state on itself; move it to the object returned by
 **Majority, mode or GLCM steps don't speed up with ``n_jobs``.** numba's
 threading layer is probably ``workqueue``; install TBB (see `Step 10 —
 Parallel tiles`_).
+
+**Repeated band names.** Filters keep their input's band names, so stacking
+two filters of the same bands repeats them. Name the bands with
+``StackBands(..., band_names=[...])`` or
+:class:`~rsgispy.imageprocess.SetBandNames`; a ``SampleSink`` raises an
+error for repeated names.
+
+**Integer outputs written as float.** Before rsgispy 0.4 a ``DiskSink``
+without ``datatype`` always wrote ``float32``. It now writes the input
+node's type, so a class map from ``majority_filter_node(..., dtype=np.uint8)``
+or a thematic ``predict_raster_node`` is ``uint8``. If an output is still
+``float32``, check its node's data type with ``describe()``, and use
+:class:`~rsgispy.imageprocess.Cast` or ``datatype``.
 
 **A large halo makes the graph slow.** Large windows, or many window steps
 in a row, add up to a large halo that is read again for every tile. Use a

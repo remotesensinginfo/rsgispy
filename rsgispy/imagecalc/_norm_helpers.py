@@ -322,6 +322,185 @@ def _fit_sklearn_band_params(
     }, transformed
 
 
+#: Methods whose parameters are functions of summary statistics (min, max,
+#: mean, standard deviation and, for some, percentiles / median / MAD).
+SUMMARY_NORM_METHODS = (
+    "none",
+    "linear",
+    "stdev",
+    "cumulative",
+    "user",
+    "zscore",
+    "robust_zscore",
+    "decimal_scaling",
+)
+
+#: scikit-learn scalers whose fitted attributes follow from summary statistics.
+SUMMARY_SKLEARN_METHODS = (
+    "standard_scaler",
+    "minmax_scaler",
+    "maxabs_scaler",
+    "robust_scaler",
+)
+
+#: Methods that need percentiles (the median, quartiles or a cumulative range).
+PERCENTILE_NORM_METHODS = ("cumulative", "robust_zscore", "robust_scaler")
+
+
+def summary_band_params(
+    method: str,
+    data_min: float,
+    data_max: float,
+    mean_val: float,
+    std_val: float,
+    eff_out_min: Optional[float],
+    eff_out_max: Optional[float],
+    lower: float,
+    upper: float,
+    n_stdevs: float,
+    user_bounds: Optional[Tuple[float, float]],
+    percentile_fn: Optional[Any] = None,
+    median_fn: Optional[Any] = None,
+    mad_fn: Optional[Any] = None,
+) -> Tuple[Dict[str, Any], Any]:
+    """
+    Parameters of one band for a method of :data:`SUMMARY_NORM_METHODS`,
+    from summary statistics, and the transform they define.
+
+    ``percentile_fn(percents) -> values`` (``cumulative``), ``median_fn() ->
+    median`` and ``mad_fn(median) -> median absolute deviation``
+    (``robust_zscore``) give the order statistics, from the pixel values or
+    from a histogram.
+
+    :return: ``(extra_params, transform)``, where ``transform(values)``
+             applies the normalisation to an array.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-return-statements
+    o_lo = 0.0 if eff_out_min is None else eff_out_min
+    o_hi = 1.0 if eff_out_max is None else eff_out_max
+
+    def _stretch(s_lo: float, s_hi: float) -> Any:
+        return lambda vals: _linear_map_array(vals, s_lo, s_hi, o_lo, o_hi)
+
+    if method == "none":
+        return {}, lambda vals: vals.copy()
+    if method == "linear":
+        return {"stretch_min": data_min, "stretch_max": data_max}, _stretch(
+            data_min, data_max
+        )
+    if method == "stdev":
+        s_low = max(data_min, mean_val - float(n_stdevs) * std_val)
+        s_high = min(data_max, mean_val + float(n_stdevs) * std_val)
+        return {
+            "stretch_min": s_low,
+            "stretch_max": s_high,
+            "n_stdevs": float(n_stdevs),
+        }, _stretch(s_low, s_high)
+    if method == "cumulative":
+        p_low, p_high = percentile_fn([float(lower), float(upper)])
+        return {
+            "stretch_min": float(p_low),
+            "stretch_max": float(p_high),
+            "lower": float(lower),
+            "upper": float(upper),
+        }, _stretch(float(p_low), float(p_high))
+    if method == "user":
+        if user_bounds is None:
+            raise rsgispy.RSGISPyException(
+                "in_min_max bounds are required for method='user'."
+            )
+        u_low, u_high = user_bounds
+        return {"stretch_min": float(u_low), "stretch_max": float(u_high)}, _stretch(
+            u_low, u_high
+        )
+    if method == "zscore":
+        scale = std_val if std_val > 0.0 else 1.0
+        return {"mean": mean_val, "scale": scale}, lambda vals: (vals - mean_val) / scale
+    if method == "robust_zscore":
+        med = float(median_fn())
+        mad = float(mad_fn(med)) * 1.4826
+        scale = mad if mad > 0.0 else 1.0
+        return {"median": med, "scale": scale}, lambda vals: (vals - med) / scale
+    if method == "decimal_scaling":
+        max_abs = max(abs(data_min), abs(data_max))
+        exp_j = math.ceil(math.log10(max_abs)) if max_abs > 0.0 else 0
+        denom = float(10.0**exp_j)
+        return {"exponent": int(exp_j), "denom": denom}, lambda vals: vals / denom
+    raise rsgispy.RSGISPyException(f"Unhandled normalisation method: {method!r}.")
+
+
+def summary_sklearn_band_params(
+    method: str,
+    data_min: float,
+    data_max: float,
+    mean_val: float,
+    std_val: float,
+    eff_out_min: Optional[float],
+    eff_out_max: Optional[float],
+    kwargs: Mapping[str, Any],
+    percentile_fn: Optional[Any] = None,
+) -> Tuple[Dict[str, Any], Any]:
+    """
+    The fitted attributes of a :data:`SUMMARY_SKLEARN_METHODS` scaler from
+    summary statistics (as scikit-learn computes them from the pixels, up to
+    rounding), and the transform they define.
+
+    :return: ``(extra_params, transform)``.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    kwargs = dict(kwargs)
+    if method == "standard_scaler":
+        with_mean = bool(kwargs.get("with_mean", True))
+        with_std = bool(kwargs.get("with_std", True))
+        mean = mean_val if with_mean else 0.0
+        scale = (std_val if std_val > 0.0 else 1.0) if with_std else 1.0
+        return {
+            "with_mean": with_mean,
+            "with_std": with_std,
+            "mean": mean,
+            "scale": scale,
+        }, lambda vals: (vals - mean) / scale
+    if method == "minmax_scaler":
+        feat_range = kwargs.get(
+            "feature_range",
+            (
+                0.0 if eff_out_min is None else eff_out_min,
+                1.0 if eff_out_max is None else eff_out_max,
+            ),
+        )
+        span = data_max - data_min
+        scale = (float(feat_range[1]) - float(feat_range[0])) / (span if span != 0.0 else 1.0)
+        min_offset = float(feat_range[0]) - data_min * scale
+        return {
+            "feature_range": [float(feat_range[0]), float(feat_range[1])],
+            "data_min": data_min,
+            "data_max": data_max,
+            "scale": scale,
+            "min_offset": min_offset,
+        }, lambda vals: vals * scale + min_offset
+    if method == "maxabs_scaler":
+        max_abs = max(abs(data_min), abs(data_max))
+        scale = max_abs if max_abs != 0.0 else 1.0
+        return {"max_abs": max_abs, "scale": scale}, lambda vals: vals / scale
+    if method == "robust_scaler":
+        with_centering = bool(kwargs.get("with_centering", True))
+        with_scaling = bool(kwargs.get("with_scaling", True))
+        q_rng = kwargs.get("quantile_range", (25.0, 75.0))
+        q_lo, q_med, q_hi = percentile_fn([float(q_rng[0]), 50.0, float(q_rng[1])])
+        center = float(q_med) if with_centering else 0.0
+        iqr = float(q_hi) - float(q_lo)
+        scale = (iqr if iqr != 0.0 else 1.0) if with_scaling else 1.0
+        return {
+            "with_centering": with_centering,
+            "with_scaling": with_scaling,
+            "quantile_range": [float(q_rng[0]), float(q_rng[1])],
+            "center": center,
+            "scale": scale,
+        }, lambda vals: (vals - center) / scale
+    raise rsgispy.RSGISPyException(f"Unhandled normalisation method: {method!r}.")
+
+
 def fit_band_norm_params(
     method: str,
     vals: np.ndarray,
@@ -338,7 +517,7 @@ def fit_band_norm_params(
 ) -> Dict[str, Any]:
     """Fit JSON-serialisable normalisation parameters for a single raster band."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+    # pylint: disable=too-many-locals
     if vals.size == 0:
         raise rsgispy.RSGISPyException(
             f"Band {band_idx} contains no valid finite non-nodata pixels."
@@ -350,77 +529,24 @@ def fit_band_norm_params(
     std_val = float(np.std(vals))
     extra_params: Dict[str, Any] = {}
 
-    if method == "none":
-        transformed = vals.copy()
-    elif method == "linear":
-        extra_params = {"stretch_min": data_min, "stretch_max": data_max}
-        transformed = _linear_map_array(
-            vals,
+    if method in SUMMARY_NORM_METHODS:
+        extra_params, transform = summary_band_params(
+            method,
             data_min,
             data_max,
-            0.0 if eff_out_min is None else eff_out_min,
-            1.0 if eff_out_max is None else eff_out_max,
+            mean_val,
+            std_val,
+            eff_out_min,
+            eff_out_max,
+            lower,
+            upper,
+            n_stdevs,
+            user_bounds,
+            percentile_fn=lambda percents: np.percentile(vals, percents),
+            median_fn=lambda: np.median(vals),
+            mad_fn=lambda med: np.median(np.abs(vals - med)),
         )
-    elif method == "stdev":
-        s_low = max(data_min, mean_val - float(n_stdevs) * std_val)
-        s_high = min(data_max, mean_val + float(n_stdevs) * std_val)
-        extra_params = {
-            "stretch_min": s_low,
-            "stretch_max": s_high,
-            "n_stdevs": float(n_stdevs),
-        }
-        transformed = _linear_map_array(
-            vals,
-            s_low,
-            s_high,
-            0.0 if eff_out_min is None else eff_out_min,
-            1.0 if eff_out_max is None else eff_out_max,
-        )
-    elif method == "cumulative":
-        p_low, p_high = np.percentile(vals, [float(lower), float(upper)])
-        extra_params = {
-            "stretch_min": float(p_low),
-            "stretch_max": float(p_high),
-            "lower": float(lower),
-            "upper": float(upper),
-        }
-        transformed = _linear_map_array(
-            vals,
-            float(p_low),
-            float(p_high),
-            0.0 if eff_out_min is None else eff_out_min,
-            1.0 if eff_out_max is None else eff_out_max,
-        )
-    elif method == "user":
-        if user_bounds is None:
-            raise rsgispy.RSGISPyException(
-                "in_min_max bounds are required for method='user'."
-            )
-        u_low, u_high = user_bounds
-        extra_params = {"stretch_min": float(u_low), "stretch_max": float(u_high)}
-        transformed = _linear_map_array(
-            vals,
-            u_low,
-            u_high,
-            0.0 if eff_out_min is None else eff_out_min,
-            1.0 if eff_out_max is None else eff_out_max,
-        )
-    elif method == "zscore":
-        scale = std_val if std_val > 0.0 else 1.0
-        extra_params = {"mean": mean_val, "scale": scale}
-        transformed = (vals - mean_val) / scale
-    elif method == "robust_zscore":
-        med = float(np.median(vals))
-        mad = float(np.median(np.abs(vals - med))) * 1.4826
-        scale = mad if mad > 0.0 else 1.0
-        extra_params = {"median": med, "scale": scale}
-        transformed = (vals - med) / scale
-    elif method == "decimal_scaling":
-        max_abs = float(np.max(np.abs(vals)))
-        exp_j = math.ceil(math.log10(max_abs)) if max_abs > 0.0 else 0
-        denom = float(10.0**exp_j)
-        extra_params = {"exponent": int(exp_j), "denom": denom}
-        transformed = vals / denom
+        transformed = transform(vals)
     elif method in ("log", "log1p"):
         min_required = 1e-6 if method == "log" else 0.0
         shift = (

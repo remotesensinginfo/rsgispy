@@ -69,41 +69,41 @@ def run_workflow(
     indices = calc_indices_node(s2, band_names, ["NDVI", "NDWI"])
     indices_med = median_filter_node(indices, 3)  # remove isolated noise
     indices_sd = stddev_filter_node(indices, 5)  # local texture
-    features = StackBands([indices_med, indices_sd])  # 4 feature bands
+    features = StackBands(  # 4 feature bands, with unique names
+        [indices_med, indices_sd],
+        band_names=["NDVI_med", "NDWI_med", "NDVI_sd", "NDWI_sd"],
+    )
     ndvi = SelectBands(indices, 1)  # used again in later steps
     # [end-step-2-features]
 
     # [step-3-train]
     import numpy as np
     from sklearn.tree import DecisionTreeClassifier
-    from rsgispy.imageprocess import MemorySink, TileGraph
+    from rsgispy.imageprocess import SampleSink, TileGraph
 
-    arrays = TileGraph(
-        [MemorySink(features, name="x"),
-         MemorySink(RasterSource(train_img), name="y")],
+    samples = TileGraph(
+        SampleSink(features, RasterSource(train_img),  # 0 = unlabelled
+                   max_per_class=2000, name="samples"),
         block_size=block_size,
-    ).run(use_pbar=use_pbar)
-    x_all = arrays["x"].reshape(arrays["x"].shape[0], -1).T  # pixels x features
-    y_all = arrays["y"].ravel()
-    train = (y_all > 0) & np.all(np.isfinite(x_all), axis=1)
-    train &= np.all(x_all != infer_node_meta(features).nodata, axis=1)
+    ).run(use_pbar=use_pbar)["samples"]
+    feat_cols = list(infer_node_meta(features).band_names)
     clf = DecisionTreeClassifier(max_depth=6, random_state=42)
-    clf.fit(x_all[train], y_all[train].astype(int))
+    clf.fit(samples[feat_cols].to_numpy(), samples["out_cls_id"])
     # [end-step-3-train]
-    out["n_train"] = int(train.sum())
+    out["samples"] = samples
+    out["n_train"] = len(samples)
 
     # [step-4-graph]
-    import rsgispy
     from rsgispy.classification.classpostprocess import majority_filter_node
     from rsgispy.elevation.illumination import hillshade_node
     from rsgispy.elevation.terrain import slope_node
     from rsgispy.imageprocess import DiskSink
     from rsgispy.ml.predict import predict_raster_node
 
-    cls = predict_raster_node(features, clf, thematic=True)  # 0 = no data
+    cls = predict_raster_node(features, clf, thematic=True)  # uint8, 0 = no data
     cls_smooth = majority_filter_node(cls, 3, dtype=np.uint8)
     slope = slope_node(dem)  # degrees
-    hshade = hillshade_node(dem, azimuth=315.0, zenith=45.0)
+    hshade = hillshade_node(dem, azimuth=315.0, zenith=45.0)  # uint8
 
     cls_img = os.path.join(out_dir, "s2_cls.tif")
     feats_img = os.path.join(out_dir, "s2_features.tif")
@@ -111,12 +111,10 @@ def run_workflow(
     hshade_img = os.path.join(out_dir, "hillshade.tif")
     graph = TileGraph(
         [
-            DiskSink(cls_smooth, cls_img, datatype=rsgispy.TYPE_8UINT,
-                     calc_stats=True),
-            DiskSink(features, feats_img,
-                     band_names=["NDVI_med", "NDWI_med", "NDVI_sd", "NDWI_sd"]),
-            DiskSink(slope, slope_img),
-            DiskSink(hshade, hshade_img, datatype=rsgispy.TYPE_8UINT),
+            DiskSink(cls_smooth, cls_img, calc_stats=True),  # uint8
+            DiskSink(features, feats_img),  # float32, with the band names
+            DiskSink(slope, slope_img),  # float32
+            DiskSink(hshade, hshade_img),  # uint8
         ],
         block_size=block_size,
     )
@@ -162,7 +160,7 @@ def run_workflow(
     out.update(sharp_img=sharp_img, dog_img=dog_img, dem_edges_img=dem_edges_img)
 
     # [step-6-nodata]
-    from rsgispy.imageprocess import SetNoData
+    from rsgispy.imageprocess import MemorySink, SetNoData
 
     nir = RasterSource(s2_img, bands=[k for k, v in band_names.items()
                                       if v == "NIR"])
@@ -222,7 +220,7 @@ def run_workflow(
     steep_veg = PointwiseOp([veg_frac, slope], steep_vegetation,
                             meta_fn=same_bands_meta(np.uint8, nodata=255))
     steep_veg_img = os.path.join(out_dir, "steep_vegetation.tif")
-    TileGraph(DiskSink(steep_veg, steep_veg_img, datatype=rsgispy.TYPE_8UINT),
+    TileGraph(DiskSink(steep_veg, steep_veg_img),  # uint8, from meta_fn
               block_size=block_size).run(use_pbar=use_pbar, n_jobs=n_jobs)
     # [end-step-8-pointwiseop]
     out["steep_veg_img"] = steep_veg_img
@@ -269,19 +267,17 @@ def run_workflow(
     out["stats"] = stats
 
     # [step-9-two-pass]
-    from rsgispy.imageprocess import BandMathOp
+    from rsgispy.imagecalc.rescale import img_norm_params_node, norm_params_from_stats
 
-    # Pass 1 (above): the NDVI mean and standard deviation from StatsSink.
-    ndvi_mean = float(stats["indices"].mean[0])
-    ndvi_std = float(stats["indices"].std[0])
-    # Pass 2: use them in a node.
-    ndvi_z = BandMathOp({"ndvi": ndvi}, f"(ndvi - {ndvi_mean!r}) / {ndvi_std!r}",
-                        nodata=-999.0)
-    ndvi_z_img = os.path.join(out_dir, "ndvi_zscore.tif")
-    TileGraph(DiskSink(ndvi_z, ndvi_z_img, band_names=["NDVI_z"]),
+    # Pass 1 (above): StatsSink statistics of the indices.
+    z_params = norm_params_from_stats(stats["indices"], method="zscore")
+    # Pass 2: apply them in a node.
+    indices_z = img_norm_params_node(indices, z_params)
+    indices_z_img = os.path.join(out_dir, "indices_zscore.tif")
+    TileGraph(DiskSink(indices_z, indices_z_img),
               block_size=block_size).run(use_pbar=use_pbar, n_jobs=n_jobs)
     # [end-step-9-two-pass]
-    out["ndvi_z_img"] = ndvi_z_img
+    out["indices_z_img"] = indices_z_img
 
     # [step-10-parallel]
     chain = {"cls": cls_smooth, "slope": slope}

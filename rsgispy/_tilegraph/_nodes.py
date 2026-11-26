@@ -263,12 +263,12 @@ class TileNode:
         Compute this node's block for one tile.
 
         :param inputs: Input blocks; each has at least the halo requested by
-                       :meth:`input_halos` (crop with
+                       :meth:`TileNode.input_halos` (crop with
                        :meth:`TileTensor.crop` where needed).
         :param halo_y: Halo in rows the output must have.
         :param halo_x: Halo in columns the output must have.
         :param ctx: Position of the core tile in the image (halo 0).
-        :param state: Object returned by :meth:`start_run`.
+        :param state: Object returned by :meth:`TileNode.start_run`.
         :return: Output :class:`TileTensor`.
         """
         raise NotImplementedError(
@@ -733,6 +733,28 @@ class BandMathOp(TileNode):
         return f"expr='{self.expr}' vars={list(self.var_names)}"
 
 
+def _band_names_arg(band_names: Optional[Sequence[str]]) -> Optional[Tuple[str, ...]]:
+    """Normalise a ``band_names`` argument (``None`` or a sequence of names)."""
+    if band_names is None:
+        return None
+    if isinstance(band_names, str):
+        band_names = [band_names]
+    names = tuple(str(n) for n in band_names)
+    if not names:
+        raise rsgispy.RSGISPyException("band_names must not be empty.")
+    return names
+
+
+def _check_band_names(
+    label: str, names: Tuple[str, ...], n_bands: Optional[int]
+) -> None:
+    """Raise when ``names`` does not give one name per band."""
+    if n_bands is not None and len(names) != int(n_bands):
+        raise rsgispy.RSGISPyException(
+            f"{label}: {len(names)} band name(s) given for {n_bands} band(s)."
+        )
+
+
 class SelectBands(TileNode):
     """
     Select (and reorder or repeat) bands of a node's output.
@@ -740,6 +762,8 @@ class SelectBands(TileNode):
     :param source: Upstream :class:`TileNode`.
     :param bands: 1-based band index or sequence of band indices.
     :param name: Optional node identifier.
+    :param band_names: Optional names of the selected bands (one per band;
+                       Default = ``None``: the input's names).
 
     .. code:: python
 
@@ -759,8 +783,11 @@ class SelectBands(TileNode):
         source: TileNode,
         bands: Union[int, Sequence[int]],
         name: Optional[str] = None,
+        *,
+        band_names: Optional[Sequence[str]] = None,
     ) -> None:
         super().__init__(inputs=(source,), name=name)
+        self.band_names = _band_names_arg(band_names)
         if isinstance(bands, (int, np.integer)):
             band_list = [int(bands)]
         else:
@@ -774,6 +801,8 @@ class SelectBands(TileNode):
                 )
         self.bands: List[int] = band_list
         self._index = [b - 1 for b in band_list]
+        if self.band_names is not None:
+            _check_band_names(f"SelectBands {band_list}", self.band_names, len(band_list))
 
     def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
         meta = inputs[0]
@@ -784,11 +813,12 @@ class SelectBands(TileNode):
                         f"{self.label}: band {band} requested but the input "
                         f"has {meta.n_bands} band(s)."
                     )
-        names = (
-            tuple(meta.band_names[i] for i in self._index)
-            if meta.band_names is not None
-            else None
-        )
+        if self.band_names is not None:
+            names: Optional[Tuple[str, ...]] = self.band_names
+        elif meta.band_names is not None:
+            names = tuple(meta.band_names[i] for i in self._index)
+        else:
+            names = None
         return meta.replace(n_bands=len(self.bands), band_names=names)
 
     def evaluate(
@@ -808,6 +838,8 @@ class SelectBands(TileNode):
         return aligned.with_data(aligned.data[self._index])
 
     def describe_params(self) -> str:
+        if self.band_names is not None:
+            return f"bands={self.bands} band_names={list(self.band_names)}"
         return f"bands={self.bands}"
 
 
@@ -818,6 +850,10 @@ class StackBands(TileNode):
 
     :param sources: Sequence of upstream :class:`TileNode` objects.
     :param name: Optional node identifier.
+    :param band_names: Optional names of the stacked bands, one per band
+                       (Default = ``None``: the inputs' names). Use it when
+                       inputs have the same band names, e.g. two filters of
+                       the same bands.
 
     .. code:: python
 
@@ -826,7 +862,8 @@ class StackBands(TileNode):
 
         src = RasterSource("in.tif", bands=1)
         stack = StackBands(
-            [src, mean_filter_node(src, 5), stddev_filter_node(src, 5)]
+            [src, mean_filter_node(src, 5), stddev_filter_node(src, 5)],
+            band_names=["value", "mean5", "stddev5"],
         )
         TileGraph(DiskSink(stack, "features.tif")).run()
     """
@@ -835,11 +872,14 @@ class StackBands(TileNode):
         self,
         sources: Sequence[TileNode],
         name: Optional[str] = None,
+        *,
+        band_names: Optional[Sequence[str]] = None,
     ) -> None:
         src_list = tuple(sources)
         if not src_list:
             raise rsgispy.RSGISPyException("StackBands requires at least one input.")
         super().__init__(inputs=src_list, name=name)
+        self.band_names = _band_names_arg(band_names)
 
     def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
         counts = [m.n_bands for m in inputs]
@@ -865,6 +905,11 @@ class StackBands(TileNode):
         )
         nodatas = [m.nodata for m in inputs]
         nodata = nodatas[0] if all(_same_nodata(nodatas[0], n) for n in nodatas) else None
+        if self.band_names is not None:
+            _check_band_names(self.label, self.band_names, n_bands)
+            names = self.band_names
+            if n_bands is None:
+                n_bands = len(names)
         return NodeMeta(n_bands=n_bands, band_names=names, dtype=dtype, nodata=nodata)
 
     def evaluate(
@@ -877,6 +922,11 @@ class StackBands(TileNode):
     ) -> TileTensor:
         aligned = [t.crop(halo_y, halo_x) for t in inputs]
         return aligned[0].with_data(np.concatenate([t.data for t in aligned], axis=0))
+
+    def describe_params(self) -> str:
+        if self.band_names is not None:
+            return f"band_names={list(self.band_names)}"
+        return ""
 
 
 class Cast(TileNode):
@@ -989,6 +1039,60 @@ class SetNoData(TileNode):
         return f"nodata={self.nodata!r}"
 
 
+class SetBandNames(TileNode):
+    """
+    Set the band names in a node's metadata without changing its pixels,
+    e.g. to name the result of a filter (whose bands keep the input's
+    names) before stacking it with other nodes or writing it. A sink given
+    ``band_names`` still overrides them.
+
+    :param source: Upstream :class:`TileNode`.
+    :param band_names: One name per band of ``source``.
+    :param name: Optional node identifier.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import (
+            DiskSink, RasterSource, SetBandNames, StackBands, TileGraph,
+        )
+        from rsgispy.imagefilter.stats import median_filter_node
+
+        ndvi = RasterSource("ndvi.tif")  # one band, named "NDVI"
+        med = SetBandNames(median_filter_node(ndvi, 3), ["NDVI_med3"])
+        TileGraph(DiskSink(StackBands([ndvi, med]), "ndvi_feats.tif")).run()
+    """
+
+    def __init__(
+        self,
+        source: TileNode,
+        band_names: Sequence[str],
+        name: Optional[str] = None,
+    ) -> None:
+        super().__init__(inputs=(source,), name=name)
+        names = _band_names_arg(band_names)
+        if names is None:
+            raise rsgispy.RSGISPyException("SetBandNames requires band names.")
+        self.band_names: Tuple[str, ...] = names
+
+    def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+        meta = inputs[0]
+        _check_band_names(self.label, self.band_names, meta.n_bands)
+        return meta.replace(n_bands=len(self.band_names), band_names=self.band_names)
+
+    def evaluate(
+        self,
+        inputs: Sequence[TileTensor],
+        halo_y: int,
+        halo_x: int,
+        ctx: TileContext,
+        state: Any = None,
+    ) -> TileTensor:
+        return inputs[0].crop(halo_y, halo_x)
+
+    def describe_params(self) -> str:
+        return f"band_names={list(self.band_names)}"
+
+
 def _same_nodata(val_a: Optional[float], val_b: Optional[float]) -> bool:
     """Compare two no-data values (``None`` and NaN aware)."""
     if val_a is None or val_b is None:
@@ -996,6 +1100,26 @@ def _same_nodata(val_a: Optional[float], val_b: Optional[float]) -> bool:
     if math.isnan(float(val_a)) or math.isnan(float(val_b)):
         return math.isnan(float(val_a)) and math.isnan(float(val_b))
     return float(val_a) == float(val_b)
+
+
+def datatype_from_meta(meta: NodeMeta) -> int:
+    """
+    The ``rsgispy.TYPE_*`` a :class:`DiskSink` with ``datatype=None`` writes
+    for a node with metadata ``meta``: integer and ``float32`` data types are
+    kept (``bool`` is written as ``uint8``); ``float64``, other types and an
+    unknown data type give ``TYPE_32FLOAT``.
+
+    :param meta: Metadata of the sink's input node.
+    :return: ``rsgispy.TYPE_*`` constant.
+    """
+    if meta.dtype is None:
+        return rsgispy.TYPE_32FLOAT
+    np_dt = np.dtype(meta.dtype)
+    if np_dt == np.bool_:
+        return rsgispy.TYPE_8UINT
+    if np.issubdtype(np_dt, np.integer) or np_dt == np.float32:
+        return int(rsgispy.rsgis_dtype_from_np_dtype(np_dt, fallback=rsgispy.TYPE_32FLOAT))
+    return rsgispy.TYPE_32FLOAT
 
 
 def _nodata_fits(nodata: float, np_dtype: np.dtype) -> bool:
@@ -1019,10 +1143,21 @@ class DiskSink(TileSink):
     ``True``), the no-data value and band names of the input node's metadata
     are used (the no-data value only when the output data type can store it).
 
+    When ``datatype`` is ``None`` (the default) the data type comes from the
+    input node's metadata (see :func:`datatype_from_meta`): integer and
+    ``float32`` nodes are written in their own type (e.g. ``uint8`` for
+    :func:`~rsgispy.elevation.illumination.hillshade_node` or a
+    :func:`~rsgispy.classification.classpostprocess.majority_filter_node`
+    with ``dtype=np.uint8``), ``bool`` as ``uint8``, and ``float64`` (the
+    type of most nodes' blocks) or unknown types as ``float32``. Pass
+    ``rsgispy.TYPE_64FLOAT`` for a ``float64`` file. Before rsgispy 0.4 the
+    default was always ``TYPE_32FLOAT``.
+
     :param source: Upstream :class:`TileNode` producing the output tiles.
     :param output_img: Output raster file path.
     :param gdalformat: GDAL/rasterio driver format (Default = ``'GTIFF'``).
-    :param datatype: ``rsgispy.TYPE_*`` constant (Default = ``TYPE_32FLOAT``).
+    :param datatype: ``rsgispy.TYPE_*`` constant (Default = ``None``: from the
+                     input node's metadata).
     :param nodata: Optional output nodata value.
     :param clamp_int: Clamp values to integer type bounds before casting
                       (Default = ``True``).
@@ -1046,7 +1181,7 @@ class DiskSink(TileSink):
         source: TileNode,
         output_img: Union[str, os.PathLike],
         gdalformat: str = "GTIFF",
-        datatype: int = rsgispy.TYPE_32FLOAT,
+        datatype: Optional[int] = None,
         nodata: Optional[float] = None,
         clamp_int: bool = True,
         creation_opts: Optional[Mapping[str, Any]] = None,
@@ -1059,7 +1194,9 @@ class DiskSink(TileSink):
         super().__init__(source, name=name)
         self.output_img: str = os.fspath(output_img)
         self.gdalformat: str = str(gdalformat)
-        self.datatype: int = int(datatype)
+        #: The ``datatype`` argument (``None``: from the input's metadata).
+        self.datatype: Optional[int] = None if datatype is None else int(datatype)
+        self._resolved_datatype: Optional[int] = self.datatype
         self.nodata: Optional[float] = nodata
         self.clamp_int: bool = bool(clamp_int)
         self.creation_opts: Optional[Mapping[str, Any]] = creation_opts
@@ -1081,7 +1218,20 @@ class DiskSink(TileSink):
                 f"Cannot set {len(self.band_names)} band names on image "
                 f"'{self.output_img}' with {meta.n_bands} band(s)."
             )
+        self._resolved_datatype = (
+            self.datatype if self.datatype is not None else datatype_from_meta(meta)
+        )
         return meta
+
+    @property
+    def out_datatype(self) -> int:
+        """
+        ``rsgispy.TYPE_*`` written: ``datatype``, or the type resolved from the
+        input's metadata when the graph was built.
+        """
+        if self._resolved_datatype is not None:
+            return self._resolved_datatype
+        return self.datatype if self.datatype is not None else rsgispy.TYPE_32FLOAT
 
     def resolve_output_meta(
         self, meta: NodeMeta
@@ -1090,7 +1240,9 @@ class DiskSink(TileSink):
         Return the ``(nodata, band_names)`` written for input metadata
         ``meta`` (explicit values first, then the inherited ones).
         """
-        out_np_dt = np.dtype(rsgispy.get_numpy_datatype(self.datatype))
+        if self.datatype is None:
+            self._resolved_datatype = datatype_from_meta(meta)
+        out_np_dt = np.dtype(rsgispy.get_numpy_datatype(self.out_datatype))
         nodata = self.nodata
         if (
             nodata is None
@@ -1120,7 +1272,7 @@ class DiskSink(TileSink):
             "nodata": nodata,
             "band_names": names,
             "dst": None,
-            "np_dtype": np.dtype(rsgispy.get_numpy_datatype(self.datatype)),
+            "np_dtype": np.dtype(rsgispy.get_numpy_datatype(self.out_datatype)),
         }
 
     def _open_dataset(self, count: int) -> rasterio.io.DatasetWriter:
@@ -1138,7 +1290,7 @@ class DiskSink(TileSink):
             stack=run["stack"],
             output_img=self.output_img,
             gdalformat=self.gdalformat,
-            out_rio_dtype=rsgispy.get_rasterio_datatype(self.datatype),
+            out_rio_dtype=rsgispy.get_rasterio_datatype(self.out_datatype),
             grid=run["grid"],
             count=int(count),
             output_exists=False,
@@ -1191,7 +1343,8 @@ class DiskSink(TileSink):
     def describe_params(self) -> str:
         return (
             f"output='{self.output_img}' format={self.gdalformat} "
-            f"datatype={rsgispy.get_rasterio_datatype(self.datatype)}"
+            f"datatype={rsgispy.get_rasterio_datatype(self.out_datatype)}"
+            + (" (from input)" if self.datatype is None else "")
         )
 
 

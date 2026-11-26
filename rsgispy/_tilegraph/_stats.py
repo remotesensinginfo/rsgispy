@@ -58,6 +58,7 @@ class RasterStats:
                  (``int64``), as :func:`numpy.histogram` of each band's valid
                  pixels with ``bin_edges``.
     :param bin_edges: Optional histogram bin edges (``n_bins + 1`` values).
+    :param ddof: Delta degrees of freedom of ``std`` (Default = ``0``).
     """
 
     # pylint: disable=too-many-instance-attributes
@@ -71,6 +72,7 @@ class RasterStats:
     nodata: Optional[float] = None
     hist: Optional[np.ndarray] = None
     bin_edges: Optional[np.ndarray] = None
+    ddof: int = 0
 
     def to_dataframe(self) -> Any:
         """
@@ -230,6 +232,7 @@ class StatsSink(TileSink):
             nodata=self._nodata,
             hist=hist,
             bin_edges=None if self.bin_edges is None else self.bin_edges.copy(),
+            ddof=self.ddof,
         )
         self._acc = None
         self._hist = None

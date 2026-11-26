@@ -223,7 +223,7 @@ class WrapperDiskSink(DiskSink):
             stack=run["stack"],
             output_img=self.output_img,
             gdalformat=self.gdalformat,
-            out_rio_dtype=rsgispy.get_rasterio_datatype(self.datatype),
+            out_rio_dtype=rsgispy.get_rasterio_datatype(self.out_datatype),
             grid=run["grid"],
             count=int(count),
             output_exists=False,

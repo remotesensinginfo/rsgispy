@@ -200,7 +200,7 @@ For multi-step analyses, follow the step order of the matching guide in the rsgi
 | Polygon / point / label-raster zonal stats, hex grids | `zonal_stats_and_vectors` |
 | Map figures, legends, scale bars, insets | `making_maps` |
 | Block processing, `TileGraph`, VRTs, tiling, `n_jobs` | `large_rasters` |
-| Chaining operations in memory: `*_node` builders, `FilterStep`, custom `WindowOp`/`PointwiseOp`/`TileNode`, `StatsSink`/`ZonalStatsSink`, `run(n_jobs=...)` | `tile_graph` |
+| Chaining operations in memory: `*_node` builders, `FilterStep`, custom `WindowOp`/`PointwiseOp`/`TileNode`, `SampleSink`, `StatsSink`/`ZonalStatsSink`, `norm_params_from_stats`, `run(n_jobs=...)` | `tile_graph` |
 
 Workflow notes from the guides:
 - Pass `no_data_val=` (and `calc_stats=True` if wanted) to `band_maths`; the expression must still produce the no-data value (e.g. `"b1 == 0 ? -9999 : b1 * 2"`).
@@ -210,7 +210,9 @@ Workflow notes from the guides:
 - Tile graphs (`large_rasters` step 5; table of all chainable operations in docs `rsgispy_imageprocess` "Chainable operations"):
   - **Tile-local rule**: only operations whose output pixel depends on input pixels within a fixed radius and on parameters known before the run are nodes (filters, indices, value transforms, masks, change detection, terrain/illumination, morphology, majority filter, model prediction). Segmentation, hydrology, distance, sieve, `shadow_mask` and warping are not; whole-image parameters (PCA, normalisation, GLCM range) are computed first (two passes).
   - **Builders**: `<function without apply_>_node(source, <processing params>, *, no_data_val=None, name=None)` next to each file-based function; file options go on `DiskSink`; filters also have `FilterStep` kinds. `no_data_val=None` uses the input node's no-data value (a `RasterSource` has the file's); `SetNoData(src, None)` turns no-data handling off, `SetNoData(src, v)` / `RasterSource(path, nodata=v)` sets one.
-  - **Statistics**: `StatsSink(node, bins=..., hist_range=..., name="s")` gives per-band count/min/max/mean/std (+ histogram) in the same pass (`TileGraph(...).run()["s"]`, a `RasterStats`); `ZonalStatsSink(labels, values)` gives a per-label DataFrame.
+  - **Statistics**: `StatsSink(node, bins=..., hist_range=..., name="s")` gives per-band count/min/max/mean/std (+ histogram) in the same pass (`TileGraph(...).run()["s"]`, a `RasterStats`); `ZonalStatsSink(labels, values)` gives a per-label DataFrame. Two-pass normalisation without a file: `norm_params_from_stats(stats, method="zscore")` -> `img_norm_params_node(node, params)`.
+  - **Training samples**: `SampleSink(features, labels, max_per_class=5000, name="s")` returns a sample DataFrame (`class_name, out_cls_id, internal_cls_id, x, y, <band names>`) tile by tile; the subset is the same for any block size / `n_jobs`. Give stacked features unique names with `StackBands(..., band_names=[...])` or `SetBandNames`.
+  - **Output types**: `DiskSink` without `datatype` writes the node's type (integer/float32 kept, float64 -> float32), so class maps from `majority_filter_node(..., dtype=np.uint8)` or thematic `predict_raster_node` are uint8 without `datatype=`.
   - **Parallel**: `TileGraph(...).run(n_jobs=4)` runs tiles on threads with identical results (3-7x faster on large images); default `n_jobs=1`.
   - **Block size**: 256 (`get_default_block_size()`), used by `TileGraph`, `apply_filter_chain` and the file-based wrappers.
 - Unmixing outputs use `out_no_data_val=-9999.0` (a fraction of 0 is valid); pixels with any band ≤ 0 are not unmixed. `ImageBandRescale.no_data_val=None` uses the input band's no-data value.

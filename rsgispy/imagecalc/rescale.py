@@ -16,7 +16,10 @@ import rsgispy
 from rsgispy.imagecalc._norm_helpers import (
     ALL_NORM_METHODS,
     DEFAULT_TRIM_METHODS,
+    PERCENTILE_NORM_METHODS,
     PIXEL_VECTOR_METHODS,
+    SUMMARY_NORM_METHODS,
+    SUMMARY_SKLEARN_METHODS,
     _extract_user_bounds,
     apply_band_norm_1d,
     apply_pixel_vector_norm,
@@ -27,6 +30,8 @@ from rsgispy.imagecalc._norm_helpers import (
     resolve_out_bounds,
     resolve_out_nodata,
     subsample_band_values,
+    summary_band_params,
+    summary_sklearn_band_params,
 )
 from rsgispy._tilegraph._wrap import (
     GridRasterSource,
@@ -63,6 +68,8 @@ __all__ = [
     "rescale_img_pxl_vals",
     "rescale_img_pxl_vals_node",
     "calc_img_norm_params",
+    "norm_params_from_stats",
+    "STATS_NORM_METHODS",
     "apply_img_norm_params",
     "img_norm_params_node",
     "normalise_img_pxl_vals",
@@ -792,6 +799,258 @@ def calc_img_norm_params(
         "version": 1,
         "method": norm_method,
         "input_img": in_path,
+        "selected_bands": sel_bands,
+        "out_min": eff_out_min,
+        "out_max": eff_out_max,
+        "method_kwargs": dict(method_kwargs or {}),
+        "bands": band_entries,
+    }
+    if out_stats_file is not None:
+        out_json = ensure_parent_dir(out_stats_file)
+        write_dict_to_json(result, out_json)
+    return result
+
+
+#: Methods :func:`norm_params_from_stats` supports.
+STATS_NORM_METHODS = SUMMARY_NORM_METHODS + SUMMARY_SKLEARN_METHODS
+
+
+def _hist_percentiles(
+    hist: np.ndarray, bin_edges: np.ndarray, percents: Sequence[float]
+) -> np.ndarray:
+    """
+    Percentiles of the values a histogram summarises, assuming the values of
+    each bin are spread evenly over it (exact to within a bin width).
+    """
+    counts = np.asarray(hist, dtype=np.float64)
+    cum = np.concatenate([[0.0], np.cumsum(counts)])
+    total = cum[-1]
+    targets = np.asarray(percents, dtype=np.float64) / 100.0 * total
+    return np.interp(targets, cum, np.asarray(bin_edges, dtype=np.float64))
+
+
+def _hist_mad(hist: np.ndarray, bin_edges: np.ndarray, median: float) -> float:
+    """Median absolute deviation from ``median`` of a histogram's values."""
+    centres = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    width = float(np.max(np.diff(bin_edges)))
+    dev = np.abs(centres - median)
+    order = np.argsort(dev)
+    dev_sorted = dev[order]
+    cnt_sorted = np.asarray(hist, dtype=np.float64)[order]
+    # Spread each bin's deviations over [dev - w/2, dev + w/2] (clipped at 0).
+    lo_edges = np.maximum(dev_sorted - width / 2.0, 0.0)
+    edges = np.concatenate([lo_edges, [dev_sorted[-1] + width / 2.0]])
+    edges = np.maximum.accumulate(edges)
+    cum = np.concatenate([[0.0], np.cumsum(cnt_sorted)])
+    return float(np.interp(0.5 * cum[-1], cum, edges))
+
+
+def _hist_order_stats(hist: np.ndarray, bin_edges: np.ndarray) -> Tuple[Any, Any, Any]:
+    """``(percentile_fn, median_fn, mad_fn)`` of a band's histogram."""
+
+    def _percentiles(percents: Sequence[float]) -> np.ndarray:
+        return _hist_percentiles(hist, bin_edges, percents)
+
+    def _median() -> float:
+        return float(_hist_percentiles(hist, bin_edges, [50.0])[0])
+
+    def _mad(median: float) -> float:
+        return _hist_mad(hist, bin_edges, median)
+
+    return _percentiles, _median, _mad
+
+
+def norm_params_from_stats(
+    stats: Any,
+    method: Union[str, int] = "linear",
+    out_min: Optional[float] = None,
+    out_max: Optional[float] = None,
+    bands: Optional[Sequence[int]] = None,
+    n_stdevs: float = 2.0,
+    lower: float = 2.0,
+    upper: float = 98.0,
+    in_min_max: Optional[
+        Union[Mapping[str, float], Sequence[Mapping[str, float]]]
+    ] = None,
+    method_kwargs: Optional[Mapping[str, Any]] = None,
+    out_stats_file: Optional[Union[str, os.PathLike]] = None,
+) -> Dict[str, Any]:
+    """
+    Normalisation parameters from the per-band statistics of a
+    :class:`~rsgispy.imageprocess.StatsSink`
+    (:class:`~rsgispy.imageprocess.RasterStats`), in the format of
+    :func:`calc_img_norm_params`. This makes a normalisation inside a
+    :class:`~rsgispy.imageprocess.TileGraph` a two-pass workflow without
+    writing the image: a ``StatsSink`` on any node (pass 1), then
+    :func:`img_norm_params_node` with these parameters (pass 2). The result
+    is accepted unchanged by :func:`img_norm_params_node`,
+    :func:`apply_img_norm_params` and, written with ``out_stats_file``, by
+    their ``stats_file`` argument.
+
+    The band numbers are those of the node the ``StatsSink`` was given, and
+    each band's no-data value is the statistics' ``nodata``.
+
+    Supported methods:
+
+    * exact from the statistics: ``'none'``, ``'user'`` / ``'manual'``,
+      ``'linear'``, ``'stdev'``, ``'zscore'``, ``'decimal_scaling'``,
+      ``'standard_scaler'``, ``'minmax_scaler'`` and ``'maxabs_scaler'``
+      (they agree with :func:`calc_img_norm_params` on the same pixels to
+      rounding error);
+    * from the histogram: ``'cumulative'``, ``'robust_zscore'`` and
+      ``'robust_scaler'`` need percentiles (the median, quartiles or the
+      ``lower`` / ``upper`` range), which are interpolated from the
+      histogram (``StatsSink(..., bins=..., hist_range=...)``, with a range
+      that covers every value) and so are approximate: the share of pixels
+      below each estimate differs from the requested one by at most the
+      share of pixels in one bin (use more bins for a closer estimate);
+    * other methods (fitted transformers such as ``'log'``,
+      ``'power_transformer'`` or ``'quantile_transformer'``, and the
+      pixel-vector norms such as ``'l1'``, ``'l2'`` or ``'softmax'``) need
+      the pixel values: use :func:`calc_img_norm_params` on a file.
+
+    The standard deviations must be population standard deviations (the
+    ``StatsSink`` default ``ddof=0``), as :func:`calc_img_norm_params` uses.
+
+    :param stats: :class:`~rsgispy.imageprocess.RasterStats` returned by a
+                  :class:`~rsgispy.imageprocess.StatsSink`.
+    :param method: Normalisation method name or ``IMG_STRETCH_*`` constant
+                   (see above; Default = ``'linear'``).
+    :param out_min: Optional output minimum (as :func:`calc_img_norm_params`).
+    :param out_max: Optional output maximum (as :func:`calc_img_norm_params`).
+    :param bands: Optional 1-based bands to include (Default = all bands).
+    :param n_stdevs: Number of standard deviations for ``'stdev'``
+                     (Default = ``2.0``).
+    :param lower: Lower percentile for ``'cumulative'`` (Default = ``2.0``).
+    :param upper: Upper percentile for ``'cumulative'`` (Default = ``98.0``).
+    :param in_min_max: ``{'min': ..., 'max': ...}`` or one per band, for
+                       ``'user'``.
+    :param method_kwargs: Optional scaler options (e.g. ``with_mean`` for
+                          ``'standard_scaler'``, ``feature_range`` for
+                          ``'minmax_scaler'``, ``quantile_range`` for
+                          ``'robust_scaler'``).
+    :param out_stats_file: Optional JSON file to write the parameters to.
+    :return: Normalisation parameters dictionary.
+
+    .. code:: python
+
+        import numpy as np
+        from rsgispy.imageprocess import DiskSink, RasterSource, StatsSink, TileGraph
+        from rsgispy.imagecalc.calcindices import calc_indices_node
+        from rsgispy.imagecalc.rescale import img_norm_params_node, norm_params_from_stats
+
+        idx = calc_indices_node(RasterSource("s2.tif"),
+                                {2: "Green", 3: "Red", 4: "NIR"}, ["NDVI", "NDWI"])
+        stats = TileGraph(StatsSink(idx, name="st")).run()["st"]  # pass 1
+        params = norm_params_from_stats(stats, method="zscore")
+        TileGraph(DiskSink(img_norm_params_node(idx, params),
+                           "indices_zscore.tif")).run()  # pass 2
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals,too-many-branches
+    for attr in ("count", "min", "max", "mean", "std"):
+        if not hasattr(stats, attr):
+            raise rsgispy.RSGISPyException(
+                "stats must be the RasterStats result of a StatsSink."
+            )
+    norm_method = resolve_norm_method(method)
+    if norm_method not in STATS_NORM_METHODS:
+        raise rsgispy.RSGISPyException(
+            f"norm_params_from_stats does not support method {norm_method!r}: it "
+            "needs the pixel values (use calc_img_norm_params on a file). "
+            f"Supported methods: {', '.join(STATS_NORM_METHODS)}."
+        )
+    if int(getattr(stats, "ddof", 0)) != 0:
+        raise rsgispy.RSGISPyException(
+            "norm_params_from_stats needs population standard deviations; "
+            f"use StatsSink(..., ddof=0), not ddof={stats.ddof}."
+        )
+    eff_out_min, eff_out_max = resolve_out_bounds(norm_method, out_min, out_max)
+    if norm_method == "cumulative" and not 0.0 <= float(lower) < float(upper) <= 100.0:
+        raise rsgispy.RSGISPyException(
+            f"cumulative stretch requires 0 <= lower < upper <= 100, got ({lower}, {upper})."
+        )
+    if norm_method == "stdev" and float(n_stdevs) <= 0.0:
+        raise rsgispy.RSGISPyException("n_stdevs must be strictly positive.")
+    hist = getattr(stats, "hist", None)
+    bin_edges = getattr(stats, "bin_edges", None)
+    if norm_method in PERCENTILE_NORM_METHODS and (hist is None or bin_edges is None):
+        raise rsgispy.RSGISPyException(
+            f"Method {norm_method!r} needs percentiles: give the StatsSink a "
+            "histogram (bins=..., hist_range=...) covering every value."
+        )
+
+    n_bands = int(np.asarray(stats.count).size)
+    sel_bands = list(range(1, n_bands + 1)) if bands is None else [int(b) for b in bands]
+    if not sel_bands:
+        raise rsgispy.RSGISPyException("bands must not be empty.")
+    eff_nd = None if stats.nodata is None else float(stats.nodata)
+    band_entries: List[Dict[str, Any]] = []
+    for sel_pos, b_idx in enumerate(sel_bands):
+        if not 1 <= b_idx <= n_bands:
+            raise rsgispy.RSGISPyException(
+                f"Band {b_idx} is not in the statistics ({n_bands} band(s))."
+            )
+        i_b = b_idx - 1
+        if int(stats.count[i_b]) == 0:
+            raise rsgispy.RSGISPyException(
+                f"Band {b_idx} contains no valid finite non-nodata pixels."
+            )
+        data_min = float(stats.min[i_b])
+        data_max = float(stats.max[i_b])
+        mean_val = float(stats.mean[i_b])
+        std_val = float(stats.std[i_b])
+        pct_fn = med_fn = mad_fn = None
+        if norm_method in PERCENTILE_NORM_METHODS:
+            b_hist = np.asarray(hist)[i_b]
+            if int(b_hist.sum()) != int(stats.count[i_b]):
+                raise rsgispy.RSGISPyException(
+                    f"The histogram of band {b_idx} holds {int(b_hist.sum())} of its "
+                    f"{int(stats.count[i_b])} pixels; set the StatsSink hist_range "
+                    f"to cover every value ({data_min} to {data_max})."
+                )
+            pct_fn, med_fn, mad_fn = _hist_order_stats(
+                b_hist, np.asarray(bin_edges, dtype=np.float64)
+            )
+        if norm_method in SUMMARY_NORM_METHODS:
+            u_bounds = (
+                _extract_user_bounds(in_min_max, sel_pos, len(sel_bands))
+                if norm_method == "user"
+                else None
+            )
+            extra, transform = summary_band_params(
+                norm_method, data_min, data_max, mean_val, std_val,
+                eff_out_min, eff_out_max, lower, upper, n_stdevs, u_bounds,
+                percentile_fn=pct_fn, median_fn=med_fn, mad_fn=mad_fn,
+            )
+        else:
+            extra, transform = summary_sklearn_band_params(
+                norm_method, data_min, data_max, mean_val, std_val,
+                eff_out_min, eff_out_max, dict(method_kwargs or {}),
+                percentile_fn=pct_fn,
+            )
+        # Every supported transform is monotonic increasing, so the
+        # transformed range is the transform of the data range.
+        trans = transform(np.array([data_min, data_max], dtype=np.float64))
+        band_rec: Dict[str, Any] = {
+            "band": int(b_idx),
+            "no_data_val": eff_nd,
+            "in_min": data_min,
+            "in_max": data_max,
+            "mean": mean_val,
+            "std": std_val,
+            "trans_min": float(np.min(trans)),
+            "trans_max": float(np.max(trans)),
+            "out_min": eff_out_min,
+            "out_max": eff_out_max,
+        }
+        band_rec.update(extra)
+        band_entries.append(band_rec)
+
+    result: Dict[str, Any] = {
+        "version": 1,
+        "method": norm_method,
+        "input_img": None,
         "selected_bands": sel_bands,
         "out_min": eff_out_min,
         "out_max": eff_out_max,
