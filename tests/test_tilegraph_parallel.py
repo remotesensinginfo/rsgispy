@@ -4,6 +4,9 @@ must be identical to ``n_jobs=1``.
 """
 
 import os
+import subprocess
+import sys
+import textwrap
 
 import numpy as np
 import pytest
@@ -116,3 +119,49 @@ def test_invalid_n_jobs(img, bad):
     graph = TileGraph(MemorySink(RasterSource(img, bands=1)), block_size=32)
     with pytest.raises(rsgispy.RSGISPyException, match="n_jobs"):
         graph.run(use_pbar=False, n_jobs=bad)
+
+
+# Launches a parallel numba kernel from several threads at once with numba's
+# ``workqueue`` threading layer, which aborts the process on concurrent
+# launches unless rsgispy serialises them (the layer used where neither TBB
+# nor OpenMP is available, e.g. with the macOS wheels).
+_WORKQUEUE_SCRIPT = textwrap.dedent(
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    import numpy as np
+
+    from rsgispy._numba import optional_njit, prange
+
+    @optional_njit(parallel=True, cache=False, warn=False)
+    def _row_sums(arr):
+        out = np.zeros(arr.shape[0])
+        for i in prange(arr.shape[0]):
+            out[i] = arr[i].sum()
+        return out
+
+    arr = np.arange(20000.0).reshape(200, 100)
+    expected = arr.sum(axis=1)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: _row_sums(arr), range(64)))
+    assert all(np.array_equal(res, expected) for res in results)
+    print("ok")
+    """
+)
+
+
+def test_parallel_numba_kernels_safe_with_workqueue_layer():
+    """Concurrent parallel-kernel launches do not abort with ``workqueue``."""
+    pytest.importorskip("numba")
+    env = dict(os.environ, NUMBA_THREADING_LAYER="workqueue")
+    env.pop("RSGISPY_DISABLE_NUMBA", None)
+    proc = subprocess.run(
+        [sys.executable, "-c", _WORKQUEUE_SCRIPT],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert proc.stdout.strip() == "ok"
