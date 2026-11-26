@@ -273,3 +273,58 @@ def test_edge_mask_node_with_halo_matches_files(tmp_path):
     np.testing.assert_array_equal(_read(out), _read(mean_file))
     with pytest.raises(rsgispy.RSGISPyException, match="non-negative"):
         iu_msk.gen_img_edge_mask_node(RasterSource(img), -1)
+
+
+# --------------------------------------------------------------------------
+# Change detection
+# --------------------------------------------------------------------------
+
+
+def test_index_difference_chain_matches_files(tmp_path):
+    import rsgispy.changedetect.imgchngmthds as icm  # pylint: disable=import-outside-toplevel
+
+    base, chng = pg._change_pair(str(tmp_path))  # pylint: disable=protected-access
+    bands = {1: "red", 2: "nir"}
+    files = {k: str(tmp_path / f"{k}.tif") for k in ("i1", "i2", "diff", "ratio")}
+    ic_idx.calc_indices(base, files["i1"], bands, ["NDVI"], calc_stats=False, use_pbar=False)
+    ic_idx.calc_indices(chng, files["i2"], bands, ["NDVI"], calc_stats=False, use_pbar=False)
+    icm.image_difference(files["i1"], files["i2"], files["diff"], base_img_no_data=-999,
+                         chng_img_no_data=-999, no_data_val=-999, calc_stats=False,
+                         use_pbar=False)
+    icm.image_ratio(base, chng, files["ratio"], img_base_bands=[2, 3],
+                    img_chng_bands=[1, 3], calc_stats=False, use_pbar=False)
+
+    nd1 = ic_idx.calc_indices_node(RasterSource(base), bands, ["NDVI"])
+    nd2 = ic_idx.calc_indices_node(RasterSource(chng), bands, ["NDVI"])
+    diff = icm.image_difference_node(nd1, nd2, base_img_no_data=-999, chng_img_no_data=-999,
+                                     no_data_val=-999)
+    meta = _meta(diff)
+    assert (meta.n_bands, meta.dtype, meta.nodata) == (1, np.float64, -999)
+    out = str(tmp_path / "chain.tif")
+    TileGraph(DiskSink(diff, out, clamp_int=False), block_size=23).run(use_pbar=False)
+    np.testing.assert_array_equal(_read(out), _read(files["diff"]))
+
+    ratio = icm.image_ratio_node(RasterSource(base, bands=[2, 3]),
+                                 RasterSource(chng, bands=[1, 3]))
+    np.testing.assert_array_equal(_run_mem(Cast(ratio, np.float32)), _read(files["ratio"]))
+    with pytest.raises(rsgispy.RSGISPyException, match="do not match"):
+        TileGraph(MemorySink(icm.image_ratio_node(RasterSource(base, bands=[1]),
+                                                  RasterSource(chng))))
+
+
+def test_image_difference_node_with_std_params_and_mask(tmp_path):
+    import rsgispy.changedetect.imgchngmthds as icm  # pylint: disable=import-outside-toplevel
+
+    base, chng = pg._change_pair(str(tmp_path))  # pylint: disable=protected-access
+    msk = pg._mask_img(str(tmp_path))  # pylint: disable=protected-access
+    out_file = str(tmp_path / "d.tif")
+    icm.image_difference(base, chng, out_file, vld_msk_img=msk, apply_std=True,
+                         calc_stats=False, use_pbar=False)
+    params = icm._change_std_params(  # pylint: disable=protected-access
+        base, chng, msk, 1, [1, 2, 3], [1, 2, 3], (0, 0), (pg.WIDTH, pg.HEIGHT), False
+    )
+    node = icm.image_difference_node(RasterSource(base), RasterSource(chng),
+                                     RasterSource(msk, dtype=np.uint8), std_params=params)
+    np.testing.assert_array_equal(_run_mem(Cast(node, np.float32)), _read(out_file))
+    with pytest.raises(rsgispy.RSGISPyException, match="std_params"):
+        icm.image_difference_node(RasterSource(base), RasterSource(chng), std_params=[1, 2])

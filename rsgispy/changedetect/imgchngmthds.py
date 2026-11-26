@@ -15,15 +15,24 @@ if ``scipy`` is not installed.
 """
 
 from contextlib import ExitStack
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import rasterio
 
 import rsgispy
+from rsgispy._tilegraph._wrap import (
+    GridRasterSource,
+    WrapperDiskSink,
+    run_wrapper_graph,
+)
 from rsgispy.imageprocess import (
-    cast_result_block,
-    create_output_from_dataset,
+    IntersectionGrid,
+    NodeMeta,
+    RasterSource,
+    TileContext,
+    TileNode,
+    TileTensor,
     ensure_file_exists,
     iter_dataset_windows,
     validate_band_index,
@@ -57,7 +66,9 @@ except ImportError:
 
 __all__: List[str] = [
     "image_difference",
+    "image_difference_node",
     "image_ratio",
+    "image_ratio_node",
     "change_vector_analysis",
     "slow_feature_analysis",
     "multivariate_alteration_detection",
@@ -292,6 +303,299 @@ def _read_change_window(
     return base_blk, chng_blk, vld_2d
 
 
+def _change_std_params(
+    in_base_img: str,
+    in_chng_img: str,
+    vld_msk_img: Optional[str],
+    vld_msk_val: int,
+    base_bands: Sequence[int],
+    chng_bands: Sequence[int],
+    nodata: Tuple[float, float],
+    img_size: Tuple[int, int],
+    use_pbar: bool,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    First pass of ``apply_std``: per-band mean and standard deviation of the
+    base and change images over the valid pixels,
+    ``(mean_base, std_base, mean_chng, std_chng)``.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    n_bands = len(base_bands)
+    base_img_no_data, chng_img_no_data = nodata
+    img_x, img_y = img_size
+    mean_b = np.zeros(n_bands, dtype=np.float64)
+    std_b = np.ones(n_bands, dtype=np.float64)
+    mean_c = np.zeros(n_bands, dtype=np.float64)
+    std_c = np.ones(n_bands, dtype=np.float64)
+    with ExitStack() as stack:
+        base_src = stack.enter_context(rasterio.open(in_base_img, "r"))
+        chng_src = stack.enter_context(rasterio.open(in_chng_img, "r"))
+        msk_src = (
+            stack.enter_context(rasterio.open(vld_msk_img, "r"))
+            if vld_msk_img is not None
+            else None
+        )
+        n_vld = 0
+        m2_b = np.zeros(n_bands, dtype=np.float64)
+        m2_c = np.zeros(n_bands, dtype=np.float64)
+        for win in iter_dataset_windows(img_y, img_x, use_pbar=use_pbar):
+            b_blk, c_blk, vld_2d = _read_change_window(
+                base_src,
+                chng_src,
+                msk_src,
+                base_bands,
+                chng_bands,
+                win,
+                vld_msk_val,
+                base_img_no_data,
+                chng_img_no_data,
+            )
+            if np.any(vld_2d):
+                b_v = b_blk[:, vld_2d]
+                c_v = c_blk[:, vld_2d]
+                n_next, mean_b, m2_b = _update_band_stats_1d(n_vld, mean_b, m2_b, b_v)
+                _, mean_c, m2_c = _update_band_stats_1d(n_vld, mean_c, m2_c, c_v)
+                n_vld = n_next
+        if n_vld > 0:
+            std_b = np.sqrt(np.maximum(m2_b / float(n_vld), 0.0))
+            std_c = np.sqrt(np.maximum(m2_c / float(n_vld), 0.0))
+    return mean_b, std_b, mean_c, std_c
+
+
+class _BandChangeNode(TileNode):
+    """Node of :func:`image_difference_node` and :func:`image_ratio_node`."""
+
+    # pylint: disable=too-many-instance-attributes
+
+    def __init__(
+        self,
+        inputs: Sequence[TileNode],
+        op_kind: str,
+        settings: Mapping[str, Any],
+        name: Optional[str] = None,
+    ) -> None:
+        super().__init__(inputs=tuple(inputs), name=name or f"image_{op_kind}")
+        self.op_kind = op_kind
+        self.has_mask = len(inputs) > 2
+        self.vld_msk_val = settings["vld_msk_val"]
+        self.base_nd = settings["base_img_no_data"]
+        self.chng_nd = settings["chng_img_no_data"]
+        self.no_data_val = settings["no_data_val"]
+        self.fill_val = 0.0 if self.no_data_val is None else float(self.no_data_val)
+        std_params = settings["std_params"]
+        self.std_params: Optional[Tuple[np.ndarray, ...]] = (
+            tuple(np.asarray(v, dtype=np.float64).ravel() for v in std_params)
+            if std_params is not None
+            else None
+        )
+        if self.std_params is not None and len(self.std_params) != 4:
+            raise rsgispy.RSGISPyException(
+                "std_params must be (mean_base, std_base, mean_chng, std_chng)."
+            )
+
+    def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+        n_base, n_chng = inputs[0].n_bands, inputs[1].n_bands
+        if n_base is not None and n_chng is not None and n_base != n_chng:
+            raise rsgispy.RSGISPyException(
+                "The number of bands specified for the two images do not match."
+            )
+        if self.std_params is not None and n_base is not None:
+            if any(len(v) != n_base for v in self.std_params):
+                raise rsgispy.RSGISPyException(
+                    f"std_params need one value per band ({n_base})."
+                )
+        return NodeMeta(
+            n_bands=n_base,
+            band_names=inputs[0].band_names,
+            dtype=np.float64,
+            nodata=self.no_data_val,
+        )
+
+    def evaluate(
+        self,
+        inputs: Sequence[TileTensor],
+        halo_y: int,
+        halo_x: int,
+        ctx: TileContext,
+        state: Any = None,
+    ) -> TileTensor:
+        aligned = [t.crop(halo_y, halo_x) for t in inputs]
+        b_blk = np.nan_to_num(
+            np.asarray(aligned[0].data, dtype=np.float64),
+            copy=True,
+            nan=self.base_nd,
+            posinf=self.base_nd,
+            neginf=self.base_nd,
+        )
+        c_blk = np.nan_to_num(
+            np.asarray(aligned[1].data, dtype=np.float64),
+            copy=True,
+            nan=self.chng_nd,
+            posinf=self.chng_nd,
+            neginf=self.chng_nd,
+        )
+        if self.has_mask:
+            vld_2d = aligned[2].data[0] == self.vld_msk_val
+        else:
+            vld_2d = _both_dates_valid(b_blk, c_blk, self.base_nd, self.chng_nd)
+        out_blk = np.full(b_blk.shape, self.fill_val, dtype=np.float64)
+        if np.any(vld_2d):
+            b_v = b_blk[:, vld_2d]
+            c_v = c_blk[:, vld_2d]
+            if self.std_params is not None:
+                mean_b, std_b, mean_c, std_c = self.std_params
+                b_v = np.divide(
+                    b_v - mean_b[:, np.newaxis],
+                    std_b[:, np.newaxis],
+                    out=np.zeros_like(b_v),
+                    where=std_b[:, np.newaxis] != 0.0,
+                )
+                c_v = np.divide(
+                    c_v - mean_c[:, np.newaxis],
+                    std_c[:, np.newaxis],
+                    out=np.zeros_like(c_v),
+                    where=std_c[:, np.newaxis] != 0.0,
+                )
+            if self.op_kind == "difference":
+                res = b_v - c_v
+            else:
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    res = b_v / c_v
+                np.nan_to_num(res, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+            out_blk[:, vld_2d] = res
+        return aligned[0].with_data(out_blk)
+
+
+def _band_change_node(
+    base: TileNode,
+    chng: TileNode,
+    op_kind: str,
+    vld_msk: Optional[TileNode],
+    settings: Mapping[str, Any],
+    name: Optional[str],
+) -> TileNode:
+    """Build a :class:`_BandChangeNode`."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    inputs = [base, chng] + ([vld_msk] if vld_msk is not None else [])
+    return _BandChangeNode(inputs, op_kind, settings, name=name)
+
+
+def image_difference_node(
+    base: TileNode,
+    chng: TileNode,
+    vld_msk: Optional[TileNode] = None,
+    vld_msk_val: int = 1,
+    std_params: Optional[Sequence[Sequence[float]]] = None,
+    *,
+    base_img_no_data: float = 0,
+    chng_img_no_data: float = 0,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`image_difference`: the per-band difference
+    ``base - chng`` of two co-registered inputs with the same number of
+    bands, for chaining in a :class:`~rsgispy.imageprocess.TileGraph` (e.g.
+    the difference of two index nodes, followed by a filter).
+
+    Valid pixels are those where band 1 of ``vld_msk`` equals
+    ``vld_msk_val`` or, without a mask, where both dates have data (as in
+    :func:`image_difference`); other pixels are set to ``no_data_val`` (or
+    ``0`` when it is ``None``). Standardisation (``apply_std`` in
+    :func:`image_difference`) needs whole-image statistics, so supply them as
+    ``std_params = (mean_base, std_base, mean_chng, std_chng)`` (one value per
+    band each). The node outputs ``float64`` blocks with the bands of
+    ``base``.
+
+    :param base: Node of the base (reference) image.
+    :param chng: Node of the change image.
+    :param vld_msk: Optional node whose first band is a valid-pixel mask.
+    :param vld_msk_val: Valid value in ``vld_msk`` (Default = ``1``).
+    :param std_params: Optional per-band ``(mean_base, std_base, mean_chng,
+                       std_chng)`` to standardise each band first.
+    :param base_img_no_data: No-data value of ``base`` (Default = ``0``).
+    :param chng_img_no_data: No-data value of ``chng`` (Default = ``0``).
+    :param no_data_val: Optional output no-data value.
+    :param name: Optional node name (Default = ``'image_difference'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagecalc.calcindices import calc_indices_node
+        from rsgispy.changedetect.imgchngmthds import image_difference_node
+
+        bands = {3: "red", 4: "nir"}
+        ndvi1 = calc_indices_node(RasterSource("t1.tif"), bands, ["NDVI"])
+        ndvi2 = calc_indices_node(RasterSource("t2.tif"), bands, ["NDVI"])
+        diff = image_difference_node(
+            ndvi1, ndvi2, base_img_no_data=-999, chng_img_no_data=-999,
+            no_data_val=-999,
+        )
+        TileGraph(DiskSink(diff, "dndvi.tif")).run()
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    settings = {
+        "vld_msk_val": vld_msk_val,
+        "base_img_no_data": base_img_no_data,
+        "chng_img_no_data": chng_img_no_data,
+        "no_data_val": no_data_val,
+        "std_params": std_params,
+    }
+    return _band_change_node(base, chng, "difference", vld_msk, settings, name)
+
+
+def image_ratio_node(
+    base: TileNode,
+    chng: TileNode,
+    vld_msk: Optional[TileNode] = None,
+    vld_msk_val: int = 1,
+    std_params: Optional[Sequence[Sequence[float]]] = None,
+    *,
+    base_img_no_data: float = 0,
+    chng_img_no_data: float = 0,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`image_ratio`: the per-band ratio ``base /
+    chng`` of two co-registered inputs (non-finite ratios are ``0``), with
+    the same valid-pixel rules and parameters as
+    :func:`image_difference_node`.
+
+    :param base: Node of the base (reference) image.
+    :param chng: Node of the change image.
+    :param vld_msk: Optional node whose first band is a valid-pixel mask.
+    :param vld_msk_val: Valid value in ``vld_msk`` (Default = ``1``).
+    :param std_params: Optional per-band ``(mean_base, std_base, mean_chng,
+                       std_chng)`` to standardise each band first.
+    :param base_img_no_data: No-data value of ``base`` (Default = ``0``).
+    :param chng_img_no_data: No-data value of ``chng`` (Default = ``0``).
+    :param no_data_val: Optional output no-data value.
+    :param name: Optional node name (Default = ``'image_ratio'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagefilter.sar import lee_filter_node
+        from rsgispy.changedetect.imgchngmthds import image_ratio_node
+
+        t1 = lee_filter_node(RasterSource("s1_t1.tif"), 5)
+        t2 = lee_filter_node(RasterSource("s1_t2.tif"), 5)
+        TileGraph(DiskSink(image_ratio_node(t1, t2), "ratio.tif")).run()
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    settings = {
+        "vld_msk_val": vld_msk_val,
+        "base_img_no_data": base_img_no_data,
+        "chng_img_no_data": chng_img_no_data,
+        "no_data_val": no_data_val,
+        "std_params": std_params,
+    }
+    return _band_change_node(base, chng, "ratio", vld_msk, settings, name)
+
+
 def _stream_band_change_op(
     in_base_img: str,
     in_chng_img: str,
@@ -310,12 +614,14 @@ def _stream_band_change_op(
     calc_stats: bool,
     use_pbar: bool,
 ) -> None:
-    """Stream per-band difference or ratio block-by-block with bounded RAM."""
+    """
+    Per-band difference or ratio as a tile graph (``apply_std`` statistics
+    are calculated in a first pass).
+    """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,too-many-branches
+    # pylint: disable=too-many-locals
     out_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
-    out_rio_dtype = rsgispy.get_rasterio_datatype(out_dtype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(out_dtype))
+    rsgispy.get_rasterio_datatype(out_dtype)
 
     base_bands, chng_bands, img_x, img_y = _validate_change_inputs(
         in_base_img=in_base_img,
@@ -324,119 +630,53 @@ def _stream_band_change_op(
         img_base_bands=img_base_bands,
         img_chng_bands=img_chng_bands,
     )
-    n_bands = len(base_bands)
-    fill_val = 0.0 if no_data_val is None else float(no_data_val)
-
-    with ExitStack() as stack:
-        base_src = stack.enter_context(rasterio.open(in_base_img, "r"))
-        chng_src = stack.enter_context(rasterio.open(in_chng_img, "r"))
-        msk_src = (
-            stack.enter_context(rasterio.open(vld_msk_img, "r"))
-            if vld_msk_img is not None
-            else None
+    std_params = None
+    if apply_std:
+        std_params = _change_std_params(
+            in_base_img,
+            in_chng_img,
+            vld_msk_img,
+            vld_msk_val,
+            base_bands,
+            chng_bands,
+            (base_img_no_data, chng_img_no_data),
+            (img_x, img_y),
+            use_pbar,
         )
 
-        mean_b = np.zeros(n_bands, dtype=np.float64)
-        std_b = np.ones(n_bands, dtype=np.float64)
-        mean_c = np.zeros(n_bands, dtype=np.float64)
-        std_c = np.ones(n_bands, dtype=np.float64)
-
-        if apply_std:
-            n_vld = 0
-            m2_b = np.zeros(n_bands, dtype=np.float64)
-            m2_c = np.zeros(n_bands, dtype=np.float64)
-            for win in iter_dataset_windows(img_y, img_x, use_pbar=use_pbar):
-                b_blk, c_blk, vld_2d = _read_change_window(
-                    base_src,
-                    chng_src,
-                    msk_src,
-                    base_bands,
-                    chng_bands,
-                    win,
-                    vld_msk_val,
-                    base_img_no_data,
-                    chng_img_no_data,
-                )
-                if np.any(vld_2d):
-                    b_v = b_blk[:, vld_2d]
-                    c_v = c_blk[:, vld_2d]
-                    n_next, mean_b, m2_b = _update_band_stats_1d(
-                        n_vld, mean_b, m2_b, b_v
-                    )
-                    _, mean_c, m2_c = _update_band_stats_1d(
-                        n_vld, mean_c, m2_c, c_v
-                    )
-                    n_vld = n_next
-            if n_vld > 0:
-                std_b = np.sqrt(np.maximum(m2_b / float(n_vld), 0.0))
-                std_c = np.sqrt(np.maximum(m2_c / float(n_vld), 0.0))
-
-        dst = create_output_from_dataset(
-            stack=stack,
-            src=base_src,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            out_rio_dtype=out_rio_dtype,
-            count=n_bands,
-        )
-        if no_data_val is not None:
-            dst.nodata = no_data_val
-
-        for win in iter_dataset_windows(img_y, img_x, use_pbar=use_pbar):
-            win_h = int(win.height)
-            win_w = int(win.width)
-            b_blk, c_blk, vld_2d = _read_change_window(
-                base_src,
-                chng_src,
-                msk_src,
-                base_bands,
-                chng_bands,
-                win,
-                vld_msk_val,
-                base_img_no_data,
-                chng_img_no_data,
-            )
-            out_blk = np.full((n_bands, win_h, win_w), fill_val, dtype=np.float64)
-            if np.any(vld_2d):
-                b_v = b_blk[:, vld_2d]
-                c_v = c_blk[:, vld_2d]
-                if apply_std:
-                    b_v = np.divide(
-                        b_v - mean_b[:, np.newaxis],
-                        std_b[:, np.newaxis],
-                        out=np.zeros_like(b_v),
-                        where=std_b[:, np.newaxis] != 0.0,
-                    )
-                    c_v = np.divide(
-                        c_v - mean_c[:, np.newaxis],
-                        std_c[:, np.newaxis],
-                        out=np.zeros_like(c_v),
-                        where=std_c[:, np.newaxis] != 0.0,
-                    )
-                if op_kind == "diff":
-                    res = b_v - c_v
-                else:
-                    with np.errstate(divide="ignore", invalid="ignore"):
-                        res = b_v / c_v
-                    np.nan_to_num(
-                        res, copy=False, nan=0.0, posinf=0.0, neginf=0.0
-                    )
-                out_blk[:, vld_2d] = res
-
-            dst.write(
-                cast_result_block(
-                    out_blk, win_h, win_w, out_np_dtype, clamp_int=False
-                ),
-                window=win,
-            )
-
-    if calc_stats:
-        pop_img_stats(
-            output_img,
-            no_data_val=no_data_val,
-            calc_pyramids=True,
-            use_pbar=use_pbar,
-        )
+    with rasterio.open(in_base_img, "r") as base_src:
+        grid = IntersectionGrid.from_dataset(base_src)
+    # The inputs were checked above (same extent; mask of the same size).
+    vld_msk = None
+    if vld_msk_img is not None:
+        with rasterio.open(vld_msk_img, "r") as msk_src:
+            msk_dtype = msk_src.dtypes[0]
+        vld_msk = GridRasterSource(vld_msk_img, grid, bands=1, dtype=msk_dtype)
+    settings = {
+        "vld_msk_val": vld_msk_val,
+        "base_img_no_data": base_img_no_data,
+        "chng_img_no_data": chng_img_no_data,
+        "no_data_val": no_data_val,
+        "std_params": std_params,
+    }
+    node = _band_change_node(
+        RasterSource(in_base_img, bands=base_bands),
+        GridRasterSource(in_chng_img, grid, bands=chng_bands),
+        "difference" if op_kind == "diff" else "ratio",
+        vld_msk,
+        settings,
+        None,
+    )
+    sink = WrapperDiskSink(
+        node,
+        output_img,
+        gdalformat=gdalformat,
+        datatype=out_dtype,
+        nodata=no_data_val,
+        clamp_int=False,
+        calc_stats=calc_stats,
+    )
+    run_wrapper_graph(sink, use_pbar=use_pbar)
 
 
 def _safe_otsu_threshold(values: np.ndarray) -> float:
