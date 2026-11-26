@@ -48,6 +48,31 @@ Populating Image Statistics and Pyramids
    # Generate tiled overview pyramids for a large raster across multiple cores
    rsgispy.imageutils.stats.build_img_pyramids_multi_core("large_img.tif", tile_size=1024, n_cores=4)
 
+Chaining
+~~~~~~~~
+
+The masking functions of :mod:`rsgispy.imageutils.masking` have tile-graph
+node builders (``mask_img_node``, ``gen_finite_mask_node``,
+``gen_valid_mask_node``, ``gen_img_edge_mask_node``,
+``mask_all_band_zero_vals_node`` and ``create_valid_mask_node``) for use in
+an in-memory :class:`~rsgispy.imageprocess.TileGraph`; the file-based
+functions are wrappers around them and give the same result. The mask of
+``mask_img_node`` can be any node, e.g. one computed in the same graph:
+
+.. code-block:: python
+
+   import rsgispy
+   from rsgispy.imageprocess import BandMathOp, DiskSink, RasterSource, TileGraph
+   from rsgispy.imageutils.masking import mask_img_node
+
+   img = RasterSource("s2.tif")
+   swir = RasterSource("s2.tif", bands=5)
+   water = BandMathOp({"swir": swir}, "swir < 500 ? 1 : 0")
+   masked = mask_img_node(img, water, 0, 1, no_data_val=0)
+   TileGraph(DiskSink(masked, "s2_land.tif", datatype=rsgispy.TYPE_16UINT)).run()
+
+See :doc:`rsgispy_imageprocess` for the list of chainable operations.
+
 Configuration, Metadata & Validation
 ------------------------------------
 

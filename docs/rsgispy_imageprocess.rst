@@ -163,6 +163,79 @@ kinds call the same builders.
      - :func:`~rsgispy.imagefilter.sar.lee_filter_node`
      - ``'lee'``
 
+Pixel-wise operations (indices, value transforms, masks, change detection,
+multi-date percentiles and spectral transforms) have node builders too. Their
+file-based functions are wrappers around them (``RasterSource`` → node →
+``DiskSink``), so the outputs are the same. Where the file-based function reads
+the input's no-data value, the builder's ``no_data_val`` defaults to the
+no-data value of its source node, and builders whose result depends on the
+output data type (rounding, no-data value) take ``out_dtype``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - File-based function
+     - Node builder
+   * - :func:`~rsgispy.imagecalc.calcindices.calc_indices`,
+       :func:`~rsgispy.imagecalc.calcindices.calc_sar_indices`
+     - :func:`~rsgispy.imagecalc.calcindices.calc_indices_node`,
+       :func:`~rsgispy.imagecalc.calcindices.calc_sar_indices_node`
+   * - :func:`~rsgispy.imagecalc.rescale.rescale_img_pxl_vals`,
+       :func:`~rsgispy.imagecalc.rescale.calc_img_rescale`,
+       :func:`~rsgispy.imagecalc.rescale.apply_img_norm_params`
+     - :func:`~rsgispy.imagecalc.rescale.rescale_img_pxl_vals_node`,
+       :func:`~rsgispy.imagecalc.rescale.calc_img_rescale_node`,
+       :func:`~rsgispy.imagecalc.rescale.img_norm_params_node`
+   * - :func:`~rsgispy.imagecalc.encoding.recode_int_raster`,
+       :func:`~rsgispy.imagecalc.encoding.one_hot_category_encoding`
+     - :func:`~rsgispy.imagecalc.encoding.recode_int_raster_node`,
+       :func:`~rsgispy.imagecalc.encoding.one_hot_category_encoding_node`
+   * - :func:`~rsgispy.imageutils.masking.mask_img`,
+       :func:`~rsgispy.imageutils.masking.gen_finite_mask`,
+       :func:`~rsgispy.imageutils.masking.gen_valid_mask`,
+       :func:`~rsgispy.imageutils.masking.gen_img_edge_mask`,
+       :func:`~rsgispy.imageutils.masking.mask_all_band_zero_vals`,
+       :func:`~rsgispy.imageutils.masking.create_valid_mask`
+     - ``mask_img_node``, ``gen_finite_mask_node``, ``gen_valid_mask_node``,
+       ``gen_img_edge_mask_node``, ``mask_all_band_zero_vals_node``,
+       ``create_valid_mask_node`` (:mod:`rsgispy.imageutils.masking`)
+   * - :func:`~rsgispy.changedetect.imgchngmthds.image_difference`,
+       :func:`~rsgispy.changedetect.imgchngmthds.image_ratio`
+     - :func:`~rsgispy.changedetect.imgchngmthds.image_difference_node`,
+       :func:`~rsgispy.changedetect.imgchngmthds.image_ratio_node` (two
+       inputs; standardisation statistics given as ``std_params``)
+   * - :func:`~rsgispy.imagecalc.percentiles.calc_imgs_pxl_percentiles`,
+       :func:`~rsgispy.imagecalc.percentiles.calc_img_band_pxl_percentiles`
+     - :func:`~rsgispy.imagecalc.percentiles.calc_imgs_pxl_percentiles_node`,
+       :func:`~rsgispy.imagecalc.percentiles.calc_img_band_pxl_percentiles_node`
+       (N inputs)
+   * - :func:`~rsgispy.imagespectral.transforms.calc_tasseled_cap`;
+       applying a fitted :func:`~rsgispy.imagespectral.transforms.calc_pca`
+       or :func:`~rsgispy.imagespectral.transforms.calc_mnf`
+     - :func:`~rsgispy.imagespectral.transforms.calc_tasseled_cap_node`,
+       :func:`~rsgispy.imagespectral.transforms.pca_projection_node`,
+       :func:`~rsgispy.imagespectral.transforms.mnf_projection_node`
+   * - :func:`~rsgispy.imagespectral.classification.spectral_angle_mapper`,
+       :func:`~rsgispy.imagespectral.classification.spectral_correlation_mapper`
+     - :func:`~rsgispy.imagespectral.classification.spectral_angle_mapper_node`,
+       :func:`~rsgispy.imagespectral.classification.spectral_correlation_mapper_node`
+   * - :func:`~rsgispy.imagespectral.unmixing.spec_unmix_ucls`,
+       :func:`~rsgispy.imagespectral.unmixing.spec_unmix_nnls`,
+       :func:`~rsgispy.imagespectral.unmixing.spec_unmix_fcls`,
+       :func:`~rsgispy.imagespectral.unmixing.predict_refl_linear_unmixing`
+     - ``spec_unmix_ucls_node``, ``spec_unmix_nnls_node``,
+       ``spec_unmix_fcls_node``, ``predict_refl_linear_unmixing_node``
+       (:mod:`rsgispy.imagespectral.unmixing`)
+
+Some of these functions need whole-image parameters, which their builders
+take as arguments; the file-based functions still calculate them in a first
+pass: ``Brightness_Scaled`` bounds and the ``DPSVI`` scene maximum
+(``index_params``), the ``apply_std`` statistics of change detection
+(``std_params``), the categories of ``one_hot_category_encoding``
+(``recode_dict``) and the normalisation parameters of
+:func:`~rsgispy.imagecalc.rescale.calc_img_norm_params`.
+
 Operations that cannot be nodes, because an output pixel does not depend
 only on the input pixels within a fixed radius:
 
@@ -176,7 +249,7 @@ only on the input pixels within a fixed radius:
 * **operations that need whole-image parameters**: ``calc_pca``,
   ``calc_mnf``, ``whiten_image``, ``histogram_matching`` and normalisation
   without given parameters. Compute the parameters first, then apply them
-  pixel by pixel;
+  pixel by pixel (e.g. ``pca_projection_node``, ``img_norm_params_node``);
 * **optional backends**: unmixing with ``pysptools`` or ``pyMCR``.
 
 Custom nodes
