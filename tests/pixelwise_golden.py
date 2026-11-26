@@ -39,6 +39,20 @@ PREFIX = "pixelwise_"
 #: Block sizes: one larger than the image (a single block), and two that do
 #: not divide the image dimensions.
 BLOCK_SIZES = (256, 16, 23)
+
+
+def _has_driver(name: str) -> bool:
+    """Whether GDAL (as bundled with rasterio) has the raster driver ``name``."""
+    with rasterio.Env() as env:
+        return name in env.drivers()
+
+
+# The KEA driver is not in every GDAL build (e.g. rasterio's PyPI wheels).
+HAS_KEA = _has_driver("KEA")
+
+# Outputs that need the KEA driver: {case: {label, ...}}. They are skipped,
+# not failed, where KEA is unavailable.
+KEA_OUTPUTS: Dict[str, frozenset] = {"rescale_img_pxl_vals": frozenset({"kea_nd"})}
 HEIGHT = 45
 WIDTH = 53
 ORIGIN = (500000.0, 5000000.0)
@@ -239,9 +253,10 @@ def case_rescale_img_pxl_vals(tmp: str) -> Dict[str, str]:
                                  out_max=100.0, out_no_data=-(b * 10.0))
         for b in range(1, 7)
     ]
-    outs["kea_nd"] = os.path.join(tmp, "resc.kea")
-    ic_resc.rescale_img_pxl_vals(img, outs["kea_nd"], objs_kea, gdalformat="KEA",
-                                 use_pbar=False)
+    if HAS_KEA:  # KEA keeps a no-data value per band
+        outs["kea_nd"] = os.path.join(tmp, "resc.kea")
+        ic_resc.rescale_img_pxl_vals(img, outs["kea_nd"], objs_kea, gdalformat="KEA",
+                                     use_pbar=False)
     return outs
 
 
