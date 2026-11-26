@@ -209,8 +209,8 @@ def kuwahara_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``5``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'kuwahara_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -258,8 +258,8 @@ def gaussian_smooth_filter_node(
     :param filter_angle: Orientation angle in degrees (Default = ``0.0``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'gaussian_smooth_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -315,8 +315,8 @@ def kernel_filter_node(
                     does.
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'kernel_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 

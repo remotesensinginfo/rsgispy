@@ -477,8 +477,8 @@ def sobel_filter_node(
     :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'sobel_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -520,8 +520,8 @@ def prewitt_filter_node(
     :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'prewitt_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -567,8 +567,8 @@ def laplacian_filter_node(
     :param stddev: Gaussian standard deviation > 0 (Default = ``1.0``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'laplacian_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -621,8 +621,8 @@ def sobel_x_filter_node(
     :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'sobel_x_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -660,8 +660,8 @@ def sobel_y_filter_node(
     :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'sobel_y_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -696,8 +696,8 @@ def prewitt_x_filter_node(
     :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'prewitt_x_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -732,8 +732,8 @@ def prewitt_y_filter_node(
     :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'prewitt_y_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -777,8 +777,8 @@ def gaussian_1st_deriv_filter_node(
     :param filter_angle: Orientation angle in degrees (Default = ``0.0``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'gaussian_1st_deriv_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -827,8 +827,8 @@ def gaussian_2nd_deriv_filter_node(
     :param filter_angle: Orientation angle in degrees (Default = ``0.0``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'gaussian_2nd_deriv_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 

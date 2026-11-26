@@ -37,6 +37,7 @@ from rsgispy._tilegraph import (
     RasterSource,
     RasterStats,
     SelectBands,
+    SetNoData,
     SourceGrid,
     StackBands,
     StatsSink,
@@ -47,6 +48,8 @@ from rsgispy._tilegraph import (
     TileTensor,
     WindowOp,
     ZonalStatsSink,
+    infer_node_meta,
+    resolve_input_nodata,
     run_tile_graph,
     same_bands_meta,
 )
@@ -74,5 +77,8 @@ __all__ = [
     "SelectBands",
     "StackBands",
     "Cast",
+    "SetNoData",
+    "infer_node_meta",
+    "resolve_input_nodata",
     "same_bands_meta",
 ]

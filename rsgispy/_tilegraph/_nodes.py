@@ -936,6 +936,59 @@ class Cast(TileNode):
         return f"dtype={self.dtype}"
 
 
+class SetNoData(TileNode):
+    """
+    Set (or clear) the no-data value in a node's metadata without changing
+    its pixels. Node builders called with ``no_data_val=None`` use the
+    no-data value of their input's metadata, so this controls the no-data
+    handling of everything downstream:
+
+    * ``SetNoData(node, None)`` — no no-data handling (only non-finite values
+      are treated as invalid), e.g. when ``0`` is a valid value although the
+      file declares it as no data;
+    * ``SetNoData(node, value)`` — treat ``value`` as no data, e.g. for a
+      file without a no-data value (as ``RasterSource(path, nodata=value)``).
+
+    :param source: Upstream :class:`TileNode`.
+    :param nodata: The no-data value, or ``None`` for none.
+    :param name: Optional node identifier.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, SetNoData, TileGraph
+        from rsgispy.imagefilter.stats import median_filter_node
+
+        # The file declares 0 as no data, but 0 is a valid value here.
+        src = SetNoData(RasterSource("temperature.tif"), None)
+        TileGraph(DiskSink(median_filter_node(src, 5), "temp_med5.tif")).run()
+    """
+
+    def __init__(
+        self,
+        source: TileNode,
+        nodata: Optional[float],
+        name: Optional[str] = None,
+    ) -> None:
+        super().__init__(inputs=(source,), name=name)
+        self.nodata: Optional[float] = None if nodata is None else float(nodata)
+
+    def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+        return inputs[0].replace(nodata=self.nodata)
+
+    def evaluate(
+        self,
+        inputs: Sequence[TileTensor],
+        halo_y: int,
+        halo_x: int,
+        ctx: TileContext,
+        state: Any = None,
+    ) -> TileTensor:
+        return inputs[0].crop(halo_y, halo_x)
+
+    def describe_params(self) -> str:
+        return f"nodata={self.nodata!r}"
+
+
 def _same_nodata(val_a: Optional[float], val_b: Optional[float]) -> bool:
     """Compare two no-data values (``None`` and NaN aware)."""
     if val_a is None or val_b is None:

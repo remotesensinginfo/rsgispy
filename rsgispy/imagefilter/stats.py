@@ -914,8 +914,8 @@ def median_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'median_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -956,8 +956,8 @@ def mean_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'mean_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -998,8 +998,8 @@ def min_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'min_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1040,8 +1040,8 @@ def max_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'max_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1083,8 +1083,8 @@ def mode_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'mode_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1125,8 +1125,8 @@ def stddev_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'stddev_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1167,8 +1167,8 @@ def range_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'range_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1209,8 +1209,8 @@ def total_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'total_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1252,8 +1252,8 @@ def mean_diff_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'mean_diff_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1295,8 +1295,8 @@ def mean_diff_abs_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'mean_diff_abs_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1338,8 +1338,8 @@ def total_diff_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'total_diff_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1381,8 +1381,8 @@ def total_diff_abs_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'total_diff_abs_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1424,8 +1424,8 @@ def coeff_of_var_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'coeff_of_var_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1467,8 +1467,8 @@ def norm_var_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'norm_var_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1510,8 +1510,8 @@ def norm_var_sqrt_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'norm_var_sqrt_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1553,8 +1553,8 @@ def norm_var_ln_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'norm_var_ln_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1595,8 +1595,8 @@ def texture_var_filter_node(
     :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'texture_var_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 

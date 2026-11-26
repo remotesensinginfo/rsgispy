@@ -12,7 +12,7 @@ from typing import Any, Optional, Tuple
 import numpy as np
 
 import rsgispy
-from rsgispy._io import TileNode
+from rsgispy._io import TileNode, resolve_input_nodata
 from rsgispy.imagemorphology._helpers import (
     MorphNodeNodata,
     _load_morph_operator,
@@ -892,7 +892,7 @@ def _reduce_node(
 ) -> TileNode:
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(*op_args)
-    nodata = MorphNodeNodata(no_data_val, dtype)
+    nodata = MorphNodeNodata(resolve_input_nodata(source, no_data_val), dtype)
     return morph_reduce_node(
         source,
         op_mask,
@@ -924,8 +924,8 @@ def image_dilate_node(
 
     The node outputs ``float64`` blocks with the bands (and band names) of
     ``source`` (one band when ``combined``). ``no_data_val`` is the input
-    no-data value (not read from ``source``, so pass the input's no-data
-    value): these pixels are ignored, and output pixels without a value are
+    no-data value (by default that of ``source``'s metadata; see
+    :ref:`tilegraph-nodata`): these pixels are ignored, and output pixels without a value are
     set to it (to NaN when it cannot be stored in ``dtype``; NaN becomes 0
     when written to an integer raster).
 
@@ -940,7 +940,8 @@ def image_dilate_node(
     :param dtype: NumPy dtype of the raster the result will be written to,
                   used to decide whether ``no_data_val`` can be kept
                   (Default = ``None``, ``float64``).
-    :param no_data_val: Input no-data value (Default = ``None``).
+    :param no_data_val: Input no-data value (Default = ``None``: that of
+                        ``source``'s metadata).
     :param name: Optional node name (Default = ``'image_dilate'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -993,7 +994,8 @@ def image_erode_node(
                      (Default = ``False``).
     :param dtype: NumPy dtype of the raster the result will be written to
                   (Default = ``None``, ``float64``).
-    :param no_data_val: Input no-data value (Default = ``None``).
+    :param no_data_val: Input no-data value (Default = ``None``: that of
+                        ``source``'s metadata).
     :param name: Optional node name (Default = ``'image_erode'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1047,7 +1049,8 @@ def image_gradient_node(
                      (Default = ``False``).
     :param dtype: NumPy dtype of the raster the result will be written to
                   (Default = ``None``, ``float64``).
-    :param no_data_val: Input no-data value (Default = ``None``).
+    :param no_data_val: Input no-data value (Default = ``None``: that of
+                        ``source``'s metadata).
     :param name: Optional node name (Default = ``'image_gradient'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1104,8 +1107,8 @@ def image_local_minima_node(
     :param op_size: Odd square operator size >= 3 (Default = ``3``).
     :param combined: Test the minimum across all bands (Default = ``False``).
     :param no_data_val: Input no-data value; these pixels are never minima
-                        and are ignored as neighbours (Default = ``None``;
-                        not read from ``source``).
+                        and are ignored as neighbours (Default = ``None``:
+                        the no-data value of ``source``'s metadata).
     :param name: Optional node name (Default = ``'image_local_minima'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node (``float64``
              blocks of 0 and 1).
@@ -1129,12 +1132,13 @@ def image_local_minima_node(
             "(file based) or number the binary minima afterwards."
         )
     op_mask = _load_morph_operator(morph_op_file, use_op_file, op_size)
+    in_nd = resolve_input_nodata(source, no_data_val)
     return local_minima_node(
         source,
         op_mask,
         combined=combined,
         allow_equal=allow_equal,
-        in_nd=float(no_data_val) if no_data_val is not None else None,
+        in_nd=float(in_nd) if in_nd is not None else None,
         name=name or "image_local_minima",
     )
 
@@ -1153,7 +1157,7 @@ def _two_step_node(
     second_op = "dilate" if first_op == "erode" else "erode"
     _, result = morph_two_step_nodes(
         source, op_mask, first_op, second_op, niters,
-        MorphNodeNodata(no_data_val, dtype), name,
+        MorphNodeNodata(resolve_input_nodata(source, no_data_val), dtype), name,
     )
     return result
 
@@ -1189,7 +1193,8 @@ def image_opening_node(
                    (Default = ``1``).
     :param dtype: NumPy dtype of the raster the result will be written to
                   (Default = ``None``, ``float64``).
-    :param no_data_val: Input no-data value (Default = ``None``).
+    :param no_data_val: Input no-data value (Default = ``None``: that of
+                        ``source``'s metadata).
     :param name: Optional node name prefix (Default = ``'image_opening'``).
     :return: Last node of the opening.
 
@@ -1245,7 +1250,8 @@ def image_closing_node(
                    (Default = ``1``).
     :param dtype: NumPy dtype of the raster the result will be written to
                   (Default = ``None``, ``float64``).
-    :param no_data_val: Input no-data value (Default = ``None``).
+    :param no_data_val: Input no-data value (Default = ``None``: that of
+                        ``source``'s metadata).
     :param name: Optional node name prefix (Default = ``'image_closing'``).
     :return: Last node of the closing.
 
@@ -1278,7 +1284,11 @@ def _top_hat_node(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(*op_args)
     _, result = morph_top_hat_nodes(
-        source, op_mask, black, MorphNodeNodata(no_data_val, dtype), name
+        source,
+        op_mask,
+        black,
+        MorphNodeNodata(resolve_input_nodata(source, no_data_val), dtype),
+        name,
     )
     return result
 
@@ -1308,7 +1318,8 @@ def image_white_top_hat_node(
     :param op_size: Odd square operator size >= 3 (Default = ``3``).
     :param dtype: NumPy dtype of the raster the result will be written to
                   (Default = ``None``, ``float64``).
-    :param no_data_val: Input no-data value (Default = ``None``).
+    :param no_data_val: Input no-data value (Default = ``None``: that of
+                        ``source``'s metadata).
     :param name: Optional node name (Default = ``'image_white_top_hat'``).
     :return: :class:`~rsgispy.imageprocess.PointwiseOp` node.
 
@@ -1354,7 +1365,8 @@ def image_black_top_hat_node(
     :param op_size: Odd square operator size >= 3 (Default = ``3``).
     :param dtype: NumPy dtype of the raster the result will be written to
                   (Default = ``None``, ``float64``).
-    :param no_data_val: Input no-data value (Default = ``None``).
+    :param no_data_val: Input no-data value (Default = ``None``: that of
+                        ``source``'s metadata).
     :param name: Optional node name (Default = ``'image_black_top_hat'``).
     :return: :class:`~rsgispy.imageprocess.PointwiseOp` node.
 

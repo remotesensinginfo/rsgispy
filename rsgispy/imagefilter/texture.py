@@ -5,7 +5,7 @@ Grey-Level Co-occurrence Matrix (GLCM) spatial texture filters for raster images
 from typing import List, Optional, Sequence, Tuple, Union
 
 import rsgispy
-from rsgispy._io import RasterSource, TileNode
+from rsgispy._io import RasterSource, TileNode, resolve_input_nodata
 from rsgispy.imagefilter._glcm_helpers import (
     GLCM_ALL_PROPERTIES,
     GLCM_ASM,
@@ -234,8 +234,8 @@ def glcm_filter_node(
                         ``min_val`` and ``max_val`` are ``None``.
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'glcm_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -289,6 +289,6 @@ def glcm_filter_node(
         bool(symmetric),
         bool(average_angles),
         bounds,
-        no_data_val=no_data_val,
+        no_data_val=resolve_input_nodata(source, no_data_val),
         name=name or "glcm_filter",
     )

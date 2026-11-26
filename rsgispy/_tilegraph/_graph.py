@@ -99,6 +99,103 @@ def check_source_grids(grids: Sequence[SourceGrid]) -> SourceGrid:
     return ref
 
 
+def _topo_sort(roots: Sequence[TileNode]) -> Tuple[TileNode, ...]:
+    """Topologically sort the nodes reachable from ``roots``; reject cycles."""
+    visited: Dict[TileNode, int] = {}
+    order: List[TileNode] = []
+
+    def _dfs(node: TileNode) -> None:
+        state = visited.get(node, 0)
+        if state == 1:
+            raise rsgispy.RSGISPyException(
+                "Cycle detected in TileGraph definition."
+            )
+        if state == 2:
+            return
+        visited[node] = 1
+        for parent in node.inputs:
+            if not isinstance(parent, TileNode):
+                raise rsgispy.RSGISPyException(
+                    f"{node.label} has an input that is not a TileNode "
+                    f"({type(parent).__name__})."
+                )
+            _dfs(parent)
+        visited[node] = 2
+        order.append(node)
+
+    for root in roots:
+        _dfs(root)
+    return tuple(order)
+
+
+def _derive_metadata(
+    order: Sequence[TileNode],
+    node_meta: Dict[TileNode, NodeMeta],
+    source_grids: Dict[TileNode, SourceGrid],
+) -> None:
+    """
+    Derive the metadata of the nodes in topological ``order`` (reading the
+    source headers once), filling ``node_meta`` and ``source_grids``.
+    """
+    headers = HeaderCache()
+    for node in order:
+        if node.is_source:
+            grid, meta = node.source_info(headers)
+            source_grids[node] = grid
+        else:
+            meta = node.infer_meta([node_meta[p] for p in node.inputs])
+        if not isinstance(meta, NodeMeta):
+            raise rsgispy.RSGISPyException(
+                f"{node.label} returned {type(meta).__name__} as metadata, "
+                "expected NodeMeta."
+            )
+        node_meta[node] = meta
+
+
+def infer_node_meta(node: TileNode) -> NodeMeta:
+    """
+    Return the metadata (band count, band names, dtype, no-data value) of a
+    node's output, derived from its sources and parameters exactly as
+    :class:`TileGraph` does when it is built (the source headers are read,
+    no pixels).
+
+    :param node: Any :class:`TileNode`.
+    :return: :class:`NodeMeta` of ``node``.
+    :raises rsgispy.RSGISPyException: If the upstream graph is invalid.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import RasterSource, infer_node_meta
+
+        print(infer_node_meta(RasterSource("dem.tif")).nodata)
+    """
+    node_meta: Dict[TileNode, NodeMeta] = {}
+    _derive_metadata(_topo_sort([node]), node_meta, {})
+    return node_meta[node]
+
+
+def resolve_input_nodata(
+    source: TileNode, no_data_val: Optional[float] = None
+) -> Optional[float]:
+    """
+    Resolve the input no-data value of a node builder: ``no_data_val`` when
+    given, otherwise the no-data value of ``source``'s metadata
+    (:func:`infer_node_meta`; ``None`` when it has none or it cannot be
+    derived, in which case building the :class:`TileGraph` reports the
+    problem). This is the no-data convention of every ``*_node`` builder.
+
+    :param source: Input node of the builder.
+    :param no_data_val: Explicit no-data value, or ``None``.
+    :return: The no-data value to use, or ``None`` (no no-data handling).
+    """
+    if no_data_val is not None:
+        return no_data_val
+    try:
+        return infer_node_meta(source).nodata
+    except Exception:  # pylint: disable=broad-exception-caught
+        return None
+
+
 class TileGraph:
     """
     Directed acyclic graph of raster tile operations executed tile-by-tile
@@ -185,31 +282,7 @@ class TileGraph:
 
     def _build_topo_order(self) -> Tuple[TileNode, ...]:
         """Topologically sort all reachable nodes and reject cycles."""
-        visited: Dict[TileNode, int] = {}
-        order: List[TileNode] = []
-
-        def _dfs(node: TileNode) -> None:
-            state = visited.get(node, 0)
-            if state == 1:
-                raise rsgispy.RSGISPyException(
-                    "Cycle detected in TileGraph definition."
-                )
-            if state == 2:
-                return
-            visited[node] = 1
-            for parent in node.inputs:
-                if not isinstance(parent, TileNode):
-                    raise rsgispy.RSGISPyException(
-                        f"{node.label} has an input that is not a TileNode "
-                        f"({type(parent).__name__})."
-                    )
-                _dfs(parent)
-            visited[node] = 2
-            order.append(node)
-
-        for sink in self.sinks:
-            _dfs(sink)
-        return tuple(order)
+        return _topo_sort(self.sinks)
 
     def _compute_required_halos(self) -> Dict[TileNode, Tuple[int, int]]:
         """Propagate cumulative halo radii backward from sinks to sources."""
@@ -239,19 +312,7 @@ class TileGraph:
 
     def _infer_metadata(self) -> None:
         """Read source grids and derive (and validate) every node's metadata."""
-        headers = HeaderCache()
-        for node in self.topo_order:
-            if node.is_source:
-                grid, meta = node.source_info(headers)
-                self.source_grids[node] = grid
-            else:
-                meta = node.infer_meta([self.node_meta[p] for p in node.inputs])
-            if not isinstance(meta, NodeMeta):
-                raise rsgispy.RSGISPyException(
-                    f"{node.label} returned {type(meta).__name__} as metadata, "
-                    "expected NodeMeta."
-                )
-            self.node_meta[node] = meta
+        _derive_metadata(self.topo_order, self.node_meta, self.source_grids)
 
     def describe(self) -> str:
         """

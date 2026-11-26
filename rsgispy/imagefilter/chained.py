@@ -25,6 +25,7 @@ from rsgispy._io import (
     RasterSource,
     TileGraph,
     TileNode,
+    resolve_input_nodata,
 )
 from rsgispy.imagefilter._helpers import _resolve_out_nodata
 from rsgispy.imagefilter import edge as _edge
@@ -214,8 +215,10 @@ def build_filter_chain_node(
                    :class:`~rsgispy._io.RasterSource` or
                    :class:`~rsgispy._io.ArraySource`).
     :param steps: Non-empty sequence of :class:`FilterStep` objects or dicts.
-    :param no_data_val: Optional nodata value honoured by windowed and
-                        band-math operations.
+    :param no_data_val: Optional no-data value honoured by the windowed and
+                        band-math steps (Default = ``None``: the no-data value
+                        of ``source``'s metadata, see :ref:`tilegraph-nodata`;
+                        :func:`apply_filter_chain` passes the input image's).
     :return: Terminal :class:`~rsgispy._io.TileNode` of the fused chain.
     """
     # pylint: disable=too-many-branches,too-many-locals
@@ -223,6 +226,7 @@ def build_filter_chain_node(
         raise rsgispy.RSGISPyException(
             "apply_filter_chain requires at least one FilterStep."
         )
+    no_data_val = resolve_input_nodata(source, no_data_val)
 
     current: TileNode = source
     named_nodes: Dict[str, TileNode] = {"input": source}
