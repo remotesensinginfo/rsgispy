@@ -89,8 +89,8 @@ temporary arrays of the same size while it is processed.
    :dedent: 4
 
 For a 10,980 x 10,980 pixel, 10-band ``uint16`` Sentinel-2 image this gives
-about 2.2 GiB as ``uint16`` (9.0 GiB as float64), but only 20 MiB for a
-512 x 512 block of all 10 bands. Block processing therefore keeps the memory
+about 2.2 GiB as ``uint16`` (9.0 GiB as float64), but only 5 MiB for a
+256 x 256 block of all 10 bands (as float64). Block processing therefore keeps the memory
 use small and constant; what grows with the image size is the processing
 time and, for some functions, memory per *object* (e.g. the number of
 segments or polygons), not per pixel.
@@ -108,9 +108,11 @@ memory grows with ``block size² x filter_size²`` (see
 Step 2 — Block size and creation options
 ----------------------------------------
 
-**Block size.** ``rsgispy.imageprocess.DEFAULT_BLOCK_SIZE`` is 512
-pixels, which matches the internal tiling of COGs (512 x 512) and is a
-multiple of the 256 x 256 tiles of a tiled GeoTIFF. Change it for the whole session with
+**Block size.** ``rsgispy.imageprocess.DEFAULT_BLOCK_SIZE`` is 256
+pixels: one 256 x 256 tile of a tiled GeoTIFF and a quarter of a 512 x 512
+COG tile. It was 512 up to rsgispy 0.3; 256 pixel blocks were as fast or
+faster in the measurements below and need a quarter of the memory for window
+filters. Change it for the whole session with
 :func:`~rsgispy.imageprocess.set_default_block_size`, or by setting the
 ``RSGISPY_BLOCK_SIZE`` environment variable (``RSGISLIB_BLOCK_SIZE`` is also
 read) before running a script; :func:`~rsgispy.imageprocess.get_default_block_size`
@@ -120,9 +122,9 @@ restores the default. Functions with an explicit ``block_size`` argument
 :class:`~rsgispy.imageprocess.TileGraph`,
 :func:`~rsgispy.imagefilter.chained.apply_filter_chain`,
 :func:`~rsgispy.zonalstats.labels.calc_label_zonal_stats`) use that value
-instead. Note that :class:`~rsgispy.imageprocess.TileGraph` and
-:func:`~rsgispy.imagefilter.chained.apply_filter_chain` default to 256, not
-to the session default.
+instead; without it, :class:`~rsgispy.imageprocess.TileGraph` and
+:func:`~rsgispy.imagefilter.chained.apply_filter_chain` also use the session
+default.
 
 How to choose it:
 
@@ -134,8 +136,8 @@ How to choose it:
   window size.
 * Keep the block size a multiple of the internal tile size of your files
   (usually 256 or 512) so each block reads whole tiles. GeoTIFF outputs are
-  tiled with GDAL's default 256 x 256 tiles (see below), so the default 512
-  pixel block covers exactly four tiles; pass ``BLOCKXSIZE`` and
+  tiled with GDAL's default 256 x 256 tiles (see below), so the default 256
+  pixel block covers exactly one tile; pass ``BLOCKXSIZE`` and
   ``BLOCKYSIZE`` in the creation options for other tile sizes (multiples of
   16).
 
@@ -261,6 +263,15 @@ memory and writes only the final outputs. The building blocks are:
   (a Python function per pixel block) and
   :class:`~rsgispy.imageprocess.WindowOp` (a moving-window function with a
   halo);
+* filter nodes — each filter that can be chained has a node builder next to
+  its file-based function, named after it without ``apply_`` and with
+  ``_node`` (e.g. :func:`~rsgispy.imagefilter.stats.median_filter_node`,
+  :func:`~rsgispy.imagefilter.sar.lee_filter_node`,
+  :func:`~rsgispy.imagefilter.edge.sobel_filter_node`; see
+  :doc:`../rsgispy_imageprocess` for the list);
+* band nodes — :class:`~rsgispy.imageprocess.SelectBands` (pick bands of a
+  node by 1-based index) and :class:`~rsgispy.imageprocess.StackBands`
+  (stack the bands of several nodes, keeping their band names);
 * :func:`rsgispy.imagefilter.chained.build_filter_chain_node`, which adds a
   sequence of filters (:class:`~rsgispy.imagefilter.chained.FilterStep`:
   window statistics such as ``'median'`` and ``'mean'``, ``'gaussian'``,
@@ -283,9 +294,16 @@ minus its smoothed version, which enhances edges and small features).
    :end-before: # [end-step-5-tilegraph]
    :dedent: 4
 
-All sources must be on the same pixel grid (use
-:func:`~rsgispy.imageutils.warp.resample_img_to_match` first if they are
-not). With ``nodata`` set on a :class:`~rsgispy.imageprocess.BandMathOp`,
+All sources must be on the same pixel grid: the graph checks their size,
+transform and CRS when it is built and raises an error naming the rasters
+that differ (use
+:func:`~rsgispy.imageutils.warp.resample_img_to_match` first). Sources on the
+same file, such as ``red`` and ``nir`` here, share one open file and are read
+together for each tile. Every node also carries its number of bands, band
+names, data type and no data value, so a
+:class:`~rsgispy.imageprocess.DiskSink` without ``band_names`` or ``nodata``
+uses those of its input, and ``print(graph.describe())`` shows the whole
+graph with the halo and metadata of each node. With ``nodata`` set on a :class:`~rsgispy.imageprocess.BandMathOp`,
 pixels that are no data in any input stay no data in the output (the NDVI no
 data value is 0 here, the input's; use a ternary expression as in step 7 if
 you need a different value). The NDVI from the graph equals the one from

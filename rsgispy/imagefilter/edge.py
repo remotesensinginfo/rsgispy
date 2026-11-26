@@ -4,8 +4,11 @@ Edge-detection and spatial derivative convolution filters for raster images.
 
 from typing import List, Optional
 
+from rsgispy._io import TileNode
 from rsgispy.imagefilter._helpers import (
     gaussian_kernel,
+    gradient_magnitude_node,
+    kernel_conv_node,
     laplacian_kernel,
     prewitt_kernels,
     run_gradient_magnitude_filter,
@@ -23,6 +26,9 @@ __all__: List[str] = [
     "apply_gaussian_1st_deriv_filter",
     "apply_gaussian_2nd_deriv_filter",
     "apply_laplacian_filter",
+    "sobel_filter_node",
+    "prewitt_filter_node",
+    "laplacian_filter_node",
 ]
 
 
@@ -440,4 +446,137 @@ def apply_laplacian_filter(
         no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+    )
+
+
+def sobel_filter_node(
+    source: TileNode,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_sobel_filter`: the 3x3 Sobel edge
+    magnitude (``sqrt(Gx**2 + Gy**2)``) of each band of ``source``, for
+    chaining in a :class:`~rsgispy.imageprocess.TileGraph` without
+    intermediate files.
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``; its halo radius is 1.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param no_data_val: Optional input no-data value: these pixels are
+                        ignored, and output pixels without a value are set to
+                        it (Default = ``None``; not read from ``source``, so
+                        pass the input's no-data value).
+    :param name: Optional node name (Default = ``'sobel_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagefilter.edge import sobel_filter_node
+        from rsgispy.imagefilter.stats import median_filter_node
+
+        src = RasterSource("in.tif")
+        edges = sobel_filter_node(median_filter_node(src, 3))
+        TileGraph(DiskSink(edges, "median_sobel.tif")).run()
+    """
+    kx, ky = sobel_kernels()
+    return gradient_magnitude_node(
+        source,
+        kx,
+        ky,
+        no_data_val=no_data_val,
+        name=name or "sobel_filter",
+    )
+
+
+def prewitt_filter_node(
+    source: TileNode,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_prewitt_filter`: the 3x3 Prewitt edge
+    magnitude (``sqrt(Gx**2 + Gy**2)``) of each band of ``source``, for
+    chaining in a :class:`~rsgispy.imageprocess.TileGraph` without
+    intermediate files.
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``; its halo radius is 1.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param no_data_val: Optional input no-data value: these pixels are
+                        ignored, and output pixels without a value are set to
+                        it (Default = ``None``; not read from ``source``, so
+                        pass the input's no-data value).
+    :param name: Optional node name (Default = ``'prewitt_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagefilter.edge import prewitt_filter_node
+        from rsgispy.imagefilter.stats import median_filter_node
+
+        src = RasterSource("in.tif")
+        edges = prewitt_filter_node(median_filter_node(src, 3))
+        TileGraph(DiskSink(edges, "median_prewitt.tif")).run()
+    """
+    kx, ky = prewitt_kernels()
+    return gradient_magnitude_node(
+        source,
+        kx,
+        ky,
+        no_data_val=no_data_val,
+        name=name or "prewitt_filter",
+    )
+
+
+def laplacian_filter_node(
+    source: TileNode,
+    filter_size: int = 3,
+    stddev: float = 1.0,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_laplacian_filter`: a zero-sum
+    Laplacian-of-Gaussian (LoG) edge/blob filter of each band of ``source``,
+    for chaining in a :class:`~rsgispy.imageprocess.TileGraph` without
+    intermediate files.
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``; its halo radius is half the kernel size.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param filter_size: Odd kernel width/height >= 3 (Default = ``3``).
+    :param stddev: Gaussian standard deviation > 0 (Default = ``1.0``).
+    :param no_data_val: Optional input no-data value: these pixels are
+                        ignored, and output pixels without a value are set to
+                        it (Default = ``None``; not read from ``source``, so
+                        pass the input's no-data value).
+    :param name: Optional node name (Default = ``'laplacian_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagefilter.edge import laplacian_filter_node
+        from rsgispy.imagefilter.smooth import gaussian_smooth_filter_node
+
+        src = RasterSource("in.tif")
+        log = laplacian_filter_node(gaussian_smooth_filter_node(src, 5), 5, stddev=1.0)
+        TileGraph(DiskSink(log, "smooth_log.tif")).run()
+    """
+    kernel = laplacian_kernel(filter_size, stddev)
+    return kernel_conv_node(
+        source,
+        kernel,
+        zero_dc=True,
+        no_data_val=no_data_val,
+        name=name or "laplacian_filter",
     )

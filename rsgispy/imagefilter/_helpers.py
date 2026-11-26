@@ -872,7 +872,8 @@ def _make_tile_stat_op(
     name: Optional[str] = None,
 ) -> "rsgispy._io.WindowOp":
     """Build a :class:`rsgispy._io.WindowOp` running ``tile_fn`` band-by-band."""
-    from rsgispy._io import HaloBorder, WindowOp  # pylint: disable=import-outside-toplevel
+    # pylint: disable=import-outside-toplevel
+    from rsgispy._io import HaloBorder, WindowOp, same_bands_meta
 
     kh, kw = win_shape
     pad_y, pad_x = kh // 2, kw // 2
@@ -903,6 +904,7 @@ def _make_tile_stat_op(
         func=_op_fn,
         border=border if border is not None else HaloBorder("edge"),
         name=name,
+        meta_fn=same_bands_meta(np.float64, no_data_val),
     )
 
 

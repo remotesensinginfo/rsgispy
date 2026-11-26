@@ -26,36 +26,12 @@ from rsgispy._io import (
     TileGraph,
     TileNode,
 )
-from rsgispy.imagefilter._helpers import (
-    _resolve_out_nodata,
-    gaussian_kernel,
-    gradient_magnitude_node,
-    kernel_conv_node,
-    laplacian_kernel,
-    make_lee_stat_fn,
-    prewitt_kernels,
-    sobel_kernels,
-    stat_coeff_of_var,
-    stat_kuwahara,
-    stat_max,
-    stat_mean,
-    stat_mean_diff,
-    stat_mean_diff_abs,
-    stat_median,
-    stat_min,
-    stat_mode,
-    stat_norm_var,
-    stat_norm_var_ln,
-    stat_norm_var_sqrt,
-    stat_range,
-    stat_stddev,
-    stat_texture_var,
-    stat_total,
-    stat_total_diff,
-    stat_total_diff_abs,
-    window_stat_node,
-)
-from rsgispy.imageprocess import ensure_file_exists
+from rsgispy.imagefilter._helpers import _resolve_out_nodata
+from rsgispy.imagefilter import edge as _edge
+from rsgispy.imagefilter import sar as _sar
+from rsgispy.imagefilter import smooth as _smooth
+from rsgispy.imagefilter import stats as _stats
+from rsgispy.imageprocess import ensure_file_exists, get_default_block_size
 from rsgispy.imageutils.metadata import get_band_names, get_img_no_data_value
 
 __all__ = [
@@ -64,25 +40,27 @@ __all__ = [
     "apply_filter_chain",
 ]
 
-_STAT_DISPATCH: Dict[str, Any] = {
-    "mean": stat_mean,
-    "median": stat_median,
-    "min": stat_min,
-    "max": stat_max,
-    "mode": stat_mode,
-    "range": stat_range,
-    "total": stat_total,
-    "stddev": stat_stddev,
-    "variance": stat_texture_var,
-    "coeff_of_var": stat_coeff_of_var,
-    "norm_var": stat_norm_var,
-    "norm_var_sqrt": stat_norm_var_sqrt,
-    "norm_var_ln": stat_norm_var_ln,
-    "mean_diff": stat_mean_diff,
-    "mean_diff_abs": stat_mean_diff_abs,
-    "total_diff": stat_total_diff,
-    "total_diff_abs": stat_total_diff_abs,
-    "kuwahara": stat_kuwahara,
+#: Window-statistic ``FilterStep`` kinds and their node builders (all take
+#: ``(source, filter_size, *, no_data_val, name)``).
+_STAT_DISPATCH: Dict[str, Callable[..., TileNode]] = {
+    "mean": _stats.mean_filter_node,
+    "median": _stats.median_filter_node,
+    "min": _stats.min_filter_node,
+    "max": _stats.max_filter_node,
+    "mode": _stats.mode_filter_node,
+    "range": _stats.range_filter_node,
+    "total": _stats.total_filter_node,
+    "stddev": _stats.stddev_filter_node,
+    "variance": _stats.texture_var_filter_node,
+    "coeff_of_var": _stats.coeff_of_var_filter_node,
+    "norm_var": _stats.norm_var_filter_node,
+    "norm_var_sqrt": _stats.norm_var_sqrt_filter_node,
+    "norm_var_ln": _stats.norm_var_ln_filter_node,
+    "mean_diff": _stats.mean_diff_filter_node,
+    "mean_diff_abs": _stats.mean_diff_abs_filter_node,
+    "total_diff": _stats.total_diff_filter_node,
+    "total_diff_abs": _stats.total_diff_abs_filter_node,
+    "kuwahara": _smooth.kuwahara_filter_node,
 }
 
 
@@ -107,6 +85,18 @@ class FilterStep:
     * Point-wise / band-math: ``'band_math'`` (``params={'expr': 'input - x'}``,
       where ``x`` is the current stage and ``input`` is the original raster),
       ``'pointwise'`` (``params={'func': callable}``).
+
+    Each filter kind builds its node with the public node builder of the
+    filter (e.g. ``'median'`` calls
+    :func:`rsgispy.imagefilter.stats.median_filter_node`, ``'variance'``
+    :func:`~rsgispy.imagefilter.stats.texture_var_filter_node`, ``'kuwahara'``
+    :func:`~rsgispy.imagefilter.smooth.kuwahara_filter_node`, ``'gaussian'``
+    :func:`~rsgispy.imagefilter.smooth.gaussian_smooth_filter_node`,
+    ``'kernel'`` :func:`~rsgispy.imagefilter.smooth.kernel_filter_node`,
+    ``'sobel'``, ``'prewitt'`` and ``'laplacian'`` the
+    :mod:`rsgispy.imagefilter.edge` builders and ``'lee'``
+    :func:`~rsgispy.imagefilter.sar.lee_filter_node`), so a chain gives the
+    same result as the builders used directly.
 
     :param kind: Filter or operation name.
     :param filter_size: Odd window size ``>= 3`` for windowed filters
@@ -175,7 +165,6 @@ def build_filter_chain_node(
 
     current: TileNode = source
     named_nodes: Dict[str, TileNode] = {"input": source}
-    border = HaloBorder("edge")
 
     for idx, raw_step in enumerate(steps):
         step = _coerce_step(raw_step)
@@ -183,80 +172,57 @@ def build_filter_chain_node(
         step_name = step.name or f"step_{idx}_{kind}"
 
         if kind in _STAT_DISPATCH:
-            current = window_stat_node(
-                source=current,
-                filter_size=step.filter_size,
-                stat_fn=_STAT_DISPATCH[kind],
+            current = _STAT_DISPATCH[kind](
+                current,
+                step.filter_size,
                 no_data_val=no_data_val,
-                border=border,
                 name=step_name,
             )
         elif kind == "lee":
-            n_looks = float(step.params.get("n_looks", 1.0))
-            current = window_stat_node(
-                source=current,
-                filter_size=step.filter_size,
-                stat_fn=make_lee_stat_fn(n_looks),
+            current = _sar.lee_filter_node(
+                current,
+                step.filter_size,
+                n_looks=float(step.params.get("n_looks", 1.0)),
                 no_data_val=no_data_val,
-                border=border,
                 name=step_name,
             )
         elif kind == "gaussian":
             sd = float(step.params.get("stddev", 1.0))
-            sd_x = float(step.params.get("stddev_x", sd))
-            sd_y = float(step.params.get("stddev_y", sd))
-            angle = float(step.params.get("filter_angle", 0.0))
-            kern = gaussian_kernel(step.filter_size, sd_x, sd_y, angle)
-            current = kernel_conv_node(
-                source=current,
-                kernel=kern,
-                zero_dc=False,
+            current = _smooth.gaussian_smooth_filter_node(
+                current,
+                step.filter_size,
+                stddev_x=float(step.params.get("stddev_x", sd)),
+                stddev_y=float(step.params.get("stddev_y", sd)),
+                filter_angle=float(step.params.get("filter_angle", 0.0)),
                 no_data_val=no_data_val,
-                border=border,
                 name=step_name,
             )
         elif kind == "laplacian":
-            sd = float(step.params.get("stddev", 1.0))
-            kern = laplacian_kernel(step.filter_size, sd)
-            current = kernel_conv_node(
-                source=current,
-                kernel=kern,
-                zero_dc=True,
+            current = _edge.laplacian_filter_node(
+                current,
+                step.filter_size,
+                stddev=float(step.params.get("stddev", 1.0)),
                 no_data_val=no_data_val,
-                border=border,
                 name=step_name,
             )
         elif kind == "sobel":
-            kx, ky = sobel_kernels()
-            current = gradient_magnitude_node(
-                source=current,
-                kernel_x=kx,
-                kernel_y=ky,
-                no_data_val=no_data_val,
-                border=border,
-                name=step_name,
+            current = _edge.sobel_filter_node(
+                current, no_data_val=no_data_val, name=step_name
             )
         elif kind == "prewitt":
-            kx, ky = prewitt_kernels()
-            current = gradient_magnitude_node(
-                source=current,
-                kernel_x=kx,
-                kernel_y=ky,
-                no_data_val=no_data_val,
-                border=border,
-                name=step_name,
+            current = _edge.prewitt_filter_node(
+                current, no_data_val=no_data_val, name=step_name
             )
         elif kind == "kernel":
             if "kernel" not in step.params:
                 raise rsgispy.RSGISPyException(
                     "FilterStep(kind='kernel') requires params['kernel']."
                 )
-            current = kernel_conv_node(
-                source=current,
-                kernel=np.asarray(step.params["kernel"], dtype=np.float64),
+            current = _smooth.kernel_filter_node(
+                current,
+                np.asarray(step.params["kernel"], dtype=np.float64),
                 zero_dc=bool(step.params.get("zero_dc", False)),
                 no_data_val=no_data_val,
-                border=border,
                 name=step_name,
             )
         elif kind == "band_math":
@@ -295,7 +261,7 @@ def apply_filter_chain(
     input_img: Union[str, os.PathLike],
     output_img: Union[str, os.PathLike],
     steps: Sequence[Union[FilterStep, Mapping[str, Any]]],
-    block_size: int = 256,
+    block_size: Optional[int] = None,
     *,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
@@ -314,7 +280,10 @@ def apply_filter_chain(
                   describing each stage (e.g. Gaussian smoothing followed by
                   Sobel edge detection, or unsharp masking via
                   ``FilterStep('band_math', params={'expr': 'input - x'})``).
-    :param block_size: Core processing tile size in pixels (Default = ``256``).
+    :param block_size: Core processing tile size in pixels (Default = ``None``,
+                       the package default block size
+                       :func:`rsgispy.imageprocess.get_default_block_size`;
+                       this was a fixed ``256`` before).
     :param gdalformat: GDAL/rasterio output driver format (Default = ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` constant (Default = ``None``, resolves
                      to :data:`rsgispy.TYPE_32FLOAT`).
@@ -388,4 +357,5 @@ def apply_filter_chain(
         band_names=band_names,
         calc_stats=calc_stats,
     )
-    TileGraph(sinks=sink, block_size=block_size).run(use_pbar=use_pbar)
+    blk_sz = get_default_block_size() if block_size is None else int(block_size)
+    TileGraph(sinks=sink, block_size=blk_sz).run(use_pbar=use_pbar)

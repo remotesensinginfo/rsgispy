@@ -1,53 +1,98 @@
 """
-Tile-graph DAG planning, halo propagation, and streaming execution for
-:mod:`rsgispy._tilegraph`.
+Tile-graph DAG planning, validation, halo propagation, and streaming
+execution for :mod:`rsgispy._tilegraph`.
 """
 
 from __future__ import annotations
 
 from contextlib import ExitStack
+import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
-import pymu_eval
-import rasterio
 from rasterio.transform import Affine
-from rasterio.windows import Window
 
 import rsgispy
-from rsgispy._tilegraph._exec import (
-    eval_band_math_op,
-    eval_pointwise_op,
-    eval_window_op,
-    read_array_source,
-    read_raster_source,
-)
 from rsgispy._tilegraph._nodes import (
-    ArraySource,
-    BandMathOp,
-    DiskSink,
-    MemorySink,
-    PointwiseOp,
-    RasterSource,
+    HeaderCache,
+    NodeMeta,
+    RunResources,
+    SourceGrid,
     TileContext,
     TileNode,
-    WindowOp,
-    _TileTensor,
+    TileSink,
+    TileTensor,
     _crop_tensor,
 )
 
+#: Relative tolerance (of the pixel size) for the scale and rotation terms
+#: of source transforms.
+GRID_SCALE_RTOL = 1e-6
+#: Tolerance, in pixels, for the origins of source transforms.
+GRID_ORIGIN_TOL_PX = 1e-3
 
-def _set_sink_band_names(dst: rasterio.io.DatasetWriter, sink: DiskSink) -> None:
-    """Set the band descriptions of an open :class:`DiskSink` writer."""
-    if sink.band_names is None:
-        return
-    if len(sink.band_names) > dst.count:
-        raise rsgispy.RSGISPyException(
-            f"Cannot set {len(sink.band_names)} band names on image "
-            f"'{sink.output_img}' with {dst.count} band(s)."
-        )
-    for b_idx, b_name in enumerate(sink.band_names, start=1):
-        dst.set_band_description(b_idx, str(b_name))
+
+def _transforms_match(t_a: Affine, t_b: Affine) -> bool:
+    """``True`` if two geotransforms describe the same grid within tolerance."""
+    pix = max(math.hypot(t_a.a, t_a.d), math.hypot(t_a.b, t_a.e), 1e-300)
+    for v_a, v_b in ((t_a.a, t_b.a), (t_a.b, t_b.b), (t_a.d, t_b.d), (t_a.e, t_b.e)):
+        if abs(v_a - v_b) > GRID_SCALE_RTOL * pix:
+            return False
+    return (
+        abs(t_a.c - t_b.c) <= GRID_ORIGIN_TOL_PX * pix
+        and abs(t_a.f - t_b.f) <= GRID_ORIGIN_TOL_PX * pix
+    )
+
+
+def _crs_match(crs_a: Any, crs_b: Any) -> bool:
+    """``True`` if two CRS definitions are equal."""
+    if crs_a == crs_b:
+        return True
+    try:
+        import pyproj  # pylint: disable=import-outside-toplevel
+
+        return pyproj.CRS.from_user_input(crs_a) == pyproj.CRS.from_user_input(crs_b)
+    except Exception:  # pylint: disable=broad-exception-caught
+        return str(crs_a) == str(crs_b)
+
+
+def check_source_grids(grids: Sequence[SourceGrid]) -> SourceGrid:
+    """
+    Check that all source grids have the same dimensions, transform and CRS
+    (within :data:`GRID_SCALE_RTOL` / :data:`GRID_ORIGIN_TOL_PX`); a missing
+    (``None``) transform or CRS is not compared. Returns the first grid.
+
+    :param grids: Grids of the graph's sources.
+    :return: Reference (first) grid.
+    """
+    ref = grids[0]
+    for grid in grids[1:]:
+        if (grid.height, grid.width) != (ref.height, ref.width):
+            raise rsgispy.RSGISPyException(
+                f"TileGraph sources must have matching dimensions; "
+                f"got {(grid.height, grid.width)} for {grid.label} vs "
+                f"{(ref.height, ref.width)} for {ref.label}."
+            )
+        if (
+            grid.transform is not None
+            and ref.transform is not None
+            and not _transforms_match(ref.transform, grid.transform)
+        ):
+            raise rsgispy.RSGISPyException(
+                f"TileGraph sources must be on the same pixel grid; the "
+                f"transform of {grid.label} ({tuple(grid.transform)[:6]}) differs "
+                f"from that of {ref.label} ({tuple(ref.transform)[:6]})."
+            )
+        if (
+            grid.crs is not None
+            and ref.crs is not None
+            and not _crs_match(ref.crs, grid.crs)
+        ):
+            raise rsgispy.RSGISPyException(
+                f"TileGraph sources must have the same CRS; {grid.label} has "
+                f"{grid.crs} but {ref.label} has {ref.crs}."
+            )
+    return ref
 
 
 class TileGraph:
@@ -55,18 +100,43 @@ class TileGraph:
     Directed acyclic graph of raster tile operations executed tile-by-tile
     in memory with automatic cumulative halo propagation.
 
-    :param sinks: Single sink (:class:`DiskSink` or :class:`MemorySink`) or
-                  sequence of sinks defining graph outputs.
-    :param block_size: Core processing tile size in pixels (Default = ``256``).
+    When the graph is built it is checked: the sources must be on the same
+    pixel grid (dimensions, transform and CRS), and every node's metadata
+    (band count, band names, dtype, no data) is derived from its inputs, so
+    errors such as incompatible :class:`BandMathOp` band counts or a band
+    index out of range are reported before any pixel is read. Use
+    :meth:`describe` to print the graph.
+
+    :param sinks: Single sink (e.g. :class:`DiskSink` or :class:`MemorySink`)
+                  or sequence of sinks defining graph outputs.
+    :param block_size: Core processing tile size in pixels (Default = ``None``,
+                       the package default block size
+                       :func:`rsgispy.imageprocess.get_default_block_size`,
+                       which is 256 unless changed; up to rsgispy 0.3 the
+                       default was a fixed 256, independent of the package
+                       default).
+
+    .. code:: python
+
+        from rsgispy.imageprocess import BandMathOp, DiskSink, RasterSource, TileGraph
+
+        red = RasterSource("s2.tif", bands=3)
+        nir = RasterSource("s2.tif", bands=8)
+        ndvi = BandMathOp({"red": red, "nir": nir}, "(nir - red) / (nir + red)")
+        graph = TileGraph(DiskSink(ndvi, "ndvi.tif", band_names=["NDVI"]))
+        print(graph.describe())
+        graph.run()
     """
+
+    # pylint: disable=too-many-instance-attributes
 
     def __init__(
         self,
-        sinks: Union[DiskSink, MemorySink, Sequence[Union[DiskSink, MemorySink]]],
-        block_size: int = 256,
+        sinks: Union[TileSink, Sequence[TileSink]],
+        block_size: Optional[int] = None,
     ) -> None:
-        if isinstance(sinks, (DiskSink, MemorySink)):
-            sink_list: List[Union[DiskSink, MemorySink]] = [sinks]
+        if isinstance(sinks, TileNode):
+            sink_list: List[TileSink] = [sinks]  # type: ignore[list-item]
         else:
             sink_list = list(sinks)
         if not sink_list:
@@ -74,21 +144,40 @@ class TileGraph:
                 "TileGraph requires at least one DiskSink or MemorySink."
             )
         for sink in sink_list:
-            if not isinstance(sink, (DiskSink, MemorySink)):
+            if not isinstance(sink, TileSink):
                 raise rsgispy.RSGISPyException(
-                    f"TileGraph sinks must be DiskSink or MemorySink, got {type(sink).__name__}."
+                    "TileGraph sinks must be TileSink objects (e.g. DiskSink or "
+                    f"MemorySink), got {type(sink).__name__}."
                 )
+        if block_size is None:
+            # pylint: disable=import-outside-toplevel
+            from rsgispy.imageprocess import get_default_block_size
+
+            block_size = get_default_block_size()
         if block_size <= 0:
             raise rsgispy.RSGISPyException(
                 f"block_size must be > 0, got {block_size}."
             )
-        self.sinks: Tuple[Union[DiskSink, MemorySink], ...] = tuple(sink_list)
+        self.sinks: Tuple[TileSink, ...] = tuple(sink_list)
         self.block_size: int = int(block_size)
         self.topo_order: Tuple[TileNode, ...] = self._build_topo_order()
         self.required_halos: Dict[TileNode, Tuple[int, int]] = (
             self._compute_required_halos()
         )
         self.consumer_counts: Dict[TileNode, int] = self._compute_consumer_counts()
+        self.sources: Tuple[TileNode, ...] = tuple(
+            n for n in self.topo_order if n.is_source
+        )
+        if not self.sources:
+            raise rsgispy.RSGISPyException(
+                "TileGraph must contain at least one RasterSource or ArraySource."
+            )
+        self.source_grids: Dict[TileNode, SourceGrid] = {}
+        self.node_meta: Dict[TileNode, NodeMeta] = {}
+        self._infer_metadata()
+        self.grid: SourceGrid = check_source_grids(
+            [self.source_grids[s] for s in self.sources]
+        )
 
     def _build_topo_order(self) -> Tuple[TileNode, ...]:
         """Topologically sort all reachable nodes and reject cycles."""
@@ -105,6 +194,11 @@ class TileGraph:
                 return
             visited[node] = 1
             for parent in node.inputs:
+                if not isinstance(parent, TileNode):
+                    raise rsgispy.RSGISPyException(
+                        f"{node.label} has an input that is not a TileNode "
+                        f"({type(parent).__name__})."
+                    )
                 _dfs(parent)
             visited[node] = 2
             order.append(node)
@@ -120,17 +214,15 @@ class TileGraph:
         }
         for node in reversed(self.topo_order):
             hy, hx = req[node]
-            if isinstance(node, WindowOp):
-                parent = node.inputs[0]
-                phy, phx = req[parent]
-                req[parent] = (
-                    max(phy, hy + node.radius_y),
-                    max(phx, hx + node.radius_x),
+            in_halos = node.input_halos(hy, hx)
+            if len(in_halos) != len(node.inputs):
+                raise rsgispy.RSGISPyException(
+                    f"{node.label}.input_halos() returned {len(in_halos)} "
+                    f"halo(s) for {len(node.inputs)} input(s)."
                 )
-            elif isinstance(node, (PointwiseOp, BandMathOp, DiskSink, MemorySink)):
-                for parent in node.inputs:
-                    phy, phx = req[parent]
-                    req[parent] = (max(phy, hy), max(phx, hx))
+            for parent, (phy_need, phx_need) in zip(node.inputs, in_halos):
+                phy, phx = req[parent]
+                req[parent] = (max(phy, int(phy_need)), max(phx, int(phx_need)))
         return req
 
     def _compute_consumer_counts(self) -> Dict[TileNode, int]:
@@ -141,56 +233,62 @@ class TileGraph:
                 counts[parent] += 1
         return counts
 
-    @staticmethod
-    def _read_raster_source(
-        node: RasterSource,
-        ds: rasterio.io.DatasetReader,
-        win: Window,
-        hy: int,
-        hx: int,
-    ) -> _TileTensor:
-        return read_raster_source(node, ds, win, hy, hx)
+    def _infer_metadata(self) -> None:
+        """Read source grids and derive (and validate) every node's metadata."""
+        headers = HeaderCache()
+        for node in self.topo_order:
+            if node.is_source:
+                grid, meta = node.source_info(headers)
+                self.source_grids[node] = grid
+            else:
+                meta = node.infer_meta([self.node_meta[p] for p in node.inputs])
+            if not isinstance(meta, NodeMeta):
+                raise rsgispy.RSGISPyException(
+                    f"{node.label} returned {type(meta).__name__} as metadata, "
+                    "expected NodeMeta."
+                )
+            self.node_meta[node] = meta
 
-    @staticmethod
-    def _read_array_source(
-        node: ArraySource,
-        win: Window,
-        hy: int,
-        hx: int,
-    ) -> _TileTensor:
-        return read_array_source(node, win, hy, hx)
+    def describe(self) -> str:
+        """
+        Return a text description of the graph: the grid and block size, and
+        for each node (in evaluation order) its inputs, parameters, the halo
+        its output is computed with, its own halo radius and its metadata.
 
-    @staticmethod
-    def _eval_window_op(
-        node: WindowOp,
-        in_tensor: _TileTensor,
-        out_hy: int,
-        out_hx: int,
-        base_ctx: TileContext,
-    ) -> _TileTensor:
-        return eval_window_op(node, in_tensor, out_hy, out_hx, base_ctx)
+        :return: Multi-line string (print it).
 
-    @staticmethod
-    def _eval_pointwise_op(
-        node: PointwiseOp,
-        in_tensors: Sequence[_TileTensor],
-        out_hy: int,
-        out_hx: int,
-        base_ctx: TileContext,
-    ) -> _TileTensor:
-        return eval_pointwise_op(node, in_tensors, out_hy, out_hx, base_ctx)
+        .. code:: python
 
-    @staticmethod
-    def _eval_band_math_op(
-        node: BandMathOp,
-        in_tensors: Sequence[_TileTensor],
-        out_hy: int,
-        out_hx: int,
-        parsers: Dict[BandMathOp, pymu_eval.Parser],
-    ) -> _TileTensor:
-        return eval_band_math_op(node, in_tensors, out_hy, out_hx, parsers)
+            print(graph.describe())
+        """
+        index = {node: idx for idx, node in enumerate(self.topo_order)}
+        grid = self.grid
+        lines = [
+            f"TileGraph: {len(self.topo_order)} node(s), {len(self.sinks)} sink(s), "
+            f"block_size={self.block_size}",
+            f"  grid: {grid.height} rows x {grid.width} columns, crs={grid.crs}, "
+            f"transform={None if grid.transform is None else tuple(grid.transform)[:6]}",
+        ]
+        for node in self.topo_order:
+            inputs = (
+                " <- " + ", ".join(f"[{index[p]}]" for p in node.inputs)
+                if node.inputs
+                else ""
+            )
+            params = node.describe_params()
+            lines.append(
+                f"  [{index[node]}] {node.label}{inputs}"
+                + (f" ({params})" if params else "")
+            )
+            hy, hx = self.required_halos[node]
+            ry, rx = node.halo_radius
+            lines.append(
+                f"      halo=({hy}, {hx}) radius=({ry}, {rx}) "
+                f"{self.node_meta[node].describe()}"
+            )
+        return "\n".join(lines)
 
-    def run(self, use_pbar: bool = True) -> Dict[str, np.ndarray]:
+    def run(self, use_pbar: bool = True) -> Dict[str, Any]:
         """
         Execute the tile graph across all tiles, writing every :class:`DiskSink`
         and populating every :class:`MemorySink`.
@@ -199,81 +297,53 @@ class TileGraph:
                          over output tiles.
         :return: Dictionary mapping each :class:`MemorySink`'s ``name`` (or
                  ``'memory_<i>'`` when unnamed) to its assembled 3D
-                 ``(C, H, W)`` NumPy array.
+                 ``(C, H, W)`` NumPy array (and the results of any other sink
+                 with ``returns_result = True``).
         """
-        # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+        # pylint: disable=too-many-locals,too-many-branches
         # pylint: disable=import-outside-toplevel
-        from rsgispy.imageprocess import (
-            IntersectionGrid,
-            cast_result_block,
-            ensure_file_exists,
-            iter_dataset_windows,
-            open_output_dataset,
-            pop_stats_on_close,
-        )
-        from rsgispy.imageprocess import normalise_creation_options
-
-        sources = [
-            n for n in self.topo_order if isinstance(n, (RasterSource, ArraySource))
-        ]
-        if not sources:
-            raise rsgispy.RSGISPyException(
-                "TileGraph must contain at least one RasterSource or ArraySource."
-            )
+        from rsgispy.imageprocess import IntersectionGrid, iter_dataset_windows
 
         with ExitStack() as stack:
-            open_rasters: Dict[RasterSource, rasterio.io.DatasetReader] = {}
-            img_h: Optional[int] = None
-            img_w: Optional[int] = None
-            ref_transform: Optional[Affine] = None
-            ref_crs: Any = None
-            ref_nodata: Optional[float] = None
+            resources = RunResources(stack)
+            states: Dict[TileNode, Any] = {}
+            for node in self.topo_order:
+                if not isinstance(node, TileSink):
+                    hy, hx = self.required_halos[node]
+                    states[node] = node.start_run(resources, hy, hx)
 
-            for src_node in sources:
-                if isinstance(src_node, RasterSource):
-                    ensure_file_exists(src_node.path)
-                    ds = stack.enter_context(rasterio.open(src_node.path, "r"))
-                    open_rasters[src_node] = ds
-                    cur_h, cur_w = int(ds.height), int(ds.width)
-                    cur_transform, cur_crs = ds.transform, ds.crs
-                    cur_nd = (
-                        src_node.nodata if src_node.nodata is not None else ds.nodata
+            # Re-check the grids of the files actually opened.
+            run_grids = []
+            for src in self.sources:
+                grid = self.source_grids[src]
+                state = states.get(src)
+                dset = getattr(state, "dataset", None)
+                if dset is not None:
+                    grid = SourceGrid(
+                        height=int(dset.height),
+                        width=int(dset.width),
+                        transform=dset.transform,
+                        crs=dset.crs,
+                        nodata=grid.nodata,
+                        label=grid.label,
                     )
-                else:
-                    cur_h = int(src_node.array.shape[1])
-                    cur_w = int(src_node.array.shape[2])
-                    cur_transform = src_node.transform
-                    cur_crs = src_node.crs
-                    cur_nd = src_node.nodata
-
-                if img_h is None:
-                    img_h, img_w = cur_h, cur_w
-                    ref_transform = cur_transform
-                    ref_crs = cur_crs
-                    ref_nodata = cur_nd
-                elif (cur_h, cur_w) != (img_h, img_w):
-                    raise rsgispy.RSGISPyException(
-                        f"TileGraph sources must have matching dimensions; "
-                        f"got {(cur_h, cur_w)} vs {(img_h, img_w)}."
-                    )
-
-            if img_h is None or img_w is None:
-                raise rsgispy.RSGISPyException(
-                    "TileGraph could not determine image dimensions from sources."
-                )
-            grid = IntersectionGrid(
-                crs=ref_crs,
-                transform=(
-                    ref_transform if ref_transform is not None else Affine.identity()
-                ),
+                run_grids.append(grid)
+            ref = check_source_grids(run_grids)
+            img_h, img_w = int(ref.height), int(ref.width)
+            out_grid = IntersectionGrid(
+                crs=ref.crs,
+                transform=ref.transform if ref.transform is not None else Affine.identity(),
                 width=img_w,
                 height=img_h,
                 offsets={},
             )
-
-            open_sinks: Dict[DiskSink, rasterio.io.DatasetWriter] = {}
-            mem_arrays: Dict[MemorySink, np.ndarray] = {}
-            band_math_parsers: Dict[BandMathOp, pymu_eval.Parser] = {}
+            for sink in self.sinks:
+                sink.open(
+                    out_grid,
+                    self.node_meta[sink.inputs[0]],
+                    stack=stack,
+                    use_pbar=use_pbar,
+                )
 
             for win in iter_dataset_windows(
                 img_h, img_w, block_size=self.block_size, use_pbar=use_pbar
@@ -291,119 +361,50 @@ class TileGraph:
                     oob_bottom=0,
                     oob_left=0,
                     oob_right=0,
-                    transform=ref_transform,
-                    crs=ref_crs,
-                    nodata=ref_nodata,
+                    transform=ref.transform,
+                    crs=ref.crs,
+                    nodata=ref.nodata,
                 )
 
-                tensors: Dict[TileNode, _TileTensor] = {}
+                tensors: Dict[TileNode, TileTensor] = {}
                 remaining_uses = dict(self.consumer_counts)
 
                 for node in self.topo_order:
-                    hy, hx = self.required_halos[node]
-                    if isinstance(node, RasterSource):
-                        tensors[node] = self._read_raster_source(
-                            node, open_rasters[node], win, hy, hx
-                        )
-                    elif isinstance(node, ArraySource):
-                        tensors[node] = self._read_array_source(node, win, hy, hx)
-                    elif isinstance(node, WindowOp):
-                        parent = node.inputs[0]
-                        tensors[node] = self._eval_window_op(
-                            node, tensors[parent], hy, hx, base_ctx
-                        )
-                    elif isinstance(node, PointwiseOp):
-                        in_t = [tensors[p] for p in node.inputs]
-                        tensors[node] = self._eval_pointwise_op(
-                            node, in_t, hy, hx, base_ctx
-                        )
-                    elif isinstance(node, BandMathOp):
-                        in_t = [tensors[p] for p in node.inputs]
-                        tensors[node] = self._eval_band_math_op(
-                            node, in_t, hy, hx, band_math_parsers
-                        )
-                    elif isinstance(node, DiskSink):
+                    if isinstance(node, TileSink):
                         core = _crop_tensor(tensors[node.inputs[0]], 0, 0).data
-                        if node not in open_sinks:
-                            out_rio_dt = rsgispy.get_rasterio_datatype(node.datatype)
-                            dst = open_output_dataset(
-                                stack=stack,
-                                output_img=node.output_img,
-                                gdalformat=node.gdalformat,
-                                out_rio_dtype=out_rio_dt,
-                                grid=grid,
-                                count=int(core.shape[0]),
-                                output_exists=False,
-                                creation_opts=normalise_creation_options(
-                                    node.creation_opts
-                                ),
-                            )
-                            if node.nodata is not None:
-                                dst.nodata = node.nodata
-                            _set_sink_band_names(dst, node)
-                            # Statistics run once the writer has closed (for
-                            # COG, before the temporary GeoTIFF is converted).
-                            pop_stats_on_close(
-                                dst,
-                                node.calc_stats,
-                                no_data_val=node.nodata,
-                                use_pbar=use_pbar,
-                            )
-                            open_sinks[node] = dst
-                        out_np_dt = np.dtype(
-                            rsgispy.get_numpy_datatype(node.datatype)
+                        node.write(core, win)
+                    else:
+                        hy, hx = self.required_halos[node]
+                        tensors[node] = node.evaluate(
+                            [tensors[p] for p in node.inputs],
+                            hy,
+                            hx,
+                            base_ctx,
+                            states[node],
                         )
-                        cast_blk = cast_result_block(
-                            core,
-                            int(win.height),
-                            int(win.width),
-                            out_np_dt,
-                            clamp_int=node.clamp_int,
-                        )
-                        open_sinks[node].write(cast_blk, window=win)
-                    elif isinstance(node, MemorySink):
-                        core = _crop_tensor(tensors[node.inputs[0]], 0, 0).data
-                        out_np_dt = (
-                            node.dtype if node.dtype is not None else core.dtype
-                        )
-                        if node not in mem_arrays:
-                            mem_arrays[node] = np.empty(
-                                (int(core.shape[0]), img_h, img_w),
-                                dtype=out_np_dt,
-                            )
-                        cast_blk = cast_result_block(
-                            core,
-                            int(win.height),
-                            int(win.width),
-                            out_np_dt,
-                            clamp_int=node.clamp_int,
-                        )
-                        r0 = int(win.row_off)
-                        c0 = int(win.col_off)
-                        r1 = r0 + int(win.height)
-                        c1 = c0 + int(win.width)
-                        mem_arrays[node][:, r0:r1, c0:c1] = cast_blk
 
                     for parent in node.inputs:
                         remaining_uses[parent] -= 1
                         if remaining_uses[parent] <= 0:
                             tensors.pop(parent, None)
 
-        mem_results: Dict[str, np.ndarray] = {}
-        mem_idx = 0
+            for sink in self.sinks:
+                sink.close()
+
+        results: Dict[str, Any] = {}
+        prefix_counts: Dict[str, int] = {}
         for sink in self.sinks:
-            if isinstance(sink, MemorySink):
-                arr_out = mem_arrays[sink]
-                sink.result = arr_out
-                key = sink.name if sink.name is not None else f"memory_{mem_idx}"
-                mem_results[key] = arr_out
-                mem_idx += 1
-        return mem_results
+            if sink.returns_result:
+                idx = prefix_counts.get(sink.result_prefix, 0)
+                key = sink.name if sink.name is not None else f"{sink.result_prefix}_{idx}"
+                results[key] = sink.result
+                prefix_counts[sink.result_prefix] = idx + 1
+        return results
 
 
 def run_tile_graph(
-    sinks: Union[DiskSink, MemorySink, Sequence[Union[DiskSink, MemorySink]]],
-    block_size: int = 256,
+    sinks: Union[TileSink, Sequence[TileSink]],
+    block_size: Optional[int] = None,
     use_pbar: bool = True,
 ) -> Dict[str, np.ndarray]:
     """
@@ -411,7 +412,8 @@ def run_tile_graph(
 
     :param sinks: Single :class:`DiskSink` / :class:`MemorySink` or sequence of
                   sinks.
-    :param block_size: Core tile size in pixels (Default = ``256``).
+    :param block_size: Core tile size in pixels (Default = ``None``, the
+                       package default block size).
     :param use_pbar: Display a ``tqdm`` progress bar (Default = ``True``).
     :return: Dictionary of :class:`MemorySink` outputs (empty when only
              :class:`DiskSink` instances are used).

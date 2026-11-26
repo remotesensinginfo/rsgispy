@@ -447,10 +447,11 @@ Performance and large datasets
 
 * **Block size and memory.** The speckle filters and GLCM texture are
   moving-window operations: their memory grows with the square of the block
-  size and of the window size. With 7 x 7 windows, 512 pixel blocks need a
-  few hundred MiB per process; set a smaller block size with
-  :func:`rsgispy.imageprocess.set_default_block_size` (e.g. 256) when
-  running large windows or several processes at once. See
+  size and of the window size. With 7 x 7 windows, the default 256 pixel
+  blocks need about 100 MiB per process and 512 pixel blocks about four
+  times as much; keep the default (or set a smaller block size with
+  :func:`rsgispy.imageprocess.set_default_block_size`) when running large
+  windows or several processes at once. See
   :doc:`large_rasters` for measurements.
 * **numba** speeds up the GLCM texture and other window statistics; the first
   call compiles the code and takes a few seconds.
