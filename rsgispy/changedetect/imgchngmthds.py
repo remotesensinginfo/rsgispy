@@ -909,9 +909,10 @@ def change_vector_analysis(
     img_chng_bands: Optional[Sequence[int]] = None,
     use_kmeans: bool = False,
     *,
+    centre_on_threshold: bool = True,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
-    no_data_val: Optional[float] = None,
+    no_data_val: float = -9999.0,
     base_img_no_data: float = 0,
     chng_img_no_data: float = 0,
     calc_stats: bool = True,
@@ -928,8 +929,12 @@ def change_vector_analysis(
     :param in_chng_img: Path to the input change image file.
     :param out_chng_img: Path to the output ``uint8`` binary change image file
                          (``1`` = change, ``0`` = no change).
-    :param out_chng_dist_img: Path to the output threshold-centred change
-                              distance image file.
+    :param out_chng_dist_img: Path to the output change distance image file:
+                              the magnitude of the difference vector, minus
+                              the threshold used for the binary map when
+                              ``centre_on_threshold=True`` (so values above
+                              ``0`` are change), otherwise the magnitude
+                              itself.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
                         If ``None`` (Default), a pixel is valid only where
                         **both** images have data: at least one selected band
@@ -948,10 +953,16 @@ def change_vector_analysis(
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type for
                      ``out_chng_dist_img`` (Default = ``None``, which uses
                      :data:`rsgispy.TYPE_32FLOAT`).
-    :param no_data_val: Optional output no-data value for ``out_chng_dist_img``,
-                        written to invalid pixels (Default = ``None``:
-                        invalid pixels are written as ``0``). Invalid
-                        pixels are ``255`` (no data) in ``out_chng_img``.
+    :param centre_on_threshold: If ``True`` (Default), write the distance
+                                minus the threshold used for the binary map
+                                (Otsu or K-means), so ``distance > 0`` is the
+                                same as the binary change map. If ``False``,
+                                write the distance itself.
+    :param no_data_val: Output no-data value for ``out_chng_dist_img``,
+                        written to invalid pixels and set as the file's
+                        no-data value (Default = ``-9999``, which a valid
+                        distance cannot normally take). Invalid pixels are
+                        ``255`` (no data) in ``out_chng_img``.
     :param base_img_no_data: No-data value in ``in_base_img`` (Default = ``0``).
     :param chng_img_no_data: No-data value in ``in_chng_img`` (Default = ``0``).
     :param calc_stats: If ``True``, compute output image statistics and pyramids
@@ -1003,11 +1014,11 @@ def change_vector_analysis(
     l2_norm = np.sqrt(np.sum(np.square(img_diff), axis=0))
     np.nan_to_num(l2_norm, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
-    otsu_thres = _safe_otsu_threshold(l2_norm)
+    chng_thres, thres_method = _calc_change_threshold(l2_norm, use_kmeans)
+    dist_offset = chng_thres if centre_on_threshold else 0.0
 
-    fill_val = 0.0 if no_data_val is None else float(no_data_val)
-    l2_flat_arr = np.full(n_pxls, fill_val, dtype=np.float32)
-    l2_flat_arr[pxl_ids] = (l2_norm - otsu_thres).astype(np.float32, copy=False)
+    l2_flat_arr = np.full(n_pxls, float(no_data_val), dtype=np.float32)
+    l2_flat_arr[pxl_ids] = (l2_norm - dist_offset).astype(np.float32, copy=False)
     l2_dist_img = l2_flat_arr.reshape((1, img_y, img_x))
 
     create_img_from_array_ref_img(
@@ -1021,7 +1032,6 @@ def change_vector_analysis(
         use_pbar=use_pbar,
     )
 
-    chng_thres, thres_method = _calc_change_threshold(l2_norm, use_kmeans)
     chng_bin_flat = np.full(n_pxls, 255, dtype=np.uint8)
     chng_bin_flat[pxl_ids] = (l2_norm > chng_thres).astype(np.uint8)
     chng_bin_img = chng_bin_flat.reshape((1, img_y, img_x))
@@ -1075,9 +1085,10 @@ def slow_feature_analysis(
     sfa_regular: bool = False,
     use_kmeans: bool = False,
     *,
+    centre_on_threshold: bool = True,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
-    no_data_val: Optional[float] = None,
+    no_data_val: float = -9999.0,
     base_img_no_data: float = 0,
     chng_img_no_data: float = 0,
     calc_stats: bool = True,
@@ -1091,8 +1102,12 @@ def slow_feature_analysis(
     :param in_base_img: Path to the input base image file.
     :param in_chng_img: Path to the input change image file.
     :param out_chng_img: Path to the output ``uint8`` binary change image.
-    :param out_chng_dist_img: Path to the output threshold-centred chi-square
-                              distance image.
+    :param out_chng_dist_img: Path to the output change distance image: the
+                              square root of the chi-square distance, minus
+                              the threshold used for the binary map when
+                              ``centre_on_threshold=True`` (so values above
+                              ``0`` are change), otherwise the square root of
+                              the chi-square distance itself.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
                         If ``None`` (Default), a pixel is valid only where
                         **both** images have data: at least one selected band
@@ -1118,10 +1133,16 @@ def slow_feature_analysis(
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type for
                      ``out_chng_dist_img`` (Default = ``None``, which uses
                      :data:`rsgispy.TYPE_32FLOAT`).
-    :param no_data_val: Optional output no-data value for ``out_chng_dist_img``,
-                        written to invalid pixels (Default = ``None``:
-                        invalid pixels are written as ``0``). Invalid
-                        pixels are ``255`` (no data) in ``out_chng_img``.
+    :param centre_on_threshold: If ``True`` (Default), write the distance
+                                minus the threshold used for the binary map
+                                (Otsu or K-means), so ``distance > 0`` is the
+                                same as the binary change map. If ``False``,
+                                write the distance itself.
+    :param no_data_val: Output no-data value for ``out_chng_dist_img``,
+                        written to invalid pixels and set as the file's
+                        no-data value (Default = ``-9999``, which a valid
+                        distance cannot normally take). Invalid pixels are
+                        ``255`` (no data) in ``out_chng_img``.
     :param base_img_no_data: No-data value in ``in_base_img`` (Default = ``0``).
     :param chng_img_no_data: No-data value in ``in_chng_img`` (Default = ``0``).
     :param calc_stats: If ``True``, compute output image statistics and pyramids
@@ -1280,11 +1301,11 @@ def slow_feature_analysis(
 
     sqrt_chi2 = np.sqrt(np.maximum(t_stat, 0.0))
     np.nan_to_num(sqrt_chi2, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-    otsu_thres = _safe_otsu_threshold(sqrt_chi2)
+    chng_thres, thres_method = _calc_change_threshold(sqrt_chi2, use_kmeans)
+    dist_offset = chng_thres if centre_on_threshold else 0.0
 
-    fill_val = 0.0 if no_data_val is None else float(no_data_val)
-    dist_flat = np.full(n_pxls, fill_val, dtype=np.float32)
-    dist_flat[pxl_ids] = (sqrt_chi2 - otsu_thres).astype(np.float32, copy=False)
+    dist_flat = np.full(n_pxls, float(no_data_val), dtype=np.float32)
+    dist_flat[pxl_ids] = (sqrt_chi2 - dist_offset).astype(np.float32, copy=False)
     create_img_from_array_ref_img(
         data_arr=dist_flat.reshape((1, img_y, img_x)),
         output_img=out_chng_dist_img,
@@ -1296,7 +1317,6 @@ def slow_feature_analysis(
         use_pbar=use_pbar,
     )
 
-    chng_thres, thres_method = _calc_change_threshold(sqrt_chi2, use_kmeans)
     bin_flat = np.full(n_pxls, 255, dtype=np.uint8)
     bin_flat[pxl_ids] = (sqrt_chi2 > chng_thres).astype(np.uint8)
 
@@ -1363,10 +1383,11 @@ def multivariate_alteration_detection(
     mad_epsilon: float = 1e-6,
     use_kmeans: bool = True,
     *,
+    centre_on_threshold: bool = False,
     mad_regularisation: float = 0.0,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
-    no_data_val: Optional[float] = None,
+    no_data_val: float = -9999.0,
     base_img_no_data: float = 0,
     chng_img_no_data: float = 0,
     calc_stats: bool = True,
@@ -1380,8 +1401,11 @@ def multivariate_alteration_detection(
     :param in_base_img: Path to the input base image file.
     :param in_chng_img: Path to the input change image file.
     :param out_chng_img: Path to the output ``uint8`` binary change image.
-    :param out_chng_dist_img: Path to the output square-root chi-square
-                              distance image.
+    :param out_chng_dist_img: Path to the output change distance image: the
+                              square root of the chi-square distance (Default),
+                              or that minus the threshold used for the binary
+                              map when ``centre_on_threshold=True`` (so values
+                              above ``0`` are change).
     :param out_chng_mads_img: Path to the output MAD variates multi-band image.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
                         If ``None`` (Default), a pixel is valid only where
@@ -1415,10 +1439,16 @@ def multivariate_alteration_detection(
                      ``out_chng_dist_img`` and ``out_chng_mads_img``
                      (Default = ``None``, which uses
                      :data:`rsgispy.TYPE_32FLOAT`).
-    :param no_data_val: Optional output no-data value for continuous outputs,
-                        written to invalid pixels (Default = ``None``:
-                        invalid pixels are written as ``0``). Invalid
-                        pixels are ``255`` (no data) in ``out_chng_img``.
+    :param centre_on_threshold: If ``True``, write the distance minus the
+                                threshold used for the binary map (Otsu or
+                                K-means), so ``distance > 0`` is the same as
+                                the binary change map. If ``False``
+                                (Default), write the distance itself.
+    :param no_data_val: Output no-data value for ``out_chng_dist_img`` and
+                        ``out_chng_mads_img``, written to invalid pixels and
+                        set as the files' no-data value (Default = ``-9999``).
+                        Invalid pixels are ``255`` (no data) in
+                        ``out_chng_img``.
     :param base_img_no_data: No-data value in ``in_base_img`` (Default = ``0``).
     :param chng_img_no_data: No-data value in ``in_chng_img`` (Default = ``0``).
     :param calc_stats: If ``True``, compute output image statistics and pyramids
@@ -1598,9 +1628,12 @@ def multivariate_alteration_detection(
     sqrt_chi2 = np.sqrt(np.maximum(chi_square_dis, 0.0))
     np.nan_to_num(sqrt_chi2, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
-    fill_val = 0.0 if no_data_val is None else float(no_data_val)
+    chng_thres, thres_method = _calc_change_threshold(sqrt_chi2, use_kmeans)
+    dist_offset = chng_thres if centre_on_threshold else 0.0
+
+    fill_val = float(no_data_val)
     dist_flat = np.full(n_pxls, fill_val, dtype=np.float32)
-    dist_flat[pxl_ids] = sqrt_chi2.astype(np.float32, copy=False)
+    dist_flat[pxl_ids] = (sqrt_chi2 - dist_offset).astype(np.float32, copy=False)
     create_img_from_array_ref_img(
         data_arr=dist_flat.reshape((1, img_y, img_x)),
         output_img=out_chng_dist_img,
@@ -1625,7 +1658,6 @@ def multivariate_alteration_detection(
         use_pbar=use_pbar,
     )
 
-    chng_thres, thres_method = _calc_change_threshold(sqrt_chi2, use_kmeans)
     bin_flat = np.full(n_pxls, 255, dtype=np.uint8)
     bin_flat[pxl_ids] = (sqrt_chi2 > chng_thres).astype(np.uint8)
 

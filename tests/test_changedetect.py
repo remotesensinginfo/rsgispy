@@ -654,3 +654,93 @@ def test_mad_regularisation_keeps_correlations_below_one(tmp_path):
             base_path, chng_path, str(tmp_path / "b.tif"), str(tmp_path / "d.tif"),
             str(tmp_path / "v.tif"), mad_regularisation=-1.0, **kwargs,
         )
+
+
+# ---------------------------------------------------------------------------
+# Change distance outputs: centring and no data
+# ---------------------------------------------------------------------------
+
+
+def _run_change_method(method, base_path, chng_path, tmp_path, **kwargs):
+    """Run one of CVA / ISFA / IR-MAD and return (out, bin_path, dist_path)."""
+    out_bin = str(tmp_path / f"{method}_bin.tif")
+    out_dist = str(tmp_path / f"{method}_dist.tif")
+    if method == "cva":
+        out = icm.change_vector_analysis(
+            base_path, chng_path, out_bin, out_dist, use_pbar=False, **kwargs
+        )
+    elif method == "sfa":
+        out = icm.slow_feature_analysis(
+            base_path, chng_path, out_bin, out_dist, sfa_max_iter=5,
+            use_pbar=False, **kwargs,
+        )
+    else:
+        out = icm.multivariate_alteration_detection(
+            base_path, chng_path, out_bin, out_dist,
+            str(tmp_path / f"{method}_vars.tif"), mad_max_iter=5,
+            use_pbar=False, **kwargs,
+        )
+    return out, out_bin, out_dist
+
+
+_METHODS = ["cva"] + (["sfa", "mad"] if icm.HAVE_SCIPY else [])
+_KMEANS = [False] + ([True] if icm.HAVE_SKLEARN else [])
+
+
+def test_centre_on_threshold_defaults():
+    """CVA and ISFA centre on the threshold by default; IR-MAD does not."""
+    for fn, centred in (
+        (icm.change_vector_analysis, True),
+        (icm.slow_feature_analysis, True),
+        (icm.multivariate_alteration_detection, False),
+    ):
+        params = inspect.signature(fn).parameters
+        assert params["centre_on_threshold"].default is centred
+        assert params["no_data_val"].default == -9999.0
+
+
+@pytest.mark.filterwarnings("ignore:.*did not converge:UserWarning")
+@pytest.mark.parametrize("method", _METHODS)
+@pytest.mark.parametrize("use_kmeans", _KMEANS)
+def test_centred_distance_matches_binary(tmp_path, method, use_kmeans):
+    """``distance > 0`` equals the binary map for every method and threshold."""
+    base_path, chng_path, _, _ = _make_diag_pair(tmp_path)
+    out, out_bin, out_dist = _run_change_method(
+        method, base_path, chng_path, tmp_path,
+        use_kmeans=use_kmeans, centre_on_threshold=True,
+    )
+    assert out["threshold_method"] == ("kmeans" if use_kmeans else "otsu")
+    bin_arr = _read_band(out_bin)
+    dist_arr = _read_band(out_dist)
+    np.testing.assert_array_equal(dist_arr > 0, bin_arr == 1)
+    assert 0 < out["n_change"] < out["n_valid"]
+
+    # Uncentred: the raw distance, thresholded at the returned threshold.
+    out, out_bin, out_dist = _run_change_method(
+        method, base_path, chng_path, tmp_path,
+        use_kmeans=use_kmeans, centre_on_threshold=False,
+    )
+    raw = _read_band(out_dist).astype(np.float64)
+    np.testing.assert_allclose(raw, dist_arr + out["threshold"], atol=1e-4)
+    assert np.all(raw >= 0.0)
+
+
+@pytest.mark.filterwarnings("ignore:.*did not converge:UserWarning")
+@pytest.mark.parametrize("method", _METHODS)
+def test_default_no_data_is_set(tmp_path, method):
+    """Invalid pixels are written as -9999 and the no-data value is set."""
+    base_path, chng_path, hole = _make_one_date_hole_pair(tmp_path)
+    kwargs = {} if method == "cva" else {"use_kmeans": False}
+    _, out_bin, out_dist = _run_change_method(
+        method, base_path, chng_path, tmp_path, **kwargs
+    )
+    with rasterio.open(out_dist) as src:
+        assert src.nodata == -9999.0
+        dist_arr = src.read(1)
+    assert np.all(dist_arr[hole] == -9999.0)
+    assert np.all(dist_arr[~hole] != -9999.0)
+    assert np.all(_read_band(out_bin)[hole] == 255)
+    if method == "mad":
+        with rasterio.open(tmp_path / "mad_vars.tif") as src:
+            assert src.nodata == -9999.0
+            assert np.all(src.read()[:, hole] == -9999.0)
