@@ -4,6 +4,8 @@ Edge-detection and spatial derivative convolution filters for raster images.
 
 from typing import List, Optional
 
+import numpy as np
+
 from rsgispy._io import TileNode
 from rsgispy.imagefilter._helpers import (
     gaussian_kernel,
@@ -29,6 +31,12 @@ __all__: List[str] = [
     "sobel_filter_node",
     "prewitt_filter_node",
     "laplacian_filter_node",
+    "sobel_x_filter_node",
+    "sobel_y_filter_node",
+    "prewitt_x_filter_node",
+    "prewitt_y_filter_node",
+    "gaussian_1st_deriv_filter_node",
+    "gaussian_2nd_deriv_filter_node",
 ]
 
 
@@ -579,4 +587,265 @@ def laplacian_filter_node(
         zero_dc=True,
         no_data_val=no_data_val,
         name=name or "laplacian_filter",
+    )
+
+
+def _directional_node(
+    source: TileNode,
+    kernel: np.ndarray,
+    no_data_val: Optional[float],
+    name: str,
+) -> TileNode:
+    """Zero-sum directional convolution node (Sobel/Prewitt/Gaussian derivative)."""
+    return kernel_conv_node(
+        source, kernel, zero_dc=True, no_data_val=no_data_val, name=name
+    )
+
+
+def sobel_x_filter_node(
+    source: TileNode,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_sobel_x_filter`: the horizontal (X-axis)
+    3x3 Sobel derivative of each band of ``source``, for chaining in a
+    :class:`~rsgispy.imageprocess.TileGraph` without intermediate files.
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``; its halo radius is 1.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param no_data_val: Optional input no-data value: these pixels are
+                        ignored, and output pixels without a value are set to
+                        it (Default = ``None``; not read from ``source``, so
+                        pass the input's no-data value).
+    :param name: Optional node name (Default = ``'sobel_x_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        import numpy as np
+        from rsgispy.imageprocess import DiskSink, PointwiseOp, RasterSource, TileGraph
+        from rsgispy.imagefilter.edge import sobel_x_filter_node, sobel_y_filter_node
+        from rsgispy.imagefilter.smooth import gaussian_smooth_filter_node
+
+        smooth = gaussian_smooth_filter_node(RasterSource("dem.tif"), 5)
+        gx = sobel_x_filter_node(smooth)
+        gy = sobel_y_filter_node(smooth)
+        direction = PointwiseOp([gx, gy], lambda x, y: np.degrees(np.arctan2(y, x)))
+        TileGraph(DiskSink(direction, "edge_direction.tif")).run()
+    """
+    kx, _ = sobel_kernels()
+    return _directional_node(source, kx, no_data_val, name or "sobel_x_filter")
+
+
+def sobel_y_filter_node(
+    source: TileNode,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_sobel_y_filter`: the vertical (Y-axis)
+    3x3 Sobel derivative of each band of ``source``, for chaining in a
+    :class:`~rsgispy.imageprocess.TileGraph` without intermediate files.
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``; its halo radius is 1.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param no_data_val: Optional input no-data value: these pixels are
+                        ignored, and output pixels without a value are set to
+                        it (Default = ``None``; not read from ``source``, so
+                        pass the input's no-data value).
+    :param name: Optional node name (Default = ``'sobel_y_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagefilter.edge import sobel_y_filter_node
+        from rsgispy.imagefilter.stats import median_filter_node
+
+        src = RasterSource("in.tif")
+        node = sobel_y_filter_node(median_filter_node(src, 3))
+        TileGraph(DiskSink(node, "median_sobel_y.tif")).run()
+    """
+    _, ky = sobel_kernels()
+    return _directional_node(source, ky, no_data_val, name or "sobel_y_filter")
+
+
+def prewitt_x_filter_node(
+    source: TileNode,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_prewitt_x_filter`: the horizontal
+    (X-axis) 3x3 Prewitt derivative of each band of ``source``, for chaining
+    in a :class:`~rsgispy.imageprocess.TileGraph` without intermediate files.
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``; its halo radius is 1.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param no_data_val: Optional input no-data value: these pixels are
+                        ignored, and output pixels without a value are set to
+                        it (Default = ``None``; not read from ``source``, so
+                        pass the input's no-data value).
+    :param name: Optional node name (Default = ``'prewitt_x_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagefilter.edge import prewitt_x_filter_node
+        from rsgispy.imagefilter.stats import mean_filter_node
+
+        src = RasterSource("in.tif")
+        node = prewitt_x_filter_node(mean_filter_node(src, 3))
+        TileGraph(DiskSink(node, "mean_prewitt_x.tif")).run()
+    """
+    kx, _ = prewitt_kernels()
+    return _directional_node(source, kx, no_data_val, name or "prewitt_x_filter")
+
+
+def prewitt_y_filter_node(
+    source: TileNode,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_prewitt_y_filter`: the vertical (Y-axis)
+    3x3 Prewitt derivative of each band of ``source``, for chaining in a
+    :class:`~rsgispy.imageprocess.TileGraph` without intermediate files.
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``; its halo radius is 1.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param no_data_val: Optional input no-data value: these pixels are
+                        ignored, and output pixels without a value are set to
+                        it (Default = ``None``; not read from ``source``, so
+                        pass the input's no-data value).
+    :param name: Optional node name (Default = ``'prewitt_y_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagefilter.edge import prewitt_y_filter_node
+        from rsgispy.imagefilter.stats import mean_filter_node
+
+        src = RasterSource("in.tif")
+        node = prewitt_y_filter_node(mean_filter_node(src, 3))
+        TileGraph(DiskSink(node, "mean_prewitt_y.tif")).run()
+    """
+    _, ky = prewitt_kernels()
+    return _directional_node(source, ky, no_data_val, name or "prewitt_y_filter")
+
+
+def gaussian_1st_deriv_filter_node(
+    source: TileNode,
+    filter_size: int = 3,
+    stddev_x: float = 1.0,
+    stddev_y: float = 1.0,
+    filter_angle: float = 0.0,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_gaussian_1st_deriv_filter`: an oriented
+    2D Gaussian first-derivative filter of each band of ``source``, for
+    chaining in a :class:`~rsgispy.imageprocess.TileGraph` without
+    intermediate files.
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``; its halo radius is ``filter_size // 2``.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param filter_size: Odd kernel width/height >= 3 (Default = ``3``).
+    :param stddev_x: Standard deviation along the primary rotated axis (Default = ``1.0``).
+    :param stddev_y: Standard deviation along the orthogonal axis (Default = ``1.0``).
+    :param filter_angle: Orientation angle in degrees (Default = ``0.0``).
+    :param no_data_val: Optional input no-data value: these pixels are
+                        ignored, and output pixels without a value are set to
+                        it (Default = ``None``; not read from ``source``, so
+                        pass the input's no-data value).
+    :param name: Optional node name (Default = ``'gaussian_1st_deriv_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, StackBands, TileGraph
+        from rsgispy.imagefilter.edge import gaussian_1st_deriv_filter_node
+
+        src = RasterSource("dem.tif", nodata=-9999.0)
+        d_0 = gaussian_1st_deriv_filter_node(src, 7, 1.5, 1.5, 0.0, no_data_val=-9999.0)
+        d_90 = gaussian_1st_deriv_filter_node(src, 7, 1.5, 1.5, 90.0, no_data_val=-9999.0)
+        TileGraph(DiskSink(StackBands([d_0, d_90]), "dem_gauss_d1.tif")).run()
+    """
+    # pylint: disable=too-many-arguments
+    kernel = gaussian_kernel(
+        filter_size, stddev_x, stddev_y, filter_angle, deriv_order=1
+    )
+    return _directional_node(
+        source, kernel, no_data_val, name or "gaussian_1st_deriv_filter"
+    )
+
+
+def gaussian_2nd_deriv_filter_node(
+    source: TileNode,
+    filter_size: int = 3,
+    stddev_x: float = 1.0,
+    stddev_y: float = 1.0,
+    filter_angle: float = 0.0,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_gaussian_2nd_deriv_filter`: an oriented
+    2D Gaussian second-derivative filter of each band of ``source``, for
+    chaining in a :class:`~rsgispy.imageprocess.TileGraph` without
+    intermediate files.
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``; its halo radius is ``filter_size // 2``.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param filter_size: Odd kernel width/height >= 3 (Default = ``3``).
+    :param stddev_x: Standard deviation along the primary rotated axis (Default = ``1.0``).
+    :param stddev_y: Standard deviation along the orthogonal axis (Default = ``1.0``).
+    :param filter_angle: Orientation angle in degrees (Default = ``0.0``).
+    :param no_data_val: Optional input no-data value: these pixels are
+                        ignored, and output pixels without a value are set to
+                        it (Default = ``None``; not read from ``source``, so
+                        pass the input's no-data value).
+    :param name: Optional node name (Default = ``'gaussian_2nd_deriv_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagefilter.edge import gaussian_2nd_deriv_filter_node
+        from rsgispy.imagefilter.stats import median_filter_node
+
+        src = RasterSource("in.tif")
+        ridges = gaussian_2nd_deriv_filter_node(
+            median_filter_node(src, 3), 7, stddev_x=1.5, stddev_y=3.0, filter_angle=45.0
+        )
+        TileGraph(DiskSink(ridges, "ridges_45.tif")).run()
+    """
+    # pylint: disable=too-many-arguments
+    kernel = gaussian_kernel(
+        filter_size, stddev_x, stddev_y, filter_angle, deriv_order=2
+    )
+    return _directional_node(
+        source, kernel, no_data_val, name or "gaussian_2nd_deriv_filter"
     )

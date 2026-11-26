@@ -5,13 +5,14 @@ Internal windowed spatial filtering and convolution engine for
 """
 
 import math
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Sequence, Tuple
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
 import rsgispy
 from rsgispy._numba import optional_njit, prange, use_compiled
+from rsgispy._io import HaloBorder, NodeMeta, TileNode, WindowOp, same_bands_meta
 from rsgispy.imageprocess import (
     build_valid_mask,
     ensure_file_exists,
@@ -862,28 +863,76 @@ def run_gradient_magnitude_filter(
     )
 
 
-def _make_tile_stat_op(
-    source: "rsgispy._io.TileNode",
-    win_shape: Tuple[int, int],
-    tile_fn: StatFunc,
-    *,
-    no_data_val: Optional[float] = None,
-    border: Optional["rsgispy._io.HaloBorder"] = None,
-    name: Optional[str] = None,
-) -> "rsgispy._io.WindowOp":
-    """Build a :class:`rsgispy._io.WindowOp` running ``tile_fn`` band-by-band."""
-    # pylint: disable=import-outside-toplevel
-    from rsgispy._io import HaloBorder, WindowOp, same_bands_meta
+class FilterWindowOp(WindowOp):
+    """
+    :class:`~rsgispy.imageprocess.WindowOp` applying a per-band moving-window
+    filter ``tile_fn(wins, centre, valid, centre_valid)`` to every band of its
+    input (the node behind all the ``*_filter_node`` builders of
+    :mod:`rsgispy.imagefilter`).
 
-    kh, kw = win_shape
-    pad_y, pad_x = kh // 2, kw // 2
+    Pixels equal to ``no_data_val`` (and non-finite pixels) are ignored, and
+    output pixels without a finite value are set to ``fill_value`` (which is
+    ``no_data_val`` unless changed with :meth:`set_nodata`). The output blocks
+    are ``float64`` with the bands and band names of the input.
 
-    def _op_fn(padded_3d: np.ndarray) -> np.ndarray:
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param win_shape: ``(height, width)`` of the odd moving window.
+    :param tile_fn: Window function (see :data:`StatFunc`).
+    :param no_data_val: Optional input no-data value.
+    :param border: Padding outside the image (Default = ``HaloBorder('edge')``).
+    :param name: Optional node name.
+    """
+
+    # pylint: disable=too-many-arguments
+
+    def __init__(
+        self,
+        source: TileNode,
+        win_shape: Tuple[int, int],
+        tile_fn: StatFunc,
+        *,
+        no_data_val: Optional[float] = None,
+        border: Optional[HaloBorder] = None,
+        name: Optional[str] = None,
+    ) -> None:
+        kh, kw = int(win_shape[0]), int(win_shape[1])
+        self.win_shape: Tuple[int, int] = (kh, kw)
+        self.tile_fn: StatFunc = tile_fn
+        self.no_data_val: Optional[float] = no_data_val
+        self.fill_value: Optional[float] = no_data_val
+        super().__init__(
+            source=source,
+            radius=(kh // 2, kw // 2),
+            func=self._filter_block,
+            border=border if border is not None else HaloBorder("edge"),
+            name=name,
+            meta_fn=self._filter_meta,
+        )
+
+    def set_nodata(
+        self, no_data_val: Optional[float], fill_value: Optional[float]
+    ) -> None:
+        """
+        Set the input no-data value and the value written where the filter
+        has no result (``None`` leaves NaN). Call before the graph is built.
+        """
+        self.no_data_val = no_data_val
+        self.fill_value = fill_value
+
+    def _filter_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+        return same_bands_meta(np.float64, self.fill_value)(inputs)
+
+    def _filter_block(self, padded_3d: np.ndarray) -> np.ndarray:
+        # pylint: disable=too-many-locals
+        kh, kw = self.win_shape
+        pad_y, pad_x = kh // 2, kw // 2
         n_bands, h_in, w_in = padded_3d.shape
         out_h = h_in - 2 * pad_y
         out_w = w_in - 2 * pad_x
         y_end = pad_y + out_h
         x_end = pad_x + out_w
+        no_data_val = self.no_data_val
+        fill = self.fill_value
         out = np.empty((n_bands, out_h, out_w), dtype=np.float64)
         for b_idx in range(n_bands):
             band_halo = padded_3d[b_idx]
@@ -892,31 +941,43 @@ def _make_tile_stat_op(
             centre_valid = valid_halo[pad_y:y_end, pad_x:x_end]
             wins = sliding_window_view(band_halo, (kh, kw))
             v_wins = sliding_window_view(valid_halo, (kh, kw))
-            res = tile_fn(wins, centre, v_wins, centre_valid)
-            if no_data_val is not None:
-                res = np.where(np.isfinite(res), res, float(no_data_val))
+            res = self.tile_fn(wins, centre, v_wins, centre_valid)
+            if fill is not None:
+                res = np.where(np.isfinite(res), res, float(fill))
             out[b_idx] = res
         return out
 
-    return WindowOp(
-        source=source,
-        radius=(pad_y, pad_x),
-        func=_op_fn,
-        border=border if border is not None else HaloBorder("edge"),
+
+def _make_tile_stat_op(
+    source: TileNode,
+    win_shape: Tuple[int, int],
+    tile_fn: StatFunc,
+    *,
+    no_data_val: Optional[float] = None,
+    border: Optional[HaloBorder] = None,
+    name: Optional[str] = None,
+) -> FilterWindowOp:
+    """Build a :class:`FilterWindowOp` running ``tile_fn`` band-by-band."""
+    # pylint: disable=too-many-arguments
+    return FilterWindowOp(
+        source,
+        win_shape,
+        tile_fn,
+        no_data_val=no_data_val,
+        border=border,
         name=name,
-        meta_fn=same_bands_meta(np.float64, no_data_val),
     )
 
 
 def window_stat_node(
-    source: "rsgispy._io.TileNode",
+    source: TileNode,
     filter_size: int,
     stat_fn: StatFunc,
     *,
     no_data_val: Optional[float] = None,
-    border: Optional["rsgispy._io.HaloBorder"] = None,
+    border: Optional[HaloBorder] = None,
     name: Optional[str] = None,
-) -> "rsgispy._io.WindowOp":
+) -> FilterWindowOp:
     """Build a composable :class:`~rsgispy._io.WindowOp` for a moving-window statistic."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     size = validate_filter_size(filter_size)
@@ -931,14 +992,14 @@ def window_stat_node(
 
 
 def kernel_conv_node(
-    source: "rsgispy._io.TileNode",
+    source: TileNode,
     kernel: np.ndarray,
     zero_dc: bool = False,
     *,
     no_data_val: Optional[float] = None,
-    border: Optional["rsgispy._io.HaloBorder"] = None,
+    border: Optional[HaloBorder] = None,
     name: Optional[str] = None,
-) -> "rsgispy._io.WindowOp":
+) -> FilterWindowOp:
     """Build a composable :class:`~rsgispy._io.WindowOp` for a 2D convolution kernel."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     k_arr = validate_kernel(kernel)
@@ -964,14 +1025,14 @@ def kernel_conv_node(
 
 
 def gradient_magnitude_node(
-    source: "rsgispy._io.TileNode",
+    source: TileNode,
     kernel_x: np.ndarray,
     kernel_y: np.ndarray,
     *,
     no_data_val: Optional[float] = None,
-    border: Optional["rsgispy._io.HaloBorder"] = None,
+    border: Optional[HaloBorder] = None,
     name: Optional[str] = None,
-) -> "rsgispy._io.WindowOp":
+) -> FilterWindowOp:
     """Build a composable :class:`~rsgispy._io.WindowOp` computing ``hypot(Gx, Gy)``."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     kx = validate_kernel(kernel_x)

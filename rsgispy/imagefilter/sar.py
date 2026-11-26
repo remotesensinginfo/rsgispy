@@ -29,6 +29,12 @@ __all__: List[str] = [
     "apply_gamma_map_filter",
     "apply_refined_lee_filter",
     "lee_filter_node",
+    "enhanced_lee_filter_node",
+    "frost_filter_node",
+    "enhanced_frost_filter_node",
+    "kuan_filter_node",
+    "gamma_map_filter_node",
+    "refined_lee_filter_node",
 ]
 
 
@@ -452,4 +458,293 @@ def lee_filter_node(
         make_lee_stat_fn(looks),
         no_data_val=no_data_val,
         name=name or "lee_filter",
+    )
+
+
+def enhanced_lee_filter_node(
+    source: TileNode,
+    filter_size: int = 5,
+    n_looks: float = 1.0,
+    damping: float = 1.0,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_enhanced_lee_filter`: a Lopes et al.
+    (1990) Enhanced Lee adaptive SAR speckle filter of each band of
+    ``source``, for chaining in a :class:`~rsgispy.imageprocess.TileGraph`
+    without intermediate files.
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``; its halo radius is ``filter_size // 2``.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param filter_size: Odd filter window width/height >= 3 (Default = ``5``).
+    :param n_looks: Equivalent number of looks (> 0; Default = ``1.0``).
+    :param damping: Exponential damping factor (> 0; Default = ``1.0``).
+    :param no_data_val: Optional input no-data value: these pixels are
+                        ignored, and output pixels without a value are set to
+                        it (Default = ``None``; not read from ``source``, so
+                        pass the input's no-data value).
+    :param name: Optional node name (Default = ``'enhanced_lee_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import BandMathOp, DiskSink, RasterSource, TileGraph
+        from rsgispy.imagefilter.sar import enhanced_lee_filter_node
+
+        sar = RasterSource("sar_linear.tif", nodata=0.0)
+        elee = enhanced_lee_filter_node(sar, 5, n_looks=4, damping=1.0, no_data_val=0.0)
+        db = BandMathOp({"x": elee}, "10 * log10(x)", nodata=0.0)
+        TileGraph(DiskSink(db, "sar_elee5_db.tif")).run()
+    """
+    # pylint: disable=too-many-arguments
+    looks = validate_positive(n_looks, "n_looks")
+    damp = validate_positive(damping, "damping")
+    return window_stat_node(
+        source,
+        filter_size,
+        make_enhanced_lee_stat_fn(looks, damping=damp),
+        no_data_val=no_data_val,
+        name=name or "enhanced_lee_filter",
+    )
+
+
+def frost_filter_node(
+    source: TileNode,
+    filter_size: int = 5,
+    damping: float = 1.0,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_frost_filter`: a Frost et al. (1982)
+    exponentially damped SAR speckle filter of each band of ``source``, for
+    chaining in a :class:`~rsgispy.imageprocess.TileGraph` without
+    intermediate files.
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``; its halo radius is ``filter_size // 2``.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param filter_size: Odd filter window width/height >= 3 (Default = ``5``).
+    :param damping: Exponential damping factor (> 0; Default = ``1.0``).
+    :param no_data_val: Optional input no-data value: these pixels are
+                        ignored, and output pixels without a value are set to
+                        it (Default = ``None``; not read from ``source``, so
+                        pass the input's no-data value).
+    :param name: Optional node name (Default = ``'frost_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import BandMathOp, DiskSink, RasterSource, TileGraph
+        from rsgispy.imagefilter.sar import frost_filter_node
+
+        sar = RasterSource("sar_linear.tif", nodata=0.0)
+        frost = frost_filter_node(sar, 5, damping=1.0, no_data_val=0.0)
+        db = BandMathOp({"x": frost}, "10 * log10(x)", nodata=0.0)
+        TileGraph(DiskSink(db, "sar_frost5_db.tif")).run()
+    """
+    damp = validate_positive(damping, "damping")
+    return window_stat_node(
+        source,
+        filter_size,
+        make_frost_stat_fn(damping=damp),
+        no_data_val=no_data_val,
+        name=name or "frost_filter",
+    )
+
+
+def enhanced_frost_filter_node(
+    source: TileNode,
+    filter_size: int = 5,
+    n_looks: float = 1.0,
+    damping: float = 1.0,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_enhanced_frost_filter`: a Lopes et al.
+    (1990) Enhanced Frost adaptive SAR speckle filter of each band of
+    ``source``, for chaining in a :class:`~rsgispy.imageprocess.TileGraph`
+    without intermediate files.
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``; its halo radius is ``filter_size // 2``.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param filter_size: Odd filter window width/height >= 3 (Default = ``5``).
+    :param n_looks: Equivalent number of looks (> 0; Default = ``1.0``).
+    :param damping: Exponential damping factor (> 0; Default = ``1.0``).
+    :param no_data_val: Optional input no-data value: these pixels are
+                        ignored, and output pixels without a value are set to
+                        it (Default = ``None``; not read from ``source``, so
+                        pass the input's no-data value).
+    :param name: Optional node name (Default = ``'enhanced_frost_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagefilter.sar import enhanced_frost_filter_node
+        from rsgispy.imagefilter.stats import median_filter_node
+
+        sar = RasterSource("sar_linear.tif", nodata=0.0)
+        efrost = enhanced_frost_filter_node(sar, 5, n_looks=4, no_data_val=0.0)
+        smooth = median_filter_node(efrost, 3, no_data_val=0.0)
+        TileGraph(DiskSink(smooth, "sar_efrost_median.tif")).run()
+    """
+    # pylint: disable=too-many-arguments
+    looks = validate_positive(n_looks, "n_looks")
+    damp = validate_positive(damping, "damping")
+    return window_stat_node(
+        source,
+        filter_size,
+        make_enhanced_frost_stat_fn(looks, damping=damp),
+        no_data_val=no_data_val,
+        name=name or "enhanced_frost_filter",
+    )
+
+
+def kuan_filter_node(
+    source: TileNode,
+    filter_size: int = 5,
+    n_looks: float = 1.0,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_kuan_filter`: a Kuan et al. (1985)
+    adaptive MMSE SAR speckle filter of each band of ``source``, for chaining
+    in a :class:`~rsgispy.imageprocess.TileGraph` without intermediate files.
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``; its halo radius is ``filter_size // 2``.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param filter_size: Odd filter window width/height >= 3 (Default = ``5``).
+    :param n_looks: Equivalent number of looks (> 0; Default = ``1.0``).
+    :param no_data_val: Optional input no-data value: these pixels are
+                        ignored, and output pixels without a value are set to
+                        it (Default = ``None``; not read from ``source``, so
+                        pass the input's no-data value).
+    :param name: Optional node name (Default = ``'kuan_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import BandMathOp, DiskSink, RasterSource, TileGraph
+        from rsgispy.imagefilter.sar import kuan_filter_node
+
+        sar = RasterSource("sar_linear.tif", nodata=0.0)
+        kuan = kuan_filter_node(sar, 5, n_looks=4, no_data_val=0.0)
+        db = BandMathOp({"x": kuan}, "10 * log10(x)", nodata=0.0)
+        TileGraph(DiskSink(db, "sar_kuan5_db.tif")).run()
+    """
+    looks = validate_positive(n_looks, "n_looks")
+    return window_stat_node(
+        source,
+        filter_size,
+        make_kuan_stat_fn(looks),
+        no_data_val=no_data_val,
+        name=name or "kuan_filter",
+    )
+
+
+def gamma_map_filter_node(
+    source: TileNode,
+    filter_size: int = 5,
+    n_looks: float = 1.0,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_gamma_map_filter`: a Lopes et al. (1993)
+    Gamma MAP SAR speckle filter of each band of ``source``, for chaining in
+    a :class:`~rsgispy.imageprocess.TileGraph` without intermediate files.
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``; its halo radius is ``filter_size // 2``.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param filter_size: Odd filter window width/height >= 3 (Default = ``5``).
+    :param n_looks: Equivalent number of looks (> 0; Default = ``1.0``).
+    :param no_data_val: Optional input no-data value: these pixels are
+                        ignored, and output pixels without a value are set to
+                        it (Default = ``None``; not read from ``source``, so
+                        pass the input's no-data value).
+    :param name: Optional node name (Default = ``'gamma_map_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import BandMathOp, DiskSink, RasterSource, TileGraph
+        from rsgispy.imagefilter.sar import gamma_map_filter_node
+
+        sar = RasterSource("sar_linear.tif", nodata=0.0)
+        gmap = gamma_map_filter_node(sar, 5, n_looks=4, no_data_val=0.0)
+        db = BandMathOp({"x": gmap}, "10 * log10(x)", nodata=0.0)
+        TileGraph(DiskSink(db, "sar_gmap5_db.tif")).run()
+    """
+    looks = validate_positive(n_looks, "n_looks")
+    return window_stat_node(
+        source,
+        filter_size,
+        make_gamma_map_stat_fn(looks),
+        no_data_val=no_data_val,
+        name=name or "gamma_map_filter",
+    )
+
+
+def refined_lee_filter_node(
+    source: TileNode,
+    filter_size: int = 7,
+    n_looks: float = 1.0,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_refined_lee_filter`: a Lee et al. (1999)
+    edge-directed Refined Lee SAR speckle filter of each band of ``source``,
+    for chaining in a :class:`~rsgispy.imageprocess.TileGraph` without
+    intermediate files.
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``; its halo radius is ``filter_size // 2``.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param filter_size: Odd filter window width/height >= 3 (Default = ``7``).
+    :param n_looks: Equivalent number of looks (> 0; Default = ``1.0``).
+    :param no_data_val: Optional input no-data value: these pixels are
+                        ignored, and output pixels without a value are set to
+                        it (Default = ``None``; not read from ``source``, so
+                        pass the input's no-data value).
+    :param name: Optional node name (Default = ``'refined_lee_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import BandMathOp, DiskSink, RasterSource, TileGraph
+        from rsgispy.imagefilter.sar import refined_lee_filter_node
+
+        sar = RasterSource("s1_vv_vh_linear.tif", nodata=0.0)
+        rlee = refined_lee_filter_node(sar, 7, n_looks=4, no_data_val=0.0)
+        db = BandMathOp({"x": rlee}, "10 * log10(x)", nodata=0.0)
+        TileGraph(DiskSink(db, "s1_reflee7_db.tif")).run()
+    """
+    looks = validate_positive(n_looks, "n_looks")
+    return window_stat_node(
+        source,
+        filter_size,
+        make_refined_lee_stat_fn(looks),
+        no_data_val=no_data_val,
+        name=name or "refined_lee_filter",
     )

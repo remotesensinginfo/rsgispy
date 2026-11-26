@@ -12,6 +12,7 @@ from numpy.lib.stride_tricks import sliding_window_view
 import rasterio
 
 import rsgispy
+from rsgispy._io import HaloBorder, NodeMeta, TileNode, WindowOp
 from rsgispy._numba import optional_njit, prange, use_compiled
 from rsgispy.imagefilter._helpers import (
     _apply_tile_nd,
@@ -543,6 +544,295 @@ def _compute_glcm_offset_tile_numpy(
             results[p_name][ok] = vals_1d
 
     return results
+
+
+#: ``(distance, angle, d_row, d_col)`` of one GLCM pixel offset.
+GlcmOffset = Tuple[int, float, int, int]
+
+
+def validate_glcm_params(
+    properties: Union[str, Sequence[str]],
+    filter_size: int,
+    distances: Union[int, Sequence[int]],
+    angles: Union[float, Sequence[float]],
+    n_levels: int,
+    min_val: Optional[float],
+    max_val: Optional[float],
+) -> Tuple[int, List[str], List[GlcmOffset], int]:
+    """
+    Validate the GLCM parameters; return ``(filter_size, properties, offsets,
+    n_levels)`` with the non-zero ``(distance, angle, d_row, d_col)`` offsets.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    size = validate_filter_size(filter_size)
+    prop_list = validate_glcm_properties(properties)
+    dist_list = validate_glcm_distances(distances, size)
+    angle_list = validate_glcm_angles(angles)
+    if (
+        isinstance(n_levels, bool)
+        or not isinstance(n_levels, (int, np.integer))
+        or int(n_levels) < 2
+    ):
+        raise rsgispy.RSGISPyException(
+            f"n_levels must be an integer >= 2, got {n_levels!r}."
+        )
+    levels = int(n_levels)
+    if (min_val is None) != (max_val is None):
+        raise rsgispy.RSGISPyException(
+            "min_val and max_val must either both be specified or both be None."
+        )
+    if min_val is not None and max_val is not None and float(max_val) < float(min_val):
+        raise rsgispy.RSGISPyException("max_val must be >= min_val.")
+
+    offsets: List[GlcmOffset] = []
+    for dist in dist_list:
+        for ang in angle_list:
+            rad = math.radians(ang)
+            dr = int(round(math.sin(rad) * dist))
+            dc = int(round(math.cos(rad) * dist))
+            if dr == 0 and dc == 0:
+                continue
+            offsets.append((dist, ang, dr, dc))
+    if not offsets:
+        raise rsgispy.RSGISPyException("No non-zero GLCM offsets derived.")
+    return size, prop_list, offsets, levels
+
+
+def glcm_band_names(
+    in_band_names: Sequence[Optional[str]],
+    prop_list: Sequence[str],
+    offsets: Sequence[GlcmOffset],
+    average_angles: bool,
+) -> List[str]:
+    """
+    Output band names of a GLCM filter: ``<band>_glcm_<property>`` (with
+    ``_d<distance>_a<angle>`` when ``average_angles`` is ``False``); unnamed
+    input bands are called ``b<index>``.
+    """
+    out_names: List[str] = []
+    for b_idx, b_name in enumerate(in_band_names, start=1):
+        b_label = b_name if b_name else f"b{b_idx}"
+        if average_angles:
+            for p_name in prop_list:
+                out_names.append(f"{b_label}_glcm_{p_name}")
+        else:
+            for p_name in prop_list:
+                for dist, ang, _, _ in offsets:
+                    out_names.append(
+                        f"{b_label}_glcm_{p_name}_d{dist}_a{int(round(ang))}"
+                    )
+    return out_names
+
+
+def calc_band_bounds(
+    input_img: str,
+    no_data_val: Optional[float] = None,
+    use_pbar: bool = True,
+) -> List[Tuple[float, float]]:
+    """
+    Per-band ``(min, max)`` of the valid pixels of ``input_img`` (``(0, 1)``
+    for a band without valid pixels), the grey-level range used by the GLCM
+    filter when ``min_val`` / ``max_val`` are not given.
+    """
+    ensure_file_exists(input_img, "Input image")
+    eff_in_nd = (
+        float(no_data_val)
+        if no_data_val is not None
+        else get_img_no_data_value(input_img)
+    )
+    with rasterio.open(input_img, "r") as src:
+        return [
+            _compute_band_minmax(src, b_idx, eff_in_nd, use_pbar=use_pbar)
+            for b_idx in range(1, src.count + 1)
+        ]
+
+
+def _glcm_band_tile(
+    halo: np.ndarray,
+    valid_halo: np.ndarray,
+    bounds: Tuple[float, float],
+    size: int,
+    prop_list: Sequence[str],
+    offsets: Sequence[GlcmOffset],
+    levels: int,
+    symmetric: bool,
+    average_angles: bool,
+) -> List[np.ndarray]:
+    """GLCM output layers (``NaN`` where undefined) of one band halo tile."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    pad = size // 2
+    win_h = halo.shape[0] - 2 * pad
+    win_w = halo.shape[1] - 2 * pad
+    centre_valid = valid_halo[pad:pad + win_h, pad:pad + win_w]
+    q_halo = _quantise_halo(halo, valid_halo, bounds[0], bounds[1], levels)
+    q_wins = sliding_window_view(q_halo, (size, size))
+    v_wins = sliding_window_view(valid_halo, (size, size))
+
+    per_offset = [
+        compute_glcm_offset_tile(
+            q_wins=q_wins,
+            v_wins=v_wins,
+            centre_valid=centre_valid,
+            dr=dr,
+            dc=dc,
+            n_levels=levels,
+            symmetric=symmetric,
+            props=prop_list,
+        )
+        for _, _, dr, dc in offsets
+    ]
+    layers: List[np.ndarray] = []
+    if average_angles:
+        for p_name in prop_list:
+            stacked = np.stack([d[p_name] for d in per_offset], axis=0)
+            valid_any = np.any(np.isfinite(stacked), axis=0)
+            avg = np.full((win_h, win_w), np.nan, dtype=np.float64)
+            if np.any(valid_any):
+                cnt = np.sum(np.isfinite(stacked), axis=0)
+                s_val = np.sum(np.where(np.isfinite(stacked), stacked, 0.0), axis=0)
+                avg[valid_any] = s_val[valid_any] / cnt[valid_any]
+            layers.append(avg)
+    else:
+        for p_name in prop_list:
+            for off_dict in per_offset:
+                layers.append(off_dict[p_name])
+    return layers
+
+
+class GlcmWindowOp(WindowOp):
+    """
+    :class:`~rsgispy.imageprocess.WindowOp` computing moving-window GLCM
+    texture measures of every band of its input (the node behind
+    :func:`rsgispy.imagefilter.texture.glcm_filter_node`).
+
+    Each input band gives ``len(prop_list)`` output bands (times the number
+    of offsets when ``average_angles`` is ``False``), in the order of
+    :func:`glcm_band_names`. Output pixels without a value are set to
+    ``fill_value`` (``no_data_val`` unless changed with :meth:`set_nodata`).
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param size: Odd window size.
+    :param prop_list: Validated property names.
+    :param offsets: Validated ``(distance, angle, d_row, d_col)`` offsets.
+    :param levels: Number of grey levels.
+    :param symmetric: Count both ``(i, j)`` and ``(j, i)`` pairs.
+    :param average_angles: Average each property over the offsets.
+    :param band_bounds: Grey-level range: one ``(min, max)`` for all bands or
+                        one per input band.
+    :param no_data_val: Optional input no-data value.
+    :param name: Optional node name.
+    """
+
+    # pylint: disable=too-many-arguments,too-many-instance-attributes
+
+    def __init__(
+        self,
+        source: TileNode,
+        size: int,
+        prop_list: Sequence[str],
+        offsets: Sequence[GlcmOffset],
+        levels: int,
+        symmetric: bool,
+        average_angles: bool,
+        band_bounds: Union[Tuple[float, float], Sequence[Tuple[float, float]]],
+        *,
+        no_data_val: Optional[float] = None,
+        name: Optional[str] = None,
+    ) -> None:
+        # pylint: disable=too-many-positional-arguments
+        self.size = int(size)
+        self.prop_list: List[str] = list(prop_list)
+        self.offsets: List[GlcmOffset] = list(offsets)
+        self.levels = int(levels)
+        self.symmetric = bool(symmetric)
+        self.average_angles = bool(average_angles)
+        self.band_bounds = band_bounds
+        self.no_data_val: Optional[float] = no_data_val
+        self.fill_value: Optional[float] = no_data_val
+        self.n_per_band = (
+            len(self.prop_list)
+            if self.average_angles
+            else len(self.prop_list) * len(self.offsets)
+        )
+        super().__init__(
+            source=source,
+            radius=(self.size // 2, self.size // 2),
+            func=self._glcm_block,
+            border=HaloBorder("edge"),
+            name=name,
+            meta_fn=self._glcm_meta,
+        )
+
+    def set_nodata(
+        self, no_data_val: Optional[float], fill_value: Optional[float]
+    ) -> None:
+        """
+        Set the input no-data value and the value written where a measure is
+        undefined (``None`` leaves NaN). Call before the graph is built.
+        """
+        self.no_data_val = no_data_val
+        self.fill_value = fill_value
+
+    def _bounds_for(self, n_bands: int) -> List[Tuple[float, float]]:
+        bounds = self.band_bounds
+        if isinstance(bounds, tuple) and len(bounds) == 2 and not isinstance(
+            bounds[0], (tuple, list)
+        ):
+            return [(float(bounds[0]), float(bounds[1]))] * n_bands
+        b_list = [(float(lo), float(hi)) for lo, hi in bounds]  # type: ignore[misc]
+        if len(b_list) != n_bands:
+            raise rsgispy.RSGISPyException(
+                f"band_bounds has {len(b_list)} (min, max) pairs for an input "
+                f"with {n_bands} band(s)."
+            )
+        return b_list
+
+    def _glcm_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+        first = inputs[0] if inputs else NodeMeta()
+        n_in = first.n_bands
+        if n_in is None:
+            return NodeMeta(dtype=np.dtype(np.float64), nodata=self.fill_value)
+        self._bounds_for(n_in)
+        in_names = (
+            list(first.band_names) if first.band_names is not None else [None] * n_in
+        )
+        return NodeMeta(
+            n_bands=n_in * self.n_per_band,
+            band_names=tuple(
+                glcm_band_names(in_names, self.prop_list, self.offsets, self.average_angles)
+            ),
+            dtype=np.dtype(np.float64),
+            nodata=self.fill_value,
+        )
+
+    def _glcm_block(self, padded_3d: np.ndarray) -> np.ndarray:
+        n_bands = padded_3d.shape[0]
+        pad = self.size // 2
+        out_h = padded_3d.shape[1] - 2 * pad
+        out_w = padded_3d.shape[2] - 2 * pad
+        bounds = self._bounds_for(n_bands)
+        fill = self.fill_value
+        out = np.empty((n_bands * self.n_per_band, out_h, out_w), dtype=np.float64)
+        out_b = 0
+        for b_idx in range(n_bands):
+            halo = padded_3d[b_idx]
+            valid_halo = build_valid_mask(halo, self.no_data_val)
+            for layer in _glcm_band_tile(
+                halo,
+                valid_halo,
+                bounds[b_idx],
+                self.size,
+                self.prop_list,
+                self.offsets,
+                self.levels,
+                self.symmetric,
+                self.average_angles,
+            ):
+                if fill is not None:
+                    layer = np.where(np.isfinite(layer), layer, float(fill))
+                out[out_b] = layer
+                out_b += 1
+        return out
 
 
 def run_glcm_filter(
