@@ -293,7 +293,18 @@ Points to note:
   indices, are written as ``float32``. Pass ``datatype`` (e.g.
   ``rsgispy.TYPE_64FLOAT``) to choose another. It also takes the band names
   and no data value from its input unless you give ``band_names`` or
-  ``nodata``.
+  ``nodata``. The class map nodes name their band ``class`` (unless you give
+  ``band_names``).
+* For a class map, give the ``DiskSink`` its classes:
+  ``DiskSink(smooth, "landcover.tif", classes={1: ("Water", "#1f78b4"),
+  2: ("Forest", "#33a02c")})`` marks the file thematic, writes the colour
+  table and the class names (read them with
+  :func:`~rsgispy.imageutils.colourtable.get_thematic_classes`) and builds
+  thematic statistics and pyramids when it closes, so no
+  ``set_img_thematic`` / ``define_colour_table`` / ``pop_thmt_img_stats``
+  calls are needed afterwards. ``colour_table={...}`` gives the colours
+  only, and ``thematic=True`` alone marks the file thematic with thematic
+  statistics.
 * :meth:`~rsgispy.imageprocess.TileGraph.describe` prints the grid, the
   block size and every node with its inputs, parameters, halo and metadata.
   For this graph the Sentinel-2 source is read with a 3-pixel halo: 2 for the
@@ -372,6 +383,16 @@ and check only that values are finite when it is ``None``, and for the
 prediction nodes ``no_data_val`` is the value written where no prediction is
 made. :func:`~rsgispy.imageprocess.resolve_input_nodata` applies the rule in
 your own builders.
+
+A stack has one no-data value. When the inputs of a
+:class:`~rsgispy.imageprocess.StackBands` have different ones (e.g.
+Sentinel-2 bands with ``0`` and an index with ``-999``), give
+``no_data_val``: ``StackBands([s2, ndvi], no_data_val=-999)`` writes
+``-999`` into every band of a pixel where any input is invalid, so the
+training samples and the predictions skip those pixels
+(``no_data_val='auto'`` uses the first input's value, or NaN). Without it
+the bands are stacked unchanged, the stack has no no-data value and a
+warning says so (see :ref:`tilegraph-nodata`).
 
 Step 7 — Halos and block size
 -----------------------------

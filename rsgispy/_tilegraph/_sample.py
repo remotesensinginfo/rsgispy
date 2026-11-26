@@ -178,7 +178,9 @@ class SampleSink(TileSink):
                     "SampleSink features and labels must be TileNode objects, "
                     f"got {type(node).__name__}."
                 )
-        self._stack = _ZonalStack(labels, features, name=f"{name or 'samples'}_stack")
+        self._stack = _ZonalStack(
+            labels, features, name=f"{name or 'samples'}_stack", owner="SampleSink"
+        )
         super().__init__(self._stack, name=name)
         self.max_per_class = self._check_limits(max_per_class)
         self.class_names = dict(class_names) if class_names is not None else None
