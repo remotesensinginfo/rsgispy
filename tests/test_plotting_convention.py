@@ -35,6 +35,7 @@ from shapely.geometry import box
 
 import rsgispy.imagespectral.endmembers as em
 import rsgispy.mapping.elements as map_elements
+import rsgispy.mapping.layout as map_layout
 import rsgispy.mapping.legend as map_legend
 import rsgispy.mapping.raster as map_raster
 import rsgispy.mapping.vector as map_vector
@@ -205,6 +206,18 @@ FIGURE_CASES = [
         lambda d, ax, out: ml_explain.plot_jackknife_bars(
             ["a", "b"], [0.7, 0.6], [0.5, 0.4], 0.8, "Jackknife", "Accuracy",
             ax=ax, out_plot_file=out,
+        ),
+    ),
+    (
+        "create_map_panels",
+        2,
+        lambda d, ax, out: map_layout.create_map_panels(
+            [
+                {"panel_type": "rgb", "input_img": d["cont_img"], "title": "Image"},
+                {"panel_type": "thematic", "input_img": d["cls_img"], "title": "Classes"},
+            ],
+            axs=ax,
+            out_plot_file=out,
         ),
     ),
     (

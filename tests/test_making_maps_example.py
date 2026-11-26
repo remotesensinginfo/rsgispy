@@ -68,7 +68,7 @@ def test_worked_example_runs(tmp_path):
     assert out["fig_height"] == pytest.approx(6.7 * 40 / 60)
     for key in ("rgb_stretches", "rgb_map", "score_map", "cls_map", "cls_legend",
                 "vec_map", "choropleth_map", "final_map", "final_map_pdf",
-                "zoom_map", "basemap_map", "wmts_map"):
+                "zoom_map", "panels_map", "basemap_map", "wmts_map"):
         assert os.path.getsize(out[key]) > 0, key
     regions = out["regions"]
     assert regions["forest_pct"].between(0, 100).all()

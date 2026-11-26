@@ -3,7 +3,7 @@ The mapping subpackage provides cartographic map composition and visualisation
 utilities using ``matplotlib``, ``rasterio``, ``geopandas``, and ``pyproj``,
 organised into submodules by functionality:
 
-* :mod:`rsgispy.mapping.layout` — figure sizing, axis extent, tick spacing, and inset overview maps.
+* :mod:`rsgispy.mapping.layout` — figure sizing, axis extent, tick spacing, inset overview maps, and maps side by side.
 * :mod:`rsgispy.mapping.elements` — scale bars, north arrows, bounding boxes, and axis labels.
 * :mod:`rsgispy.mapping.raster` — continuous, colour-mapped, and thematic raster maps.
 * :mod:`rsgispy.mapping.vector` — vector layer, choropleth, and point-density maps.

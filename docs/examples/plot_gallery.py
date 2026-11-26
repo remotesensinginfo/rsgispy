@@ -32,6 +32,7 @@ import rsgispy  # noqa: E402
 import rsgispy.imagespectral.endmembers as spec_em  # noqa: E402
 import rsgispy.imageutils.metadata  # noqa: E402
 import rsgispy.mapping.elements as map_elements  # noqa: E402
+import rsgispy.mapping.layout as map_layout  # noqa: E402
 import rsgispy.mapping.legend as map_legend  # noqa: E402
 import rsgispy.mapping.raster as map_raster  # noqa: E402
 import rsgispy.mapping.vector as map_vector  # noqa: E402
@@ -263,6 +264,22 @@ def _gallery_plots(scene: Dict[str, str], tbl: Dict[str, object]) -> List[Tuple[
                                           loc="lower left", title="Land cover")
         map_elements.add_axis_label(ax, "(a)")
 
+    def map_panels():
+        fig, _ = map_layout.create_map_panels(
+            [
+                {"panel_type": "rgb", "input_img": scene["s2"], "bands": [3, 2, 1],
+                 "title": "Sentinel-2", "map_kw": {"no_data_out_clr": (1.0, 1.0, 1.0)}},
+                {"panel_type": "thematic", "input_img": scene["cls"], "title": "Land cover"},
+                {"panel_type": "vector", "vec": regions, "base_img": scene["s2"],
+                 "base_bands": [3, 2, 1], "title": "Regions over the image",
+                 "map_kw": {"vec_fill_clrs": "none", "vec_line_clrs": "yellow",
+                            "vec_line_widths": 1.5}},
+            ],
+            classes_info=CLASS_NAMES, legend_title="Land cover", legend_position="bottom",
+            scale_bar_loc="lower right",
+        )
+        return fig
+
     return [
         ("plot_histogram_threshold", hist_threshold),
         ("plot_roc_curve", roc_curve),
@@ -284,6 +301,7 @@ def _gallery_plots(scene: Dict[str, str], tbl: Dict[str, object]) -> List[Tuple[
         ("create_vec_lyr_map", map_figure(vector_map)),
         ("create_choropleth_vec_lyr_map", map_figure(choropleth_map)),
         ("map_elements", map_figure(elements_map)),
+        ("create_map_panels", map_panels),
     ]
 
 

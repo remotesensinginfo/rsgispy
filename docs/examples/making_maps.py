@@ -281,6 +281,26 @@ def run_workflow(
     plt.close(fig_zoom)
     # [end-step-8-export]
 
+    # [step-panels]
+    # Maps side by side with one extent, one legend and one scale bar.
+    fig, axs = map_layout.create_map_panels(
+        [
+            {"panel_type": "rgb", "input_img": s2_img, "bands": list(rgb_bands),
+             "title": "Sentinel-2"},
+            {"panel_type": "thematic", "input_img": cls_img, "title": "Land cover"},
+            {"panel_type": "cmap", "input_img": score_img, "vmin": 0.0, "vmax": 1.0,
+             "show_colour_bar": True, "cbar_label": "Score", "title": "Score"},
+        ],
+        bbox=zoom_bbox,
+        classes_info=classes_info,
+        legend_title="Land cover",
+        legend_position="bottom",
+    )
+    out["panels_map"] = os.path.join(out_dir, "maps_panels.png")
+    fig.savefig(out["panels_map"], dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    # [end-step-panels]
+
     # [step-9-basemap]
     import rsgispy.mapping.basemaps as map_basemaps
 
