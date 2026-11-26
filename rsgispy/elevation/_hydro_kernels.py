@@ -970,10 +970,31 @@ def flow_dir_mfd_numpy(
 
 
 @njit
+def _count_unreleased(valid: np.ndarray, in_deg: np.ndarray) -> int:
+    """
+    Count the valid cells that a Kahn's topological sort never released
+    (in-degree still above zero): they sit on or downstream of a cycle in
+    the flow graph, so their accumulation is incomplete.
+    """
+    height, width = in_deg.shape
+    n_left = 0
+    for r in range(height):
+        for c in range(width):
+            if valid[r, c] and in_deg[r, c] > 0:
+                n_left += 1
+    return n_left
+
+
+@njit
 def flow_acc_d8_kernel(
     flow_dir: np.ndarray, valid: np.ndarray, weights: np.ndarray
-) -> np.ndarray:
-    """O(N) Kahn's topological sort D8 flow accumulation."""
+) -> Tuple[np.ndarray, int]:
+    """
+    O(N) Kahn's topological sort D8 flow accumulation.
+
+    Returns the accumulation and the number of valid cells never released by
+    the sort (non-zero only if the flow graph has a cycle).
+    """
     # pylint: disable=too-many-locals,too-many-branches
     height, width = flow_dir.shape
     in_deg = np.zeros((height, width), dtype=np.int32)
@@ -1021,7 +1042,18 @@ def flow_acc_d8_kernel(
                     q_rows, q_cols, q_tail, q_count, cap, nr, nc
                 )
 
-    return acc
+    return acc, _count_unreleased(valid, in_deg)
+
+
+# Angular tolerance (radians) for snapping a D-Infinity angle onto a facet
+# boundary (a cardinal or diagonal direction). The angles are stored as
+# float32, which can't represent the boundary angles exactly (e.g. pi/2 and
+# pi round up by ~4e-8 and ~9e-8 rad), so without snapping a tiny share of
+# the flow (alpha ~ 1e-8) is sent to the other neighbour of the facet, which
+# may be higher than the cell; those uphill edges form cycles in the flow
+# graph. 1e-5 rad is far above float32 rounding (~2.4e-7 rad at 2*pi) and far
+# below any real facet split (a 1e-5 rad angle sends a share of ~1.3e-5).
+DINF_SNAP_TOL = 1e-5
 
 
 @njit
@@ -1031,8 +1063,12 @@ def _dinf_targets(
     """
     Resolve D-Infinity CCW angle ``ang in [0, 2*pi)`` into two neighbour
     offsets ``(dr1, dc1, dr2, dc2, w1, w2)``.
+
+    Angles within :data:`DINF_SNAP_TOL` radians of a facet boundary (a
+    cardinal or diagonal direction for the pixel geometry) are snapped onto
+    it, so all the flow goes to that one neighbour (``w2 = 0``).
     """
-    # pylint: disable=too-many-branches
+    # pylint: disable=too-many-branches,too-many-statements
     phi = math.atan2(dy, dx)
     half_pi = 0.5 * math.pi
     pi = math.pi
@@ -1043,37 +1079,47 @@ def _dinf_targets(
         return 0, 0, 0, 0, 0.0, 0.0
 
     # Normalise near 2*pi
-    if ang >= two_pi - 1e-12:
+    if ang >= two_pi - DINF_SNAP_TOL:
         ang = 0.0
 
+    # ``width`` is the angular width of the facet, so ``alpha * width`` is
+    # the angle from the first neighbour's direction.
     if ang <= phi:
-        alpha = ang / phi
+        width = phi
+        alpha = ang / width
         dr1, dc1, dr2, dc2 = 0, 1, -1, 1
     elif ang <= half_pi:
-        alpha = (half_pi - ang) / (half_pi - phi)
+        width = half_pi - phi
+        alpha = (half_pi - ang) / width
         dr1, dc1, dr2, dc2 = -1, 0, -1, 1
     elif ang <= pi - phi:
-        alpha = (ang - half_pi) / (half_pi - phi)
+        width = half_pi - phi
+        alpha = (ang - half_pi) / width
         dr1, dc1, dr2, dc2 = -1, 0, -1, -1
     elif ang <= pi:
-        alpha = (pi - ang) / phi
+        width = phi
+        alpha = (pi - ang) / width
         dr1, dc1, dr2, dc2 = 0, -1, -1, -1
     elif ang <= pi + phi:
-        alpha = (ang - pi) / phi
+        width = phi
+        alpha = (ang - pi) / width
         dr1, dc1, dr2, dc2 = 0, -1, 1, -1
     elif ang <= three_half_pi:
-        alpha = (three_half_pi - ang) / (half_pi - phi)
+        width = half_pi - phi
+        alpha = (three_half_pi - ang) / width
         dr1, dc1, dr2, dc2 = 1, 0, 1, -1
     elif ang <= two_pi - phi:
-        alpha = (ang - three_half_pi) / (half_pi - phi)
+        width = half_pi - phi
+        alpha = (ang - three_half_pi) / width
         dr1, dc1, dr2, dc2 = 1, 0, 1, 1
     else:
-        alpha = (two_pi - ang) / phi
+        width = phi
+        alpha = (two_pi - ang) / width
         dr1, dc1, dr2, dc2 = 0, 1, 1, 1
 
-    if alpha < 1e-12:
+    if alpha * width <= DINF_SNAP_TOL:
         return dr1, dc1, 0, 0, 1.0, 0.0
-    if alpha > 1.0 - 1e-12:
+    if (1.0 - alpha) * width <= DINF_SNAP_TOL:
         return dr2, dc2, 0, 0, 1.0, 0.0
     return dr1, dc1, dr2, dc2, 1.0 - alpha, alpha
 
@@ -1085,8 +1131,13 @@ def flow_acc_dinf_kernel(
     weights: np.ndarray,
     dx: float,
     dy: float,
-) -> np.ndarray:
-    """O(N) Kahn's topological sort D-Infinity flow accumulation."""
+) -> Tuple[np.ndarray, int]:
+    """
+    O(N) Kahn's topological sort D-Infinity flow accumulation.
+
+    Returns the accumulation and the number of valid cells never released by
+    the sort (non-zero only if the flow graph has a cycle).
+    """
     # pylint: disable=too-many-locals,too-many-branches
     height, width = flow_dir.shape
     in_deg = np.zeros((height, width), dtype=np.int32)
@@ -1150,14 +1201,19 @@ def flow_acc_dinf_kernel(
                         q_rows, q_cols, q_tail, q_count, cap, nr2, nc2
                     )
 
-    return acc
+    return acc, _count_unreleased(valid, in_deg)
 
 
 @njit
 def flow_acc_mfd_kernel(
     flow_dir_mfd: np.ndarray, valid: np.ndarray, weights: np.ndarray
-) -> np.ndarray:
-    """O(N) Kahn's topological sort 8-band MFD flow accumulation."""
+) -> Tuple[np.ndarray, int]:
+    """
+    O(N) Kahn's topological sort 8-band MFD flow accumulation.
+
+    Returns the accumulation and the number of valid cells never released by
+    the sort (non-zero only if the flow graph has a cycle).
+    """
     # pylint: disable=too-many-locals,too-many-branches
     _, height, width = flow_dir_mfd.shape
     in_deg = np.zeros((height, width), dtype=np.int32)
@@ -1206,7 +1262,7 @@ def flow_acc_mfd_kernel(
                             q_rows, q_cols, q_tail, q_count, cap, nr, nc
                         )
 
-    return acc
+    return acc, _count_unreleased(valid, in_deg)
 
 
 @njit
