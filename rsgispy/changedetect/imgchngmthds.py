@@ -697,7 +697,9 @@ def _safe_otsu_threshold(values: np.ndarray) -> float:
     return float(calc_otsu_threshold(finite))
 
 
-def _kmeans_threshold(data: np.ndarray, max_iter: int = 1500) -> float:
+def _kmeans_threshold(
+    data: np.ndarray, max_iter: int = 1500, rnd_seed: Optional[int] = 42
+) -> float:
     """
     Fit a 2-cluster K-means to the 1D change magnitudes and return the
     decision boundary between the two clusters (the midpoint of the two
@@ -707,13 +709,15 @@ def _kmeans_threshold(data: np.ndarray, max_iter: int = 1500) -> float:
         HAVE_SKLEARN, "change_vector_analysis (use_kmeans=True)", "scikit-learn", "stats"
     )
     vec = np.asarray(data, dtype=np.float64).reshape(-1, 1)
-    km = KMeans(n_clusters=2, max_iter=max_iter, n_init="auto").fit(vec)
+    km = KMeans(
+        n_clusters=2, max_iter=max_iter, n_init="auto", random_state=rnd_seed
+    ).fit(vec)
     centres = km.cluster_centers_[:, 0]
     return float(0.5 * (float(np.min(centres)) + float(np.max(centres))))
 
 
 def _calc_change_threshold(
-    values: np.ndarray, use_kmeans: bool
+    values: np.ndarray, use_kmeans: bool, rnd_seed: Optional[int] = 42
 ) -> Tuple[float, str]:
     """
     Return ``(threshold, threshold_method)`` for the 1D change magnitudes:
@@ -721,7 +725,7 @@ def _calc_change_threshold(
     Pixels with a value above the threshold are change.
     """
     if use_kmeans:
-        return _kmeans_threshold(values), "kmeans"
+        return _kmeans_threshold(values, rnd_seed=rnd_seed), "kmeans"
     return _safe_otsu_threshold(values), "otsu"
 
 
@@ -909,6 +913,7 @@ def change_vector_analysis(
     img_chng_bands: Optional[Sequence[int]] = None,
     use_kmeans: bool = False,
     *,
+    rnd_seed: Optional[int] = 42,
     centre_on_threshold: bool = True,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
@@ -949,6 +954,11 @@ def change_vector_analysis(
     :param img_chng_bands: Optional sequence of 1-based bands for ``in_chng_img``.
     :param use_kmeans: Use K-means clustering instead of Otsu thresholding for
                        the binary change mask (Default = ``False``).
+    :param rnd_seed: Random seed for the K-means threshold
+                     (``use_kmeans=True``), passed to scikit-learn as
+                     ``random_state`` so the result is reproducible; ``None``
+                     gives a different initialisation each run
+                     (Default = ``42``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type for
                      ``out_chng_dist_img`` (Default = ``None``, which uses
@@ -1014,7 +1024,9 @@ def change_vector_analysis(
     l2_norm = np.sqrt(np.sum(np.square(img_diff), axis=0))
     np.nan_to_num(l2_norm, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
-    chng_thres, thres_method = _calc_change_threshold(l2_norm, use_kmeans)
+    chng_thres, thres_method = _calc_change_threshold(
+        l2_norm, use_kmeans, rnd_seed
+    )
     dist_offset = chng_thres if centre_on_threshold else 0.0
 
     l2_flat_arr = np.full(n_pxls, float(no_data_val), dtype=np.float32)
@@ -1085,6 +1097,7 @@ def slow_feature_analysis(
     sfa_regular: bool = False,
     use_kmeans: bool = False,
     *,
+    rnd_seed: Optional[int] = 42,
     centre_on_threshold: bool = True,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
@@ -1129,6 +1142,11 @@ def slow_feature_analysis(
                         matrix with a smoothness penalty (Default = ``False``).
     :param use_kmeans: Use K-means clustering instead of Otsu thresholding for
                        the binary change mask (Default = ``False``).
+    :param rnd_seed: Random seed for the K-means threshold
+                     (``use_kmeans=True``), passed to scikit-learn as
+                     ``random_state`` so the result is reproducible; ``None``
+                     gives a different initialisation each run
+                     (Default = ``42``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type for
                      ``out_chng_dist_img`` (Default = ``None``, which uses
@@ -1301,7 +1319,9 @@ def slow_feature_analysis(
 
     sqrt_chi2 = np.sqrt(np.maximum(t_stat, 0.0))
     np.nan_to_num(sqrt_chi2, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-    chng_thres, thres_method = _calc_change_threshold(sqrt_chi2, use_kmeans)
+    chng_thres, thres_method = _calc_change_threshold(
+        sqrt_chi2, use_kmeans, rnd_seed
+    )
     dist_offset = chng_thres if centre_on_threshold else 0.0
 
     dist_flat = np.full(n_pxls, float(no_data_val), dtype=np.float32)
@@ -1383,6 +1403,7 @@ def multivariate_alteration_detection(
     mad_epsilon: float = 1e-6,
     use_kmeans: bool = True,
     *,
+    rnd_seed: Optional[int] = 42,
     centre_on_threshold: bool = False,
     mad_regularisation: float = 0.0,
     gdalformat: str = "GTIFF",
@@ -1434,6 +1455,11 @@ def multivariate_alteration_detection(
                                (nearly) collinear and keeps the canonical
                                correlations below 1. Must be ``>= 0``
                                (Default = ``0.0``, no regularisation).
+    :param rnd_seed: Random seed for the K-means threshold
+                     (``use_kmeans=True``), passed to scikit-learn as
+                     ``random_state`` so the result is reproducible; ``None``
+                     gives a different initialisation each run
+                     (Default = ``42``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type for
                      ``out_chng_dist_img`` and ``out_chng_mads_img``
@@ -1628,7 +1654,9 @@ def multivariate_alteration_detection(
     sqrt_chi2 = np.sqrt(np.maximum(chi_square_dis, 0.0))
     np.nan_to_num(sqrt_chi2, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
-    chng_thres, thres_method = _calc_change_threshold(sqrt_chi2, use_kmeans)
+    chng_thres, thres_method = _calc_change_threshold(
+        sqrt_chi2, use_kmeans, rnd_seed
+    )
     dist_offset = chng_thres if centre_on_threshold else 0.0
 
     fill_val = float(no_data_val)

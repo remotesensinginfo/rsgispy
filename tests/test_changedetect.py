@@ -744,3 +744,46 @@ def test_default_no_data_is_set(tmp_path, method):
         with rasterio.open(tmp_path / "mad_vars.tif") as src:
             assert src.nodata == -9999.0
             assert np.all(src.read()[:, hole] == -9999.0)
+
+
+# ---------------------------------------------------------------------------
+# Reproducible K-means thresholds
+# ---------------------------------------------------------------------------
+
+
+def test_kmeans_functions_take_rnd_seed():
+    """Every function that can use K-means takes rnd_seed (Default = 42)."""
+    for fn in (
+        icm.change_vector_analysis,
+        icm.slow_feature_analysis,
+        icm.multivariate_alteration_detection,
+    ):
+        assert inspect.signature(fn).parameters["rnd_seed"].default == 42
+
+
+@pytest.mark.skipif(not icm.HAVE_SKLEARN, reason="scikit-learn not installed")
+@pytest.mark.filterwarnings("ignore:.*did not converge:UserWarning")
+@pytest.mark.parametrize("method", _METHODS)
+def test_kmeans_threshold_reproducible(tmp_path, monkeypatch, method):
+    """K-means gets random_state=rnd_seed and two runs give identical outputs."""
+    base_path, chng_path, _, _ = _make_diag_pair(tmp_path)
+    seen = []
+    orig_kmeans = icm.KMeans
+
+    def _spy_kmeans(*args, **kwargs):
+        seen.append(kwargs.get("random_state"))
+        return orig_kmeans(*args, **kwargs)
+
+    monkeypatch.setattr(icm, "KMeans", _spy_kmeans)
+    runs = []
+    for i in range(2):
+        run_dir = tmp_path / f"run{i}"
+        run_dir.mkdir()
+        out, out_bin, out_dist = _run_change_method(
+            method, base_path, chng_path, run_dir, use_kmeans=True, rnd_seed=7
+        )
+        runs.append((out, _read_band(out_bin), _read_band(out_dist)))
+    assert seen == [7, 7]
+    assert runs[0][0]["threshold"] == runs[1][0]["threshold"]
+    np.testing.assert_array_equal(runs[0][1], runs[1][1])
+    np.testing.assert_array_equal(runs[0][2], runs[1][2])
