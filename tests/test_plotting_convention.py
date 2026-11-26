@@ -67,6 +67,11 @@ def plot_data(tmp_path_factory):
     with rasterio.open(cont_img, "w", count=3, dtype="float32", **profile) as dst:
         dst.write(rng.uniform(1.0, 100.0, (3, 20, 20)).astype(np.float32))
 
+    dem_img = os.path.join(data_dir, "dem.tif")
+    rows, cols = np.mgrid[0:20, 0:20]
+    with rasterio.open(dem_img, "w", count=1, dtype="float32", **profile) as dst:
+        dst.write((50.0 + 5.0 * np.sin(cols / 3.0) + rows).astype(np.float32)[np.newaxis])
+
     cls_img = os.path.join(data_dir, "cls.tif")
     cls_arr = np.repeat(np.arange(1, 5, dtype=np.uint8), 100).reshape(20, 20)
     with rasterio.open(cls_img, "w", count=1, dtype="uint8", nodata=0, **profile) as dst:
@@ -115,6 +120,7 @@ def plot_data(tmp_path_factory):
     corr_df = pd.DataFrame(rng.normal(size=(50, 4)), columns=list("abcd")).corr()
     return {
         "cont_img": cont_img,
+        "dem_img": dem_img,
         "cls_img": cls_img,
         "polys": polys,
         "eval_df": eval_df,
@@ -293,6 +299,20 @@ AXIS_CASES = [
         lambda res, ax: isinstance(res, list)
         and len(res) == 2
         and all(isinstance(img, AxesImage) for img in res),
+    ),
+    (
+        "add_hillshade",
+        lambda d, ax: map_raster.add_hillshade(ax, dem_img=d["dem_img"]),
+        lambda res, ax: isinstance(res, AxesImage) and res in ax.images,
+    ),
+    (
+        "create_shaded_cmap_img_map",
+        lambda d, ax: map_raster.create_shaded_cmap_img_map(
+            ax, d["cont_img"], dem_img=d["dem_img"], cbar_label="Value"
+        ),
+        lambda res, ax: isinstance(res, AxesImage)
+        and res is ax.images[0]
+        and res.colorbar is not None,
     ),
     (
         "create_vec_lyr_map",

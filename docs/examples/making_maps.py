@@ -10,7 +10,7 @@ Run it on your own data with, e.g.::
 
     python making_maps.py --s2 s2_sref_10m.tif --cls land_cover.tif \\
         --score restoration_score.tif --regions admin_units.gpkg \\
-        --rivers rivers.gpkg --overview countries.gpkg \\
+        --rivers rivers.gpkg --overview countries.gpkg --dem dem.tif \\
         --classes cls_config.json --out-dir maps --basemap
 """
 
@@ -35,6 +35,7 @@ def run_workflow(
     basemap: bool = False,
     wmts_url: Optional[str] = None,
     wmts_lyr: Optional[str] = None,
+    dem_img: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Run the worked example. ``s2_img`` is a surface reflectance stack,
@@ -43,7 +44,8 @@ def run_workflow(
     polygons, ``rivers_vec`` a line layer and ``overview_vec`` a small-scale
     layer (e.g. country outlines) for the inset map. ``classes_info`` gives the
     class names (``{pixel value: name}``, a ``ClassificationConfig`` or its
-    JSON file). Figures are written to ``out_dir``.
+    JSON file). ``dem_img`` is an optional DEM for the hillshaded maps.
+    Figures are written to ``out_dir``.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-statements,import-outside-toplevel
@@ -133,6 +135,33 @@ def run_workflow(
     fig.savefig(out["score_map"], dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     # [end-step-3-continuous]
+
+    if dem_img is not None:
+        # [step-3-relief]
+        fig, axs = plt.subplots(1, 2, figsize=(fig_width, fig_height / 1.6),
+                                layout="constrained")
+        # a) The elevation, coloured and shaded by its own hillshade, which
+        #    is made in memory from the DEM.
+        img = map_raster.create_shaded_cmap_img_map(
+            axs[0], dem_img, dem_img=dem_img,
+            cmap_name="viridis", hshade_alpha=0.4,
+            show_colour_bar=False, scale_bar_loc="lower right",
+            show_north_arrow=False,
+        )
+        # The colour bar below the map, so both panels are the same size.
+        fig.colorbar(img, ax=axs[0], orientation="horizontal", shrink=0.8,
+                     label="Elevation (m)")
+        # b) A hillshade over the land cover (drawn above it, zorder=2).
+        map_raster.create_thematic_raster_map(
+            axs[1], cls_img, show_scale_bar=False, show_map_axis=False,
+        )
+        map_raster.add_hillshade(axs[1], dem_img=dem_img, alpha=0.35)
+        for ax, label in zip(axs, ["a)", "b)"]):
+            map_elements.add_axis_label(ax, label, lbl_font_size=8)
+        out["relief_map"] = os.path.join(out_dir, "maps_relief.png")
+        fig.savefig(out["relief_map"], dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
+        # [end-step-3-relief]
 
     # [step-4-thematic]
     import rsgispy.mapping.legend as map_legend
@@ -338,12 +367,13 @@ def main() -> None:
                         help="Also draw an OpenStreetMap basemap (internet)")
     parser.add_argument("--wmts-url", default=None, help="WMTS service URL")
     parser.add_argument("--wmts-lyr", default=None, help="WMTS layer name")
+    parser.add_argument("--dem", default=None, help="DEM for the hillshaded maps")
     parser.add_argument("--out-dir", required=True, help="Output directory")
     args = parser.parse_args()
     run_workflow(args.s2, args.cls, args.score, args.regions, args.rivers,
                  args.overview, args.out_dir, args.classes,
                  rgb_bands=args.rgb_bands, dpi=args.dpi, basemap=args.basemap,
-                 wmts_url=args.wmts_url, wmts_lyr=args.wmts_lyr)
+                 wmts_url=args.wmts_url, wmts_lyr=args.wmts_lyr, dem_img=args.dem)
 
 
 if __name__ == "__main__":

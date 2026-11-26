@@ -228,6 +228,20 @@ def _gallery_plots(scene: Dict[str, str], tbl: Dict[str, object]) -> List[Tuple[
             scale_bar_loc="lower right",
         )
 
+    def shaded_cmap_map(ax):
+        map_raster.create_shaded_cmap_img_map(
+            ax, scene["dem"], dem_img=scene["dem"], cmap_name="viridis",
+            title_str="Elevation over a hillshade", cbar_label="Elevation (m)",
+            scale_bar_loc="lower right",
+        )
+
+    def hillshade_map(ax):
+        map_raster.create_thematic_raster_map(
+            ax, scene["cls"], title_str="Land cover with a hillshade",
+            scale_bar_loc="lower right", show_north_arrow=True,
+        )
+        map_raster.add_hillshade(ax, dem_img=scene["dem"], alpha=0.35)
+
     def vector_map(ax):
         map_raster.create_raster_img_map(
             ax, scene["s2"], img_bands=[3, 2, 1], img_stch=rsgispy.IMG_STRETCH_CUMULATIVE,
@@ -281,6 +295,8 @@ def _gallery_plots(scene: Dict[str, str], tbl: Dict[str, object]) -> List[Tuple[
         ("create_raster_img_map", map_figure(rgb_map)),
         ("create_raster_cmap_img_map", map_figure(cmap_map)),
         ("create_thematic_raster_map", map_figure(thematic_map)),
+        ("create_shaded_cmap_img_map", map_figure(shaded_cmap_map)),
+        ("add_hillshade", map_figure(hillshade_map)),
         ("create_vec_lyr_map", map_figure(vector_map)),
         ("create_choropleth_vec_lyr_map", map_figure(choropleth_map)),
         ("map_elements", map_figure(elements_map)),

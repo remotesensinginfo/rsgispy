@@ -118,6 +118,17 @@ Maps
 .. image:: images/gallery/create_thematic_raster_map.png
    :width: 60%
 
+:func:`rsgispy.mapping.raster.create_shaded_cmap_img_map` (a colour-mapped
+raster shaded by a hillshade, here the elevation itself) and
+:func:`~rsgispy.mapping.raster.add_hillshade` (a hillshade over any map, here
+the land cover); both make the hillshade in memory from a DEM:
+
+.. image:: images/gallery/create_shaded_cmap_img_map.png
+   :width: 60%
+
+.. image:: images/gallery/add_hillshade.png
+   :width: 60%
+
 :func:`rsgispy.mapping.vector.create_vec_lyr_map` and
 :func:`~rsgispy.mapping.vector.create_choropleth_vec_lyr_map`:
 

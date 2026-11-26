@@ -11,6 +11,7 @@ import matplotlib.image
 import matplotlib.pyplot as plt
 import numpy as np
 import rasterio
+from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imageprocess import bbox_from_dataset
@@ -33,6 +34,8 @@ __all__ = [
     "create_raster_img_map",
     "create_thematic_raster_map",
     "create_raster_cmap_img_map",
+    "add_hillshade",
+    "create_shaded_cmap_img_map",
 ]
 
 
@@ -76,6 +79,8 @@ def create_raster_img_map(
     show_north_arrow: bool = False,
     north_arrow_style: str = NORTH_ARROW_STYLE_TRIANGLE,
     north_arrow_loc: str = "upper left",
+    interpolation: Optional[str] = None,
+    interp_stage: str = "data",
 ) -> matplotlib.image.AxesImage:
     """
     Display a continuous 1-band or 3-band raster layer onto ``ax`` with stretching.
@@ -106,6 +111,15 @@ def create_raster_img_map(
     :param north_arrow_style: North arrow style constant (Default =
                               :data:`~rsgispy.mapping.elements.NORTH_ARROW_STYLE_TRIANGLE`).
     :param north_arrow_loc: North arrow placement string (Default = ``'upper left'``).
+    :param interpolation: Optional Matplotlib ``imshow`` interpolation
+                          (e.g. ``'nearest'``; Default = ``None``, the
+                          Matplotlib default, ``'auto'``).
+    :param interp_stage: Stage at which the image is resampled when drawn
+                         larger or smaller than its pixels: ``'data'``
+                         (Default: the values are resampled before colour
+                         mapping, which keeps one-pixel features such as
+                         stream channels visible on a small map), ``'rgba'``
+                         or ``'auto'`` (see ``AxesImage.set_interpolation_stage``).
     :return: The image artist (``matplotlib.image.AxesImage``).
 
     .. code:: python
@@ -176,6 +190,8 @@ def create_raster_img_map(
         extent=img_coords,
         alpha=img_alpha,
         zorder=plot_zorder,
+        interpolation=interpolation,
+        interpolation_stage=interp_stage,
     )
     ax.set_xlim([img_coords[0], img_coords[1]])
     ax.set_ylim([img_coords[2], img_coords[3]])
@@ -229,6 +245,8 @@ def create_thematic_raster_map(
     legend_loc: str = "lower right",
     legend_kwargs: Optional[Dict[str, Any]] = None,
     legend_ax: Optional[matplotlib.axes.Axes] = None,
+    interpolation: Optional[str] = None,
+    interp_stage: str = "data",
 ) -> Union[matplotlib.image.AxesImage, List[matplotlib.image.AxesImage]]:
     """
     Display one or more thematic raster layers onto ``ax`` using the colour
@@ -284,6 +302,15 @@ def create_thematic_raster_map(
                       the legend is written via
                       :func:`~rsgispy.mapping.legend.add_categorical_legend_axis`
                       when ``show_legend=True`` (Default = ``None``).
+    :param interpolation: Optional Matplotlib ``imshow`` interpolation
+                          (e.g. ``'nearest'``; Default = ``None``, the
+                          Matplotlib default, ``'auto'``).
+    :param interp_stage: Stage at which the image is resampled when drawn
+                         larger or smaller than its pixels: ``'data'``
+                         (Default: the values are resampled before colour
+                         mapping, which keeps one-pixel features such as
+                         stream channels visible on a small map), ``'rgba'``
+                         or ``'auto'`` (see ``AxesImage.set_interpolation_stage``).
     :return: The image artist (``matplotlib.image.AxesImage``) when
              ``input_img`` is one image, or a list of image artists (one per
              image, in drawing order) when it is a list. The legend, when
@@ -355,7 +382,12 @@ def create_thematic_raster_map(
     ):
         img_artists.append(
             ax.imshow(
-                img_data_arr, extent=img_coords, alpha=img_alpha, zorder=plot_zorder
+                img_data_arr,
+                extent=img_coords,
+                alpha=img_alpha,
+                zorder=plot_zorder,
+                interpolation=interpolation,
+                interpolation_stage=interp_stage,
             )
         )
 
@@ -448,6 +480,9 @@ def create_raster_cmap_img_map(
     north_arrow_loc: str = "upper left",
     show_colour_bar: bool = False,
     cbar_label: Optional[str] = None,
+    img_alpha: float = 1.0,
+    interpolation: Optional[str] = None,
+    interp_stage: str = "data",
 ) -> matplotlib.image.AxesImage:
     """
     Display a single-band raster layer on ``ax`` using a Matplotlib colour map and
@@ -481,6 +516,16 @@ def create_raster_cmap_img_map(
     :param show_colour_bar: Draw a colour bar beside the map (Default = False).
     :param cbar_label: Optional colour bar label, e.g. the variable and its
                        units (Default = None).
+    :param img_alpha: Display alpha transparency (Default = 1.0).
+    :param interpolation: Optional Matplotlib ``imshow`` interpolation
+                          (e.g. ``'nearest'``; Default = ``None``, the
+                          Matplotlib default, ``'auto'``).
+    :param interp_stage: Stage at which the image is resampled when drawn
+                         larger or smaller than its pixels: ``'data'``
+                         (Default: the values are resampled before colour
+                         mapping, which keeps one-pixel features such as
+                         stream channels visible on a small map), ``'rgba'``
+                         or ``'auto'`` (see ``AxesImage.set_interpolation_stage``).
     :return: The image artist (``matplotlib.image.AxesImage``), e.g. for
              ``fig.colorbar(img)``; with ``show_colour_bar=True`` the colour
              bar is ``img.colorbar``.
@@ -544,7 +589,14 @@ def create_raster_cmap_img_map(
             print(f"{norm_vmin} - {norm_vmax}")
 
     img_artist = ax.imshow(
-        img_data, extent=img_coords, cmap=c_cmap, norm=c_norm, zorder=plot_zorder
+        img_data,
+        extent=img_coords,
+        cmap=c_cmap,
+        norm=c_norm,
+        alpha=img_alpha,
+        zorder=plot_zorder,
+        interpolation=interpolation,
+        interpolation_stage=interp_stage,
     )
     ax.set_xlim([img_coords[0], img_coords[1]])
     ax.set_ylim([img_coords[2], img_coords[3]])
@@ -569,4 +621,307 @@ def create_raster_cmap_img_map(
     if show_colour_bar:
         add_map_colour_bar(ax, img_artist, cbar_label=cbar_label)
 
+    return img_artist
+
+
+def _check_one_hillshade_input(
+    hshade_img: Optional[str], dem_img: Optional[str]
+) -> None:
+    if (hshade_img is None) == (dem_img is None):
+        raise rsgispy.RSGISPyException(
+            "Give one of hshade_img (a hillshade image) or dem_img (a DEM)."
+        )
+
+
+def _calc_hillshade_for_bbox(
+    dem_img: str,
+    bbox: Optional[Tuple[float, float, float, float]],
+    azimuth: float,
+    zenith: float,
+) -> Tuple[np.ndarray, Tuple[float, float, float, float], Optional[float]]:
+    """
+    Hillshade of the part of ``dem_img`` in ``bbox``, made in memory with
+    :func:`~rsgispy.elevation.illumination.hillshade_node`. The DEM is read
+    with a one-pixel margin (inside the image), so the values equal those of
+    :func:`~rsgispy.elevation.illumination.hillshade` on the whole DEM.
+    Returns ``(hillshade, extent, nodata)``.
+    """
+    # pylint: disable=import-outside-toplevel,too-many-locals
+    from rsgispy.elevation.illumination import hillshade_node
+    from rsgispy.imageprocess import (
+        ArraySource,
+        MemorySink,
+        TileGraph,
+        ensure_file_exists,
+        infer_node_meta,
+    )
+
+    ensure_file_exists(dem_img, "Input DEM image")
+    with rasterio.open(dem_img, "r") as src:
+        # pylint: disable=protected-access
+        win, coords = rsgispy.tools.plotting._get_subset_window_and_coords(src, bbox)
+        col0 = max(0, int(win.col_off) - 1)
+        row0 = max(0, int(win.row_off) - 1)
+        col1 = min(src.width, int(win.col_off + win.width) + 1)
+        row1 = min(src.height, int(win.row_off + win.height) + 1)
+        read_win = Window(col0, row0, col1 - col0, row1 - row0)
+        dem_arr = src.read(1, window=read_win).astype(np.float64)
+        dem_trans = src.window_transform(read_win)
+        dem_nodata = src.nodatavals[0]
+
+    dem_src = ArraySource(dem_arr, transform=dem_trans, nodata=dem_nodata)
+    hs_node = hillshade_node(dem_src, azimuth, zenith)
+    hs_arr = TileGraph([MemorySink(hs_node, name="hshade")]).run(use_pbar=False)[
+        "hshade"
+    ][0]
+    r_off = int(win.row_off) - row0
+    c_off = int(win.col_off) - col0
+    hs_arr = hs_arr[r_off: r_off + int(win.height), c_off: c_off + int(win.width)]
+    return hs_arr, coords, infer_node_meta(hs_node).nodata
+
+
+@use_plot_style(plot_type="map")
+def add_hillshade(
+    ax: matplotlib.axes.Axes,
+    hshade_img: Optional[str] = None,
+    *,
+    dem_img: Optional[str] = None,
+    bbox: Optional[Tuple[float, float, float, float]] = None,
+    alpha: float = 0.4,
+    azimuth: float = 315.0,
+    zenith: float = 45.0,
+    zorder: float = 2.0,
+    interpolation: Optional[str] = None,
+    interp_stage: str = "data",
+) -> matplotlib.image.AxesImage:
+    """
+    Draw a semi-transparent hillshade over what is already on ``ax``, e.g. to
+    show the relief under a colour-mapped or thematic raster map.
+
+    Give either a hillshade image (``hshade_img``, e.g. from
+    :func:`~rsgispy.elevation.illumination.hillshade`) or a DEM
+    (``dem_img``), from which the hillshade of ``bbox`` is made in memory (no
+    file is written; the values equal those of
+    :func:`~rsgispy.elevation.illumination.hillshade` with the same
+    ``azimuth`` and ``zenith``). The hillshade is drawn in grey, stretched
+    linearly between its minimum and maximum; no-data pixels are transparent.
+
+    :param ax: Matplotlib axis to draw on.
+    :param hshade_img: Optional path to a single-band hillshade image.
+    :param dem_img: Optional path to a DEM, used when ``hshade_img`` is
+                    ``None``.
+    :param bbox: Optional bounding box ``(MinX, MaxX, MinY, MaxY)`` (Default =
+                 the whole image).
+    :param alpha: Transparency of the hillshade (Default = ``0.4``).
+    :param azimuth: Solar azimuth in degrees of a hillshade made from
+                    ``dem_img`` (Default = ``315.0``).
+    :param zenith: Solar zenith in degrees of a hillshade made from
+                   ``dem_img`` (Default = ``45.0``).
+    :param zorder: Drawing z-order, above the layer to shade (Default =
+                   ``2.0``; the raster map functions draw at ``1.0``).
+    :param interpolation: Optional Matplotlib ``imshow`` interpolation
+                          (Default = ``None``).
+    :param interp_stage: Stage at which the image is resampled (Default =
+                         ``'data'``; see :func:`create_raster_cmap_img_map`).
+    :return: The hillshade image artist (``matplotlib.image.AxesImage``).
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import rsgispy.mapping.raster as map_raster
+
+        fig, ax = plt.subplots()
+        map_raster.create_thematic_raster_map(ax, "landcover.tif")
+        # The hillshade is made in memory from the DEM.
+        map_raster.add_hillshade(ax, dem_img="dem.tif", alpha=0.35)
+    """
+    # pylint: disable=too-many-arguments,too-many-locals
+    _check_one_hillshade_input(hshade_img, dem_img)
+    if hshade_img is not None:
+        hs_arr, coords = rsgispy.tools.plotting.get_raster_mpl_imshow(
+            hshade_img, bands=[1], bbox=bbox
+        )
+        _, _, hs_nodata = _read_raster_map_meta(hshade_img, band=1)
+    else:
+        hs_arr, coords, hs_nodata = _calc_hillshade_for_bbox(
+            dem_img, bbox, azimuth, zenith
+        )
+
+    hs_arr = np.asarray(hs_arr, dtype=np.float64)
+    if hs_nodata is not None and not np.isnan(hs_nodata):
+        hs_arr = np.where(hs_arr == hs_nodata, np.nan, hs_arr)
+    finite = np.isfinite(hs_arr)
+    vmin = float(np.min(hs_arr[finite])) if np.any(finite) else 0.0
+    vmax = float(np.max(hs_arr[finite])) if np.any(finite) else 1.0
+    if vmax <= vmin:
+        vmax = vmin + 1.0
+    hs_cmap = plt.get_cmap("gray").with_extremes(bad=(0.0, 0.0, 0.0, 0.0))
+    return ax.imshow(
+        hs_arr,
+        extent=coords,
+        cmap=hs_cmap,
+        vmin=vmin,
+        vmax=vmax,
+        alpha=alpha,
+        zorder=zorder,
+        interpolation=interpolation,
+        interpolation_stage=interp_stage,
+    )
+
+
+@use_plot_style(plot_type="map")
+def create_shaded_cmap_img_map(
+    ax: matplotlib.axes.Axes,
+    input_img: str,
+    hshade_img: Optional[str] = None,
+    *,
+    dem_img: Optional[str] = None,
+    img_band: int = 1,
+    bbox: Optional[Tuple[float, float, float, float]] = None,
+    cmap_name: str = "viridis",
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    use_log_norm: bool = False,
+    vals_under_white: bool = False,
+    hshade_alpha: float = 0.4,
+    azimuth: float = 315.0,
+    zenith: float = 45.0,
+    show_colour_bar: bool = True,
+    cbar_label: Optional[str] = None,
+    title_str: Optional[str] = None,
+    show_scale_bar: bool = True,
+    show_north_arrow: bool = True,
+    show_map_axis: bool = False,
+    use_grid: bool = False,
+    scale_bar_loc: str = "upper right",
+    scale_bar_style: str = SCALEBAR_STYLE_SOLID,
+    scale_bar_units: Optional[str] = None,
+    north_arrow_style: str = NORTH_ARROW_STYLE_TRIANGLE,
+    north_arrow_loc: str = "upper left",
+    img_alpha: float = 1.0,
+    interpolation: Optional[str] = None,
+    interp_stage: str = "data",
+) -> matplotlib.image.AxesImage:
+    """
+    Draw a single-band raster with a colour map, shaded by a hillshade so the
+    relief shows through (e.g. flow accumulation, a wetness index or flood
+    depth), with an optional colour bar, scale bar and north arrow.
+
+    The raster is drawn with :func:`create_raster_cmap_img_map` (normalised
+    between ``vmin`` and ``vmax``) and the hillshade over it with
+    :func:`add_hillshade`, from ``hshade_img`` or made in memory from
+    ``dem_img``. The images are resampled on their values
+    (``interp_stage='data'``), so one-pixel features such as stream channels
+    stay visible when a large raster is drawn small.
+
+    :param ax: Matplotlib axis to draw on.
+    :param input_img: Path to the raster to colour map.
+    :param hshade_img: Optional path to a hillshade image.
+    :param dem_img: Optional path to a DEM from which the hillshade is made
+                    (when ``hshade_img`` is ``None``).
+    :param img_band: 1-based band of ``input_img`` (Default = ``1``).
+    :param bbox: Optional bounding box ``(MinX, MaxX, MinY, MaxY)`` (Default =
+                 the whole of ``input_img``).
+    :param cmap_name: Matplotlib colour map name (Default = ``'viridis'``).
+    :param vmin: Minimum of the colour map (Default = the minimum value).
+    :param vmax: Maximum of the colour map (Default = the maximum value).
+    :param use_log_norm: Use a logarithmic colour scale, e.g. for flow
+                         accumulation (Default = ``False``).
+    :param vals_under_white: Draw values below ``vmin`` in white (Default =
+                             ``False``).
+    :param hshade_alpha: Transparency of the hillshade (Default = ``0.4``).
+    :param azimuth: Solar azimuth of a hillshade made from ``dem_img``
+                    (Default = ``315.0``).
+    :param zenith: Solar zenith of a hillshade made from ``dem_img``
+                   (Default = ``45.0``).
+    :param show_colour_bar: Draw a colour bar beside the map (Default =
+                            ``True``).
+    :param cbar_label: Optional colour bar label, e.g. the variable and its
+                       units.
+    :param title_str: Optional map title.
+    :param show_scale_bar: Add a scale bar (Default = ``True``).
+    :param show_north_arrow: Add a north arrow (Default = ``True``).
+    :param show_map_axis: Show the axis ticks and frame (Default = ``False``).
+    :param use_grid: Draw grid lines (Default = ``False``).
+    :param scale_bar_loc: Scale bar placement (Default = ``'upper right'``).
+    :param scale_bar_style: Scale bar style constant (Default =
+                            :data:`~rsgispy.mapping.elements.SCALEBAR_STYLE_SOLID`).
+    :param scale_bar_units: Scale bar units (``'m'``, ``'km'`` or ``None``
+                            for automatic).
+    :param north_arrow_style: North arrow style constant (Default =
+                              :data:`~rsgispy.mapping.elements.NORTH_ARROW_STYLE_TRIANGLE`).
+    :param north_arrow_loc: North arrow placement (Default = ``'upper left'``).
+    :param img_alpha: Transparency of the colour-mapped raster (Default =
+                      ``1.0``).
+    :param interpolation: Optional Matplotlib ``imshow`` interpolation
+                          (Default = ``None``).
+    :param interp_stage: Stage at which the images are resampled (Default =
+                         ``'data'``).
+    :return: The colour-mapped image artist (``matplotlib.image.AxesImage``),
+             e.g. for another colour bar. The hillshade is the last image on
+             the axis (``ax.images[-1]``), and with ``show_colour_bar=True``
+             the colour bar is ``img.colorbar``.
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import rsgispy.mapping.raster as map_raster
+
+        fig, ax = plt.subplots(figsize=(7, 6))
+        img = map_raster.create_shaded_cmap_img_map(
+            ax,
+            "flow_acc.tif",
+            dem_img="dem.tif",
+            cmap_name="Blues",
+            vmin=1,
+            use_log_norm=True,
+            title_str="Flow accumulation",
+            cbar_label="Upslope cells",
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-locals
+    _check_one_hillshade_input(hshade_img, dem_img)
+    if bbox is None:
+        bbox, _, _ = _read_raster_map_meta(input_img)
+    img_artist = create_raster_cmap_img_map(
+        ax,
+        input_img,
+        img_band,
+        bbox=bbox,
+        title_str=title_str,
+        show_scale_bar=show_scale_bar,
+        use_grid=use_grid,
+        show_map_axis=show_map_axis,
+        cmap_name=cmap_name,
+        norm_img_vals=True,
+        use_log_norm=use_log_norm,
+        norm_vmin=vmin,
+        norm_vmax=vmax,
+        vals_under_white=vals_under_white,
+        scale_bar_loc=scale_bar_loc,
+        plot_zorder=1.0,
+        scale_bar_style=scale_bar_style,
+        scale_bar_units=scale_bar_units,
+        show_north_arrow=show_north_arrow,
+        north_arrow_style=north_arrow_style,
+        north_arrow_loc=north_arrow_loc,
+        show_colour_bar=False,
+        img_alpha=img_alpha,
+        interpolation=interpolation,
+        interp_stage=interp_stage,
+    )
+    add_hillshade(
+        ax,
+        hshade_img,
+        dem_img=dem_img,
+        bbox=bbox,
+        alpha=hshade_alpha,
+        azimuth=azimuth,
+        zenith=zenith,
+        zorder=2.0,
+        interpolation=interpolation,
+        interp_stage=interp_stage,
+    )
+    if show_colour_bar:
+        add_map_colour_bar(ax, img_artist, cbar_label=cbar_label)
     return img_artist

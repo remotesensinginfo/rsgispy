@@ -17,6 +17,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+# pylint: disable=wrong-import-position,wrong-import-order
 import pytest  # noqa: E402
 
 import rsgispy.mapping.basemaps  # noqa: E402
@@ -38,6 +39,7 @@ def _load_example():
 
 
 def test_worked_example_runs(tmp_path):
+    """The example runs end to end and writes every figure."""
     mod = _load_example()
     scene = make_maps_scene(str(tmp_path / "data"), height=40, width=60)
 
@@ -60,13 +62,14 @@ def test_worked_example_runs(tmp_path):
             basemap=True,
             wmts_url="https://example.com/wmts/WMTSCapabilities.xml",
             wmts_lyr="mosaic",
+            dem_img=scene["dem"],
         )
     fake_cx.add_basemap.assert_called_once()
     assert fake_cx.add_basemap.call_args.kwargs["crs"] == "epsg:32630"
     fake_wmts.assert_called_once()
 
     assert out["fig_height"] == pytest.approx(6.7 * 40 / 60)
-    for key in ("rgb_stretches", "rgb_map", "score_map", "cls_map", "cls_legend",
+    for key in ("rgb_stretches", "rgb_map", "score_map", "relief_map", "cls_map", "cls_legend",
                 "vec_map", "choropleth_map", "final_map", "final_map_pdf",
                 "zoom_map", "basemap_map", "wmts_map"):
         assert os.path.getsize(out[key]) > 0, key
