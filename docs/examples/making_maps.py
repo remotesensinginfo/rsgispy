@@ -118,17 +118,16 @@ def run_workflow(
     # [end-step-2-rgb]
 
     # [step-3-continuous]
-    import matplotlib.cm
-
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-    cmap, norm = map_raster.create_raster_cmap_img_map(
+    map_raster.create_raster_cmap_img_map(
         ax, score_img, img_band=1,
         cmap_name="viridis",  # perceptually uniform, colour-blind safe
         norm_img_vals=True, norm_vmin=0.0, norm_vmax=1.0,  # fixed range
         title_str="Score", scale_bar_loc="lower right",
+        show_colour_bar=True, cbar_label="Score (0-1)",
     )
-    fig.colorbar(matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax,
-                 label="Score (0-1)", shrink=0.8)
+    # The image artist is returned, so you can also add the colour bar
+    # yourself (e.g. one bar for several panels): fig.colorbar(img).
     map_layout.define_map_tick_spacing(ax, tick_spacing)
     out["score_map"] = os.path.join(out_dir, "maps_score.png")
     fig.savefig(out["score_map"], dpi=dpi, bbox_inches="tight")
@@ -207,9 +206,8 @@ def run_workflow(
         vec_fill_cmap="Greens", vec_var_norm=pct_norm, vec_line_clr="black",
         vec_line_width=0.5, title_str="Forest cover by region",
         scale_bar_loc="lower right",
+        show_colour_bar=True, cbar_label="Forest (%)",
     )
-    fig.colorbar(matplotlib.cm.ScalarMappable(norm=pct_norm, cmap="Greens"),
-                 ax=ax, label="Forest (%)", shrink=0.8)
     map_layout.define_map_tick_spacing(ax, tick_spacing)
     out["choropleth_map"] = os.path.join(out_dir, "maps_choropleth.png")
     fig.savefig(out["choropleth_map"], dpi=dpi, bbox_inches="tight")

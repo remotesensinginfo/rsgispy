@@ -279,10 +279,14 @@ def run_workflow(
         out_json_file=os.path.join(out_dir, "valid_metrics.json"),
     )
     print(val_metrics)
-    rmet.plot_pred_vs_obs(val_pts, ref_col=target_col, pred_col="pred",
-                          out_plot_file=os.path.join(out_dir, "pred_vs_obs.png"))
-    rmet.plot_residuals(val_pts, ref_col=target_col, pred_col="pred",
-                        out_plot_file=os.path.join(out_dir, "residuals.png"))
+    fig, axs = rmet.plot_pred_vs_obs(
+        val_pts, ref_col=target_col, pred_col="pred",
+        out_plot_file=os.path.join(out_dir, "pred_vs_obs.png"),
+    )
+    fig, axs = rmet.plot_residuals(
+        val_pts, ref_col=target_col, pred_col="pred",
+        out_plot_file=os.path.join(out_dir, "residuals.png"),
+    )
     in_interval = val_pts[target_col].between(val_pts["lower"], val_pts["upper"])
     print(f"90 % interval coverage: {in_interval.mean():.2f}")
     val_pts["residual"] = val_pts["pred"] - val_pts[target_col]
@@ -307,9 +311,12 @@ def run_workflow(
 
     fig, axs = plt.subplots(1, 2, figsize=(10, 4))
     create_raster_cmap_img_map(axs[0], pred_img, 1, title_str="Canopy cover (%)",
-                               cmap_name="YlGn", norm_vmin=0, norm_vmax=100)
+                               cmap_name="YlGn", norm_img_vals=True,
+                               norm_vmin=0, norm_vmax=100,
+                               show_colour_bar=True, cbar_label="Canopy cover (%)")
     create_raster_cmap_img_map(axs[1], width_img, 1,
-                               title_str="q05-q95 width (%)", cmap_name="magma")
+                               title_str="q05-q95 width (%)", cmap_name="magma",
+                               show_colour_bar=True, cbar_label="Interval width (%)")
     map_file = os.path.join(out_dir, "canopy_cover_map.png")
     fig.savefig(map_file, dpi=150, bbox_inches="tight")
     plt.close(fig)

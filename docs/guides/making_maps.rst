@@ -186,8 +186,12 @@ Step 3 — Continuous single-band maps
 
 :func:`~rsgispy.mapping.raster.create_raster_cmap_img_map` draws one band
 with a Matplotlib colour map. Pixels equal to the band's no data value are
-transparent. It returns the colour map and the normalisation, which you need
-for the colour bar.
+transparent. ``show_colour_bar=True`` (with ``cbar_label``) adds a colour bar
+beside the map. The function returns the image artist
+(:class:`matplotlib.image.AxesImage`), so you can also draw the colour bar
+yourself, e.g. one bar for several panels with ``fig.colorbar(img, ax=axs)``.
+Every map function returns the artist it drew (see
+:ref:`plotting_conventions`).
 
 Choosing a colour map:
 

@@ -29,7 +29,6 @@ from typing import (
 )
 
 import geopandas as gpd
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -45,6 +44,7 @@ from rsgispy.imageprocess import (
 )
 from rsgispy.imageutils.stats import pop_img_stats, pop_thmt_img_stats
 from rsgispy.tools._ml_explain import finalise_plot
+from rsgispy.tools.plotting import PLOT_DPI, get_fig_ax, save_plot
 from rsgispy.tools._sklearn import (
     HAVE_SKLEARN,
     check_sklearn_available as _check_sklearn_available,
@@ -544,35 +544,41 @@ def plot_roc_curve(
     fpr: Union[np.ndarray, Sequence[float]],
     tpr: Union[np.ndarray, Sequence[float]],
     roc_auc: float,
-    out_file: Optional[Union[str, os.PathLike]] = None,
     *,
     label: str = "ROC Curve",
     title: str = "Receiver Operating Characteristic",
-    dpi: int = 150,
-) -> None:
+    figsize: Tuple[float, float] = (5.5, 5.0),
+    ax: Optional[Any] = None,
+    out_plot_file: Optional[Union[str, os.PathLike]] = None,
+    out_dpi: int = PLOT_DPI,
+) -> Tuple[Any, Any]:
     """
     Plot a binary ROC curve (true positive rate against false positive rate),
-    with the AUC in the legend and the 1:1 line of a random model, and save it
-    to ``out_file``. The Matplotlib figure is always closed afterwards.
+    with the AUC in the legend and the 1:1 line of a random model.
 
     :param fpr: False positive rates (1 − specificity), e.g. from
                 :func:`calc_binary_roc_auc`.
     :param tpr: True positive rates (sensitivity), the same length as ``fpr``.
     :param roc_auc: Area under the curve, shown in the legend.
-    :param out_file: Output image file (format from the extension, e.g.
-                     ``.png``); parent directories are created. If ``None``
-                     the plot is displayed when running in a Jupyter notebook
-                     and is otherwise discarded.
     :param label: Legend label of the curve (Default = ``'ROC Curve'``).
     :param title: Plot title (Default = ``'Receiver Operating Characteristic'``).
-    :param dpi: Resolution of the saved image (Default = ``150``).
+    :param figsize: Size of a new figure in inches (Default = ``(5.5, 5.0)``).
+    :param ax: Optional Matplotlib axis to draw on (Default = a new figure).
+    :param out_plot_file: Optional output image file (format from the
+                          extension, e.g. ``.png``); parent directories are
+                          created and the figure is left open
+                          (Default = ``None``).
+    :param out_dpi: Resolution of the saved image (Default = ``300``).
+    :return: Tuple ``(fig, ax)``.
 
     .. code:: python
 
         import rsgispy.modelling.species_distribution as sdm
 
         fpr, tpr, test_auc = sdm.calc_binary_roc_auc(test_y, test_prob)
-        sdm.plot_roc_curve(fpr, tpr, test_auc, "plots/roc_curve.png", label="Ensemble")
+        fig, ax = sdm.plot_roc_curve(
+            fpr, tpr, test_auc, label="Ensemble", out_plot_file="plots/roc_curve.png"
+        )
     """
     # pylint: disable=too-many-arguments
     fpr_arr = np.asarray(fpr, dtype=np.float64)
@@ -581,18 +587,18 @@ def plot_roc_curve(
         raise rsgispy.RSGISPyException(
             "fpr and tpr must be 1D arrays of the same length."
         )
-    fig, ax = plt.subplots()
-    try:
-        ax.plot(fpr_arr, tpr_arr, label=f"{label} (AUC = {roc_auc:.3f})")
-        ax.plot([0.0, 1.0], [0.0, 1.0], linestyle="--", color="grey")
-        ax.set_xlim([0.0, 1.0])
-        ax.set_ylim([0.0, 1.05])
-        ax.set_xlabel("False Positive Rate")
-        ax.set_ylabel("True Positive Rate")
-        ax.set_title(title)
-        ax.legend(loc="lower right")
-    finally:
-        finalise_plot(fig, out_file=out_file, dpi=dpi)
+    fig, ax = get_fig_ax(ax, figsize=figsize)
+    ax.plot(fpr_arr, tpr_arr, label=f"{label} (AUC = {roc_auc:.3f})")
+    ax.plot([0.0, 1.0], [0.0, 1.0], linestyle="--", color="grey")
+    ax.set_xlim([0.0, 1.0])
+    ax.set_ylim([0.0, 1.05])
+    ax.set_xlabel("False Positive Rate")
+    ax.set_ylabel("True Positive Rate")
+    ax.set_title(title)
+    ax.legend(loc="lower right")
+    if out_plot_file is not None:
+        save_plot(fig, out_plot_file, out_dpi=out_dpi)
+    return fig, ax
 
 
 def env_vars_to_band_defs(

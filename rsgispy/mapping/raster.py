@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import matplotlib.axes
 import matplotlib.colors
+import matplotlib.image
 import matplotlib.pyplot as plt
 import numpy as np
 import rasterio
@@ -14,6 +15,7 @@ import rasterio
 import rsgispy
 from rsgispy.imageprocess import bbox_from_dataset
 from rsgispy.imageutils.colourtable import get_thematic_classes
+from rsgispy.mapping._common import add_map_colour_bar
 from rsgispy.mapping._legend import create_companion_legend_axis
 from rsgispy.mapping.elements import (
     NORTH_ARROW_STYLE_TRIANGLE,
@@ -72,7 +74,7 @@ def create_raster_img_map(
     show_north_arrow: bool = False,
     north_arrow_style: str = NORTH_ARROW_STYLE_TRIANGLE,
     north_arrow_loc: str = "upper left",
-) -> None:
+) -> matplotlib.image.AxesImage:
     """
     Display a continuous 1-band or 3-band raster layer onto ``ax`` with stretching.
 
@@ -102,6 +104,7 @@ def create_raster_img_map(
     :param north_arrow_style: North arrow style constant (Default =
                               :data:`~rsgispy.mapping.elements.NORTH_ARROW_STYLE_TRIANGLE`).
     :param north_arrow_loc: North arrow placement string (Default = ``'upper left'``).
+    :return: The image artist (:class:`matplotlib.image.AxesImage`).
 
     .. code:: python
 
@@ -110,7 +113,7 @@ def create_raster_img_map(
         import rsgispy.mapping.raster as map_raster
 
         fig, ax = plt.subplots()
-        map_raster.create_raster_img_map(
+        img = map_raster.create_raster_img_map(
             ax=ax,
             input_img="sentinel2.tif",
             img_bands=[4, 3, 2],
@@ -165,7 +168,7 @@ def create_raster_img_map(
             "Do not recognise stretch method. Must be rsgispy.IMG_STRETCH_*"
         )
 
-    ax.imshow(
+    img_artist = ax.imshow(
         img_data_strch,
         cmap=clr_map,
         extent=img_coords,
@@ -191,6 +194,8 @@ def create_raster_img_map(
         north_arrow_style=north_arrow_style,
         north_arrow_loc=north_arrow_loc,
     )
+
+    return img_artist
 
 
 def create_thematic_raster_map(
@@ -221,7 +226,7 @@ def create_thematic_raster_map(
     legend_loc: str = "lower right",
     legend_kwargs: Optional[Dict[str, Any]] = None,
     legend_ax: Optional[matplotlib.axes.Axes] = None,
-) -> None:
+) -> Union[matplotlib.image.AxesImage, List[matplotlib.image.AxesImage]]:
     """
     Display one or more thematic raster layers onto ``ax`` using the colour
     table stored in each image, optionally attaching a categorical legend.
@@ -276,6 +281,11 @@ def create_thematic_raster_map(
                       the legend is written via
                       :func:`~rsgispy.mapping.legend.add_categorical_legend_axis`
                       when ``show_legend=True`` (Default = ``None``).
+    :return: The image artist (:class:`matplotlib.image.AxesImage`) when
+             ``input_img`` is one image, or a list of image artists (one per
+             image, in drawing order) when it is a list. The legend, when
+             drawn, is available from the axis (``ax.get_legend()``) or
+             ``legend_ax``.
 
     .. code:: python
 
@@ -336,10 +346,15 @@ def create_thematic_raster_map(
     ax.set_ylim([img_coords_scns[0][2], img_coords_scns[0][3]])
     ax.ticklabel_format(useOffset=False, style="plain")
 
+    img_artists = []
     for img_data_arr, img_coords, plot_zorder in zip(
         img_data_arr_scns, img_coords_scns, zorder_list
     ):
-        ax.imshow(img_data_arr, extent=img_coords, alpha=img_alpha, zorder=plot_zorder)
+        img_artists.append(
+            ax.imshow(
+                img_data_arr, extent=img_coords, alpha=img_alpha, zorder=plot_zorder
+            )
+        )
 
     _finalise_map_axis(
         ax=ax,
@@ -399,6 +414,10 @@ def create_thematic_raster_map(
                 **extra_kw,
             )
 
+    if isinstance(input_img, str):
+        return img_artists[0]
+    return img_artists
+
 
 def create_raster_cmap_img_map(
     ax: matplotlib.axes.Axes,
@@ -423,7 +442,9 @@ def create_raster_cmap_img_map(
     show_north_arrow: bool = False,
     north_arrow_style: str = NORTH_ARROW_STYLE_TRIANGLE,
     north_arrow_loc: str = "upper left",
-) -> Tuple[matplotlib.colors.Colormap, Optional[matplotlib.colors.Normalize]]:
+    show_colour_bar: bool = False,
+    cbar_label: Optional[str] = None,
+) -> matplotlib.image.AxesImage:
     """
     Display a single-band raster layer on ``ax`` using a Matplotlib colour map and
     optional value normalisation.
@@ -453,7 +474,12 @@ def create_raster_cmap_img_map(
     :param north_arrow_style: North arrow style constant (Default =
                               :data:`~rsgispy.mapping.elements.NORTH_ARROW_STYLE_TRIANGLE`).
     :param north_arrow_loc: North arrow placement string (Default = ``'upper left'``).
-    :return: Tuple ``(c_cmap, c_norm)`` for creating a Matplotlib colourbar.
+    :param show_colour_bar: Draw a colour bar beside the map (Default = False).
+    :param cbar_label: Optional colour bar label, e.g. the variable and its
+                       units (Default = None).
+    :return: The image artist (:class:`matplotlib.image.AxesImage`), e.g. for
+             ``fig.colorbar(img)``; with ``show_colour_bar=True`` the colour
+             bar is ``img.colorbar``.
 
     .. code:: python
 
@@ -461,12 +487,14 @@ def create_raster_cmap_img_map(
         import rsgispy.mapping.raster as map_raster
 
         fig, ax = plt.subplots()
-        cmap, norm = map_raster.create_raster_cmap_img_map(
+        img = map_raster.create_raster_cmap_img_map(
             ax=ax,
             input_img="ndvi.tif",
             img_band=1,
             cmap_name="YlGn",
             norm_img_vals=True,
+            show_colour_bar=True,
+            cbar_label="NDVI",
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -511,7 +539,9 @@ def create_raster_cmap_img_map(
         if print_norm_vals:
             print(f"{norm_vmin} - {norm_vmax}")
 
-    ax.imshow(img_data, extent=img_coords, cmap=c_cmap, norm=c_norm, zorder=plot_zorder)
+    img_artist = ax.imshow(
+        img_data, extent=img_coords, cmap=c_cmap, norm=c_norm, zorder=plot_zorder
+    )
     ax.set_xlim([img_coords[0], img_coords[1]])
     ax.set_ylim([img_coords[2], img_coords[3]])
     ax.ticklabel_format(useOffset=False, style="plain")
@@ -532,4 +562,7 @@ def create_raster_cmap_img_map(
         north_arrow_loc=north_arrow_loc,
     )
 
-    return c_cmap, c_norm
+    if show_colour_bar:
+        add_map_colour_bar(ax, img_artist, cbar_label=cbar_label)
+
+    return img_artist

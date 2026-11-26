@@ -15,7 +15,6 @@ SALib Sobol global sensitivity analysis).
 import os
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -56,6 +55,7 @@ from rsgispy.tools.featureselection import (
     cqv_threshold,
 )
 from rsgispy.tools.files import ensure_parent_dir
+from rsgispy.tools.plotting import get_fig_ax
 
 __all__ = [
     "target_scatter_plots",
@@ -162,6 +162,49 @@ def _predict_1d_target(
 # ---------------------------------------------------------------------------
 
 
+def _plot_target_scatter(
+    x_vals: np.ndarray,
+    y_vals: np.ndarray,
+    f_col: str,
+    t_col: str,
+    add_trendline: bool = True,
+    ax: Optional[Any] = None,
+) -> Tuple[Any, Any]:
+    """Scatter one feature against one target, with an optional OLS trendline."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    fig, ax = get_fig_ax(ax, figsize=(6, 4.5))
+    ax.scatter(
+        x_vals,
+        y_vals,
+        color="#1E88E5",
+        alpha=0.55,
+        s=20,
+        edgecolors="none",
+    )
+    r_val = 0.0
+    if np.std(x_vals) > 0.0 and np.std(y_vals) > 0.0:
+        r_val = float(np.corrcoef(x_vals, y_vals)[0, 1])
+        if np.isnan(r_val):
+            r_val = 0.0
+    if add_trendline and np.std(x_vals) > 0.0 and x_vals.size >= 2:
+        slope, intercept = np.polyfit(x_vals, y_vals, 1)
+        x_line = np.linspace(float(np.min(x_vals)), float(np.max(x_vals)), 100)
+        ax.plot(
+            x_line,
+            slope * x_line + intercept,
+            color="#D81B60",
+            linestyle="--",
+            linewidth=1.8,
+            label=f"Trend (r = {r_val:.3f})",
+        )
+        ax.legend(loc="best")
+    ax.set_xlabel(f_col)
+    ax.set_ylabel(t_col)
+    ax.set_title(f"{f_col} vs {t_col} (r = {r_val:.3f})")
+    ax.grid(alpha=0.25)
+    return fig, ax
+
+
 # pylint: disable=too-many-arguments,too-many-positional-arguments
 def target_scatter_plots(
     samples_data: SamplesInput,
@@ -171,10 +214,12 @@ def target_scatter_plots(
     out_dir: Union[str, os.PathLike] = "scatter_plots",
     add_trendline: bool = True,
     use_pbar: bool = True,
-) -> None:
+) -> List[str]:
     """
     Create per-feature scatter plots against each continuous target variable
-    with optional linear regression trendlines and Pearson correlation annotations.
+    with optional linear regression trendlines and Pearson correlation
+    annotations. One file is written per feature and target, and each figure
+    is closed after it is saved (see :ref:`plotting_conventions`).
 
     :param samples_data: Sample :class:`pandas.DataFrame` or table path
                          (Parquet, CSV, etc.).
@@ -188,12 +233,13 @@ def target_scatter_plots(
     :param add_trendline: If ``True`` (default), overlay a fitted ordinary
                           least-squares trendline and Pearson ``r`` label.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :return: List of the plot files written.
 
     .. code:: python
 
         import rsgispy.regression.regfeatures as rf
 
-        rf.target_scatter_plots(
+        plot_files = rf.target_scatter_plots(
             "train.parquet",
             reg_cfg="reg_config.json",
             out_dir="scatter_plots",
@@ -211,46 +257,21 @@ def target_scatter_plots(
     out_dir_str = os.fspath(out_dir)
     os.makedirs(out_dir_str, exist_ok=True)
 
+    out_files: List[str] = []
     pairs = [(t_col, f_col) for t_col in eff_targets for f_col in feat_cols]
     pbar = rsgispy.get_tqdm()
     for t_col, f_col in pbar(pairs, disable=not use_pbar):
-        x_vals = x_df[f_col].to_numpy(dtype=np.float64)
-        y_vals = df[t_col].to_numpy(dtype=np.float64)
-        fig, ax = plt.subplots(figsize=(6, 4.5))
-        try:
-            ax.scatter(
-                x_vals,
-                y_vals,
-                color="#1E88E5",
-                alpha=0.55,
-                s=20,
-                edgecolors="none",
-            )
-            r_val = 0.0
-            if np.std(x_vals) > 0.0 and np.std(y_vals) > 0.0:
-                r_val = float(np.corrcoef(x_vals, y_vals)[0, 1])
-                if np.isnan(r_val):
-                    r_val = 0.0
-            if add_trendline and np.std(x_vals) > 0.0 and x_vals.size >= 2:
-                slope, intercept = np.polyfit(x_vals, y_vals, 1)
-                x_line = np.linspace(float(np.min(x_vals)), float(np.max(x_vals)), 100)
-                ax.plot(
-                    x_line,
-                    slope * x_line + intercept,
-                    color="#D81B60",
-                    linestyle="--",
-                    linewidth=1.8,
-                    label=f"Trend (r = {r_val:.3f})",
-                )
-                ax.legend(loc="best")
-            ax.set_xlabel(f_col)
-            ax.set_ylabel(t_col)
-            ax.set_title(f"{f_col} vs {t_col} (r = {r_val:.3f})")
-            ax.grid(alpha=0.25)
-            fig.tight_layout()
-        finally:
-            out_plot = os.path.join(out_dir_str, f"{f_col}_{t_col}_scatter.png")
-            finalise_plot(fig, out_file=out_plot)
+        fig, _ = _plot_target_scatter(
+            x_df[f_col].to_numpy(dtype=np.float64),
+            df[t_col].to_numpy(dtype=np.float64),
+            f_col,
+            t_col,
+            add_trendline=add_trendline,
+        )
+        out_plot = os.path.join(out_dir_str, f"{f_col}_{t_col}_scatter.png")
+        finalise_plot(fig, out_file=out_plot)
+        out_files.append(out_plot)
+    return out_files
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -1265,26 +1286,26 @@ def calc_jackknife_feature_importance(
         jack_df.to_csv(ensure_parent_dir(out_var_importance_file), index=True)
 
     if out_importance_r2_plot is not None:
-        plot_jackknife_bars(
+        fig, _ = plot_jackknife_bars(
             feat_cols,
             out_data["test_r2_leave_var_out"],
             out_data["test_r2_only_var"],
             all_metrics["test_r2"],
             "Jackknife R^2 Comparison",
             "Testing R^2",
-            out_importance_r2_plot,
         )
+        finalise_plot(fig, out_file=out_importance_r2_plot)
 
     if out_importance_rmse_plot is not None:
-        plot_jackknife_bars(
+        fig, _ = plot_jackknife_bars(
             feat_cols,
             out_data["test_rmse_leave_var_out"],
             out_data["test_rmse_only_var"],
             all_metrics["test_rmse"],
             "Jackknife RMSE Comparison",
             "Testing RMSE",
-            out_importance_rmse_plot,
         )
+        finalise_plot(fig, out_file=out_importance_rmse_plot)
 
     return jack_df
 

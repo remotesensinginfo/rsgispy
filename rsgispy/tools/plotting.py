@@ -1,12 +1,19 @@
 """
-The tools.plotting module provides functions for reading raster data into
-NumPy arrays and applying image stretches for visualisation with Matplotlib
-using rasterio.
+The tools.plotting module provides the helpers every rsgispy plotting
+function uses (:func:`get_fig_ax`, :func:`get_fig_axs`, :func:`save_plot`
+and :func:`add_stats_text_box`), functions for reading raster data into
+NumPy arrays and applying image stretches for visualisation with Matplotlib,
+and generic plots (:func:`plot_histogram_threshold`).
+
+See :ref:`plotting_conventions` for the conventions every rsgispy plotting
+function follows.
 """
 
 import math
+import os
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
+import matplotlib
 from matplotlib.patches import Patch
 import numpy as np
 import rasterio
@@ -18,6 +25,11 @@ import rsgispy
 from rsgispy.imageprocess import ensure_file_exists
 
 __all__ = [
+    "PLOT_DPI",
+    "get_fig_ax",
+    "get_fig_axs",
+    "save_plot",
+    "add_stats_text_box",
     "get_raster_mpl_imshow",
     "get_thematic_raster_mpl_imshow",
     "limit_range_np_arr",
@@ -27,6 +39,175 @@ __all__ = [
     "stdev_stretch_np_arr",
     "plot_histogram_threshold",
 ]
+
+#: Default resolution (dots per inch) of saved plots.
+PLOT_DPI = 300
+
+#: Colour of 1:1 and zero reference lines.
+REF_LINE_COLOUR = "#4d4d4d"
+
+
+def get_fig_ax(
+    ax: Optional[Any] = None,
+    figsize: Optional[Tuple[float, float]] = None,
+    **subplots_kw: Any,
+) -> Tuple[Any, Any]:
+    """
+    Get the figure and axis to draw on: ``ax`` and its figure when ``ax`` is
+    given, otherwise a new figure and axis from
+    :func:`matplotlib.pyplot.subplots`.
+
+    :param ax: Optional existing Matplotlib axis to draw on.
+    :param figsize: Size ``(width, height)`` in inches of a new figure.
+    :param subplots_kw: Extra keyword arguments for ``plt.subplots`` when a
+                        new figure is created (e.g.
+                        ``subplot_kw={"projection": "polar"}``).
+    :return: Tuple ``(fig, ax)``.
+
+    .. code:: python
+
+        import rsgispy.tools.plotting as rplot
+
+        fig, ax = rplot.get_fig_ax(None, figsize=(6.0, 4.0))
+    """
+    if ax is not None:
+        return ax.get_figure(), ax
+    import matplotlib.pyplot as plt  # pylint: disable=import-outside-toplevel
+
+    fig, new_ax = plt.subplots(figsize=figsize, **subplots_kw)
+    return fig, new_ax
+
+
+def get_fig_axs(
+    axs: Optional[Any] = None,
+    nrows: int = 1,
+    ncols: int = 1,
+    figsize: Optional[Tuple[float, float]] = None,
+    **subplots_kw: Any,
+) -> Tuple[Any, np.ndarray]:
+    """
+    Get the figure and a 2D array of axes for a multi-panel plot: ``axs``
+    (reshaped to ``(nrows, ncols)``) and its figure when given, otherwise a
+    new figure from :func:`matplotlib.pyplot.subplots` with ``squeeze=False``.
+
+    :param axs: Optional existing axes (one axis, a sequence or an array)
+                with ``nrows * ncols`` elements.
+    :param nrows: Number of rows of panels (Default = 1).
+    :param ncols: Number of columns of panels (Default = 1).
+    :param figsize: Size ``(width, height)`` in inches of a new figure.
+    :param subplots_kw: Extra keyword arguments for ``plt.subplots`` when a
+                        new figure is created.
+    :return: Tuple ``(fig, axs)``, with ``axs`` an array of shape
+             ``(nrows, ncols)``.
+
+    .. code:: python
+
+        import rsgispy.tools.plotting as rplot
+
+        fig, axs = rplot.get_fig_axs(None, nrows=2, ncols=2, figsize=(8, 8))
+    """
+    if axs is not None:
+        ax_arr = np.asarray(axs, dtype=object).ravel()
+        if ax_arr.size != nrows * ncols:
+            raise rsgispy.RSGISPyException(
+                f"{nrows * ncols} axes are needed (nrows={nrows}, "
+                f"ncols={ncols}) but {ax_arr.size} were given."
+            )
+        return ax_arr[0].get_figure(), ax_arr.reshape(nrows, ncols)
+    import matplotlib.pyplot as plt  # pylint: disable=import-outside-toplevel
+
+    fig, new_axs = plt.subplots(
+        nrows, ncols, figsize=figsize, squeeze=False, **subplots_kw
+    )
+    return fig, new_axs
+
+
+def save_plot(
+    fig: Any,
+    out_plot_file: Union[str, os.PathLike],
+    out_dpi: int = PLOT_DPI,
+    close: bool = False,
+) -> str:
+    """
+    Save a figure with ``bbox_inches="tight"``, creating the parent directory
+    if needed; the format comes from the file extension. The figure is not
+    closed, so it still shows in a notebook, unless ``close=True`` (used by
+    functions that write many figures, to free their memory).
+
+    :param fig: Matplotlib figure to save.
+    :param out_plot_file: Output image file path (e.g. ``.png`` or ``.pdf``).
+    :param out_dpi: Resolution in dots per inch (Default = ``300``).
+    :param close: Close the figure after saving it (Default = ``False``).
+    :return: The output file path.
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import rsgispy.tools.plotting as rplot
+
+        fig, ax = plt.subplots()
+        ax.plot([0, 1], [0, 1])
+        rplot.save_plot(fig, "plots/line.png", out_dpi=150)
+    """
+    out_path = os.fspath(out_plot_file)
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    try:
+        fig.savefig(out_path, dpi=out_dpi, bbox_inches="tight")
+    finally:
+        if close:
+            import matplotlib.pyplot as plt  # pylint: disable=import-outside-toplevel
+
+            plt.close(fig)
+    return out_path
+
+
+def add_stats_text_box(
+    ax: Any,
+    text: Union[str, Sequence[str]],
+    loc: str = "upper left",
+    fontsize: Optional[float] = None,
+) -> Any:
+    """
+    Add a small box of text (e.g. ``r²``, RMSE and ``n``) inside ``ax``, in
+    the style of the rsgispy plots.
+
+    :param ax: Matplotlib axis.
+    :param text: Text, or a sequence of lines.
+    :param loc: Placement, as for a legend (Default = ``'upper left'``).
+    :param fontsize: Font size (Default = the legend font size).
+    :return: The :class:`matplotlib.offsetbox.AnchoredText` artist.
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import rsgispy.tools.plotting as rplot
+
+        fig, ax = plt.subplots()
+        rplot.add_stats_text_box(ax, ["RMSE = 1.20", "n = 50"])
+    """
+    from matplotlib.offsetbox import AnchoredText  # pylint: disable=import-outside-toplevel
+
+    if not isinstance(text, str):
+        text = "\n".join(str(line) for line in text)
+    if fontsize is None:
+        fontsize = matplotlib.rcParams["legend.fontsize"]
+    txt_box = AnchoredText(
+        text,
+        loc=loc,
+        frameon=True,
+        prop={"fontsize": fontsize},
+        pad=0.4,
+        borderpad=0.6,
+    )
+    txt_box.patch.set_facecolor("white")
+    txt_box.patch.set_alpha(0.9)
+    txt_box.patch.set_edgecolor("#cccccc")
+    txt_box.patch.set_linewidth(0.6)
+    txt_box.set_zorder(5)
+    ax.add_artist(txt_box)
+    return txt_box
 
 
 def _get_subset_window_and_coords(
@@ -674,27 +855,35 @@ def stdev_stretch_np_arr(
 
 def plot_histogram_threshold(
     data: np.ndarray,
-    out_file: str,
     threshold: Optional[float] = None,
+    *,
     title_str: Optional[str] = None,
+    x_label: Optional[str] = None,
     hist_clr: str = "gray",
-    out_format: Optional[str] = None,
-    plot_dpi: int = 300,
     n_bins: Optional[int] = None,
-) -> None:
+    figsize: Tuple[float, float] = (6.4, 4.2),
+    ax: Optional[Any] = None,
+    out_plot_file: Optional[Union[str, os.PathLike]] = None,
+    out_dpi: int = PLOT_DPI,
+) -> Tuple[Any, Any]:
     """
-    Create a histogram plot for a 1D NumPy array and optionally display a
-    vertical threshold line.
+    Plot a histogram of a 1D NumPy array, optionally with a vertical line at
+    a threshold.
 
-    :param data: 1D NumPy array of values to plot.
-    :param out_file: Output image file path for the saved plot.
-    :param threshold: Optional threshold value plotted as a vertical red line.
-    :param title_str: Optional plot title string.
-    :param hist_clr: Colour for the histogram bars (Default = ``'gray'``).
-    :param out_format: Output image format (inferred from extension if ``None``).
-    :param plot_dpi: Resolution in DPI for the saved figure (Default = ``300``).
-    :param n_bins: Number of histogram bins (estimated via Freedman-Diaconis rule
-                   if ``None``).
+    :param data: NumPy array of values to plot (flattened; non-finite values
+                 are ignored).
+    :param threshold: Optional threshold value drawn as a vertical line.
+    :param title_str: Optional plot title.
+    :param x_label: Optional x-axis label (Default = ``'Value'``).
+    :param hist_clr: Colour of the histogram bars (Default = ``'gray'``).
+    :param n_bins: Number of histogram bins (estimated with the
+                   Freedman-Diaconis rule if ``None``).
+    :param figsize: Size of a new figure in inches (Default = ``(6.4, 4.2)``).
+    :param ax: Optional Matplotlib axis to draw on (Default = a new figure).
+    :param out_plot_file: Optional output image file; the figure is saved
+                          and left open (Default = ``None``).
+    :param out_dpi: Resolution of the saved image (Default = ``300``).
+    :return: Tuple ``(fig, ax)``.
 
     .. code:: python
 
@@ -702,13 +891,12 @@ def plot_histogram_threshold(
         import rsgispy.tools.plotting
 
         vals = np.concatenate([np.random.normal(2.0, 0.4, 200), np.random.normal(6.0, 0.4, 200)])
-        rsgispy.tools.plotting.plot_histogram_threshold(
-            vals, "hist_thres.png", threshold=4.0, title_str="Threshold"
+        fig, ax = rsgispy.tools.plotting.plot_histogram_threshold(
+            vals, threshold=4.0, title_str="Threshold", out_plot_file="hist_thres.png"
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments
     # pylint: disable=import-outside-toplevel
-    import matplotlib.pyplot as plt
     from rsgispy.tools.thresholding import get_nbins_histogram
 
     data_arr = np.asarray(data, dtype=float).ravel()
@@ -726,13 +914,14 @@ def plot_histogram_threshold(
         else:
             n_bins = min(50, max(1, int(data_arr.size)))
 
-    fig, ax = plt.subplots()
-    try:
-        ax.hist(data_arr, bins=n_bins, color=hist_clr)
-        if threshold is not None:
-            ax.axvline(x=threshold, color="red")
-        if title_str is not None:
-            ax.set_title(title_str)
-        fig.savefig(out_file, format=out_format, dpi=plot_dpi)
-    finally:
-        plt.close(fig)
+    fig, ax = get_fig_ax(ax, figsize=figsize)
+    ax.hist(data_arr, bins=n_bins, color=hist_clr)
+    if threshold is not None:
+        ax.axvline(x=threshold, color="red")
+    if title_str is not None:
+        ax.set_title(title_str)
+    ax.set_xlabel(x_label if x_label is not None else "Value")
+    ax.set_ylabel("Frequency")
+    if out_plot_file is not None:
+        save_plot(fig, out_plot_file, out_dpi=out_dpi)
+    return fig, ax

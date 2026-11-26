@@ -40,6 +40,10 @@ custom scale bar:
        classes_info={1: "Forest", 2: "Grassland", 3: "Water"},
    )
 
+Every map function draws on the axis it is given and returns the artist
+the caller needs next (e.g. the image, for a colour bar); see
+:ref:`plotting_conventions`.
+
 Submodules
 ----------
 

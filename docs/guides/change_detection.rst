@@ -177,7 +177,9 @@ the histogram of the valid pixels (extracted here with
   better with a small change class in a long tail.
 
 There is no universally best method: compute several, plot them on the
-histogram (:func:`rsgispy.tools.plotting.plot_histogram_threshold`), look at
+histogram (:func:`rsgispy.tools.plotting.plot_histogram_threshold`, which
+returns ``(fig, ax)``, so you can add more threshold lines with
+``ax.axvline``), look at
 the change map over areas you know, and check it against reference data
 (step 7). A threshold from the literature or a pilot area (for example
 dNDVI > 0.2 for clearing), or the no-change mean plus *k* standard deviations,

@@ -146,9 +146,10 @@ def run_workflow(
     print(em_df.round(0))  # rows = bands, columns = endmembers
     spec_em.write_endmembers_df(em_df, os.path.join(out_dir, "endmembers.csv"))
     out["em_plot"] = os.path.join(out_dir, "unmix_endmembers.png")
-    spec_em.plot_endmembers(em_df, out["em_plot"], gain=refl_scale,
-                            plot_title="TropWet endmembers",
-                            wavelengths=wavelengths)
+    fig, ax = spec_em.plot_endmembers(
+        em_df, gain=refl_scale, plot_title="TropWet endmembers",
+        wavelengths=wavelengths, out_plot_file=out["em_plot"],
+    )
     # [end-step-3-endmembers]
     out["em_counts"] = em_counts
     out["em_msk_img"] = em_msk_img
@@ -335,7 +336,6 @@ def run_workflow(
     out["freq_img"] = freq_img
 
     # [step-9-map]
-    import matplotlib.cm
     import matplotlib.pyplot as plt
     import rsgispy.mapping.elements as map_elements
     import rsgispy.mapping.legend as map_legend
@@ -351,14 +351,13 @@ def run_workflow(
         title_str="Sand / Vegetation / Water (R/G/B)",
     )
     # (b) Water frequency across the dates.
-    cmap, norm = map_raster.create_raster_cmap_img_map(
+    map_raster.create_raster_cmap_img_map(
         axs[0, 1], freq_img, img_band=3, cmap_name="Blues",
         norm_img_vals=True, norm_vmin=0.0, norm_vmax=100.0,
         show_map_axis=False, scale_bar_loc="lower left",
         title_str="Water frequency",
+        show_colour_bar=True, cbar_label="% of observations",
     )
-    fig.colorbar(matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap),
-                 ax=axs[0, 1], label="% of observations", shrink=0.8)
     # (c) TropWet classes, using the colour table stored in the image.
     map_raster.create_thematic_raster_map(
         axs[1, 0], cls_img, show_map_axis=False, scale_bar_loc="lower left",

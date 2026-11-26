@@ -189,8 +189,10 @@ def run_workflow(
 
     # ROC curve of the ensemble on the test set.
     fpr, tpr, ens_auc = sdm.calc_binary_roc_auc(test_y, test_prob)
-    sdm.plot_roc_curve(fpr, tpr, ens_auc, os.path.join(plots_dir, "roc_curve.png"),
-                       label="Ensemble")
+    fig, ax = sdm.plot_roc_curve(
+        fpr, tpr, ens_auc, label="Ensemble",
+        out_plot_file=os.path.join(plots_dir, "roc_curve.png"),
+    )
     # [end-step-7-evaluate]
     out["ens_metrics"] = ens_metrics
     out["ens_auc"] = ens_auc

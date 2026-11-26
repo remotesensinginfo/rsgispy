@@ -719,7 +719,7 @@ def comparison_box_plots(
     out_dir: str = "boxplots",
     cls_col: str = "clsid",
     box_plots: bool = False,
-) -> None:
+) -> List[str]:
     """
     Create distribution comparison plots (violin or box plots) grouped by
     ``cls_col`` for every covariate in ``env_vars``.
@@ -730,6 +730,8 @@ def comparison_box_plots(
     :param out_dir: Output directory where ``<var>_comp_plot.png`` images are saved.
     :param cls_col: Class column name (Default = ``'clsid'``).
     :param box_plots: If ``True``, render box plots; if ``False``, violin plots.
+    :return: List of the plot files written (one per covariate; each figure is
+             closed after it is saved).
 
     .. code:: python
 
@@ -740,7 +742,7 @@ def comparison_box_plots(
     data_gdf = read_model_vector(vec_file, vec_lyr=vec_lyr)
     analysis_vars = resolve_analysis_vars(env_vars)
     validate_columns_exist(data_gdf, [*analysis_vars, cls_col])
-    plot_class_feature_distributions(
+    return plot_class_feature_distributions(
         data_df=data_gdf,
         feature_cols=analysis_vars,
         cls_col=cls_col,

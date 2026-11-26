@@ -8,21 +8,22 @@ Covers `rsgispy.mapping.*`, `rsgispy.dataaccess.*`, `rsgispy.droneutils`, all 29
 
 > **BBox order & British spelling**: `bbox` arguments expect RSGIS order `(xmin, xmax, ymin, ymax)` (`bbox.as_rsgis()`). Note British spelling on `colour`, `alt_colour`, `box_colour`, `swatch_edge_colour`, and `colour_lut`.
 
+- **Plotting convention** (all of `mapping`, `tools.plotting` and every `plot_*`): figure functions take `ax=None`/`axs=None`, `out_plot_file=None`, `out_dpi=300` and return `(fig, ax)` / `(fig, axs)` (saving never closes the figure; assign the result in notebooks). Map functions draw on the given `ax` and return their artist. Compute functions (`calc_*`, `run_*`) keep returning data; plot it with the matching `plot_*` (e.g. `tools.stats.plot_semivariogram(vario_df)`). Helpers: `tools.plotting.get_fig_ax`, `get_fig_axs`, `save_plot(fig, out_plot_file, out_dpi=300, close=False)`, `add_stats_text_box`.
 - **Raster layers (`mapping.raster`)**:
-  - `create_raster_img_map(ax, input_img, img_bands, img_stch, bbox=None, title_str=None, show_scale_bar=True, use_grid=False, show_map_axis=True, no_data_val=None, no_data_out_clr=None, stch_min_max_vals=None, stch_n_stdevs=2.0, img_alpha=1.0, scale_bar_loc='upper right', plot_zorder=1.0, scale_bar_style='solid', scale_bar_units=None, show_north_arrow=False, north_arrow_style='triangle', north_arrow_loc='upper left')` (`img_stch`: `rsgispy.IMG_STRETCH_*`)
-  - `create_thematic_raster_map(ax, input_img, bbox=None, title_str=None, alpha_backgd=True, img_alpha=1.0, ctab_alpha=True, show_scale_bar=True, ..., show_legend=False, classes_info=None, legend_position='right', legend_title=None, legend_ncols=None, legend_nrows=None, legend_overlay=False, legend_loc='lower right', legend_kwargs=None, legend_ax=None)`
-  - `create_raster_cmap_img_map(ax, input_img, img_band, bbox=None, title_str=None, ..., cmap_name='viridis', norm_img_vals=False, use_log_norm=False, norm_vmin=None, norm_vmax=None, vals_under_white=False, print_norm_vals=False, ...)` -> `(Colormap, Normalize | None)`
+  - `create_raster_img_map(ax, input_img, img_bands, img_stch, bbox=None, title_str=None, show_scale_bar=True, use_grid=False, show_map_axis=True, no_data_val=None, no_data_out_clr=None, stch_min_max_vals=None, stch_n_stdevs=2.0, img_alpha=1.0, scale_bar_loc='upper right', plot_zorder=1.0, scale_bar_style='solid', scale_bar_units=None, show_north_arrow=False, north_arrow_style='triangle', north_arrow_loc='upper left')` -> `AxesImage` (`img_stch`: `rsgispy.IMG_STRETCH_*`)
+  - `create_thematic_raster_map(ax, input_img, bbox=None, title_str=None, alpha_backgd=True, img_alpha=1.0, ctab_alpha=True, show_scale_bar=True, ..., show_legend=False, classes_info=None, legend_position='right', legend_title=None, legend_ncols=None, legend_nrows=None, legend_overlay=False, legend_loc='lower right', legend_kwargs=None, legend_ax=None)` -> `AxesImage` (a list for a list of images)
+  - `create_raster_cmap_img_map(ax, input_img, img_band, bbox=None, title_str=None, ..., cmap_name='viridis', norm_img_vals=False, use_log_norm=False, norm_vmin=None, norm_vmax=None, vals_under_white=False, print_norm_vals=False, ..., show_colour_bar=False, cbar_label=None)` -> `AxesImage` (use `fig.colorbar(img)`; with `show_colour_bar=True` it is `img.colorbar`)
 - **Vector layers (`mapping.vector`)**:
-  - `create_vec_lyr_map(ax, gp_vecs, bbox, title_str=None, vec_fill_clrs='grey', vec_line_clrs='black', vec_line_widths=0.25, vec_fill_alphas=1.0, vec_markersize=None, show_scale_bar=True, ...)`
+  - `create_vec_lyr_map(ax, gp_vecs, bbox, title_str=None, vec_fill_clrs='grey', vec_line_clrs='black', vec_line_widths=0.25, vec_fill_alphas=1.0, vec_markersize=None, show_scale_bar=True, ...)` -> list of collections
   - Line layers are drawn in `vec_line_clrs` (polygons/points use `vec_fill_clrs` with `vec_line_clrs` edges; mixed layers are split by geometry type).
-  - `create_choropleth_vec_lyr_map(ax, gp_vec, vec_col, bbox, title_str=None, vec_fill_cmap=None, vec_var_norm=None, ...)`
-  - `create_vec_pt_density_map(ax, gp_vec, bbox, title_str=None, cmap_name='viridis', use_log_norm=False, density_norm_vmin=1.0, density_norm_vmax=None, density_dpi=72, ...)` -> `(Colormap, Normalize)`
+  - `create_choropleth_vec_lyr_map(ax, gp_vec, vec_col, bbox, title_str=None, vec_fill_cmap=None, vec_var_norm=None, ..., show_colour_bar=False, cbar_label=None)` -> first collection (for `fig.colorbar`)
+  - `create_vec_pt_density_map(ax, gp_vec, bbox, title_str=None, cmap_name='viridis', use_log_norm=False, density_norm_vmin=1.0, density_norm_vmax=None, density_dpi=72, ..., show_colour_bar=False, cbar_label=None)` -> density artist
 - **Basemaps (`mapping.basemaps`)**:
-  - `add_contextily_basemap(ax, epsg_crs, cx_src, cx_zoom_lvl='auto', cx_attribution=None, cx_att_size=8)` (requires `mapping` extra / `contextily`)
-  - `create_wmts_img_map(ax, wmts_url, wmts_lyr, bbox, bbox_epsg, wmts_zoom_level=None, ...)`
+  - `add_contextily_basemap(ax, epsg_crs, cx_src, cx_zoom_lvl='auto', cx_attribution=None, cx_att_size=8)` -> `AxesImage` (requires `mapping` extra / `contextily`)
+  - `create_wmts_img_map(ax, wmts_url, wmts_lyr, bbox, bbox_epsg, wmts_zoom_level=None, ...)` -> `AxesImage`
 - **Cartographic elements (`mapping.elements`)**:
   - Constants: `SCALEBAR_STYLE_{SOLID,ALTERNATING,TICKS}`, `SCALEBAR_UNIT_{METRES,KILOMETRES}`, `NORTH_ARROW_STYLE_{TRIANGLE,ARROW,COMPASS,SIMPLE}`.
-  - Classes & helpers: `MapScaleBar`, `MapNorthArrow`, `add_scale_bar(...)`, `add_north_arrow(...)`, `draw_bboxes_to_axis(...)`, `add_axis_label(...)`.
+  - Classes & helpers: `MapScaleBar`, `MapNorthArrow`, `add_scale_bar(...)`, `add_north_arrow(...)`, `draw_bboxes_to_axis(...)` -> list of `Rectangle`, `add_axis_label(...)` -> `Text`.
 - **Layout (`mapping.layout`)**: `calc_y_fig_size(bbox, fig_x_size)`, `define_axis_extent(ax, bbox)`, `define_map_tick_spacing(ax, tick_spacing)`, `get_overview_info(...)`, `add_overview_maps(...)`.
 - **Categorical legends (`mapping.legend`)**: `calc_categorical_legend_layout`, `create_categorical_legend_patches`, `add_categorical_legend`, `add_categorical_legend_axis`, `save_categorical_legend_img`.
 
@@ -76,12 +77,12 @@ Covers `rsgispy.mapping.*`, `rsgispy.dataaccess.*`, `rsgispy.droneutils`, all 29
   - `web`: `find_web_imgs`, `find_web_files`.
   - `wmts`: `get_wmts_layer_list`, `get_wmts_as_img`.
 - **`stats` / `thresholding` / `accuracy` / `featureselection`**:
-  - `stats`: `mask_data_to_valid`, `calc_semivariogram`, `standardise_img_data`, `normalise_img_data`, `validate_percentiles_0_100`, `compute_nanpercentiles`, `resolve_metric_type`, `calc_similarity_metric`, `phase_cross_correlation_2d` (integer peak, then re-correlation on the overlap with DFT-upsampled sub-pixel refinement; unbiased for windows ≥ 32 px with shifts below about a quarter of the window). `compute_nanpercentiles` is vectorised and matches `np.nanpercentile`.
+  - `stats`: `mask_data_to_valid`, `calc_semivariogram`, `plot_semivariogram(vario_df, *, ..., axs=None, out_plot_file=None) -> (fig, axs)`, `standardise_img_data`, `normalise_img_data`, `validate_percentiles_0_100`, `compute_nanpercentiles`, `resolve_metric_type`, `calc_similarity_metric`, `phase_cross_correlation_2d` (integer peak, then re-correlation on the overlap with DFT-upsampled sub-pixel refinement; unbiased for windows ≥ 32 px with shifts below about a quarter of the window). `compute_nanpercentiles` is vectorised and matches `np.nanpercentile`.
   - `thresholding`: `get_nbins_histogram`, `get_bin_centres`, `calc_{otsu,yen,isodata,li,kurt_skew}_threshold`, `calc_hist_cross_entropy`.
   - `accuracy`: `bias_score`, `decompose_bias_variance`, `accuracy_scores_binary`, `bin_accuracy_scores_prob`.
   - `featureselection`: `cqv_threshold`, `calc_pandas_vif`, `lassolars_feature_selection`, `corr_feature_selection`, `breusch_pagan_test`.
 - **`plotting` / `imaging` / `maths` / `system`**:
-  - `plotting`: `get_raster_mpl_imshow`, `get_thematic_raster_mpl_imshow`, `limit_range_np_arr`, `{manual,linear,cumulative,stdev}_stretch_np_arr`, `plot_histogram_threshold`.
+  - `plotting`: `get_raster_mpl_imshow`, `get_thematic_raster_mpl_imshow`, `limit_range_np_arr`, `{manual,linear,cumulative,stdev}_stretch_np_arr`, `plot_histogram_threshold(data, threshold=None, *, title_str=None, x_label=None, ..., ax=None, out_plot_file=None, out_dpi=300) -> (fig, ax)`, `get_fig_ax`, `get_fig_axs`, `save_plot`, `add_stats_text_box`.
   - `imaging`: `list_exif_info_pil`, `animate_img_set`, `list_exif_info`, `get_exif_info`, `extract_images_from_pdf`, `add_pdf_blank_pages`, `create_qr_code`.
   - `maths`: `round_to_nearest_val`, `is_number`, `similar_numeric_vals`, `in_bounds`, `mixed_signs`, `negative`, `is_odd`, `powerset_iter`, `powerset_lst`, `create_var_list`.
   - `system`: `get_environment_variable`, `num_process_cores`.

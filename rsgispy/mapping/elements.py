@@ -5,7 +5,7 @@ panel labels—for Matplotlib map axes.
 """
 
 import math
-from typing import Any, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence, Tuple
 
 import matplotlib.axes
 from matplotlib.lines import Line2D
@@ -923,7 +923,7 @@ def _finalise_map_axis(
             style=north_arrow_style,
         )
     if title_str is not None:
-        ax.title.set_text(title_str)
+        ax.set_title(title_str)
 
 
 def draw_bboxes_to_axis(
@@ -941,7 +941,7 @@ def draw_bboxes_to_axis(
     lbl_pos_buf: float = 0.0,
     lbl_fill_clr: Optional[str] = None,
     lbl_padding: float = 3.0,
-) -> None:
+) -> List[Rectangle]:
     """
     Draw one or more bounding box rectangles and optional labels onto ``ax``.
 
@@ -960,6 +960,7 @@ def draw_bboxes_to_axis(
     :param lbl_pos_buf: Offset distance between rectangle edge and label.
     :param lbl_fill_clr: Optional background fill colour behind label text.
     :param lbl_padding: Padding around label text when ``lbl_fill_clr`` is set.
+    :return: List of the rectangle patches drawn (one per bbox).
 
     .. code:: python
 
@@ -967,7 +968,7 @@ def draw_bboxes_to_axis(
         import rsgispy.mapping.elements as elements
 
         fig, ax = plt.subplots()
-        elements.draw_bboxes_to_axis(
+        rects = elements.draw_bboxes_to_axis(
             ax=ax,
             bboxes=[(0.0, 10.0, 0.0, 10.0), (15.0, 25.0, 0.0, 10.0)],
             bbox_labels=["Site A", "Site B"],
@@ -979,6 +980,7 @@ def draw_bboxes_to_axis(
             "If labels are provided then the list length must be the same as bboxes."
         )
 
+    rects: List[Rectangle] = []
     for idx, bbox in enumerate(bboxes):
         width = bbox[1] - bbox[0]
         height = bbox[3] - bbox[2]
@@ -994,6 +996,7 @@ def draw_bboxes_to_axis(
             alpha=clr_alpha,
         )
         ax.add_patch(rect)
+        rects.append(rect)
 
         if bbox_labels is not None:
             cx = bl_x + width / 2.0
@@ -1031,6 +1034,7 @@ def draw_bboxes_to_axis(
                 va=va_val,
                 bbox=bbox_kw,
             )
+    return rects
 
 
 def add_axis_label(
@@ -1041,7 +1045,7 @@ def add_axis_label(
     lbl_font_size: int = 12,
     fill_clr: str = "white",
     padding: float = 3.0,
-) -> None:
+) -> Text:
     """
     Add a label in the top-left corner of ``ax`` (e.g. panel labels ``a``, ``b``).
 
@@ -1052,6 +1056,7 @@ def add_axis_label(
     :param lbl_font_size: Font size (Default = 12).
     :param fill_clr: Background box fill colour (Default = ``'white'``).
     :param padding: Padding around label text (Default = 3.0).
+    :return: The label's :class:`matplotlib.text.Text` artist.
 
     .. code:: python
 
@@ -1059,10 +1064,10 @@ def add_axis_label(
         import rsgispy.mapping.elements as elements
 
         fig, ax = plt.subplots()
-        elements.add_axis_label(ax, lbl_text="(a)")
+        lbl = elements.add_axis_label(ax, lbl_text="(a)")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    ax.text(
+    return ax.text(
         0.0,
         1.0,
         lbl_text,

@@ -128,8 +128,10 @@ def run_workflow(
     }
     print({name: round(val, 3) for name, val in thresholds.items()})
     dndvi_thres = thresholds[thres_method]
-    plot_histogram_threshold(dndvi, os.path.join(out_dir, "dndvi_hist.png"),
-                             threshold=dndvi_thres, title_str="dNDVI")
+    fig, ax = plot_histogram_threshold(
+        dndvi, threshold=dndvi_thres, title_str="dNDVI", x_label="dNDVI",
+        out_plot_file=os.path.join(out_dir, "dndvi_hist.png"),
+    )
 
     # 0 = no data, 1 = no change, 2 = vegetation loss.
     chng_img = os.path.join(out_dir, "dndvi_change.tif")

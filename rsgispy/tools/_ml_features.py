@@ -7,7 +7,6 @@ import os
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 import warnings
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -31,8 +30,31 @@ from rsgispy.tools.featureselection import (
     lassolars_feature_selection,
 )
 from rsgispy.tools.files import ensure_parent_dir
+from rsgispy.tools.plotting import get_fig_ax
 
 _VALID_CORR_METHODS = {"pearson", "spearman", "kendall"}
+
+
+def _plot_rfecv_scores(
+    n_feats: np.ndarray,
+    mean_scores: np.ndarray,
+    n_optimal: int,
+    ax: Optional[Any] = None,
+) -> Tuple[Any, Any]:
+    """Plot the RFECV cross-validation score against the number of features."""
+    fig, ax = get_fig_ax(ax, figsize=(7, 4))
+    ax.plot(n_feats, mean_scores, marker="o", color="#1E88E5")
+    ax.axvline(
+        x=n_optimal,
+        color="#D81B60",
+        linestyle="--",
+        label=f"Optimal = {n_optimal}",
+    )
+    ax.set_xlabel("Number of Selected Features")
+    ax.set_ylabel("CV Score")
+    ax.set_title("RFECV Feature Selection")
+    ax.legend()
+    return fig, ax
 
 
 def run_correlation_matrix(
@@ -57,13 +79,12 @@ def run_correlation_matrix(
     if out_corr_file is not None:
         corr_df.to_csv(ensure_parent_dir(out_corr_file), index=True)
     if out_plt_file is not None:
-        plot_correlation_heatmap(
+        fig, _ = plot_correlation_heatmap(
             corr_df=corr_df,
             var_names=col_list,
-            out_plt_file=out_plt_file,
-            fig_width=fig_width,
-            fig_height=fig_height,
+            figsize=(fig_width, fig_height),
         )
+        finalise_plot(fig, out_file=out_plt_file)
     return corr_df
 
 
@@ -309,22 +330,10 @@ def run_rfe_selection(
             ),
             dtype=int,
         )
-        fig, ax = plt.subplots(figsize=(7, 4))
-        try:
-            ax.plot(n_feats_axis, mean_scores, marker="o", color="#1E88E5")
-            ax.axvline(
-                x=int(selector.n_features_),
-                color="#D81B60",
-                linestyle="--",
-                label=f"Optimal = {int(selector.n_features_)}",
-            )
-            ax.set_xlabel("Number of Selected Features")
-            ax.set_ylabel("CV Score")
-            ax.set_title("RFECV Feature Selection")
-            ax.legend()
-            fig.tight_layout()
-        finally:
-            finalise_plot(fig, out_file=out_cv_plot)
+        fig, _ = _plot_rfecv_scores(
+            n_feats_axis, mean_scores, int(selector.n_features_)
+        )
+        finalise_plot(fig, out_file=out_cv_plot)
 
     if out_scores_file is not None:
         rank_df.to_csv(ensure_parent_dir(out_scores_file), index=False)
@@ -506,13 +515,13 @@ def run_feature_importance(
             if eff_method in {"permutation", "both"}
             else "Model Feature Importance"
         )
-        plot_feature_importance_bars(
+        fig, _ = plot_feature_importance_bars(
             features=imp_df["feature"].tolist(),
             importances=imp_df[sort_col].to_numpy(),
-            out_plot=out_plot_file,
             errors=plot_errs,
             title=plot_title,
             xlabel=xlabel,
         )
+        finalise_plot(fig, out_file=out_plot_file)
 
     return imp_df

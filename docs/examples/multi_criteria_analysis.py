@@ -402,14 +402,13 @@ def run_workflow(
     import rsgispy.mapping.raster as map_raster
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-    cmap, norm = map_raster.create_raster_cmap_img_map(
+    map_raster.create_raster_cmap_img_map(
         ax1, potential_img, 2, title_str="Restoration score (x 100)",
         cmap_name="YlGn", norm_img_vals=True, norm_vmin=1, norm_vmax=100,
         vals_under_white=True,  # excluded pixels (score 0) in white
         show_map_axis=False,
+        show_colour_bar=True, cbar_label="Score (x 100)",
     )
-    fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax1,
-                 shrink=0.7)
     map_raster.create_thematic_raster_map(
         ax2, potential_img, title_str="Restoration potential",
         show_map_axis=False,

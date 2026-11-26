@@ -387,7 +387,8 @@ training or tuning, ideally a probability sample of the area.
   :func:`~rsgispy.regression.regmetrics.calc_reg_stats_ptonly_bootstrap_conf`
   adds bootstrap confidence intervals.
 * :func:`~rsgispy.regression.regmetrics.plot_pred_vs_obs` plots predicted
-  against observed values with the 1:1 line. Points below the line at high
+  against observed values with the 1:1 line (it returns ``(fig, axs)``;
+  the metrics come from ``calc_reg_metrics``). Points below the line at high
   values and above it at low values (a slope below 1) are typical of tree
   models, which shrink predictions towards the mean.
 * :func:`~rsgispy.regression.regmetrics.plot_residuals` plots the residuals
@@ -413,7 +414,8 @@ Step 11 — Maps
 :func:`~rsgispy.mapping.raster.create_raster_cmap_img_map` draws one band of
 a continuous raster with a colour map; ``norm_vmin`` / ``norm_vmax`` fix the
 colour range so that maps of different areas or dates are comparable. Here
-the prediction is shown next to the width of the tree-spread interval,
+the prediction is shown next to the width of the tree-spread interval, each
+with its colour bar (``show_colour_bar=True``),
 calculated with :func:`~rsgispy.imagecalc.maths.band_maths` (no data is set
 to 0 so it is not counted as a very large width).
 

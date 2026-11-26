@@ -13,6 +13,7 @@ import rsgispy
 __all__ = [
     "mask_data_to_valid",
     "calc_semivariogram",
+    "plot_semivariogram",
     "standardise_img_data",
     "normalise_img_data",
     "validate_percentiles_0_100",
@@ -115,7 +116,6 @@ def calc_semivariogram(
     """
     # pylint: disable=import-outside-toplevel,too-many-arguments
     # pylint: disable=too-many-positional-arguments,too-many-locals
-    import matplotlib.pyplot as plt
     import pandas as pd
 
     try:
@@ -164,53 +164,111 @@ def calc_semivariogram(
         vario_out_df.to_csv(out_data_file)
 
     if out_plot_file is not None:
-        fig = plt.figure(figsize=(8, 5))
-        ax1 = plt.subplot2grid((5, 1), (1, 0), rowspan=4)
-        ax2 = plt.subplot2grid((5, 1), (0, 0), sharex=ax1)
-        fig.subplots_adjust(hspace=0)
+        from rsgispy.tools.plotting import save_plot
 
-        ax1.scatter(x=vario_out_df["distance"], y=vario_out_df["semivariance"])
-        ax1.set_xlabel("Distance")
-        ax1.set_ylabel("Semi-Variance")
-
-        if normalise_vals:
-            ax1.set_xlim([0, 1.05])
-            ax1.set_ylim([0, 1.05])
-
-        ax1.grid(False)
-        ax1.vlines(
-            vario_out_df["distance"],
-            *ax1.axes.get_ybound(),
-            colors=(0.85, 0.85, 0.85),
-            linestyles="dashed",
-        )
-
-        bar_width = (np.max(vario_out_df["distance"]) * 0.7) / len(
-            vario_out_df["count"]
-        )
-        ax2.bar(
-            vario_out_df["distance"],
-            vario_out_df["count"],
-            width=bar_width,
-            align="center",
-            color="red",
-        )
-
-        plt.setp(ax2.axes.get_xticklabels(), visible=False)
-        ax2.axes.set_yticks(ax2.axes.get_yticks()[1:])
-        ax2.grid(False)
-        ax2.vlines(
-            vario_out_df["distance"],
-            *ax2.axes.get_ybound(),
-            colors=(0.85, 0.85, 0.85),
-            linestyles="dashed",
-        )
-        ax2.axes.set_ylabel("N")
-
-        plt.savefig(out_plot_file)
-        plt.close(fig)
+        fig, _ = plot_semivariogram(vario_out_df, normalised=normalise_vals)
+        save_plot(fig, out_plot_file, close=True)
 
     return vario_out_df
+
+
+def plot_semivariogram(
+    vario_df: Any,
+    *,
+    normalised: bool = False,
+    title: Optional[str] = None,
+    dist_label: str = "Distance",
+    figsize: Tuple[float, float] = (8.0, 5.0),
+    axs: Optional[Sequence[Any]] = None,
+    out_plot_file: Optional[str] = None,
+    out_dpi: int = 300,
+) -> Tuple[Any, np.ndarray]:
+    """
+    Plot an empirical semivariogram from :func:`calc_semivariogram` (or
+    :func:`rsgispy.vector.stats.calc_empirical_semivariogram`): the
+    semi-variance against lag distance, with the number of point pairs in
+    each lag class in a narrow panel above it.
+
+    :param vario_df: ``pandas.DataFrame`` with ``distance``, ``semivariance``
+                     and ``count`` columns.
+    :param normalised: The values were normalised to ``[0, 1]``, so both axes
+                       of the semivariogram run from 0 to 1.05
+                       (Default = ``False``).
+    :param title: Optional plot title.
+    :param dist_label: Label of the distance axis, e.g. with units
+                       (Default = ``'Distance'``).
+    :param figsize: Size of a new figure in inches (Default = ``(8.0, 5.0)``).
+    :param axs: Optional two Matplotlib axes ``(count_ax, vario_ax)`` to draw
+                on (Default = a new figure).
+    :param out_plot_file: Optional output image file; the figure is saved and
+                          left open (Default = ``None``).
+    :param out_dpi: Resolution of the saved image (Default = ``300``).
+    :return: Tuple ``(fig, axs)``, with ``axs`` the array
+             ``[count_ax, vario_ax]``.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.stats
+
+        rng = np.random.default_rng(42)
+        coords = rng.uniform(0, 1000, size=(200, 2))
+        vals = coords[:, 0] / 100.0 + rng.normal(0, 1, 200)
+        vario_df = rsgispy.tools.stats.calc_semivariogram(coords, vals, n_lags=10)
+        fig, axs = rsgispy.tools.stats.plot_semivariogram(vario_df, dist_label="Distance (m)")
+    """
+    # pylint: disable=too-many-arguments,too-many-locals,import-outside-toplevel
+    from rsgispy.tools.plotting import get_fig_axs, save_plot
+
+    if axs is None:
+        import matplotlib.pyplot as plt
+
+        fig, ax_arr = plt.subplots(
+            2,
+            1,
+            figsize=figsize,
+            sharex=True,
+            gridspec_kw={"height_ratios": [1, 4], "hspace": 0.05},
+        )
+    else:
+        fig, ax_arr = get_fig_axs(axs, nrows=2, ncols=1)
+    count_ax = ax_arr.ravel()[0]
+    vario_ax = ax_arr.ravel()[1]
+
+    dists = np.asarray(vario_df["distance"], dtype=float)
+    semivar = np.asarray(vario_df["semivariance"], dtype=float)
+    counts = np.asarray(vario_df["count"], dtype=float)
+
+    vario_ax.scatter(dists, semivar)
+    vario_ax.set_xlabel(dist_label)
+    vario_ax.set_ylabel("Semi-Variance")
+    if normalised:
+        vario_ax.set_xlim([0, 1.05])
+        vario_ax.set_ylim([0, 1.05])
+    vario_ax.grid(False)
+    vario_ax.vlines(
+        dists,
+        *vario_ax.get_ybound(),
+        colors=(0.85, 0.85, 0.85),
+        linestyles="dashed",
+    )
+
+    bar_width = (np.max(dists) * 0.7) / max(1, len(counts)) if dists.size else 1.0
+    count_ax.bar(dists, counts, width=bar_width, align="center", color="red")
+    count_ax.tick_params(labelbottom=False)
+    count_ax.grid(False)
+    count_ax.vlines(
+        dists,
+        *count_ax.get_ybound(),
+        colors=(0.85, 0.85, 0.85),
+        linestyles="dashed",
+    )
+    count_ax.set_ylabel("N")
+    if title is not None:
+        count_ax.set_title(title)
+    if out_plot_file is not None:
+        save_plot(fig, out_plot_file, out_dpi=out_dpi)
+    return fig, np.array([count_ax, vario_ax], dtype=object)
 
 
 def standardise_img_data(img_data: np.ndarray) -> np.ndarray:

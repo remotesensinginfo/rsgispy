@@ -11,6 +11,8 @@ import math
 import os
 
 import geopandas as gpd
+import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
@@ -27,6 +29,8 @@ import rsgispy.imagespectral.preprocessing as sp
 import rsgispy.imagespectral.transforms as st
 import rsgispy.imagespectral.unmixing as su
 import rsgispy.zonalstats as zs
+
+matplotlib.use("Agg")
 
 HAVE_PYARROW = importlib.util.find_spec("pyarrow") is not None
 HAVE_OPENPYXL = importlib.util.find_spec("openpyxl") is not None
@@ -171,13 +175,16 @@ def test_df_roundtrip_formats_plot_and_equality(tmp_path):
 
     plot_from_df = tmp_path / "em_df.png"
     plot_from_csv = tmp_path / "em_csv.png"
-    em.plot_endmembers(
+    fig, ax = em.plot_endmembers(
         em_df,
-        str(plot_from_df),
         plot_title="Test Endmembers (DF)",
         wavelengths=[480, 560, 660],
+        out_plot_file=str(plot_from_df),
     )
-    em.plot_endmembers(str(tmp_path / "em.csv"), str(plot_from_csv))
+    assert len(ax.get_lines()) == em_df.shape[1]
+    plt.close(fig)
+    fig, _ = em.plot_endmembers(str(tmp_path / "em.csv"), out_plot_file=str(plot_from_csv))
+    plt.close(fig)
     assert plot_from_df.exists() and plot_from_df.stat().st_size > 0
     assert plot_from_csv.exists() and plot_from_csv.stat().st_size > 0
 

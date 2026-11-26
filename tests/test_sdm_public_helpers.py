@@ -151,18 +151,25 @@ def test_plot_roc_curve(tmp_path):
     fpr, tpr, roc_auc = sdm.calc_binary_roc_auc(y_true, scores)
     out_png = tmp_path / "plots" / "roc.png"
     plt.close("all")
-    sdm.plot_roc_curve(fpr, tpr, roc_auc, str(out_png), label="Ensemble",
-                       title="Test ROC", dpi=80)
+    fig, ax = sdm.plot_roc_curve(fpr, tpr, roc_auc, label="Ensemble",
+                                 title="Test ROC", out_plot_file=str(out_png),
+                                 out_dpi=80)
     assert out_png.is_file() and out_png.stat().st_size > 0
-    assert not plt.get_fignums()
+    # Saving leaves the returned figure open (so it shows in a notebook).
+    assert plt.get_fignums() == [fig.number]
+    assert ax.get_title() == "Test ROC"
+    plt.close(fig)
 
-    # Without an output file nothing is written and no figure is left open.
-    sdm.plot_roc_curve(fpr, tpr, roc_auc)
-    assert not plt.get_fignums()
+    # Drawing on a given axis creates no new figure.
+    fig2, ax2 = plt.subplots()
+    out_fig, out_ax = sdm.plot_roc_curve(fpr, tpr, roc_auc, ax=ax2)
+    assert out_fig is fig2 and out_ax is ax2
+    assert plt.get_fignums() == [fig2.number]
+    plt.close(fig2)
 
     with pytest.raises(TypeError):
         sdm.plot_roc_curve(  # pylint: disable=too-many-function-args
-            fpr, tpr, roc_auc, str(out_png), "Ensemble"
+            fpr, tpr, roc_auc, "Ensemble"
         )
 
 
@@ -368,7 +375,7 @@ def test_fit_sklearn_mdl_roc_plot_only_when_requested(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(
         "rsgispy.modelling._sdm_models.plot_roc_curve",
-        lambda *a, **k: calls.append(k),
+        lambda *a, **k: (calls.append(k), plt.subplots())[1],
     )
     rf = RandomForestClassifier(n_estimators=5, random_state=0)
     sdm.fit_sklearn_mdl(rf, gdf, None, gdf, None, ["s"])

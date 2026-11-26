@@ -6,6 +6,8 @@ Tests for :mod:`rsgispy.changedetect.imgchngmthds`,
 
 import inspect
 
+import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 import rasterio
@@ -17,6 +19,8 @@ import rsgispy.changedetect.imgchngmthds as icm
 import rsgispy.changedetect.pxloutlierchng as poc
 import rsgispy.tools.plotting as rplot
 from rsgispy.imageutils.colourtable import is_img_thematic
+
+matplotlib.use("Agg")
 
 
 def _write_raster(
@@ -88,13 +92,19 @@ def test_plot_histogram_threshold(tmp_path):
     out_png = tmp_path / "hist.png"
     rng = np.random.default_rng(0)
     vals = np.concatenate([rng.normal(2.0, 0.3, 100), rng.normal(6.0, 0.3, 100)])
-    rplot.plot_histogram_threshold(
-        vals, str(out_png), threshold=4.0, title_str="Test Histogram"
+    fig, ax = rplot.plot_histogram_threshold(
+        vals, 4.0, title_str="Test Histogram", out_plot_file=str(out_png)
     )
     assert out_png.exists() and out_png.stat().st_size > 0
+    assert ax.get_title() == "Test Histogram"
+    assert plt.fignum_exists(fig.number)
+    plt.close(fig)
 
     const_png = tmp_path / "const.png"
-    rplot.plot_histogram_threshold(np.ones(20), str(const_png), threshold=1.0)
+    fig, _ = rplot.plot_histogram_threshold(
+        np.ones(20), threshold=1.0, out_plot_file=str(const_png)
+    )
+    plt.close(fig)
     assert const_png.exists() and const_png.stat().st_size > 0
 
 

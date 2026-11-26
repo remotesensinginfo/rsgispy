@@ -21,6 +21,7 @@ from rsgispy.tools._sklearn import (
     sklearn,
 )
 from rsgispy.tools.files import ensure_parent_dir
+from rsgispy.tools.plotting import PLOT_DPI, get_fig_ax, save_plot
 
 try:
     import scipy.stats  # pylint: disable=import-error
@@ -76,20 +77,53 @@ __all__ = [
 def finalise_plot(
     fig: Any,
     out_file: Optional[Union[str, os.PathLike]] = None,
-    dpi: int = 150,
+    dpi: int = PLOT_DPI,
 ) -> None:
     """
-    Save or display ``fig`` and always close it to prevent Matplotlib state and
-    memory leaks when iterating over multiple models or covariates.
+    Save ``fig`` to ``out_file`` (when given) and close it. Used for figures
+    a function creates and does not return (e.g. the plots of a compute
+    function, or one plot per feature), so they do not stay in memory when
+    iterating over many models or covariates.
     """
     try:
         if out_file is not None:
-            out_path = ensure_parent_dir(out_file)
-            fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
-        elif rsgispy.is_notebook():
-            plt.show()
+            save_plot(fig, out_file, out_dpi=dpi)
     finally:
         plt.close(fig)
+
+
+def _plot_class_feature_distribution(
+    data_df: pd.DataFrame,
+    col_name: str,
+    cls_col: str,
+    box_plots: bool = False,
+    ax: Optional[Any] = None,
+) -> Tuple[Any, Any]:
+    """Draw a violin or box plot of ``col_name`` grouped by ``cls_col``."""
+    fig, ax = get_fig_ax(ax, figsize=(6, 4))
+    if HAVE_SEABORN:
+        if box_plots:
+            sns.boxplot(data=data_df, x=cls_col, y=col_name, ax=ax)
+        else:
+            sns.violinplot(data=data_df, x=cls_col, y=col_name, ax=ax)
+    else:
+        groups = sorted(
+            data_df[cls_col].dropna().unique().tolist(),
+            key=str,
+        )
+        series_list = [
+            data_df.loc[data_df[cls_col] == g, col_name].dropna().to_numpy()
+            for g in groups
+        ]
+        if box_plots:
+            ax.boxplot(series_list, tick_labels=[str(g) for g in groups])
+        else:
+            ax.violinplot(series_list)
+            ax.set_xticks(range(1, len(groups) + 1))
+            ax.set_xticklabels([str(g) for g in groups])
+        ax.set_xlabel(cls_col)
+        ax.set_ylabel(col_name)
+    return fig, ax
 
 
 def plot_class_feature_distributions(
@@ -99,88 +133,75 @@ def plot_class_feature_distributions(
     out_dir: Union[str, os.PathLike] = "boxplots",
     box_plots: bool = False,
     use_pbar: bool = True,
-) -> None:
+) -> List[str]:
     """
     Create distribution comparison plots (violin or box plots) grouped by
-    ``cls_col`` for every column in ``feature_cols``.
+    ``cls_col`` for every column in ``feature_cols``, writing one file per
+    feature (``<feature>_comp_plot.png``) to ``out_dir`` and closing each
+    figure. Returns the list of files written.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals
     out_dir_str = os.fspath(out_dir)
     os.makedirs(out_dir_str, exist_ok=True)
+    out_files: List[str] = []
     pbar = rsgispy.get_tqdm()
     for col_name in pbar(list(feature_cols), disable=not use_pbar):
         out_path = os.path.join(out_dir_str, f"{col_name}_comp_plot.png")
-        fig, ax = plt.subplots(figsize=(6, 4))
-        try:
-            if HAVE_SEABORN:
-                if box_plots:
-                    sns.boxplot(data=data_df, x=cls_col, y=col_name, ax=ax)
-                else:
-                    sns.violinplot(data=data_df, x=cls_col, y=col_name, ax=ax)
-            else:
-                groups = sorted(
-                    data_df[cls_col].dropna().unique().tolist(),
-                    key=str,
-                )
-                series_list = [
-                    data_df.loc[data_df[cls_col] == g, col_name]
-                    .dropna()
-                    .to_numpy()
-                    for g in groups
-                ]
-                if box_plots:
-                    ax.boxplot(series_list, tick_labels=[str(g) for g in groups])
-                else:
-                    ax.violinplot(series_list)
-                    ax.set_xticks(range(1, len(groups) + 1))
-                    ax.set_xticklabels([str(g) for g in groups])
-                ax.set_xlabel(cls_col)
-                ax.set_ylabel(col_name)
-        finally:
-            finalise_plot(fig, out_file=out_path)
+        fig, _ = _plot_class_feature_distribution(
+            data_df, col_name, cls_col, box_plots=box_plots
+        )
+        finalise_plot(fig, out_file=out_path)
+        out_files.append(out_path)
+    return out_files
 
 
 def plot_correlation_heatmap(
     corr_df: pd.DataFrame,
-    var_names: Sequence[str],
-    out_plt_file: Union[str, os.PathLike],
-    fig_width: int = 15,
-    fig_height: int = 14,
-) -> None:
+    var_names: Optional[Sequence[str]] = None,
+    *,
+    figsize: Optional[Tuple[float, float]] = None,
+    ax: Optional[Any] = None,
+    out_plot_file: Optional[Union[str, os.PathLike]] = None,
+    out_dpi: int = PLOT_DPI,
+) -> Tuple[Any, Any]:
     """
-    Plot a lower-triangular correlation heatmap and save to ``out_plt_file``.
+    Plot a lower-triangular correlation heatmap of ``corr_df``.
+
+    :return: Tuple ``(fig, ax)``.
     """
+    # pylint: disable=too-many-arguments
+    names = list(var_names) if var_names is not None else [str(c) for c in corr_df.columns]
+    if figsize is None:
+        side = max(4.0, 0.45 * len(names) + 2.0)
+        figsize = (side + 1.0, side)
     mask = np.triu(np.ones_like(corr_df, dtype=bool))
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-    try:
-        if HAVE_SEABORN:
-            cmap = sns.diverging_palette(230, 20, as_cmap=True)
-            sns.heatmap(
-                corr_df,
-                mask=mask,
-                cmap=cmap,
-                vmin=-1.0,
-                vmax=1.0,
-                center=0,
-                square=True,
-                linewidths=0.5,
-                cbar_kws={"shrink": 0.5},
-                ax=ax,
-            )
-        else:
-            masked_vals = np.ma.array(
-                corr_df.to_numpy(dtype=float), mask=mask
-            )
-            im = ax.imshow(masked_vals, cmap="coolwarm", vmin=-1.0, vmax=1.0)
-            fig.colorbar(im, ax=ax, shrink=0.5)
-            ticks = range(len(var_names))
-            ax.set_xticks(ticks)
-            ax.set_xticklabels(var_names, rotation=45, ha="right")
-            ax.set_yticks(ticks)
-            ax.set_yticklabels(var_names)
-    finally:
-        finalise_plot(fig, out_file=out_plt_file)
+    fig, ax = get_fig_ax(ax, figsize=figsize)
+    if HAVE_SEABORN:
+        cmap = sns.diverging_palette(230, 20, as_cmap=True)
+        sns.heatmap(
+            corr_df,
+            mask=mask,
+            cmap=cmap,
+            vmin=-1.0,
+            vmax=1.0,
+            center=0,
+            square=True,
+            linewidths=0.5,
+            cbar_kws={"shrink": 0.5},
+            ax=ax,
+        )
+    else:
+        masked_vals = np.ma.array(corr_df.to_numpy(dtype=float), mask=mask)
+        im = ax.imshow(masked_vals, cmap="coolwarm", vmin=-1.0, vmax=1.0)
+        fig.colorbar(im, ax=ax, shrink=0.5)
+        ticks = range(len(names))
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(names, rotation=45, ha="right")
+        ax.set_yticks(ticks)
+        ax.set_yticklabels(names)
+    if out_plot_file is not None:
+        save_plot(fig, out_plot_file, out_dpi=out_dpi)
+    return fig, ax
 
 
 def plot_jackknife_bars(
@@ -190,11 +211,16 @@ def plot_jackknife_bars(
     all_val: float,
     title: str,
     xlabel: str,
-    out_plot: Union[str, os.PathLike],
-) -> None:
+    *,
+    ax: Optional[Any] = None,
+    out_plot_file: Optional[Union[str, os.PathLike]] = None,
+    out_dpi: int = PLOT_DPI,
+) -> Tuple[Any, Any]:
     """
     Plot a horizontal jackknife comparison bar chart showing leave-one-out,
     single-variable-only, and all-variable baseline performance.
+
+    :return: Tuple ``(fig, ax)``.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     n_vars = len(var_names)
@@ -203,86 +229,69 @@ def plot_jackknife_bars(
     var_idx_all = var_idx + [n_vars]
     all_var_names = list(var_names) + ["All"]
 
-    fig, ax = plt.subplots(figsize=(8, plt_height))
-    try:
-        ax.barh(
-            var_idx,
-            leave_vals,
-            height=0.8,
-            color="#1E88E5",
-            label="Without Var",
-        )
-        ax.barh(
-            var_idx,
-            only_vals,
-            height=0.8,
-            color="#FFC107",
-            label="Only Var",
-        )
-        ax.barh(
-            [n_vars],
-            [all_val],
-            height=0.8,
-            color="#D81B60",
-            label="All Vars",
-        )
-        ax.set_yticks(var_idx_all, labels=all_var_names)
-        ax.set_title(title)
-        ax.set_xlabel(xlabel)
-        ax.legend(
-            loc="upper center",
-            bbox_to_anchor=(0.5, -0.11),
-            fancybox=True,
-            shadow=False,
-            ncol=3,
-        )
-        fig.tight_layout()
-    finally:
-        finalise_plot(fig, out_file=out_plot)
+    fig, ax = get_fig_ax(ax, figsize=(8, plt_height))
+    ax.barh(var_idx, leave_vals, height=0.8, color="#1E88E5", label="Without Var")
+    ax.barh(var_idx, only_vals, height=0.8, color="#FFC107", label="Only Var")
+    ax.barh([n_vars], [all_val], height=0.8, color="#D81B60", label="All Vars")
+    ax.set_yticks(var_idx_all, labels=all_var_names)
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.11),
+        fancybox=True,
+        shadow=False,
+        ncol=3,
+    )
+    if out_plot_file is not None:
+        save_plot(fig, out_plot_file, out_dpi=out_dpi)
+    return fig, ax
 
 
 def plot_feature_importance_bars(
     features: Sequence[str],
     importances: Sequence[float],
-    out_plot: Union[str, os.PathLike],
     errors: Optional[Sequence[float]] = None,
     title: str = "Feature Importance",
     xlabel: str = "Importance",
-) -> None:
+    *,
+    ax: Optional[Any] = None,
+    out_plot_file: Optional[Union[str, os.PathLike]] = None,
+    out_dpi: int = PLOT_DPI,
+) -> Tuple[Any, Any]:
     """
     Plot a horizontal bar chart of sorted feature importances with optional
     error bars.
+
+    :return: Tuple ``(fig, ax)``.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     feat_list = list(features)
     val_arr = np.asarray(importances, dtype=float)
-    err_arr = (
-        np.asarray(errors, dtype=float) if errors is not None else None
-    )
+    err_arr = np.asarray(errors, dtype=float) if errors is not None else None
     order = np.argsort(val_arr)
     sorted_feats = [feat_list[i] for i in order]
     sorted_vals = val_arr[order]
     sorted_errs = err_arr[order] if err_arr is not None else None
 
     plt_height = max(3.0, (0.45 * len(sorted_feats)) + 1.5)
-    fig, ax = plt.subplots(figsize=(8, plt_height))
-    try:
-        y_pos = np.arange(len(sorted_feats))
-        ax.barh(
-            y_pos,
-            sorted_vals,
-            xerr=sorted_errs,
-            color="#1E88E5",
-            ecolor="#0D47A1",
-            capsize=3,
-        )
-        ax.set_yticks(y_pos)
-        ax.set_yticklabels(sorted_feats)
-        ax.set_title(title)
-        ax.set_xlabel(xlabel)
-        fig.tight_layout()
-    finally:
-        finalise_plot(fig, out_file=out_plot)
+    fig, ax = get_fig_ax(ax, figsize=(8, plt_height))
+    y_pos = np.arange(len(sorted_feats))
+    ax.barh(
+        y_pos,
+        sorted_vals,
+        xerr=sorted_errs,
+        color="#1E88E5",
+        ecolor="#0D47A1",
+        capsize=3,
+    )
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(sorted_feats)
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    if out_plot_file is not None:
+        save_plot(fig, out_plot_file, out_dpi=out_dpi)
+    return fig, ax
 
 
 def extract_native_feature_importances(
@@ -731,9 +740,13 @@ def _plot_boruta_shap_boxplots(
     status: Mapping[str, str],
     shadow_max_hist: Sequence[float],
     shadow_mean_hist: Sequence[float],
-    out_plot_file: Union[str, os.PathLike],
-) -> None:
-    """Plot BorutaShap importance distributions colour-coded by decision."""
+    ax: Optional[Any] = None,
+) -> Tuple[Any, Any]:
+    """
+    Plot BorutaShap importance distributions colour-coded by decision.
+
+    :return: Tuple ``(fig, ax)``.
+    """
     entries: List[Tuple[str, List[float], str]] = []
     for col, vals in history.items():
         if vals:
@@ -754,32 +767,29 @@ def _plot_boruta_shap_boxplots(
     }
 
     fig_height = max(3.5, 0.45 * len(entries) + 1.5)
-    fig, ax = plt.subplots(figsize=(9, fig_height))
-    try:
-        bp_params = inspect.signature(ax.boxplot).parameters
-        bp_kwargs: Dict[str, Any] = {"patch_artist": True}
-        if "orientation" in bp_params:
-            bp_kwargs["orientation"] = "horizontal"
-        else:
-            bp_kwargs["vert"] = False
-        if "tick_labels" in bp_params:
-            bp_kwargs["tick_labels"] = [item[0] for item in entries]
-        else:
-            bp_kwargs["labels"] = [item[0] for item in entries]
+    fig, ax = get_fig_ax(ax, figsize=(9, fig_height))
+    bp_params = inspect.signature(ax.boxplot).parameters
+    bp_kwargs: Dict[str, Any] = {"patch_artist": True}
+    if "orientation" in bp_params:
+        bp_kwargs["orientation"] = "horizontal"
+    else:
+        bp_kwargs["vert"] = False
+    if "tick_labels" in bp_params:
+        bp_kwargs["tick_labels"] = [item[0] for item in entries]
+    else:
+        bp_kwargs["labels"] = [item[0] for item in entries]
 
-        bp = ax.boxplot([item[1] for item in entries], **bp_kwargs)
-        for patch, (_, _, dec) in zip(bp["boxes"], entries):
-            patch.set_facecolor(colour_map.get(dec, "#90A4AE"))
-            patch.set_alpha(0.85)
-        for median in bp["medians"]:
-            median.set_color("#111111")
-            median.set_linewidth(1.4)
+    bp = ax.boxplot([item[1] for item in entries], **bp_kwargs)
+    for patch, (_, _, dec) in zip(bp["boxes"], entries):
+        patch.set_facecolor(colour_map.get(dec, "#90A4AE"))
+        patch.set_alpha(0.85)
+    for median in bp["medians"]:
+        median.set_color("#111111")
+        median.set_linewidth(1.4)
 
-        ax.set_xlabel("Mean |SHAP| Importance")
-        ax.set_title("BorutaShap Feature Importance Distributions")
-        fig.tight_layout()
-    finally:
-        finalise_plot(fig, out_file=out_plot_file)
+    ax.set_xlabel("Mean |SHAP| Importance")
+    ax.set_title("BorutaShap Feature Importance Distributions")
+    return fig, ax
 
 
 def run_boruta_shap_selection(
@@ -967,13 +977,13 @@ def run_boruta_shap_selection(
     scores_df["rank"] = np.arange(1, len(scores_df) + 1, dtype=int)
 
     if out_plot_file is not None:
-        _plot_boruta_shap_boxplots(
+        fig, _ = _plot_boruta_shap_boxplots(
             history=history,
             status=status,
             shadow_max_hist=shadow_max_hist,
             shadow_mean_hist=shadow_mean_hist,
-            out_plot_file=out_plot_file,
         )
+        finalise_plot(fig, out_file=out_plot_file)
 
     return selected, scores_df
 

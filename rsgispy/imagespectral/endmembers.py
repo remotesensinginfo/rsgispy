@@ -15,7 +15,7 @@ from contextlib import ExitStack
 import json
 import math
 import os
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
@@ -524,21 +524,25 @@ def prepare_endmembers_array(
 
 def plot_endmembers(
     endmembers: EndmemberInput,
-    out_plot_file: str,
+    *,
     endmember_names: Optional[Sequence[str]] = None,
     plot_title: Optional[str] = None,
     gain: float = 1,
     wavelengths: Optional[Sequence[float]] = None,
     file_format: Optional[str] = None,
-) -> None:
+    y_label: str = "Reflectance",
+    figsize: Tuple[float, float] = (7.0, 5.0),
+    ax: Optional[Any] = None,
+    out_plot_file: Optional[str] = None,
+    out_dpi: int = 300,
+) -> Tuple[Any, Any]:
     """
     Plot spectral endmember signatures from a :class:`pandas.DataFrame` (or
-    endmembers file) and save the figure to disk.
+    endmembers file).
 
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
                        rows = bands) or file path readable by
                        :func:`read_endmembers_df`.
-    :param out_plot_file: Output image path for the saved figure.
     :param endmember_names: Optional legend labels overriding DataFrame column
                             names (must match endmember count if supplied).
     :param plot_title: Optional plot title string.
@@ -548,20 +552,26 @@ def plot_endmembers(
                         when ``None``).
     :param file_format: Optional format override when ``endmembers`` is a file
                         path (Default = ``None``).
+    :param y_label: y-axis label (Default = ``'Reflectance'``).
+    :param figsize: Size of a new figure in inches (Default = ``(7.0, 5.0)``).
+    :param ax: Optional Matplotlib axis to draw on (Default = a new figure).
+    :param out_plot_file: Optional output image file; the figure is saved and
+                          left open (Default = ``None``).
+    :param out_dpi: Resolution of the saved image (Default = ``300``).
+    :return: Tuple ``(fig, ax)``.
 
     .. code:: python
 
         import rsgispy.imagespectral.endmembers as em
 
-        em.plot_endmembers(
+        fig, ax = em.plot_endmembers(
             "endmembers.csv",
-            "endmembers.png",
             plot_title="Endmember Signatures",
+            out_plot_file="endmembers.png",
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    # pylint: disable=import-outside-toplevel
-    import matplotlib.pyplot as plt
+    # pylint: disable=too-many-arguments,too-many-locals,import-outside-toplevel
+    from rsgispy.tools.plotting import get_fig_ax, save_plot
 
     df = coerce_endmembers_df(endmembers, gain=gain, file_format=file_format)
     n_bands, n_endmembers = df.shape
@@ -592,20 +602,18 @@ def plot_endmembers(
         x_axis_lbl = "Band"
 
     arr = df.to_numpy(dtype=np.float64)
-    fig = plt.figure(figsize=(7, 5), dpi=300)
-    try:
-        ax1 = fig.add_subplot(111)
-        for i in range(n_endmembers):
-            ax1.plot(x_vals, arr[:, i], label=labels[i])
+    fig, ax = get_fig_ax(ax, figsize=figsize)
+    for i in range(n_endmembers):
+        ax.plot(x_vals, arr[:, i], label=labels[i])
 
-        if plot_title is not None:
-            ax1.set_title(plot_title)
-        ax1.set_xlabel(x_axis_lbl)
-        ax1.set_ylabel("Reflectance")
-        ax1.legend()
-        fig.savefig(out_plot_file)
-    finally:
-        plt.close(fig)
+    if plot_title is not None:
+        ax.set_title(plot_title)
+    ax.set_xlabel(x_axis_lbl)
+    ax.set_ylabel(y_label)
+    ax.legend()
+    if out_plot_file is not None:
+        save_plot(fig, out_plot_file, out_dpi=out_dpi)
+    return fig, ax
 
 
 def are_endmembers_equal(

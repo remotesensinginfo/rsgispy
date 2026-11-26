@@ -59,6 +59,23 @@ def resolve_mpl_location(loc: Union[str, int]) -> str:
     return norm_loc
 
 
+def add_map_colour_bar(
+    ax: matplotlib.axes.Axes,
+    mappable: Any,
+    cbar_label: Optional[str] = None,
+) -> Any:
+    """
+    Add a colour bar for ``mappable`` beside the map axis ``ax`` (taking its
+    space from ``ax``) and return it. The colour bar is also available as
+    ``mappable.colorbar``.
+    """
+    fig = ax.get_figure()
+    cbar = fig.colorbar(mappable, ax=ax, shrink=0.85, pad=0.02)
+    if cbar_label is not None:
+        cbar.set_label(cbar_label)
+    return cbar
+
+
 def plot_vec_lyr_by_geom_type(
     ax: matplotlib.axes.Axes,
     gp_vec: Union[gpd.GeoDataFrame, gpd.GeoSeries],

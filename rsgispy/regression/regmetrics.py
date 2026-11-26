@@ -9,7 +9,6 @@ import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -27,7 +26,7 @@ from rsgispy.tools._ml_data import (
     resolve_rng,
     summarise_bootstrap_interval,
 )
-from rsgispy.tools._ml_explain import finalise_plot
+from rsgispy.tools.plotting import PLOT_DPI, get_fig_axs, save_plot
 from rsgispy.tools.files import ensure_parent_dir
 import rsgispy.tools.jsonio
 from rsgispy.vector.attrs import write_vec_column_to_layer
@@ -608,7 +607,9 @@ def plot_pred_vs_obs(
     out_plot_file: Optional[Union[str, os.PathLike]] = None,
     add_trendline: bool = True,
     title: Optional[str] = None,
-) -> Dict[str, Any]:
+    axs: Optional[Any] = None,
+    out_dpi: int = PLOT_DPI,
+) -> Tuple[Any, np.ndarray]:
     """
     Create Predicted vs Observed scatter plot(s) with 1:1 identity reference
     line, optional OLS trendline, and ``R^2`` / ``RMSE`` / ``MAE`` metrics.
@@ -621,18 +622,22 @@ def plot_pred_vs_obs(
     :param ref_cols: Reference column names for multivariate regression.
     :param pred_cols: Predicted column names matching ``ref_cols``.
     :param target_names: Optional display titles per target variable.
-    :param out_plot_file: Optional output PNG path (displays in notebooks if
-                          ``None``).
+    :param out_plot_file: Optional output image file; the figure is saved
+                          and left open (Default = ``None``).
     :param add_trendline: Overlay linear best-fit line when ``True``
                           (Default = ``True``).
     :param title: Optional figure suptitle / plot title.
-    :return: Dictionary of computed regression accuracy metrics.
+    :param axs: Optional Matplotlib axes, one per target (Default = a new
+                figure).
+    :param out_dpi: Resolution of the saved image (Default = ``300``).
+    :return: Tuple ``(fig, axs)``, with ``axs`` a 2D array of axes. The
+             metrics are given by :func:`calc_reg_metrics`.
 
     .. code:: python
 
         import rsgispy.regression.regmetrics as rm
 
-        rm.plot_pred_vs_obs(
+        fig, axs = rm.plot_pred_vs_obs(
             "val_pts_eval.gpkg",
             vec_lyr="val_pts",
             ref_col="canopy_cover",
@@ -658,71 +663,68 @@ def plot_pred_vs_obs(
     n_targets = len(eff_names)
     n_cols = 1 if n_targets == 1 else min(3, n_targets)
     n_rows = int(math.ceil(n_targets / float(n_cols)))
-    fig, axes = plt.subplots(
-        n_rows,
-        n_cols,
+    fig, axes = get_fig_axs(
+        axs,
+        nrows=n_rows,
+        ncols=n_cols,
         figsize=(6.0 * n_cols, 5.2 * n_rows),
-        squeeze=False,
     )
-    try:
-        for idx, t_name in enumerate(eff_names):
-            r_i, c_i = divmod(idx, n_cols)
-            ax = axes[r_i, c_i]
-            yt = y_t_2d[:, idx]
-            yp = y_p_2d[:, idx]
-            ax.scatter(
-                yt, yp, color="#1E88E5", alpha=0.6, s=22, edgecolors="none"
-            )
-            lo = float(min(np.min(yt), np.min(yp)))
-            hi = float(max(np.max(yt), np.max(yp)))
-            if hi <= lo:
-                hi = lo + 1.0
-            pad = 0.04 * (hi - lo)
-            lims = (lo - pad, hi + pad)
+    for idx, t_name in enumerate(eff_names):
+        r_i, c_i = divmod(idx, n_cols)
+        ax = axes[r_i, c_i]
+        yt = y_t_2d[:, idx]
+        yp = y_p_2d[:, idx]
+        ax.scatter(
+            yt, yp, color="#1E88E5", alpha=0.6, s=22, edgecolors="none"
+        )
+        lo = float(min(np.min(yt), np.min(yp)))
+        hi = float(max(np.max(yt), np.max(yp)))
+        if hi <= lo:
+            hi = lo + 1.0
+        pad = 0.04 * (hi - lo)
+        lims = (lo - pad, hi + pad)
+        ax.plot(
+            lims,
+            lims,
+            color="#424242",
+            linestyle="--",
+            linewidth=1.3,
+            label="1:1 Line",
+        )
+        if add_trendline and np.std(yt) > 0.0 and yt.size >= 2:
+            slope, intercept = np.polyfit(yt, yp, 1)
+            xs_line = np.linspace(lo, hi, 100)
             ax.plot(
-                lims,
-                lims,
-                color="#424242",
-                linestyle="--",
-                linewidth=1.3,
-                label="1:1 Line",
+                xs_line,
+                slope * xs_line + intercept,
+                color="#D81B60",
+                linewidth=1.6,
+                label="Linear Fit",
             )
-            if add_trendline and np.std(yt) > 0.0 and yt.size >= 2:
-                slope, intercept = np.polyfit(yt, yp, 1)
-                xs_line = np.linspace(lo, hi, 100)
-                ax.plot(
-                    xs_line,
-                    slope * xs_line + intercept,
-                    color="#D81B60",
-                    linewidth=1.6,
-                    label="Linear Fit",
-                )
-            ax.set_xlim(lims)
-            ax.set_ylim(lims)
-            ax.set_aspect("equal", adjustable="box")
-            ax.set_xlabel(f"Observed {t_name}")
-            ax.set_ylabel(f"Predicted {t_name}")
-            prefix = f"{t_name}_" if n_targets > 1 else ""
-            r2_v = metrics[f"{prefix}r2"]
-            rmse_v = metrics[f"{prefix}rmse"]
-            mae_v = metrics[f"{prefix}mae"]
-            ax.set_title(
-                f"{t_name}\nR2={r2_v:.3f} | RMSE={rmse_v:.3f} | MAE={mae_v:.3f}"
-            )
-            ax.grid(alpha=0.25)
-            ax.legend(loc="upper left", fontsize=8)
+        ax.set_xlim(lims)
+        ax.set_ylim(lims)
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlabel(f"Observed {t_name}")
+        ax.set_ylabel(f"Predicted {t_name}")
+        prefix = f"{t_name}_" if n_targets > 1 else ""
+        r2_v = metrics[f"{prefix}r2"]
+        rmse_v = metrics[f"{prefix}rmse"]
+        mae_v = metrics[f"{prefix}mae"]
+        ax.set_title(
+            f"{t_name}\nR2={r2_v:.3f} | RMSE={rmse_v:.3f} | MAE={mae_v:.3f}"
+        )
+        ax.grid(alpha=0.25)
+        ax.legend(loc="upper left", fontsize=8)
 
-        for idx in range(n_targets, n_rows * n_cols):
-            r_i, c_i = divmod(idx, n_cols)
-            axes[r_i, c_i].set_visible(False)
+    for idx in range(n_targets, n_rows * n_cols):
+        r_i, c_i = divmod(idx, n_cols)
+        axes[r_i, c_i].set_visible(False)
 
-        if title:
-            fig.suptitle(title, y=1.01)
-        fig.tight_layout()
-    finally:
-        finalise_plot(fig, out_file=out_plot_file)
-
-    return metrics
+    if title:
+        fig.suptitle(title, y=1.01)
+    if out_plot_file is not None:
+        save_plot(fig, out_plot_file, out_dpi=out_dpi)
+    return fig, axes
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -736,7 +738,9 @@ def plot_residuals(
     target_names: Optional[Sequence[str]] = None,
     out_plot_file: Optional[Union[str, os.PathLike]] = None,
     title: Optional[str] = None,
-) -> Dict[str, Any]:
+    axs: Optional[Any] = None,
+    out_dpi: int = PLOT_DPI,
+) -> Tuple[Any, np.ndarray]:
     """
     Create residual diagnostic scatter plot(s) (``Predicted - Observed`` versus
     ``Predicted``) with zero-error reference line and bias / RMSE summary.
@@ -749,15 +753,20 @@ def plot_residuals(
     :param ref_cols: Reference column names for multivariate regression.
     :param pred_cols: Predicted column names matching ``ref_cols``.
     :param target_names: Optional display titles per target variable.
-    :param out_plot_file: Optional output PNG path.
+    :param out_plot_file: Optional output image file; the figure is saved
+                          and left open (Default = ``None``).
     :param title: Optional figure suptitle / plot title.
-    :return: Dictionary of computed regression accuracy metrics.
+    :param axs: Optional Matplotlib axes, one per target (Default = a new
+                figure).
+    :param out_dpi: Resolution of the saved image (Default = ``300``).
+    :return: Tuple ``(fig, axs)``, with ``axs`` a 2D array of axes. The
+             metrics are given by :func:`calc_reg_metrics`.
 
     .. code:: python
 
         import rsgispy.regression.regmetrics as rm
 
-        rm.plot_residuals(
+        fig, axs = rm.plot_residuals(
             "val_pts_eval.gpkg",
             vec_lyr="val_pts",
             ref_col="canopy_cover",
@@ -783,41 +792,38 @@ def plot_residuals(
     n_targets = len(eff_names)
     n_cols = 1 if n_targets == 1 else min(3, n_targets)
     n_rows = int(math.ceil(n_targets / float(n_cols)))
-    fig, axes = plt.subplots(
-        n_rows,
-        n_cols,
+    fig, axes = get_fig_axs(
+        axs,
+        nrows=n_rows,
+        ncols=n_cols,
         figsize=(6.0 * n_cols, 4.8 * n_rows),
-        squeeze=False,
     )
-    try:
-        for idx, t_name in enumerate(eff_names):
-            r_i, c_i = divmod(idx, n_cols)
-            ax = axes[r_i, c_i]
-            yp = y_p_2d[:, idx]
-            resid = yp - y_t_2d[:, idx]
-            ax.scatter(
-                yp, resid, color="#1E88E5", alpha=0.6, s=22, edgecolors="none"
-            )
-            ax.axhline(
-                0.0, color="#D81B60", linestyle="--", linewidth=1.5, label="Zero Error"
-            )
-            ax.set_xlabel(f"Predicted {t_name}")
-            ax.set_ylabel("Residual (Predicted - Observed)")
-            prefix = f"{t_name}_" if n_targets > 1 else ""
-            rmse_v = metrics[f"{prefix}rmse"]
-            bias_v = metrics[f"{prefix}bias"]
-            ax.set_title(f"{t_name} Residuals\nRMSE={rmse_v:.3f} | Bias={bias_v:.3f}")
-            ax.grid(alpha=0.25)
-            ax.legend(loc="best", fontsize=8)
+    for idx, t_name in enumerate(eff_names):
+        r_i, c_i = divmod(idx, n_cols)
+        ax = axes[r_i, c_i]
+        yp = y_p_2d[:, idx]
+        resid = yp - y_t_2d[:, idx]
+        ax.scatter(
+            yp, resid, color="#1E88E5", alpha=0.6, s=22, edgecolors="none"
+        )
+        ax.axhline(
+            0.0, color="#D81B60", linestyle="--", linewidth=1.5, label="Zero Error"
+        )
+        ax.set_xlabel(f"Predicted {t_name}")
+        ax.set_ylabel("Residual (Predicted - Observed)")
+        prefix = f"{t_name}_" if n_targets > 1 else ""
+        rmse_v = metrics[f"{prefix}rmse"]
+        bias_v = metrics[f"{prefix}bias"]
+        ax.set_title(f"{t_name} Residuals\nRMSE={rmse_v:.3f} | Bias={bias_v:.3f}")
+        ax.grid(alpha=0.25)
+        ax.legend(loc="best", fontsize=8)
 
-        for idx in range(n_targets, n_rows * n_cols):
-            r_i, c_i = divmod(idx, n_cols)
-            axes[r_i, c_i].set_visible(False)
+    for idx in range(n_targets, n_rows * n_cols):
+        r_i, c_i = divmod(idx, n_cols)
+        axes[r_i, c_i].set_visible(False)
 
-        if title:
-            fig.suptitle(title, y=1.01)
-        fig.tight_layout()
-    finally:
-        finalise_plot(fig, out_file=out_plot_file)
-
-    return metrics
+    if title:
+        fig.suptitle(title, y=1.01)
+    if out_plot_file is not None:
+        save_plot(fig, out_plot_file, out_dpi=out_dpi)
+    return fig, axes

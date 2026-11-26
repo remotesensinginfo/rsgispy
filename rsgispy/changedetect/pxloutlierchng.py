@@ -30,7 +30,7 @@ from rsgispy.imageutils.colourtable import define_colour_table
 from rsgispy.imageutils.metadata import get_img_band_count, get_img_no_data_value
 from rsgispy.imageutils.sampling import extract_img_pxl_vals_in_msk
 from rsgispy.imageutils.stats import pop_img_stats, pop_thmt_img_stats
-from rsgispy.tools.plotting import plot_histogram_threshold
+from rsgispy.tools.plotting import plot_histogram_threshold, save_plot
 from rsgispy.tools.thresholding import (
     HAVE_SCIPY,
     calc_kurt_skew_threshold,
@@ -371,7 +371,8 @@ def find_class_otsu_outliers(
                          (Default = ``1``).
     :param img_band: 1-based band index within ``input_img`` (Default = ``1``).
     :param plot_thres_file: Optional output image path for a histogram plot
-                            showing the computed threshold.
+                            showing the computed threshold, drawn with
+                            :func:`~rsgispy.tools.plotting.plot_histogram_threshold`.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type
                      (Default = ``None``, which uses
@@ -434,7 +435,8 @@ def find_class_otsu_outliers(
     )
 
     if plot_thres_file is not None:
-        plot_histogram_threshold(vals_1d, plot_thres_file, threshold=chng_thres)
+        fig, _ = plot_histogram_threshold(vals_1d, threshold=chng_thres)
+        save_plot(fig, plot_thres_file, close=True)
 
     return chng_thres
 
@@ -474,7 +476,8 @@ def find_class_li_outliers(
                          (Default = ``1``).
     :param img_band: 1-based band index within ``input_img`` (Default = ``1``).
     :param plot_thres_file: Optional output image path for a histogram plot
-                            showing the computed threshold.
+                            showing the computed threshold, drawn with
+                            :func:`~rsgispy.tools.plotting.plot_histogram_threshold`.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type
                      (Default = ``None``, which uses
@@ -537,7 +540,8 @@ def find_class_li_outliers(
     )
 
     if plot_thres_file is not None:
-        plot_histogram_threshold(vals_1d, plot_thres_file, threshold=chng_thres)
+        fig, _ = plot_histogram_threshold(vals_1d, threshold=chng_thres)
+        save_plot(fig, plot_thres_file, close=True)
 
     return chng_thres
 
@@ -585,7 +589,8 @@ def find_class_kurt_skew_outliers(
                          (Default = ``1``).
     :param img_band: 1-based band index within ``input_img`` (Default = ``1``).
     :param plot_thres_file: Optional output image path for a histogram plot
-                            showing the computed threshold.
+                            showing the computed threshold, drawn with
+                            :func:`~rsgispy.tools.plotting.plot_histogram_threshold`.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type
                      (Default = ``None``, which uses
@@ -667,6 +672,7 @@ def find_class_kurt_skew_outliers(
     )
 
     if plot_thres_file is not None:
-        plot_histogram_threshold(vals_1d, plot_thres_file, threshold=chng_thres)
+        fig, _ = plot_histogram_threshold(vals_1d, threshold=chng_thres)
+        save_plot(fig, plot_thres_file, close=True)
 
     return chng_thres

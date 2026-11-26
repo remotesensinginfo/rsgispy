@@ -7,6 +7,8 @@ intervals, and predicted-vs-observed / residual plots.
 from pathlib import Path
 
 import geopandas as gpd
+import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
@@ -16,6 +18,8 @@ from shapely.geometry import Point, box
 
 import rsgispy
 import rsgispy.regression.regmetrics as rrm
+
+matplotlib.use("Agg")
 
 
 def _write_pred_raster(tmp_path: Path):
@@ -166,20 +170,21 @@ def test_bootstrap_conf_and_diagnostic_plots(tmp_path: Path):
     pvo_mv = tmp_path / "pvo_mv.png"
     res_mv = tmp_path / "res_mv.png"
 
-    m1 = rrm.plot_pred_vs_obs(
+    m1 = rrm.calc_reg_metrics(eval_df, ref_col="obs_cover", pred_col="pred_cover")
+    fig1, axs1 = rrm.plot_pred_vs_obs(
         eval_df, ref_col="obs_cover", pred_col="pred_cover", out_plot_file=pvo_uni
     )
-    m2 = rrm.plot_residuals(
+    fig2, axs2 = rrm.plot_residuals(
         eval_df, ref_col="obs_cover", pred_col="pred_cover", out_plot_file=res_uni
     )
-    m3 = rrm.plot_pred_vs_obs(
+    fig3, axs3 = rrm.plot_pred_vs_obs(
         eval_df,
         ref_cols=["obs_cover", "obs_height"],
         pred_cols=["pred_cover", "pred_height"],
         target_names=["Canopy Cover", "Canopy Height"],
         out_plot_file=pvo_mv,
     )
-    m4 = rrm.plot_residuals(
+    fig4, axs4 = rrm.plot_residuals(
         eval_df,
         ref_cols=["obs_cover", "obs_height"],
         pred_cols=["pred_cover", "pred_height"],
@@ -187,5 +192,8 @@ def test_bootstrap_conf_and_diagnostic_plots(tmp_path: Path):
         out_plot_file=res_mv,
     )
     assert all(p.exists() for p in (pvo_uni, res_uni, pvo_mv, res_mv))
-    assert m1["r2"] > 0.9 and m2["r2"] == m1["r2"]
-    assert "Canopy Cover_r2" in m3 and "Canopy Height_bias" in m4
+    assert m1["r2"] > 0.9
+    assert axs1.shape == (1, 1) and axs2.shape[0] == 1
+    assert axs3.size >= 2 and axs4.size >= 2
+    for fig in (fig1, fig2, fig3, fig4):
+        plt.close(fig)
