@@ -22,6 +22,26 @@ Covers `rsgispy.elevation.*`, `rsgispy.segmentation.*`, `rsgispy.imagefilter.*`,
 - `local_incidence_angle(input_img, output_img, azimuth, zenith, *, ...)`
 - `local_exitance_angle(input_img, output_img, azimuth, zenith, *, ...)`
 
+### Chaining terrain in a tile graph (node builders)
+Each terrain/illumination function above (except `shadow_mask`) has a node builder for an in-memory `TileGraph` (one pass, no intermediate files; same output as the file function, which is built on it). Signature `builder(dem_node, <params>, *, no_data_val=None, name=None)`; `no_data_val=None` uses the **input node's** no-data value (unlike the filter builders):
+- `terrain.slope_node(dem, unit='degrees')`, `terrain.aspect_node(dem)`, `terrain.categorise_aspect_node(aspect_node)` (pixel-wise, `uint8`, no nodata)
+- `terrain.slope_pxl_res_img_node(dem, pxl_res, unit='degrees')`, `terrain.aspect_pxl_res_img_node(dem, pxl_res)` (`pxl_res`: node with EW/NS resolution in bands 1/2, same grid as the DEM)
+- `illumination.hillshade_node(dem, azimuth, zenith)` (`uint8`), `illumination.hillshade_pxl_res_img_node(dem, pxl_res, azimuth, zenith)`
+- `illumination.local_incidence_angle_node(dem, azimuth, zenith)`, `illumination.local_exitance_angle_node(dem, azimuth, zenith)`
+
+The DEM node must be single-band (`RasterSource("dem.tif", bands=1)` or `SelectBands`). Horn 3x3 nodes: halo radius 1, edge padding, pixel size from the DEM geotransform (an `ArraySource` needs a `transform`). Slope/aspect/angle nodes output `float64` (write with `DiskSink(..., datatype=rsgispy.TYPE_32FLOAT)` to match the file functions); hillshade writes as `rsgispy.TYPE_8UINT`. `shadow_mask` is not chainable (rays cross the whole DEM).
+```python
+import rsgispy
+from rsgispy.imageprocess import BandMathOp, DiskSink, RasterSource, TileGraph
+from rsgispy.imagefilter.stats import mean_filter_node
+from rsgispy.elevation.terrain import slope_node
+
+dem = RasterSource("dem.tif", bands=1)
+slp = slope_node(mean_filter_node(dem, 5, no_data_val=-9999), "degrees")
+classes = BandMathOp({"s": slp}, "(s >= 5) + (s >= 15) + (s >= 30)")
+TileGraph(DiskSink(classes, "slope_classes.tif", datatype=rsgispy.TYPE_8UINT)).run()
+```
+
 ### Filtering & Fusion (`rsgispy.elevation.{filtering,fusion}`)
 - `filtering.dtm_aspect_median_filter(in_dem_img, in_aspect_img, output_img, aspect_range, win_h_size, *, ...)`
 - `filtering.fill_dem_soille_gratin_1994(in_dem_img, in_vld_img, output_img, *, ...)`
