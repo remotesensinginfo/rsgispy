@@ -105,5 +105,6 @@ Submodules:
   :func:`~rsgispy.regression.regmetrics.pop_reg_img_pred_pts`,
   :func:`~rsgispy.regression.regmetrics.calc_reg_stats_ptonly_bootstrap_conf`,
   :func:`~rsgispy.regression.regmetrics.plot_pred_vs_obs`,
-  :func:`~rsgispy.regression.regmetrics.plot_residuals`).
+  :func:`~rsgispy.regression.regmetrics.plot_residuals`,
+  :func:`~rsgispy.regression.regmetrics.plot_qq_residuals`).
 """

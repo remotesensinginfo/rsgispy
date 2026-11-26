@@ -4,7 +4,8 @@ The tools.plotting module provides the rsgispy house plot style
 rsgispy plotting function uses (:func:`get_fig_ax`, :func:`get_fig_axs`,
 :func:`save_plot` and :func:`add_stats_text_box`), functions for reading
 raster data into NumPy arrays and applying image stretches for visualisation
-with Matplotlib, and generic plots (:func:`plot_histogram_threshold`).
+with Matplotlib, and generic plots (:func:`plot_histogram_threshold` and
+:func:`plot_qq`).
 
 See :ref:`plotting_conventions` for the conventions every rsgispy plotting
 function follows.
@@ -61,6 +62,9 @@ __all__ = [
     "cumulative_stretch_np_arr",
     "stdev_stretch_np_arr",
     "plot_histogram_threshold",
+    "plot_qq",
+    "draw_qq",
+    "describe_shapiro",
 ]
 
 #: The Okabe-Ito colour-blind-safe palette (Okabe and Ito, 2008), by name.
@@ -75,9 +79,9 @@ OKABE_ITO_COLOURS: Dict[str, str] = {
     "reddish_purple": "#CC79A7",
 }
 
-#: The colour cycle for categories: the Okabe-Ito colours, ordered so the
-#: first ones are the most distinct. The first colour is used for a single
-#: series and the second for reference or fitted lines.
+#: The colour cycle for categories (the Okabe-Ito colours, ordered so the
+#: first ones are the most distinct). The first colour is used for a single
+#: series and the second for fitted lines.
 CATEGORICAL_COLOURS: List[str] = [
     OKABE_ITO_COLOURS["blue"],
     OKABE_ITO_COLOURS["vermillion"],
@@ -96,7 +100,7 @@ DIVERGING_CMAP = "RdBu_r"
 #: Default resolution (dots per inch) of saved plots.
 PLOT_DPI = 300
 
-#: Colour of 1:1 and zero reference lines.
+#: Colour of the one-to-one and zero reference lines.
 REF_LINE_COLOUR = "#4d4d4d"
 
 _PLOT_TYPES = ("chart", "map")
@@ -182,7 +186,7 @@ def rsgispy_plot_style(
 ) -> Iterator[None]:
     """
     Context manager applying the rsgispy house plot style
-    (:func:`get_plot_style_rc`) with :func:`matplotlib.rc_context`. The
+    (:func:`get_plot_style_rc`) with ``matplotlib.rc_context``. The
     previous ``rcParams`` are restored on exit, so the style never changes
     the global Matplotlib settings. Every rsgispy plotting function applies
     it internally (see :func:`use_plot_style`); use it to give your own plots
@@ -212,7 +216,9 @@ def rsgispy_plot_style(
         yield
 
 
-def use_plot_style(func: Optional[_F] = None, *, plot_type: str = "chart") -> Any:
+def use_plot_style(
+    func: Optional[Callable[..., Any]] = None, *, plot_type: str = "chart"
+) -> Any:
     """
     Decorator running the decorated function inside
     :func:`rsgispy_plot_style`, so a plotting function applies the house
@@ -266,7 +272,7 @@ def get_fig_ax(
     """
     Get the figure and axis to draw on: ``ax`` and its figure when ``ax`` is
     given, otherwise a new figure and axis from
-    :func:`matplotlib.pyplot.subplots`.
+    ``matplotlib.pyplot.subplots``.
 
     :param ax: Optional existing Matplotlib axis to draw on.
     :param figsize: Size ``(width, height)`` in inches of a new figure.
@@ -299,7 +305,7 @@ def get_fig_axs(
     """
     Get the figure and a 2D array of axes for a multi-panel plot: ``axs``
     (reshaped to ``(nrows, ncols)``) and its figure when given, otherwise a
-    new figure from :func:`matplotlib.pyplot.subplots` with ``squeeze=False``.
+    new figure from ``matplotlib.pyplot.subplots`` with ``squeeze=False``.
 
     :param axs: Optional existing axes (one axis, a sequence or an array)
                 with ``nrows * ncols`` elements.
@@ -388,7 +394,7 @@ def add_stats_text_box(
     :param text: Text, or a sequence of lines.
     :param loc: Placement, as for a legend (Default = ``'upper left'``).
     :param fontsize: Font size (Default = the legend font size).
-    :return: The :class:`matplotlib.offsetbox.AnchoredText` artist.
+    :return: The ``matplotlib.offsetbox.AnchoredText`` artist.
 
     .. code:: python
 
@@ -555,7 +561,7 @@ def get_thematic_raster_mpl_imshow(
     :param band: 1-based band index (Default = 1).
     :param bbox: Optional bounding box ``(MinX, MaxX, MinY, MaxY)`` in the image
                  CRS used to spatially subset the raster.
-    :param out_patches: If True, build a list of :class:`matplotlib.patches.Patch`
+    :param out_patches: If True, build a list of ``matplotlib.patches.Patch``
                         objects for creating a legend (Default = False).
     :param cls_names_lut: Optional mapping from pixel class value to class label.
     :param alpha_lyr: If True, include an alpha channel where background pixel
@@ -1150,6 +1156,165 @@ def plot_histogram_threshold(
         ax.set_title(title_str)
     ax.set_xlabel(x_label if x_label is not None else "Value")
     ax.set_ylabel("Frequency")
+    if out_plot_file is not None:
+        save_plot(fig, out_plot_file, out_dpi=out_dpi)
+    return fig, ax
+
+
+def describe_shapiro(stat: float, p_val: float, alpha: float = 0.05) -> str:
+    """
+    Describe a Shapiro-Wilk test result in words: with ``p < alpha`` the
+    values are unlikely to come from a normal distribution; otherwise the test
+    gives no evidence against normality (it does not show they are normal).
+
+    :param stat: Shapiro-Wilk ``W`` statistic.
+    :param p_val: Shapiro-Wilk p-value.
+    :param alpha: Significance level (Default = ``0.05``).
+    :return: Two-line description, e.g. for a plot's text box.
+
+    .. code:: python
+
+        import rsgispy.tools.plotting as rplot
+
+        print(rplot.describe_shapiro(0.95, 0.01))
+    """
+    verdict = (
+        f"p < {alpha:g}: not normal"
+        if p_val < alpha
+        else f"p ≥ {alpha:g}: no evidence against normality"
+    )
+    return f"Shapiro–Wilk W = {stat:.3f}, p = {p_val:.3g}\n({verdict})"
+
+
+def draw_qq(
+    ax: Any,
+    values: Union[np.ndarray, Sequence[float]],
+    dist: Any = "norm",
+    show_shapiro: bool = True,
+) -> Dict[str, Any]:
+    """
+    Draw a Q-Q plot of ``values`` on ``ax`` (the points and fitted line of
+    ``scipy.stats.probplot``, and optionally a Shapiro-Wilk text box) and
+    return the numbers drawn: ``osm`` (theoretical quantiles), ``osr``
+    (ordered values), ``slope``, ``intercept``, ``r`` and, when tested,
+    ``shapiro_w`` and ``shapiro_p``. Used by :func:`plot_qq`; no labels or
+    title are set.
+
+    :param ax: Matplotlib axis.
+    :param values: Finite values (flattened).
+    :param dist: Distribution name or ``scipy.stats`` distribution object.
+    :param show_shapiro: Add the Shapiro-Wilk test result (Default = ``True``).
+    :return: Dictionary of the plotted values and statistics.
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import rsgispy.tools.plotting as rplot
+
+        fig, ax = plt.subplots()
+        qq = rplot.draw_qq(ax, np.random.default_rng(0).normal(size=100))
+    """
+    # pylint: disable=import-outside-toplevel
+    try:
+        import scipy.stats
+    except ImportError as exc:
+        rsgispy.check_optional_dep(False, "plot_qq", "scipy", "stats", error_detail=str(exc))
+        raise
+    vals = np.asarray(values, dtype=float).ravel()
+    (osm, osr), (slope, intercept, r_val) = scipy.stats.probplot(vals, dist=dist, fit=True)
+    ax.scatter(osm, osr, s=16, alpha=0.7, color=CATEGORICAL_COLOURS[0], label="Values", zorder=3)
+    line_x = np.array([np.min(osm), np.max(osm)])
+    ax.plot(
+        line_x,
+        slope * line_x + intercept,
+        color=CATEGORICAL_COLOURS[1],
+        linestyle="--",
+        label="Fitted line",
+    )
+    out: Dict[str, Any] = {
+        "osm": np.asarray(osm),
+        "osr": np.asarray(osr),
+        "slope": float(slope),
+        "intercept": float(intercept),
+        "r": float(r_val),
+    }
+    if show_shapiro:
+        if vals.size >= 3:
+            sw_stat, sw_p = scipy.stats.shapiro(vals)
+            out["shapiro_w"] = float(sw_stat)
+            out["shapiro_p"] = float(sw_p)
+            add_stats_text_box(ax, describe_shapiro(float(sw_stat), float(sw_p)), loc="upper left")
+        else:
+            add_stats_text_box(ax, "Shapiro–Wilk needs at least 3 values", loc="upper left")
+    ax.legend(loc="lower right")
+    return out
+
+
+@use_plot_style
+def plot_qq(
+    values: Union[np.ndarray, Sequence[float]],
+    *,
+    dist: Any = "norm",
+    show_shapiro: bool = True,
+    title: Optional[str] = None,
+    x_label: Optional[str] = None,
+    y_label: Optional[str] = None,
+    figsize: Tuple[float, float] = (5.5, 5.0),
+    ax: Optional[Any] = None,
+    out_plot_file: Optional[Union[str, os.PathLike]] = None,
+    out_dpi: int = PLOT_DPI,
+) -> Tuple[Any, Any]:
+    """
+    Plot a quantile-quantile (Q-Q) plot of ``values`` against a theoretical
+    distribution (normal by default), with the fitted line from
+    ``scipy.stats.probplot``. Points close to the line mean the values
+    follow the distribution; curved tails show skew or heavy tails. With
+    ``show_shapiro`` the Shapiro-Wilk test statistic and p-value are shown
+    (normal distribution only); ``p < 0.05`` means the values are unlikely to
+    be normal (:func:`describe_shapiro`).
+
+    Use it for any values, e.g. the residuals of a regression or the k-fold
+    residuals of :func:`rsgispy.regression.regsklearn.perform_kfold_fit`; see
+    also :func:`rsgispy.regression.regmetrics.plot_qq_residuals`.
+
+    :param values: Values to plot (flattened; non-finite values are ignored).
+    :param dist: Distribution name or ``scipy.stats`` distribution object
+                 (Default = ``'norm'``).
+    :param show_shapiro: Show the Shapiro-Wilk test result (only when
+                         ``dist='norm'``; Default = ``True``).
+    :param title: Optional plot title.
+    :param x_label: x-axis label (Default = ``'Theoretical quantiles (normal)'``
+                    for the normal distribution).
+    :param y_label: y-axis label (Default = ``'Ordered values'``).
+    :param figsize: Size of a new figure in inches (Default = ``(5.5, 5.0)``).
+    :param ax: Optional Matplotlib axis to draw on (Default = a new figure).
+    :param out_plot_file: Optional output image file; the figure is saved and
+                          left open (Default = ``None``).
+    :param out_dpi: Resolution of the saved image (Default = ``300``).
+    :return: Tuple ``(fig, ax)``.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.tools.plotting as rplot
+
+        resid = np.random.default_rng(0).normal(0.0, 2.0, 200)
+        fig, ax = rplot.plot_qq(resid, title="Residuals", out_plot_file="qq.png")
+    """
+    # pylint: disable=too-many-arguments
+    vals = np.asarray(values, dtype=float).ravel()
+    vals = vals[np.isfinite(vals)]
+    if vals.size < 2:
+        raise rsgispy.RSGISPyException("At least two finite values are needed for a Q-Q plot.")
+    fig, ax = get_fig_ax(ax, figsize=figsize)
+    dist_name = dist if isinstance(dist, str) else getattr(dist, "name", "distribution")
+    draw_qq(ax, vals, dist=dist, show_shapiro=show_shapiro and dist_name == "norm")
+    dist_lbl = "normal" if dist_name == "norm" else dist_name
+    ax.set_xlabel(x_label if x_label is not None else f"Theoretical quantiles ({dist_lbl})")
+    ax.set_ylabel(y_label if y_label is not None else "Ordered values")
+    if title is not None:
+        ax.set_title(title)
     if out_plot_file is not None:
         save_plot(fig, out_plot_file, out_dpi=out_dpi)
     return fig, ax

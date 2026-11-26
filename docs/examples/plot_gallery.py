@@ -160,6 +160,16 @@ def _gallery_plots(scene: Dict[str, str], tbl: Dict[str, object]) -> List[Tuple[
         )
         return fig
 
+    def qq_residuals():
+        fig, _ = rmet.plot_qq_residuals(eval_df, ref_col="cover_obs", pred_col="cover_pred",
+                                        target_names=["Canopy cover (%)"])
+        return fig
+
+    def qq_values():
+        rng = np.random.default_rng(3)
+        fig, _ = rplot.plot_qq(rng.gamma(2.0, 2.0, 200), title="Q-Q plot of skewed values")
+        return fig
+
     def correlation_heatmap():
         fig, _ = ml_explain.plot_correlation_heatmap(tbl["corr_df"])
         return fig
@@ -262,6 +272,8 @@ def _gallery_plots(scene: Dict[str, str], tbl: Dict[str, object]) -> List[Tuple[
         ("plot_pred_vs_obs_multi", pred_vs_obs_multi),
         ("plot_residuals", residuals),
         ("plot_residuals_multi", residuals_multi),
+        ("plot_qq_residuals", qq_residuals),
+        ("plot_qq", qq_values),
         ("plot_correlation_heatmap", correlation_heatmap),
         ("plot_jackknife_bars", jackknife_bars),
         ("plot_feature_importance_bars", importance_bars),

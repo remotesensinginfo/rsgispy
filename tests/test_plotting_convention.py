@@ -167,10 +167,30 @@ FIGURE_CASES = [
     ),
     (
         "plot_residuals",
-        1,
+        2,
         lambda d, ax, out: rm.plot_residuals(
             d["eval_df"], ref_col="obs", pred_col="pred", axs=ax, out_plot_file=out
         ),
+    ),
+    (
+        "plot_residuals_no_hist",
+        1,
+        lambda d, ax, out: rm.plot_residuals(
+            d["eval_df"], ref_col="obs", pred_col="pred", show_hist=False, axs=ax,
+            out_plot_file=out,
+        ),
+    ),
+    (
+        "plot_qq_residuals",
+        1,
+        lambda d, ax, out: rm.plot_qq_residuals(
+            d["eval_df"], ref_col="obs", pred_col="pred", axs=ax, out_plot_file=out
+        ),
+    ),
+    (
+        "plot_qq",
+        1,
+        lambda d, ax, out: rplot.plot_qq(d["vals"], ax=ax, out_plot_file=out),
     ),
     (
         "plot_correlation_heatmap",

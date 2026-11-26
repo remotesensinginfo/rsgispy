@@ -35,8 +35,8 @@ figure is then shown once, at the end of the cell. Close figures you no longer
 need with ``plt.close(fig)``.
 
 **Functions that draw on a given axis** (maps and map elements, ``create_*``
-and ``add_*`` in :mod:`rsgispy.mapping`) return what the caller needs next:
-the image artist (:class:`matplotlib.image.AxesImage`) for raster maps, so
+and ``add_*`` in :doc:`rsgispy.mapping <rsgispy_mapping>`) return what the caller needs next:
+the image artist (``matplotlib.image.AxesImage``) for raster maps, so
 ``fig.colorbar(img)`` works; the collections for vector maps; and the legend,
 scale bar, north arrow, rectangles or text for map elements. The
 colour-mapped map functions take ``show_colour_bar=False`` and
@@ -60,7 +60,7 @@ close each figure and return the list of files written.
 
 **House style.** Every plotting function applies the rsgispy house style
 (:func:`~rsgispy.tools.plotting.get_plot_style_rc`) with
-:func:`matplotlib.rc_context` while it runs, so your global ``rcParams`` are
+``matplotlib.rc_context`` while it runs, so your global ``rcParams`` are
 never changed (importing rsgispy changes nothing either). Use
 :func:`~rsgispy.tools.plotting.rsgispy_plot_style` to draw your own plots
 in the same style; the colours are

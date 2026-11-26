@@ -50,7 +50,7 @@ def add_contextily_basemap(
     :param cx_attribution: Attribution string, ``False`` to suppress, or ``None``
                            for default attribution.
     :param cx_att_size: Attribution font size (Default = 8).
-    :return: The basemap image artist (:class:`matplotlib.image.AxesImage`).
+    :return: The basemap image artist (``matplotlib.image.AxesImage``).
 
     .. code:: python
 
@@ -181,7 +181,7 @@ def create_wmts_img_map(
     :param north_arrow_style: North arrow style constant (Default =
                               :data:`~rsgispy.mapping.elements.NORTH_ARROW_STYLE_TRIANGLE`).
     :param north_arrow_loc: North arrow placement string (Default = ``'upper left'``).
-    :return: The image artist (:class:`matplotlib.image.AxesImage`).
+    :return: The image artist (``matplotlib.image.AxesImage``).
 
     .. code:: python
 

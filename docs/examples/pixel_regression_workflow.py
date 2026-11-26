@@ -287,6 +287,10 @@ def run_workflow(
         val_pts, ref_col=target_col, pred_col="pred",
         out_plot_file=os.path.join(out_dir, "residuals.png"),
     )
+    fig, axs = rmet.plot_qq_residuals(
+        val_pts, ref_col=target_col, pred_col="pred",
+        out_plot_file=os.path.join(out_dir, "residuals_qq.png"),
+    )
     in_interval = val_pts[target_col].between(val_pts["lower"], val_pts["upper"])
     print(f"90 % interval coverage: {in_interval.mean():.2f}")
     val_pts["residual"] = val_pts["pred"] - val_pts[target_col]

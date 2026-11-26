@@ -1074,7 +1074,7 @@ def add_axis_label(
     :param lbl_font_size: Font size (Default = 12).
     :param fill_clr: Background box fill colour (Default = ``'white'``).
     :param padding: Padding around label text (Default = 3.0).
-    :return: The label's :class:`matplotlib.text.Text` artist.
+    :return: The label's ``matplotlib.text.Text`` artist.
 
     .. code:: python
 

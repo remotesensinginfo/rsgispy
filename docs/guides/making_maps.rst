@@ -188,7 +188,7 @@ Step 3 — Continuous single-band maps
 with a Matplotlib colour map. Pixels equal to the band's no data value are
 transparent. ``show_colour_bar=True`` (with ``cbar_label``) adds a colour bar
 beside the map. The function returns the image artist
-(:class:`matplotlib.image.AxesImage`), so you can also draw the colour bar
+(``matplotlib.image.AxesImage``), so you can also draw the colour bar
 yourself, e.g. one bar for several panels with ``fig.colorbar(img, ax=axs)``.
 Every map function returns the artist it drew (see
 :ref:`plotting_conventions`).

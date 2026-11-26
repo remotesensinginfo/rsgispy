@@ -50,6 +50,16 @@ targets:
 .. image:: images/gallery/plot_residuals_multi.png
    :width: 100%
 
+:func:`rsgispy.regression.regmetrics.plot_qq_residuals` (the same data
+arguments) and :func:`rsgispy.tools.plotting.plot_qq` (any values; here
+skewed values, which the Shapiro–Wilk test flags as not normal):
+
+.. image:: images/gallery/plot_qq_residuals.png
+   :width: 55%
+
+.. image:: images/gallery/plot_qq.png
+   :width: 55%
+
 Classification and species distribution models
 ----------------------------------------------
 

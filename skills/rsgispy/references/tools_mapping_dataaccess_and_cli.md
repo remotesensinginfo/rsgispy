@@ -82,7 +82,7 @@ Covers `rsgispy.mapping.*`, `rsgispy.dataaccess.*`, `rsgispy.droneutils`, all 29
   - `accuracy`: `bias_score`, `decompose_bias_variance`, `accuracy_scores_binary`, `bin_accuracy_scores_prob`.
   - `featureselection`: `cqv_threshold`, `calc_pandas_vif`, `lassolars_feature_selection`, `corr_feature_selection`, `breusch_pagan_test`.
 - **`plotting` / `imaging` / `maths` / `system`**:
-  - `plotting`: `get_raster_mpl_imshow`, `get_thematic_raster_mpl_imshow`, `limit_range_np_arr`, `{manual,linear,cumulative,stdev}_stretch_np_arr`, `plot_histogram_threshold(data, threshold=None, *, title_str=None, x_label=None, ..., ax=None, out_plot_file=None, out_dpi=300) -> (fig, ax)`, `get_fig_ax`, `get_fig_axs`, `save_plot`, `add_stats_text_box`.
+  - `plotting`: `get_raster_mpl_imshow`, `get_thematic_raster_mpl_imshow`, `limit_range_np_arr`, `{manual,linear,cumulative,stdev}_stretch_np_arr`, `plot_histogram_threshold(data, threshold=None, *, title_str=None, x_label=None, ..., ax=None, out_plot_file=None, out_dpi=300) -> (fig, ax)`, `plot_qq(values, *, dist='norm', show_shapiro=True, title=None, ax=None, out_plot_file=None) -> (fig, ax)` (Shapiro-Wilk p < 0.05 = not normal; `describe_shapiro`, `draw_qq`), `get_fig_ax`, `get_fig_axs`, `save_plot`, `add_stats_text_box`.
   - `imaging`: `list_exif_info_pil`, `animate_img_set`, `list_exif_info`, `get_exif_info`, `extract_images_from_pdf`, `add_pdf_blank_pages`, `create_qr_code`.
   - `maths`: `round_to_nearest_val`, `is_number`, `similar_numeric_vals`, `in_bounds`, `mixed_signs`, `negative`, `is_odd`, `powerset_iter`, `powerset_lst`, `create_var_list`.
   - `system`: `get_environment_variable`, `num_process_cores`.

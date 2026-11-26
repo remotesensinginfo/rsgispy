@@ -388,13 +388,20 @@ training or tuning, ideally a probability sample of the area.
   adds bootstrap confidence intervals.
 * :func:`~rsgispy.regression.regmetrics.plot_pred_vs_obs` plots predicted
   against observed values with the 1:1 line (it returns ``(fig, axs)``;
-  the metrics come from ``calc_reg_metrics``). Points below the line at high
+  the metrics come from ``calc_reg_metrics``; the text box gives R², RMSE,
+  bias and ``n``, and the legend the fitted line). Points below the line at high
   values and above it at low values (a slope below 1) are typical of tree
   models, which shrink predictions towards the mean.
 * :func:`~rsgispy.regression.regmetrics.plot_residuals` plots the residuals
-  against the predictions. They should be centred on zero with no trend and
-  a similar spread everywhere; a funnel shape means the error grows with
-  the value.
+  (predicted − observed) against the predictions, with their histogram (and
+  a normal curve) beside the y-axis. They should be centred on zero with no
+  trend and a similar spread everywhere; a funnel shape means the error grows
+  with the value.
+* :func:`~rsgispy.regression.regmetrics.plot_qq_residuals` is a normal Q-Q
+  plot of the residuals with the Shapiro–Wilk test: points off the line in
+  the tails, or ``p < 0.05``, mean the residuals are not normal, so intervals
+  that assume normal errors are unreliable. (The prediction interval here
+  comes from the quantiles of the trees, so it does not assume normality.)
 * The **coverage** of the prediction interval (the fraction of plots inside
   it) should be close to the nominal level (0.9 here).
 * Writing the residuals to a vector file gives a **residual map**: clusters

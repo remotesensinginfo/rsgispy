@@ -57,6 +57,13 @@ predicted-vs-observed and residual diagnostic plots.
         pred_col="pred_canopy_cover",
         out_plot_file="canopy_residuals.png",
     )
+    fig, axs = rm.plot_qq_residuals(
+        "canopy_val_pts_eval.gpkg",
+        vec_lyr="val_pts",
+        ref_col="canopy_cover",
+        pred_col="pred_canopy_cover",
+        out_plot_file="canopy_residuals_qq.png",
+    )
 
 API Reference
 -------------

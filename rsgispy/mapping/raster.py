@@ -106,7 +106,7 @@ def create_raster_img_map(
     :param north_arrow_style: North arrow style constant (Default =
                               :data:`~rsgispy.mapping.elements.NORTH_ARROW_STYLE_TRIANGLE`).
     :param north_arrow_loc: North arrow placement string (Default = ``'upper left'``).
-    :return: The image artist (:class:`matplotlib.image.AxesImage`).
+    :return: The image artist (``matplotlib.image.AxesImage``).
 
     .. code:: python
 
@@ -284,7 +284,7 @@ def create_thematic_raster_map(
                       the legend is written via
                       :func:`~rsgispy.mapping.legend.add_categorical_legend_axis`
                       when ``show_legend=True`` (Default = ``None``).
-    :return: The image artist (:class:`matplotlib.image.AxesImage`) when
+    :return: The image artist (``matplotlib.image.AxesImage``) when
              ``input_img`` is one image, or a list of image artists (one per
              image, in drawing order) when it is a list. The legend, when
              drawn, is available from the axis (``ax.get_legend()``) or
@@ -481,7 +481,7 @@ def create_raster_cmap_img_map(
     :param show_colour_bar: Draw a colour bar beside the map (Default = False).
     :param cbar_label: Optional colour bar label, e.g. the variable and its
                        units (Default = None).
-    :return: The image artist (:class:`matplotlib.image.AxesImage`), e.g. for
+    :return: The image artist (``matplotlib.image.AxesImage``), e.g. for
              ``fig.colorbar(img)``; with ``show_colour_bar=True`` the colour
              bar is ``img.colorbar``.
 

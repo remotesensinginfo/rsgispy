@@ -26,7 +26,16 @@ from rsgispy.tools._ml_data import (
     resolve_rng,
     summarise_bootstrap_interval,
 )
-from rsgispy.tools.plotting import PLOT_DPI, get_fig_axs, save_plot, use_plot_style
+from rsgispy.tools.plotting import (
+    CATEGORICAL_COLOURS,
+    PLOT_DPI,
+    REF_LINE_COLOUR,
+    add_stats_text_box,
+    draw_qq,
+    get_fig_axs,
+    save_plot,
+    use_plot_style,
+)
 from rsgispy.tools.files import ensure_parent_dir
 import rsgispy.tools.jsonio
 from rsgispy.vector.attrs import write_vec_column_to_layer
@@ -42,6 +51,7 @@ __all__ = [
     "calc_reg_stats_ptonly_bootstrap_conf",
     "plot_pred_vs_obs",
     "plot_residuals",
+    "plot_qq_residuals",
 ]
 
 _TABULAR_EXTS = {".csv", ".tsv", ".txt", ".feather", ".parquet", ".pq"}
@@ -595,6 +605,16 @@ def _prepare_2d_eval_arrays(
     return y_t, y_p
 
 
+def _target_prefix(t_name: str, n_targets: int) -> str:
+    """Metric key prefix of a target in a ``calc_reg_metrics``-style dictionary."""
+    return f"{t_name}_" if n_targets > 1 else ""
+
+
+def _fmt_num(val: float) -> str:
+    """Format a statistic for a plot text box."""
+    return f"{val:.3g}" if abs(val) < 1000 else f"{val:,.0f}"
+
+
 # pylint: disable=too-many-arguments,too-many-positional-arguments
 @use_plot_style
 def plot_pred_vs_obs(
@@ -605,34 +625,46 @@ def plot_pred_vs_obs(
     ref_cols: Optional[Sequence[str]] = None,
     pred_cols: Optional[Sequence[str]] = None,
     target_names: Optional[Sequence[str]] = None,
-    out_plot_file: Optional[Union[str, os.PathLike]] = None,
+    *,
     add_trendline: bool = True,
+    show_stats: bool = True,
     title: Optional[str] = None,
+    figsize: Optional[Tuple[float, float]] = None,
     axs: Optional[Any] = None,
+    out_plot_file: Optional[Union[str, os.PathLike]] = None,
     out_dpi: int = PLOT_DPI,
 ) -> Tuple[Any, np.ndarray]:
     """
-    Create Predicted vs Observed scatter plot(s) with 1:1 identity reference
-    line, optional OLS trendline, and ``R^2`` / ``RMSE`` / ``MAE`` metrics.
+    Plot predicted against observed values, one panel per target, with the
+    1:1 line, an optional least-squares fitted line (its equation in the
+    legend) and equal axis ranges, so departures from the 1:1 line are easy
+    to see. With ``show_stats`` a text box gives the coefficient of
+    determination (R², ``sklearn.metrics.r2_score``, not the squared
+    correlation), RMSE, bias (predicted − observed) and ``n``, computed as by
+    :func:`calc_reg_metrics`.
 
     :param in_data: Input vector file path, :class:`geopandas.GeoDataFrame`,
                     :class:`pandas.DataFrame`, CSV, or Parquet table.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param ref_col: Reference column name for univariate regression.
-    :param pred_col: Predicted column name for univariate regression.
-    :param ref_cols: Reference column names for multivariate regression.
+    :param ref_col: Reference (observed) column name for one target.
+    :param pred_col: Predicted column name for one target.
+    :param ref_cols: Reference column names for several targets.
     :param pred_cols: Predicted column names matching ``ref_cols``.
-    :param target_names: Optional display titles per target variable.
-    :param out_plot_file: Optional output image file; the figure is saved
-                          and left open (Default = ``None``).
-    :param add_trendline: Overlay linear best-fit line when ``True``
+    :param target_names: Optional display names per target (e.g. with units).
+    :param add_trendline: Draw the least-squares line of predicted on observed
                           (Default = ``True``).
-    :param title: Optional figure suptitle / plot title.
+    :param show_stats: Show R², RMSE, bias and ``n`` (Default = ``True``).
+    :param title: Optional figure title.
+    :param figsize: Size of a new figure in inches (Default = 5 inches per
+                    panel, up to three panels per row).
     :param axs: Optional Matplotlib axes, one per target (Default = a new
                 figure).
+    :param out_plot_file: Optional output image file; the figure is saved
+                          and left open (Default = ``None``).
     :param out_dpi: Resolution of the saved image (Default = ``300``).
-    :return: Tuple ``(fig, axs)``, with ``axs`` a 2D array of axes. The
-             metrics are given by :func:`calc_reg_metrics`.
+    :return: Tuple ``(fig, axs)``, with ``axs`` a 2D array of axes (up to
+             three panels per row). The metrics are given by
+             :func:`calc_reg_metrics`.
 
     .. code:: python
 
@@ -643,6 +675,7 @@ def plot_pred_vs_obs(
             vec_lyr="val_pts",
             ref_col="canopy_cover",
             pred_col="pred_canopy_cover",
+            target_names=["Canopy cover (%)"],
             out_plot_file="pred_vs_obs.png",
         )
     """
@@ -658,71 +691,63 @@ def plot_pred_vs_obs(
         target_names=target_names,
     )
     metrics = compute_regression_metrics_dict(y_true, y_pred, eff_names)
-    metrics["n_samples"] = int(y_true.shape[0])
 
     y_t_2d, y_p_2d = _prepare_2d_eval_arrays(y_true, y_pred)
     n_targets = len(eff_names)
     n_cols = 1 if n_targets == 1 else min(3, n_targets)
     n_rows = int(math.ceil(n_targets / float(n_cols)))
-    fig, axes = get_fig_axs(
-        axs,
-        nrows=n_rows,
-        ncols=n_cols,
-        figsize=(6.0 * n_cols, 5.2 * n_rows),
-    )
+    if figsize is None:
+        figsize = (5.0 * n_cols, 5.0 * n_rows)
+    fig, axes = get_fig_axs(axs, nrows=n_rows, ncols=n_cols, figsize=figsize)
     for idx, t_name in enumerate(eff_names):
         r_i, c_i = divmod(idx, n_cols)
         ax = axes[r_i, c_i]
         yt = y_t_2d[:, idx]
         yp = y_p_2d[:, idx]
-        ax.scatter(
-            yt, yp, color="#1E88E5", alpha=0.6, s=22, edgecolors="none"
-        )
+        ax.scatter(yt, yp, s=16, alpha=0.6, color=CATEGORICAL_COLOURS[0], zorder=3)
         lo = float(min(np.min(yt), np.min(yp)))
         hi = float(max(np.max(yt), np.max(yp)))
         if hi <= lo:
             hi = lo + 1.0
         pad = 0.04 * (hi - lo)
         lims = (lo - pad, hi + pad)
-        ax.plot(
-            lims,
-            lims,
-            color="#424242",
-            linestyle="--",
-            linewidth=1.3,
-            label="1:1 Line",
-        )
+        ax.plot(lims, lims, color=REF_LINE_COLOUR, linestyle="--", linewidth=1.2, label="1:1 line")
         if add_trendline and np.std(yt) > 0.0 and yt.size >= 2:
             slope, intercept = np.polyfit(yt, yp, 1)
-            xs_line = np.linspace(lo, hi, 100)
+            sign = "+" if intercept >= 0 else "−"
             ax.plot(
-                xs_line,
-                slope * xs_line + intercept,
-                color="#D81B60",
-                linewidth=1.6,
-                label="Linear Fit",
+                lims,
+                slope * np.asarray(lims) + intercept,
+                color=CATEGORICAL_COLOURS[1],
+                label=f"Fit: y = {slope:.3g}x {sign} {abs(intercept):.3g}",
             )
         ax.set_xlim(lims)
         ax.set_ylim(lims)
         ax.set_aspect("equal", adjustable="box")
         ax.set_xlabel(f"Observed {t_name}")
         ax.set_ylabel(f"Predicted {t_name}")
-        prefix = f"{t_name}_" if n_targets > 1 else ""
-        r2_v = metrics[f"{prefix}r2"]
-        rmse_v = metrics[f"{prefix}rmse"]
-        mae_v = metrics[f"{prefix}mae"]
-        ax.set_title(
-            f"{t_name}\nR2={r2_v:.3f} | RMSE={rmse_v:.3f} | MAE={mae_v:.3f}"
-        )
-        ax.grid(alpha=0.25)
-        ax.legend(loc="upper left", fontsize=8)
+        if n_targets > 1:
+            ax.set_title(t_name)
+        ax.legend(loc="lower right")
+        if show_stats:
+            prefix = _target_prefix(t_name, n_targets)
+            add_stats_text_box(
+                ax,
+                [
+                    f"R² = {metrics[f'{prefix}r2']:.3f}",
+                    f"RMSE = {_fmt_num(metrics[f'{prefix}rmse'])}",
+                    f"Bias = {_fmt_num(metrics[f'{prefix}bias'])}",
+                    f"n = {yt.size}",
+                ],
+                loc="upper left",
+            )
 
     for idx in range(n_targets, n_rows * n_cols):
         r_i, c_i = divmod(idx, n_cols)
         axes[r_i, c_i].set_visible(False)
 
     if title:
-        fig.suptitle(title, y=1.01)
+        fig.suptitle(title)
     if out_plot_file is not None:
         save_plot(fig, out_plot_file, out_dpi=out_dpi)
     return fig, axes
@@ -738,31 +763,60 @@ def plot_residuals(
     ref_cols: Optional[Sequence[str]] = None,
     pred_cols: Optional[Sequence[str]] = None,
     target_names: Optional[Sequence[str]] = None,
-    out_plot_file: Optional[Union[str, os.PathLike]] = None,
+    *,
+    x_axis: str = "pred",
+    show_hist: bool = True,
+    hist_bins: Union[int, str, Sequence[float]] = "auto",
+    show_normal: bool = True,
+    show_stats: bool = True,
     title: Optional[str] = None,
+    figsize: Optional[Tuple[float, float]] = None,
     axs: Optional[Any] = None,
+    out_plot_file: Optional[Union[str, os.PathLike]] = None,
     out_dpi: int = PLOT_DPI,
 ) -> Tuple[Any, np.ndarray]:
     """
-    Create residual diagnostic scatter plot(s) (``Predicted - Observed`` versus
-    ``Predicted``) with zero-error reference line and bias / RMSE summary.
+    Plot the residuals (predicted − observed, the sign used by the ``bias``
+    of :func:`calc_reg_metrics`) against the predicted (or observed) values,
+    with a zero line, one row per target. With ``show_hist`` a histogram of
+    the residuals is drawn in a narrow panel beside the y-axis, sharing it,
+    so the distribution lines up with the scatter; ``show_normal`` overlays
+    the normal curve with the residuals' mean and standard deviation. With
+    ``show_stats`` a text box gives the bias, RMSE and ``n``.
+
+    Residuals should be centred on zero with no trend and a similar spread
+    everywhere; a funnel shape means the error grows with the value. See
+    :func:`plot_qq_residuals` for a Q-Q plot of the same residuals.
 
     :param in_data: Input vector file path, :class:`geopandas.GeoDataFrame`,
                     :class:`pandas.DataFrame`, CSV, or Parquet table.
     :param vec_lyr: Input vector layer name (or ``None``).
-    :param ref_col: Reference column name for univariate regression.
-    :param pred_col: Predicted column name for univariate regression.
-    :param ref_cols: Reference column names for multivariate regression.
+    :param ref_col: Reference (observed) column name for one target.
+    :param pred_col: Predicted column name for one target.
+    :param ref_cols: Reference column names for several targets.
     :param pred_cols: Predicted column names matching ``ref_cols``.
-    :param target_names: Optional display titles per target variable.
+    :param target_names: Optional display names per target (e.g. with units).
+    :param x_axis: ``'pred'`` (Default) to plot the residuals against the
+                   predicted values, or ``'obs'`` against the observed values.
+    :param show_hist: Draw the residual histogram beside the y-axis
+                      (Default = ``True``).
+    :param hist_bins: Bins of the histogram, as for :func:`numpy.histogram`
+                      (Default = ``'auto'``).
+    :param show_normal: Overlay the normal curve on the histogram
+                        (Default = ``True``).
+    :param show_stats: Show the bias, RMSE and ``n`` (Default = ``True``).
+    :param title: Optional figure title.
+    :param figsize: Size of a new figure in inches (Default = ``(7.5, 4.2)``
+                    per target row).
+    :param axs: Optional Matplotlib axes: per target, a scatter axis and (with
+                ``show_hist``) a histogram axis, i.e. ``n_targets x 2`` axes
+                (or ``n_targets``) (Default = a new figure).
     :param out_plot_file: Optional output image file; the figure is saved
                           and left open (Default = ``None``).
-    :param title: Optional figure suptitle / plot title.
-    :param axs: Optional Matplotlib axes, one per target (Default = a new
-                figure).
     :param out_dpi: Resolution of the saved image (Default = ``300``).
-    :return: Tuple ``(fig, axs)``, with ``axs`` a 2D array of axes. The
-             metrics are given by :func:`calc_reg_metrics`.
+    :return: Tuple ``(fig, axs)``, with ``axs`` an array of shape
+             ``(n_targets, 2)`` (scatter, histogram) with ``show_hist``, or
+             ``(n_targets, 1)`` without.
 
     .. code:: python
 
@@ -773,11 +827,14 @@ def plot_residuals(
             vec_lyr="val_pts",
             ref_col="canopy_cover",
             pred_col="pred_canopy_cover",
+            target_names=["Canopy cover (%)"],
             out_plot_file="residuals.png",
         )
     """
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-locals,too-many-statements,import-outside-toplevel
     check_sklearn_available("plot_residuals")
+    if x_axis not in ("pred", "obs"):
+        raise rsgispy.RSGISPyException("x_axis must be 'pred' or 'obs'.")
     y_true, y_pred, eff_names = _load_reg_eval_arrays(
         in_data=in_data,
         vec_lyr=vec_lyr,
@@ -787,45 +844,176 @@ def plot_residuals(
         pred_cols=pred_cols,
         target_names=target_names,
     )
-    metrics = compute_regression_metrics_dict(y_true, y_pred, eff_names)
-    metrics["n_samples"] = int(y_true.shape[0])
+    y_t_2d, y_p_2d = _prepare_2d_eval_arrays(y_true, y_pred)
+    n_targets = len(eff_names)
+    n_cols = 2 if show_hist else 1
+    if figsize is None:
+        figsize = (7.5 if show_hist else 6.0, 4.2 * n_targets)
+    if axs is None:
+        import matplotlib.pyplot as plt
 
+        fig, axes = plt.subplots(
+            n_targets,
+            n_cols,
+            figsize=figsize,
+            squeeze=False,
+            sharey="row" if show_hist else False,
+            gridspec_kw={"width_ratios": [4, 1]} if show_hist else None,
+        )
+    else:
+        fig, axes = get_fig_axs(axs, nrows=n_targets, ncols=n_cols)
+        if show_hist:
+            for r_i in range(n_targets):
+                try:
+                    axes[r_i, 1].sharey(axes[r_i, 0])
+                except ValueError:  # already shared (e.g. plt.subplots(sharey="row"))
+                    pass
+
+    for idx, t_name in enumerate(eff_names):
+        ax = axes[idx, 0]
+        yt = y_t_2d[:, idx]
+        yp = y_p_2d[:, idx]
+        resid = yp - yt
+        x_vals = yp if x_axis == "pred" else yt
+        ax.scatter(x_vals, resid, s=16, alpha=0.6, color=CATEGORICAL_COLOURS[0], zorder=3)
+        ax.axhline(0.0, color=REF_LINE_COLOUR, linestyle="--", linewidth=1.2)
+        ax.set_xlabel(f"{'Predicted' if x_axis == 'pred' else 'Observed'} {t_name}")
+        ax.set_ylabel("Residual (predicted − observed)")
+        if n_targets > 1:
+            ax.set_title(t_name)
+        if show_stats:
+            bias_v = float(np.mean(resid))
+            rmse_v = float(np.sqrt(np.mean(resid**2)))
+            add_stats_text_box(
+                ax,
+                [f"Bias = {_fmt_num(bias_v)}", f"RMSE = {_fmt_num(rmse_v)}", f"n = {resid.size}"],
+                loc="upper left",
+            )
+        # Symmetric y range about zero, so over- and under-prediction compare.
+        y_max = float(np.max(np.abs(resid))) * 1.1 if resid.size else 1.0
+        ax.set_ylim(-y_max if y_max > 0 else -1.0, y_max if y_max > 0 else 1.0)
+
+        if show_hist:
+            h_ax = axes[idx, 1]
+            counts, edges, _ = h_ax.hist(
+                resid,
+                bins=hist_bins,
+                orientation="horizontal",
+                color="#9a9a9a",
+                edgecolor="white",
+                linewidth=0.4,
+            )
+            h_ax.axhline(0.0, color=REF_LINE_COLOUR, linestyle="--", linewidth=1.2)
+            if show_normal and resid.size > 1 and np.std(resid) > 0.0:
+                mean_v = float(np.mean(resid))
+                std_v = float(np.std(resid, ddof=1))
+                y_line = np.linspace(edges[0], edges[-1], 200)
+                bin_w = float(np.mean(np.diff(edges)))
+                pdf = np.exp(-0.5 * ((y_line - mean_v) / std_v) ** 2)
+                pdf /= std_v * np.sqrt(2.0 * np.pi)
+                h_ax.plot(
+                    pdf * resid.size * bin_w, y_line, color=CATEGORICAL_COLOURS[1], label="Normal"
+                )
+                h_ax.legend(loc="lower right", fontsize=7, handlelength=1.2)
+            h_ax.tick_params(labelleft=False)
+            h_ax.set_xlabel("Count")
+            h_ax.grid(axis="y", visible=False)
+            h_ax.set_xlim(0, max(1.0, float(np.max(counts)) * 1.1))
+
+    if title:
+        fig.suptitle(title)
+    if out_plot_file is not None:
+        save_plot(fig, out_plot_file, out_dpi=out_dpi)
+    return fig, axes
+
+
+# pylint: disable=too-many-arguments,too-many-positional-arguments
+@use_plot_style
+def plot_qq_residuals(
+    in_data: Union[VectorInput, pd.DataFrame, str, os.PathLike],
+    vec_lyr: Optional[str] = None,
+    ref_col: Optional[str] = None,
+    pred_col: Optional[str] = None,
+    ref_cols: Optional[Sequence[str]] = None,
+    pred_cols: Optional[Sequence[str]] = None,
+    target_names: Optional[Sequence[str]] = None,
+    *,
+    show_shapiro: bool = True,
+    title: Optional[str] = None,
+    figsize: Optional[Tuple[float, float]] = None,
+    axs: Optional[Any] = None,
+    out_plot_file: Optional[Union[str, os.PathLike]] = None,
+    out_dpi: int = PLOT_DPI,
+) -> Tuple[Any, np.ndarray]:
+    """
+    Plot a normal Q-Q plot of the residuals (predicted − observed) of each
+    target, with the fitted line and, with ``show_shapiro``, the Shapiro-Wilk
+    test (``p < 0.05``: the residuals are unlikely to be normal). Takes the
+    same data arguments as :func:`plot_residuals`; see
+    :func:`rsgispy.tools.plotting.plot_qq` for any other values.
+
+    :param in_data: Input vector file path, ``geopandas.GeoDataFrame``,
+                    ``pandas.DataFrame``, CSV, or Parquet table.
+    :param vec_lyr: Input vector layer name (or ``None``).
+    :param ref_col: Reference (observed) column name for one target.
+    :param pred_col: Predicted column name for one target.
+    :param ref_cols: Reference column names for several targets.
+    :param pred_cols: Predicted column names matching ``ref_cols``.
+    :param target_names: Optional display names per target.
+    :param show_shapiro: Show the Shapiro-Wilk test (Default = ``True``).
+    :param title: Optional figure title.
+    :param figsize: Size of a new figure in inches (Default = 5 inches per
+                    panel, up to three panels per row).
+    :param axs: Optional Matplotlib axes, one per target (Default = a new
+                figure).
+    :param out_plot_file: Optional output image file; the figure is saved
+                          and left open (Default = ``None``).
+    :param out_dpi: Resolution of the saved image (Default = ``300``).
+    :return: Tuple ``(fig, axs)``, with ``axs`` a 2D array of axes.
+
+    .. code:: python
+
+        import rsgispy.regression.regmetrics as rm
+
+        fig, axs = rm.plot_qq_residuals(
+            "val_pts_eval.gpkg",
+            vec_lyr="val_pts",
+            ref_col="canopy_cover",
+            pred_col="pred_canopy_cover",
+            out_plot_file="residuals_qq.png",
+        )
+    """
+    y_true, y_pred, eff_names = _load_reg_eval_arrays(
+        in_data=in_data,
+        vec_lyr=vec_lyr,
+        ref_col=ref_col,
+        pred_col=pred_col,
+        ref_cols=ref_cols,
+        pred_cols=pred_cols,
+        target_names=target_names,
+    )
     y_t_2d, y_p_2d = _prepare_2d_eval_arrays(y_true, y_pred)
     n_targets = len(eff_names)
     n_cols = 1 if n_targets == 1 else min(3, n_targets)
     n_rows = int(math.ceil(n_targets / float(n_cols)))
-    fig, axes = get_fig_axs(
-        axs,
-        nrows=n_rows,
-        ncols=n_cols,
-        figsize=(6.0 * n_cols, 4.8 * n_rows),
-    )
+    if figsize is None:
+        figsize = (5.0 * n_cols, 5.0 * n_rows)
+    fig, axes = get_fig_axs(axs, nrows=n_rows, ncols=n_cols, figsize=figsize)
     for idx, t_name in enumerate(eff_names):
         r_i, c_i = divmod(idx, n_cols)
         ax = axes[r_i, c_i]
-        yp = y_p_2d[:, idx]
-        resid = yp - y_t_2d[:, idx]
-        ax.scatter(
-            yp, resid, color="#1E88E5", alpha=0.6, s=22, edgecolors="none"
-        )
-        ax.axhline(
-            0.0, color="#D81B60", linestyle="--", linewidth=1.5, label="Zero Error"
-        )
-        ax.set_xlabel(f"Predicted {t_name}")
-        ax.set_ylabel("Residual (Predicted - Observed)")
-        prefix = f"{t_name}_" if n_targets > 1 else ""
-        rmse_v = metrics[f"{prefix}rmse"]
-        bias_v = metrics[f"{prefix}bias"]
-        ax.set_title(f"{t_name} Residuals\nRMSE={rmse_v:.3f} | Bias={bias_v:.3f}")
-        ax.grid(alpha=0.25)
-        ax.legend(loc="best", fontsize=8)
-
+        resid = y_p_2d[:, idx] - y_t_2d[:, idx]
+        if resid.size < 2:
+            raise rsgispy.RSGISPyException("At least two samples are needed for a Q-Q plot.")
+        draw_qq(ax, resid, show_shapiro=show_shapiro)
+        ax.set_xlabel("Theoretical quantiles (normal)")
+        ax.set_ylabel("Residual (predicted − observed)")
+        ax.set_title(t_name if n_targets > 1 else f"Q-Q plot of {t_name} residuals")
     for idx in range(n_targets, n_rows * n_cols):
         r_i, c_i = divmod(idx, n_cols)
         axes[r_i, c_i].set_visible(False)
-
     if title:
-        fig.suptitle(title, y=1.01)
+        fig.suptitle(title)
     if out_plot_file is not None:
         save_plot(fig, out_plot_file, out_dpi=out_dpi)
     return fig, axes
