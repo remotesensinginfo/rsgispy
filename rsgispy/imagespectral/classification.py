@@ -5,29 +5,372 @@ Spectral Angle Mapper (SAM) and Spectral Correlation Mapper (SCM).
 """
 
 from contextlib import ExitStack
-from typing import List, Optional
+from typing import Any, List, Optional, Sequence, Tuple
 
 import numpy as np
-from rasterio.windows import Window
 
 import rsgispy
+from rsgispy._tilegraph._wrap import (
+    GridRasterSource,
+    WrapperDiskSink,
+    run_wrapper_graph,
+)
 from rsgispy.imageprocess import (
+    NodeMeta,
+    PointwiseOp,
+    TileContext,
+    TileNode,
+    TileTensor,
     ensure_file_exists,
-    iter_dataset_windows,
-    open_output_dataset,
+    rsgis_dtype_from_np_dtype,
 )
 from rsgispy.imagespectral._helpers import open_spectral_inputs, valid_cube_mask
 from rsgispy.imagespectral.endmembers import (
     EndmemberInput,
     prepare_endmembers_array,
 )
-from rsgispy.imageutils.metadata import set_band_names
-from rsgispy.imageutils.stats import pop_img_stats, pop_thmt_img_stats
 
 __all__: List[str] = [
     "spectral_angle_mapper",
+    "spectral_angle_mapper_node",
     "spectral_correlation_mapper",
+    "spectral_correlation_mapper_node",
 ]
+
+
+class _SimilaritySetup:
+    """Endmembers and settings of a SAM / SCM run."""
+
+    # pylint: disable=too-few-public-methods,too-many-instance-attributes
+
+    def __init__(
+        self,
+        endmembers: EndmemberInput,
+        mode: str,
+        endmembers_gain: float,
+        file_format: Optional[str],
+        score_threshold: Optional[float],
+    ) -> None:
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
+        em_names, n_em, n_em_bands, em_arr = prepare_endmembers_array(
+            endmembers, gain=endmembers_gain, file_format=file_format
+        )
+        if n_em == 0:
+            raise rsgispy.RSGISPyException(
+                "Endmembers table must contain at least one class column."
+            )
+        self.is_scm = mode == "scm"
+        if self.is_scm:
+            if n_em_bands < 2:
+                raise rsgispy.RSGISPyException(
+                    "Spectral Correlation Mapper requires at least 2 spectral bands."
+                )
+            if score_threshold is not None and (
+                float(score_threshold) < -1.0 or float(score_threshold) > 1.0
+            ):
+                raise rsgispy.RSGISPyException(
+                    f"min_corr must be within [-1.0, 1.0], got {score_threshold}."
+                )
+            em_work = em_arr - np.mean(em_arr, axis=1, keepdims=True)
+            em_norms = np.linalg.norm(em_work, axis=1, keepdims=True)
+            if np.any(em_norms == 0.0) or not np.all(np.isfinite(em_norms)):
+                raise rsgispy.RSGISPyException(
+                    "All endmember spectra must be finite and have non-zero "
+                    "variance across bands."
+                )
+        else:
+            em_work = em_arr
+            em_norms = np.linalg.norm(em_work, axis=1, keepdims=True)
+            if np.any(em_norms == 0.0) or not np.all(np.isfinite(em_norms)):
+                raise rsgispy.RSGISPyException(
+                    "All endmember spectra must be finite and have non-zero norm."
+                )
+        self.em_names = em_names
+        self.n_em = n_em
+        self.n_em_bands = n_em_bands
+        self.em_unit = em_work / em_norms  # (n_em, n_bands)
+        self.score_threshold = score_threshold
+        self.cls_np_dtype = np.dtype(np.uint8 if n_em <= 255 else np.uint16)
+
+
+_OUT_FLOAT_ND = -9999.0
+
+
+class _SimilarityNode(TileNode):
+    """
+    SAM / SCM node: ``n_em`` score bands, the best score and the class
+    (1-based index of the best endmember, ``0`` when not classified), in a
+    ``float64`` block of ``n_em + 2`` bands.
+    """
+
+    # pylint: disable=too-many-instance-attributes
+
+    def __init__(
+        self,
+        inputs: Sequence[TileNode],
+        setup: _SimilaritySetup,
+        settings: Tuple[float, bool, int, Optional[float]],
+        name: Optional[str] = None,
+        summary_name: str = "score",
+    ) -> None:
+        super().__init__(inputs=tuple(inputs), name=name)
+        self.setup = setup
+        self.summary_name = summary_name
+        self.img_gain, self.degrees, self.valid_msk_val, self.no_data_val = settings
+        self.eff_nd: Optional[float] = self.no_data_val
+
+    def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+        n_in = inputs[0].n_bands
+        if n_in is not None and int(n_in) != self.setup.n_em_bands:
+            raise rsgispy.RSGISPyException(
+                f"Input image band count ({n_in}) does not match "
+                f"endmember band count ({self.setup.n_em_bands})."
+            )
+        if self.no_data_val is None:
+            self.eff_nd = inputs[0].nodata
+        return NodeMeta(
+            n_bands=self.setup.n_em + 2,
+            band_names=list(self.setup.em_names) + [self.summary_name, "class"],
+            dtype=np.float64,
+        )
+
+    def evaluate(
+        self,
+        inputs: Sequence[TileTensor],
+        halo_y: int,
+        halo_x: int,
+        ctx: TileContext,
+        state: Any = None,
+    ) -> TileTensor:
+        # pylint: disable=too-many-locals
+        aligned = [t.crop(halo_y, halo_x) for t in inputs]
+        setup = self.setup
+        n_em = setup.n_em
+        blk = np.asarray(aligned[0].data, dtype=np.float64)
+        win_h, win_w = int(blk.shape[1]), int(blk.shape[2])
+        n_pxls = win_h * win_w
+        msk_blk = aligned[1].data[0] if len(aligned) > 1 else None
+        vld_flat = valid_cube_mask(blk, self.eff_nd, msk_blk, self.valid_msk_val).ravel()
+        scores_out = np.full((n_pxls, n_em), _OUT_FLOAT_ND, dtype=np.float32)
+        summary_out = np.full(n_pxls, _OUT_FLOAT_ND, dtype=np.float32)
+        cls_out = np.zeros(n_pxls, dtype=setup.cls_np_dtype)
+        if np.any(vld_flat):
+            pxls = np.moveaxis(blk, 0, -1).reshape(-1, setup.n_em_bands)[vld_flat]
+            if self.img_gain > 1:
+                pxls = pxls / float(self.img_gain)
+            if setup.is_scm:
+                pxls_work = pxls - np.mean(pxls, axis=1, keepdims=True)
+            else:
+                pxls_work = pxls
+            norms = np.linalg.norm(pxls_work, axis=1)
+            non_zero = norms > 0.0
+            if np.any(non_zero):
+                nz_unit = pxls_work[non_zero] / norms[non_zero, None]
+                cos_sim = np.clip(nz_unit @ setup.em_unit.T, -1.0, 1.0)
+                if setup.is_scm:
+                    metric_vals = cos_sim
+                    best_idx = np.argmax(metric_vals, axis=1)
+                else:
+                    metric_vals = np.arccos(cos_sim)
+                    if self.degrees:
+                        metric_vals = np.degrees(metric_vals)
+                    best_idx = np.argmin(metric_vals, axis=1)
+                nz_indices = np.flatnonzero(vld_flat)[non_zero]
+                scores_out[nz_indices] = metric_vals.astype(np.float32)
+                best_score = metric_vals[np.arange(metric_vals.shape[0]), best_idx]
+                summary_out[nz_indices] = best_score.astype(np.float32)
+                cls_vals = (best_idx + 1).astype(setup.cls_np_dtype)
+                thresh = setup.score_threshold
+                if thresh is not None:
+                    keep = (
+                        best_score >= float(thresh)
+                        if setup.is_scm
+                        else best_score <= float(thresh)
+                    )
+                    cls_vals = np.where(keep, cls_vals, 0).astype(setup.cls_np_dtype)
+                cls_out[nz_indices] = cls_vals
+        out = np.empty((n_em + 2, win_h, win_w), dtype=np.float64)
+        out[:n_em] = np.moveaxis(scores_out.reshape((win_h, win_w, n_em)), -1, 0)
+        out[n_em] = summary_out.reshape((win_h, win_w))
+        out[n_em + 1] = cls_out.reshape((win_h, win_w))
+        return aligned[0].with_data(out)
+
+
+def _similarity_output(
+    node: _SimilarityNode,
+    output: str,
+    summary_name: str,
+    name: Optional[str],
+) -> TileNode:
+    """Select one output of a :class:`_SimilarityNode` with its metadata."""
+    setup = node.setup
+    n_em = setup.n_em
+    if output == "scores":
+        idx = list(range(n_em))
+        meta = NodeMeta(n_bands=n_em, band_names=setup.em_names, dtype=np.float32,
+                        nodata=_OUT_FLOAT_ND)
+    elif output == "best":
+        idx = [n_em]
+        meta = NodeMeta(n_bands=1, band_names=(summary_name,), dtype=np.float32,
+                        nodata=_OUT_FLOAT_ND)
+    elif output == "all":
+        return node
+    elif output == "class":
+        idx = [n_em + 1]
+        meta = NodeMeta(n_bands=1, dtype=setup.cls_np_dtype, nodata=0.0)
+    else:
+        raise rsgispy.RSGISPyException(
+            f"output must be 'scores', 'best', 'class' or 'all', got {output!r}."
+        )
+    dtype = meta.dtype
+
+    return PointwiseOp(
+        node,
+        lambda arr: arr[idx].astype(dtype),
+        name=name or f"{node.name}_{output}",
+        meta_fn=lambda inputs: meta,
+    )
+
+
+def _similarity_node(
+    source: TileNode,
+    vld_msk: Optional[TileNode],
+    setup: _SimilaritySetup,
+    settings: Tuple[float, bool, int, Optional[float]],
+    names: Tuple[str, str],
+) -> _SimilarityNode:
+    """Build a :class:`_SimilarityNode`; ``names`` is ``(name, summary_name)``."""
+    inputs = [source] + ([vld_msk] if vld_msk is not None else [])
+    return _SimilarityNode(inputs, setup, settings, name=names[0], summary_name=names[1])
+
+
+def spectral_angle_mapper_node(
+    source: TileNode,
+    endmembers: EndmemberInput,
+    img_gain: float = 1,
+    endmembers_gain: float = 1,
+    file_format: Optional[str] = None,
+    degrees: bool = False,
+    max_angle: Optional[float] = None,
+    vld_msk: Optional[TileNode] = None,
+    valid_msk_val: int = 1,
+    *,
+    output: str = "scores",
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`spectral_angle_mapper`, for chaining in a
+    :class:`~rsgispy.imageprocess.TileGraph`. ``output`` selects what the
+    node gives (the outputs of :func:`spectral_angle_mapper`):
+
+    * ``'scores'``: one ``float32`` band per endmember with the spectral
+      angles, named after the endmembers (no data ``-9999``);
+    * ``'best'``: the minimum angle (``float32``, band ``'min_angle'``);
+    * ``'class'``: the 1-based index of the closest endmember (``0`` for no
+      data, zero-norm spectra or angles above ``max_angle``; ``uint8``, or
+      ``uint16`` for more than 255 endmembers).
+
+    * ``'all'``: the scores, the best score and the class in one
+      ``float64`` block of ``n_endmembers + 2`` bands (select them with
+      :class:`~rsgispy.imageprocess.SelectBands` to write several outputs
+      from one calculation).
+
+    The other parameters are those of :func:`spectral_angle_mapper`, with
+    the valid mask as an optional node ``vld_msk``; ``source`` must have the
+    endmembers' bands.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param endmembers: Endmembers table or file (bands as rows).
+    :param img_gain: Gain divisor of ``source`` when ``> 1`` (Default = ``1``).
+    :param endmembers_gain: Gain divisor of the endmembers (Default = ``1``).
+    :param file_format: Optional table format of an endmembers file.
+    :param degrees: Angles in degrees (Default = ``False``: radians).
+    :param max_angle: Optional maximum angle for ``'class'``.
+    :param vld_msk: Optional node whose first band is a valid-pixel mask.
+    :param valid_msk_val: Valid value in ``vld_msk`` (Default = ``1``).
+    :param output: ``'scores'`` (Default), ``'best'``, ``'class'`` or ``'all'``.
+    :param no_data_val: Optional input no-data value (Default = ``None``: that
+                        of ``source``).
+    :param name: Optional node name.
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        import rsgispy
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagespectral.classification import spectral_angle_mapper_node
+
+        refl = RasterSource("refl.tif")
+        cls = spectral_angle_mapper_node(
+            refl, "endmembers.csv", img_gain=10000, degrees=True, max_angle=15.0,
+            output="class",
+        )
+        TileGraph(DiskSink(cls, "sam_class.tif", datatype=rsgispy.TYPE_8UINT)).run()
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    setup = _SimilaritySetup(endmembers, "sam", endmembers_gain, file_format, max_angle)
+    node = _similarity_node(
+        source, vld_msk, setup, (img_gain, degrees, valid_msk_val, no_data_val),
+        ("spectral_angle_mapper", "min_angle"),
+    )
+    return _similarity_output(node, output, "min_angle", name)
+
+
+def spectral_correlation_mapper_node(
+    source: TileNode,
+    endmembers: EndmemberInput,
+    img_gain: float = 1,
+    endmembers_gain: float = 1,
+    file_format: Optional[str] = None,
+    min_corr: Optional[float] = None,
+    vld_msk: Optional[TileNode] = None,
+    valid_msk_val: int = 1,
+    *,
+    output: str = "scores",
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`spectral_correlation_mapper`: as
+    :func:`spectral_angle_mapper_node`, with the SCM correlations as
+    ``'scores'``, the maximum correlation (band ``'max_corr'``) as
+    ``'best'``, and for ``'class'`` the most correlated endmember (``0``
+    below ``min_corr``).
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param endmembers: Endmembers table or file (bands as rows).
+    :param img_gain: Gain divisor of ``source`` when ``> 1`` (Default = ``1``).
+    :param endmembers_gain: Gain divisor of the endmembers (Default = ``1``).
+    :param file_format: Optional table format of an endmembers file.
+    :param min_corr: Optional minimum correlation in ``[-1, 1]`` for ``'class'``.
+    :param vld_msk: Optional node whose first band is a valid-pixel mask.
+    :param valid_msk_val: Valid value in ``vld_msk`` (Default = ``1``).
+    :param output: ``'scores'`` (Default), ``'best'``, ``'class'`` or ``'all'``.
+    :param no_data_val: Optional input no-data value (Default = ``None``: that
+                        of ``source``).
+    :param name: Optional node name.
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagespectral.classification import (
+            spectral_correlation_mapper_node,
+        )
+
+        corr = spectral_correlation_mapper_node(
+            RasterSource("refl.tif"), "endmembers.csv", output="best"
+        )
+        TileGraph(DiskSink(corr, "scm_max_corr.tif")).run()
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    setup = _SimilaritySetup(endmembers, "scm", endmembers_gain, file_format, min_corr)
+    node = _similarity_node(
+        source, vld_msk, setup, (img_gain, False, valid_msk_val, no_data_val),
+        ("spectral_correlation_mapper", "max_corr"),
+    )
+    return _similarity_output(node, output, "max_corr", name)
 
 
 def _run_spectral_similarity_mapper(
@@ -50,203 +393,74 @@ def _run_spectral_similarity_mapper(
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
-    """Shared windowed runner for SAM and SCM spectral similarity mapping."""
+    """Shared tile-graph runner for SAM and SCM spectral similarity mapping."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+    # pylint: disable=too-many-locals
     ensure_file_exists(input_img, "Input image")
-    em_names, n_em, n_em_bands, em_arr = prepare_endmembers_array(
-        endmembers, gain=endmembers_gain, file_format=file_format
+    setup = _SimilaritySetup(
+        endmembers, mode, endmembers_gain, file_format, score_threshold
     )
-    if n_em == 0:
-        raise rsgispy.RSGISPyException(
-            "Endmembers table must contain at least one class column."
-        )
-
-    is_scm = mode == "scm"
-    if is_scm:
-        if n_em_bands < 2:
-            raise rsgispy.RSGISPyException(
-                "Spectral Correlation Mapper requires at least 2 spectral bands."
-            )
-        if score_threshold is not None and (
-            float(score_threshold) < -1.0 or float(score_threshold) > 1.0
-        ):
-            raise rsgispy.RSGISPyException(
-                f"min_corr must be within [-1.0, 1.0], got {score_threshold}."
-            )
-        em_work = em_arr - np.mean(em_arr, axis=1, keepdims=True)
-        em_norms = np.linalg.norm(em_work, axis=1, keepdims=True)
-        if np.any(em_norms == 0.0) or not np.all(np.isfinite(em_norms)):
-            raise rsgispy.RSGISPyException(
-                "All endmember spectra must be finite and have non-zero "
-                "variance across bands."
-            )
-    else:
-        em_work = em_arr
-        em_norms = np.linalg.norm(em_work, axis=1, keepdims=True)
-        if np.any(em_norms == 0.0) or not np.all(np.isfinite(em_norms)):
-            raise rsgispy.RSGISPyException(
-                "All endmember spectra must be finite and have non-zero norm."
-            )
-    em_unit = em_work / em_norms  # (n_em, n_bands)
-
-    out_float_nd = -9999.0
-    cls_dtype = "uint8" if n_em <= 255 else "uint16"
-    cls_np_dtype = np.uint8 if n_em <= 255 else np.uint16
-
     with ExitStack() as stack:
         src, msk_ds, grid, img_off, msk_off = open_spectral_inputs(
             stack, input_img, valid_msk_img
         )
-        if int(src.count) != n_em_bands:
+        if int(src.count) != setup.n_em_bands:
             raise rsgispy.RSGISPyException(
                 f"Input image band count ({src.count}) does not match "
-                f"endmember band count ({n_em_bands})."
+                f"endmember band count ({setup.n_em_bands})."
             )
-
         eff_nd = no_data_val if no_data_val is not None else src.nodata
+        msk_dtype = msk_ds.dtypes[0] if msk_ds is not None else None
 
-        dst_scores = open_output_dataset(
-            stack=stack,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            out_rio_dtype="float32",
-            grid=grid,
-            count=n_em,
-        )
-        dst_scores.nodata = out_float_nd
-
-        dst_summary = None
-        if out_summary_img is not None:
-            dst_summary = open_output_dataset(
-                stack=stack,
-                output_img=out_summary_img,
-                gdalformat=gdalformat,
-                out_rio_dtype="float32",
-                grid=grid,
-                count=1,
-            )
-            dst_summary.nodata = out_float_nd
-
-        dst_cls = None
-        if out_class_img is not None:
-            dst_cls = open_output_dataset(
-                stack=stack,
-                output_img=out_class_img,
-                gdalformat=gdalformat,
-                out_rio_dtype=cls_dtype,
-                grid=grid,
-                count=1,
-            )
-            dst_cls.nodata = 0
-
-        for dst_win in iter_dataset_windows(
-            grid.height, grid.width, use_pbar=use_pbar
-        ):
-            col_off, row_off = int(dst_win.col_off), int(dst_win.row_off)
-            win_w, win_h = int(dst_win.width), int(dst_win.height)
-            n_pxls = win_h * win_w
-            img_win = Window(
-                img_off[0] + col_off, img_off[1] + row_off, win_w, win_h
-            )
-            blk = src.read(window=img_win, out_dtype=np.float64)
-            msk_blk = None
-            if msk_ds is not None and msk_off is not None:
-                msk_win = Window(
-                    msk_off[0] + col_off, msk_off[1] + row_off, win_w, win_h
-                )
-                msk_blk = msk_ds.read(1, window=msk_win)
-            vld = valid_cube_mask(blk, eff_nd, msk_blk, valid_msk_val)
-
-            vld_flat = vld.ravel()
-            scores_out = np.full(
-                (n_pxls, n_em), out_float_nd, dtype=np.float32
-            )
-            summary_out = np.full(n_pxls, out_float_nd, dtype=np.float32)
-            cls_out = np.zeros(n_pxls, dtype=cls_np_dtype)
-
-            if np.any(vld_flat):
-                pxls = np.moveaxis(blk, 0, -1).reshape(-1, n_em_bands)[
-                    vld_flat
-                ]
-                if img_gain > 1:
-                    pxls = pxls / float(img_gain)
-                if is_scm:
-                    pxls_work = pxls - np.mean(pxls, axis=1, keepdims=True)
-                else:
-                    pxls_work = pxls
-                norms = np.linalg.norm(pxls_work, axis=1)
-                non_zero = norms > 0.0
-                if np.any(non_zero):
-                    nz_unit = pxls_work[non_zero] / norms[non_zero, None]
-                    cos_sim = np.clip(nz_unit @ em_unit.T, -1.0, 1.0)
-                    if is_scm:
-                        metric_vals = cos_sim
-                        best_idx = np.argmax(metric_vals, axis=1)
-                    else:
-                        metric_vals = np.arccos(cos_sim)
-                        if degrees:
-                            metric_vals = np.degrees(metric_vals)
-                        best_idx = np.argmin(metric_vals, axis=1)
-
-                    nz_indices = np.flatnonzero(vld_flat)[non_zero]
-                    scores_out[nz_indices] = metric_vals.astype(np.float32)
-                    best_score = metric_vals[
-                        np.arange(metric_vals.shape[0]), best_idx
-                    ]
-                    summary_out[nz_indices] = best_score.astype(np.float32)
-
-                    cls_vals = (best_idx + 1).astype(cls_np_dtype)
-                    if score_threshold is not None:
-                        keep = (
-                            best_score >= float(score_threshold)
-                            if is_scm
-                            else best_score <= float(score_threshold)
-                        )
-                        cls_vals = np.where(keep, cls_vals, 0).astype(
-                            cls_np_dtype
-                        )
-                    cls_out[nz_indices] = cls_vals
-
-            out_cube = np.moveaxis(
-                scores_out.reshape((win_h, win_w, n_em)), -1, 0
-            )
-            dst_scores.write(out_cube, window=dst_win)
-            if dst_summary is not None:
-                dst_summary.write(
-                    summary_out.reshape((1, win_h, win_w)), window=dst_win
-                )
-            if dst_cls is not None:
-                dst_cls.write(
-                    cls_out.reshape((1, win_h, win_w)), window=dst_win
-                )
-
-    set_band_names(output_img, em_names, feedback=False)
-    if out_summary_img is not None:
-        set_band_names(out_summary_img, [summary_band_name], feedback=False)
-
-    if calc_stats:
-        pop_img_stats(
+    vld_msk = None
+    if valid_msk_img is not None and msk_off is not None:
+        vld_msk = GridRasterSource(valid_msk_img, grid, msk_off, bands=1, dtype=msk_dtype)
+    node = _similarity_node(
+        GridRasterSource(input_img, grid, img_off),
+        vld_msk,
+        setup,
+        (img_gain, degrees, valid_msk_val, eff_nd),
+        (
+            "spectral_angle_mapper" if mode == "sam" else "spectral_correlation_mapper",
+            summary_band_name,
+        ),
+    )
+    sinks = [
+        WrapperDiskSink(
+            _similarity_output(node, "scores", summary_band_name, None),
             output_img,
-            no_data_val=out_float_nd,
-            calc_pyramids=True,
-            use_pbar=use_pbar,
+            gdalformat=gdalformat,
+            datatype=rsgispy.TYPE_32FLOAT,
+            nodata=_OUT_FLOAT_ND,
+            band_names=setup.em_names,
+            calc_stats=calc_stats,
         )
-        if out_summary_img is not None:
-            pop_img_stats(
+    ]
+    if out_summary_img is not None:
+        sinks.append(
+            WrapperDiskSink(
+                _similarity_output(node, "best", summary_band_name, None),
                 out_summary_img,
-                no_data_val=out_float_nd,
-                calc_pyramids=True,
-                use_pbar=use_pbar,
+                gdalformat=gdalformat,
+                datatype=rsgispy.TYPE_32FLOAT,
+                nodata=_OUT_FLOAT_ND,
+                band_names=[summary_band_name],
+                calc_stats=calc_stats,
             )
-        if out_class_img is not None:
-            pop_thmt_img_stats(
+        )
+    if out_class_img is not None:
+        sinks.append(
+            WrapperDiskSink(
+                _similarity_output(node, "class", summary_band_name, None),
                 out_class_img,
-                add_clr_tab=True,
-                calc_pyramids=True,
-                ignore_zero=True,
-                use_pbar=use_pbar,
+                gdalformat=gdalformat,
+                datatype=rsgis_dtype_from_np_dtype(setup.cls_np_dtype),
+                nodata=0,
+                calc_stats=calc_stats,
+                thematic=True,
             )
+        )
+    run_wrapper_graph(sinks, use_pbar=use_pbar)
 
 
 def spectral_angle_mapper(

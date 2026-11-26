@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 """
 The imagecalc.rescale module provides gain/offset and per-band min-max raster
 pixel rescaling utilities using ``rasterio``.
@@ -6,11 +7,10 @@ pixel rescaling utilities using ``rasterio``.
 from contextlib import ExitStack
 import math
 import os
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import rasterio
-from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imagecalc._norm_helpers import (
@@ -28,7 +28,19 @@ from rsgispy.imagecalc._norm_helpers import (
     resolve_out_nodata,
     subsample_band_values,
 )
+from rsgispy._tilegraph._wrap import (
+    GridRasterSource,
+    WrapperDiskSink,
+    run_wrapper_graph,
+)
 from rsgispy.imageprocess import (
+    NodeMeta,
+    PointwiseOp,
+    RasterSource,
+    StackBands,
+    TileContext,
+    TileNode,
+    TileTensor,
     build_valid_mask,
     cast_result_block,
     compute_spatial_intersection,
@@ -36,11 +48,10 @@ from rsgispy.imageprocess import (
     fits_dtype_range,
     iter_dataset_windows,
     open_multi_image_datasets,
-    open_output_dataset,
     validate_band_index,
 )
 from rsgispy.imageprocess import resolve_out_nodata as _ip_resolve_out_nodata
-from rsgispy.imageutils.metadata import get_band_names, set_band_names
+from rsgispy.imageutils.metadata import get_band_names
 from rsgispy.tools.files import ensure_parent_dir
 from rsgispy.tools.jsonio import read_json_to_dict, write_dict_to_json
 
@@ -48,9 +59,12 @@ __all__ = [
     "ALL_NORM_METHODS",
     "ImageBandRescale",
     "calc_img_rescale",
+    "calc_img_rescale_node",
     "rescale_img_pxl_vals",
+    "rescale_img_pxl_vals_node",
     "calc_img_norm_params",
     "apply_img_norm_params",
+    "img_norm_params_node",
     "normalise_img_pxl_vals",
 ]
 
@@ -140,6 +154,282 @@ def _same_nodata(val_a: float, val_b: float) -> bool:
     return val_a == val_b or (math.isnan(val_a) and math.isnan(val_b))
 
 
+def _check_rescale_objs(
+    band_rescale_objs: Sequence[ImageBandRescale], out_np_dtype: np.dtype
+) -> Tuple[Dict[int, ImageBandRescale], Dict[int, float]]:
+    """
+    Validate :class:`ImageBandRescale` objects; return ``{band_idx: obj}``
+    and ``{band_idx: out_no_data}`` (0-based band indices).
+    """
+    if not band_rescale_objs:
+        raise rsgispy.RSGISPyException(
+            "band_rescale_objs must contain at least one ImageBandRescale."
+        )
+    rescale_dict: Dict[int, ImageBandRescale] = {}
+    for rescale_obj in band_rescale_objs:
+        if rescale_obj.band < 1:
+            raise rsgispy.RSGISPyException(
+                f"Band index must be >= 1, got {rescale_obj.band}."
+            )
+        if rescale_obj.in_max == rescale_obj.in_min:
+            raise rsgispy.RSGISPyException(
+                f"Band {rescale_obj.band} has in_max == in_min ({rescale_obj.in_min})."
+            )
+        rescale_dict[rescale_obj.band - 1] = rescale_obj
+    out_nds = {
+        b_idx: _resolve_rescale_out_nodata(cfg.out_no_data, out_np_dtype, b_idx + 1)
+        for b_idx, cfg in rescale_dict.items()
+    }
+    return rescale_dict, out_nds
+
+
+def _rescale_band_out_nds(
+    rescale_dict: Mapping[int, ImageBandRescale],
+    out_nds: Mapping[int, float],
+    n_bands: int,
+) -> List[float]:
+    """Output no-data value of each of ``n_bands`` bands (all need an object)."""
+    for b_idx in range(n_bands):
+        if b_idx not in rescale_dict:
+            raise rsgispy.RSGISPyException(
+                f"Missing ImageBandRescale specification for band {b_idx + 1}."
+            )
+    return [out_nds[b_idx] for b_idx in range(n_bands)]
+
+
+class _RescalePxlNode(TileNode):
+    """Node of :func:`rescale_img_pxl_vals_node`."""
+
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-instance-attributes,too-many-locals
+
+    def __init__(
+        self,
+        source: TileNode,
+        rescale_dict: Dict[int, ImageBandRescale],
+        out_nds: Dict[int, float],
+        trim_to_limits: bool,
+        out_np_dtype: np.dtype,
+        *,
+        no_data_val: Optional[float] = None,
+        band_nodata: Optional[Sequence[Optional[float]]] = None,
+        name: Optional[str] = None,
+    ) -> None:
+        super().__init__(inputs=(source,), name=name or "rescale_img_pxl_vals")
+        self.rescale_dict = rescale_dict
+        self.out_nds = out_nds
+        self.trim_to_limits = bool(trim_to_limits)
+        self.out_np_dtype = np.dtype(out_np_dtype)
+        self.no_data_val = no_data_val
+        self.band_nodata = list(band_nodata) if band_nodata is not None else None
+        self._band_out_nds: List[float] = []
+        self._in_nds: List[Optional[float]] = []
+
+    def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+        meta = inputs[0]
+        if meta.n_bands is None:
+            raise rsgispy.RSGISPyException(
+                f"{self.label} needs an input with a known number of bands."
+            )
+        n_bands = int(meta.n_bands)
+        self._band_out_nds = _rescale_band_out_nds(self.rescale_dict, self.out_nds, n_bands)
+        if self.band_nodata is not None:
+            src_nds = self.band_nodata
+        else:
+            src_nds = [
+                self.no_data_val if self.no_data_val is not None else meta.nodata
+            ] * n_bands
+        self._in_nds = [
+            float(self.rescale_dict[b_idx].no_data_val)
+            if self.rescale_dict[b_idx].no_data_val is not None
+            else src_nds[b_idx]
+            for b_idx in range(n_bands)
+        ]
+        first = self._band_out_nds[0]
+        single = all(_same_nodata(nd, first) for nd in self._band_out_nds)
+        return NodeMeta(
+            n_bands=n_bands,
+            band_names=meta.band_names,
+            dtype=self.out_np_dtype,
+            nodata=first if single else None,
+        )
+
+    def evaluate(
+        self,
+        inputs: Sequence[TileTensor],
+        halo_y: int,
+        halo_x: int,
+        ctx: TileContext,
+        state: Any = None,
+    ) -> TileTensor:
+        aligned = inputs[0].crop(halo_y, halo_x)
+        in_block = np.asarray(aligned.data, dtype=np.float64)
+        win_h, win_w = int(in_block.shape[1]), int(in_block.shape[2])
+        out_bands = []
+        for b_idx in range(in_block.shape[0]):
+            cfg = self.rescale_dict[b_idx]
+            band_arr = in_block[b_idx]
+            nodata_mask = ~build_valid_mask(band_arr, no_data_val=self._in_nds[b_idx])
+            scaled = (
+                ((band_arr - cfg.in_min) / (cfg.in_max - cfg.in_min))
+                * (cfg.out_max - cfg.out_min)
+            ) + cfg.out_min
+            if self.trim_to_limits:
+                low = min(cfg.out_min, cfg.out_max)
+                high = max(cfg.out_min, cfg.out_max)
+                scaled = np.clip(scaled, low, high)
+            res = np.where(nodata_mask, self._band_out_nds[b_idx], scaled)
+            out_bands.append(cast_result_block(res, win_h, win_w, self.out_np_dtype))
+        return aligned.with_data(np.stack(out_bands, axis=0))
+
+
+def rescale_img_pxl_vals_node(
+    source: TileNode,
+    band_rescale_objs: Sequence[ImageBandRescale] = (),
+    trim_to_limits: bool = True,
+    *,
+    out_dtype: Any = np.float32,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`rescale_img_pxl_vals`: per-band min-max
+    rescaling with :class:`ImageBandRescale` objects (one for every band of
+    ``source``), for chaining in a :class:`~rsgispy.imageprocess.TileGraph`.
+
+    Masked input pixels (a band's ``no_data_val``, by default the no-data
+    value of ``source`` or ``no_data_val``, and non-finite values) are set to
+    the band's ``out_no_data``. The blocks have the data type ``out_dtype``;
+    the node's band names are those of ``source``, and its no-data value is
+    the bands' ``out_no_data`` (``None`` if they differ).
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param band_rescale_objs: :class:`ImageBandRescale` objects (band numbers
+                              are those of ``source``).
+    :param trim_to_limits: Clamp to ``[out_min, out_max]`` (Default = ``True``).
+    :param out_dtype: NumPy dtype of the output blocks
+                      (Default = ``numpy.float32``).
+    :param no_data_val: Input no-data value for objects without one
+                        (Default = ``None``: that of ``source``).
+    :param name: Optional node name (Default = ``'rescale_img_pxl_vals'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        import numpy as np
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagecalc.rescale import ImageBandRescale, rescale_img_pxl_vals_node
+        from rsgispy.imagecalc.calcindices import calc_indices_node
+
+        src = RasterSource("s2.tif")
+        objs = [
+            ImageBandRescale(band=b, in_min=0, in_max=10000, out_min=0, out_max=1)
+            for b in range(1, 7)
+        ]
+        refl = rescale_img_pxl_vals_node(src, objs, out_dtype=np.float64)
+        ndvi = calc_indices_node(refl, {3: "red", 4: "nir"}, ["NDVI"], no_data_val=-9999)
+        TileGraph(DiskSink(ndvi, "ndvi.tif")).run()
+    """
+    # pylint: disable=too-many-arguments
+    out_np_dtype = np.dtype(out_dtype)
+    rescale_dict, out_nds = _check_rescale_objs(band_rescale_objs, out_np_dtype)
+    return _RescalePxlNode(
+        source,
+        rescale_dict,
+        out_nds,
+        trim_to_limits,
+        out_np_dtype,
+        no_data_val=no_data_val,
+        name=name,
+    )
+
+
+def _calc_img_rescale_block(
+    in_block: np.ndarray,
+    params: Tuple[float, float, float, float, float],
+    out_np_dtype: np.dtype,
+) -> np.ndarray:
+    """
+    Rescale a block from ``(c_offset, c_gain)`` to ``(n_offset, n_gain)``;
+    ``params`` is ``(c_no_data_val, c_offset, scale, n_offset, n_no_data_val)``.
+    """
+    # pylint: disable=too-many-locals
+    c_nd, c_off, scale, n_off, n_nd = params
+    in_block = np.asarray(in_block, dtype=np.float64)
+    win_h, win_w = int(in_block.shape[1]), int(in_block.shape[2])
+    out_bands = []
+    for b_idx in range(in_block.shape[0]):
+        band_arr = in_block[b_idx]
+        nodata_mask = ~build_valid_mask(band_arr, no_data_val=float(c_nd))
+        rescaled = ((band_arr - c_off) * scale) + n_off
+        res = np.where(nodata_mask, n_nd, rescaled)
+        out_bands.append(cast_result_block(res, win_h, win_w, out_np_dtype))
+    return np.stack(out_bands, axis=0)
+
+
+def calc_img_rescale_node(
+    source: TileNode,
+    c_no_data_val: float = 0.0,
+    c_offset: float = 0.0,
+    c_gain: float = 1.0,
+    n_no_data_val: float = 0.0,
+    n_offset: float = 0.0,
+    n_gain: float = 1.0,
+    *,
+    out_dtype: Any = np.float32,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`calc_img_rescale`: converts every band of
+    ``source`` from ``(c_offset, c_gain)`` to ``(n_offset, n_gain)`` scaling,
+    ``(((val - c_offset) / c_gain) * n_gain) + n_offset``, with pixels equal
+    to ``c_no_data_val`` (or non-finite) set to ``n_no_data_val``. Stack
+    several images with :class:`~rsgispy.imageprocess.StackBands` first.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param c_no_data_val: Current no-data value.
+    :param c_offset: Current offset.
+    :param c_gain: Current gain (must be non-zero).
+    :param n_no_data_val: New no-data value (the node's no-data value).
+    :param n_offset: New offset.
+    :param n_gain: New gain.
+    :param out_dtype: NumPy dtype of the output blocks
+                      (Default = ``numpy.float32``).
+    :param name: Optional node name (Default = ``'calc_img_rescale'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, StackBands, TileGraph
+        from rsgispy.imagecalc.rescale import calc_img_rescale_node
+
+        stack = StackBands([RasterSource("b1.tif"), RasterSource("b2.tif")])
+        refl = calc_img_rescale_node(stack, c_gain=10000.0, n_no_data_val=-9999.0)
+        TileGraph(DiskSink(refl, "refl.tif")).run()
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    if c_gain == 0.0:
+        raise rsgispy.RSGISPyException("c_gain must not be zero.")
+    out_np_dtype = np.dtype(out_dtype)
+    params = (
+        float(c_no_data_val),
+        float(c_offset),
+        float(n_gain) / float(c_gain),
+        float(n_offset),
+        n_no_data_val,
+    )
+
+    def _meta(inputs: Sequence[NodeMeta]) -> NodeMeta:
+        return inputs[0].replace(dtype=out_np_dtype, nodata=n_no_data_val)
+
+    return PointwiseOp(
+        source,
+        lambda arr: _calc_img_rescale_block(arr, params, out_np_dtype),
+        name=name or "calc_img_rescale",
+        meta_fn=_meta,
+    )
+
+
 def calc_img_rescale(
     input_imgs: Union[str, Sequence[str]],
     output_img: str,
@@ -201,55 +491,32 @@ def calc_img_rescale(
         raise rsgispy.RSGISPyException("c_gain must not be zero.")
 
     img_list = [input_imgs] if isinstance(input_imgs, str) else list(input_imgs)
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
 
     with ExitStack() as stack:
         datasets, img_paths = open_multi_image_datasets(stack, img_list)
         grid = compute_spatial_intersection(datasets)
-        total_bands = sum(datasets[path].count for path in img_paths)
 
-        dst = open_output_dataset(
-            stack=stack,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            out_rio_dtype=out_rio_dtype,
-            grid=grid,
-            count=total_bands,
-            creation_opts=creation_opts,
-        )
-        dst.nodata = n_no_data_val
-
-        scale = float(n_gain) / float(c_gain)
-        c_off = float(c_offset)
-        n_off = float(n_offset)
-
-        for out_win in iter_dataset_windows(
-            grid.height, grid.width, use_pbar=use_pbar
-        ):
-            win_h = int(out_win.height)
-            win_w = int(out_win.width)
-            out_band_idx = 1
-            for path in img_paths:
-                ds = datasets[path]
-                base_col, base_row = grid.offsets[path]
-                src_win = Window(
-                    base_col + int(out_win.col_off),
-                    base_row + int(out_win.row_off),
-                    win_w,
-                    win_h,
-                )
-                in_block = ds.read(window=src_win, out_dtype=np.float64)
-                for b_idx in range(ds.count):
-                    band_arr = in_block[b_idx]
-                    nodata_mask = ~build_valid_mask(
-                        band_arr, no_data_val=float(c_no_data_val)
-                    )
-                    rescaled = ((band_arr - c_off) * scale) + n_off
-                    res = np.where(nodata_mask, n_no_data_val, rescaled)
-                    out_block = cast_result_block(res, win_h, win_w, out_np_dtype)
-                    dst.write(out_block, out_band_idx, window=out_win)
-                    out_band_idx += 1
+    sources = [GridRasterSource(path, grid, grid.offsets[path]) for path in img_paths]
+    node = calc_img_rescale_node(
+        StackBands(sources) if len(sources) > 1 else sources[0],
+        c_no_data_val=c_no_data_val,
+        c_offset=c_offset,
+        c_gain=c_gain,
+        n_no_data_val=n_no_data_val,
+        n_offset=n_offset,
+        n_gain=n_gain,
+        out_dtype=out_np_dtype,
+    )
+    sink = WrapperDiskSink(
+        node,
+        output_img,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        nodata=n_no_data_val,
+        creation_opts=creation_opts,
+    )
+    run_wrapper_graph(sink, use_pbar=use_pbar)
 
 
 def rescale_img_pxl_vals(
@@ -312,40 +579,14 @@ def rescale_img_pxl_vals(
         )
     """
     # pylint: disable=too-many-arguments,too-many-locals
-    if not band_rescale_objs:
-        raise rsgispy.RSGISPyException(
-            "band_rescale_objs must contain at least one ImageBandRescale."
-        )
-
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
-
-    rescale_dict: Dict[int, ImageBandRescale] = {}
-    for rescale_obj in band_rescale_objs:
-        if rescale_obj.band < 1:
-            raise rsgispy.RSGISPyException(
-                f"Band index must be >= 1, got {rescale_obj.band}."
-            )
-        if rescale_obj.in_max == rescale_obj.in_min:
-            raise rsgispy.RSGISPyException(
-                f"Band {rescale_obj.band} has in_max == in_min ({rescale_obj.in_min})."
-            )
-        rescale_dict[rescale_obj.band - 1] = rescale_obj
-    out_nds = {
-        b_idx: _resolve_rescale_out_nodata(cfg.out_no_data, out_np_dtype, b_idx + 1)
-        for b_idx, cfg in rescale_dict.items()
-    }
+    rescale_dict, out_nds = _check_rescale_objs(band_rescale_objs, out_np_dtype)
 
     with ExitStack() as stack:
         datasets, _ = open_multi_image_datasets(stack, [input_img])
         src = datasets[input_img]
         n_bands = src.count
-        for b_idx in range(n_bands):
-            if b_idx not in rescale_dict:
-                raise rsgispy.RSGISPyException(
-                    f"Missing ImageBandRescale specification for band {b_idx + 1}."
-                )
-        band_out_nds = [out_nds[b_idx] for b_idx in range(n_bands)]
+        band_out_nds = _rescale_band_out_nds(rescale_dict, out_nds, n_bands)
         single_nd = all(_same_nodata(nd, band_out_nds[0]) for nd in band_out_nds)
         if not single_nd and gdalformat.upper().strip() in ("GTIFF", "COG"):
             raise rsgispy.RSGISPyException(
@@ -353,56 +594,26 @@ def rescale_img_pxl_vals(
                 f"but {gdalformat} stores one no-data value for all bands: use "
                 "the same out_no_data for every band or another format."
             )
-        in_nds = [
-            float(rescale_dict[b_idx].no_data_val)
-            if rescale_dict[b_idx].no_data_val is not None
-            else src.nodatavals[b_idx]
-            for b_idx in range(n_bands)
-        ]
+        src_nodatavals = list(src.nodatavals)
 
-        grid = compute_spatial_intersection(datasets)
-        dst = open_output_dataset(
-            stack=stack,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            out_rio_dtype=out_rio_dtype,
-            grid=grid,
-            count=n_bands,
-            creation_opts=creation_opts,
-        )
-        if single_nd:
-            dst.nodata = band_out_nds[0]
-        else:
-            dst._set_nodatavals(band_out_nds)  # pylint: disable=protected-access
-
-        for out_win in iter_dataset_windows(
-            grid.height, grid.width, use_pbar=use_pbar
-        ):
-            win_h = int(out_win.height)
-            win_w = int(out_win.width)
-            in_block = src.read(window=out_win, out_dtype=np.float64)
-            out_bands = []
-            for b_idx in range(n_bands):
-                cfg = rescale_dict[b_idx]
-                band_arr = in_block[b_idx]
-                nodata_mask = ~build_valid_mask(
-                    band_arr, no_data_val=in_nds[b_idx]
-                )
-
-                scaled = (
-                    ((band_arr - cfg.in_min) / (cfg.in_max - cfg.in_min))
-                    * (cfg.out_max - cfg.out_min)
-                ) + cfg.out_min
-                if trim_to_limits:
-                    low = min(cfg.out_min, cfg.out_max)
-                    high = max(cfg.out_min, cfg.out_max)
-                    scaled = np.clip(scaled, low, high)
-
-                res = np.where(nodata_mask, band_out_nds[b_idx], scaled)
-                out_bands.append(
-                    cast_result_block(res, win_h, win_w, out_np_dtype)
-                )
-            dst.write(np.stack(out_bands, axis=0), window=out_win)
+    node = _RescalePxlNode(
+        RasterSource(input_img),
+        rescale_dict,
+        out_nds,
+        trim_to_limits,
+        out_np_dtype,
+        band_nodata=src_nodatavals,
+    )
+    sink = WrapperDiskSink(
+        node,
+        output_img,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        nodata=band_out_nds[0] if single_nd else None,
+        per_band_nodata=None if single_nd else band_out_nds,
+        creation_opts=creation_opts,
+    )
+    run_wrapper_graph(sink, use_pbar=use_pbar)
 
 
 def calc_img_norm_params(
@@ -593,6 +804,247 @@ def calc_img_norm_params(
     return result
 
 
+def _load_norm_params(
+    norm_params: Optional[Mapping[str, Any]],
+    stats_file: Optional[Union[str, os.PathLike]],
+) -> Mapping[str, Any]:
+    """Return the normalisation parameters given directly or in a JSON file."""
+    if norm_params is None and stats_file is None:
+        raise rsgispy.RSGISPyException(
+            "Either norm_params or stats_file must be provided."
+        )
+    if norm_params is not None and stats_file is not None:
+        raise rsgispy.RSGISPyException(
+            "Provide either norm_params or stats_file, not both."
+        )
+    params_dict: Mapping[str, Any] = (
+        read_json_to_dict(os.fspath(stats_file))
+        if stats_file is not None
+        else norm_params  # type: ignore[assignment]
+    )
+    if not isinstance(params_dict, Mapping) or "bands" not in params_dict:
+        raise rsgispy.RSGISPyException(
+            "Invalid normalisation parameter dictionary."
+        )
+    return params_dict
+
+
+class _NormApply:
+    """Resolved settings for applying normalisation parameters."""
+
+    # pylint: disable=too-few-public-methods,too-many-arguments
+    # pylint: disable=too-many-positional-arguments
+
+    def __init__(
+        self,
+        method: str,
+        band_specs: Sequence[Mapping[str, Any]],
+        eff_out_min: Optional[float],
+        eff_out_max: Optional[float],
+        eff_trim: bool,
+        eff_out_nd: Optional[float],
+    ) -> None:
+        self.method = method
+        self.band_specs = band_specs
+        self.eff_out_min = eff_out_min
+        self.eff_out_max = eff_out_max
+        self.eff_trim = eff_trim
+        self.eff_out_nd = eff_out_nd
+
+
+def _resolve_norm_apply(
+    params_dict: Mapping[str, Any],
+    out_min: Optional[float],
+    out_max: Optional[float],
+    trim_to_limits: Optional[bool],
+    out_no_data_val: Optional[float],
+    out_np_dtype: np.dtype,
+) -> _NormApply:
+    """Resolve the method, band specs, output bounds, trimming and no data."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    norm_method = resolve_norm_method(params_dict["method"])
+    band_specs: Sequence[Mapping[str, Any]] = params_dict["bands"]
+    if not band_specs:
+        raise rsgispy.RSGISPyException("norm_params['bands'] must not be empty.")
+    if out_min is not None or out_max is not None:
+        eff_out_min, eff_out_max = resolve_out_bounds(
+            norm_method, out_min, out_max
+        )
+    else:
+        saved_min = params_dict.get("out_min")
+        saved_max = params_dict.get("out_max")
+        eff_out_min = float(saved_min) if saved_min is not None else None
+        eff_out_max = float(saved_max) if saved_max is not None else None
+    eff_trim = (
+        (norm_method in DEFAULT_TRIM_METHODS)
+        if trim_to_limits is None
+        else bool(trim_to_limits)
+    )
+    eff_out_nd = resolve_out_nodata(band_specs, out_no_data_val, out_np_dtype)
+    return _NormApply(
+        norm_method, band_specs, eff_out_min, eff_out_max, eff_trim, eff_out_nd
+    )
+
+
+def _apply_norm_block(
+    in_block: np.ndarray, norm: _NormApply, out_np_dtype: np.dtype
+) -> np.ndarray:
+    """Normalise a ``(n_selected_bands, H, W)`` ``float64`` block."""
+    # pylint: disable=too-many-locals
+    win_h, win_w = int(in_block.shape[1]), int(in_block.shape[2])
+    band_specs = norm.band_specs
+    eff_out_nd = norm.eff_out_nd
+    out_bands = []
+    if norm.method in PIXEL_VECTOR_METHODS:
+        valid_masks = [
+            build_valid_mask(in_block[idx], band_specs[idx].get("no_data_val"))
+            for idx in range(len(band_specs))
+        ]
+        vec_out = apply_pixel_vector_norm(
+            method=norm.method,
+            block=in_block,
+            valid_masks=valid_masks,
+            norm_type=str(band_specs[0].get("norm", "l2")),
+            eff_out_min=norm.eff_out_min,
+            eff_out_max=norm.eff_out_max,
+            trim_to_limits=norm.eff_trim,
+            vec_min=band_specs[0].get("vec_min"),
+            vec_max=band_specs[0].get("vec_max"),
+        )
+        for idx in range(len(band_specs)):
+            band_res = vec_out[idx]
+            if eff_out_nd is not None:
+                band_res = np.where(np.isfinite(band_res), band_res, eff_out_nd)
+            out_bands.append(cast_result_block(band_res, win_h, win_w, out_np_dtype))
+    else:
+        for idx, b_spec in enumerate(band_specs):
+            arr = in_block[idx]
+            valid = build_valid_mask(arr, b_spec.get("no_data_val"))
+            res = np.full(
+                (win_h, win_w),
+                np.nan if eff_out_nd is None else float(eff_out_nd),
+                dtype=np.float64,
+            )
+            if np.any(valid):
+                res[valid] = apply_band_norm_1d(
+                    method=norm.method,
+                    vals=arr[valid],
+                    band_params=b_spec,
+                    eff_out_min=norm.eff_out_min,
+                    eff_out_max=norm.eff_out_max,
+                    trim_to_limits=norm.eff_trim,
+                )
+            out_bands.append(cast_result_block(res, win_h, win_w, out_np_dtype))
+    return np.stack(out_bands, axis=0)
+
+
+class _NormParamsNode(TileNode):
+    """Node of :func:`img_norm_params_node`."""
+
+    def __init__(
+        self,
+        source: TileNode,
+        norm: _NormApply,
+        out_np_dtype: np.dtype,
+        *,
+        preselected: bool = False,
+        name: Optional[str] = None,
+    ) -> None:
+        super().__init__(inputs=(source,), name=name or "img_norm_params")
+        self.norm = norm
+        self.out_np_dtype = np.dtype(out_np_dtype)
+        self.sel_bands = [int(b_spec["band"]) for b_spec in norm.band_specs]
+        self.preselected = bool(preselected)
+
+    def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+        meta = inputs[0]
+        names = None
+        if self.preselected:
+            names = meta.band_names
+        elif meta.n_bands is not None:
+            for b_idx in self.sel_bands:
+                validate_band_index(b_idx, int(meta.n_bands), f"input of {self.label}")
+            if meta.band_names is not None:
+                names = tuple(meta.band_names[b - 1] for b in self.sel_bands)
+        return NodeMeta(
+            n_bands=len(self.sel_bands),
+            band_names=names,
+            dtype=self.out_np_dtype,
+            nodata=self.norm.eff_out_nd,
+        )
+
+    def evaluate(
+        self,
+        inputs: Sequence[TileTensor],
+        halo_y: int,
+        halo_x: int,
+        ctx: TileContext,
+        state: Any = None,
+    ) -> TileTensor:
+        aligned = inputs[0].crop(halo_y, halo_x)
+        data = aligned.data
+        if not self.preselected:
+            data = data[[b - 1 for b in self.sel_bands]]
+        in_block = np.asarray(data, dtype=np.float64)
+        return aligned.with_data(_apply_norm_block(in_block, self.norm, self.out_np_dtype))
+
+
+def img_norm_params_node(
+    source: TileNode,
+    norm_params: Optional[Mapping[str, Any]] = None,
+    stats_file: Optional[Union[str, os.PathLike]] = None,
+    out_min: Optional[float] = None,
+    out_max: Optional[float] = None,
+    trim_to_limits: Optional[bool] = None,
+    *,
+    out_dtype: Any = np.float32,
+    out_no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_img_norm_params`: applies normalisation
+    parameters calculated beforehand with :func:`calc_img_norm_params` (given
+    directly or as its JSON file) to the bands of ``source`` that they
+    select, for chaining in a :class:`~rsgispy.imageprocess.TileGraph`.
+
+    Normalisation parameters are whole-image statistics, so they must be
+    calculated first (a two-pass workflow); applying them is tile-local. The
+    band numbers in the parameters are those of ``source``. The blocks have
+    the data type ``out_dtype`` and the node's no-data value is resolved as
+    in :func:`apply_img_norm_params`.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param norm_params: Parameters returned by :func:`calc_img_norm_params`.
+    :param stats_file: JSON file written by :func:`calc_img_norm_params`.
+    :param out_min: Optional override of the output minimum.
+    :param out_max: Optional override of the output maximum.
+    :param trim_to_limits: Clamp to ``[out_min, out_max]`` (default by method).
+    :param out_dtype: NumPy dtype of the output blocks
+                      (Default = ``numpy.float32``).
+    :param out_no_data_val: Optional output no-data value.
+    :param name: Optional node name (Default = ``'img_norm_params'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        import numpy as np
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagecalc.rescale import calc_img_norm_params, img_norm_params_node
+
+        params = calc_img_norm_params("s2.tif", method="zscore")  # pass 1
+        src = RasterSource("s2.tif")
+        norm = img_norm_params_node(src, params, out_dtype=np.float64)  # pass 2
+        TileGraph(DiskSink(norm, "s2_zscore.tif")).run()
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    params_dict = _load_norm_params(norm_params, stats_file)
+    out_np_dtype = np.dtype(out_dtype)
+    norm = _resolve_norm_apply(
+        params_dict, out_min, out_max, trim_to_limits, out_no_data_val, out_np_dtype
+    )
+    return _NormParamsNode(source, norm, out_np_dtype, name=name)
+
+
 def apply_img_norm_params(
     input_img: Union[str, os.PathLike],
     output_img: Union[str, os.PathLike],
@@ -646,135 +1098,35 @@ def apply_img_norm_params(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches
-    if norm_params is None and stats_file is None:
-        raise rsgispy.RSGISPyException(
-            "Either norm_params or stats_file must be provided."
-        )
-    if norm_params is not None and stats_file is not None:
-        raise rsgispy.RSGISPyException(
-            "Provide either norm_params or stats_file, not both."
-        )
-
-    params_dict: Mapping[str, Any] = (
-        read_json_to_dict(os.fspath(stats_file))
-        if stats_file is not None
-        else norm_params  # type: ignore[assignment]
-    )
-    if not isinstance(params_dict, Mapping) or "bands" not in params_dict:
-        raise rsgispy.RSGISPyException(
-            "Invalid normalisation parameter dictionary."
-        )
-
+    params_dict = _load_norm_params(norm_params, stats_file)
     in_path = os.fspath(input_img)
     out_path = os.fspath(output_img)
     ensure_file_exists(in_path, "Input image")
-
-    norm_method = resolve_norm_method(params_dict["method"])
-    band_specs: Sequence[Mapping[str, Any]] = params_dict["bands"]
-    if not band_specs:
-        raise rsgispy.RSGISPyException("norm_params['bands'] must not be empty.")
-
-    if out_min is not None or out_max is not None:
-        eff_out_min, eff_out_max = resolve_out_bounds(
-            norm_method, out_min, out_max
-        )
-    else:
-        saved_min = params_dict.get("out_min")
-        saved_max = params_dict.get("out_max")
-        eff_out_min = float(saved_min) if saved_min is not None else None
-        eff_out_max = float(saved_max) if saved_max is not None else None
-
-    eff_trim = (
-        (norm_method in DEFAULT_TRIM_METHODS)
-        if trim_to_limits is None
-        else bool(trim_to_limits)
-    )
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
-    eff_out_nd = resolve_out_nodata(band_specs, out_no_data_val, out_np_dtype)
+    norm = _resolve_norm_apply(
+        params_dict, out_min, out_max, trim_to_limits, out_no_data_val, out_np_dtype
+    )
     in_band_names = get_band_names(in_path)
-
     with ExitStack() as stack:
         datasets, _ = open_multi_image_datasets(stack, [in_path])
         src = datasets[in_path]
-        sel_bands = [int(b_spec["band"]) for b_spec in band_specs]
+        sel_bands = [int(b_spec["band"]) for b_spec in norm.band_specs]
         for b_idx in sel_bands:
             validate_band_index(b_idx, src.count, in_path)
 
-        grid = compute_spatial_intersection(datasets)
-        dst = open_output_dataset(
-            stack=stack,
-            output_img=out_path,
-            gdalformat=gdalformat,
-            out_rio_dtype=out_rio_dtype,
-            grid=grid,
-            count=len(sel_bands),
-            creation_opts=creation_opts,
-        )
-        if eff_out_nd is not None:
-            dst.nodata = eff_out_nd
-
-        for out_win in iter_dataset_windows(
-            grid.height, grid.width, use_pbar=use_pbar
-        ):
-            win_h = int(out_win.height)
-            win_w = int(out_win.width)
-            in_block = src.read(sel_bands, window=out_win, out_dtype=np.float64)
-
-            if norm_method in PIXEL_VECTOR_METHODS:
-                valid_masks = [
-                    build_valid_mask(
-                        in_block[idx],
-                        band_specs[idx].get("no_data_val"),
-                    )
-                    for idx in range(len(sel_bands))
-                ]
-                norm_kind = str(band_specs[0].get("norm", "l2"))
-                vec_out = apply_pixel_vector_norm(
-                    method=norm_method,
-                    block=in_block,
-                    valid_masks=valid_masks,
-                    norm_type=norm_kind,
-                    eff_out_min=eff_out_min,
-                    eff_out_max=eff_out_max,
-                    trim_to_limits=eff_trim,
-                    vec_min=band_specs[0].get("vec_min"),
-                    vec_max=band_specs[0].get("vec_max"),
-                )
-                out_bands = []
-                for idx in range(len(sel_bands)):
-                    band_res = vec_out[idx]
-                    if eff_out_nd is not None:
-                        band_res = np.where(np.isfinite(band_res), band_res, eff_out_nd)
-                    out_bands.append(
-                        cast_result_block(band_res, win_h, win_w, out_np_dtype)
-                    )
-            else:
-                out_bands = []
-                for idx, b_spec in enumerate(band_specs):
-                    arr = in_block[idx]
-                    valid = build_valid_mask(arr, b_spec.get("no_data_val"))
-                    res = np.full(
-                        (win_h, win_w),
-                        np.nan if eff_out_nd is None else float(eff_out_nd),
-                        dtype=np.float64,
-                    )
-                    if np.any(valid):
-                        res[valid] = apply_band_norm_1d(
-                            method=norm_method,
-                            vals=arr[valid],
-                            band_params=b_spec,
-                            eff_out_min=eff_out_min,
-                            eff_out_max=eff_out_max,
-                            trim_to_limits=eff_trim,
-                        )
-                    out_bands.append(
-                        cast_result_block(res, win_h, win_w, out_np_dtype)
-                    )
-            dst.write(np.stack(out_bands, axis=0), window=out_win)
-
-    out_names = [in_band_names[b_idx - 1] for b_idx in sel_bands]
-    set_band_names(out_path, out_names, feedback=False)
+    node = _NormParamsNode(
+        RasterSource(in_path, bands=sel_bands), norm, out_np_dtype, preselected=True
+    )
+    sink = WrapperDiskSink(
+        node,
+        out_path,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        nodata=norm.eff_out_nd,
+        band_names=[in_band_names[b_idx - 1] for b_idx in sel_bands],
+        creation_opts=creation_opts,
+    )
+    run_wrapper_graph(sink, use_pbar=use_pbar)
 
 
 def normalise_img_pxl_vals(
