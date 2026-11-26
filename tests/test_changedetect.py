@@ -184,6 +184,7 @@ def test_change_vector_analysis(tmp_path):
         assert np.all(b_km[6:, 6:] == 0)
 
 
+@pytest.mark.filterwarnings("ignore:.*did not converge:UserWarning")
 @pytest.mark.skipif(not icm.HAVE_SCIPY, reason="scipy not installed")
 def test_sfa_and_mad_change_detection(tmp_path):
     """Verify ISFA and IR-MAD run end-to-end and detect synthetic change."""
@@ -288,6 +289,7 @@ def test_cva_no_mask_requires_both_dates(tmp_path):
     assert np.all(bin_arr[~hole] != 255)
 
 
+@pytest.mark.filterwarnings("ignore:.*did not converge:UserWarning")
 @pytest.mark.skipif(not icm.HAVE_SCIPY, reason="scipy not installed")
 def test_sfa_mad_no_mask_requires_both_dates(tmp_path):
     """SFA and IR-MAD without a valid mask leave one-date pixels as no data."""
@@ -318,6 +320,7 @@ def test_sfa_mad_no_mask_requires_both_dates(tmp_path):
         assert np.all(src.read()[:, hole] == -9999.0)
 
 
+@pytest.mark.filterwarnings("ignore:.*did not converge:UserWarning")
 def test_array_outputs_pass_use_pbar_and_skip_double_stats(tmp_path, monkeypatch):
     """CVA/SFA/MAD write their outputs without stats or progress bars there."""
     base_path, chng_path, _ = _make_one_date_hole_pair(tmp_path)
@@ -473,4 +476,181 @@ def test_optional_scipy_missing_changedetect(monkeypatch):
     with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
         poc_fresh.find_class_kurt_skew_outliers(
             "img.tif", "msk.tif", "out.tif", 0.0, 1.0, 0.5, True
+        )
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics, convergence and regularisation (CVA / ISFA / IR-MAD)
+# ---------------------------------------------------------------------------
+
+
+def _make_diag_pair(tmp_path, n_bands=4, size=30, seed=21, same_band=None):
+    """Two correlated dates with a changed block (rows/cols 0:8)."""
+    rng = np.random.default_rng(seed)
+    base_arr = rng.uniform(0.1, 0.4, size=(n_bands, size, size))
+    mix = np.eye(n_bands) + 0.1 * rng.normal(size=(n_bands, n_bands))
+    chng_arr = np.einsum("ij,jhw->ihw", mix, base_arr) + 0.05
+    chng_arr += rng.normal(0.0, 0.01, size=chng_arr.shape)
+    chng_arr[:, 0:8, 0:8] += rng.uniform(0.3, 0.6, size=(n_bands, 1, 1))
+    if same_band is not None:
+        chng_arr[same_band] = base_arr[same_band]
+    base_path = tmp_path / "diag_base.tif"
+    chng_path = tmp_path / "diag_chng.tif"
+    _write_raster(base_path, base_arr.astype(np.float32))
+    _write_raster(chng_path, chng_arr.astype(np.float32))
+    return (
+        str(base_path),
+        str(chng_path),
+        base_arr.reshape(n_bands, -1).astype(np.float32).astype(np.float64),
+        chng_arr.reshape(n_bands, -1).astype(np.float32).astype(np.float64),
+    )
+
+
+def _read_band(path):
+    with rasterio.open(path) as src:
+        return src.read(1)
+
+
+def test_cva_returns_diagnostics(tmp_path):
+    """CVA returns the threshold, its method and the pixel counts."""
+    base_path, chng_path, x, y = _make_diag_pair(tmp_path)
+    out_bin = str(tmp_path / "b.tif")
+    out = icm.change_vector_analysis(
+        base_path, chng_path, out_bin, str(tmp_path / "d.tif"), use_pbar=False
+    )
+    assert isinstance(out, dict)
+    assert set(out) >= {"threshold", "threshold_method", "n_valid", "n_change"}
+    mag = np.sqrt(np.sum(np.square(x - y), axis=0))
+    exp_thres = icm.calc_otsu_threshold(mag)
+    assert out["threshold_method"] == "otsu"
+    assert out["threshold"] == pytest.approx(exp_thres, rel=1e-6)
+    assert out["n_valid"] == x.shape[1]
+    assert out["n_change"] == int(np.sum(mag > exp_thres))
+    assert out["n_change"] == int(np.sum(_read_band(out_bin) == 1))
+
+    if icm.HAVE_SKLEARN:
+        out_km = icm.change_vector_analysis(
+            base_path, chng_path, out_bin, str(tmp_path / "d.tif"),
+            use_kmeans=True, use_pbar=False,
+        )
+        assert out_km["threshold_method"] == "kmeans"
+        assert out_km["n_change"] == int(np.sum(_read_band(out_bin) == 1))
+        assert out_km["n_change"] == int(np.sum(mag > out_km["threshold"]))
+
+
+@pytest.mark.skipif(not icm.HAVE_SCIPY, reason="scipy not installed")
+def test_sfa_returns_diagnostics(tmp_path):
+    """ISFA (one iteration) eigenvalues match a direct NumPy calculation."""
+    base_path, chng_path, x, y = _make_diag_pair(tmp_path)
+    out_bin = str(tmp_path / "b.tif")
+    out = icm.slow_feature_analysis(
+        base_path, chng_path, out_bin, str(tmp_path / "d.tif"),
+        sfa_max_iter=1, use_pbar=False,
+    )
+    assert set(out) >= {
+        "threshold", "threshold_method", "n_valid", "n_change",
+        "eigenvalues", "n_iter", "converged", "last_change",
+    }
+    norm_x = (x - x.mean(axis=1, keepdims=True)) / x.std(axis=1, ddof=1, keepdims=True)
+    norm_y = (y - y.mean(axis=1, keepdims=True)) / y.std(axis=1, ddof=1, keepdims=True)
+    mat_a = np.cov(norm_x - norm_y)
+    mat_b = 0.5 * (np.cov(norm_x) + np.cov(norm_y))
+    exp_eig = np.sort(np.linalg.eigvals(np.linalg.solve(mat_b, mat_a)).real)
+    np.testing.assert_allclose(out["eigenvalues"], exp_eig, rtol=1e-5, atol=1e-9)
+    assert out["n_iter"] == 1
+    assert out["n_valid"] == x.shape[1]
+    assert out["threshold_method"] == "otsu"
+    assert out["n_change"] == int(np.sum(_read_band(out_bin) == 1))
+
+    out_conv = icm.slow_feature_analysis(
+        base_path, chng_path, out_bin, str(tmp_path / "d.tif"),
+        sfa_max_iter=200, sfa_epsilon=1e-4, use_pbar=False,
+    )
+    assert out_conv["converged"] is True
+    assert out_conv["n_iter"] < 200
+    assert out_conv["last_change"] < 1e-4
+
+
+@pytest.mark.skipif(not icm.HAVE_SCIPY, reason="scipy not installed")
+def test_mad_returns_diagnostics(tmp_path):
+    """IR-MAD (one iteration) canonical correlations match a direct CCA."""
+    base_path, chng_path, x, y = _make_diag_pair(tmp_path)
+    out_bin = str(tmp_path / "b.tif")
+    out = icm.multivariate_alteration_detection(
+        base_path, chng_path, out_bin, str(tmp_path / "d.tif"),
+        str(tmp_path / "v.tif"), mad_max_iter=1, use_kmeans=False, use_pbar=False,
+    )
+    assert set(out) >= {
+        "threshold", "threshold_method", "n_valid", "n_change",
+        "canonical_correlations", "n_iter", "converged", "last_change",
+    }
+    n_bands = x.shape[0]
+    cov = np.cov(np.concatenate((x, y), axis=0))
+    s11, s22 = cov[:n_bands, :n_bands], cov[n_bands:, n_bands:]
+    s12 = cov[:n_bands, n_bands:]
+
+    def _inv_sqrt(mat):
+        vals, vecs = np.linalg.eigh(mat)
+        return vecs @ np.diag(1.0 / np.sqrt(vals)) @ vecs.T
+
+    exp_rho = np.sort(np.linalg.svd(_inv_sqrt(s11) @ s12 @ _inv_sqrt(s22))[1])
+    np.testing.assert_allclose(out["canonical_correlations"], exp_rho, atol=1e-5)
+    assert out["n_iter"] == 1
+    assert out["n_valid"] == x.shape[1]
+    assert out["threshold_method"] == "otsu"
+    assert out["n_change"] == int(np.sum(_read_band(out_bin) == 1))
+
+    out_conv = icm.multivariate_alteration_detection(
+        base_path, chng_path, out_bin, str(tmp_path / "d.tif"),
+        str(tmp_path / "v.tif"), mad_max_iter=200, mad_epsilon=1e-4,
+        use_kmeans=False, use_pbar=False,
+    )
+    assert out_conv["converged"] is True
+    assert out_conv["n_iter"] < 200
+    assert out_conv["last_change"] < 1e-4
+
+
+@pytest.mark.skipif(not icm.HAVE_SCIPY, reason="scipy not installed")
+def test_sfa_mad_warn_without_convergence(tmp_path):
+    """Reaching max_iter without meeting epsilon warns and names the change."""
+    base_path, chng_path, _, _ = _make_diag_pair(tmp_path)
+    with pytest.warns(UserWarning, match="did not converge(.|\n)*mask"):
+        out = icm.slow_feature_analysis(
+            base_path, chng_path, str(tmp_path / "b.tif"), str(tmp_path / "d.tif"),
+            sfa_max_iter=2, sfa_epsilon=1e-12, use_pbar=False,
+        )
+    assert out["converged"] is False
+    assert out["n_iter"] == 2
+    with pytest.warns(UserWarning, match="did not converge(.|\n)*mask"):
+        out = icm.multivariate_alteration_detection(
+            base_path, chng_path, str(tmp_path / "b.tif"), str(tmp_path / "d.tif"),
+            str(tmp_path / "v.tif"), mad_max_iter=2, mad_epsilon=1e-12,
+            use_kmeans=False, use_pbar=False,
+        )
+    assert out["converged"] is False
+    assert out["n_iter"] == 2
+    assert np.isfinite(out["last_change"]) and out["last_change"] > 1e-12
+
+
+@pytest.mark.skipif(not icm.HAVE_SCIPY, reason="scipy not installed")
+def test_mad_regularisation_keeps_correlations_below_one(tmp_path):
+    """With an identical band the MAD correlation is 1; regularisation shrinks it."""
+    base_path, chng_path, _, _ = _make_diag_pair(tmp_path, same_band=0)
+    kwargs = {"mad_max_iter": 1, "use_kmeans": False, "use_pbar": False}
+    out = icm.multivariate_alteration_detection(
+        base_path, chng_path, str(tmp_path / "b.tif"), str(tmp_path / "d.tif"),
+        str(tmp_path / "v.tif"), **kwargs,
+    )
+    assert max(out["canonical_correlations"]) == pytest.approx(1.0, abs=1e-6)
+    out_reg = icm.multivariate_alteration_detection(
+        base_path, chng_path, str(tmp_path / "b.tif"), str(tmp_path / "d.tif"),
+        str(tmp_path / "v.tif"), mad_regularisation=0.1, **kwargs,
+    )
+    rho = np.asarray(out_reg["canonical_correlations"])
+    assert np.all(rho > 0.0) and np.all(rho < 1.0)
+    assert max(rho) < 0.95
+    with pytest.raises(rsgispy.RSGISPyException):
+        icm.multivariate_alteration_detection(
+            base_path, chng_path, str(tmp_path / "b.tif"), str(tmp_path / "d.tif"),
+            str(tmp_path / "v.tif"), mad_regularisation=-1.0, **kwargs,
         )

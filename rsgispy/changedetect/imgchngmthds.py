@@ -14,8 +14,9 @@ Functions requiring ``scipy`` (:func:`slow_feature_analysis`,
 if ``scipy`` is not installed.
 """
 
+import warnings
 from contextlib import ExitStack
-from typing import Any, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import rasterio
@@ -696,19 +697,48 @@ def _safe_otsu_threshold(values: np.ndarray) -> float:
     return float(calc_otsu_threshold(finite))
 
 
-def _get_binary_change_map(data: np.ndarray, max_iter: int = 1500) -> np.ndarray:
+def _kmeans_threshold(data: np.ndarray, max_iter: int = 1500) -> float:
     """
-    Apply 2-cluster K-means to segment change magnitude values into ``0``
-    (unchanged) and ``1`` (changed).
+    Fit a 2-cluster K-means to the 1D change magnitudes and return the
+    decision boundary between the two clusters (the midpoint of the two
+    cluster centres): values above it belong to the changed cluster.
     """
     rsgispy.check_optional_dep(
         HAVE_SKLEARN, "change_vector_analysis (use_kmeans=True)", "scikit-learn", "stats"
     )
     vec = np.asarray(data, dtype=np.float64).reshape(-1, 1)
     km = KMeans(n_clusters=2, max_iter=max_iter, n_init="auto").fit(vec)
-    c0, c1 = float(km.cluster_centers_[0, 0]), float(km.cluster_centers_[1, 0])
-    chng_cluster = 0 if c0 > c1 else 1
-    return (km.labels_ == chng_cluster).astype(np.uint8)
+    centres = km.cluster_centers_[:, 0]
+    return float(0.5 * (float(np.min(centres)) + float(np.max(centres))))
+
+
+def _calc_change_threshold(
+    values: np.ndarray, use_kmeans: bool
+) -> Tuple[float, str]:
+    """
+    Return ``(threshold, threshold_method)`` for the 1D change magnitudes:
+    Otsu's threshold, or the 2-cluster K-means boundary when ``use_kmeans``.
+    Pixels with a value above the threshold are change.
+    """
+    if use_kmeans:
+        return _kmeans_threshold(values), "kmeans"
+    return _safe_otsu_threshold(values), "otsu"
+
+
+def _warn_not_converged(
+    method: str, n_iter: int, last_change: float, epsilon: float, eps_param: str
+) -> None:
+    """Warn that an iteratively reweighted method stopped at ``max_iter``."""
+    warnings.warn(
+        f"{method} did not converge in {n_iter} iterations: the last change "
+        f"was {last_change:.3g}, above {eps_param}={epsilon:g}. The "
+        "reweighting may have locked on to part of the image (one type of "
+        "land cover), so check the result. Restricting the analysis with a "
+        "valid mask (vld_msk_img) to areas of comparable land cover usually "
+        "helps.",
+        UserWarning,
+        stacklevel=3,
+    )
 
 
 def image_difference(
@@ -886,7 +916,7 @@ def change_vector_analysis(
     chng_img_no_data: float = 0,
     calc_stats: bool = True,
     use_pbar: bool = True,
-) -> None:
+) -> Dict[str, Any]:
     """
     Perform Change Vector Analysis (CVA) between two co-registered images.
 
@@ -928,14 +958,23 @@ def change_vector_analysis(
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a progress bar during processing
                      (Default = ``True``).
+    :return: A dictionary of diagnostics:
+
+             * ``threshold`` — the change threshold on the change magnitude
+               (pixels above it are change);
+             * ``threshold_method`` — ``"otsu"`` or ``"kmeans"`` (the
+               boundary between the two K-means clusters);
+             * ``n_valid`` — the number of valid pixels analysed;
+             * ``n_change`` — the number of pixels labelled change.
 
     .. code:: python
 
         import rsgispy.changedetect.imgchngmthds as icm
 
-        icm.change_vector_analysis(
+        out = icm.change_vector_analysis(
             "t1.tif", "t2.tif", "cva_bin.tif", "cva_dist.tif"
         )
+        print(out["threshold"], out["n_change"] / out["n_valid"])
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     out_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
@@ -982,11 +1021,9 @@ def change_vector_analysis(
         use_pbar=use_pbar,
     )
 
+    chng_thres, thres_method = _calc_change_threshold(l2_norm, use_kmeans)
     chng_bin_flat = np.full(n_pxls, 255, dtype=np.uint8)
-    if use_kmeans:
-        chng_bin_flat[pxl_ids] = _get_binary_change_map(l2_norm)
-    else:
-        chng_bin_flat[pxl_ids] = (l2_norm > otsu_thres).astype(np.uint8)
+    chng_bin_flat[pxl_ids] = (l2_norm > chng_thres).astype(np.uint8)
     chng_bin_img = chng_bin_flat.reshape((1, img_y, img_x))
 
     create_img_from_array_ref_img(
@@ -1014,6 +1051,13 @@ def change_vector_analysis(
             use_pbar=use_pbar,
         )
 
+    return {
+        "threshold": float(chng_thres),
+        "threshold_method": thres_method,
+        "n_valid": int(pxl_ids.size),
+        "n_change": int(np.count_nonzero(chng_bin_flat == 1)),
+    }
+
 
 def slow_feature_analysis(
     in_base_img: str,
@@ -1038,7 +1082,7 @@ def slow_feature_analysis(
     chng_img_no_data: float = 0,
     calc_stats: bool = True,
     use_pbar: bool = True,
-) -> None:
+) -> Dict[str, Any]:
     """
     Perform Iteratively Reweighted Slow Feature Analysis (ISFA) change
     detection between two co-registered multi-band images (Wu et al., 2014).
@@ -1084,14 +1128,38 @@ def slow_feature_analysis(
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during
                      iterations (Default = ``True``).
+    :return: A dictionary of diagnostics:
+
+             * ``threshold`` — the change threshold on the square root of the
+               chi-square distance (pixels above it are change);
+             * ``threshold_method`` — ``"otsu"`` or ``"kmeans"``;
+             * ``n_valid`` — the number of valid pixels analysed;
+             * ``n_change`` — the number of pixels labelled change;
+             * ``eigenvalues`` — the final generalised eigenvalues (a list,
+               in increasing order: the slowest feature first);
+             * ``n_iter`` — the number of iterations run;
+             * ``converged`` — ``True`` if the change in ``sqrt(lambda)``
+               fell below ``sfa_epsilon`` before ``sfa_max_iter``;
+             * ``last_change`` — the largest change in ``sqrt(lambda)`` at the
+               last iteration (``nan`` after a single iteration).
+
+    .. note::
+
+        If ``sfa_max_iter`` (> 1) is reached without meeting ``sfa_epsilon``
+        a ``UserWarning`` is given. Over a varied scene the reweighting can
+        lock on to one land cover; restrict ``vld_msk_img`` to areas of
+        comparable land cover. ``sfa_max_iter=1`` gives SFA without
+        reweighting and no warning.
 
     .. code:: python
 
         import rsgispy.changedetect.imgchngmthds as icm
 
-        icm.slow_feature_analysis(
+        out = icm.slow_feature_analysis(
             "t1.tif", "t2.tif", "sfa_bin.tif", "sfa_dist.tif"
         )
+        if not out["converged"]:
+            print(f"Stopped after {out['n_iter']} iterations")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
@@ -1134,10 +1202,14 @@ def slow_feature_analysis(
     weight = np.ones((1, n_valid), dtype=np.float64)
     t_stat = np.zeros(n_valid, dtype=np.float64)
 
+    n_iter = 0
+    converged = False
+    last_change = float("nan")
     pbar = rsgispy.get_tqdm()(
         range(sfa_max_iter), desc="ISFA", disable=not use_pbar
     )
     for _iter in pbar:
+        n_iter += 1
         sum_w = max(float(np.sum(weight)), 1e-12)
         denom = (n_valid - 1) * sum_w / float(n_valid)
         denom = max(denom, 1e-12)
@@ -1192,11 +1264,19 @@ def slow_feature_analysis(
             axis=0,
         )
 
-        threshold = float(np.max(np.abs(np.sqrt(lamb) - np.sqrt(eig_col))))
+        delta = float(np.max(np.abs(np.sqrt(lamb) - np.sqrt(eig_col))))
         lamb = eig_col
-        if threshold < sfa_epsilon:
+        if n_iter > 1:
+            last_change = delta
+        if delta < sfa_epsilon:
+            converged = True
             break
         weight = (1.0 - scipy.stats.chi2.cdf(t_stat, n_bands)).reshape(1, n_valid)
+
+    if not converged and sfa_max_iter > 1:
+        _warn_not_converged(
+            "slow_feature_analysis", n_iter, last_change, sfa_epsilon, "sfa_epsilon"
+        )
 
     sqrt_chi2 = np.sqrt(np.maximum(t_stat, 0.0))
     np.nan_to_num(sqrt_chi2, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
@@ -1216,11 +1296,9 @@ def slow_feature_analysis(
         use_pbar=use_pbar,
     )
 
+    chng_thres, thres_method = _calc_change_threshold(sqrt_chi2, use_kmeans)
     bin_flat = np.full(n_pxls, 255, dtype=np.uint8)
-    if use_kmeans:
-        bin_flat[pxl_ids] = _get_binary_change_map(sqrt_chi2)
-    else:
-        bin_flat[pxl_ids] = (sqrt_chi2 > otsu_thres).astype(np.uint8)
+    bin_flat[pxl_ids] = (sqrt_chi2 > chng_thres).astype(np.uint8)
 
     create_img_from_array_ref_img(
         data_arr=bin_flat.reshape((1, img_y, img_x)),
@@ -1246,6 +1324,17 @@ def slow_feature_analysis(
             calc_pyramids=True,
             use_pbar=use_pbar,
         )
+
+    return {
+        "threshold": float(chng_thres),
+        "threshold_method": thres_method,
+        "n_valid": int(pxl_ids.size),
+        "n_change": int(np.count_nonzero(bin_flat == 1)),
+        "eigenvalues": [float(val) for val in np.ravel(lamb)],
+        "n_iter": int(n_iter),
+        "converged": bool(converged),
+        "last_change": float(last_change),
+    }
 
 
 def _covw(
@@ -1274,6 +1363,7 @@ def multivariate_alteration_detection(
     mad_epsilon: float = 1e-6,
     use_kmeans: bool = True,
     *,
+    mad_regularisation: float = 0.0,
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
@@ -1281,7 +1371,7 @@ def multivariate_alteration_detection(
     chng_img_no_data: float = 0,
     calc_stats: bool = True,
     use_pbar: bool = True,
-) -> None:
+) -> Dict[str, Any]:
     """
     Perform Iteratively Reweighted Multivariate Alteration Detection
     (IR-MAD) between two co-registered multi-band images. Requires at least
@@ -1310,6 +1400,16 @@ def multivariate_alteration_detection(
                         (Default = ``1e-6``).
     :param use_kmeans: Use K-means clustering instead of Otsu thresholding for
                        the binary change mask (Default = ``True``).
+    :param mad_regularisation: Regularisation (ridge) strength for regularised
+                               IR-MAD (Nielsen, 2007). ``lambda * s * I`` is
+                               added to the covariance matrix of each date,
+                               where ``s`` is that date's mean band variance,
+                               so the value is relative to the data and does
+                               not depend on its scaling. It stabilises the
+                               canonical correlation analysis when bands are
+                               (nearly) collinear and keeps the canonical
+                               correlations below 1. Must be ``>= 0``
+                               (Default = ``0.0``, no regularisation).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` output data type for
                      ``out_chng_dist_img`` and ``out_chng_mads_img``
@@ -1325,14 +1425,41 @@ def multivariate_alteration_detection(
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during
                      iterations (Default = ``True``).
+    :return: A dictionary of diagnostics:
+
+             * ``threshold`` — the change threshold on the square root of the
+               chi-square distance (pixels above it are change);
+             * ``threshold_method`` — ``"otsu"`` or ``"kmeans"``;
+             * ``n_valid`` — the number of valid pixels analysed;
+             * ``n_change`` — the number of pixels labelled change;
+             * ``canonical_correlations`` — the final canonical correlations
+               (a list, in increasing order, matching the order of the MAD
+               variates);
+             * ``n_iter`` — the number of iterations run;
+             * ``converged`` — ``True`` if the change in the canonical
+               correlations fell below ``mad_epsilon`` before
+               ``mad_max_iter``;
+             * ``last_change`` — the largest change in the canonical
+               correlations at the last iteration (``nan`` after a single
+               iteration).
+
+    .. note::
+
+        If ``mad_max_iter`` (> 1) is reached without meeting ``mad_epsilon``
+        a ``UserWarning`` is given. Over a varied scene (e.g. water, forest
+        and farmland, years apart) the reweighting can lock on to one land
+        cover so that most of the rest is labelled change; restrict
+        ``vld_msk_img`` to areas of comparable land cover.
+        ``mad_max_iter=1`` gives MAD without reweighting and no warning.
 
     .. code:: python
 
         import rsgispy.changedetect.imgchngmthds as icm
 
-        icm.multivariate_alteration_detection(
+        out = icm.multivariate_alteration_detection(
             "t1.tif", "t2.tif", "mad_bin.tif", "mad_dist.tif", "mad_vars.tif"
         )
+        print(out["canonical_correlations"], out["converged"])
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-statements
@@ -1345,6 +1472,11 @@ def multivariate_alteration_detection(
             "multivariate_alteration_detection",
             "scikit-learn",
             "stats",
+        )
+    mad_regularisation = float(mad_regularisation)
+    if not np.isfinite(mad_regularisation) or mad_regularisation < 0.0:
+        raise rsgispy.RSGISPyException(
+            f"mad_regularisation must be >= 0, got {mad_regularisation}."
         )
     out_dtype = rsgispy.TYPE_32FLOAT if datatype is None else datatype
 
@@ -1371,10 +1503,14 @@ def multivariate_alteration_detection(
     mad_variates = np.zeros((n_bands, n_valid), dtype=np.float64)
     chi_square_dis = np.zeros(n_valid, dtype=np.float64)
 
+    n_iter = 0
+    converged = False
+    last_change = float("nan")
     pbar = rsgispy.get_tqdm()(
         range(mad_max_iter), desc="IR-MAD", disable=not use_pbar
     )
     for _ in pbar:
+        n_iter += 1
         sum_w = max(float(np.sum(weight)), 1e-12)
         mean_x = np.sum(weight * img_x_mat, axis=1, keepdims=True) / sum_w
         mean_y = np.sum(weight * img_y_mat, axis=1, keepdims=True) / sum_w
@@ -1383,8 +1519,18 @@ def multivariate_alteration_detection(
 
         cov_xy = _covw(centre_x, centre_y, weight)
         size = cov_xy.shape[0]
-        sigma_11 = cov_xy[0:n_bands, 0:n_bands] + 1e-9 * np.eye(n_bands)
-        sigma_22 = cov_xy[n_bands:size, n_bands:size] + 1e-9 * np.eye(n_bands)
+        sigma_11 = cov_xy[0:n_bands, 0:n_bands]
+        sigma_22 = cov_xy[n_bands:size, n_bands:size]
+        sigma_11_data, sigma_22_data = sigma_11, sigma_22
+        if mad_regularisation > 0.0:
+            sigma_11 = sigma_11 + mad_regularisation * (
+                float(np.trace(sigma_11)) / n_bands
+            ) * np.eye(n_bands)
+            sigma_22 = sigma_22 + mad_regularisation * (
+                float(np.trace(sigma_22)) / n_bands
+            ) * np.eye(n_bands)
+        sigma_11 = sigma_11 + 1e-9 * np.eye(n_bands)
+        sigma_22 = sigma_22 + 1e-9 * np.eye(n_bands)
         sigma_12 = cov_xy[0:n_bands, n_bands:size]
         sigma_21 = sigma_12.T
 
@@ -1411,18 +1557,42 @@ def multivariate_alteration_detection(
         eigenvector_y = eigenvector_y * signs
 
         mad_variates = (eigenvector_x.T @ centre_x) - (eigenvector_y.T @ centre_y)
-        mad_var = np.maximum(2.0 * (1.0 - np.clip(eigenvalue, -1.0, 0.999999)), 1e-12)
+        if mad_regularisation > 0.0:
+            # The regularised variates are not unit variance on the data, so
+            # use the (weighted) variance of each MAD variate on the data.
+            mad_var = np.maximum(
+                np.diag(eigenvector_x.T @ sigma_11_data @ eigenvector_x)
+                + np.diag(eigenvector_y.T @ sigma_22_data @ eigenvector_y)
+                - 2.0 * np.diag(eigenvector_x.T @ sigma_12 @ eigenvector_y),
+                1e-12,
+            )
+        else:
+            mad_var = np.maximum(
+                2.0 * (1.0 - np.clip(eigenvalue, -1.0, 0.999999)), 1e-12
+            )
         chi_square_dis = np.sum(
             np.square(mad_variates) / mad_var.reshape(n_bands, 1),
             axis=0,
         )
 
-        if float(np.max(np.abs(can_corr - eigenvalue))) < mad_epsilon:
-            can_corr = eigenvalue
-            break
+        delta = float(np.max(np.abs(can_corr - eigenvalue)))
         can_corr = eigenvalue
+        if n_iter > 1:
+            last_change = delta
+        if delta < mad_epsilon:
+            converged = True
+            break
         weight = (1.0 - scipy.stats.chi2.cdf(chi_square_dis, n_bands)).reshape(
             1, n_valid
+        )
+
+    if not converged and mad_max_iter > 1:
+        _warn_not_converged(
+            "multivariate_alteration_detection",
+            n_iter,
+            last_change,
+            mad_epsilon,
+            "mad_epsilon",
         )
 
     sqrt_chi2 = np.sqrt(np.maximum(chi_square_dis, 0.0))
@@ -1455,12 +1625,9 @@ def multivariate_alteration_detection(
         use_pbar=use_pbar,
     )
 
+    chng_thres, thres_method = _calc_change_threshold(sqrt_chi2, use_kmeans)
     bin_flat = np.full(n_pxls, 255, dtype=np.uint8)
-    if use_kmeans:
-        bin_flat[pxl_ids] = _get_binary_change_map(sqrt_chi2)
-    else:
-        otsu_thres = _safe_otsu_threshold(sqrt_chi2)
-        bin_flat[pxl_ids] = (sqrt_chi2 > otsu_thres).astype(np.uint8)
+    bin_flat[pxl_ids] = (sqrt_chi2 > chng_thres).astype(np.uint8)
 
     create_img_from_array_ref_img(
         data_arr=bin_flat.reshape((1, img_y, img_x)),
@@ -1492,3 +1659,14 @@ def multivariate_alteration_detection(
             calc_pyramids=True,
             use_pbar=use_pbar,
         )
+
+    return {
+        "threshold": float(chng_thres),
+        "threshold_method": thres_method,
+        "n_valid": int(pxl_ids.size),
+        "n_change": int(np.count_nonzero(bin_flat == 1)),
+        "canonical_correlations": [float(val) for val in can_corr],
+        "n_iter": int(n_iter),
+        "converged": bool(converged),
+        "last_change": float(last_change),
+    }

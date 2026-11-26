@@ -268,6 +268,15 @@ surface reflectance, or from different sensors.
 ``sfa_max_iter`` / ``mad_max_iter`` (default 50) limit the iterations, and the
 iteration stops earlier once the transform changes by less than
 ``sfa_epsilon`` / ``mad_epsilon``. Both methods need at least 50 valid pixels.
+Both return a dictionary of diagnostics: the threshold and how it was found,
+the numbers of valid and changed pixels, the final eigenvalues (ISFA) or
+canonical correlations (IR-MAD), the number of iterations, whether they
+converged and the last change. When the iterations stop at the maximum without
+converging a ``UserWarning`` is given: over a varied scene the reweighting can
+lock on to one land cover, so that most of the rest is labelled change.
+Restricting ``vld_msk_img`` to areas of comparable land cover is the usual
+remedy; ``mad_regularisation`` (regularised IR-MAD, Nielsen 2007) stabilises
+the canonical correlations when bands are nearly collinear.
 They detect *any* change, so, as for CVA, combine them with an index
 difference to label the type of change.
 
