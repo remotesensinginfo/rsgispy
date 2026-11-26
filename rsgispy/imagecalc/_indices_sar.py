@@ -7,7 +7,6 @@ from contextlib import ExitStack
 import math
 from typing import (
     Any,
-    Dict,
     List,
     Mapping,
     Optional,
@@ -20,14 +19,15 @@ import numpy as np
 import rasterio
 
 import rsgispy
+from rsgispy._tilegraph._wrap import WrapperDiskSink, run_wrapper_graph
+from rsgispy.imagecalc._indices_nodes import IndicesNode, IndicesSetup, scale_bands
 from rsgispy.imagecalc._indices_optical import (
-    _format_output_band,
     _normalise_band_names,
     _read_scaled_bands,
-    _resolve_in_scaling,
     _resolve_index_params,
     _resolve_out_nodata,
-    _resolve_out_scaling,
+    calc_index_band,
+    finish_indices_setup,
 )
 from rsgispy.imagecalc._sar_indices import (
     _SAR_BAND_ALIASES,
@@ -37,12 +37,11 @@ from rsgispy.imagecalc._sar_indices import (
     normalise_sar_units,
 )
 from rsgispy.imageprocess import (
-    compute_spatial_intersection,
-    create_output_from_dataset,
+    RasterSource,
+    TileNode,
     ensure_file_exists,
     iter_dataset_windows,
 )
-from rsgispy.imageutils.stats import pop_img_stats
 
 
 def _resolve_requested_sar_indices(
@@ -106,6 +105,185 @@ def _calc_sar_vv_max(
         if np.any(valid_mask):
             vv_max = max(vv_max, float(np.max(pwr_bands["vv"][valid_mask])))
     return vv_max if math.isfinite(vv_max) else math.nan
+
+
+def _setup_sar_indices(
+    band_names: Mapping[int, str],
+    indices: Sequence[str],
+    scaling: Tuple[Any, Any, Any, Any],
+    n_bands: int,
+    band_nodata: Sequence[Optional[float]],
+    img_label: str,
+) -> IndicesSetup:
+    """
+    Validate the polarisation mapping, SAR indices and scaling
+    ``(in_gain, in_offset, out_gain, out_offset)`` against an input with
+    ``n_bands`` bands and per-band no-data values ``band_nodata``.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    canonical_to_idx = _normalise_band_names(
+        band_names, n_bands, img_label, band_aliases=_SAR_BAND_ALIASES
+    )
+    resolved_indices = _resolve_requested_sar_indices(indices, canonical_to_idx)
+    return finish_indices_setup(
+        canonical_to_idx,
+        resolved_indices,
+        scaling,
+        n_bands,
+        band_nodata,
+        band_aliases=_SAR_BAND_ALIASES,
+    )
+
+
+def _sar_block_fn(
+    norm_units: str,
+    parsed_idx_params: Mapping[str, Mapping[str, float]],
+    out_nd: float,
+    out_np_dtype: np.dtype,
+) -> Any:
+    """Return the block function of a SAR :class:`IndicesNode`."""
+
+    def _block(
+        data: np.ndarray,
+        setup: IndicesSetup,
+        positions: Mapping[int, int],
+        shape: Tuple[int, ...],
+    ) -> np.ndarray:
+        phys_bands, base_invalid = scale_bands(data, setup, positions)
+        need_power = any(spec.units == "power" for _, spec in setup.resolved_indices)
+        need_db = any(spec.units == "dB" for _, spec in setup.resolved_indices)
+        pwr_bands, pwr_invalid, db_bands, db_invalid = convert_sar_block_units(
+            phys_bands,
+            base_invalid,
+            norm_units,
+            need_power=need_power,
+            need_db=need_db,
+        )
+        out_bands: List[np.ndarray] = []
+        for idx_pos, (_, spec) in enumerate(setup.resolved_indices):
+            domain = (
+                (pwr_bands, pwr_invalid)
+                if spec.units == "power"
+                else (db_bands, db_invalid)
+            )
+            out_bands.append(
+                calc_index_band(
+                    domain, idx_pos, setup, parsed_idx_params,
+                    (out_nd, out_np_dtype), shape,
+                )
+            )
+        return np.stack(out_bands, axis=0)
+
+    return _block
+
+
+def _check_vv_max_param(
+    parsed_idx_params: Mapping[str, Mapping[str, float]],
+) -> Any:
+    """Return a setup check requiring a given ``DPSVI`` ``vv_max``."""
+
+    def _check(setup: IndicesSetup) -> None:
+        if any(spec.requires_vv_max for _, spec in setup.resolved_indices):
+            if "vv_max" not in parsed_idx_params.get("dpsvi", {}):
+                raise rsgispy.RSGISPyException(
+                    "DPSVI needs the scene maximum of VV: give it as "
+                    "index_params={'DPSVI': {'vv_max': ...}} (linear power; "
+                    "calc_sar_indices calculates it in a first pass)."
+                )
+
+    return _check
+
+
+def calc_sar_indices_node(
+    source: TileNode,
+    band_names: Mapping[int, str],
+    indices: Sequence[str],
+    in_units: str,
+    in_gain: Optional[
+        Union[float, Sequence[float], Mapping[Union[int, str], float]]
+    ] = 1.0,
+    in_offset: Optional[
+        Union[float, Sequence[float], Mapping[Union[int, str], float]]
+    ] = 0.0,
+    out_gain: Optional[Union[float, Sequence[float], Mapping[str, float]]] = 1.0,
+    out_offset: Optional[Union[float, Sequence[float], Mapping[str, float]]] = 0.0,
+    index_params: Optional[Mapping[str, Mapping[str, float]]] = None,
+    *,
+    out_dtype: Any = np.float32,
+    no_data_val: Optional[float] = None,
+    out_no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`calc_sar_indices`: one output band per SAR
+    index, named after the index, with the same automatic dB / linear power
+    conversions, for chaining in a :class:`~rsgispy.imageprocess.TileGraph`
+    (e.g. after a speckle filter) without intermediate files.
+
+    The parameters are those of :func:`calc_sar_indices`; ``band_names``
+    refers to the bands of ``source`` and is checked when the graph is built.
+    The node's blocks have the data type ``out_dtype`` (integer types are
+    rounded and clamped) and its no-data value is the resolved
+    ``out_no_data_val``. ``DPSVI`` needs the scene maximum of VV, so it must
+    be given as ``index_params={'DPSVI': {'vv_max': ...}}``.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param band_names: Mapping from 1-based band index of ``source`` to
+                       polarisation (e.g. ``{1: "VV", 2: "VH"}``).
+    :param indices: SAR index names, one output band each.
+    :param in_units: ``'dB'`` or ``'power'`` (units after ``in_gain`` and
+                     ``in_offset``).
+    :param in_gain: Input gain (Default = ``1.0``).
+    :param in_offset: Input offset (Default = ``0.0``).
+    :param out_gain: Output gain (Default = ``1.0``).
+    :param out_offset: Output offset (Default = ``0.0``).
+    :param index_params: Optional per-index parameters.
+    :param out_dtype: NumPy dtype of the output blocks
+                      (Default = ``numpy.float32``).
+    :param no_data_val: Optional input no-data value (Default = ``None``: the
+                        no-data value of ``source``).
+    :param out_no_data_val: Optional output no-data value (Default = ``None``:
+                            ``-999``, or the type's limit for narrow integers).
+    :param name: Optional node name (Default = ``'calc_sar_indices'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagefilter.sar import lee_filter_node
+        from rsgispy.imagecalc.calcindices import calc_sar_indices_node
+
+        s1 = RasterSource("s1_vv_vh_power.tif")
+        speckle = lee_filter_node(s1, 7)
+        idx = calc_sar_indices_node(
+            speckle, {1: "VV", 2: "VH"}, ["RVI_VV_VH", "CR_VH_VV_dB"], "power"
+        )
+        TileGraph(DiskSink(idx, "s1_indices.tif")).run()
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    norm_units = normalise_sar_units(in_units)
+    out_np_dtype = np.dtype(out_dtype)
+    out_nd = _resolve_out_nodata(out_no_data_val, out_np_dtype)
+    parsed_idx_params = _resolve_index_params(index_params)
+
+    def _setup(
+        n_bands: int, band_nodata: Sequence[Optional[float]], label: str
+    ) -> IndicesSetup:
+        return _setup_sar_indices(
+            band_names, indices, (in_gain, in_offset, out_gain, out_offset),
+            n_bands, band_nodata, label,
+        )
+
+    return IndicesNode(
+        source,
+        _setup,
+        _sar_block_fn(norm_units, parsed_idx_params, out_nd, out_np_dtype),
+        out_np_dtype,
+        out_nd,
+        no_data_val=no_data_val,
+        check_fn=_check_vv_max_param(parsed_idx_params),
+        name=name or "calc_sar_indices",
+    )
 
 
 def calc_sar_indices(
@@ -244,10 +422,9 @@ def calc_sar_indices(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals,too-many-branches
+    # pylint: disable=too-many-locals
     ensure_file_exists(input_img)
     norm_units = normalise_sar_units(in_units)
-    out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
     out_nd = _resolve_out_nodata(out_no_data_val, out_np_dtype)
     parsed_idx_params = _resolve_index_params(index_params)
@@ -260,71 +437,26 @@ def calc_sar_indices(
                 f"Could not open input image '{input_img}': {err}"
             ) from err
 
-        canonical_to_idx = _normalise_band_names(
-            band_names, src.count, input_img, band_aliases=_SAR_BAND_ALIASES
+        n_bands = int(src.count)
+        band_nodata = (
+            [float(no_data_val)] * n_bands
+            if no_data_val is not None
+            else list(src.nodatavals)
         )
-        resolved_indices = _resolve_requested_sar_indices(
-            indices, canonical_to_idx
-        )
-
-        req_band_set: List[str] = []
-        seen_bands = set()
-        for _, spec in resolved_indices:
-            for b_name in spec.req_bands:
-                if b_name not in seen_bands:
-                    seen_bands.add(b_name)
-                    req_band_set.append(b_name)
-
-        in_gain_map = _resolve_in_scaling(
-            in_gain,
-            1.0,
-            req_band_set,
-            canonical_to_idx,
-            src.count,
-            "in_gain",
-            check_nonzero=True,
-            band_aliases=_SAR_BAND_ALIASES,
-        )
-        in_offset_map = _resolve_in_scaling(
-            in_offset,
-            0.0,
-            req_band_set,
-            canonical_to_idx,
-            src.count,
-            "in_offset",
-            check_nonzero=False,
-            band_aliases=_SAR_BAND_ALIASES,
-        )
-        out_gain_list = _resolve_out_scaling(
-            out_gain, 1.0, resolved_indices, "out_gain", check_nonzero=True
-        )
-        out_offset_list = _resolve_out_scaling(
-            out_offset, 0.0, resolved_indices, "out_offset", check_nonzero=False
+        setup = _setup_sar_indices(
+            band_names, indices, (in_gain, in_offset, out_gain, out_offset),
+            n_bands, band_nodata, input_img,
         )
 
-        in_nodata_map: Dict[str, Optional[float]] = {}
-        for b_name in req_band_set:
-            if no_data_val is not None:
-                in_nodata_map[b_name] = float(no_data_val)
-            else:
-                b_idx = canonical_to_idx[b_name]
-                in_nodata_map[b_name] = src.nodatavals[b_idx - 1]
-
-        need_power = any(spec.units == "power" for _, spec in resolved_indices)
-        need_db = any(spec.units == "dB" for _, spec in resolved_indices)
-
-        needs_vv_max = any(
-            spec.requires_vv_max for _, spec in resolved_indices
-        )
-        if needs_vv_max:
+        if any(spec.requires_vv_max for _, spec in setup.resolved_indices):
             dpsvi_params = parsed_idx_params.get("dpsvi", {})
             if "vv_max" not in dpsvi_params:
                 vv_max = _calc_sar_vv_max(
                     src=src,
-                    canonical_to_idx=canonical_to_idx,
-                    in_nodata_map=in_nodata_map,
-                    in_gain_map=in_gain_map,
-                    in_offset_map=in_offset_map,
+                    canonical_to_idx=setup.canonical_to_idx,
+                    in_nodata_map=setup.in_nodata_map,
+                    in_gain_map=setup.in_gain_map,
+                    in_offset_map=setup.in_offset_map,
                     in_units=norm_units,
                     use_pbar=use_pbar,
                 )
@@ -333,82 +465,32 @@ def calc_sar_indices(
                     "vv_max": vv_max,
                 }
 
-        grid = compute_spatial_intersection({input_img: src})
-        dst = create_output_from_dataset(
-            stack=stack,
-            src=src,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            out_rio_dtype=out_rio_dtype,
-            count=len(resolved_indices),
-            creation_opts=creation_opts,
-        )
-        dst.nodata = out_nd
-        for band_pos, (out_name, _) in enumerate(resolved_indices, start=1):
-            dst.set_band_description(band_pos, out_name)
+    # Read only the polarisations the indices need.
+    src_bands = sorted({setup.canonical_to_idx[b] for b in setup.req_band_set})
 
-        for out_win in iter_dataset_windows(
-            grid.height, grid.width, use_pbar=use_pbar
-        ):
-            phys_bands, base_invalid = _read_scaled_bands(
-                src,
-                out_win,
-                req_band_set,
-                canonical_to_idx,
-                in_nodata_map,
-                in_gain_map,
-                in_offset_map,
-            )
-            pwr_bands, pwr_invalid, db_bands, db_invalid = (
-                convert_sar_block_units(
-                    phys_bands,
-                    base_invalid,
-                    norm_units,
-                    need_power=need_power,
-                    need_db=need_db,
-                )
-            )
+    def _setup_fn(
+        n_bands_: int, band_nodata_: Sequence[Optional[float]], label: str
+    ) -> IndicesSetup:
+        del n_bands_, band_nodata_, label
+        return setup
 
-            out_bands: List[np.ndarray] = []
-            for idx_pos, (out_name, spec) in enumerate(resolved_indices):
-                domain_bands = pwr_bands if spec.units == "power" else db_bands
-                domain_invalid = (
-                    pwr_invalid if spec.units == "power" else db_invalid
-                )
-                req_invalid = np.zeros(
-                    (int(out_win.height), int(out_win.width)), dtype=bool
-                )
-                for b_name in spec.req_bands:
-                    req_invalid = req_invalid | domain_invalid[b_name]
-
-                per_idx_params = parsed_idx_params.get(
-                    out_name.lower(),
-                    parsed_idx_params.get(spec.canonical_name.lower(), {}),
-                )
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    raw_idx, expr_valid = spec.calc_fn(
-                        domain_bands, per_idx_params
-                    )
-
-                full_valid = (~req_invalid) & expr_valid & np.isfinite(raw_idx)
-                out_bands.append(
-                    _format_output_band(
-                        index_arr=raw_idx,
-                        valid_mask=full_valid,
-                        out_g=out_gain_list[idx_pos],
-                        out_o=out_offset_list[idx_pos],
-                        out_nd=out_nd,
-                        out_np_dtype=out_np_dtype,
-                    )
-                )
-
-            dst.write(np.stack(out_bands, axis=0), window=out_win)
-
-    if calc_stats:
-        pop_img_stats(
-            input_img=output_img,
-            no_data_val=out_nd,
-            calc_pyramids=True,
-            ignore_cog=gdalformat.upper().strip() == "COG",
-            use_pbar=use_pbar,
-        )
+    node = IndicesNode(
+        RasterSource(input_img, bands=src_bands),
+        _setup_fn,
+        _sar_block_fn(norm_units, parsed_idx_params, out_nd, out_np_dtype),
+        out_np_dtype,
+        out_nd,
+        src_bands=src_bands,
+        name="calc_sar_indices",
+    )
+    sink = WrapperDiskSink(
+        node,
+        output_img,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        nodata=out_nd,
+        band_names=setup.out_names,
+        calc_stats=calc_stats,
+        creation_opts=creation_opts,
+    )
+    run_wrapper_graph(sink, use_pbar=use_pbar)
