@@ -1,10 +1,10 @@
 """
-Internal structuring-element parsing, block reduction, and halo-fused
-tile-graph execution helpers for :mod:`rsgispy.imagemorphology`.
+Internal structuring-element parsing, block reduction, and tile-graph node
+helpers for :mod:`rsgispy.imagemorphology`.
 """
 
 import math
-from typing import List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
@@ -14,11 +14,13 @@ import rsgispy
 from rsgispy._io import (
     DiskSink,
     HaloBorder,
+    NodeMeta,
     PointwiseOp,
     RasterSource,
     TileGraph,
     TileNode,
     WindowOp,
+    same_bands_meta,
 )
 from rsgispy.imageprocess import (
     build_valid_mask,
@@ -72,17 +74,6 @@ def _resolve_morph_nodata(
         default_float=None,
         default_int=None,
     )
-
-
-def _resolve_fill_nodata(
-    out_nd: Optional[float], out_np_dtype: np.dtype
-) -> float:
-    """Resolve numeric fill value written at invalid/nodata output pixels."""
-    if out_nd is not None:
-        return float(out_nd)
-    if np.issubdtype(out_np_dtype, np.floating):
-        return float(np.nan)
-    return 0.0
 
 
 def _valid_morph_mask(
@@ -288,6 +279,357 @@ def _morph_reduce_block(
     return raw_out
 
 
+def _run_sequential_local_minima(
+    input_img: str,
+    output_img: str,
+    op_mask: np.ndarray,
+    gdalformat: str,
+    datatype: Optional[int],
+    combined: bool = False,
+    allow_equal: bool = True,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = True,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Local minima numbered sequentially (``1, 2, ...`` in raster scan order).
+
+    The numbering depends on all pixels before the current one, so it is not
+    tile-local and cannot be a tile-graph node: the image is processed in
+    full-width strips, in which raster scan order is kept.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    ensure_file_exists(input_img)
+    eff_dtype = _resolve_morph_datatype(
+        input_img, datatype, default_dtype=rsgispy.TYPE_32UINT
+    )
+    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    in_nd = _resolve_input_nodata(input_img, no_data_val)
+    out_nd = _resolve_morph_nodata(input_img, no_data_val, out_np_dtype)
+    win_size = int(op_mask.shape[0])
+    with rasterio.open(input_img, "r") as src:
+        out_count = 1 if combined else int(src.count)
+    seq_counters = np.ones(out_count, dtype=np.int64)
+
+    def _minima_block(padded: np.ndarray) -> np.ndarray:
+        return _compute_local_minima_block(
+            padded=padded,
+            op_mask=op_mask,
+            combined=combined,
+            allow_equal=allow_equal,
+            sequencial_out=True,
+            seq_counters=seq_counters,
+            in_nd=in_nd,
+        )
+
+    run_window_halo_blocks(
+        input_img=input_img,
+        output_img=output_img,
+        win_shape=(win_size, win_size),
+        block_fn=_minima_block,
+        gdalformat=gdalformat,
+        out_rio_dtype=out_rio_dtype,
+        out_np_dtype=out_np_dtype,
+        out_count=out_count,
+        per_band=False,
+        read_dtype=np.float64,
+        pad_mode="edge",
+        out_no_data_val=out_nd,
+        clamp_int=True,
+        full_width_strips=True,
+        use_pbar=use_pbar,
+    )
+    if calc_stats:
+        pop_img_stats(
+            output_img,
+            no_data_val=out_nd,
+            calc_pyramids=True,
+            use_pbar=use_pbar,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Tile-graph nodes
+# ---------------------------------------------------------------------------
+
+
+class MorphNodeNodata:
+    """
+    No-data handling of a morphology node: the input no-data value
+    (``in_nd``, ignored pixels), the output no-data value (``out_nd``, the
+    input one when the output data type can store it) and the value written
+    at pixels without a result (``fill``: ``out_nd``, else NaN, which becomes
+    0 in integer outputs).
+    """
+
+    # pylint: disable=too-few-public-methods
+
+    def __init__(self, no_data_val: Optional[float], dtype: Any = None) -> None:
+        self.np_dtype = np.dtype(np.float64 if dtype is None else dtype)
+        self.in_nd: Optional[float] = (
+            float(no_data_val) if no_data_val is not None else None
+        )
+        if self.in_nd is None or not math.isfinite(self.in_nd):
+            self.out_nd: Optional[float] = None
+        else:
+            self.out_nd = resolve_out_nodata(
+                self.np_dtype,
+                fallback_nodata=self.in_nd,
+                default_float=None,
+                default_int=None,
+            )
+        self.fill: float = (
+            float(self.out_nd) if self.out_nd is not None else float(np.nan)
+        )
+        self.round_int: bool = bool(np.issubdtype(self.np_dtype, np.integer))
+
+
+def _morph_meta(combined: bool, nodata: Optional[float]) -> Callable[..., NodeMeta]:
+    """Metadata function of a morphology node."""
+    if not combined:
+        return same_bands_meta(np.float64, nodata)
+
+    def _meta(inputs: Any) -> NodeMeta:
+        del inputs
+        return NodeMeta(n_bands=1, dtype=np.float64, nodata=nodata)
+
+    return _meta
+
+
+def _round_to_dtype(arr: np.ndarray, np_dtype: np.dtype) -> np.ndarray:
+    """
+    Round ``arr`` as when it is written to an integer raster of ``np_dtype``
+    (non-finite values become 0, others are clamped to the type range and
+    truncated) and return it as ``float64``.
+    """
+    info = np.iinfo(np_dtype)
+    finite = np.where(np.isfinite(arr), arr, 0.0)
+    return np.clip(finite, float(info.min), float(info.max)).astype(np_dtype).astype(
+        np.float64
+    )
+
+
+def morph_reduce_node(
+    source: TileNode,
+    op_mask: np.ndarray,
+    op_kind: str,
+    nodata: MorphNodeNodata,
+    *,
+    combined: bool = False,
+    in_nd: Optional[float] = None,
+    round_int: bool = False,
+    name: Optional[str] = None,
+) -> WindowOp:
+    """
+    :class:`WindowOp` computing a dilation, erosion or morphological gradient
+    over the structuring element ``op_mask``; with ``round_int``, results are
+    rounded to ``nodata.np_dtype`` (as for the intermediate steps of an
+    opening or closing written to an integer raster).
+    """
+    # pylint: disable=too-many-arguments
+    if op_kind not in ("dilate", "erode", "gradient"):
+        raise rsgispy.RSGISPyException(
+            f"Unsupported morphology operation: '{op_kind}'."
+        )
+    half = int(op_mask.shape[0]) // 2
+    do_round = bool(round_int and nodata.round_int)
+
+    def _reduce(arr: np.ndarray) -> np.ndarray:
+        raw_out = _morph_reduce_block(
+            padded=arr,
+            op_mask=op_mask,
+            op_kind=op_kind,
+            combined=combined,
+            in_nd=in_nd,
+            fill_nd=nodata.fill,
+        )
+        if do_round:
+            raw_out = _round_to_dtype(raw_out, nodata.np_dtype)
+        return raw_out
+
+    return WindowOp(
+        source=source,
+        radius=(half, half),
+        func=_reduce,
+        border=HaloBorder(mode="edge"),
+        name=name,
+        meta_fn=_morph_meta(combined, nodata.out_nd),
+    )
+
+
+def local_minima_node(
+    source: TileNode,
+    op_mask: np.ndarray,
+    *,
+    combined: bool = False,
+    allow_equal: bool = True,
+    in_nd: Optional[float] = None,
+    name: Optional[str] = None,
+) -> WindowOp:
+    """:class:`WindowOp` flagging local minima with ``1`` (others ``0``)."""
+    # pylint: disable=too-many-arguments
+    half = int(op_mask.shape[0]) // 2
+
+    def _minima(arr: np.ndarray) -> np.ndarray:
+        n_out = 1 if combined else int(arr.shape[0])
+        return _compute_local_minima_block(
+            padded=arr,
+            op_mask=op_mask,
+            combined=combined,
+            allow_equal=allow_equal,
+            sequencial_out=False,
+            seq_counters=np.ones(n_out, dtype=np.int64),
+            in_nd=in_nd,
+        )
+
+    return WindowOp(
+        source=source,
+        radius=(half, half),
+        func=_minima,
+        border=HaloBorder(mode="edge"),
+        name=name,
+        meta_fn=_morph_meta(combined, None),
+    )
+
+
+def morph_two_step_nodes(
+    source: TileNode,
+    op_mask: np.ndarray,
+    first_op: str,
+    second_op: str,
+    niters: int,
+    nodata: MorphNodeNodata,
+    name: str,
+) -> Tuple[TileNode, TileNode]:
+    """
+    ``niters`` steps of ``first_op`` followed by ``niters`` steps of
+    ``second_op`` (an opening or a closing). Steps after the first are
+    rounded to ``nodata.np_dtype`` when it is an integer type, as if each
+    step had been written to the output raster. Returns
+    ``(after_first_op, result)``.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    if isinstance(niters, bool) or int(niters) < 1:
+        raise rsgispy.RSGISPyException(f"niters must be >= 1 (got {niters}).")
+    cur: TileNode = source
+    for idx in range(int(niters)):
+        cur = morph_reduce_node(
+            cur,
+            op_mask,
+            first_op,
+            nodata,
+            in_nd=nodata.in_nd if idx == 0 else nodata.out_nd,
+            round_int=True,
+            name=f"{name}_{first_op}_{idx}",
+        )
+    mid = cur
+    for idx in range(int(niters)):
+        cur = morph_reduce_node(
+            cur,
+            op_mask,
+            second_op,
+            nodata,
+            in_nd=nodata.out_nd,
+            round_int=True,
+            name=f"{name}_{second_op}_{idx}",
+        )
+    return mid, cur
+
+
+def morph_top_hat_nodes(
+    source: TileNode,
+    op_mask: np.ndarray,
+    black: bool,
+    nodata: MorphNodeNodata,
+    name: str,
+) -> Tuple[TileNode, TileNode]:
+    """
+    Black (``closing - input``) or white (``input - opening``) top-hat.
+    Returns ``(closing_or_opening, top_hat)``.
+    """
+    first_op, second_op = ("dilate", "erode") if black else ("erode", "dilate")
+    _, step2 = morph_two_step_nodes(
+        source, op_mask, first_op, second_op, 1, nodata, name
+    )
+    in_nd = nodata.in_nd
+    out_nd = nodata.out_nd
+    fill = nodata.fill
+
+    def _top_hat_diff(first_arr: np.ndarray, second_arr: np.ndarray) -> np.ndarray:
+        orig_arr = second_arr if black else first_arr
+        orig_valid = _valid_morph_mask(orig_arr, in_nd)
+        other_arr = first_arr if black else second_arr
+        other_valid = _valid_morph_mask(other_arr, out_nd)
+        return np.where(orig_valid & other_valid, first_arr - second_arr, fill)
+
+    diff = PointwiseOp(
+        inputs=(step2, source) if black else (source, step2),
+        func=_top_hat_diff,
+        name=name,
+        meta_fn=same_bands_meta(np.float64, out_nd),
+    )
+    return step2, diff
+
+
+def run_morph_graph(
+    input_img: str,
+    output_img: str,
+    build: Callable[[TileNode, Optional[float], np.dtype], Tuple[TileNode, Optional[TileNode]]],
+    gdalformat: str,
+    datatype: Optional[int],
+    no_data_val: Optional[float],
+    calc_stats: bool,
+    use_pbar: bool,
+    tmp_img: Optional[str] = None,
+    default_dtype: Optional[int] = None,
+) -> None:
+    """
+    Run a file-based morphology function as ``RasterSource -> node ->
+    DiskSink``: resolves the output data type and the no-data values from
+    ``input_img`` as the functions always have, builds the node(s) with
+    ``build(source, input_nodata, out_np_dtype) -> (result, intermediate)``
+    and writes ``result`` to ``output_img`` (and ``intermediate`` to
+    ``tmp_img`` when given).
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    ensure_file_exists(input_img)
+    eff_dtype = _resolve_morph_datatype(input_img, datatype, default_dtype=default_dtype)
+    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
+    in_nd = _resolve_input_nodata(input_img, no_data_val)
+    out_nd = _resolve_morph_nodata(input_img, no_data_val, out_np_dtype)
+    src = RasterSource(input_img, dtype=np.float64, name="src")
+    result, mid = build(src, in_nd, out_np_dtype)
+    sinks: List[DiskSink] = [
+        DiskSink(
+            source=result,
+            output_img=output_img,
+            gdalformat=gdalformat,
+            datatype=eff_dtype,
+            nodata=out_nd,
+            clamp_int=True,
+            calc_stats=calc_stats,
+            name="output",
+            inherit_meta=False,
+        )
+    ]
+    if tmp_img and mid is not None:
+        sinks.append(
+            DiskSink(
+                source=mid,
+                output_img=str(tmp_img),
+                gdalformat=gdalformat,
+                datatype=eff_dtype,
+                nodata=out_nd,
+                clamp_int=True,
+                calc_stats=False,
+                name="tmp_mid",
+                inherit_meta=False,
+            )
+        )
+    TileGraph(sinks).run(use_pbar=use_pbar)
+
+
 def _run_window_morphology(
     input_img: str,
     output_img: str,
@@ -303,111 +645,60 @@ def _run_window_morphology(
     use_pbar: bool = True,
     default_dtype: Optional[int] = None,
 ) -> None:
-    """Apply a windowed morphological operation across ``input_img`` block-by-block."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    ensure_file_exists(input_img)
+    """
+    Run a dilation, erosion, gradient or local-minima file function through
+    its tile-graph node (sequentially numbered local minima excepted).
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     if op_kind not in ("dilate", "erode", "gradient", "local_minima"):
         raise rsgispy.RSGISPyException(
             f"Unsupported morphology operation: '{op_kind}'."
         )
-
-    eff_dtype = _resolve_morph_datatype(
-        input_img, datatype, default_dtype=default_dtype
-    )
-    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
-    in_nd = _resolve_input_nodata(input_img, no_data_val)
-    out_nd = _resolve_morph_nodata(input_img, no_data_val, out_np_dtype)
-    fill_nd = _resolve_fill_nodata(out_nd, out_np_dtype)
-    win_size = int(op_mask.shape[0])
-    use_strips = op_kind == "local_minima" and sequencial_out
-    with rasterio.open(input_img, "r") as src:
-        out_count = 1 if combined else int(src.count)
-    seq_counters = np.ones(out_count, dtype=np.int64)
-
-    def _morph_block(padded: np.ndarray) -> np.ndarray:
-        if op_kind == "local_minima":
-            return _compute_local_minima_block(
-                padded=padded,
-                op_mask=op_mask,
-                combined=combined,
-                allow_equal=allow_equal,
-                sequencial_out=sequencial_out,
-                seq_counters=seq_counters,
-                in_nd=in_nd,
-            )
-        return _morph_reduce_block(
-            padded=padded,
+    if op_kind == "local_minima" and sequencial_out:
+        _run_sequential_local_minima(
+            input_img=input_img,
+            output_img=output_img,
             op_mask=op_mask,
-            op_kind=op_kind,
+            gdalformat=gdalformat,
+            datatype=datatype,
             combined=combined,
-            in_nd=in_nd,
-            fill_nd=fill_nd,
-        )
-
-    run_window_halo_blocks(
-        input_img=input_img,
-        output_img=output_img,
-        win_shape=(win_size, win_size),
-        block_fn=_morph_block,
-        gdalformat=gdalformat,
-        out_rio_dtype=out_rio_dtype,
-        out_np_dtype=out_np_dtype,
-        out_count=out_count,
-        per_band=False,
-        read_dtype=np.float64,
-        pad_mode="edge",
-        out_no_data_val=out_nd,
-        clamp_int=True,
-        full_width_strips=use_strips,
-        use_pbar=use_pbar,
-    )
-    if calc_stats:
-        pop_img_stats(
-            output_img,
-            no_data_val=out_nd,
-            calc_pyramids=True,
+            allow_equal=allow_equal,
+            no_data_val=no_data_val,
+            calc_stats=calc_stats,
             use_pbar=use_pbar,
         )
+        return
 
+    def _build(
+        src: TileNode, in_nd: Optional[float], np_dtype: np.dtype
+    ) -> Tuple[TileNode, Optional[TileNode]]:
+        if op_kind == "local_minima":
+            node = local_minima_node(
+                src,
+                op_mask,
+                combined=combined,
+                allow_equal=allow_equal,
+                in_nd=in_nd,
+                name="local_minima",
+            )
+        else:
+            nodata = MorphNodeNodata(in_nd, np_dtype)
+            node = morph_reduce_node(
+                src, op_mask, op_kind, nodata, combined=combined,
+                in_nd=nodata.in_nd, name=op_kind,
+            )
+        return node, None
 
-def _make_morph_step_node(
-    source: TileNode,
-    op_mask: np.ndarray,
-    op_kind: str,
-    out_np_dtype: np.dtype,
-    in_nd: Optional[float] = None,
-    fill_nd: float = 0.0,
-    name: Optional[str] = None,
-) -> WindowOp:
-    """Build a :class:`WindowOp` node applying a single dilation/erosion step."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    win_size = int(op_mask.shape[0])
-    half = win_size // 2
-    is_int = np.issubdtype(out_np_dtype, np.integer)
-    int_info = np.iinfo(out_np_dtype) if is_int else None
-
-    def _step_fn(arr: np.ndarray) -> np.ndarray:
-        raw_out = _morph_reduce_block(
-            padded=arr,
-            op_mask=op_mask,
-            op_kind=op_kind,
-            combined=False,
-            in_nd=in_nd,
-            fill_nd=fill_nd,
-        )
-        if int_info is not None:
-            raw_out = np.clip(
-                raw_out, float(int_info.min), float(int_info.max)
-            ).astype(out_np_dtype).astype(np.float64)
-        return raw_out
-
-    return WindowOp(
-        source=source,
-        radius=(half, half),
-        func=_step_fn,
-        border=HaloBorder(mode="edge"),
-        name=name,
+    run_morph_graph(
+        input_img,
+        output_img,
+        _build,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
+        default_dtype=default_dtype,
     )
 
 
@@ -426,77 +717,40 @@ def _run_two_step_seq(
     use_pbar: bool = True,
 ) -> None:
     """
-    Execute ``niters`` iterations of ``first_op`` followed by ``niters``
-    iterations of ``second_op`` (e.g., ``n`` erosions -> ``n`` dilations for
-    opening, or ``n`` dilations -> ``n`` erosions for closing) in a single
-    halo-fused :class:`~rsgispy._io.TileGraph` pass with zero intermediate
-    disk I/O unless ``tmp_img`` is explicitly requested.
+    Run an opening (``first_op='erode'``) or closing (``first_op='dilate'``)
+    file function through its tile-graph nodes; ``tmp_img`` receives the
+    result of the ``niters`` ``first_op`` steps.
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     ensure_file_exists(input_img)
-    if niters < 1:
-        raise rsgispy.RSGISPyException(
-            f"niters must be >= 1 (got {niters})."
-        )
+    if isinstance(niters, bool) or int(niters) < 1:
+        raise rsgispy.RSGISPyException(f"niters must be >= 1 (got {niters}).")
 
-    eff_dtype = _resolve_morph_datatype(input_img, datatype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
-    in_nd = _resolve_input_nodata(input_img, no_data_val)
-    out_nd = _resolve_morph_nodata(input_img, no_data_val, out_np_dtype)
-    fill_nd = _resolve_fill_nodata(out_nd, out_np_dtype)
-    cur_node: TileNode = RasterSource(input_img, dtype=np.float64, name="src")
-
-    for idx in range(niters):
-        step_nd = in_nd if idx == 0 else out_nd
-        cur_node = _make_morph_step_node(
-            source=cur_node,
-            op_mask=op_mask,
-            op_kind=first_op,
-            out_np_dtype=out_np_dtype,
-            in_nd=step_nd,
-            fill_nd=fill_nd,
-            name=f"{first_op}_{idx}",
+    def _build(
+        src: TileNode, in_nd: Optional[float], np_dtype: np.dtype
+    ) -> Tuple[TileNode, Optional[TileNode]]:
+        mid, result = morph_two_step_nodes(
+            src,
+            op_mask,
+            first_op,
+            second_op,
+            niters,
+            MorphNodeNodata(in_nd, np_dtype),
+            "opening" if first_op == "erode" else "closing",
         )
-    mid_node = cur_node
+        return result, mid
 
-    for idx in range(niters):
-        cur_node = _make_morph_step_node(
-            source=cur_node,
-            op_mask=op_mask,
-            op_kind=second_op,
-            out_np_dtype=out_np_dtype,
-            in_nd=out_nd,
-            fill_nd=fill_nd,
-            name=f"{second_op}_{idx}",
-        )
-
-    sinks: List[DiskSink] = [
-        DiskSink(
-            source=cur_node,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            datatype=eff_dtype,
-            nodata=out_nd,
-            clamp_int=True,
-            calc_stats=calc_stats,
-            name="output",
-        )
-    ]
-    if tmp_img:
-        sinks.append(
-            DiskSink(
-                source=mid_node,
-                output_img=str(tmp_img),
-                gdalformat=gdalformat,
-                datatype=eff_dtype,
-                nodata=out_nd,
-                clamp_int=True,
-                calc_stats=False,
-                name="tmp_mid",
-            )
-        )
-
-    TileGraph(sinks).run(use_pbar=use_pbar)
+    run_morph_graph(
+        input_img,
+        output_img,
+        _build,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
+        tmp_img=tmp_img,
+    )
 
 
 def _run_top_hat(
@@ -512,81 +766,31 @@ def _run_top_hat(
     use_pbar: bool = True,
 ) -> None:
     """
-    Execute black (``closing - input``) or white (``input - opening``) top-hat
-    transform in a single halo-fused :class:`~rsgispy._io.TileGraph` pass.
+    Run a black or white top-hat file function through its tile-graph nodes;
+    ``tmp_img`` receives the closing (black) or opening (white).
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    ensure_file_exists(input_img)
-    eff_dtype = _resolve_morph_datatype(input_img, datatype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
-    in_nd = _resolve_input_nodata(input_img, no_data_val)
-    out_nd = _resolve_morph_nodata(input_img, no_data_val, out_np_dtype)
-    fill_nd = _resolve_fill_nodata(out_nd, out_np_dtype)
-    src_node = RasterSource(input_img, dtype=np.float64, name="src")
-    first_op, second_op = ("dilate", "erode") if black else ("erode", "dilate")
-    step1 = _make_morph_step_node(
-        source=src_node,
-        op_mask=op_mask,
-        op_kind=first_op,
-        out_np_dtype=out_np_dtype,
-        in_nd=in_nd,
-        fill_nd=fill_nd,
-        name=first_op,
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+
+    def _build(
+        src: TileNode, in_nd: Optional[float], np_dtype: np.dtype
+    ) -> Tuple[TileNode, Optional[TileNode]]:
+        mid, result = morph_top_hat_nodes(
+            src,
+            op_mask,
+            black,
+            MorphNodeNodata(in_nd, np_dtype),
+            "black_top_hat" if black else "white_top_hat",
+        )
+        return result, mid
+
+    run_morph_graph(
+        input_img,
+        output_img,
+        _build,
+        gdalformat=gdalformat,
+        datatype=datatype,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
+        use_pbar=use_pbar,
+        tmp_img=tmp_img,
     )
-    step2 = _make_morph_step_node(
-        source=step1,
-        op_mask=op_mask,
-        op_kind=second_op,
-        out_np_dtype=out_np_dtype,
-        in_nd=out_nd,
-        fill_nd=fill_nd,
-        name=second_op,
-    )
-
-    def _top_hat_diff(first_arr: np.ndarray, second_arr: np.ndarray) -> np.ndarray:
-        orig_arr = second_arr if black else first_arr
-        orig_valid = _valid_morph_mask(orig_arr, in_nd)
-        other_arr = first_arr if black else second_arr
-        other_valid = _valid_morph_mask(other_arr, out_nd)
-        return np.where(orig_valid & other_valid, first_arr - second_arr, fill_nd)
-
-    if black:
-        diff_node = PointwiseOp(
-            inputs=(step2, src_node),
-            func=_top_hat_diff,
-            name="black_top_hat_diff",
-        )
-    else:
-        diff_node = PointwiseOp(
-            inputs=(src_node, step2),
-            func=_top_hat_diff,
-            name="white_top_hat_diff",
-        )
-
-    sinks: List[DiskSink] = [
-        DiskSink(
-            source=diff_node,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            datatype=eff_dtype,
-            nodata=out_nd,
-            clamp_int=True,
-            calc_stats=calc_stats,
-            name="output",
-        )
-    ]
-    if tmp_img:
-        sinks.append(
-            DiskSink(
-                source=step2,
-                output_img=str(tmp_img),
-                gdalformat=gdalformat,
-                datatype=eff_dtype,
-                nodata=out_nd,
-                clamp_int=True,
-                calc_stats=False,
-                name="tmp_mid",
-            )
-        )
-
-    TileGraph(sinks).run(use_pbar=use_pbar)

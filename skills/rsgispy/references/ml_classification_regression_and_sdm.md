@@ -34,6 +34,25 @@ Covers `rsgispy.ml.*`, `rsgispy.classification.*`, `rsgispy.regression.*`, and `
 - `predict_raster(estimator, feature_stack, output_img, in_msk_img=None, img_msk_val=1, scaler=None, lut=None, threshold=None, thematic=False, band_names=None, block_size=None, *, gdalformat='GTIFF', datatype=None, no_data_val=None, calc_stats=True, use_pbar=True, creation_opts=None)`
 - `predict_proba_raster(estimator, feature_stack, output_img, ..., class_names=None, out_class_img=None, out_entropy_img=None, lut=None, scale_to_pct=False, ...)`
 - `predict_quantiles_raster(estimators_or_model, feature_stack, output_img, quantiles=(0.05, 0.5, 0.95), ..., conformal_residuals=None, alpha=0.1, ...)`
+- **Tile-graph nodes** (chain features -> model -> majority filter in one `TileGraph` pass, no intermediate files; same pixels as the file functions):
+  - `feature_stack_nodes(stack) -> List[TileNode]` (or `stack.to_tile_nodes()`): one node per `BandSpec`, with the stack's feature names, no-data and `min/max_vld_val` (out of range -> NaN). All rasters (and the mask) must be on the same pixel grid (the file functions also handle intersections/reprojection). The stack's scaler is not applied: pass `scaler=stack.scaler`.
+  - `predict_raster_node(features, estimator, scaler=None, lut=None, threshold=None, thematic=False, band_names=None, *, mask=None, img_msk_val=1, n_outputs=None, no_data_val=None)` (no data default 0 if thematic/threshold else -9999).
+  - `predict_proba_raster_node(features, estimator, scaler=None, class_names=None, lut=None, scale_to_pct=False, *, with_class=False, with_entropy=False, mask=None, ...)` (extra bands appended; split with `SelectBands`).
+  - `predict_quantiles_raster_node(features, estimators_or_model, quantiles=(0.05, 0.5, 0.95), scaler=None, conformal_residuals=None, alpha=0.1, *, mask=None, ...)`.
+  - `features` = any node(s): filters, indices, `BandMathOp`, `StackBands`; a pixel is predicted if inside `mask == img_msk_val` and all features are finite and != their node's no-data.
+
+```python
+import numpy as np
+import rsgispy
+from rsgispy.classification import majority_filter_node
+from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+from rsgispy.ml.predict import feature_stack_nodes, predict_raster_node
+
+cls = predict_raster_node(feature_stack_nodes(stack), clf, scaler=stack.scaler, thematic=True,
+                          mask=RasterSource("valid_mask.tif", bands=1))
+smooth = majority_filter_node(cls, 3, dtype=np.uint8, no_data_val=0)
+TileGraph(DiskSink(smooth, "landcover.tif", datatype=rsgispy.TYPE_8UINT)).run()
+```
 
 ### Chunked Vector I/O & Prediction (`rsgispy.ml.vector`)
 - `read_vec_layer_info(vec_file, vec_lyr=None) -> VecLayerInfo`, `iter_vec_batches(vec_file, columns=None, vec_lyr=None, read_geometry=False, chunk_size=100_000)` (Arrow), `iter_vec_chunks(...)` (pandas, never geometry).
@@ -83,7 +102,7 @@ Covers `rsgispy.ml.*`, `rsgispy.classification.*`, `rsgispy.regression.*`, and `
 - **`classfeatures`**: `comparison_box_plots`, `correlation_matrix`, `calc_vif_multicollinearity`, `select_features_cqv`, `select_features_corr`, `select_features_vif`, `select_features_univariate`, `select_features_rfe`, `select_features_from_model`, `select_features_boruta_shap`, `calc_feature_importance`, `calc_jackknife_feature_importance`, `calc_feature_response_curves`, `calc_shap_feature_contributions`, `calc_salib_feature_sensitivity`.
 - **`classrefpts`**: `create_random_ref_smpls_darts`, `create_stratified_random_ref_smpls_darts`, `create_stratified_random_ref_smpls_lut`, `pop_class_info_accuracy_pts`.
 - **`classaccuracymetrics`**: `calc_acc_stats_img`, `calc_acc_stats_ptonly`, `calc_acc_stats_img_bootstrap_conf`, `calc_acc_stats_ptonly_bootstrap_conf`.
-- **`classpostprocess`** (also top-level `rsgispy.classification.{apply_majority_filter,apply_sieve_filter}`): `apply_majority_filter(..., filter_size=3, img_band=1, keep_centre_on_tie=True, copy_colour_table=True, *)`, `apply_sieve_filter(..., size_threshold, connectivity=4, img_band=1, ...)`, `apply_postprocess_pipeline(..., majority_sizes=(), sieve_size_threshold=None, ...)`.
+- **`classpostprocess`** (also top-level `rsgispy.classification.{apply_majority_filter,apply_sieve_filter,majority_filter_node}`): `apply_majority_filter(..., filter_size=3, img_band=1, keep_centre_on_tie=True, copy_colour_table=True, *)`, `apply_sieve_filter(..., size_threshold, connectivity=4, img_band=1, ...)`, `apply_postprocess_pipeline(..., majority_sizes=(), sieve_size_threshold=None, ...)`; tile-graph node `majority_filter_node(source, filter_size=3, keep_centre_on_tie=True, *, dtype=None, no_data_val=None)` (filters every band of `source`; pass the input no-data and output dtype). The sieve is whole-image (connected components) and has no node.
 
 ---
 

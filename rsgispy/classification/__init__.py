@@ -130,15 +130,19 @@ Submodules:
   post-processing filters for boundary smoothing and minimum-mapping-unit
   clump elimination
   (:func:`~rsgispy.classification.classpostprocess.apply_majority_filter`,
-  :func:`~rsgispy.classification.classpostprocess.apply_sieve_filter`).
+  :func:`~rsgispy.classification.classpostprocess.apply_sieve_filter`), and
+  the tile-graph node
+  :func:`~rsgispy.classification.classpostprocess.majority_filter_node`.
 """
 
 from rsgispy.classification.classpostprocess import (
     apply_majority_filter,
     apply_sieve_filter,
+    majority_filter_node,
 )
 
 __all__ = [
     "apply_majority_filter",
     "apply_sieve_filter",
+    "majority_filter_node",
 ]
