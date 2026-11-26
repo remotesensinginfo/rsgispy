@@ -200,6 +200,7 @@ For multi-step analyses, follow the step order of the matching guide in the rsgi
 | Polygon / point / label-raster zonal stats, hex grids | `zonal_stats_and_vectors` |
 | Map figures, legends, scale bars, insets | `making_maps` |
 | Block processing, `TileGraph`, VRTs, tiling, `n_jobs` | `large_rasters` |
+| Chaining operations in memory: `*_node` builders, `FilterStep`, custom `WindowOp`/`PointwiseOp`/`TileNode`, `StatsSink`/`ZonalStatsSink`, `run(n_jobs=...)` | `tile_graph` |
 
 Workflow notes from the guides:
 - Pass `no_data_val=` (and `calc_stats=True` if wanted) to `band_maths`; the expression must still produce the no-data value (e.g. `"b1 == 0 ? -9999 : b1 * 2"`).

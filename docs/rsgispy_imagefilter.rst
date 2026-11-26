@@ -50,6 +50,11 @@ texture extraction:
 Chaining
 --------
 
+.. seealso::
+
+   :doc:`guides/tile_graph` — a guide to chaining operations in memory with a
+   tile graph, with a worked example.
+
 Every filter in this package can also be used as a node of an in-memory
 :class:`~rsgispy.imageprocess.TileGraph`, chained with other filters, band
 maths and indices in one pass without intermediate files. Each has a node

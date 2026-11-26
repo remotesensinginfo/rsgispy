@@ -174,6 +174,11 @@ histograms supporting fixed bin counts (``n_bins``), fixed bin widths
 Chaining
 --------
 
+.. seealso::
+
+   :doc:`guides/tile_graph` — a guide to chaining operations in memory with a
+   tile graph, with a worked example.
+
 The pixel-wise functions of this subpackage can also be used as nodes of an
 in-memory :class:`~rsgispy.imageprocess.TileGraph`, chained with filters,
 masks and other operations in one pass without intermediate files. Each has a

@@ -51,6 +51,11 @@ You can pass any Python callable ``block_func(block_vars)`` to :func:`rsgispy.im
 Composable In-Memory Tile-Graph Pipelines
 -----------------------------------------
 
+.. seealso::
+
+   :doc:`guides/tile_graph` — a guide to chaining operations in memory with a
+   tile graph, with a worked example.
+
 :class:`rsgispy.imageprocess.TileGraph` chains multiple windowed
 (:class:`~rsgispy.imageprocess.WindowOp`) and point-wise
 (:class:`~rsgispy.imageprocess.PointwiseOp`, :class:`~rsgispy.imageprocess.BandMathOp`)
@@ -122,6 +127,10 @@ was 512. ``TileGraph.run(n_jobs=...)`` evaluates tiles on several threads
 
 Chainable operations
 ~~~~~~~~~~~~~~~~~~~~
+
+.. seealso::
+
+   :doc:`guides/tile_graph` shows these builders in a worked chain.
 
 An operation can be a node when it is **tile-local**: every output pixel
 depends only on the input pixels within a fixed radius (the halo) and on
@@ -408,6 +417,14 @@ per-run state in the object returned by
 ``n_jobs=8`` 4.7-7x faster than one thread for a median → mean chain, a
 Refined Lee → dB → SAR indices chain, slope + hillshade and a random-forest
 prediction → majority filter. The file-based functions run with one thread.
+
+The numba kernels that run in parallel themselves (the mode and majority
+filters, GLCM texture, the shadow rays of the illumination functions and
+image co-registration) need a thread-safe numba threading layer (TBB or
+OpenMP) to be launched from several threads at once. With the ``workqueue``
+layer, used when neither is installed, rsgispy runs them one at a time, so
+the results are the same but those steps do not speed up with ``n_jobs``;
+``numba.threading_layer()`` reports the layer once a parallel kernel has run.
 
 Custom nodes
 ~~~~~~~~~~~~
