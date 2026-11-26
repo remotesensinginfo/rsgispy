@@ -2,18 +2,30 @@
 The elevation.illumination module provides solar hillshading, ray-traced shadow
 masking, and local solar/sensor incidence and exitance angle functions using
 ``rasterio`` and ``numpy``.
+
+Hillshade and the incidence and exitance angles also have tile-graph node
+builders (:func:`hillshade_node`, :func:`hillshade_pxl_res_img_node`,
+:func:`local_incidence_angle_node`, :func:`local_exitance_angle_node`) for
+chaining them with other operations in a
+:class:`~rsgispy.imageprocess.TileGraph`. :func:`shadow_mask` has no node:
+its solar rays are traced across the whole DEM (a cast shadow can come from
+terrain any distance away), so it cannot be computed tile by tile with a
+fixed halo.
 """
 
 from contextlib import ExitStack
 import math
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 import numpy as np
 import rasterio
 
 import rsgispy
+from rsgispy._io import TileNode
 from rsgispy._numba import optional_njit, prange, use_compiled
 from rsgispy.elevation._helpers import (
+    Horn3x3Node as _Horn3x3Node,
+    HornBlockFunc as _HornBlockFunc,
     calc_slope_aspect_from_diffs as _calc_slope_aspect_from_diffs,
     prepare_3x3_horn_diffs as _prepare_3x3_horn_diffs,
     process_pxl_res_dem_3x3 as _process_pxl_res_dem_3x3,
@@ -34,6 +46,10 @@ __all__ = [
     "shadow_mask",
     "local_incidence_angle",
     "local_exitance_angle",
+    "hillshade_node",
+    "hillshade_pxl_res_img_node",
+    "local_incidence_angle_node",
+    "local_exitance_angle_node",
 ]
 
 
@@ -104,6 +120,98 @@ def _calc_ray_angle_block(
     ang_deg = np.degrees(np.arccos(dot))
     invalid = (n_vals <= 1) | np.isnan(ang_deg)
     return np.where(invalid, fallback_val, ang_deg)
+
+
+def _make_hillshade_node(
+    source: TileNode,
+    pxl_res: Optional[TileNode],
+    azimuth: float,
+    zenith: float,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+    out_datatype: int = rsgispy.TYPE_8UINT,
+    res_nodata: Optional[Tuple[Any, Any]] = None,
+) -> TileNode:
+    """Hillshade node (``out_datatype`` sets the no-data fill as the file function)."""
+    # pylint: disable=too-many-arguments
+    _validate_sun_angles(azimuth, zenith)
+    az = float(azimuth)
+    zen = float(zenith)
+
+    def _block(
+        dx: np.ndarray,
+        dy: np.ndarray,
+        n_vals: np.ndarray,
+        ew_res: Any,
+        ns_res: Any,
+    ) -> np.ndarray:
+        return _calc_hillshade_block(dx, dy, n_vals, ew_res, ns_res, az, zen)
+
+    return _Horn3x3Node(
+        source,
+        _block,
+        out_datatype,
+        pxl_res=pxl_res,
+        no_data_val=no_data_val,
+        res_nodata=res_nodata,
+        uint8_values=True,
+        op_desc=f"hillshade azimuth={az} zenith={zen}",
+        name=name or ("hillshade_pxl_res_img" if pxl_res is not None else "hillshade"),
+    )
+
+
+def _ray_angle_block_fn(
+    azimuth: float, zenith: float, fallback_val: float
+) -> _HornBlockFunc:
+    """Block function of the local incidence/exitance angle."""
+
+    def _block(
+        dx: np.ndarray,
+        dy: np.ndarray,
+        n_vals: np.ndarray,
+        ew_res: Any,
+        ns_res: Any,
+    ) -> np.ndarray:
+        return _calc_ray_angle_block(
+            dx,
+            dy,
+            n_vals,
+            ew_res,
+            ns_res,
+            azimuth,
+            zenith,
+            flat_aspect_val=0.0,
+            fallback_val=fallback_val,
+        )
+
+    return _block
+
+
+def _make_ray_angle_node(
+    source: TileNode,
+    azimuth: float,
+    zenith: float,
+    exitance: bool,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+    out_datatype: int = rsgispy.TYPE_32FLOAT,
+) -> TileNode:
+    """Local incidence (``exitance=False``) or exitance angle node."""
+    # pylint: disable=too-many-arguments
+    _validate_sun_angles(azimuth, zenith)
+    # Pixels without a slope get the zenith angle (incidence) or 0 (exitance).
+    fallback = 0.0 if exitance else float(zenith)
+    label = "local_exitance_angle" if exitance else "local_incidence_angle"
+    return _Horn3x3Node(
+        source,
+        _ray_angle_block_fn(azimuth, zenith, fallback),
+        out_datatype,
+        no_data_val=no_data_val,
+        op_desc=f"{label} azimuth={float(azimuth)} zenith={float(zenith)}",
+        name=name or label,
+    )
 
 
 def hillshade(
@@ -663,4 +771,193 @@ def local_exitance_angle(
         no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+    )
+
+
+def hillshade_node(
+    source: TileNode,
+    azimuth: float,
+    zenith: float,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`hillshade`: the hillshade (values 1-255) of a
+    single-band DEM node for a sun at ``azimuth`` / ``zenith``, for chaining
+    in a :class:`~rsgispy.imageprocess.TileGraph` without intermediate files.
+
+    The pixel size is that of the graph grid (the DEM's geotransform; use
+    :func:`hillshade_pxl_res_img_node` for geographic DEMs). The node has a
+    halo radius of 1 and pads the image borders by repeating the edge
+    pixels. It outputs one ``uint8`` band; pixels whose DEM value is no data
+    are set to the DEM no-data value if it fits in ``uint8``, otherwise to
+    ``0`` (``0`` without a no-data value too), and that is the node's no-data
+    value (none when the DEM has none). Written with a
+    :class:`~rsgispy.imageprocess.DiskSink` of ``rsgispy.TYPE_8UINT``, the
+    output equals that of :func:`hillshade`.
+
+    :param source: Single-band DEM :class:`~rsgispy.imageprocess.TileNode`.
+    :param azimuth: Solar azimuth angle in degrees ``[0, 360]`` (e.g., 315).
+    :param zenith: Solar zenith angle in degrees ``[0, 90]`` (e.g., 45).
+    :param no_data_val: Optional DEM no-data value (Default = ``None``: the
+                        no-data value of ``source``, e.g. the DEM file's).
+    :param name: Optional node name (Default = ``'hillshade'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    Hillshade of a smoothed DEM, and a 3-band stack of hillshades from three
+    sun directions, written in one pass:
+
+    .. code:: python
+
+        import rsgispy
+        from rsgispy.imageprocess import DiskSink, RasterSource, StackBands, TileGraph
+        from rsgispy.imagefilter.stats import median_filter_node
+        from rsgispy.elevation.illumination import hillshade_node
+
+        dem = RasterSource("dem.tif", bands=1)
+        smooth = median_filter_node(dem, 3, no_data_val=-9999)
+        hs = StackBands([hillshade_node(smooth, az, 45.0) for az in (270, 315, 360)])
+        TileGraph(DiskSink(hs, "hillshades.tif", datatype=rsgispy.TYPE_8UINT)).run()
+    """
+    return _make_hillshade_node(
+        source, None, azimuth, zenith, no_data_val=no_data_val, name=name
+    )
+
+
+def hillshade_pxl_res_img_node(
+    source: TileNode,
+    pxl_res: TileNode,
+    azimuth: float,
+    zenith: float,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`hillshade_pxl_res_img`: the hillshade of a
+    single-band DEM node using the per-pixel resolution in bands 1
+    (East-West) and 2 (North-South) of ``pxl_res``.
+
+    As :func:`hillshade_node`, with pixels whose resolution is no data, zero
+    or not finite also set to the no-data value. Both inputs must be on the
+    same pixel grid.
+
+    :param source: Single-band DEM :class:`~rsgispy.imageprocess.TileNode`.
+    :param pxl_res: :class:`~rsgispy.imageprocess.TileNode` with at least 2
+                    bands (East-West and North-South pixel resolution).
+    :param azimuth: Solar azimuth angle in degrees ``[0, 360]``.
+    :param zenith: Solar zenith angle in degrees ``[0, 90]``.
+    :param no_data_val: Optional DEM no-data value (Default = ``None``: the
+                        no-data value of ``source``).
+    :param name: Optional node name (Default = ``'hillshade_pxl_res_img'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        import rsgispy
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.elevation.illumination import hillshade_pxl_res_img_node
+
+        dem = RasterSource("dem_wgs84.tif", bands=1)
+        res = RasterSource("pxl_res_m.tif", bands=[1, 2])
+        hs = hillshade_pxl_res_img_node(dem, res, 315.0, 45.0)
+        TileGraph(DiskSink(hs, "hillshade.tif", datatype=rsgispy.TYPE_8UINT)).run()
+    """
+    # pylint: disable=too-many-arguments
+    return _make_hillshade_node(
+        source, pxl_res, azimuth, zenith, no_data_val=no_data_val, name=name
+    )
+
+
+def local_incidence_angle_node(
+    source: TileNode,
+    azimuth: float,
+    zenith: float,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`local_incidence_angle`: the local solar
+    incidence angle (degrees) of each pixel of a single-band DEM node.
+
+    The pixel size is that of the graph grid (the DEM's geotransform). The
+    node has a halo radius of 1 and pads the image borders by repeating the
+    edge pixels. It outputs one ``float64`` band; pixels whose DEM value is
+    no data are set to the DEM no-data value (``NaN`` when the DEM has
+    none), which is the node's no-data value. Written with a
+    :class:`~rsgispy.imageprocess.DiskSink` of ``rsgispy.TYPE_32FLOAT``, the
+    output equals that of :func:`local_incidence_angle`.
+
+    :param source: Single-band DEM :class:`~rsgispy.imageprocess.TileNode`.
+    :param azimuth: Solar azimuth angle in degrees ``[0, 360]``.
+    :param zenith: Solar zenith angle in degrees ``[0, 90]``.
+    :param no_data_val: Optional DEM no-data value (Default = ``None``: the
+                        no-data value of ``source``).
+    :param name: Optional node name (Default = ``'local_incidence_angle'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    Cosine of the incidence angle (e.g. for a C-correction), in one pass:
+
+    .. code:: python
+
+        from rsgispy.imageprocess import BandMathOp, DiskSink, RasterSource, TileGraph
+        from rsgispy.elevation.illumination import local_incidence_angle_node
+
+        dem = RasterSource("dem.tif", bands=1)
+        inc = local_incidence_angle_node(dem, azimuth=150.0, zenith=35.0)
+        cos_i = BandMathOp({"i": inc}, "cos(i * pi / 180)", nodata=-9999)
+        TileGraph(DiskSink(cos_i, "cos_incidence.tif", nodata=-9999)).run()
+    """
+    return _make_ray_angle_node(
+        source, azimuth, zenith, False, no_data_val=no_data_val, name=name
+    )
+
+
+def local_exitance_angle_node(
+    source: TileNode,
+    azimuth: float,
+    zenith: float,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`local_exitance_angle`: the local sensor
+    exitance (viewing) angle (degrees) of each pixel of a single-band DEM
+    node.
+
+    As :func:`local_incidence_angle_node` (pixels without a slope get ``0``
+    rather than the zenith angle). Written with a
+    :class:`~rsgispy.imageprocess.DiskSink` of ``rsgispy.TYPE_32FLOAT``, the
+    output equals that of :func:`local_exitance_angle`.
+
+    :param source: Single-band DEM :class:`~rsgispy.imageprocess.TileNode`.
+    :param azimuth: Sensor/view azimuth angle in degrees ``[0, 360]``.
+    :param zenith: Sensor/view zenith angle in degrees ``[0, 90]``.
+    :param no_data_val: Optional DEM no-data value (Default = ``None``: the
+                        no-data value of ``source``).
+    :param name: Optional node name (Default = ``'local_exitance_angle'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    Incidence and exitance angles of one DEM, written as a 2-band image in
+    one pass:
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, StackBands, TileGraph
+        from rsgispy.elevation.illumination import (
+            local_exitance_angle_node, local_incidence_angle_node,
+        )
+
+        dem = RasterSource("dem.tif", bands=1)
+        angles = StackBands([
+            local_incidence_angle_node(dem, 150.0, 35.0),
+            local_exitance_angle_node(dem, 100.0, 8.0),
+        ])
+        TileGraph(DiskSink(angles, "angles.tif", band_names=["inc", "exit"])).run()
+    """
+    return _make_ray_angle_node(
+        source, azimuth, zenith, True, no_data_val=no_data_val, name=name
     )
