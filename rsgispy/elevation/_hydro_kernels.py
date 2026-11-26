@@ -287,6 +287,11 @@ def _grow_heap_arrays(
     return n_keys, n_rows, n_cols, new_cap
 
 
+# Relative drop per path step when a breach ends at an edge outlet higher
+# than the pit (2.5e-7 is about two float32 ulps of the elevation).
+BREACH_EDGE_DROP = 2.5e-7
+
+
 @njit
 def breach_depressions_kernel(
     dem: np.ndarray,
@@ -300,6 +305,15 @@ def breach_depressions_kernel(
 ) -> np.ndarray:
     """
     Lindsay (2016) constrained least-cost depression breaching kernel.
+
+    From each pit (in ascending elevation order) a Dijkstra search finds the
+    least-cost path to an outlet: a cell lower than the pit, or a cell on the
+    DEM edge or next to no data at any height (flow leaves the DEM there).
+    The cost of a step is the cut needed to bring the cell down to the pit
+    (``max(z - z_pit, 0)``) times the step length, so the path with the
+    smallest total cut wins and a short, shallow route beats a long, deep
+    one. The path is carved as a descending gradient from the pit to the
+    outlet; an edge outlet higher than the pit is cut to just below it.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
@@ -406,7 +420,9 @@ def breach_depressions_kernel(
                         if not valid[r + int(D8_DR[k]), c + int(D8_DC[k])]:
                             is_edge_outlet = True
                             break
-                if z_curr < z0 or (is_edge_outlet and z_curr <= z0):
+                # An edge / no-data-adjacent cell is an outlet at any height:
+                # its cut is already in the path cost.
+                if z_curr < z0 or is_edge_outlet:
                     found = True
                     rt = r
                     ct = c
@@ -430,7 +446,8 @@ def breach_depressions_kernel(
 
                 s_dist = _step_dist(k, dx, dy, diag_d)
                 excess = dz if dz > 0.0 else 0.0
-                # Tiny step-distance tie-breaker prefers shorter breach paths
+                # Cut depth x step length; the tiny step-distance tie-breaker
+                # prefers shorter breach paths through cells below the pit.
                 edge_cost = (excess + 1e-12) * s_dist
                 new_cost = cost_u + edge_cost
 
@@ -455,6 +472,11 @@ def breach_depressions_kernel(
             path_len = int(steps_arr[rt, ct])
             if path_len > 0:
                 zt = z_out[rt, ct]
+                if zt > z0:
+                    # Edge outlet higher than the pit: cut the path to a
+                    # gradient just below the pit (two float32 ulps per step)
+                    # so it still drains once written as float32.
+                    zt = z0 - float(path_len) * BREACH_EDGE_DROP * max(abs(z0), 1.0)
                 curr_r = rt
                 curr_c = ct
                 step_k = path_len
@@ -970,10 +992,31 @@ def flow_dir_mfd_numpy(
 
 
 @njit
+def _count_unreleased(valid: np.ndarray, in_deg: np.ndarray) -> int:
+    """
+    Count the valid cells that a Kahn's topological sort never released
+    (in-degree still above zero): they sit on or downstream of a cycle in
+    the flow graph, so their accumulation is incomplete.
+    """
+    height, width = in_deg.shape
+    n_left = 0
+    for r in range(height):
+        for c in range(width):
+            if valid[r, c] and in_deg[r, c] > 0:
+                n_left += 1
+    return n_left
+
+
+@njit
 def flow_acc_d8_kernel(
     flow_dir: np.ndarray, valid: np.ndarray, weights: np.ndarray
-) -> np.ndarray:
-    """O(N) Kahn's topological sort D8 flow accumulation."""
+) -> Tuple[np.ndarray, int]:
+    """
+    O(N) Kahn's topological sort D8 flow accumulation.
+
+    Returns the accumulation and the number of valid cells never released by
+    the sort (non-zero only if the flow graph has a cycle).
+    """
     # pylint: disable=too-many-locals,too-many-branches
     height, width = flow_dir.shape
     in_deg = np.zeros((height, width), dtype=np.int32)
@@ -1021,7 +1064,18 @@ def flow_acc_d8_kernel(
                     q_rows, q_cols, q_tail, q_count, cap, nr, nc
                 )
 
-    return acc
+    return acc, _count_unreleased(valid, in_deg)
+
+
+# Angular tolerance (radians) for snapping a D-Infinity angle onto a facet
+# boundary (a cardinal or diagonal direction). The angles are stored as
+# float32, which can't represent the boundary angles exactly (e.g. pi/2 and
+# pi round up by ~4e-8 and ~9e-8 rad), so without snapping a tiny share of
+# the flow (alpha ~ 1e-8) is sent to the other neighbour of the facet, which
+# may be higher than the cell; those uphill edges form cycles in the flow
+# graph. 1e-5 rad is far above float32 rounding (~2.4e-7 rad at 2*pi) and far
+# below any real facet split (a 1e-5 rad angle sends a share of ~1.3e-5).
+DINF_SNAP_TOL = 1e-5
 
 
 @njit
@@ -1031,8 +1085,12 @@ def _dinf_targets(
     """
     Resolve D-Infinity CCW angle ``ang in [0, 2*pi)`` into two neighbour
     offsets ``(dr1, dc1, dr2, dc2, w1, w2)``.
+
+    Angles within :data:`DINF_SNAP_TOL` radians of a facet boundary (a
+    cardinal or diagonal direction for the pixel geometry) are snapped onto
+    it, so all the flow goes to that one neighbour (``w2 = 0``).
     """
-    # pylint: disable=too-many-branches
+    # pylint: disable=too-many-branches,too-many-statements
     phi = math.atan2(dy, dx)
     half_pi = 0.5 * math.pi
     pi = math.pi
@@ -1043,37 +1101,47 @@ def _dinf_targets(
         return 0, 0, 0, 0, 0.0, 0.0
 
     # Normalise near 2*pi
-    if ang >= two_pi - 1e-12:
+    if ang >= two_pi - DINF_SNAP_TOL:
         ang = 0.0
 
+    # ``width`` is the angular width of the facet, so ``alpha * width`` is
+    # the angle from the first neighbour's direction.
     if ang <= phi:
-        alpha = ang / phi
+        width = phi
+        alpha = ang / width
         dr1, dc1, dr2, dc2 = 0, 1, -1, 1
     elif ang <= half_pi:
-        alpha = (half_pi - ang) / (half_pi - phi)
+        width = half_pi - phi
+        alpha = (half_pi - ang) / width
         dr1, dc1, dr2, dc2 = -1, 0, -1, 1
     elif ang <= pi - phi:
-        alpha = (ang - half_pi) / (half_pi - phi)
+        width = half_pi - phi
+        alpha = (ang - half_pi) / width
         dr1, dc1, dr2, dc2 = -1, 0, -1, -1
     elif ang <= pi:
-        alpha = (pi - ang) / phi
+        width = phi
+        alpha = (pi - ang) / width
         dr1, dc1, dr2, dc2 = 0, -1, -1, -1
     elif ang <= pi + phi:
-        alpha = (ang - pi) / phi
+        width = phi
+        alpha = (ang - pi) / width
         dr1, dc1, dr2, dc2 = 0, -1, 1, -1
     elif ang <= three_half_pi:
-        alpha = (three_half_pi - ang) / (half_pi - phi)
+        width = half_pi - phi
+        alpha = (three_half_pi - ang) / width
         dr1, dc1, dr2, dc2 = 1, 0, 1, -1
     elif ang <= two_pi - phi:
-        alpha = (ang - three_half_pi) / (half_pi - phi)
+        width = half_pi - phi
+        alpha = (ang - three_half_pi) / width
         dr1, dc1, dr2, dc2 = 1, 0, 1, 1
     else:
-        alpha = (two_pi - ang) / phi
+        width = phi
+        alpha = (two_pi - ang) / width
         dr1, dc1, dr2, dc2 = 0, 1, 1, 1
 
-    if alpha < 1e-12:
+    if alpha * width <= DINF_SNAP_TOL:
         return dr1, dc1, 0, 0, 1.0, 0.0
-    if alpha > 1.0 - 1e-12:
+    if (1.0 - alpha) * width <= DINF_SNAP_TOL:
         return dr2, dc2, 0, 0, 1.0, 0.0
     return dr1, dc1, dr2, dc2, 1.0 - alpha, alpha
 
@@ -1085,8 +1153,13 @@ def flow_acc_dinf_kernel(
     weights: np.ndarray,
     dx: float,
     dy: float,
-) -> np.ndarray:
-    """O(N) Kahn's topological sort D-Infinity flow accumulation."""
+) -> Tuple[np.ndarray, int]:
+    """
+    O(N) Kahn's topological sort D-Infinity flow accumulation.
+
+    Returns the accumulation and the number of valid cells never released by
+    the sort (non-zero only if the flow graph has a cycle).
+    """
     # pylint: disable=too-many-locals,too-many-branches
     height, width = flow_dir.shape
     in_deg = np.zeros((height, width), dtype=np.int32)
@@ -1150,14 +1223,19 @@ def flow_acc_dinf_kernel(
                         q_rows, q_cols, q_tail, q_count, cap, nr2, nc2
                     )
 
-    return acc
+    return acc, _count_unreleased(valid, in_deg)
 
 
 @njit
 def flow_acc_mfd_kernel(
     flow_dir_mfd: np.ndarray, valid: np.ndarray, weights: np.ndarray
-) -> np.ndarray:
-    """O(N) Kahn's topological sort 8-band MFD flow accumulation."""
+) -> Tuple[np.ndarray, int]:
+    """
+    O(N) Kahn's topological sort 8-band MFD flow accumulation.
+
+    Returns the accumulation and the number of valid cells never released by
+    the sort (non-zero only if the flow graph has a cycle).
+    """
     # pylint: disable=too-many-locals,too-many-branches
     _, height, width = flow_dir_mfd.shape
     in_deg = np.zeros((height, width), dtype=np.int32)
@@ -1206,7 +1284,7 @@ def flow_acc_mfd_kernel(
                             q_rows, q_cols, q_tail, q_count, cap, nr, nc
                         )
 
-    return acc
+    return acc, _count_unreleased(valid, in_deg)
 
 
 @njit

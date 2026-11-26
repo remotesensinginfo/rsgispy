@@ -3,6 +3,8 @@ Stage 2: Flow direction, flow accumulation, flow length, flow distance, and
 flow path tracing for :mod:`rsgispy.elevation.hydrology`.
 """
 
+import math
+import warnings
 from contextlib import ExitStack
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -68,6 +70,23 @@ def _check_d8_codes(codes: np.ndarray) -> None:
             f"Invalid D8 direction code {int(codes[np.argmax(bad)])} "
             "encountered during flat routing."
         )
+
+
+def _d8_codes_to_dinf_angles(codes: np.ndarray, dx: float, dy: float) -> np.ndarray:
+    """
+    Convert D8 codes to D-Infinity angles (radians CCW from East) for a
+    ``dx`` x ``dy`` pixel. The diagonals point at the diagonal neighbours'
+    centres (``atan2(dy, dx)`` from East, not 45 degrees when the pixels
+    aren't square), so the D-Inf accumulation sends all the flow to the one
+    D8 neighbour.
+    """
+    phi = math.atan2(dy, dx)
+    angles = D8_LUT_ANGLE.copy()
+    angles[128] = phi
+    angles[32] = math.pi - phi
+    angles[8] = math.pi + phi
+    angles[2] = 2.0 * math.pi - phi
+    return angles[codes].astype(np.float32)
 
 
 def flow_direction(
@@ -206,7 +225,7 @@ def flow_direction(
                     if np.any(flat_pts):
                         codes = fdir_d8[flat_pts].astype(np.int64)
                         _check_d8_codes(codes)
-                        out_arr[flat_pts] = D8_LUT_ANGLE[codes].astype(np.float32)
+                        out_arr[flat_pts] = _d8_codes_to_dinf_angles(codes, dx, dy)
                 elif not _has_numba():
                     _warn_numpy_fallback("flow_direction")
 
@@ -315,6 +334,19 @@ def flow_accumulation(
         (Default = ``True``).
     use_pbar : bool, optional
         Display a progress bar (Default = ``True``).
+
+    Notes
+    -----
+    D-Infinity angles within ``1e-5`` radians of a cardinal or diagonal
+    direction are snapped onto it, so all the flow goes to that neighbour.
+    The angles are stored as ``float32``, which can't hold those directions
+    exactly; without snapping, a tiny share of the flow would go to the other
+    neighbour of the facet, which can be higher than the cell.
+
+    If the flow directions contain a cycle (e.g. a hand-edited or external
+    raster), the cells on and downstream of it are never reached by the
+    topological sort; a ``RuntimeWarning`` gives their number, and their
+    accumulation is incomplete.
     """
     # pylint: disable=too-many-arguments,too-many-locals
     units_norm = out_units.strip().lower()
@@ -352,7 +384,7 @@ def flow_accumulation(
             if mode == "d8":
                 fdir = src.read(1).astype(np.uint8, copy=False)
                 valid = build_valid_mask(fdir, eff_nd) & w_valid
-                acc = _call_topo_kernel(
+                acc, n_unreleased = _call_topo_kernel(
                     flow_acc_d8_kernel,
                     allow_pure_python,
                     "flow_accumulation",
@@ -363,7 +395,7 @@ def flow_accumulation(
             elif mode == "dinf":
                 fdir = src.read(1, out_dtype=np.float64)
                 valid = build_valid_mask(fdir, eff_nd) & w_valid
-                acc = _call_topo_kernel(
+                acc, n_unreleased = _call_topo_kernel(
                     flow_acc_dinf_kernel,
                     allow_pure_python,
                     "flow_accumulation",
@@ -376,13 +408,24 @@ def flow_accumulation(
             else:
                 fdir = src.read(out_dtype=np.float64)
                 valid = build_valid_mask(fdir[0], eff_nd) & w_valid
-                acc = _call_topo_kernel(
+                acc, n_unreleased = _call_topo_kernel(
                     flow_acc_mfd_kernel,
                     allow_pure_python,
                     "flow_accumulation",
                     fdir,
                     valid,
                     weights,
+                )
+            if n_unreleased > 0:
+                warnings.warn(
+                    f"flow_accumulation: the {mode} flow directions in "
+                    f"'{input_img}' contain a cycle, so {n_unreleased} cells "
+                    "were never reached by the topological sort and their "
+                    "accumulation (and everything downstream of them) is "
+                    "incomplete. Check the flow directions were derived from "
+                    "a conditioned DEM.",
+                    RuntimeWarning,
+                    stacklevel=2,
                 )
             pbar.update(1)
 
