@@ -24,6 +24,7 @@ from rsgispy._io import (
     TileGraph,
     TileNode,
     WindowOp,
+    same_bands_meta,
 )
 from rsgispy.imagefilter._helpers import (
     _apply_tile_nd,
@@ -40,7 +41,6 @@ from rsgispy.imageprocess import (
     get_default_block_size,
     iter_dataset_windows,
     open_output_dataset,
-    run_window_halo_blocks,
     validate_band_index,
 )
 from rsgispy.imageprocess import normalise_creation_options
@@ -174,6 +174,91 @@ def finalise_postprocess_output(
         define_colour_table(out_path, meta.clr_lut, img_band=1)
 
 
+def _majority_vote_2d(
+    halo: np.ndarray,
+    size: int,
+    eff_nd: Optional[float],
+    keep_tie: bool,
+) -> np.ndarray:
+    """
+    Modal class of the valid pixels in each ``size x size`` window of the
+    padded 2D block ``halo`` (NaN where the centre is invalid), keeping the
+    centre class on ties when ``keep_tie``.
+    """
+    # pylint: disable=too-many-locals
+    pad = size // 2
+    win_h = halo.shape[0] - 2 * pad
+    win_w = halo.shape[1] - 2 * pad
+    y_end = pad + win_h
+    x_end = pad + win_w
+
+    valid_halo = build_valid_mask(halo, eff_nd)
+    centre = halo[pad:y_end, pad:x_end]
+    centre_valid = valid_halo[pad:y_end, pad:x_end]
+    wins = sliding_window_view(halo, (size, size))
+    v_wins = sliding_window_view(valid_halo, (size, size))
+
+    res = stat_mode(wins, centre, v_wins, centre_valid)
+    if keep_tie:
+        diff_mask = centre_valid & np.isfinite(res) & (res != centre)
+        if np.any(diff_mask):
+            w_sub = wins[diff_mask]
+            v_sub = v_wins[diff_mask]
+            m_cnt = np.sum(
+                v_sub & (w_sub == res[diff_mask][:, None, None]),
+                axis=(1, 2),
+            )
+            c_cnt = np.sum(
+                v_sub & (w_sub == centre[diff_mask][:, None, None]),
+                axis=(1, 2),
+            )
+            tied_with_centre = c_cnt >= m_cnt
+            if np.any(tied_with_centre):
+                upd = res[diff_mask]
+                upd[tied_with_centre] = centre[diff_mask][tied_with_centre]
+                res[diff_mask] = upd
+    return res
+
+
+def majority_window_node(
+    source: TileNode,
+    size: int,
+    eff_nd: Optional[float],
+    out_nd: Optional[float],
+    out_np_dtype: np.dtype,
+    keep_centre_on_tie: bool,
+    name: Optional[str] = None,
+) -> WindowOp:
+    """
+    :class:`WindowOp` applying the modal majority filter to each band of
+    ``source``: pixels equal to ``eff_nd`` (and non-finite ones, and those
+    outside the image) are not counted, and output pixels without a value
+    get ``out_nd`` (or NaN / 0 as for ``out_np_dtype``).
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    pad = size // 2
+    keep_tie = bool(keep_centre_on_tie)
+
+    def _tile_fn(arr: np.ndarray) -> np.ndarray:
+        out = np.empty(
+            (arr.shape[0], arr.shape[1] - 2 * pad, arr.shape[2] - 2 * pad),
+            dtype=np.float64,
+        )
+        for b_idx in range(arr.shape[0]):
+            res = _majority_vote_2d(arr[b_idx], size, eff_nd, keep_tie)
+            out[b_idx] = _apply_tile_nd(res, out_nd, out_np_dtype)
+        return out
+
+    return WindowOp(
+        source=source,
+        radius=(pad, pad),
+        func=_tile_fn,
+        border=HaloBorder(mode="constant", fill_value=np.nan),
+        name=name,
+        meta_fn=same_bands_meta(np.float64, out_nd),
+    )
+
+
 def run_majority_filter(
     in_path: str,
     out_path: str,
@@ -188,7 +273,10 @@ def run_majority_filter(
     creation_opts: Optional[Mapping[str, Any]],
     use_pbar: bool,
 ) -> None:
-    """Execute moving-window modal majority filtering on a classification band."""
+    """
+    Execute moving-window modal majority filtering on a classification band
+    (``RasterSource -> majority node -> DiskSink``).
+    """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     size = validate_filter_size(filter_size)
     meta = resolve_postprocess_io_meta(
@@ -199,64 +287,30 @@ def run_majority_filter(
         copy_colour_table=copy_colour_table,
     )
     ensure_parent_dir(out_path)
-    norm_opts = normalise_creation_options(creation_opts)
+    src = RasterSource(in_path, bands=(int(img_band),), dtype=np.float64, name="src")
+    # pylint: disable-next=import-outside-toplevel,cyclic-import
+    from rsgispy.classification.classpostprocess import majority_filter_node
 
-    pad = size // 2
-    keep_tie = bool(keep_centre_on_tie)
-
-    def _tile_cb(halo: np.ndarray) -> np.ndarray:
-        win_h = halo.shape[0] - 2 * pad
-        win_w = halo.shape[1] - 2 * pad
-        y_end = pad + win_h
-        x_end = pad + win_w
-
-        valid_halo = build_valid_mask(halo, meta.eff_in_nd)
-        centre = halo[pad:y_end, pad:x_end]
-        centre_valid = valid_halo[pad:y_end, pad:x_end]
-        wins = sliding_window_view(halo, (size, size))
-        v_wins = sliding_window_view(valid_halo, (size, size))
-
-        res = stat_mode(wins, centre, v_wins, centre_valid)
-        if keep_tie:
-            diff_mask = centre_valid & np.isfinite(res) & (res != centre)
-            if np.any(diff_mask):
-                w_sub = wins[diff_mask]
-                v_sub = v_wins[diff_mask]
-                m_cnt = np.sum(
-                    v_sub & (w_sub == res[diff_mask][:, None, None]),
-                    axis=(1, 2),
-                )
-                c_cnt = np.sum(
-                    v_sub & (w_sub == centre[diff_mask][:, None, None]),
-                    axis=(1, 2),
-                )
-                tied_with_centre = c_cnt >= m_cnt
-                if np.any(tied_with_centre):
-                    upd = res[diff_mask]
-                    upd[tied_with_centre] = centre[diff_mask][tied_with_centre]
-                    res[diff_mask] = upd
-
-        return _apply_tile_nd(res, meta.out_nd, meta.out_np_dtype)
-
-    run_window_halo_blocks(
-        input_img=in_path,
-        output_img=out_path,
-        win_shape=(size, size),
-        block_fn=_tile_cb,
-        gdalformat=gdalformat,
-        out_rio_dtype=meta.out_rio_dtype,
-        out_np_dtype=meta.out_np_dtype,
-        out_count=1,
-        per_band=False,
-        read_dtype=np.float64,
-        pad_mode="constant",
-        fill_value=np.nan,
-        out_no_data_val=meta.out_nd,
-        clamp_int=True,
-        use_pbar=use_pbar,
-        creation_opts=norm_opts,
-        band_idx=int(img_band),
+    node = majority_filter_node(
+        src,
+        size,
+        keep_centre_on_tie,
+        dtype=meta.out_np_dtype,
+        no_data_val=meta.eff_in_nd,
+        name=f"majority_{size}x{size}",
     )
+    sink = DiskSink(
+        source=node,
+        output_img=out_path,
+        gdalformat=gdalformat,
+        datatype=rsgispy.get_rsgis_datatype(meta.out_rio_dtype),
+        nodata=meta.out_nd,
+        clamp_int=True,
+        creation_opts=normalise_creation_options(creation_opts),
+        name="output",
+        inherit_meta=False,
+    )
+    TileGraph(sink).run(use_pbar=use_pbar)
 
     finalise_postprocess_output(
         out_path=out_path,
@@ -1267,65 +1321,6 @@ def run_sieve_filter(
     )
 
 
-def _make_majority_window_node(
-    source: TileNode,
-    size: int,
-    eff_nd: Optional[float],
-    out_nd: Optional[float],
-    out_np_dtype: np.dtype,
-    keep_centre_on_tie: bool,
-    name: str,
-) -> WindowOp:
-    """Build a :class:`WindowOp` applying modal majority voting on band 0."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    pad = size // 2
-    keep_tie = bool(keep_centre_on_tie)
-
-    def _tile_fn(arr: np.ndarray) -> np.ndarray:
-        halo = arr[0]
-        win_h = halo.shape[0] - 2 * pad
-        win_w = halo.shape[1] - 2 * pad
-        y_end = pad + win_h
-        x_end = pad + win_w
-
-        valid_halo = build_valid_mask(halo, eff_nd)
-        centre = halo[pad:y_end, pad:x_end]
-        centre_valid = valid_halo[pad:y_end, pad:x_end]
-        wins = sliding_window_view(halo, (size, size))
-        v_wins = sliding_window_view(valid_halo, (size, size))
-
-        res = stat_mode(wins, centre, v_wins, centre_valid)
-        if keep_tie:
-            diff_mask = centre_valid & np.isfinite(res) & (res != centre)
-            if np.any(diff_mask):
-                w_sub = wins[diff_mask]
-                v_sub = v_wins[diff_mask]
-                m_cnt = np.sum(
-                    v_sub & (w_sub == res[diff_mask][:, None, None]),
-                    axis=(1, 2),
-                )
-                c_cnt = np.sum(
-                    v_sub & (w_sub == centre[diff_mask][:, None, None]),
-                    axis=(1, 2),
-                )
-                tied_with_centre = c_cnt >= m_cnt
-                if np.any(tied_with_centre):
-                    upd = res[diff_mask]
-                    upd[tied_with_centre] = centre[diff_mask][tied_with_centre]
-                    res[diff_mask] = upd
-
-        out_2d = _apply_tile_nd(res, out_nd, out_np_dtype)
-        return out_2d[np.newaxis, :, :].astype(np.float64, copy=False)
-
-    return WindowOp(
-        source=source,
-        radius=(pad, pad),
-        func=_tile_fn,
-        border=HaloBorder(mode="constant", fill_value=np.nan),
-        name=name,
-    )
-
-
 def run_postprocess_pipeline(
     in_path: str,
     out_path: str,
@@ -1349,7 +1344,10 @@ def run_postprocess_pipeline(
     by connected-component sieving with zero intermediate disk I/O (in memory).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    # pylint: disable=too-many-branches
+    # pylint: disable=too-many-branches,too-many-statements
+    # pylint: disable-next=import-outside-toplevel,cyclic-import
+    from rsgispy.classification.classpostprocess import majority_filter_node
+
     maj_sizes = [validate_filter_size(s) for s in majority_sizes]
     if not maj_sizes and sieve_size_threshold is None:
         raise rsgispy.RSGISPyException(
@@ -1424,13 +1422,12 @@ def run_postprocess_pipeline(
     )
     for idx, size in enumerate(maj_sizes):
         stage_nd = meta.eff_in_nd if idx == 0 else meta.out_nd
-        cur_node = _make_majority_window_node(
-            source=cur_node,
-            size=size,
-            eff_nd=stage_nd,
-            out_nd=meta.out_nd,
-            out_np_dtype=meta.out_np_dtype,
-            keep_centre_on_tie=keep_centre_on_tie,
+        cur_node = majority_filter_node(
+            cur_node,
+            size,
+            keep_centre_on_tie,
+            dtype=meta.out_np_dtype,
+            no_data_val=stage_nd,
             name=f"majority_{idx}_{size}x{size}",
         )
 
@@ -1444,6 +1441,7 @@ def run_postprocess_pipeline(
             clamp_int=True,
             creation_opts=norm_opts,
             name="output",
+            inherit_meta=False,
         )
         TileGraph(sink, block_size=blk_sz).run(use_pbar=use_pbar)
     else:
@@ -1498,6 +1496,7 @@ def run_postprocess_pipeline(
                     nodata=meta.out_nd,
                     clamp_int=True,
                     name="tmp_maj",
+                    inherit_meta=False,
                 )
                 TileGraph(tmp_sink, block_size=blk_sz).run(use_pbar=use_pbar)
                 sieve_meta = PostprocessMeta(

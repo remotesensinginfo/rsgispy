@@ -12,24 +12,111 @@ Functions:
   neighbour.
 * :func:`apply_postprocess_pipeline` — Multi-stage classification
   post-processing chaining one or more majority filter passes (halo-fused in
-  memory via :class:`~rsgispy._io.TileGraph`) with an optional in-memory sieve
-  pass so no intermediate GeoTIFF files are written.
+  memory via :class:`~rsgispy.imageprocess.TileGraph`) with an optional
+  in-memory sieve pass so no intermediate GeoTIFF files are written.
+* :func:`majority_filter_node` — Tile-graph node of the majority filter, for
+  chaining it after other operations (e.g. a model prediction) in a
+  :class:`~rsgispy.imageprocess.TileGraph`. The sieve filter labels
+  connected components across the whole image, so it is not tile-local and
+  has no node.
 """
 
 import os
 from typing import Any, Mapping, Optional, Sequence, Union
 
+import numpy as np
+
+from rsgispy._io import TileNode
 from rsgispy.classification._postprocess_helpers import (
+    majority_window_node,
     run_majority_filter,
     run_postprocess_pipeline,
     run_sieve_filter,
 )
+from rsgispy.imagefilter._helpers import _resolve_out_nodata, validate_filter_size
 
 __all__ = [
     "apply_majority_filter",
     "apply_sieve_filter",
     "apply_postprocess_pipeline",
+    "majority_filter_node",
 ]
+
+
+def majority_filter_node(
+    source: TileNode,
+    filter_size: int = 3,
+    keep_centre_on_tie: bool = True,
+    *,
+    dtype: Any = None,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_majority_filter`: replaces each valid
+    pixel by the most frequent valid class in the ``filter_size x
+    filter_size`` window, for every band of ``source`` (select the band to
+    filter with :class:`~rsgispy.imageprocess.SelectBands` or
+    ``RasterSource(..., bands=...)``). Pixels outside the image, non-finite
+    pixels and ``no_data_val`` pixels are not counted; the halo radius is
+    ``filter_size // 2``.
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``. ``no_data_val`` is the input no-data value (not read from
+    ``source``, so pass the input's no-data value); output pixels without a
+    value (invalid centres) are set to it when it can be stored in
+    ``dtype``, otherwise to ``-9999`` (float ``dtype``) or ``0`` (integer
+    ``dtype``), and to NaN (0 for integer ``dtype``) when ``no_data_val`` is
+    ``None``, as :func:`apply_majority_filter` does for an output of that
+    type. The node's metadata carries the resolved no-data value, so a
+    :class:`~rsgispy.imageprocess.DiskSink` writes it.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode` with
+                   class values.
+    :param filter_size: Odd window size >= 3 (Default = ``3``).
+    :param keep_centre_on_tie: Keep the centre class when it is tied with
+                               the most frequent class (Default = ``True``);
+                               otherwise ties go to the smallest class.
+    :param dtype: NumPy dtype of the raster the result will be written to
+                  (Default = ``None``, ``float64``).
+    :param no_data_val: Input no-data value (Default = ``None``).
+    :param name: Optional node name (Default = ``'majority_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy
+        from rsgispy.imageprocess import DiskSink, TileGraph
+        from rsgispy.classification.classpostprocess import majority_filter_node
+        from rsgispy.ml.predict import feature_stack_nodes, predict_raster_node
+        from rsgispy.ml.stack import ImageFeatureStack
+
+        stack = ImageFeatureStack(["s2.tif", "dem.tif"])
+        cls = predict_raster_node(feature_stack_nodes(stack), clf, thematic=True)
+        smooth = majority_filter_node(
+            majority_filter_node(cls, 3, dtype=np.uint8, no_data_val=0),
+            5,
+            dtype=np.uint8,
+            no_data_val=0,
+        )
+        TileGraph(
+            DiskSink(smooth, "landcover.tif", datatype=rsgispy.TYPE_8UINT)
+        ).run()
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    size = validate_filter_size(filter_size)
+    np_dtype = np.dtype(np.float64 if dtype is None else dtype)
+    eff_nd = float(no_data_val) if no_data_val is not None else None
+    return majority_window_node(
+        source=source,
+        size=size,
+        eff_nd=eff_nd,
+        out_nd=_resolve_out_nodata(eff_nd, np_dtype),
+        out_np_dtype=np_dtype,
+        keep_centre_on_tie=keep_centre_on_tie,
+        name=name or "majority_filter",
+    )
 
 
 def apply_majority_filter(
@@ -56,8 +143,9 @@ def apply_majority_filter(
     filter_size`` moving window. Window edges and no-data pixels are excluded
     from frequency counts so out-of-bounds areas do not bias boundary pixels.
 
-    Reuses :mod:`rsgispy.imagefilter` modal voting and
-    :mod:`rsgispy.imageprocess` windowed halo block execution.
+    Runs as ``RasterSource -> majority_filter_node -> DiskSink`` in a
+    :class:`~rsgispy.imageprocess.TileGraph`; use :func:`majority_filter_node`
+    to chain the filter after other operations without intermediate files.
 
     :param input_img: Path to the input classification raster.
     :param output_img: Path to the filtered output classification raster.
@@ -244,8 +332,12 @@ def apply_postprocess_pipeline(
 
     Chains zero or more moving-window majority (modal) filter passes specified
     by ``majority_sizes`` in a single halo-fused
-    :class:`~rsgispy._io.TileGraph` pass, optionally followed by an in-memory
-    connected-component sieve pass (when ``sieve_size_threshold`` is provided).
+    :class:`~rsgispy.imageprocess.TileGraph` pass (chained
+    :func:`majority_filter_node` nodes), optionally followed by a
+    connected-component sieve pass (when ``sieve_size_threshold`` is
+    provided). The sieve labels connected components across the whole image,
+    so it is not tile-local: it runs on the majority result in memory, or
+    on a temporary file for large images (see ``in_memory``).
 
     :param input_img: Path to the input classification raster.
     :param output_img: Path to the final post-processed classification raster.
