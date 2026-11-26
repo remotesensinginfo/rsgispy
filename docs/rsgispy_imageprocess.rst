@@ -269,6 +269,22 @@ same builder.
      - :func:`~rsgispy.imagecalc.percentiles.calc_imgs_pxl_percentiles_node`,
        :func:`~rsgispy.imagecalc.percentiles.calc_img_band_pxl_percentiles_node`
        (N inputs)
+   * - :func:`~rsgispy.imageutils.composite.create_geomedian_composite`,
+       :func:`~rsgispy.imageutils.composite.create_quality_mosaic`
+       (:func:`~rsgispy.imageutils.composite.create_max_ndvi_composite`),
+       :func:`~rsgispy.imageutils.composite.create_land_water_composite`
+       (:func:`~rsgispy.imageutils.composite.create_max_ndvi_ndwi_composite`),
+       :func:`~rsgispy.imageutils.composite.create_medoid_composite`,
+       :func:`~rsgispy.imageutils.composite.create_percentile_composite`
+     - :func:`~rsgispy.imageutils.composite.geomedian_node`,
+       :func:`~rsgispy.imageutils.composite.quality_mosaic_node`,
+       :func:`~rsgispy.imageutils.composite.land_water_composite_node`,
+       :func:`~rsgispy.imageutils.composite.medoid_node`,
+       :func:`~rsgispy.imageutils.composite.percentile_composite_node`
+       (one input per observation; they return a
+       :class:`~rsgispy.imageutils.composite.CompositeNode` whose ``ref``,
+       ``quality``, ``count``, ``mad`` and ``lw_msk`` outputs are nodes; the
+       smoothing options use a halo)
    * - :func:`~rsgispy.imagespectral.transforms.calc_tasseled_cap`;
        applying a fitted :func:`~rsgispy.imagespectral.transforms.calc_pca`
        or :func:`~rsgispy.imagespectral.transforms.calc_mnf`
