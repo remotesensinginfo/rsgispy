@@ -29,6 +29,7 @@ from rsgispy.imageutils.masking import ImageBandInfo
 from rsgispy.tools._ml_data import (
     allocate_split_counts,
     check_poly_id_col,
+    combine_ml_samples,
     extract_vector_samples_from_gdf,
     get_group_labels,
     load_samples_df,
@@ -54,6 +55,7 @@ __all__ = [
     "read_reg_config",
     "write_reg_samples",
     "read_reg_samples",
+    "combine_reg_samples",
     "extract_reg_training_samples",
     "split_reg_samples",
     "extract_and_split_reg_samples",
@@ -432,6 +434,93 @@ def read_reg_samples(
         train_df = rd.read_reg_samples("train.parquet")
     """
     return read_ml_samples(in_file, in_format=in_format)
+
+
+def combine_reg_samples(
+    samples: Sequence[Union[pd.DataFrame, str, os.PathLike]],
+    target_cols: Union[str, Sequence[str]],
+    *,
+    feat_cols: Optional[Sequence[str]] = None,
+    source_names: Optional[Sequence[str]] = None,
+    source_col: Optional[str] = None,
+    keep_xy: bool = False,
+    out_file: Optional[Union[str, os.PathLike]] = None,
+    group_col: Optional[str] = None,
+) -> pd.DataFrame:
+    """
+    Combine regression sample tables, e.g. the pixel samples of
+    :func:`extract_reg_training_samples` and the segment samples of
+    :func:`~rsgispy.regression.regsegments.extract_reg_segment_samples`, into
+    one sample table in the layout of :func:`read_reg_samples`, for
+    :func:`split_reg_samples` and the training functions.
+
+    .. note::
+
+       Combining samples is only sound when the features (and targets) mean
+       the same thing for every input, e.g. a pixel's value and a segment's
+       mean value of the same band. Features that only a segment has (e.g.
+       the standard deviation or shape measures) cannot be combined with
+       pixel samples. Name the pixel features as the segment features when
+       extracting them (``ImageBandInfo(..., band_names=seg_info.feature_cols)``).
+
+    The output has the target columns, then ``group_col`` and ``source_col``
+    (when given), ``x`` and ``y`` (with ``keep_xy``) and the feature columns;
+    other columns (e.g. ``seg_id``, ``n_ref``, ``pxl_count`` of the segment
+    samples) are dropped. The rows are those of the inputs in order (as
+    ``pandas.concat`` with ``ignore_index=True``).
+
+    :param samples: Sequence of sample DataFrames or sample files (any format
+                    read by :func:`read_reg_samples`).
+    :param target_cols: Target column name, or names for multivariate
+                        regression; they must be in every input.
+    :param feat_cols: Optional feature columns to keep (they must be in every
+                      input). When ``None``, the numeric columns other than the
+                      target, group, source and ``x``/``y`` columns, which must
+                      be the same in every input.
+    :param source_names: Optional name of each input, written to
+                         ``source_col`` (Default = the file name without its
+                         extension, or ``'input_<n>'`` for a DataFrame).
+    :param source_col: Optional name of a column recording the input of each
+                       row (e.g. ``'source'``), so a grouped split
+                       (``group_col`` of :func:`split_reg_samples`) can keep
+                       the sources apart (Default = ``None``, no column).
+    :param keep_xy: If ``True``, keep the ``x`` and ``y`` columns, which must
+                    be in every input (Default = ``False``).
+    :param out_file: Optional output sample file, written with
+                     :func:`write_reg_samples`.
+    :param group_col: Optional group column to keep (e.g. ``'train_grp'``);
+                      it must be in every input (Default = ``None``).
+    :return: The combined sample DataFrame.
+    :raises rsgispy.RSGISPyException: if the feature columns differ (without
+                                      ``feat_cols``) or a column is missing.
+
+    .. code:: python
+
+        import rsgispy.regression.regdata as rd
+
+        smpls_df = rd.combine_reg_samples(
+            ["seg_reg_smpls.parquet", "pxl_reg_smpls.parquet"],
+            "canopy_cover",
+            feat_cols=["Red_mean", "NIR_mean", "SWIR1_mean"],
+            source_names=["segment", "pixel"],
+            source_col="source",
+        )
+        train_df, test_df, valid_df = rd.split_reg_samples(smpls_df)
+    """
+    # pylint: disable=too-many-arguments
+    combined = combine_ml_samples(
+        samples,
+        normalise_target_cols(target_cols),
+        feat_cols=feat_cols,
+        source_names=source_names,
+        source_col=source_col,
+        keep_xy=keep_xy,
+        group_col=group_col,
+        label="samples",
+    )
+    if out_file is not None:
+        write_reg_samples(combined, out_file)
+    return combined
 
 
 def extract_reg_training_samples(

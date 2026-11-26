@@ -30,7 +30,7 @@ range(n_clusters)}``) to get the same cluster IDs as
 Submodules
 ----------
 
-* :doc:`classification/classdata` — Image/band and class training definitions, JSON configuration I/O, Parquet/tabular sample extraction/splitting, and unsigned class ID recoding.
+* :doc:`classification/classdata` — Image/band and class training definitions, JSON configuration I/O, Parquet/tabular sample extraction/splitting, combining pixel and segment samples, and unsigned class ID recoding.
 * :doc:`classification/classsklearn` — Scikit-learn parameter search (Grid, Random, Optuna), classifier training, and pixel classification with class ID and probability outputs.
 * :doc:`classification/classxgboost` — XGBoost binary and multi-class Optuna hyperparameter optimisation, classifier training, and block-wise pixel classification.
 * :doc:`classification/classlightgbm` — LightGBM binary and multi-class Optuna hyperparameter optimisation, classifier training, and block-wise pixel classification.
