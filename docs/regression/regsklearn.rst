@@ -122,6 +122,58 @@ descriptions:
         output_img="landsat_forest_structure.tif",
     )
 
+Repeated k-fold and Jackknife Assessment
+----------------------------------------
+
+With a small sample table (for example a forest inventory of a hundred or
+so plots), a single train / test split gives noisy accuracy figures.
+:func:`~rsgispy.regression.regsklearn.perform_kfold_fit` fits the regressor
+to every fold of a repeated k-fold and returns the
+:func:`~rsgispy.regression.regmetrics.calc_reg_metrics` metrics of each fold
+(including ``mse``, ``nrmse``, ``nrmse_range`` and ``nbias``) and the
+out-of-fold predictions; :func:`~rsgispy.regression.regsklearn.summarise_kfold_metrics`
+summarises them. :func:`~rsgispy.regression.regsklearn.perform_jackknife_fit`
+leaves out one sample (or group) at a time, giving the pooled leave-one-out
+metrics, the influence of each sample and, for linear models, jackknife
+standard errors of the coefficients. Both take any unfitted estimator with
+``fit`` / ``predict``, including pipelines and the XGBoost, LightGBM and
+CatBoost scikit-learn wrappers.
+
+.. code-block:: python
+
+    import pandas
+    from sklearn.ensemble import ExtraTreesRegressor
+    from sklearn.linear_model import LinearRegression
+    import rsgispy.regression.regsklearn as rsk
+
+    df = pandas.read_csv("forest_plots.csv", index_col=0)
+    x = df[["p95", "cover", "skew"]]
+    y = df[["Vol / ha", "BA / ha"]]
+
+    # 5 folds repeated 20 times (100 fits); writes kfold_et_metrics_vol_ha.csv etc.
+    metrics, residuals = rsk.perform_kfold_fit(
+        ExtraTreesRegressor(random_state=0),
+        x,
+        y,
+        n_splits=5,
+        n_repeats=20,
+        out_dir="kfold_outputs",
+        out_prefix="kfold_et",
+    )
+    summary = rsk.summarise_kfold_metrics(metrics)
+    print(summary.loc["Vol / ha"].loc[["r2", "rmse", "nrmse", "nbias"]])
+
+    # Pixels of one plot (or plots of one site) are never split across folds.
+    metrics, residuals = rsk.perform_kfold_fit(
+        ExtraTreesRegressor(random_state=0), x, y, groups=df["site"]
+    )
+
+    # Leave-one-out: one fit per plot.
+    jk = rsk.perform_jackknife_fit(LinearRegression(), x, y["Vol / ha"])
+    print(jk["metrics"]["Vol / ha"]["rmse"])
+    print(jk["coef_stats"]["Vol / ha"])  # bias, std_err, 95% interval
+    print(jk["influence"]["Vol / ha"].nlargest(5, "pred_shift_rmse"))
+
 Standard Parameter Search Spaces
 --------------------------------
 

@@ -357,8 +357,10 @@ training or tuning, ideally a probability sample of the area.
   several, e.g. the interval bands). Plots in no data areas get ``NaN`` and
   are removed.
 * :func:`~rsgispy.regression.regmetrics.calc_reg_metrics` returns ``r2``,
-  ``rmse``, ``mae``, ``bias``, ``explained_variance``, ``pearson_r`` and
-  ``n_samples`` (and can write them to JSON or CSV);
+  ``rmse``, ``mae``, ``bias``, ``explained_variance``, ``pearson_r``,
+  ``mse``, the normalised ``nrmse``, ``nrmse_range`` and ``nbias`` (as % of
+  the mean or range of the observed values) and ``n_samples`` (and can write
+  them to JSON or CSV);
   :func:`~rsgispy.regression.regmetrics.calc_reg_stats_ptonly_bootstrap_conf`
   adds bootstrap confidence intervals.
 * :func:`~rsgispy.regression.regmetrics.plot_pred_vs_obs` plots predicted

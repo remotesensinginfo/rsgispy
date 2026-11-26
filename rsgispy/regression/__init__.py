@@ -22,13 +22,17 @@ Submodules:
 * :mod:`rsgispy.regression.regsklearn` — Scikit-learn regressor hyperparameter
   optimisation (Grid Search, Random Search, and Optuna Bayesian optimisation
   with built-in standard search spaces for common regressors), univariate and
-  multivariate model training and persistence, and block-wise image regression
+  multivariate model training and persistence, block-wise image regression,
+  and repeated k-fold and jackknife (leave-one-out) assessment of any regressor
   (:func:`~rsgispy.regression.regsklearn.get_sklearn_regressor_param_space`,
   :func:`~rsgispy.regression.regsklearn.perform_sklearn_regressor_param_search`,
   :func:`~rsgispy.regression.regsklearn.train_sklearn_regressor`,
   :func:`~rsgispy.regression.regsklearn.apply_sklearn_regressor`,
   :func:`~rsgispy.regression.regsklearn.save_sklearn_regressor`,
-  :func:`~rsgispy.regression.regsklearn.load_sklearn_regressor`).
+  :func:`~rsgispy.regression.regsklearn.load_sklearn_regressor`,
+  :func:`~rsgispy.regression.regsklearn.perform_kfold_fit`,
+  :func:`~rsgispy.regression.regsklearn.summarise_kfold_metrics`,
+  :func:`~rsgispy.regression.regsklearn.perform_jackknife_fit`).
 * :mod:`rsgispy.regression.regxgboost` — XGBoost univariate and multi-target
   regression with Optuna Bayesian hyperparameter optimisation, early stopping,
   optional CUDA GPU acceleration with CPU fallback, model persistence, and

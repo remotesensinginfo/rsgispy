@@ -16,6 +16,8 @@ import pandas as pd
 import rsgispy
 from rsgispy.imageprocess import ensure_file_exists, validate_band_index
 from rsgispy.regression._reg_common import (
+    REG_BASE_METRIC_KEYS,
+    REG_EXTRA_METRIC_KEYS,
     check_sklearn_available,
     compute_regression_metrics_dict,
 )
@@ -44,6 +46,10 @@ __all__ = [
 ]
 
 _TABULAR_EXTS = {".csv", ".tsv", ".txt", ".feather", ".parquet", ".pq"}
+
+# The metric keys returned by calc_reg_metrics for each target, in the order
+# they are written to the CSV file.
+_REG_METRIC_KEYS = REG_BASE_METRIC_KEYS + REG_EXTRA_METRIC_KEYS
 
 
 def _load_eval_table(
@@ -157,14 +163,7 @@ def _write_reg_metrics_csv(
 ) -> None:
     """Write univariate or multivariate regression accuracy metrics to CSV."""
     out_path = ensure_parent_dir(out_csv_file)
-    m_keys = (
-        "r2",
-        "rmse",
-        "mae",
-        "bias",
-        "explained_variance",
-        "pearson_r",
-    )
+    m_keys = _REG_METRIC_KEYS
     with open(out_path, mode="w", newline="", encoding="utf-8") as csv_fp:
         writer = csv.writer(
             csv_fp, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
@@ -201,12 +200,57 @@ def calc_reg_metrics(
     out_csv_file: Optional[Union[str, os.PathLike]] = None,
 ) -> Dict[str, Any]:
     """
-    Calculate continuous regression accuracy metrics (``r2``, ``rmse``, ``mae``,
-    ``bias``, ``explained_variance``, and ``pearson_r``) from reference and
+    Calculate continuous regression accuracy metrics from reference and
     predicted columns in a vector layer, DataFrame, CSV, or Parquet table.
 
     Supports both univariate regression (``ref_col``, ``pred_col``) and
-    multivariate regression (``ref_cols``, ``pred_cols``).
+    multivariate regression (``ref_cols``, ``pred_cols``). Rows where a
+    reference or predicted value is not finite are ignored.
+
+    The metrics for each target, with :math:`y` the observed (reference)
+    values, :math:`\\hat{y}` the predicted values and :math:`n` the number
+    of samples:
+
+    .. list-table::
+       :header-rows: 1
+       :widths: 22 78
+
+       * - Key
+         - Metric
+       * - ``r2``
+         - Coefficient of determination (``sklearn.metrics.r2_score``).
+       * - ``rmse``
+         - Root mean squared error,
+           :math:`\\sqrt{\\sum (\\hat{y} - y)^2 / n}`.
+       * - ``mae``
+         - Mean absolute error, :math:`\\sum |\\hat{y} - y| / n`.
+       * - ``bias``
+         - Mean error (predicted - observed), :math:`\\sum (\\hat{y} - y) / n`.
+       * - ``explained_variance``
+         - Explained variance score
+           (``sklearn.metrics.explained_variance_score``).
+       * - ``pearson_r``
+         - Pearson correlation coefficient of observed and predicted values.
+       * - ``mse``
+         - Mean squared error, :math:`\\sum (\\hat{y} - y)^2 / n`.
+       * - ``nrmse``
+         - RMSE as a percentage of the mean observed value,
+           :math:`100 \\times \\text{RMSE} / \\bar{y}`.
+       * - ``nrmse_range``
+         - RMSE as a percentage of the observed range,
+           :math:`100 \\times \\text{RMSE} / (y_{max} - y_{min})`.
+       * - ``nbias``
+         - Bias as a percentage of the mean observed value,
+           :math:`100 \\times \\text{bias} / \\bar{y}`.
+
+    ``nrmse``, ``nrmse_range`` and ``nbias`` are ``nan`` when their
+    denominator is zero. The mean observed value is signed, so a negative
+    mean gives a negative ``nrmse``.
+
+    For a single target the metrics use the keys above. For multiple targets
+    the keys above hold the mean of each metric over the targets, and each
+    target's own metrics use the keys ``<target name>_<key>`` (for example
+    ``height_nrmse``). ``n_samples`` is the number of samples used.
 
     :param in_data: Input vector file path, :class:`geopandas.GeoDataFrame`,
                     :class:`pandas.DataFrame`, CSV, or Parquet file path.
@@ -220,7 +264,10 @@ def calc_reg_metrics(
     :param target_names: Optional display names for multivariate outputs
                          (defaults to ``ref_cols``).
     :param out_json_file: Optional output JSON file path (Default = ``None``).
-    :param out_csv_file: Optional output CSV file path (Default = ``None``).
+                          A ``nan`` metric is written as ``NaN``.
+    :param out_csv_file: Optional output CSV file path (Default = ``None``),
+                         with one row per target (and an ``overall_mean`` row
+                         for multiple targets) and a column per metric.
     :return: Dictionary containing regression accuracy statistics and
              ``n_samples``.
 
@@ -251,6 +298,7 @@ def calc_reg_metrics(
         y_true=y_true,
         y_pred=y_pred,
         target_cols=eff_names,
+        extra_metrics=True,
     )
     metrics["n_samples"] = int(y_true.shape[0])
 
