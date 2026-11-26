@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import os
-from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Union
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -31,6 +31,7 @@ from rsgispy.imagefilter import edge as _edge
 from rsgispy.imagefilter import sar as _sar
 from rsgispy.imagefilter import smooth as _smooth
 from rsgispy.imagefilter import stats as _stats
+from rsgispy.imagefilter import texture as _texture
 from rsgispy.imageprocess import ensure_file_exists, get_default_block_size
 from rsgispy.imageutils.metadata import get_band_names, get_img_no_data_value
 
@@ -63,6 +64,51 @@ _STAT_DISPATCH: Dict[str, Callable[..., TileNode]] = {
     "kuwahara": _smooth.kuwahara_filter_node,
 }
 
+#: SAR speckle-filter ``FilterStep`` kinds: node builder and the float
+#: ``params`` it takes (each defaulting to ``1.0``), passed after
+#: ``filter_size``.
+_SAR_DISPATCH: Dict[str, Tuple[Callable[..., TileNode], Tuple[str, ...]]] = {
+    "lee": (_sar.lee_filter_node, ("n_looks",)),
+    "enhanced_lee": (_sar.enhanced_lee_filter_node, ("n_looks", "damping")),
+    "frost": (_sar.frost_filter_node, ("damping",)),
+    "enhanced_frost": (_sar.enhanced_frost_filter_node, ("n_looks", "damping")),
+    "kuan": (_sar.kuan_filter_node, ("n_looks",)),
+    "gamma_map": (_sar.gamma_map_filter_node, ("n_looks",)),
+    "refined_lee": (_sar.refined_lee_filter_node, ("n_looks",)),
+}
+
+#: Fixed 3x3 edge ``FilterStep`` kinds (no parameters).
+_EDGE_DISPATCH: Dict[str, Callable[..., TileNode]] = {
+    "sobel": _edge.sobel_filter_node,
+    "sobel_x": _edge.sobel_x_filter_node,
+    "sobel_y": _edge.sobel_y_filter_node,
+    "prewitt": _edge.prewitt_filter_node,
+    "prewitt_x": _edge.prewitt_x_filter_node,
+    "prewitt_y": _edge.prewitt_y_filter_node,
+}
+
+#: Oriented Gaussian ``FilterStep`` kinds (``filter_size`` and
+#: ``params={'stddev': ...}`` or ``'stddev_x'``/``'stddev_y'``,
+#: ``'filter_angle'``).
+_GAUSS_DISPATCH: Dict[str, Callable[..., TileNode]] = {
+    "gaussian": _smooth.gaussian_smooth_filter_node,
+    "gaussian_1st_deriv": _edge.gaussian_1st_deriv_filter_node,
+    "gaussian_2nd_deriv": _edge.gaussian_2nd_deriv_filter_node,
+}
+
+#: ``params`` keys passed to :func:`rsgispy.imagefilter.texture.glcm_filter_node`.
+_GLCM_PARAMS = (
+    "properties",
+    "distances",
+    "angles",
+    "n_levels",
+    "min_val",
+    "max_val",
+    "symmetric",
+    "average_angles",
+    "band_bounds",
+)
+
 
 @dataclass(frozen=True)
 class FilterStep:
@@ -77,26 +123,41 @@ class FilterStep:
       ``'variance'``, ``'coeff_of_var'``, ``'norm_var'``, ``'norm_var_sqrt'``,
       ``'norm_var_ln'``, ``'mean_diff'``, ``'mean_diff_abs'``, ``'total_diff'``,
       ``'total_diff_abs'``, ``'kuwahara'``.
-    * SAR speckle filter: ``'lee'`` (uses ``filter_size`` and ``params={'n_looks': ...}``).
-    * Convolution / smoothing / edge: ``'gaussian'`` (``filter_size``,
-      ``params={'stddev': 1.0}`` or ``'stddev_x'``/``'stddev_y'``),
-      ``'laplacian'`` (``filter_size``, ``params={'stddev': 1.0}``),
-      ``'sobel'``, ``'prewitt'``, ``'kernel'`` (``params={'kernel': arr, 'zero_dc': False}``).
+    * SAR speckle filters (use ``filter_size``): ``'lee'``, ``'kuan'``,
+      ``'gamma_map'``, ``'refined_lee'`` (``params={'n_looks': ...}``),
+      ``'enhanced_lee'``, ``'enhanced_frost'`` (``params={'n_looks': ...,
+      'damping': ...}``) and ``'frost'`` (``params={'damping': ...}``); each
+      parameter defaults to ``1.0``.
+    * Convolution / smoothing: ``'gaussian'`` (``filter_size``,
+      ``params={'stddev': 1.0}`` or ``'stddev_x'``/``'stddev_y'``, and
+      ``'filter_angle'``), ``'kernel'`` (``params={'kernel': arr,
+      'zero_dc': False}``).
+    * Edges and derivatives: ``'sobel'``, ``'prewitt'`` (magnitudes),
+      ``'sobel_x'``, ``'sobel_y'``, ``'prewitt_x'``, ``'prewitt_y'``
+      (no parameters), ``'gaussian_1st_deriv'``, ``'gaussian_2nd_deriv'``
+      (``filter_size`` and the ``'gaussian'`` parameters), ``'laplacian'``
+      (``filter_size``, ``params={'stddev': 1.0}``).
+    * Texture: ``'glcm'`` (``filter_size`` and the
+      :func:`~rsgispy.imagefilter.texture.glcm_filter_node` parameters in
+      ``params``: ``'properties'``, ``'distances'``, ``'angles'``,
+      ``'n_levels'``, ``'symmetric'``, ``'average_angles'``, and the
+      grey-level range ``'min_val'`` / ``'max_val'`` or ``'band_bounds'``,
+      one of which is required).
     * Point-wise / band-math: ``'band_math'`` (``params={'expr': 'input - x'}``,
       where ``x`` is the current stage and ``input`` is the original raster),
       ``'pointwise'`` (``params={'func': callable}``).
 
     Each filter kind builds its node with the public node builder of the
-    filter (e.g. ``'median'`` calls
+    filter, named after the file-based function (e.g. ``'median'`` calls
     :func:`rsgispy.imagefilter.stats.median_filter_node`, ``'variance'``
     :func:`~rsgispy.imagefilter.stats.texture_var_filter_node`, ``'kuwahara'``
     :func:`~rsgispy.imagefilter.smooth.kuwahara_filter_node`, ``'gaussian'``
     :func:`~rsgispy.imagefilter.smooth.gaussian_smooth_filter_node`,
     ``'kernel'`` :func:`~rsgispy.imagefilter.smooth.kernel_filter_node`,
-    ``'sobel'``, ``'prewitt'`` and ``'laplacian'`` the
-    :mod:`rsgispy.imagefilter.edge` builders and ``'lee'``
-    :func:`~rsgispy.imagefilter.sar.lee_filter_node`), so a chain gives the
-    same result as the builders used directly.
+    ``'sobel_x'`` :func:`~rsgispy.imagefilter.edge.sobel_x_filter_node`,
+    ``'refined_lee'`` :func:`~rsgispy.imagefilter.sar.refined_lee_filter_node`
+    and ``'glcm'`` :func:`~rsgispy.imagefilter.texture.glcm_filter_node`), so
+    a chain gives the same result as the builders used directly.
 
     :param kind: Filter or operation name.
     :param filter_size: Odd window size ``>= 3`` for windowed filters
@@ -157,7 +218,7 @@ def build_filter_chain_node(
                         band-math operations.
     :return: Terminal :class:`~rsgispy._io.TileNode` of the fused chain.
     """
-    # pylint: disable=too-many-branches
+    # pylint: disable=too-many-branches,too-many-locals
     if not steps:
         raise rsgispy.RSGISPyException(
             "apply_filter_chain requires at least one FilterStep."
@@ -178,17 +239,18 @@ def build_filter_chain_node(
                 no_data_val=no_data_val,
                 name=step_name,
             )
-        elif kind == "lee":
-            current = _sar.lee_filter_node(
+        elif kind in _SAR_DISPATCH:
+            sar_builder, sar_keys = _SAR_DISPATCH[kind]
+            current = sar_builder(
                 current,
                 step.filter_size,
-                n_looks=float(step.params.get("n_looks", 1.0)),
+                **{key: float(step.params.get(key, 1.0)) for key in sar_keys},
                 no_data_val=no_data_val,
                 name=step_name,
             )
-        elif kind == "gaussian":
+        elif kind in _GAUSS_DISPATCH:
             sd = float(step.params.get("stddev", 1.0))
-            current = _smooth.gaussian_smooth_filter_node(
+            current = _GAUSS_DISPATCH[kind](
                 current,
                 step.filter_size,
                 stddev_x=float(step.params.get("stddev_x", sd)),
@@ -205,13 +267,17 @@ def build_filter_chain_node(
                 no_data_val=no_data_val,
                 name=step_name,
             )
-        elif kind == "sobel":
-            current = _edge.sobel_filter_node(
+        elif kind in _EDGE_DISPATCH:
+            current = _EDGE_DISPATCH[kind](
                 current, no_data_val=no_data_val, name=step_name
             )
-        elif kind == "prewitt":
-            current = _edge.prewitt_filter_node(
-                current, no_data_val=no_data_val, name=step_name
+        elif kind == "glcm":
+            current = _texture.glcm_filter_node(
+                current,
+                filter_size=step.filter_size,
+                **{k: v for k, v in step.params.items() if k in _GLCM_PARAMS},
+                no_data_val=no_data_val,
+                name=step_name,
             )
         elif kind == "kernel":
             if "kernel" not in step.params:
@@ -320,7 +386,10 @@ def apply_filter_chain(
         else get_img_no_data_value(in_path)
     )
     out_nd = _resolve_out_nodata(eff_in_nd, out_np_dtype)
-    band_names = get_band_names(in_path)
+    band_names: Optional[Sequence[str]] = get_band_names(in_path)
+    if any(_coerce_step(step).kind.strip().lower() == "glcm" for step in steps):
+        # GLCM changes the bands: use the names derived by the nodes.
+        band_names = None
 
     src_node = RasterSource(
         path=in_path,

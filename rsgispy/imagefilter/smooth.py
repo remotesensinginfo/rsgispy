@@ -7,12 +7,11 @@ from typing import List, Optional, Sequence, Union
 import numpy as np
 
 import rsgispy
-from rsgispy._io import TileNode
+from rsgispy._io import RasterSource, TileNode
 from rsgispy.imagefilter._helpers import (
     gaussian_kernel,
     kernel_conv_node,
-    run_kernel_filter,
-    run_window_stat_filter,
+    run_filter_node,
     stat_kuwahara,
     window_stat_node,
 )
@@ -64,11 +63,14 @@ def apply_kuwahara_filter(
         )
     """
     # pylint: disable=too-many-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_kuwahara,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        kuwahara_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -116,14 +118,17 @@ def apply_gaussian_smooth_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    kernel = gaussian_kernel(
-        filter_size, stddev_x, stddev_y, filter_angle, deriv_order=0
-    )
-    run_kernel_filter(
-        input_img=input_img,
-        output_img=output_img,
-        kernel=kernel,
-        zero_dc=False,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        gaussian_smooth_filter_node(
+            src,
+            filter_size=filter_size,
+            stddev_x=stddev_x,
+            stddev_y=stddev_y,
+            filter_angle=filter_angle,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -168,20 +173,15 @@ def apply_kernel_filter(
         rsgispy.imagefilter.smooth.apply_kernel_filter("in.tif", "out_sharp.tif", sharpen)
     """
     # pylint: disable=too-many-arguments
-    k_arr = np.asarray(kernel, dtype=np.float64)
-    if normalise:
-        k_sum = float(np.sum(k_arr))
-        if k_sum == 0.0:
-            raise rsgispy.RSGISPyException(
-                "Cannot normalise a convolution kernel whose entries sum to zero."
-            )
-        k_arr = k_arr / k_sum
-    zero_dc = abs(float(np.sum(k_arr))) < 1e-12
-    run_kernel_filter(
-        input_img=input_img,
-        output_img=output_img,
-        kernel=k_arr,
-        zero_dc=zero_dc,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        kernel_filter_node(
+            src,
+            kernel=kernel,
+            normalise=normalise,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,

@@ -100,12 +100,12 @@ All major algorithms provide both file-based (`*_segmentation`) and NumPy array 
 - **Smoothing (`smooth`)**: `apply_kuwahara_filter(..., filter_size=5)`, `apply_gaussian_smooth_filter(..., filter_size=3, stddev_x=1.0, stddev_y=1.0, filter_angle=0.0)`, `apply_kernel_filter(input_img, output_img, kernel, normalise=False, *, ...)`.
 - **Edge detection (`edge`)**: `apply_sobel_filter`, `apply_sobel_x_filter`, `apply_sobel_y_filter`, `apply_prewitt_filter`, `apply_prewitt_x_filter`, `apply_prewitt_y_filter`, `apply_gaussian_1st_deriv_filter`, `apply_gaussian_2nd_deriv_filter`, `apply_laplacian_filter`.
 - **SAR speckle (`sar`)**: `apply_lee_filter(..., filter_size=3, n_looks=1.0)`, `apply_enhanced_lee_filter(..., filter_size=5, n_looks=1.0, damping=1.0)`, `apply_frost_filter(..., filter_size=5, damping=1.0)`, `apply_enhanced_frost_filter(..., filter_size=5, n_looks=1.0, damping=1.0)`, `apply_kuan_filter(..., filter_size=5, n_looks=1.0)`, `apply_gamma_map_filter(..., filter_size=5, n_looks=1.0)`, `apply_refined_lee_filter(..., filter_size=7, n_looks=1.0)`.
-- **Node builders (tile-graph chaining)**: `builder(source, <same processing params as the apply_* function>, *, no_data_val=None, name=None) -> TileNode` (a `WindowOp`, `float64` blocks, same bands/band names as `source`, halo = half the window). Bit-identical to the `apply_*` function (pass the input's no-data value as `no_data_val`; it is not read from the source).
+- **Node builders (tile-graph chaining)**: every `apply_<name>_filter` has `<name>_filter_node(source, <same processing params as the apply_* function>, *, no_data_val=None, name=None) -> TileNode` in the same module (a `WindowOp`, `float64` blocks, same bands/band names as `source`, halo = half the window). The `apply_*` functions are wrappers running `RasterSource -> builder -> DiskSink`, so a builder is bit-identical to its function (pass the input's no-data value as `no_data_val`; it is not read from the source). File options (`gdalformat`, `datatype`, `calc_stats`) go on the `DiskSink`.
   - `stats`: `median_filter_node`, `mean_filter_node`, `min_filter_node`, `max_filter_node`, `mode_filter_node`, `stddev_filter_node`, `range_filter_node`, `total_filter_node`, `mean_diff_filter_node`, `mean_diff_abs_filter_node`, `total_diff_filter_node`, `total_diff_abs_filter_node`, `coeff_of_var_filter_node`, `norm_var_filter_node`, `norm_var_sqrt_filter_node`, `norm_var_ln_filter_node`, `texture_var_filter_node` (all `(source, filter_size=3, ...)`).
   - `smooth`: `kuwahara_filter_node(source, filter_size=5)`, `gaussian_smooth_filter_node(source, filter_size=3, stddev_x=1.0, stddev_y=1.0, filter_angle=0.0)`, `kernel_filter_node(source, kernel, normalise=False, *, zero_dc=None, ...)`.
-  - `edge`: `sobel_filter_node(source)`, `prewitt_filter_node(source)`, `laplacian_filter_node(source, filter_size=3, stddev=1.0)`.
-  - `sar`: `lee_filter_node(source, filter_size=3, n_looks=1.0)`.
-  - Not yet nodes (file-based only): directional Sobel/Prewitt, Gaussian derivatives, the other SAR filters, GLCM.
+  - `edge`: `sobel_filter_node(source)`, `sobel_x_filter_node(source)`, `sobel_y_filter_node(source)`, `prewitt_filter_node(source)`, `prewitt_x_filter_node(source)`, `prewitt_y_filter_node(source)`, `gaussian_1st_deriv_filter_node(source, filter_size=3, stddev_x=1.0, stddev_y=1.0, filter_angle=0.0)`, `gaussian_2nd_deriv_filter_node(...)` (same params), `laplacian_filter_node(source, filter_size=3, stddev=1.0)`.
+  - `sar`: `lee_filter_node(source, filter_size=3, n_looks=1.0)`, `enhanced_lee_filter_node(source, filter_size=5, n_looks=1.0, damping=1.0)`, `frost_filter_node(source, filter_size=5, damping=1.0)`, `enhanced_frost_filter_node(source, filter_size=5, n_looks=1.0, damping=1.0)`, `kuan_filter_node(source, filter_size=5, n_looks=1.0)`, `gamma_map_filter_node(source, filter_size=5, n_looks=1.0)`, `refined_lee_filter_node(source, filter_size=7, n_looks=1.0)`.
+  - `texture`: `glcm_filter_node(source, properties=GLCM_ALL_PROPERTIES, filter_size=5, distances=(1,), angles=(0.0, 45.0, 90.0, 135.0), n_levels=32, min_val=None, max_val=None, symmetric=True, average_angles=True, *, band_bounds=None, ...)`. The grey-level range must be known before the graph runs: pass `min_val`+`max_val` (all bands) or `band_bounds=[(min, max), ...]` (one per band), else `RSGISPyException`. `calc_glcm_band_bounds(input_img, no_data_val=None, use_pbar=True)` gives the per-band ranges `apply_glcm_filter` uses by default. Output: `len(properties)` bands per input band (x offsets if `average_angles=False`), named `<band>_glcm_<property>`.
 
 ```python
 from rsgispy.imageprocess import BandMathOp, DiskSink, RasterSource, TileGraph
@@ -117,6 +117,14 @@ lee = lee_filter_node(sar, filter_size=5, n_looks=4, no_data_val=0.0)
 db = BandMathOp({"x": lee}, "x > 0 ? 10 * log10(x) : -9999", nodata=-9999)
 smooth = median_filter_node(db, 3, no_data_val=-9999)
 TileGraph(DiskSink(smooth, "sar_lee_db_med.tif")).run()  # one pass, no temp files
+
+# Refined Lee -> GLCM texture with the ranges apply_glcm_filter would use
+import rsgispy.imagefilter.texture as tex
+from rsgispy.imagefilter.sar import refined_lee_filter_node
+
+rlee = refined_lee_filter_node(RasterSource("sar_linear.tif"), 7, n_looks=4, no_data_val=0.0)
+glcm = tex.glcm_filter_node(rlee, [tex.GLCM_CONTRAST, tex.GLCM_ENTROPY], min_val=0.0, max_val=0.5, no_data_val=0.0)
+TileGraph(DiskSink(glcm, "sar_rlee_glcm.tif")).run()
 ```
 - **GLCM texture (`texture`; requires `imaging` / `scikit-image`)**:
   - Constants: `GLCM_CONTRAST='contrast'`, `GLCM_DISSIMILARITY='dissimilarity'`, `GLCM_HOMOGENEITY='homogeneity'`, `GLCM_ASM='asm'`, `GLCM_ENERGY='energy'`, `GLCM_CORRELATION='correlation'`, `GLCM_ENTROPY='entropy'`, `GLCM_MEAN='mean'`, `GLCM_VARIANCE='variance'`, `GLCM_MAX_PROB='max_prob'`, `GLCM_ALL_PROPERTIES`.
@@ -125,10 +133,11 @@ TileGraph(DiskSink(smooth, "sar_lee_db_med.tif")).run()  # one pass, no temp fil
   - `FilterStep(kind: str, filter_size: int = 3, params: Dict[str, Any] = {}, name: Optional[str] = None)`
   - Supported `kind` values:
     - Any of the 18 window stat/kuwahara names (`'median'`, `'mean'`, `'min'`, `'max'`, `'mode'`, `'stddev'`, `'range'`, `'total'`, `'mean_diff'`, `'mean_diff_abs'`, `'total_diff'`, `'total_diff_abs'`, `'coeff_of_var'`, `'norm_var'`, `'norm_var_sqrt'`, `'norm_var_ln'`, `'variance'` (= `texture_var_filter_node`), `'kuwahara'`); each kind calls the matching node builder
-    - `'lee'` (`params={'n_looks': 1.0}`)
-    - `'gaussian'` (`params={'stddev': 1.0}` or `stddev_x`, `stddev_y`, `filter_angle`)
+    - SAR: `'lee'`, `'kuan'`, `'gamma_map'`, `'refined_lee'` (`params={'n_looks': 1.0}`), `'enhanced_lee'`, `'enhanced_frost'` (`params={'n_looks': 1.0, 'damping': 1.0}`), `'frost'` (`params={'damping': 1.0}`)
+    - `'gaussian'`, `'gaussian_1st_deriv'`, `'gaussian_2nd_deriv'` (`params={'stddev': 1.0}` or `stddev_x`, `stddev_y`, `filter_angle`)
     - `'laplacian'` (`params={'stddev': 1.0}`)
-    - `'sobel'`, `'prewitt'`
+    - `'sobel'`, `'prewitt'` (magnitudes), `'sobel_x'`, `'sobel_y'`, `'prewitt_x'`, `'prewitt_y'`
+    - `'glcm'` (`params` = the `glcm_filter_node` args: `properties`, `distances`, `angles`, `n_levels`, `symmetric`, `average_angles`, and `min_val`+`max_val` or `band_bounds` (required); output band names come from the node)
     - `'kernel'` (`params={'kernel': array_2d, 'zero_dc': False}`)
     - `'band_math'` (`params={'expr': "..."}` — binds `'x'` to current step and any prior named step `step.name`)
     - `'pointwise'` (`params={'func': callable_arr_fn}`)

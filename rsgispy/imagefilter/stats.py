@@ -5,9 +5,9 @@ Statistical, dispersion, and local-difference moving-window raster filters.
 
 from typing import List, Optional
 
-from rsgispy._io import TileNode
+from rsgispy._io import RasterSource, TileNode
 from rsgispy.imagefilter._helpers import (
-    run_window_stat_filter,
+    run_filter_node,
     stat_coeff_of_var,
     stat_max,
     stat_mean,
@@ -100,11 +100,14 @@ def apply_median_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_median,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        median_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -144,11 +147,14 @@ def apply_mean_filter(
         rsgispy.imagefilter.stats.apply_mean_filter("in.tif", "out_mean3.tif", filter_size=3)
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_mean,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        mean_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -188,11 +194,14 @@ def apply_min_filter(
         rsgispy.imagefilter.stats.apply_min_filter("in.tif", "out_min3.tif", filter_size=3)
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_min,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        min_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -232,11 +241,14 @@ def apply_max_filter(
         rsgispy.imagefilter.stats.apply_max_filter("in.tif", "out_max3.tif", filter_size=3)
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_max,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        max_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -281,11 +293,14 @@ def apply_mode_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_mode,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        mode_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -325,11 +340,14 @@ def apply_stddev_filter(
         rsgispy.imagefilter.stats.apply_stddev_filter("in.tif", "out_std3.tif", filter_size=3)
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_stddev,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        stddev_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -369,11 +387,14 @@ def apply_range_filter(
         rsgispy.imagefilter.stats.apply_range_filter("in.tif", "out_range3.tif", filter_size=3)
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_range,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        range_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -413,11 +434,14 @@ def apply_total_filter(
         rsgispy.imagefilter.stats.apply_total_filter("in.tif", "out_total3.tif", filter_size=3)
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_total,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        total_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -459,11 +483,14 @@ def apply_mean_diff_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_mean_diff,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        mean_diff_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -505,11 +532,14 @@ def apply_mean_diff_abs_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_mean_diff_abs,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        mean_diff_abs_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -551,11 +581,14 @@ def apply_total_diff_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_total_diff,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        total_diff_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -597,11 +630,14 @@ def apply_total_diff_abs_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_total_diff_abs,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        total_diff_abs_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -645,11 +681,14 @@ def apply_coeff_of_var_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_coeff_of_var,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        coeff_of_var_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -691,11 +730,14 @@ def apply_norm_var_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_norm_var,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        norm_var_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -738,11 +780,14 @@ def apply_norm_var_sqrt_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_norm_var_sqrt,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        norm_var_sqrt_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -785,11 +830,14 @@ def apply_norm_var_ln_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_norm_var_ln,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        norm_var_ln_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
@@ -831,11 +879,14 @@ def apply_texture_var_filter(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    run_window_stat_filter(
-        input_img=input_img,
-        output_img=output_img,
-        filter_size=filter_size,
-        stat_fn=stat_texture_var,
+    src = RasterSource(input_img)
+    run_filter_node(
+        src,
+        texture_var_filter_node(
+            src,
+            filter_size=filter_size,
+        ),
+        output_img,
         gdalformat=gdalformat,
         datatype=datatype,
         no_data_val=no_data_val,
