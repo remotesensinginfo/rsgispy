@@ -22,7 +22,7 @@ how that works and which choices affect speed, memory use and file sizes:
   mosaicking the results;
 * the ``n_jobs`` and ``numba`` options of the segmentation, zonal statistics
   and polygonisation functions;
-* choosing output formats: Cloud Optimised GeoTIFF (COG), KEA and
+* choosing output formats: GeoTIFF, Cloud Optimised GeoTIFF (COG), KEA and
   GeoParquet.
 
 The example script runs each technique on a small image so that it can be
@@ -61,7 +61,7 @@ Overview
             ├─► 6. Filter chain: median → Sobel on NDVI
             ├─► 7. Tiles (parallel) → per-tile NDVI → mosaic VRT
             │            │
-            │            └─► 8. Cloud Optimised GeoTIFF
+            │            └─► 8. Final GeoTIFF (or COG)
             └─► 9. Tiled multi-core segmentation → zonal statistics
                     (Parquet) → polygons (GeoParquet)
 
@@ -133,22 +133,34 @@ How to choose it:
   because their memory grows with the square of both the block size and the
   window size.
 * Keep the block size a multiple of the internal tile size of your files
-  (usually 256 or 512) so each block reads whole tiles.
+  (usually 256 or 512) so each block reads whole tiles. GeoTIFF outputs are
+  tiled with GDAL's default 256 x 256 tiles (see below), so the default 512
+  pixel block covers exactly four tiles; pass ``BLOCKXSIZE`` and
+  ``BLOCKYSIZE`` in the creation options for other tile sizes (multiples of
+  16).
 
-**Creation options.** Outputs are written with the GDAL creation options in
-the ``RSGISPY_IMG_CRT_OPTS_<FORMAT>`` environment variable (colon-separated
-``KEY=VALUE`` pairs), plus any ``creation_opts`` passed to a function. The
-helpers in :mod:`rsgispy.imageutils.envopts` set common choices:
+**Creation options.** GeoTIFF outputs are tiled and DEFLATE-compressed by
+default: ``TILED=YES``, ``COMPRESS=DEFLATE``, ``INTERLEAVE=BAND`` and
+``BIGTIFF=IF_SAFER``. Tiled files are fast to read in blocks, compression
+typically makes files several times smaller, and ``BIGTIFF=IF_SAFER``
+switches to BigTIFF when a file may exceed the 4 GB limit of classic TIFF.
+Other formats (KEA, COG, ...) use their GDAL driver defaults. To change the
+options, set the ``RSGISPY_IMG_CRT_OPTS_<FORMAT>`` environment variable
+(colon-separated ``KEY=VALUE`` pairs; ``RSGISLIB_IMG_CRT_OPTS_<FORMAT>`` is
+also read), which replaces the default, or pass ``creation_opts`` to a
+function, which is merged on top (``creation_opts`` with ``BLOCKYSIZE`` but
+no ``TILED`` or ``BLOCKXSIZE``, e.g. ``{"BLOCKYSIZE": 1}``, give a striped
+GeoTIFF with that many rows per strip). The helpers in
+:mod:`rsgispy.imageutils.envopts` set common choices:
 
-* :func:`~rsgispy.imageutils.envopts.set_env_vars_deflate_gtiff_outs`
-  (``TILED=YES``, ``COMPRESS=DEFLATE``, ``BIGTIFF=IF_SAFER``), or the LZW
-  and ZSTD variants. Always use tiled, compressed GeoTIFFs for large outputs:
-  tiled files are fast to read in blocks, and compression typically makes
-  files several times smaller. ``BIGTIFF=IF_SAFER`` switches to BigTIFF when
-  a file may exceed the 4 GB limit of classic TIFF (use ``bigtiff=True`` to
-  force it).
+* :func:`~rsgispy.imageutils.envopts.set_env_vars_zstd_gtiff_outs` or
+  :func:`~rsgispy.imageutils.envopts.set_env_vars_lzw_gtiff_outs` for other
+  compression; ``bigtiff=True`` forces BigTIFF.
 * :func:`~rsgispy.imageutils.envopts.set_img_creation_opts` for any other
-  set of options and format.
+  set of options and format; ``set_img_creation_opts("GTIFF", {})`` gives
+  plain striped, uncompressed GeoTIFFs.
+* :func:`~rsgispy.imageutils.envopts.reset_img_creation_opts` restores the
+  defaults.
 
 .. literalinclude:: ../examples/large_rasters.py
    :language: python
@@ -158,9 +170,10 @@ helpers in :mod:`rsgispy.imageutils.envopts` set common choices:
 
 This prints the block size and
 ``{'TILED': 'YES', 'COMPRESS': 'DEFLATE', 'INTERLEAVE': 'BAND', 'BIGTIFF': 'IF_SAFER'}``.
-These settings are environment variables, so they also apply to every rsgispy
-function called later in the same process (and to worker processes started
-from it).
+The block size and the ``set_*`` helpers use environment variables, so they
+also apply to every rsgispy function called later in the same process (and
+to worker processes started from it). The built-in defaults do not: rsgispy
+does not set any environment variables itself.
 
 Step 3 — Virtual rasters instead of copies
 ------------------------------------------
@@ -336,51 +349,70 @@ processing time — typically a few thousand pixels across (e.g. 5,000 x
 workers. With ``n_cores > 1``, call the function from inside an
 ``if __name__ == "__main__":`` block (see its documentation).
 
-Step 8 — Cloud Optimised GeoTIFF outputs
-----------------------------------------
+Step 8 — Writing the final product
+----------------------------------
 
-A COG is a GeoTIFF with internal tiles, overviews and a layout that lets
-programs read just the part and resolution they need, including over HTTP
-from cloud storage. It is the best format for final products that are shared,
-served or displayed. Create it at the end with
-:func:`~rsgispy.imageutils.warp.gdal_translate` (``gdalformat='COG'``),
-here directly from the tile mosaic VRT, and check the file with
+The VRT mosaic from step 7 refers to every tile file. Write the final
+product as a single GeoTIFF with
+:func:`~rsgispy.imageutils.warp.gdal_translate`, here directly from the tile
+mosaic VRT, and check the file with
 :func:`~rsgispy.tools.checkdatasets.check_gdal_image_file`:
 
 .. literalinclude:: ../examples/large_rasters.py
    :language: python
-   :start-after: # [step-8-cog]
-   :end-before: # [end-step-8-cog]
+   :start-after: # [step-8-final]
+   :end-before: # [end-step-8-final]
    :dedent: 4
 
-``check_gdal_image_file`` returns ``(True, '')`` for a valid file. Useful
-COG options: ``COMPRESS`` (``DEFLATE``, ``ZSTD``, or ``LZW``; ``JPEG`` or
-``WEBP`` for lossy RGB previews), ``PREDICTOR=YES`` (helps compression of
-continuous data), ``OVERVIEW_RESAMPLING`` (``AVERAGE`` or ``CUBIC`` for
-continuous data, ``NEAREST`` or ``MODE`` for classes) and ``BLOCKSIZE``
-(default 512). Do not add statistics to a COG afterwards
-(``calc_stats=False``): writing them breaks the COG layout. The
-``rsgisbatchconvert2cog`` command line tool converts many files at once.
+``check_gdal_image_file`` returns ``(True, '')`` for a valid file. rsgispy
+writes GeoTIFFs tiled and DEFLATE-compressed by default; options passed to a
+function (here ``PREDICTOR=3``, which helps the compression of floating-point
+data) are added to the defaults, and the ``envopts`` functions change the
+defaults for every later output in the same process.
+
+For products that are shared, served or read over HTTP from cloud storage,
+write a Cloud Optimised GeoTIFF (COG) instead, with ``gdalformat="COG"``. A
+COG is a GeoTIFF with internal tiles, overviews and a layout that lets
+programs read just the part and resolution they need. Useful COG options:
+``COMPRESS`` (``DEFLATE``, ``ZSTD``, or ``LZW``; ``JPEG`` or ``WEBP`` for
+lossy RGB previews), ``PREDICTOR=YES`` (helps compression of continuous
+data), ``OVERVIEW_RESAMPLING`` (``AVERAGE`` or ``CUBIC`` for continuous
+data, ``NEAREST`` or ``MODE`` for classes) and ``BLOCKSIZE`` (default 512).
+The ``rsgisbatchconvert2cog`` command line tool converts many files at once.
 The ``set_env_vars_*_cog_outs`` functions in
 :mod:`rsgispy.imageutils.envopts` set COG creation options for functions
-that write ``gdalformat='COG'`` directly.
+that write ``gdalformat='COG'``; the GeoTIFF defaults are never applied to
+COGs.
 
-.. warning::
-
-   GDAL can only create a COG from a complete image, so when an rsgispy
-   function writes ``gdalformat='COG'`` (including
-   :func:`~rsgispy.imageutils.warp.gdal_translate`), rasterio may build the
-   whole output in memory first (its ``BufferedDatasetWriter``, used for the
-   ``COG`` driver with the GDAL 3.13 releases tested here). For outputs that
-   do not fit in memory, write a tiled GeoTIFF (or a VRT) first and convert
-   it with GDAL's own tools, for example ``gdal_translate -of COG in.tif
-   out.tif`` or ``rasterio.shutil.copy("in.tif", "out.tif", driver="COG")``,
-   which copy from disk.
+**How rsgispy writes COGs.** GDAL can only create a COG by copying a
+complete image, so when an rsgispy function writes ``gdalformat='COG'``
+(including :func:`~rsgispy.imageutils.warp.gdal_translate`), it writes the
+data block by block to a temporary tiled GeoTIFF next to the output (in the
+local temporary directory for GDAL virtual file system outputs such as
+``/vsis3/...`` or ``/vsimem/...``), adds the statistics to it
+(``calc_stats=True``), and only then converts it with GDAL's COG driver,
+which builds the overviews (with ``NEAREST`` resampling for thematic outputs
+unless ``OVERVIEW_RESAMPLING`` is set); the temporary file is deleted, also
+when an error occurs. Memory use is the same as for a GeoTIFF output,
+but the output directory needs free space for the temporary file as well as
+the COG, and the conversion adds roughly the time of one more read and write
+of the image. The statistics are stored in the COG without breaking its
+layout. Your own block loops get the same behaviour from
+:func:`~rsgispy.imageprocess.open_output_dataset`; register statistics with
+:func:`~rsgispy.imageprocess.pop_stats_on_close` inside the ``with`` block.
+Calling :func:`~rsgispy.imageutils.stats.pop_img_stats` (or another function
+that edits the file) on an existing COG never edits it in place: the COG is
+rebuilt through a temporary GeoTIFF
+(:func:`~rsgispy.imageprocess.update_cog`) with the compression, quality and
+layout settings recorded in the file, which keeps it valid but costs a full
+re-encode (and another round of lossy compression for JPEG or WEBP), so
+prefer ``calc_stats=True`` when the COG is written.
 
 **Choosing output formats**
 
-* **GeoTIFF (tiled, compressed)** for intermediate and working files: fast
-  block-wise reading and writing, readable by everything.
+* **GeoTIFF** (``gdalformat='GTIFF'``, tiled and DEFLATE-compressed by
+  default) for intermediate and working files: fast block-wise reading and
+  writing, readable by everything.
 * **COG** for final, shared or cloud-hosted products.
 * **KEA** (``gdalformat='KEA'``; an HDF5-based format) supports raster
   attribute tables with many columns, compression and large files, and is
@@ -535,10 +567,15 @@ Common problems
   CRS and pixel size; resample with
   :func:`~rsgispy.imageutils.warp.resample_img_to_match` first.
 * **Files larger than 4 GB fail to write** — use ``BIGTIFF=IF_SAFER`` or
-  ``BIGTIFF=YES`` (the ``set_env_vars_*`` helpers set it).
-* **A COG is "not a valid COG" after processing** — statistics or pyramids
-  were added after it was created; create it last with
-  ``calc_stats=False``.
+  ``BIGTIFF=YES`` (the GeoTIFF default and the ``set_env_vars_*`` helpers
+  set ``IF_SAFER``; for COGs set it with the ``set_env_vars_*_cog_outs``
+  helpers).
+* **A COG is "not a valid COG" after processing** — it was edited in place
+  by a tool other than rsgispy (for example with
+  ``IGNORE_COG_LAYOUT_BREAK=YES``, or by building overviews with
+  :func:`~rsgispy.imageutils.stats.build_img_pyramids`). rsgispy's statistics
+  functions rebuild a COG instead; to repair a file, convert it again with
+  ``rasterio.shutil.copy("in.tif", "out.tif", driver="COG")``.
 * **No data in outputs** — custom block functions must handle no data
   themselves and set the output no data value; check with
   ``rasterio.open(path).nodata`` and the image statistics.
@@ -546,13 +583,18 @@ Common problems
   the call is not inside ``if __name__ == "__main__":``.
 * **Slow first call** — numba is compiling; later calls (and later runs,
   for cached kernels) are fast.
-* **"Invalid nodata value" when writing KEA** — in this version, functions
-  that write a KEA file with a no data value and then calculate statistics
-  (``calc_stats=True``) fail when the statistics step sets the no data value
-  again. Write GeoTIFF and convert at the end, or pass ``calc_stats=False``.
+* **Changing the no data value of a KEA file fails** — GDAL's KEA driver
+  cannot replace a no data value once a file has one, so
+  :func:`~rsgispy.imageutils.stats.pop_img_stats` or
+  :func:`~rsgispy.imageutils.metadata.set_img_no_data_value` with a
+  *different* value raises an error naming the old and new values (setting
+  the same value again, as the ``calc_stats=True`` step does, is fine). Pass
+  the right ``no_data_val`` when the KEA file is written.
 * **Environment settings leak between steps** — the block size and creation
-  options are environment variables; reset them with
-  :func:`~rsgispy.imageprocess.reset_default_block_size` or set them again.
+  options set with the ``set_*`` helpers are environment variables; reset them
+  with :func:`~rsgispy.imageprocess.reset_default_block_size` and
+  :func:`~rsgispy.imageutils.envopts.reset_img_creation_opts`, or set them
+  again.
 
 Related guides
 --------------

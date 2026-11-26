@@ -129,7 +129,7 @@ def run_workflow(
 
     # [step-3b-check-condition]
     from rsgispy.imagecalc.maths import BandDefn, band_maths, calc_prop_true_exp
-    from rsgispy.imageutils.metadata import get_img_no_data_value, set_img_no_data_value
+    from rsgispy.imageutils.metadata import get_img_no_data_value
 
     dem_nd = get_img_no_data_value(dem_img)
     changes = {}
@@ -139,8 +139,8 @@ def run_workflow(
         band_defs = [BandDefn("raw", dem_img, 1), BandDefn("cond", cond_img, 1)]
         # Positive = raised (filled), negative = lowered (breached or burnt).
         band_maths(diff_img, f"raw == {dem_nd} ? {dem_nd} : cond - raw", band_defs,
-                   datatype=rsgispy.TYPE_32FLOAT, use_pbar=use_pbar)
-        set_img_no_data_value(diff_img, dem_nd)
+                   datatype=rsgispy.TYPE_32FLOAT, no_data_val=dem_nd,
+                   use_pbar=use_pbar)
         d_min, d_max, _, _ = calc_basic_img_band_stats(diff_img, use_pbar=False)
         prop = calc_prop_true_exp(
             f"raw != {dem_nd} && abs(cond - raw) > 0.001 ? 1 : 0", band_defs,
@@ -166,7 +166,8 @@ def run_workflow(
     fdir_d8 = os.path.join(out_dir, "flow_dir_d8.tif")
     facc_d8 = os.path.join(out_dir, "flow_acc_d8_cells.tif")
     hydro.flow_direction(cond_dem, fdir_d8, method="d8", use_pbar=use_pbar)
-    # In cells: extract_streams converts an area threshold to cells itself.
+    # In cells; the units are recorded in the file, so extract_streams can
+    # take its threshold in m2 or in cells.
     hydro.flow_accumulation(fdir_d8, facc_d8, out_units="cells", use_pbar=use_pbar)
 
     # Dispersive routing for wetness and erosion indices (Step 9).
@@ -333,8 +334,7 @@ def run_workflow(
     acc_nd = get_img_no_data_value(facc_dinf)
     band_maths(sca_img, f"acc == {acc_nd} ? {acc_nd} : acc / {x_res}",
                [BandDefn("acc", facc_dinf, 1)], datatype=rsgispy.TYPE_32FLOAT,
-               use_pbar=use_pbar)
-    set_img_no_data_value(sca_img, acc_nd)
+               no_data_val=acc_nd, use_pbar=use_pbar)
     hydro.calc_twi(sca_img, slope_img, twi_img, slope_units="degrees",
                    min_slope=0.001, use_pbar=use_pbar)
     hydro.calc_spi(sca_img, slope_img, spi_img, slope_units="degrees",
@@ -374,8 +374,9 @@ def run_workflow(
          wsheds_gdf, streams_gdf, gpd.read_file(gauges_snap)],
         bbox,
         title_str="Streams, subcatchments and gauged watersheds",
-        # Lines are drawn with the fill colour; polygons with "none" are hollow.
-        vec_fill_clrs=["none", "none", "#1f78b4", "#e31a1c"],
+        # Polygons with the fill colour "none" are drawn as outlines; lines
+        # (the streams) are drawn in the line colour.
+        vec_fill_clrs=["none", "none", "none", "#e31a1c"],
         vec_line_clrs=["#666666", "#e31a1c", "#1f78b4", "#000000"],
         vec_line_widths=[0.5, 1.5, 1.5, 0.5],
         vec_markersize=30,

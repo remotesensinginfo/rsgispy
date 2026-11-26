@@ -88,6 +88,7 @@ def run_workflow(
     tie_df = imreg_tp.generate_tie_points(
         ref_img,
         flt_img,
+        # or TIE_METHOD_PHASE_CORR: faster, for shifts below win_size / 4
         method=imreg.TIE_METHOD_TEMPLATE_MATCH,
         ref_band=ref_band,
         flt_band=flt_band,

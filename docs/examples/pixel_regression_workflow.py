@@ -49,7 +49,7 @@ def run_workflow(
     import rsgispy
     from rsgispy.elevation.terrain import slope
     from rsgispy.imagecalc.calcindices import calc_indices
-    from rsgispy.imageutils.vrt import create_stack_images_vrt
+    from rsgispy.imageutils.vrt import create_stack_images_vrt, create_vrt_band_subset
     from rsgispy.imageutils.warp import resample_img_to_match
 
     idx_img = os.path.join(out_dir, "s2_indices.tif")
@@ -68,10 +68,13 @@ def run_workflow(
     slope_img = os.path.join(out_dir, "slope.tif")
     resample_img_to_match(s2_img, slope_dem_img, slope_img,
                           interp_method=rsgispy.INTERP_BILINEAR)
-    derived_names = ["NDVI", "EVI", "NDMI", "slope"]
-    derived_vrt = os.path.join(out_dir, "derived_features.vrt")
-    create_stack_images_vrt([idx_img, slope_img], derived_vrt,
-                            band_names=derived_names)
+    # One virtual stack (no copy) of the uint16 bands and float32 layers.
+    s2_vrt = os.path.join(out_dir, "s2_bands.vrt")
+    create_vrt_band_subset(s2_img, s2_vrt, list(s2_bands))
+    feat_names = list(s2_band_names) + ["NDVI", "EVI", "NDMI", "slope"]
+    feat_vrt = os.path.join(out_dir, "features.vrt")
+    create_stack_images_vrt([s2_vrt, idx_img, slope_img], feat_vrt,
+                            band_names=feat_names)
     # [end-step-1-features]
 
     # [step-2-config]
@@ -79,10 +82,9 @@ def run_workflow(
     from rsgispy.regression.regdata import RegressionConfig, write_reg_config
 
     img_band_info = [
-        ImageBandInfo(s2_img, name="s2", bands=list(s2_bands),
-                      band_names=list(s2_band_names)),
-        ImageBandInfo(derived_vrt, name="derived", bands=[1, 2, 3, 4],
-                      band_names=derived_names),
+        ImageBandInfo(feat_vrt, name="features",
+                      bands=list(range(1, len(feat_names) + 1)),
+                      band_names=feat_names),
     ]
     cfg_file = os.path.join(out_dir, "reg_config.json")
     reg_cfg = write_reg_config(
@@ -110,6 +112,7 @@ def run_workflow(
         stratify_col=target_col,  # every split covers the full range
         n_bins=5,
         include_coords=True,
+        group_col="train_grp",  # all pixels of a plot go to one table
         rnd_seed=42,
         use_pbar=use_pbar,
     )
@@ -139,10 +142,6 @@ def run_workflow(
     from rsgispy.ml.cv import SpatialBlockKFold
     import rsgispy.regression.regsklearn as rsk
 
-    cv_folds = list(
-        SpatialBlockKFold(n_splits=4, block_size=cv_block_size, rnd_seed=42)
-        .split(train_df, coords=train_df[["x", "y"]].to_numpy())
-    )
     rf_model = rsk.perform_sklearn_regressor_param_search(
         cfg_file,
         RandomForestRegressor(n_estimators=n_trees, n_jobs=-1, random_state=42),
@@ -150,7 +149,8 @@ def run_workflow(
         param_space={"max_features": [0.33, 0.66, 1.0],
                      "min_samples_leaf": [1, 3, 10]},
         search_method="grid",
-        cv=cv_folds,  # spatially blocked folds
+        cv=SpatialBlockKFold(n_splits=4, block_size=cv_block_size, rnd_seed=42),
+        coords=("x", "y"),  # spatially blocked folds from the x/y columns
         scoring="neg_root_mean_squared_error",
         use_pbar=use_pbar,
     )

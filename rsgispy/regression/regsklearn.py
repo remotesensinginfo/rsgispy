@@ -16,6 +16,8 @@ from typing import (
     Union,
 )
 
+import numpy as np
+
 import rsgispy
 from rsgispy.imageprocess import ensure_file_exists
 from rsgispy.imageutils.masking import ImageBandInfo
@@ -26,11 +28,13 @@ from rsgispy.regression._reg_common import (
     apply_regressor_raster,
     calc_reg_split_metrics,
     check_sklearn_available,
+    load_samples_df,
     prepare_reg_splits,
 )
 from rsgispy.tools._gbdt_common import load_joblib_model, save_joblib_model
 from rsgispy.tools._ml_tune import (
     normalise_search_method as _normalise_search_method,
+    resolve_cv_groups_coords as _resolve_cv_groups_coords,
     resolve_sklearn_param_space as _tools_resolve_sklearn_param_space,
     run_optuna_search as _tools_run_optuna_search,
     run_sklearn_search_cv as _tools_run_sklearn_search_cv,
@@ -250,6 +254,9 @@ def perform_sklearn_regressor_param_search(
     verbose: int = 0,
     extended_param_space: bool = False,
     use_pbar: bool = True,
+    *,
+    groups: Optional[Union[str, Sequence[Any], np.ndarray]] = None,
+    coords: Optional[Union[Sequence[str], np.ndarray]] = None,
 ) -> Union[Any, Tuple[Any, Dict[str, Any]]]:
     """
     Optimise hyperparameters for a univariate or multivariate ``scikit-learn``
@@ -262,6 +269,19 @@ def perform_sklearn_regressor_param_search(
     If multiple targets are configured and ``sk_regressor`` does not natively
     support 2D targets (e.g., ``SVR``, ``GradientBoostingRegressor``), it is
     automatically wrapped in ``sklearn.multioutput.MultiOutputRegressor``.
+
+    The spatial and group splitters of :mod:`rsgispy.ml.cv` can be passed
+    directly as ``cv`` with the sample coordinates (``coords``, for
+    :class:`~rsgispy.ml.cv.SpatialBlockKFold` and
+    :class:`~rsgispy.ml.cv.SpatialBufferCV`) or groups (``groups``, e.g. the
+    ``poly_id_col`` column of
+    :func:`~rsgispy.regression.regdata.extract_reg_training_samples`, for
+    :class:`~rsgispy.ml.cv.PolygonGroupKFold`); scikit-learn group splitters
+    (e.g. ``GroupKFold``) receive ``groups``. With ``groups`` or ``coords`` an
+    integer ``cv`` gives a ``SpatialBlockKFold`` (``coords``) or
+    ``PolygonGroupKFold`` (``groups``) with ``cv`` folds. The folds are made
+    once and used for every candidate (they are in
+    ``results_dict['search_obj'].cv`` for grid and random searches).
 
     :param reg_cfg: :class:`~rsgispy.regression.regdata.RegressionConfig`, JSON
                     config path, sequence of ``ImageBandInfo``, or ``None``
@@ -300,12 +320,22 @@ def perform_sklearn_regressor_param_search(
                                  when ``param_space`` is ``None``.
     :param use_pbar: Display a ``tqdm`` progress bar during Optuna trials
                      (Default = ``True``).
+    :param groups: Optional group of each training sample for the
+                   cross-validation folds: a column name of ``train_data``
+                   (e.g. ``'train_grp'``) or one label per row. Used only
+                   when ``valid_data`` is ``None`` (Default = ``None``).
+    :param coords: Optional coordinates of each training sample for spatial
+                   cross-validation folds: two column names of
+                   ``train_data`` (e.g. ``('x', 'y')``) or an
+                   ``(n_samples, 2)`` array. Used only when ``valid_data`` is
+                   ``None`` (Default = ``None``).
     :return: Optimised regressor estimator, or ``(best_estimator, results_dict)``.
 
     .. code:: python
 
         from sklearn.ensemble import RandomForestRegressor
         import rsgispy.regression.regsklearn as rsk
+        from rsgispy.ml.cv import SpatialBlockKFold
 
         best_rf = rsk.perform_sklearn_regressor_param_search(
             reg_cfg="reg_config.json",
@@ -315,19 +345,30 @@ def perform_sklearn_regressor_param_search(
             n_trials=25,
             rnd_seed=42,
         )
+        # Spatially blocked folds (train.parquet has x and y columns)
+        best_rf = rsk.perform_sklearn_regressor_param_search(
+            "reg_config.json",
+            RandomForestRegressor(),
+            "train.parquet",
+            param_space={"min_samples_leaf": [1, 3, 10]},
+            cv=SpatialBlockKFold(n_splits=4, block_size=2000.0),
+            coords=("x", "y"),
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
     check_sklearn_available("perform_sklearn_regressor_param_search")
     method = _normalise_search_method(search_method)
+    train_df = load_samples_df(train_data, "train_data")
     _, eff_targets, _, train_x, train_y, _, valid_xy = prepare_reg_splits(
         reg_cfg=reg_cfg,
-        train_data=train_data,
+        train_data=train_df,
         test_data=None,
         valid_data=valid_data,
         feature_cols=feature_cols,
         target_cols=target_cols,
     )
+    cv_groups, cv_coords = _resolve_cv_groups_coords(train_df, groups, coords)
     valid_x = valid_xy[0] if valid_xy is not None else None
     valid_y = valid_xy[1] if valid_xy is not None else None
 
@@ -373,6 +414,8 @@ def perform_sklearn_regressor_param_search(
                 func_name="perform_sklearn_regressor_param_search",
                 extra="regression",
                 use_pbar=use_pbar,
+                groups=cv_groups,
+                coords=cv_coords,
             )
         )
     else:
@@ -394,6 +437,8 @@ def perform_sklearn_regressor_param_search(
                 verbose=verbose,
                 stratified=False,
                 extra="regression",
+                groups=cv_groups,
+                coords=cv_coords,
             )
         )
 

@@ -77,7 +77,8 @@ def _convert_single_to_cog(
     if compress != "NONE":
         options["COMPRESS"] = compress
 
-    # Post-write statistics tags break GDAL's LAYOUT=COG header on COGs.
+    # Plain conversion without statistics (gdal_translate can also store
+    # them in the COG with calc_stats=True, at the cost of reading it twice).
     gdal_translate(
         input_img=in_img,
         output_img=out_img,

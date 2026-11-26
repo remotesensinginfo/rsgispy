@@ -285,15 +285,17 @@ in map units to the nearest pixel with the value 1 in the chosen band of
 value ``max_dist``, which keeps the calculation fast and still gives them a
 membership of (almost) 0. The output no data value is also set to
 ``max_dist``; ``band_maths`` reads the raw values, so this does not matter
-here, but other tools may treat those pixels as no data.
+for the distance to mangroves, but other tools, such as the rescaling below,
+treat those pixels as no data.
 
 The distance to water is converted with
 :func:`~rsgispy.imagecalc.rescale.rescale_img_pxl_vals`, which is the
 simplest way to apply a linear membership. Giving ``out_min=1`` and
 ``out_max=0`` reverses the direction (near is good), and
-``trim_to_limits=True`` clips values beyond 1 km to 0. Note that the
-rescale ``no_data_val`` must not be a real value: the default is 0, which
-here would turn every water pixel into no data.
+``trim_to_limits=True`` clips values beyond 1 km to 0. The rescaling masks
+the input band's own no data value (here ``max_dist``), so pixels further
+than 5 km from water become no data (``out_no_data``, -9999 by default) in
+``f_water.tif``; the factor expression below sets them to 0.
 
 The protection score comes from a text attribute, so
 :func:`~rsgispy.imageutils.rasterise.create_vec_lst_lut_score_img` maps each
@@ -381,8 +383,8 @@ sub-expression:
 
 The output is 8-bit so that the class band can have a colour table
 (:func:`~rsgispy.imageutils.colourtable.define_colour_table`) for the
-thematic map, and :func:`~rsgispy.imageutils.metadata.set_img_no_data_value`
-sets 255 as the no data value. The combination is wrapped in a small
+thematic map, and ``no_data_val=255`` records 255 as the no data value of
+the output. The combination is wrapped in a small
 function, ``calc_potential``, so it can be re-run with other weights in
 Step 6.
 
@@ -560,9 +562,11 @@ write the output no data value:
 
 NaN propagates through arithmetic and ``min``/``max``, and every comparison
 with NaN is false, so a NaN input falls into the *else* branch of a ternary.
-Remember to set the output no data value afterwards
-(:func:`~rsgispy.imageutils.metadata.set_img_no_data_value`); ``band_maths``
-does not set it.
+Pass the value the expression writes as ``no_data_val`` (e.g.
+``no_data_val=-999``) so it is recorded as the output no data value;
+``band_maths`` does not change the expression, so the expression must still
+write that value. ``calc_stats=True`` also calculates the output statistics,
+excluding the no data value.
 
 **Clamping and memberships.** ``min`` and ``max`` take any number of
 arguments:

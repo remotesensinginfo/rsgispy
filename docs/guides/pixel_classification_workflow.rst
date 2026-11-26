@@ -60,16 +60,16 @@ Overview
    Sentinel-2 SREF stack           DEM (any resolution, projected)
             │                              │
             ▼                              ▼
-   1. Indices, texture ──────┐     slope ─► resample to the S2 grid
-                             ▼
-                       derived_features.vrt
+   1. Bands, indices, texture ─┐   slope ─► resample to the S2 grid
+                               ▼
+                          features.vrt (one virtual stack)
             │
             ▼
    2. Config (JSON) ◄── training polygons per class (Water, Forest, …)
             │
             ▼
-   3. Training samples ──► train / valid / test tables (+ x, y)
-            │                + spatially blocked CV folds
+   3. Training samples ──► train / valid / test tables (+ x, y, polygon)
+            │                (whole polygons in each table)
             ▼
    4. Explore features (box plots, correlation, VIF)
             │
@@ -121,8 +121,10 @@ The model can only separate classes that differ in its input features, so
 this step decides most of the final accuracy. Typical features for land
 cover are:
 
-* **Spectral bands** — the reflectance values themselves. They are used
-  directly from the Sentinel-2 stack, so they are not copied.
+* **Spectral bands** — the reflectance values themselves. The bands to use
+  are selected with a VRT
+  (:func:`~rsgispy.imageutils.vrt.create_vrt_band_subset`), so they are not
+  copied.
 * **Spectral indices** —
   :func:`~rsgispy.imagecalc.calcindices.calc_indices` calculates many indices
   in one pass (here NDVI for vegetation, MNDWI for open water and NDBI for
@@ -154,13 +156,15 @@ interpolation because slope is continuous (use nearest neighbour,
 ``rsgispy.INTERP_NEAREST_NEIGHBOUR``, for categorical data such as a soil
 map).
 
-Finally, the derived layers are stacked into one virtual image with
-:func:`~rsgispy.imageutils.vrt.create_stack_images_vrt`. A VRT is a small XML
-file that refers to the source images, so nothing is copied and each band
-keeps its own no data value. The derived layers are all ``float32``; the
-``uint16`` Sentinel-2 bands are kept as a separate image, because a VRT with
-mixed data types cannot be read in one operation. To write a real
-multi-band file instead, use
+Finally, the Sentinel-2 bands and the derived layers are stacked into one
+virtual image with :func:`~rsgispy.imageutils.vrt.create_stack_images_vrt`,
+with a name for each band. A VRT is a small XML file that refers to the
+source images, so nothing is copied, and each band keeps its own data type
+(``uint16`` reflectance, ``float32`` indices, slope and texture) and its own
+no data value (``0`` and ``-9999``). The sample extraction and the
+classification functions read such mixed stacks; a pixel is removed from
+the samples, or left unclassified, when any band is no data. To write a
+real multi-band file instead, use
 :func:`~rsgispy.imageutils.bands.stack_img_bands` (with ``datatype`` and
 ``no_data_val`` set so that every band shares one no data value).
 
@@ -185,9 +189,9 @@ functions accept either the object or the JSON file:
 
 * the **image bands** — a list of
   :class:`~rsgispy.classification.classdata.ImageBandInfo`, one for each
-  image, with the bands to use and their **feature names**. The names become
-  the column names of the sample tables and the model's feature names, so
-  keep them short and unique;
+  image (here just the feature stack), with the bands to use and their
+  **feature names**. The names become the column names of the sample tables
+  and the model's feature names, so keep them short and unique;
 * the **classes** — a dictionary of
   :class:`~rsgispy.classification.classdata.ClassInfoObj` keyed by class
   name, with the training vector file, the output pixel value (``out_id``)
@@ -218,9 +222,10 @@ reads the pixels under each class's training polygons (or points) from every
 image band, removes pixels that are no data in any band, and splits them, per
 class, into **training**, **validation** and **test** tables (here 60/20/20 %).
 The tables are written as Parquet (Snappy compressed) with the columns
-``out_cls_id``, ``internal_cls_id``, ``class_name``, one column per feature
-and, with ``include_coords=True``, the pixel centre coordinates ``x`` and
-``y``.
+``class_name``, ``out_cls_id``, ``internal_cls_id``, the source polygon of
+each pixel (``train_grp``, e.g. ``'Forest:poly3'`` for the fourth polygon of
+the Forest layer), the pixel centre coordinates ``x`` and ``y``
+(``include_coords=True``) and one column per feature.
 
 * The **training** set fits the model.
 * The **validation** set is used to choose hyperparameters (or for early
@@ -231,35 +236,45 @@ and, with ``include_coords=True``, the pixel centre coordinates ``x`` and
 a model trained on unbalanced data favours the large classes.
 ``max_cls_smpls`` caps the number of pixels per class (before splitting),
 which also keeps training fast; ``n_train`` / ``n_test`` / ``n_valid`` set
-exact numbers per class. The models below also use
+the numbers per class (upper limits with ``group_col``, as whole polygons
+are kept together). The models below also use
 ``class_weight='balanced'``.
 
 **Spatial autocorrelation.** Neighbouring pixels, especially pixels inside
-the same training polygon, are very similar. The split above is random, so
-the test pixels usually have near-identical neighbours in the training set,
-and the test accuracy is **optimistic**: it measures how well the model
-recognises the training polygons, not how well it maps new places. Two things
-reduce this problem:
+the same training polygon, are very similar. If the pixels were split at
+random, the test pixels would have near-identical neighbours from the same
+polygons in the training set, and the test accuracy would be
+**optimistic**: it would measure how well the model recognises the training
+polygons, not how well it maps new places. Three things reduce this problem:
 
+* split by **polygon**. With ``group_col='train_grp'`` the source polygon
+  of each pixel is recorded in that column and whole polygons go to the
+  training, validation or test table, still stratified by class: for each
+  class the polygons are dealt out so that the tables come as close to the
+  requested proportions as the polygon sizes allow. Every table gets at
+  least one polygon of each class when the class has at least three
+  polygons; with fewer, a warning is given. Without ``group_col`` the
+  pixels are split at random (``poly_id_col='train_grp'`` records the
+  polygons without changing the split);
 * use **spatially blocked cross-validation** for tuning and for estimating
-  accuracy. :class:`~rsgispy.ml.cv.SpatialBlockKFold` divides the area into
-  square blocks of ``block_size`` metres and assigns whole blocks to folds,
-  so training and validation pixels in a fold are never close together.
-  Choose a block size larger than the training polygons and than the
-  distance over which the features are correlated (often 1–5 km for
+  accuracy (step 6). :class:`~rsgispy.ml.cv.SpatialBlockKFold` divides the
+  area into square blocks of ``block_size`` metres and assigns whole blocks
+  to folds, so training and validation pixels in a fold are never close
+  together. Choose a block size larger than the training polygons and than
+  the distance over which the features are correlated (often 1–5 km for
   Sentinel-2 land cover). ``stratify=True`` balances the classes between
-  folds (it needs the labels, passed as ``y`` to ``split()``). The folds are made once here, as a list of index arrays, and reused
-  in step 6;
+  folds. :class:`~rsgispy.ml.cv.PolygonGroupKFold` (with
+  ``groups='train_grp'``) keeps each polygon in one fold instead, and
+  :class:`~rsgispy.ml.cv.SpatialBufferCV` also removes training samples
+  within a buffer distance of each validation fold;
 * use an **independent accuracy assessment** (step 10), which is the only
   unbiased estimate of map accuracy.
 
-If you want to keep the pixels of each polygon together instead,
-:meth:`ImageFeatureStack.extract_polygons() <rsgispy.ml.stack.ImageFeatureStack.extract_polygons>`
-(``cls_cfg.to_feature_stack().extract_polygons(vec_file)``) returns a
-``poly_fid`` column that can be used as ``groups`` with
-:class:`~rsgispy.ml.cv.PolygonGroupKFold`, and
-:class:`~rsgispy.ml.cv.SpatialBufferCV` also removes training samples within
-a buffer distance of each validation fold.
+The ``train_grp`` column is kept when the tables are written and read
+(:func:`~rsgispy.classification.classdata.write_cls_samples`,
+:func:`~rsgispy.classification.classdata.read_cls_samples`), and
+:func:`~rsgispy.classification.classdata.split_class_samples` splits an
+existing table by it (``group_col='train_grp'``).
 
 .. literalinclude:: ../examples/pixel_classification_workflow.py
    :language: python
@@ -268,7 +283,7 @@ a buffer distance of each validation fold.
    :dedent: 4
 
 **Check:** every class has enough samples (at least a few hundred pixels from
-several polygons), and every spatial fold is non-empty.
+several polygons), and every table has polygons of every class.
 
 Step 4 — Exploring the features
 -------------------------------
@@ -366,11 +381,17 @@ tries combinations of hyperparameters and returns the model with the best
 cross-validated score, refitted on all the training data. ``search_method``
 is ``'grid'`` (every combination), ``'random'`` (``n_iter`` random
 combinations) or ``'optuna'`` (Bayesian optimisation with ``n_trials``
-trials; with ``param_space=None`` a built-in space is used). Passing the
-spatial folds from step 3 as ``cv`` makes the search choose parameters that
-work in new places rather than parameters that memorise the training
-polygons. ``balanced_accuracy`` (the mean recall of the classes) is a better
-score than accuracy when the classes are unbalanced.
+trials; with ``param_space=None`` a built-in space is used). Passing a
+:class:`~rsgispy.ml.cv.SpatialBlockKFold` as ``cv``, with the names of the
+coordinate columns of the training table as ``coords``, makes the search
+choose parameters that work in new places rather than parameters that
+memorise the training polygons. The folds are made once and used for every
+combination. For polygon-grouped folds pass
+``cv=PolygonGroupKFold(n_splits=4)`` with ``groups='train_grp'`` instead
+(``groups`` and ``coords`` also accept arrays, and an integer ``cv`` with
+``groups`` or ``coords`` gives grouped or spatial folds).
+``balanced_accuracy`` (the mean recall of the classes) is a better score
+than accuracy when the classes are unbalanced.
 
 For a Random Forest the parameters that matter are ``max_features`` (the
 number of features tried at each split; smaller values give more diverse,
@@ -572,10 +593,11 @@ class means the MMU or the filter is too aggressive for it.
 Step 10 — Accuracy assessment
 -----------------------------
 
-The training/test split of step 3 is **not** an accuracy assessment: the
-test pixels come from the same polygons (or the same places) as the training
-pixels, were chosen by the analyst (usually in easy, typical places), and
-do not represent the map's classes in proportion to their area. The
+The training/test split of step 3 is **not** an accuracy assessment: even
+with whole polygons in each table, the test polygons are often close to the
+training polygons, were drawn by the analyst (usually in easy, typical
+places), and do not represent the map's classes in proportion to their
+area. The
 accuracy of the map, and unbiased estimates of the area of each class, need
 an independent **probability sample** of reference points (Olofsson et al.,
 2014, *Remote Sensing of Environment*, 148, 42–57):
@@ -713,10 +735,11 @@ Common problems
   value lets fill values into the training data. GLCM texture uses the input
   no data value for its output, so a valid texture value equal to it would
   be masked.
-* **"more than one 'dtype' found"** — a VRT stack of images with different
-  data types cannot be read in one operation; keep images of different types
-  as separate :class:`~rsgispy.classification.classdata.ImageBandInfo`
-  entries, as in step 2.
+* **"fewer than the 3 sets requested"** — a class has fewer training
+  polygons than tables, so the grouped split cannot give every table a
+  polygon of it. Add training polygons (several small polygons spread over
+  the area are better than one large one), or reduce ``test_prop`` /
+  ``valid_prop`` (e.g. ``valid_prop=0`` with cross-validation for tuning).
 * **Feature names do not match when applying** — the model was trained with
   a different feature list (e.g. before feature selection). Apply it with
   the configuration used for training (here ``cls_config_selected.json``).
@@ -725,7 +748,10 @@ Common problems
   dates) or more varied training data, or merge the classes.
 * **Spatial CV fails or folds are empty** — the ``block_size`` is too large
   for the area (fewer blocks than folds) or a class occurs in only one place;
-  use a smaller block size, fewer folds or more training polygons.
+  use a smaller block size, fewer folds or more training polygons. A
+  ``SpatialBlockKFold`` passed as ``cv`` needs ``coords`` (and a
+  ``PolygonGroupKFold`` needs ``groups``), and the tables need the ``x`` /
+  ``y`` (``include_coords=True``) and ``train_grp`` columns.
 * **Optional dependencies** — XGBoost/LightGBM/CatBoost need the ``gbdt``
   extra; SHAP, BorutaShap and SALib need the ``modelling`` extra. The example
   script switches these steps off when a package is not installed.

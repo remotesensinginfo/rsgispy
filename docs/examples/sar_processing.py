@@ -51,7 +51,6 @@ def run_workflow(
     # [step-1-linear]
     import rsgispy
     from rsgispy.imagecalc.maths import BandDefn, band_maths
-    from rsgispy.imageutils.stats import pop_img_stats
 
     pols = [pol.lower() for pol in pol_names]  # band variable names: vv, vh
     if in_units.lower() == "db":
@@ -64,9 +63,10 @@ def run_workflow(
             [BandDefn(p, s1_img, idx) for idx, p in enumerate(pols, start=1)],
             band_names=list(pol_names),
             datatype=rsgispy.TYPE_32FLOAT,
+            no_data_val=0.0,
+            calc_stats=True,
             use_pbar=use_pbar,
         )
-        pop_img_stats(lin_img, no_data_val=0.0, use_pbar=use_pbar)
     else:
         lin_img = s1_img  # already linear power (sigma0 / gamma0)
     # [end-step-1-linear]
@@ -145,9 +145,10 @@ def run_workflow(
         [BandDefn(p, filt_img, idx) for idx, p in enumerate(pols, start=1)],
         band_names=[f"{pol}_dB" for pol in pol_names],
         datatype=rsgispy.TYPE_32FLOAT,
+        no_data_val=-9999.0,
+        calc_stats=True,
         use_pbar=use_pbar,
     )
-    pop_img_stats(db_img, no_data_val=-9999.0, use_pbar=use_pbar)
     # [end-step-4-db]
     out["db_img"] = db_img
 

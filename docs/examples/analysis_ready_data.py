@@ -237,7 +237,6 @@ def run_workflow(  # noqa: C901
         calc_imgs_pxl_percentiles,
     )
     from rsgispy.imageutils.metadata import get_band_names, set_band_names
-    from rsgispy.imageutils.stats import pop_img_stats
 
     comp_dir = os.path.join(out_dir, "composites")
     os.makedirs(comp_dir, exist_ok=True)
@@ -248,16 +247,12 @@ def run_workflow(  # noqa: C901
         calc_img_band_pxl_percentiles(imgs, med_img, [50], no_data_val=0,
                                       use_pbar=use_pbar)
         set_band_names(med_img, get_band_names(imgs[0]))  # 'Blue', 'Green', ...
-        pop_img_stats(med_img, no_data_val=0, calc_pyramids=True,
-                      use_pbar=use_pbar)
 
         ndvi_pcts_img = os.path.join(comp_dir, f"{tile}_ndvi_p10_p50_p90.tif")
         # All the bands of all the inputs are pooled: one band per percentile
         calc_imgs_pxl_percentiles(ndvi_imgs[tile], ndvi_pcts_img, [10, 50, 90],
                                   no_data_val=-999, use_pbar=use_pbar)
         set_band_names(ndvi_pcts_img, ["NDVI_P10", "NDVI_P50", "NDVI_P90"])
-        pop_img_stats(ndvi_pcts_img, no_data_val=-999, calc_pyramids=True,
-                      use_pbar=use_pbar)
 
         # Number of clear-sky observations contributing to each pixel
         n_obs_img = os.path.join(comp_dir, f"{tile}_n_clear_obs.tif")
@@ -272,12 +267,9 @@ def run_workflow(  # noqa: C901
     out["composites"] = composites
 
     # [step-7-mosaic]
-    import rsgispy.imageutils.envopts
     import rsgispy.imageutils.mosaic
     import rsgispy.imageutils.vrt
 
-    # Deflate-compressed Cloud Optimised GeoTIFF outputs (set once per process)
-    rsgispy.imageutils.envopts.set_env_vars_deflate_cog_outs()
     mosaics: Dict[str, str] = {}
     for product, no_data in (("sref", 0), ("ndvi", -999)):
         tile_imgs = [comp[product] for comp in composites.values()]
@@ -285,15 +277,14 @@ def run_workflow(  # noqa: C901
         rsgispy.imageutils.vrt.create_mosaic_images_vrt(
             tile_imgs, vrt_file, src_nodata=no_data, vrt_nodata=no_data
         )
-        mosaic_img = os.path.join(out_dir, f"{product}_mosaic_cog.tif")
+        mosaic_img = os.path.join(out_dir, f"{product}_mosaic.tif")
         rsgispy.imageutils.mosaic.create_img_mosaic(
             tile_imgs,
             mosaic_img,
             background_val=no_data,
             skip_val=no_data,  # ignore no data pixels (in band 1)
             overlap_behaviour=0,  # overlaps: later images overwrite earlier
-            gdalformat="COG",
-            calc_stats=False,  # writing statistics would break the COG layout
+            gdalformat="GTIFF",  # tiled, DEFLATE-compressed, with statistics
             use_pbar=use_pbar,
         )
         mosaics[product] = mosaic_img

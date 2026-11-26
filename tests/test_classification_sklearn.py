@@ -798,3 +798,134 @@ def test_optuna_progress_bar_option(tmp_path, monkeypatch):
         use_pbar=False,
     )
     assert recorded == [True, False]
+
+
+def _grouped_cls_samples(n_polys: int = 12, n_pxls: int = 8) -> pd.DataFrame:
+    """Pixel samples of two classes from ``n_polys`` polygons spread in space."""
+    rng = np.random.default_rng(0)
+    rows = []
+    for p_idx in range(n_polys):
+        cls_id = p_idx % 2
+        cx, cy = 1000.0 * (p_idx % 4), 1000.0 * (p_idx // 4)
+        for _ in range(n_pxls):
+            rows.append(
+                {
+                    "class_name": "A" if cls_id == 0 else "B",
+                    "out_cls_id": cls_id + 1,
+                    "internal_cls_id": cls_id,
+                    "train_grp": f"{'AB'[cls_id]}:poly{p_idx}",
+                    "x": cx + rng.uniform(0, 30),
+                    "y": cy + rng.uniform(0, 30),
+                    "f1": cls_id * 5.0 + rng.normal(0, 1),
+                    "f2": rng.normal(0, 1),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _assert_splits_keep_groups(splits, groups):
+    """No group in both the training and validation indices of a fold."""
+    groups = np.asarray(groups)
+    assert len(splits) >= 2
+    for tr_idx, val_idx in splits:
+        assert len(tr_idx) and len(val_idx)
+        assert set(groups[tr_idx]).isdisjoint(groups[val_idx])
+
+
+def test_param_search_with_spatial_and_group_splitters():
+    """rsgispy.ml.cv splitters are passed directly with coords= and groups=."""
+    from rsgispy.ml.cv import PolygonGroupKFold, SpatialBlockKFold
+
+    train_df = _grouped_cls_samples()
+    cls_info = {
+        "A": rcd.ClassInfoObj(out_id=1),
+        "B": rcd.ClassInfoObj(out_id=2),
+    }
+    common = dict(
+        cls_cfg=cls_info,
+        sk_classifier=RandomForestClassifier(n_estimators=10, random_state=0),
+        train_data=train_df,
+        param_space={"max_depth": [2, None]},
+        feature_cols=["f1", "f2"],
+        rnd_seed=1,
+        return_results=True,
+    )
+    xy = train_df[["x", "y"]].to_numpy()
+
+    # Spatial blocks: coords as two column names or as an (n, 2) array.
+    spatial_cv = SpatialBlockKFold(n_splits=3, block_size=1500.0, rnd_seed=3)
+    expected = list(spatial_cv.split(train_df, coords=xy))
+    for coords in (("x", "y"), xy):
+        _, res = rcsk.perform_sklearn_classifier_param_search(
+            cv=spatial_cv, coords=coords, **common
+        )
+        cv_used = res["search_obj"].cv
+        assert len(cv_used) == len(expected)
+        for (tr_a, va_a), (tr_b, va_b) in zip(cv_used, expected):
+            np.testing.assert_array_equal(tr_a, tr_b)
+            np.testing.assert_array_equal(va_a, va_b)
+
+    # Polygon groups: whole polygons in each fold (column name or array).
+    for groups in ("train_grp", train_df["train_grp"].to_numpy()):
+        _, res = rcsk.perform_sklearn_classifier_param_search(
+            cv=PolygonGroupKFold(n_splits=3, stratify=True), groups=groups,
+            **common,
+        )
+        _assert_splits_keep_groups(res["search_obj"].cv, train_df["train_grp"])
+        assert res["best_score"] > 0.8
+
+    # An integer cv with groups uses polygon-grouped folds.
+    _, res = rcsk.perform_sklearn_classifier_param_search(
+        cv=3, groups="train_grp", **common
+    )
+    _assert_splits_keep_groups(res["search_obj"].cv, train_df["train_grp"])
+
+    # A pre-configured GridSearchCV with a group splitter.
+    gs_obj = GridSearchCV(
+        RandomForestClassifier(n_estimators=10, random_state=0),
+        {"max_depth": [2, None]},
+        cv=PolygonGroupKFold(n_splits=3),
+    )
+    _, res = rcsk.perform_sklearn_classifier_param_search(
+        cls_info, gs_obj, train_df, feature_cols=["f1", "f2"],
+        groups="train_grp", return_results=True,
+    )
+    _assert_splits_keep_groups(res["search_obj"].cv, train_df["train_grp"])
+
+    # Optuna scores the trials on the same folds.
+    if importlib.util.find_spec("optuna") is not None:
+        best, res = rcsk.perform_sklearn_classifier_param_search(
+            cls_info,
+            RandomForestClassifier(n_estimators=10, random_state=0),
+            train_df,
+            param_space={"max_depth": [2, 4]},
+            search_method="optuna",
+            n_trials=2,
+            cv=PolygonGroupKFold(n_splits=3),
+            groups="train_grp",
+            feature_cols=["f1", "f2"],
+            return_results=True,
+            use_pbar=False,
+        )
+        assert isinstance(best, RandomForestClassifier)
+        assert res["best_score"] > 0.8
+
+    # Missing or invalid coords / groups give clear errors.
+    with pytest.raises(rsgispy.RSGISPyException, match="coords"):
+        rcsk.perform_sklearn_classifier_param_search(cv=spatial_cv, **common)
+    with pytest.raises(rsgispy.RSGISPyException, match="groups"):
+        rcsk.perform_sklearn_classifier_param_search(
+            cv=PolygonGroupKFold(n_splits=3), **common
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rcsk.perform_sklearn_classifier_param_search(
+            cv=3, groups="missing_col", **common
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rcsk.perform_sklearn_classifier_param_search(
+            cv=3, groups=np.arange(5), **common
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rcsk.perform_sklearn_classifier_param_search(
+            cv=3, coords=("x", "y", "z"), **common
+        )

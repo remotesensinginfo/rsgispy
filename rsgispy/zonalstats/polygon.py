@@ -46,6 +46,7 @@ from rsgispy.zonalstats._helpers import (
     load_zonal_vec_gdf as _load_zonal_vec_gdf,
     open_validated_zonal_inputs as _open_validated_zonal_inputs,
     open_validated_zonal_multiband_inputs as _open_validated_zonal_multiband_inputs,
+    read_bands_native as _read_bands_native,
     run_zonal_file_op as _run_zonal_file_op,
     sample_point_pixel as _sample_point_pixel,
 )
@@ -1064,7 +1065,9 @@ def _extract_poly_pxl_chunk(
     if window.width <= 0 or window.height <= 0:
         return None
 
-    arr = src.read(bands_list, window=window)
+    # One read for all bands, each band returned in its own data type (bands
+    # of different types, e.g. from a VRT stack, cannot be read together).
+    arr = _read_bands_native(src, bands_list, window=window)
     sub_transform = rasterio.windows.transform(window, src.transform)
     rv_array = rasterize(
         [(geom, 1)],
@@ -1102,7 +1105,7 @@ def _extract_poly_pxl_chunk(
         data["y"] = np.asarray(ys, dtype=np.float64)
 
     for b_idx, col_name in enumerate(band_col_names):
-        data[col_name] = arr[b_idx, rows, cols]
+        data[col_name] = arr[b_idx][rows, cols]
 
     return pd.DataFrame(data)
 
@@ -1133,6 +1136,11 @@ def export_poly_pxls_to_df(
     with ``poly_fid`` identifying the 0-based polygon index, optional polygon
     attribute columns (``attr_cols``), optional pixel-centre coordinates
     (``x``, ``y``), and one column per selected raster band.
+
+    The bands may have different data types (e.g. a VRT from
+    :func:`rsgispy.imageutils.vrt.create_stack_images_vrt` stacking ``uint16``
+    reflectance and ``float32`` indices): each band column keeps the band's
+    data type and is compared with the band's own no data value.
 
     :param vec_gdf: Input :class:`geopandas.GeoDataFrame` or vector file path
                     containing polygon geometries.

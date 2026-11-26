@@ -47,13 +47,13 @@ Overview
 
 .. code-block:: text
 
-   Sentinel-2 SREF + DEM ─► 1. features (indices, slope; VRT stack)
+   Sentinel-2 SREF + DEM ─► 1. features (bands, indices, slope; one VRT stack)
             │
             ▼
    2. RegressionConfig (JSON) ◄── field plots with canopy_cover (%)
             │
             ▼
-   3. Samples ─► train / test / calibration tables (+ x, y)
+   3. Samples ─► train / test / calibration tables (+ x, y, plot ID)
             │
             ▼
    4. Explore (target scatter plots, correlation, VIF)
@@ -95,8 +95,10 @@ The features are built exactly as in the classification guide (step 1 there
 explains the choices): spectral indices with
 :func:`~rsgispy.imagecalc.calcindices.calc_indices`, slope with
 :func:`~rsgispy.elevation.terrain.slope` resampled onto the image grid with
-:func:`~rsgispy.imageutils.warp.resample_img_to_match`, and a virtual stack of
-the derived layers with :func:`~rsgispy.imageutils.vrt.create_stack_images_vrt`.
+:func:`~rsgispy.imageutils.warp.resample_img_to_match`, and one virtual stack
+of the Sentinel-2 bands (``uint16``) and the derived layers (``float32``)
+with :func:`~rsgispy.imageutils.vrt.create_stack_images_vrt`, each band
+keeping its own data type and no data value.
 For canopy cover, vegetation indices that do not saturate quickly at high
 cover (EVI) and moisture indices (NDMI, sensitive to canopy water) are useful
 additions to NDVI.
@@ -146,11 +148,19 @@ Options specific to regression:
   so that every table covers the full range of values. Without it, a small
   test set can miss the rare high or low values;
 * ``include_coords=True`` keeps the ``x`` and ``y`` columns for spatial
-  cross-validation.
+  cross-validation;
+* ``group_col='train_grp'`` records the source plot of each sample in that
+  column (``'pt<n>'`` for the ``n``-th point, ``'poly<n>'`` for a polygon)
+  and puts all samples of a plot in the same table.
 
 If a plot is larger than a pixel, all of its pixels get the plot's value;
-they are not independent samples, so prefer plot sizes similar to the pixel
-size, or average the pixels of each plot before training.
+they are not independent samples. With ``group_col`` they stay together in
+one table (and ``groups='train_grp'`` with
+:class:`~rsgispy.ml.cv.PolygonGroupKFold` keeps them in one fold when
+tuning), so the test error is not flattered by pixels of the training plots;
+still, prefer plot sizes similar to the pixel size, or average the pixels of
+each plot before training. Here the plots are points, so each plot is its
+own group.
 
 .. literalinclude:: ../examples/pixel_regression_workflow.py
    :language: python
@@ -206,9 +216,12 @@ Step 5 — Training and optimisation
 
 :func:`~rsgispy.regression.regsklearn.perform_sklearn_regressor_param_search`
 searches the hyperparameters of any scikit-learn regressor (here a Random
-Forest) using the spatially blocked folds from
-:class:`~rsgispy.ml.cv.SpatialBlockKFold` (see the classification guide for
-why random folds are optimistic and how to choose ``block_size``).
+Forest) using spatially blocked folds: a
+:class:`~rsgispy.ml.cv.SpatialBlockKFold` is passed as ``cv`` with the
+coordinate columns of the training table as ``coords`` (see the
+classification guide for why random folds are optimistic and how to choose
+``block_size``; :class:`~rsgispy.ml.cv.PolygonGroupKFold` with
+``groups='train_grp'`` keeps the pixels of each plot in one fold instead).
 ``scoring='neg_root_mean_squared_error'`` chooses the parameters with the
 lowest RMSE; ``'r2'`` is the default.
 :func:`~rsgispy.regression.regsklearn.train_sklearn_regressor` then fits the

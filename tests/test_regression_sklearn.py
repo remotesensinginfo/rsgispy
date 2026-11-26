@@ -304,3 +304,72 @@ def test_sklearn_multivariate_native_and_autowrap(tmp_path: Path):
         rnd_seed=42,
     )
     assert isinstance(searched_svr, MultiOutputRegressor)
+
+
+def test_regressor_param_search_with_spatial_and_group_splitters():
+    """rsgispy.ml.cv splitters are passed directly with coords= and groups=."""
+    from rsgispy.ml.cv import PolygonGroupKFold, SpatialBlockKFold
+
+    rng = np.random.default_rng(1)
+    rows = []
+    for p_idx in range(12):
+        target = 10.0 * p_idx
+        for _ in range(6):
+            rows.append(
+                {
+                    "cover": target,
+                    "train_grp": f"poly{p_idx}",
+                    "x": 1000.0 * (p_idx % 4) + rng.uniform(0, 30),
+                    "y": 1000.0 * (p_idx // 4) + rng.uniform(0, 30),
+                    "f1": target / 10.0 + rng.normal(0, 0.2),
+                    "f2": rng.normal(0, 1),
+                }
+            )
+    train_df = pd.DataFrame(rows)
+    common = dict(
+        reg_cfg=None,
+        sk_regressor=RandomForestRegressor(n_estimators=10, random_state=0),
+        train_data=train_df,
+        target_cols="cover",
+        param_space={"max_depth": [2, None]},
+        feature_cols=["f1", "f2"],
+        rnd_seed=1,
+        return_results=True,
+    )
+    spatial_cv = SpatialBlockKFold(n_splits=3, block_size=1500.0, rnd_seed=3)
+    _, res = rsk.perform_sklearn_regressor_param_search(
+        cv=spatial_cv, coords=("x", "y"), **common
+    )
+    expected = list(
+        spatial_cv.split(train_df, coords=train_df[["x", "y"]].to_numpy())
+    )
+    assert len(res["search_obj"].cv) == len(expected)
+    for (tr_a, va_a), (tr_b, va_b) in zip(res["search_obj"].cv, expected):
+        np.testing.assert_array_equal(tr_a, tr_b)
+        np.testing.assert_array_equal(va_a, va_b)
+
+    grp = train_df["train_grp"].to_numpy()
+    for cv in (PolygonGroupKFold(n_splits=3), 3):
+        _, res = rsk.perform_sklearn_regressor_param_search(
+            cv=cv, groups="train_grp", **common
+        )
+        for tr_idx, va_idx in res["search_obj"].cv:
+            assert set(grp[tr_idx]).isdisjoint(grp[va_idx])
+
+    pytest.importorskip("optuna")
+    best = rsk.perform_sklearn_regressor_param_search(
+        reg_cfg=None,
+        sk_regressor=RandomForestRegressor(n_estimators=10, random_state=0),
+        train_data=train_df,
+        target_cols="cover",
+        param_space={"max_depth": [2, 4]},
+        feature_cols=["f1", "f2"],
+        search_method="optuna",
+        n_trials=2,
+        cv=spatial_cv,
+        coords=train_df[["x", "y"]].to_numpy(),
+        use_pbar=False,
+    )
+    assert isinstance(best, RandomForestRegressor)
+    with pytest.raises(rsgispy.RSGISPyException, match="coords"):
+        rsk.perform_sklearn_regressor_param_search(cv=spatial_cv, **common)

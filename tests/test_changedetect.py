@@ -236,6 +236,119 @@ def test_sfa_and_mad_change_detection(tmp_path):
     assert np.mean(mad_b[0:4, 0:4]) > 0.75
 
 
+def _make_one_date_hole_pair(tmp_path):
+    """Two 3-band dates; date 2 has a no-data (0) hole that date 1 does not."""
+    rng = np.random.default_rng(11)
+    base_arr = rng.uniform(1000.0, 1500.0, size=(3, 12, 12)).astype(np.float32)
+    chng_arr = (base_arr + rng.normal(0.0, 10.0, size=base_arr.shape)).astype(
+        np.float32
+    )
+    chng_arr[:, 0:4, 0:4] += 800.0  # real change
+    chng_arr[:, 8:11, 8:11] = 0.0  # no data on date 2 only (e.g. cloud)
+    base_path = tmp_path / "hole_base.tif"
+    chng_path = tmp_path / "hole_chng.tif"
+    _write_raster(base_path, base_arr)
+    _write_raster(chng_path, chng_arr)
+    hole = np.zeros((12, 12), dtype=bool)
+    hole[8:11, 8:11] = True
+    return str(base_path), str(chng_path), hole
+
+
+@pytest.mark.parametrize("func_name", ["image_difference", "image_ratio"])
+def test_band_change_no_mask_requires_both_dates(tmp_path, func_name):
+    """Without a valid mask, a pixel with data on one date only is no data."""
+    base_path, chng_path, hole = _make_one_date_hole_pair(tmp_path)
+    out_img = tmp_path / f"{func_name}.tif"
+    getattr(icm, func_name)(
+        base_path, chng_path, str(out_img), no_data_val=-9999.0, use_pbar=False
+    )
+    with rasterio.open(out_img) as src:
+        out_arr = src.read()
+        assert src.nodata == -9999.0
+    assert np.all(out_arr[:, hole] == -9999.0)
+    assert np.all(out_arr[:, ~hole] != -9999.0)
+
+
+def test_cva_no_mask_requires_both_dates(tmp_path):
+    """CVA without a valid mask leaves pixels with data on one date as no data."""
+    base_path, chng_path, hole = _make_one_date_hole_pair(tmp_path)
+    out_bin = tmp_path / "cva_bin.tif"
+    out_dist = tmp_path / "cva_dist.tif"
+    icm.change_vector_analysis(
+        base_path, chng_path, str(out_bin), str(out_dist),
+        no_data_val=-9999.0, use_pbar=False,
+    )
+    with rasterio.open(out_bin) as src:
+        bin_arr = src.read(1)
+    with rasterio.open(out_dist) as src:
+        dist_arr = src.read(1)
+    assert np.all(bin_arr[hole] == 255)
+    assert np.all(dist_arr[hole] == -9999.0)
+    assert np.all(bin_arr[0:4, 0:4] == 1)
+    assert np.all(bin_arr[~hole] != 255)
+
+
+@pytest.mark.skipif(not icm.HAVE_SCIPY, reason="scipy not installed")
+def test_sfa_mad_no_mask_requires_both_dates(tmp_path):
+    """SFA and IR-MAD without a valid mask leave one-date pixels as no data."""
+    base_path, chng_path, hole = _make_one_date_hole_pair(tmp_path)
+    sfa_bin = tmp_path / "sfa_bin.tif"
+    sfa_dist = tmp_path / "sfa_dist.tif"
+    icm.slow_feature_analysis(
+        base_path, chng_path, str(sfa_bin), str(sfa_dist),
+        sfa_max_iter=10, no_data_val=-9999.0, use_pbar=False,
+    )
+    with rasterio.open(sfa_bin) as src:
+        assert np.all(src.read(1)[hole] == 255)
+    with rasterio.open(sfa_dist) as src:
+        assert np.all(src.read(1)[hole] == -9999.0)
+
+    mad_bin = tmp_path / "mad_bin.tif"
+    mad_dist = tmp_path / "mad_dist.tif"
+    mad_vars = tmp_path / "mad_vars.tif"
+    icm.multivariate_alteration_detection(
+        base_path, chng_path, str(mad_bin), str(mad_dist), str(mad_vars),
+        mad_max_iter=10, use_kmeans=False, no_data_val=-9999.0, use_pbar=False,
+    )
+    with rasterio.open(mad_bin) as src:
+        assert np.all(src.read(1)[hole] == 255)
+    with rasterio.open(mad_dist) as src:
+        assert np.all(src.read(1)[hole] == -9999.0)
+    with rasterio.open(mad_vars) as src:
+        assert np.all(src.read()[:, hole] == -9999.0)
+
+
+def test_array_outputs_pass_use_pbar_and_skip_double_stats(tmp_path, monkeypatch):
+    """CVA/SFA/MAD write their outputs without stats or progress bars there."""
+    base_path, chng_path, _ = _make_one_date_hole_pair(tmp_path)
+    calls = []
+    orig = icm.create_img_from_array_ref_img
+
+    def _spy(*args, **kwargs):
+        calls.append(kwargs)
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(icm, "create_img_from_array_ref_img", _spy)
+    icm.change_vector_analysis(
+        base_path, chng_path, str(tmp_path / "b.tif"), str(tmp_path / "d.tif"),
+        use_pbar=False,
+    )
+    if icm.HAVE_SCIPY:
+        icm.slow_feature_analysis(
+            base_path, chng_path, str(tmp_path / "sb.tif"), str(tmp_path / "sd.tif"),
+            sfa_max_iter=5, use_pbar=False,
+        )
+        icm.multivariate_alteration_detection(
+            base_path, chng_path, str(tmp_path / "mb.tif"), str(tmp_path / "md.tif"),
+            str(tmp_path / "mv.tif"), mad_max_iter=5, use_kmeans=False,
+            use_pbar=False,
+        )
+    assert len(calls) == (7 if icm.HAVE_SCIPY else 2)
+    for kwargs in calls:
+        assert kwargs.get("use_pbar") is False
+        assert kwargs.get("calc_stats") is False
+
+
 def test_pxloutlierchng_methods(tmp_path):
     """Verify Otsu, Li, PyOD, and Kurtosis/Skewness class outlier methods."""
     img_path = tmp_path / "vals.tif"

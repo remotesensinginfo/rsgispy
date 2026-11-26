@@ -289,9 +289,9 @@ pseudo-absences.
 
 * :func:`~rsgispy.modelling.species_distribution.fit_sklearn_mdl` fits one
   model on the training set and returns the training and test accuracy and
-  the test ROC AUC, and writes the ROC curve (``roc_curve_plot``). With
-  ``return_model=True`` the fitted model is also returned (as the first value)
-  and the estimator you passed in is left unchanged.
+  the test ROC AUC (``roc_curve_plot`` also writes the model's ROC curve).
+  With ``return_model=True`` the fitted model is also returned (as the first
+  value) and the estimator you passed in is left unchanged.
 * :func:`~rsgispy.modelling.species_distribution.fit_kfold_sklearn_mdls` fits
   ``n_kfolds`` models, each on a random ``fold_prop`` fraction of the
   training samples (drawn with replacement by default, like bagging), and
@@ -341,8 +341,11 @@ Step 7 — Evaluating the ensemble
 
 The ensemble prediction for a sample is the median of its members' presence
 probabilities (the same rule used for the raster in step 10).
-:func:`rsgispy.tools.accuracy.bin_accuracy_scores_prob` compares it with the
-test labels:
+:func:`~rsgispy.modelling.species_distribution.get_positive_class_probs`
+returns a model's presence probabilities: the ``predict_proba`` column of
+class ``1``, whatever the order of the classes.
+:func:`rsgispy.tools.accuracy.bin_accuracy_scores_prob` compares the ensemble
+prediction with the test labels:
 
 * **Test AUC** — the area under the ROC curve: the probability that a randomly
   chosen presence gets a higher score than a randomly chosen pseudo-absence.
@@ -366,10 +369,12 @@ test labels:
    {'Test AUC': 0.936, 'Point-Biserial r': 0.726, 'Av. Precision': 0.750,
     'Brier Score': 0.084, 'Log-Loss Score': 0.276}
 
-The ROC curve written in step 6 (``plots/roc_curve.png``) shows the trade-off
-between the true positive rate (sensitivity) and the false positive rate
-(1 − specificity) over all thresholds; a curve close to the top-left corner is
-good.
+:func:`~rsgispy.modelling.species_distribution.calc_binary_roc_auc` returns
+the ensemble's ROC curve and AUC, and
+:func:`~rsgispy.modelling.species_distribution.plot_roc_curve` writes the
+curve to ``plots/roc_curve.png``. It shows the trade-off between the true
+positive rate (sensitivity) and the false positive rate (1 − specificity) over
+all thresholds; a curve close to the top-left corner is good.
 
 Step 8 — Spatial cross-validation
 ---------------------------------
@@ -522,7 +527,11 @@ which training samples were used and should be treated with caution.
 The variable names passed as ``analysis_vars`` must be in the same order as
 for training. Single models are applied with
 :func:`~rsgispy.modelling.species_distribution.pred_sklearn_mdl_prob` and
-:func:`~rsgispy.modelling.species_distribution.pred_sklearn_mdl_cls`.
+:func:`~rsgispy.modelling.species_distribution.pred_sklearn_mdl_cls`. For
+anything these functions do not cover (e.g. the mean instead of the median of
+the ensemble, or a hand-written suitability index),
+:func:`~rsgispy.modelling.species_distribution.predict_raster_from_env_vars`
+applies your own function to the variable table of each block of valid pixels.
 To display the map, use
 :func:`rsgispy.mapping.raster.create_raster_cmap_img_map` with a sequential
 colour map.
@@ -548,8 +557,10 @@ balanced class weights, 0.5 has no special meaning. Common choices are:
   very inclusive, sensitive to outliers.
 
 The example computes the maximum-TSS threshold from the ensemble predictions
-of the test set (step 7) with ``sklearn.metrics.roc_curve``, reports the
-binary accuracy at that threshold with
+of the test set (step 7) with
+:func:`~rsgispy.modelling.species_distribution.calc_binary_threshold`
+(``method="max_tss"``; ``method="sens_eq_spec"`` gives the sensitivity =
+specificity threshold), reports the binary accuracy at that threshold with
 :func:`rsgispy.tools.accuracy.accuracy_scores_binary` (the "Hanssen-Kuiper
 skill" is the TSS), applies it to the probability raster with
 :func:`rsgispy.imagecalc.maths.band_maths` and computes the proportion of the

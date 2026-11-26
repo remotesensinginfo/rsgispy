@@ -12,7 +12,8 @@ no data value 0) on a 60 x 80 pixel grid in UTM (EPSG:32630), together with a
 * four land cover classes (Water, Forest, Grass, Urban) laid out as a 4 x 4
   chequer of 15 x 20 pixel blocks, so every class occurs in four separate
   places (needed for spatial cross-validation);
-* training polygons (one per block, two or three blocks per class);
+* training polygons (two per block, three blocks per class, so the grouped
+  train/test/validation split has whole polygons for every set);
 * accuracy assessment points with the reference class name (``ref_name``);
 * canopy cover plots (``canopy_cover``, %) for training a regression and a
   separate set of validation plots.
@@ -161,9 +162,11 @@ def make_pixel_scene(out_dir: str, seed: int = 0) -> Dict[str, str]:
     for name, blocks in _TRAIN_BLOCKS.items():
         polys = []
         for b_row, b_col in blocks:
-            row0, col0 = b_row * BLK_H + 4, b_col * BLK_W + 5
-            polys.append(box(X0 + col0 * RES, Y0 - (row0 + 7) * RES,
-                             X0 + (col0 + 10) * RES, Y0 - row0 * RES))
+            # Two 5 x 7 pixel polygons in opposite corners of the block.
+            for d_row, d_col in ((2, 2), (8, 11)):
+                row0, col0 = b_row * BLK_H + d_row, b_col * BLK_W + d_col
+                polys.append(box(X0 + col0 * RES, Y0 - (row0 + 5) * RES,
+                                 X0 + (col0 + 7) * RES, Y0 - row0 * RES))
         path = os.path.join(out_dir, f"train_{name.lower()}.gpkg")
         gpd.GeoDataFrame({"cls": [name] * len(polys)}, geometry=polys,
                          crs=crs).to_file(path)

@@ -14,6 +14,7 @@ import rsgispy
 from rsgispy import RSGISPyException
 from rsgispy.elevation._hydro_common import (
     _call_topo_kernel,
+    _reject_flow_acc_input,
     _has_numba,
     _read_d8_grid,
     _resolve_out_dtype,
@@ -256,7 +257,11 @@ def calc_twi(
     Parameters
     ----------
     specific_catchment_area_img : str
-        Path to the specific catchment area raster (``m^2 / m``).
+        Path to the specific catchment area raster (``m^2 / m``): a flow
+        accumulation in m² (``flow_accumulation(out_units='area')``) divided
+        by the contour width, usually the pixel size. A raster tagged as a
+        flow accumulation (``RSGISPY_FLOW_ACC_UNITS``) raises
+        :class:`rsgispy.RSGISPyException`.
     slope_img : str
         Path to the aligned terrain slope raster.
     output_img : str
@@ -293,6 +298,9 @@ def calc_twi(
         with ExitStack() as stack:
             sca_src = stack.enter_context(rasterio.open(specific_catchment_area_img, "r"))
             slp_src = stack.enter_context(rasterio.open(slope_img, "r"))
+            _reject_flow_acc_input(
+                sca_src, specific_catchment_area_img, "calc_twi"
+            )
             dx, _ = _validate_projected_crs(sca_src, specific_catchment_area_img)
             _validate_matching_grid(
                 sca_src, slp_src, specific_catchment_area_img, slope_img
@@ -349,7 +357,11 @@ def calc_spi(
     Parameters
     ----------
     specific_catchment_area_img : str
-        Path to the specific catchment area raster (``m^2 / m``).
+        Path to the specific catchment area raster (``m^2 / m``): a flow
+        accumulation in m² (``flow_accumulation(out_units='area')``) divided
+        by the contour width, usually the pixel size. A raster tagged as a
+        flow accumulation (``RSGISPY_FLOW_ACC_UNITS``) raises
+        :class:`rsgispy.RSGISPyException`.
     slope_img : str
         Path to the aligned terrain slope raster.
     output_img : str
@@ -381,6 +393,9 @@ def calc_spi(
         with ExitStack() as stack:
             sca_src = stack.enter_context(rasterio.open(specific_catchment_area_img, "r"))
             slp_src = stack.enter_context(rasterio.open(slope_img, "r"))
+            _reject_flow_acc_input(
+                sca_src, specific_catchment_area_img, "calc_spi"
+            )
             _validate_projected_crs(sca_src, specific_catchment_area_img)
             _validate_matching_grid(
                 sca_src, slp_src, specific_catchment_area_img, slope_img
@@ -436,7 +451,11 @@ def calc_ls_factor(
     Parameters
     ----------
     specific_catchment_area_img : str
-        Path to the specific catchment area raster (``m^2 / m``).
+        Path to the specific catchment area raster (``m^2 / m``): a flow
+        accumulation in m² (``flow_accumulation(out_units='area')``) divided
+        by the contour width, usually the pixel size. A raster tagged as a
+        flow accumulation (``RSGISPY_FLOW_ACC_UNITS``) raises
+        :class:`rsgispy.RSGISPyException`.
     slope_img : str
         Path to the aligned terrain slope raster.
     output_img : str
@@ -472,6 +491,9 @@ def calc_ls_factor(
         with ExitStack() as stack:
             sca_src = stack.enter_context(rasterio.open(specific_catchment_area_img, "r"))
             slp_src = stack.enter_context(rasterio.open(slope_img, "r"))
+            _reject_flow_acc_input(
+                sca_src, specific_catchment_area_img, "calc_ls_factor"
+            )
             _validate_projected_crs(sca_src, specific_catchment_area_img)
             _validate_matching_grid(
                 sca_src, slp_src, specific_catchment_area_img, slope_img

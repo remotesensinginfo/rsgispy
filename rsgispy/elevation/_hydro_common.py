@@ -6,7 +6,7 @@ helpers for :mod:`rsgispy.elevation.hydrology`.
 from contextlib import ExitStack
 import math
 import sys
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import pyproj
@@ -66,6 +66,16 @@ _D8_CODE_TO_ANGLE: Dict[int, float] = {
 }
 
 _D8_CODE_TO_IDX: Dict[int, int] = {int(code): idx for idx, code in enumerate(D8_CODES)}
+
+# Dataset metadata tag in which ``flow_accumulation`` records the units of its
+# output (``'cells'`` or ``'area'``, i.e. m2), read by ``extract_streams`` and
+# the terrain index functions.
+FLOW_ACC_UNITS_TAG = "RSGISPY_FLOW_ACC_UNITS"
+FLOW_ACC_UNITS = ("cells", "area")
+FLOW_ACC_BAND_DESCS: Dict[str, str] = {
+    "cells": "Flow accumulation (cells)",
+    "area": "Flow accumulation (m2)",
+}
 
 
 def _hydro_facade() -> Any:
@@ -272,9 +282,15 @@ def _write_raster_array(
     out_no_data_val: Optional[float],
     calc_stats: bool,
     use_pbar: bool,
+    *,
+    tags: Optional[Mapping[str, str]] = None,
+    band_descs: Optional[Sequence[str]] = None,
 ) -> None:
-    """Write a 2D or 3D array to disk using ``rsgispy`` conventions and stats."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    """
+    Write a 2D or 3D array to disk using ``rsgispy`` conventions and stats,
+    optionally with dataset metadata ``tags`` and band descriptions.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     grid = IntersectionGrid.from_dataset(ref_src)
     if arr.ndim == 2:
         count = 1
@@ -302,6 +318,11 @@ def _write_raster_array(
         if out_no_data_val is not None:
             dst.nodata = out_no_data_val
         dst.write(write_data)
+        if tags:
+            dst.update_tags(**{str(key): str(val) for key, val in tags.items()})
+        if band_descs:
+            for b_idx, desc in enumerate(band_descs, start=1):
+                dst.set_band_description(b_idx, desc)
 
     if calc_stats:
         pop_img_stats(
@@ -310,6 +331,71 @@ def _write_raster_array(
             calc_pyramids=True,
             ignore_cog=gdalformat.upper().strip() == "COG",
             use_pbar=use_pbar,
+        )
+
+
+def _read_flow_acc_units_tag(
+    src: rasterio.DatasetReader, img_path: str
+) -> Optional[str]:
+    """
+    Return the units (``'cells'`` or ``'area'``) recorded in the
+    ``RSGISPY_FLOW_ACC_UNITS`` tag of a flow accumulation raster, or ``None``
+    if the raster has no tag (e.g. written before the tag was introduced).
+    """
+    tag_val = src.tags().get(FLOW_ACC_UNITS_TAG)
+    if tag_val is None:
+        return None
+    units = str(tag_val).strip().lower()
+    if units not in FLOW_ACC_UNITS:
+        raise RSGISPyException(
+            f"Unrecognised {FLOW_ACC_UNITS_TAG} tag value '{tag_val}' in "
+            f"'{img_path}'. Expected 'cells' or 'area'."
+        )
+    return units
+
+
+def _resolve_flow_acc_units(
+    src: rasterio.DatasetReader, img_path: str, acc_units: str
+) -> str:
+    """
+    Resolve the units of a flow accumulation raster from ``acc_units``
+    (``'auto'``, ``'cells'`` or ``'area'``) and its ``RSGISPY_FLOW_ACC_UNITS``
+    tag. ``'auto'`` uses the tag, or ``'cells'`` when there is no tag; an
+    explicit value that contradicts the tag raises an exception.
+    """
+    acc_norm = str(acc_units).strip().lower()
+    if acc_norm not in ("auto",) + FLOW_ACC_UNITS:
+        raise RSGISPyException(
+            f"Invalid acc_units '{acc_units}'. Must be 'auto', 'cells' or 'area'."
+        )
+    tag_units = _read_flow_acc_units_tag(src, img_path)
+    if acc_norm == "auto":
+        return tag_units if tag_units is not None else "cells"
+    if tag_units is not None and tag_units != acc_norm:
+        raise RSGISPyException(
+            f"acc_units='{acc_norm}' contradicts the {FLOW_ACC_UNITS_TAG}="
+            f"{tag_units} tag of '{img_path}' "
+            f"({FLOW_ACC_BAND_DESCS[tag_units].lower()}). "
+            f"Use acc_units='auto' or '{tag_units}'."
+        )
+    return acc_norm
+
+
+def _reject_flow_acc_input(
+    src: rasterio.DatasetReader, img_path: str, func_name: str
+) -> None:
+    """
+    Raise if ``img_path`` is tagged as a flow accumulation: the terrain index
+    functions need a specific catchment area (m2/m) instead.
+    """
+    tag_units = _read_flow_acc_units_tag(src, img_path)
+    if tag_units is not None:
+        raise RSGISPyException(
+            f"'{img_path}' is a flow accumulation ({FLOW_ACC_UNITS_TAG}="
+            f"{tag_units}), but {func_name} needs a specific catchment area "
+            "(m2/m). Divide a flow accumulation with out_units='area' by the "
+            "pixel size (the contour width) first, e.g. with "
+            "rsgispy.imagecalc.maths.band_maths."
         )
 
 

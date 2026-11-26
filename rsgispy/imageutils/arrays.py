@@ -20,10 +20,10 @@ from rsgispy.imageprocess import (
     IntersectionGrid,
     ensure_file_exists,
     open_output_dataset,
+    pop_stats_on_close,
     validate_band_index,
 )
 from rsgispy.imageutils._helpers import (
-    maybe_pop_stats,
     normalise_creation_options,
     rsgis_dtype_from_np_dtype,
 )
@@ -148,14 +148,10 @@ def create_img_from_array(
         )
         if no_data_val is not None:
             dst.nodata = no_data_val
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=no_data_val, use_pbar=use_pbar
+        )
         dst.write(arr.astype(out_np_dtype, copy=False))
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        use_pbar=use_pbar,
-    )
 
 
 def create_img_from_array_ref_img(
@@ -248,14 +244,10 @@ def create_img_from_array_ref_img(
         )
         if no_data_val is not None:
             dst.nodata = no_data_val
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=no_data_val, use_pbar=use_pbar
+        )
         dst.write(arr.astype(out_np_dtype, copy=False))
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        use_pbar=use_pbar,
-    )
 
 
 def get_img_coords_pxl_values(

@@ -19,6 +19,7 @@ from rsgispy.imageprocess import (
     normalise_creation_options,
     open_output_dataset,
     parse_epsg_crs,
+    pop_stats_on_close,
     resolve_out_dtype,
     rsgis_dtype_from_np_dtype,
 )
@@ -85,6 +86,7 @@ def copy_raster_window(
         eff_nd = no_data_val if no_data_val is not None else src.nodata
         if eff_nd is not None:
             dst.nodata = eff_nd
+        pop_stats_on_close(dst, calc_stats, no_data_val=eff_nd, use_pbar=use_pbar)
         for bidx in range(1, src.count + 1):
             desc = src.descriptions[bidx - 1]
             if desc:
@@ -102,11 +104,3 @@ def copy_raster_window(
                 data, int(dst_win.height), int(dst_win.width), out_np_dtype
             )
             dst.write(out_arr, window=dst_win)
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=eff_nd,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )

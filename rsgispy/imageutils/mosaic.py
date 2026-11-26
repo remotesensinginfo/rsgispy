@@ -18,15 +18,16 @@ import rsgispy
 from rsgispy.imagecalc.stats import get_unique_values
 from rsgispy.imageprocess import (
     IntersectionGrid,
+    StagedOutput,
     build_valid_mask,
     cast_result_block,
     compute_spatial_intersection,
     ensure_file_exists,
     iter_dataset_windows,
-    maybe_pop_stats,
     normalise_creation_options,
     open_multi_image_datasets,
     open_output_dataset,
+    pop_stats_on_close,
     resolve_out_dtype,
     validate_band_index,
     validate_crs_and_res,
@@ -44,16 +45,17 @@ __all__ = [
 
 
 def _open_rw_dataset(stack: ExitStack, img_path: str) -> DatasetWriter:
-    """Open ``img_path`` in ``r+`` mode, passing ``IGNORE_COG_LAYOUT_BREAK=YES`` if COG."""
-    is_cog = False
-    with rasterio.open(img_path, "r") as probe_ds:
-        struct_tags = probe_ds.tags(ns="IMAGE_STRUCTURE") or {}
-        if str(struct_tags.get("LAYOUT", "")).upper() == "COG":
-            is_cog = True
-    open_kwargs: Dict[str, Any] = {}
-    if is_cog:
-        open_kwargs["IGNORE_COG_LAYOUT_BREAK"] = "YES"
-    return stack.enter_context(rasterio.open(img_path, "r+", **open_kwargs))
+    """
+    Open ``img_path`` for update. A Cloud Optimised GeoTIFF is not edited in
+    place: it is copied to a temporary GeoTIFF that is converted back to a COG
+    when ``stack`` exits (see :class:`rsgispy.imageprocess.StagedOutput`).
+    """
+    stage = stack.enter_context(
+        StagedOutput(img_path, "GTIFF", output_exists=True)
+    )
+    dst = stack.enter_context(rasterio.open(stage.path, "r+"))
+    stage.track_writer(dst)
+    return dst
 
 
 def create_img_mosaic(
@@ -186,6 +188,9 @@ def create_img_mosaic(
             desc = first_ds.descriptions[bidx - 1]
             if desc:
                 dst.set_band_description(bidx, desc)
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=eff_nd, use_pbar=use_pbar
+        )
 
         for out_win in iter_dataset_windows(out_h, out_w, use_pbar=use_pbar):
             out_block = np.full(
@@ -250,14 +255,6 @@ def create_img_mosaic(
 
             dst.write(out_block, window=out_win)
 
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=eff_nd,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )
-
 
 def include_imgs(
     input_img: str,
@@ -270,7 +267,9 @@ def include_imgs(
     """
     Insert pixel values from ``include_imgs`` into an existing ``input_img`` in place.
 
-    :param input_img: Path to the existing base image updated in place.
+    :param input_img: Path to the existing base image updated in place (a
+                      Cloud Optimised GeoTIFF is rebuilt through a temporary
+                      GeoTIFF so it stays a valid COG).
     :param include_imgs: Sequence of image paths to insert into ``input_img``.
     :param input_bands: Optional 1-based band subset from each included image
                         (mapped sequentially onto bands ``1..N`` of ``input_img``).
@@ -382,7 +381,9 @@ def include_imgs_with_overlap(
     Insert cropped cores (removing ``overlap`` border pixels from all four sides)
     from ``include_imgs`` into ``input_img`` in place.
 
-    :param input_img: Path to the existing base image updated in place.
+    :param input_img: Path to the existing base image updated in place (a
+                      Cloud Optimised GeoTIFF is rebuilt through a temporary
+                      GeoTIFF so it stays a valid COG).
     :param include_imgs: Sequence of overlapping tile/image paths.
     :param overlap: Number of border pixels to crop from each side.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -525,6 +526,9 @@ def combine_imgs_to_band(
             creation_opts=norm_opts,
         )
         dst.nodata = eff_nd
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=eff_nd, use_pbar=use_pbar
+        )
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
@@ -553,14 +557,6 @@ def combine_imgs_to_band(
                 1,
                 window=out_win,
             )
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=eff_nd,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )
 
 
 def combine_binary_masks(
@@ -636,6 +632,13 @@ def combine_binary_masks(
         )
         if no_data_val is not None:
             dst.nodata = float(no_data_val)
+        pop_stats_on_close(
+            dst,
+            calc_stats,
+            no_data_val=no_data_val,
+            thematic=True,
+            use_pbar=use_pbar,
+        )
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
@@ -660,15 +663,6 @@ def combine_binary_masks(
             dst.write(packed, 1, window=out_win)
 
         dst.update_tags(1, LAYER_TYPE="thematic")
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        thematic=True,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )
 
     uniq_vals = set(int(v) for v in get_unique_values(output_img, img_band=1))
     lut_vars = {key: [0, 1] for key in keys}

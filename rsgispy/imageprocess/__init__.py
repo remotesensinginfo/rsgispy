@@ -32,8 +32,11 @@ from rsgispy.imageprocess._arrays import (
 from rsgispy.imageprocess._dtype_nodata import _INT_DTYPES  # noqa: F401
 from rsgispy.imageprocess._dtype_nodata import (
     DEFAULT_BLOCK_SIZE,
+    DEFAULT_IMG_CREATION_OPTS,
     ENV_VAR_BLOCK_SIZE,
+    ENV_VAR_IMG_CRT_OPTS_PREFIX,
     ENV_VAR_RSGISLIB_BLOCK_SIZE,
+    ENV_VAR_RSGISLIB_IMG_CRT_OPTS_PREFIX,
     cast_result_block,
     fits_dtype_range,
     get_default_block_size,
@@ -45,13 +48,22 @@ from rsgispy.imageprocess._dtype_nodata import (
     resolve_out_dtype,
     resolve_out_nodata,
     rsgis_dtype_from_np_dtype,
+    set_dataset_nodata,
     set_default_block_size,
 )
 from rsgispy.imageprocess._io import (
+    StagedOutput,
+    cog_creation_opts_from_file,
     create_output_from_dataset,
+    get_output_stage,
+    is_cog_layout,
+    on_output_close,
     open_input_datasets,
     open_multi_image_datasets,
     open_output_dataset,
+    resolve_cog_creation_opts,
+    update_cog,
+    write_cog,
 )
 from rsgispy.imageprocess._masks import (
     build_valid_cube_mask,
@@ -66,6 +78,7 @@ from rsgispy.imageprocess._stats import (
     OnlineStatsAccumulator,
     compute_dataset_band_stats,
     maybe_pop_stats,
+    pop_stats_on_close,
     update_chan_moments,
 )
 from rsgispy.imageprocess._windows import (
@@ -79,8 +92,11 @@ from rsgispy.imageprocess._windows import (
 
 __all__ = [
     "DEFAULT_BLOCK_SIZE",
+    "DEFAULT_IMG_CREATION_OPTS",
     "ENV_VAR_BLOCK_SIZE",
     "ENV_VAR_RSGISLIB_BLOCK_SIZE",
+    "ENV_VAR_IMG_CRT_OPTS_PREFIX",
+    "ENV_VAR_RSGISLIB_IMG_CRT_OPTS_PREFIX",
     "get_default_block_size",
     "set_default_block_size",
     "reset_default_block_size",
@@ -95,9 +111,11 @@ __all__ = [
     "fits_dtype_range",
     "resolve_out_nodata",
     "resolve_nodata_and_fill",
+    "set_dataset_nodata",
     "normalise_creation_options",
     "parse_epsg_crs",
     "maybe_pop_stats",
+    "pop_stats_on_close",
     "update_chan_moments",
     "OnlineStatsAccumulator",
     "compute_dataset_band_stats",
@@ -118,6 +136,14 @@ __all__ = [
     "open_multi_image_datasets",
     "open_output_dataset",
     "create_output_from_dataset",
+    "StagedOutput",
+    "on_output_close",
+    "get_output_stage",
+    "is_cog_layout",
+    "resolve_cog_creation_opts",
+    "cog_creation_opts_from_file",
+    "write_cog",
+    "update_cog",
     "iter_dataset_windows",
     "iter_image_blocks",
     "iter_single_image_band_blocks",

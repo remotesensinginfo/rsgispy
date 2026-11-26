@@ -135,8 +135,8 @@ Evaluating a mathematical expression across image bands with
    import rsgispy.imagecalc.maths
 
    band_defns = [
-       rsgispy.imagecalc.maths.BandDefn(band_name="b1", input_img="img.kea", img_band=1),
-       rsgispy.imagecalc.maths.BandDefn(band_name="b2", input_img="img.kea", img_band=2),
+       rsgispy.imagecalc.maths.BandDefn(band_name="b1", input_img="img.tif", img_band=1),
+       rsgispy.imagecalc.maths.BandDefn(band_name="b2", input_img="img.tif", img_band=2),
    ]
    rsgispy.imagecalc.maths.band_maths(
        output_img="out.tif",
@@ -145,6 +145,40 @@ Evaluating a mathematical expression across image bands with
        gdalformat="GTIFF",
        datatype=rsgispy.TYPE_32FLOAT,
    )
+
+Output image creation options
+-----------------------------
+
+By default, GeoTIFF outputs (``gdalformat="GTIFF"``) are tiled (GDAL's default
+256 x 256 tiles) and DEFLATE-compressed, with the creation options
+``TILED=YES``, ``COMPRESS=DEFLATE``, ``INTERLEAVE=BAND`` and
+``BIGTIFF=IF_SAFER``. Other formats (for example ``"KEA"`` and ``"COG"``) use
+their GDAL driver defaults. rsgispy does not set any environment variables when
+it is imported; the defaults are listed in
+``rsgispy.imageprocess.DEFAULT_IMG_CREATION_OPTS``.
+
+The options for a format are taken from, in order:
+
+1. the ``RSGISPY_IMG_CRT_OPTS_<FORMAT>`` environment variable (for example
+   ``RSGISPY_IMG_CRT_OPTS_GTIFF="TILED=YES:COMPRESS=ZSTD"``), if set;
+2. otherwise ``RSGISLIB_IMG_CRT_OPTS_<FORMAT>``, if set;
+3. otherwise the built-in default.
+
+A variable that is set replaces the default rather than adding to it, and an
+empty variable means "no creation options". The ``creation_opts`` argument of
+individual functions is merged on top. To change the options from Python, use
+:mod:`rsgispy.imageutils.envopts`:
+
+.. code-block:: python
+
+   import rsgispy.imageutils.envopts
+
+   # ZSTD instead of DEFLATE
+   rsgispy.imageutils.envopts.set_env_vars_zstd_gtiff_outs()
+   # Plain striped, uncompressed GeoTIFFs (the GDAL default)
+   rsgispy.imageutils.envopts.set_img_creation_opts("GTIFF", {})
+   # Back to the built-in defaults
+   rsgispy.imageutils.envopts.reset_img_creation_opts()
 
 Guides
 ------

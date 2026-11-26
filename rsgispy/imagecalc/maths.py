@@ -19,12 +19,15 @@ from rsgispy.imageprocess import (
     cast_result_block,
     compute_spatial_intersection,
     ensure_file_exists,
+    fits_dtype_range,
     iter_dataset_windows,
     iter_image_blocks,
     normalise_band_defs,
     open_input_datasets,
     open_output_dataset,
+    pop_stats_on_close,
     process_blocks,
+    set_dataset_nodata,
 )
 
 __all__ = [
@@ -105,6 +108,36 @@ def _normalise_out_band_names(
     return resolved
 
 
+def _check_out_no_data_val(
+    no_data_val: Optional[float], out_np_dtype: np.dtype
+) -> Optional[float]:
+    """
+    Validate an optional output no-data value against the output data type.
+
+    :param no_data_val: Requested output no-data value (or ``None``).
+    :param out_np_dtype: NumPy dtype of the output raster.
+    :return: ``no_data_val`` as a float, or ``None``.
+    """
+    if no_data_val is None:
+        return None
+    nd_val = float(no_data_val)
+    if math.isnan(nd_val) and np.issubdtype(out_np_dtype, np.floating):
+        return nd_val
+    if not fits_dtype_range(nd_val, out_np_dtype):
+        raise rsgispy.RSGISPyException(
+            f"no_data_val ({no_data_val}) cannot be represented by the output "
+            f"data type '{np.dtype(out_np_dtype).name}'."
+        )
+    return nd_val
+
+
+def _set_out_no_data_val(dst: Any, no_data_val: Optional[float]) -> None:
+    """Write ``no_data_val`` to every band of ``dst`` unless it is already set."""
+    if no_data_val is None:
+        return
+    set_dataset_nodata(dst, no_data_val)
+
+
 def _create_parser(exp: str, band_names: Sequence[str]) -> pymu_eval.Parser:
     """
     Create and validate a pymu_eval.Parser instance for the given expression and bands.
@@ -160,6 +193,8 @@ def band_maths(
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
     band_names: Optional[Sequence[str]] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
 ) -> None:
     """
     Performs band math calculation using pymu-eval and rasterio.
@@ -180,6 +215,13 @@ def band_maths(
     to compute an intermediate without emitting an extra band, assign inside
     parentheses within a sub-expression (e.g.,
     ``"(ndvi = (nir - red) / (nir + red + 1e-6)) >= 0.5 ? 1 : 0"``).
+
+    The input bands are read without masking, so their no-data values take
+    part in the calculation unless the expression tests for them. Giving
+    ``no_data_val`` writes that value as the no-data value of every output
+    band, but does not change how the expression is evaluated: the expression
+    must itself produce ``no_data_val`` for the pixels that should be no data
+    (e.g. ``"b1 == 0 ? -9999 : b1 * 0.0001"``).
 
     :param output_img: Path to the output image file.
     :param exp: String containing the muParser expression to evaluate over the
@@ -206,6 +248,14 @@ def band_maths(
     :param band_names: Optional sequence of output band description names whose
                        length matches the number of outputs produced by ``exp``
                        (takes precedence over ``exp_band_name`` when supplied).
+    :param no_data_val: Optional no-data value written to every output band
+                        (Default = ``None``: no value is written, and an
+                        existing output keeps its value). It must be
+                        representable by ``datatype``; ``NaN`` is allowed for
+                        floating-point outputs.
+    :param calc_stats: If ``True``, calculate image statistics and pyramids
+                       for the output, excluding ``no_data_val``
+                       (Default = ``False``).
 
     .. code:: python
 
@@ -214,8 +264,8 @@ def band_maths(
 
         # Single-band output
         band_defns = [
-            rsgispy.imagecalc.maths.BandDefn(band_name='b1', input_img='img.kea', img_band=1),
-            rsgispy.imagecalc.maths.BandDefn(band_name='b2', input_img='img.kea', img_band=2),
+            rsgispy.imagecalc.maths.BandDefn(band_name='b1', input_img='img.tif', img_band=1),
+            rsgispy.imagecalc.maths.BandDefn(band_name='b2', input_img='img.tif', img_band=2),
         ]
         rsgispy.imagecalc.maths.band_maths(
             output_img='out.tif',
@@ -253,10 +303,22 @@ def band_maths(
             band_defs=idx_defs,
             band_names=['min_refl', 'max_refl', 'mean_refl'],
         )
+
+        # The expression writes -9999 where the input is no data (0);
+        # no_data_val records it in the output, and the statistics skip it
+        rsgispy.imagecalc.maths.band_maths(
+            output_img='ndvi.tif',
+            exp='(red == 0 || nir == 0) ? -9999 : (nir - red) / (nir + red)',
+            band_defs=idx_defs,
+            band_names=['NDVI'],
+            no_data_val=-9999,
+            calc_stats=True,
+        )
     """
     # pylint: disable=too-many-arguments,too-many-locals
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
+    out_no_data_val = _check_out_no_data_val(no_data_val, out_np_dtype)
     norm_defs = normalise_band_defs(band_defs)
     parser = _create_parser(exp, [b.band_name for b in norm_defs if b.band_name])
     n_outputs = parser.get_num_results()
@@ -307,6 +369,10 @@ def band_maths(
                 f"Existing output image '{output_img}' has {dst.count} band(s), "
                 f"but expression produces {n_outputs} output(s)."
             )
+        _set_out_no_data_val(dst, out_no_data_val)
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=out_no_data_val, use_pbar=use_pbar
+        )
 
         if out_band_names is not None:
             for band_idx, band_name in enumerate(out_band_names, start=1):
@@ -342,13 +408,16 @@ def image_math(
     datatype: int = rsgispy.TYPE_32FLOAT,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
 ) -> None:
     """
     Perform image math calculations using ``pymu_eval`` and ``rasterio``.
 
     Produces an output image with the same number of bands as ``input_img``,
     applying the same muParser expression (using variable ``b1``) independently
-    to each band.
+    to each band. As in :func:`band_maths`, ``no_data_val`` is only written to
+    the output; the expression must produce it for the no-data pixels.
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output image file.
@@ -360,6 +429,12 @@ def image_math(
                      (Default = ``rsgispy.TYPE_32FLOAT``).
     :param use_pbar: If True, display a tqdm progress bar during processing (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+    :param no_data_val: Optional no-data value written to every output band
+                        (Default = ``None``: no value is written). It must be
+                        representable by ``datatype``.
+    :param calc_stats: If ``True``, calculate image statistics and pyramids
+                       for the output, excluding ``no_data_val``
+                       (Default = ``False``).
 
     .. code:: python
 
@@ -369,9 +444,10 @@ def image_math(
         rsgispy.imagecalc.maths.image_math(
             input_img="img.tif",
             output_img="out.tif",
-            exp="b1 * 0.0001",
+            exp="b1 == 0 ? -9999 : b1 * 0.0001",
             gdalformat="GTIFF",
             datatype=rsgispy.TYPE_32FLOAT,
+            no_data_val=-9999,
         )
     """
     # pylint: disable=too-many-arguments,too-many-locals
@@ -379,6 +455,7 @@ def image_math(
 
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
+    out_no_data_val = _check_out_no_data_val(no_data_val, out_np_dtype)
     parser = _create_parser(exp, ["b1"])
 
     with ExitStack() as stack:
@@ -400,6 +477,10 @@ def image_math(
             count=n_bands,
             output_exists=output_exists,
             creation_opts=creation_opts,
+        )
+        _set_out_no_data_val(dst, out_no_data_val)
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=out_no_data_val, use_pbar=use_pbar
         )
 
         if exp_band_name:
@@ -436,6 +517,8 @@ def image_band_math(
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
     band_names: Optional[Sequence[str]] = None,
+    no_data_val: Optional[float] = None,
+    calc_stats: bool = False,
 ) -> None:
     """
     Perform image band math calculations using ``pymu_eval`` and ``rasterio``.
@@ -445,7 +528,9 @@ def image_band_math(
     comma-separated expression (e.g., ``"(b4 - b3) / (b4 + b3), (b2 - b4) / (b2 + b4)"``)
     produces one output band per sub-expression. Sub-expressions may also
     assign new intermediate variables (e.g., ``"ndvi = (b4 - b3) / (b4 + b3), ndvi > 0.4 ? 1 : 0"``)
-    for reuse by later sub-expressions.
+    for reuse by later sub-expressions. As in :func:`band_maths`,
+    ``no_data_val`` is only written to the output; the expression must produce
+    it for the no-data pixels.
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output image file.
@@ -463,19 +548,27 @@ def image_band_math(
     :param creation_opts: Optional mapping of GDAL creation options.
     :param band_names: Optional sequence of output band description names matching
                        the number of outputs produced by ``exp``.
+    :param no_data_val: Optional no-data value written to every output band
+                        (Default = ``None``: no value is written). It must be
+                        representable by ``datatype``.
+    :param calc_stats: If ``True``, calculate image statistics and pyramids
+                       for the output, excluding ``no_data_val``
+                       (Default = ``False``).
 
     .. code:: python
 
         import rsgispy
         import rsgispy.imagecalc.maths
 
-        # Single output band
+        # Single output band, -9999 where the input is no data (0)
         rsgispy.imagecalc.maths.image_band_math(
             input_img="multispec.tif",
             output_img="ndvi.tif",
-            exp="(b4 - b3) / (b4 + b3)",
+            exp="(b3 == 0 || b4 == 0) ? -9999 : (b4 - b3) / (b4 + b3)",
             gdalformat="GTIFF",
             datatype=rsgispy.TYPE_32FLOAT,
+            no_data_val=-9999,
+            calc_stats=True,
         )
 
         # Multiple output bands in a single pass
@@ -488,7 +581,7 @@ def image_band_math(
             datatype=rsgispy.TYPE_32FLOAT,
         )
     """
-    # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-arguments,too-many-locals
     ensure_file_exists(input_img)
 
     try:
@@ -514,6 +607,8 @@ def image_band_math(
         use_pbar=use_pbar,
         creation_opts=creation_opts,
         band_names=band_names,
+        no_data_val=no_data_val,
+        calc_stats=calc_stats,
     )
 
 

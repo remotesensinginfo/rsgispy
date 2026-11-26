@@ -535,6 +535,161 @@ def test_watershed_delineation_and_polygonisation(tmp_path):
         assert np.all(sc_ds.read(1) > 0)
 
 
+def _flow_acc_units_scene(tmp_path, res=30.0):
+    """D8 directions on the Y DEM plus cells and m2 accumulations."""
+    dem = _make_convergent_y_dem(rows=31, cols=31)
+    dem_path = tmp_path / "y_dem.tif"
+    _write_raster(dem_path, dem, res=res, nodata=-9999.0)
+    fdir_path = tmp_path / "fdir_d8.tif"
+    hydrology.flow_direction(str(dem_path), str(fdir_path), method="d8", use_pbar=False)
+    acc_cells = tmp_path / "acc_cells.tif"
+    acc_area = tmp_path / "acc_area.tif"
+    hydrology.flow_accumulation(
+        str(fdir_path), str(acc_cells), out_units="cells", use_pbar=False
+    )
+    hydrology.flow_accumulation(
+        str(fdir_path), str(acc_area), out_units="area", use_pbar=False
+    )
+    return fdir_path, acc_cells, acc_area
+
+
+def _read_band1(path):
+    with rasterio.open(path) as src:
+        return src.read(1)
+
+
+@requires_numba
+def test_flow_accumulation_records_units(tmp_path):
+    """flow_accumulation writes its units as a dataset tag and band description."""
+    fdir_path, acc_cells, acc_area = _flow_acc_units_scene(tmp_path)
+    with rasterio.open(acc_cells) as src:
+        assert src.tags()["RSGISPY_FLOW_ACC_UNITS"] == "cells"
+        assert "cells" in src.descriptions[0]
+    with rasterio.open(acc_area) as src:
+        assert src.tags()["RSGISPY_FLOW_ACC_UNITS"] == "area"
+        assert "m2" in src.descriptions[0]
+
+    dem_path = tmp_path / "y_dem.tif"
+    for method in ("dinf", "mfd"):
+        fdir_m = tmp_path / f"fdir_{method}.tif"
+        acc_m = tmp_path / f"acc_{method}.tif"
+        hydrology.flow_direction(str(dem_path), str(fdir_m), method=method, use_pbar=False)
+        hydrology.flow_accumulation(
+            str(fdir_m), str(acc_m), out_units="area", calc_stats=False, use_pbar=False
+        )
+        with rasterio.open(acc_m) as src:
+            assert src.tags()["RSGISPY_FLOW_ACC_UNITS"] == "area"
+    assert fdir_path.exists()
+
+
+@requires_numba
+def test_extract_streams_units_combinations_identical(tmp_path):
+    """Cells / m2 accumulations with cells / area thresholds give one network."""
+    _, acc_cells, acc_area = _flow_acc_units_scene(tmp_path, res=30.0)
+    pxl_area = 30.0 * 30.0
+    thresh_cells = 25.0
+
+    nets = {}
+    for acc_name, acc_img in (("cells", acc_cells), ("area", acc_area)):
+        for thr_units, thr in (("cells", thresh_cells), ("area", thresh_cells * pxl_area)):
+            out_img = tmp_path / f"streams_{acc_name}_{thr_units}.tif"
+            hydrology.extract_streams(
+                str(acc_img), str(out_img), threshold=thr,
+                threshold_units=thr_units, use_pbar=False,
+            )
+            nets[(acc_name, thr_units)] = _read_band1(out_img)
+
+    ref = nets[("cells", "cells")]
+    assert 0 < np.count_nonzero(ref == 1) < ref.size / 4
+    for key, net in nets.items():
+        np.testing.assert_array_equal(net, ref, err_msg=str(key))
+
+    # Explicit units that agree with the tag are accepted.
+    out_img = tmp_path / "streams_explicit.tif"
+    hydrology.extract_streams(
+        str(acc_area), str(out_img), threshold=thresh_cells * pxl_area,
+        threshold_units="area", acc_units="area", use_pbar=False,
+    )
+    np.testing.assert_array_equal(_read_band1(out_img), ref)
+
+
+@requires_numba
+def test_extract_streams_acc_units_conflict_and_legacy(tmp_path):
+    """acc_units contradicting the tag raises; untagged rasters use acc_units."""
+    _, acc_cells, acc_area = _flow_acc_units_scene(tmp_path, res=30.0)
+    pxl_area = 30.0 * 30.0
+    out_img = tmp_path / "streams.tif"
+
+    with pytest.raises(RSGISPyException, match="RSGISPY_FLOW_ACC_UNITS"):
+        hydrology.extract_streams(
+            str(acc_cells), str(out_img), threshold=25.0, acc_units="area",
+            use_pbar=False,
+        )
+    with pytest.raises(RSGISPyException, match="RSGISPY_FLOW_ACC_UNITS"):
+        hydrology.extract_streams(
+            str(acc_area), str(out_img), threshold=25.0, acc_units="cells",
+            use_pbar=False,
+        )
+    with pytest.raises(RSGISPyException, match="acc_units"):
+        hydrology.extract_streams(
+            str(acc_cells), str(out_img), threshold=25.0, acc_units="m2",
+            use_pbar=False,
+        )
+
+    hydrology.extract_streams(
+        str(acc_cells), str(out_img), threshold=25.0, use_pbar=False
+    )
+    ref = _read_band1(out_img)
+
+    # Legacy rasters (written before the tag existed) have no units tag.
+    with rasterio.open(acc_cells) as src:
+        cells_arr, cells_nd = src.read(1), src.nodata
+    with rasterio.open(acc_area) as src:
+        area_arr, area_nd = src.read(1), src.nodata
+    legacy_cells = tmp_path / "legacy_cells.tif"
+    legacy_area = tmp_path / "legacy_area.tif"
+    _write_raster(legacy_cells, cells_arr, res=30.0, nodata=cells_nd)
+    _write_raster(legacy_area, area_arr, res=30.0, nodata=area_nd)
+    with rasterio.open(legacy_cells) as src:
+        assert "RSGISPY_FLOW_ACC_UNITS" not in src.tags()
+
+    # No tag + acc_units="auto": assumed to be in cells (the old behaviour).
+    hydrology.extract_streams(
+        str(legacy_cells), str(out_img), threshold=25.0 * pxl_area,
+        threshold_units="area", use_pbar=False,
+    )
+    np.testing.assert_array_equal(_read_band1(out_img), ref)
+    # No tag + explicit acc_units="area".
+    hydrology.extract_streams(
+        str(legacy_area), str(out_img), threshold=25.0 * pxl_area,
+        threshold_units="area", acc_units="area", use_pbar=False,
+    )
+    np.testing.assert_array_equal(_read_band1(out_img), ref)
+    hydrology.extract_streams(
+        str(legacy_area), str(out_img), threshold=25.0,
+        threshold_units="cells", acc_units="area", use_pbar=False,
+    )
+    np.testing.assert_array_equal(_read_band1(out_img), ref)
+
+
+@requires_numba
+def test_terrain_indices_reject_flow_accumulation(tmp_path):
+    """TWI/SPI/LS need a specific catchment area, not a tagged accumulation."""
+    _, acc_cells, acc_area = _flow_acc_units_scene(tmp_path, res=30.0)
+    slope_path = tmp_path / "slope.tif"
+    _write_raster(
+        slope_path, np.full((31, 31), 10.0, dtype=np.float32), res=30.0,
+        nodata=-9999.0,
+    )
+    for func in (hydrology.calc_twi, hydrology.calc_spi, hydrology.calc_ls_factor):
+        for acc_img in (acc_cells, acc_area):
+            with pytest.raises(RSGISPyException, match="specific catchment area"):
+                func(
+                    str(acc_img), str(slope_path), str(tmp_path / "idx.tif"),
+                    use_pbar=False,
+                )
+
+
 @requires_numba
 def test_hand_flood_inundation_and_terrain_indices(tmp_path):
     """

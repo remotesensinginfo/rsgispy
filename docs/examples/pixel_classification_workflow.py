@@ -85,8 +85,11 @@ def run_workflow(
     resample_img_to_match(s2_img, slope_dem_img, slope_img,
                           interp_method=rsgispy.INTERP_BILINEAR)
 
-    derived_imgs = [idx_img, slope_img]
-    derived_names = ["NDVI", "MNDWI", "NDBI", "slope"]
+    # The Sentinel-2 bands to use, as a virtual image (no copy).
+    s2_vrt = os.path.join(out_dir, "s2_bands.vrt")
+    create_vrt_band_subset(s2_img, s2_vrt, list(s2_bands))
+    feat_imgs = [s2_vrt, idx_img, slope_img]
+    feat_names = list(s2_band_names) + ["NDVI", "MNDWI", "NDBI", "slope"]
     if use_glcm:
         # Texture of the NIR band in a 5 x 5 pixel window.
         nir_vrt = os.path.join(out_dir, "s2_nir.vrt")
@@ -95,14 +98,15 @@ def run_workflow(
         glcm_img = os.path.join(out_dir, "nir_glcm.tif")
         apply_glcm_filter(nir_vrt, glcm_img, properties=["homogeneity", "entropy"],
                           filter_size=5, no_data_val=0, use_pbar=use_pbar)
-        derived_imgs.append(glcm_img)
-        derived_names += ["NIR_homogeneity", "NIR_entropy"]
+        feat_imgs.append(glcm_img)
+        feat_names += ["NIR_homogeneity", "NIR_entropy"]
 
-    # One virtual stack (no copy) of the derived float32 layers.
-    derived_vrt = os.path.join(out_dir, "derived_features.vrt")
-    create_stack_images_vrt(derived_imgs, derived_vrt, band_names=derived_names)
+    # One virtual stack (no copy) of every feature: the uint16 reflectance and
+    # the float32 derived layers, each band keeping its own no data value.
+    feat_vrt = os.path.join(out_dir, "features.vrt")
+    create_stack_images_vrt(feat_imgs, feat_vrt, band_names=feat_names)
     # [end-step-1-features]
-    out["derived_vrt"] = derived_vrt
+    out["feat_vrt"] = feat_vrt
 
     # [step-2-config]
     from rsgispy.classification.classdata import (
@@ -114,11 +118,9 @@ def run_workflow(
     )
 
     img_band_info = [
-        ImageBandInfo(s2_img, name="s2", bands=list(s2_bands),
-                      band_names=list(s2_band_names)),
-        ImageBandInfo(derived_vrt, name="derived",
-                      bands=list(range(1, len(derived_names) + 1)),
-                      band_names=derived_names),
+        ImageBandInfo(feat_vrt, name="features",
+                      bands=list(range(1, len(feat_names) + 1)),
+                      band_names=feat_names),
     ]
     class_info = {
         cls_name: ClassInfoObj(out_id=out_id, vec_file=vec_file, colour=colour)
@@ -147,23 +149,18 @@ def run_workflow(
         out_valid_file=valid_file,
         max_cls_smpls=max_cls_smpls,  # cap large classes before splitting
         include_coords=True,  # keep x/y for spatial cross-validation
+        group_col="train_grp",  # each polygon goes to one table only
         rnd_seed=42,
         use_pbar=use_pbar,
     )
     print(train_df["class_name"].value_counts())
-    print(len(train_df), "train,", len(valid_df), "valid,", len(test_df), "test")
-
-    # Spatially blocked folds over the training pixels (for tuning in step 6).
-    from rsgispy.ml.cv import SpatialBlockKFold
-
-    spatial_cv = SpatialBlockKFold(n_splits=4, block_size=cv_block_size,
-                                   stratify=True, rnd_seed=42)
-    train_xy = train_df[["x", "y"]].to_numpy()
-    cv_folds = list(spatial_cv.split(train_df, y=train_df["internal_cls_id"],
-                                     coords=train_xy))
-    print([len(val_idx) for _, val_idx in cv_folds])
+    for name, part in (("train", train_df), ("valid", valid_df), ("test", test_df)):
+        print(name, len(part), "pixels from",
+              part.groupby("class_name")["train_grp"].nunique().to_dict(),
+              "polygons")
     # [end-step-3-samples]
     out["n_train"] = len(train_df)
+    out["split_polygons"] = [set(df["train_grp"]) for df in (train_df, valid_df, test_df)]
 
     # [step-4-explore]
     import rsgispy.classification.classfeatures as cfeat
@@ -237,7 +234,10 @@ def run_workflow(
 
     # [step-6-train-rf]
     import rsgispy.classification.classsklearn as csk
+    from rsgispy.ml.cv import SpatialBlockKFold
 
+    spatial_cv = SpatialBlockKFold(n_splits=4, block_size=cv_block_size,
+                                   stratify=True, rnd_seed=42)
     rf_model = csk.perform_sklearn_classifier_param_search(
         sel_cfg_file,
         new_rf(),
@@ -247,7 +247,8 @@ def run_workflow(
             "min_samples_leaf": [1, 5, 20],
         },
         search_method="grid",
-        cv=cv_folds,  # spatially blocked folds from step 3
+        cv=spatial_cv,  # spatially blocked folds ...
+        coords=("x", "y"),  # ... from the pixel coordinates in train_file
         scoring="balanced_accuracy",
         out_params_json=os.path.join(out_dir, "rf_best_params.json"),
         use_pbar=use_pbar,

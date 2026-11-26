@@ -67,6 +67,12 @@ def test_worked_example_runs(tmp_path):
         use_pbar=False,
     )
     assert out["n_train"] > 0
+    # The grouped split never puts one training polygon in two tables.
+    train_p, valid_p, test_p = out["split_polygons"]
+    assert not (train_p & valid_p or train_p & test_p or valid_p & test_p)
+    assert len(train_p | valid_p | test_p) == 2 * 3 * len(CLASS_IDS)
+    with rasterio.open(out["feat_vrt"]) as src:
+        assert {"uint16", "float32"} <= set(src.dtypes)  # one mixed-type stack
     assert {"corr", "vif", "rfe", "model"} <= set(out["selections"])
     assert out["rf_metrics"]["test_accuracy"] > 0.9
     assert out["nested_cv"].mean_score > 0.8

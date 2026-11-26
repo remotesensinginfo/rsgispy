@@ -26,9 +26,9 @@ from rsgispy.imageprocess import (
     compute_spatial_intersection,
     ensure_file_exists,
     iter_dataset_windows,
-    maybe_pop_stats,
     normalise_creation_options,
     open_output_dataset,
+    pop_stats_on_close,
     resolve_out_dtype,
     resolve_out_nodata,
 )
@@ -1001,20 +1001,19 @@ def region_growing_fill(
             creation_opts=norm_opts,
         )
         dst.nodata = eff_out_nd
+        pop_stats_on_close(
+            dst,
+            calc_stats,
+            no_data_val=float(eff_out_nd),
+            thematic=bool(
+                np.issubdtype(out_np_dtype, np.integer) and eff_out_nd == 0
+            ),
+            use_pbar=use_pbar,
+        )
         dst.write(
             cast_result_block(out_arr, grid.height, grid.width, out_np_dtype),
             1,
         )
-
-    maybe_pop_stats(
-        output_img=out_path,
-        calc_stats=calc_stats,
-        no_data_val=float(eff_out_nd),
-        thematic=bool(
-            np.issubdtype(out_np_dtype, np.integer) and eff_out_nd == 0
-        ),
-        use_pbar=use_pbar,
-    )
 
 
 def _inspect_tile_inputs(
@@ -1324,17 +1323,16 @@ def _tiled_write_worker(task: Tuple[Any, ...]) -> int:
             creation_opts=norm_opts,
         )
         dst.nodata = eff_out_nd
+        pop_stats_on_close(
+            dst,
+            calc_stats,
+            no_data_val=float(eff_out_nd),
+            thematic=bool(
+                np.issubdtype(out_np_dtype, np.integer) and eff_out_nd == 0
+            ),
+            use_pbar=False,
+        )
         dst.write(cast_result_block(tile_out, th, tw, out_np_dtype), 1)
-
-    maybe_pop_stats(
-        output_img=out_path,
-        calc_stats=calc_stats,
-        no_data_val=float(eff_out_nd),
-        thematic=bool(
-            np.issubdtype(out_np_dtype, np.integer) and eff_out_nd == 0
-        ),
-        use_pbar=False,
-    )
     return idx
 
 

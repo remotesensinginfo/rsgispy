@@ -13,11 +13,12 @@ import matplotlib.colors
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.collections import LineCollection  # noqa: E402
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 import rasterio  # noqa: E402
 from rasterio.transform import from_origin  # noqa: E402
-from shapely.geometry import Point, Polygon  # noqa: E402
+from shapely.geometry import LineString, Point, Polygon  # noqa: E402
 
 import rsgispy  # noqa: E402
 import rsgispy.mapping  # noqa: E402
@@ -309,6 +310,114 @@ def test_create_vec_lyr_map_and_choropleth():
     )
     assert ax.get_title() == "Choropleth"
     assert not ax.axison
+    plt.close(fig)
+
+
+def _rgba(clr):
+    return np.asarray(matplotlib.colors.to_rgba(clr))
+
+
+def test_create_vec_lyr_map_line_colours():
+    """Lines are drawn in the line colour; polygons and points keep fill + edge."""
+    lines = gpd.GeoDataFrame(
+        {"id": [1, 2]},
+        geometry=[LineString([(0, 0), (5, 5)]), LineString([(5, 0), (10, 5)])],
+        crs="EPSG:32630",
+    )
+    bbox = (0.0, 10.0, 0.0, 5.0)
+
+    fig, ax = plt.subplots()
+    map_vector.create_vec_lyr_map(
+        ax, lines, bbox, vec_fill_clrs="none", vec_line_clrs="red",
+        vec_line_widths=2.0, show_scale_bar=False,
+    )
+    line_colls = [c for c in ax.collections if isinstance(c, LineCollection)]
+    assert len(line_colls) == 1
+    edge = line_colls[0].get_edgecolor()
+    assert len(edge) > 0
+    np.testing.assert_allclose(edge[0], _rgba("red"))
+    assert line_colls[0].get_linewidth()[0] == pytest.approx(2.0)
+    plt.close(fig)
+
+    # A mixed layer is split by geometry type.
+    mixed = gpd.GeoDataFrame(
+        {"id": [1, 2, 3]},
+        geometry=[
+            Polygon([(0, 0), (4, 0), (4, 4), (0, 4)]),
+            LineString([(5, 0), (10, 5)]),
+            Point(2.0, 2.0),
+        ],
+        crs="EPSG:32630",
+    )
+    fig, ax = plt.subplots()
+    map_vector.create_vec_lyr_map(
+        ax, mixed, bbox, vec_fill_clrs="yellow", vec_line_clrs="blue",
+        vec_markersize=20, show_scale_bar=False,
+    )
+    lines_c = [c for c in ax.collections if isinstance(c, LineCollection)]
+    others = [c for c in ax.collections if not isinstance(c, LineCollection)]
+    assert len(lines_c) == 1 and len(others) == 2
+    np.testing.assert_allclose(lines_c[0].get_edgecolor()[0], _rgba("blue"))
+    for coll in others:  # polygon patches and point markers
+        np.testing.assert_allclose(coll.get_facecolor()[0], _rgba("yellow"))
+        np.testing.assert_allclose(coll.get_edgecolor()[0], _rgba("blue"))
+    plt.close(fig)
+
+
+def test_create_choropleth_vec_lyr_map_line_colours():
+    """Choropleth lines are coloured by value, not drawn in the edge colour."""
+    lines = gpd.GeoDataFrame(
+        {"val": [1.0, 2.0]},
+        geometry=[LineString([(0, 0), (5, 5)]), LineString([(5, 0), (10, 5)])],
+        crs="EPSG:32630",
+    )
+    fig, ax = plt.subplots()
+    map_vector.create_choropleth_vec_lyr_map(
+        ax, lines, "val", (0.0, 10.0, 0.0, 5.0), vec_fill_cmap="viridis",
+        vec_line_clr="black", show_scale_bar=False,
+    )
+    fig.canvas.draw()
+    (coll,) = [c for c in ax.collections if isinstance(c, LineCollection)]
+    cmap = matplotlib.colormaps["viridis"]
+    np.testing.assert_allclose(coll.get_edgecolor(), [cmap(0.0), cmap(1.0)])
+    plt.close(fig)
+
+    polys = gpd.GeoDataFrame(
+        {"val": [1.0, 2.0]},
+        geometry=[
+            Polygon([(0, 0), (5, 0), (5, 5), (0, 5)]),
+            Polygon([(5, 0), (10, 0), (10, 5), (5, 5)]),
+        ],
+        crs="EPSG:32630",
+    )
+    fig, ax = plt.subplots()
+    map_vector.create_choropleth_vec_lyr_map(
+        ax, polys, "val", (0.0, 10.0, 0.0, 5.0), vec_fill_cmap="viridis",
+        vec_line_clr="red", show_scale_bar=False,
+    )
+    fig.canvas.draw()
+    (coll,) = ax.collections
+    np.testing.assert_allclose(coll.get_edgecolor()[0], _rgba("red"))
+    np.testing.assert_allclose(coll.get_facecolor(), [cmap(0.0), cmap(1.0)])
+    plt.close(fig)
+
+
+def test_add_overview_maps_lines_and_no_axis_labels():
+    """The inset has no CRS axis labels and draws line layers in line_clr."""
+    coast = gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[LineString([(-10, 50), (0, 55), (5, 58)])],
+        crs="EPSG:4326",
+    )
+    fig, ax = plt.subplots()
+    ax_over = map_layout.add_overview_maps(
+        ax, coast, (-12.0, 8.0, 45.0, 60.0), overview_pt=(-4.0, 52.0),
+        fill_clr="white", line_clr="green",
+    )
+    assert ax_over.get_xlabel() == ""
+    assert ax_over.get_ylabel() == ""
+    (coll,) = [c for c in ax_over.collections if isinstance(c, LineCollection)]
+    np.testing.assert_allclose(coll.get_edgecolor()[0], _rgba("green"))
     plt.close(fig)
 
 

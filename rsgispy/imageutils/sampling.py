@@ -19,6 +19,7 @@ from rsgispy.imageprocess import (
     iter_dataset_windows,
     iter_single_image_band_blocks,
     open_multi_image_datasets,
+    pop_stats_on_close,
     validate_band_index,
 )
 from rsgispy.imageutils._helpers import (
@@ -128,14 +129,8 @@ def perform_random_pxl_sample_in_mask(
         )
         if no_data_val is not None:
             dst.nodata = float(no_data_val)
+        pop_stats_on_close(dst, calc_stats, no_data_val=no_data_val, use_pbar=False)
         dst.write(out, 1)
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        use_pbar=False,
-    )
 
 
 def extract_img_pxl_sample(
@@ -476,6 +471,9 @@ def generate_random_pxl_vals_img(
         )
         if no_data_val is not None:
             dst.nodata = float(no_data_val)
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=no_data_val, use_pbar=use_pbar
+        )
         for win in iter_dataset_windows(
             src.height, src.width, use_pbar=use_pbar
         ):
@@ -486,10 +484,3 @@ def generate_random_pxl_vals_img(
                 dtype=np.int64,
             ).astype(out_np_dt, copy=False)
             dst.write(blk, 1, window=win)
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        use_pbar=use_pbar,
-    )

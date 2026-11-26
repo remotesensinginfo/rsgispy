@@ -4,6 +4,7 @@ Search, Random Search, CV splitters, and PredefinedSplit builders) reused
 across :mod:`rsgispy.classification` and :mod:`rsgispy.regression`.
 """
 
+import inspect
 import os
 from typing import (
     Any,
@@ -240,6 +241,159 @@ def resolve_cv_splitter(
     return cv
 
 
+def resolve_cv_groups_coords(
+    samples_df: pd.DataFrame,
+    groups: Optional[Any] = None,
+    coords: Optional[Any] = None,
+) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    """
+    Resolve the ``groups`` (a column name of ``samples_df`` or one label per
+    row) and ``coords`` (two column names, e.g. ``('x', 'y')``, or an
+    ``(n_samples, 2)`` array) arguments of the parameter-search functions.
+    """
+    n_rows = len(samples_df)
+    grp_arr: Optional[np.ndarray] = None
+    if groups is not None:
+        if isinstance(groups, str):
+            if groups not in samples_df.columns:
+                raise rsgispy.RSGISPyException(
+                    f"groups column '{groups}' was not found in train_data "
+                    f"columns {list(samples_df.columns)}."
+                )
+            grp_arr = samples_df[groups].to_numpy()
+        else:
+            grp_arr = np.asarray(groups)
+        if grp_arr.ndim != 1 or grp_arr.shape[0] != n_rows:
+            raise rsgispy.RSGISPyException(
+                f"groups must give one label for each of the {n_rows} "
+                f"training samples, got shape {grp_arr.shape}."
+            )
+        if pd.isna(grp_arr).any():
+            raise rsgispy.RSGISPyException("groups contains missing values.")
+
+    xy_arr: Optional[np.ndarray] = None
+    if coords is not None:
+        if (
+            isinstance(coords, (list, tuple))
+            and coords
+            and all(isinstance(col, str) for col in coords)
+        ):
+            if len(coords) != 2:
+                raise rsgispy.RSGISPyException(
+                    "coords must name two columns (x, y), got "
+                    f"{list(coords)}."
+                )
+            missing = [col for col in coords if col not in samples_df.columns]
+            if missing:
+                raise rsgispy.RSGISPyException(
+                    f"coords column(s) {missing} not found in train_data "
+                    f"columns {list(samples_df.columns)}."
+                )
+            xy_arr = samples_df[list(coords)].to_numpy(dtype=np.float64)
+        else:
+            xy_arr = np.asarray(coords, dtype=np.float64)
+        if xy_arr.ndim != 2 or xy_arr.shape != (n_rows, 2):
+            raise rsgispy.RSGISPyException(
+                f"coords must have shape ({n_rows}, 2), got {xy_arr.shape}."
+            )
+    return grp_arr, xy_arr
+
+
+def _resolve_spatial_group_cv(
+    cv: Union[int, Any],
+    rnd_seed: Optional[int],
+    stratified: bool,
+    groups: Optional[np.ndarray],
+    coords: Optional[np.ndarray],
+) -> Any:
+    """
+    Check that an :mod:`rsgispy.ml.cv` splitter has the inputs it needs and,
+    with ``groups`` or ``coords``, turn an integer ``cv`` into a
+    ``SpatialBlockKFold`` / ``PolygonGroupKFold``.
+    """
+    # pylint: disable=import-outside-toplevel
+    from rsgispy.ml.cv import PolygonGroupKFold, SpatialBlockKFold, SpatialBufferCV
+
+    if isinstance(cv, (SpatialBlockKFold, SpatialBufferCV)) and coords is None:
+        raise rsgispy.RSGISPyException(
+            f"cv={type(cv).__name__} needs the sample coordinates: pass "
+            "coords=('x', 'y') (the coordinate columns of train_data) or an "
+            "(n_samples, 2) array."
+        )
+    if isinstance(cv, PolygonGroupKFold) and groups is None:
+        raise rsgispy.RSGISPyException(
+            "cv=PolygonGroupKFold needs the group (e.g. source polygon) of "
+            "each sample: pass groups='train_grp' (a column of train_data) "
+            "or an array of labels."
+        )
+    is_int = isinstance(cv, (int, np.integer)) and not isinstance(cv, bool)
+    if not is_int or (groups is None and coords is None):
+        return cv
+    if int(cv) < 2:
+        raise rsgispy.RSGISPyException(f"cv must be at least 2 folds, got {cv}.")
+    if coords is not None:
+        return SpatialBlockKFold(
+            n_splits=int(cv), stratify=stratified, rnd_seed=rnd_seed
+        )
+    return PolygonGroupKFold(
+        n_splits=int(cv), stratify=stratified, rnd_seed=rnd_seed
+    )
+
+
+def resolve_cv_splits(
+    cv: Union[int, Any],
+    train_x: Any,
+    train_y: np.ndarray,
+    rnd_seed: Optional[int],
+    stratified: bool = True,
+    groups: Optional[np.ndarray] = None,
+    coords: Optional[np.ndarray] = None,
+) -> Any:
+    """
+    Resolve ``cv`` for a parameter search. Without ``groups`` and ``coords``
+    this is :func:`resolve_cv_splitter`. Otherwise the folds are made here
+    (``cv.split(X, y, groups=groups, coords=coords)`` for the
+    :mod:`rsgispy.ml.cv` splitters, ``cv.split(X, y, groups)`` for
+    scikit-learn group splitters such as ``GroupKFold``) and returned as a
+    list of ``(train_idx, test_idx)`` arrays, which every scikit-learn search
+    accepts. An integer ``cv`` gives a
+    :class:`~rsgispy.ml.cv.SpatialBlockKFold` (with ``coords``) or a
+    :class:`~rsgispy.ml.cv.PolygonGroupKFold` (with ``groups``), stratified by
+    class for classification.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    cv = _resolve_spatial_group_cv(cv, rnd_seed, stratified, groups, coords)
+    if groups is None and coords is None:
+        return resolve_cv_splitter(cv, train_y, rnd_seed, stratified=stratified)
+    if not hasattr(cv, "split"):
+        return cv  # already an iterable of (train_idx, test_idx) arrays
+
+    try:
+        split_params = inspect.signature(cv.split).parameters
+    except (TypeError, ValueError):
+        split_params = {}
+    if "coords" in split_params:
+        raw_splits = cv.split(train_x, train_y, groups=groups, coords=coords)
+    elif groups is None:
+        raise rsgispy.RSGISPyException(
+            f"cv={type(cv).__name__} does not accept coords; use a "
+            "rsgispy.ml.cv splitter (e.g. SpatialBlockKFold) or pass groups."
+        )
+    else:
+        raw_splits = cv.split(train_x, train_y, groups)
+    splits = [
+        (np.asarray(tr_idx, dtype=np.intp), np.asarray(te_idx, dtype=np.intp))
+        for tr_idx, te_idx in raw_splits
+        if len(tr_idx) > 0 and len(te_idx) > 0
+    ]
+    if not splits:
+        raise rsgispy.RSGISPyException(
+            f"cv={type(cv).__name__} produced no folds with both training "
+            "and validation samples."
+        )
+    return splits
+
+
 def build_predefined_split_data(
     train_x: pd.DataFrame,
     train_y: np.ndarray,
@@ -377,10 +531,18 @@ def run_sklearn_search_cv(
     verbose: int,
     stratified: bool = True,
     extra: str = "classification",
+    groups: Optional[np.ndarray] = None,
+    coords: Optional[np.ndarray] = None,
 ) -> Tuple[Any, Dict[str, Any], float, pd.DataFrame, Any]:
-    """Execute GridSearchCV, RandomizedSearchCV, or a passed BaseSearchCV."""
+    """
+    Execute GridSearchCV, RandomizedSearchCV, or a passed BaseSearchCV. The
+    optional ``groups`` / ``coords`` of the training samples are used to make
+    the cross-validation folds (see :func:`resolve_cv_splits`).
+    """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
+    preconfigured = is_sklearn_search_cv(sk_estimator)
+    use_grp = groups is not None or coords is not None
     if valid_x is not None and valid_y is not None:
         fit_x, fit_y, cv_obj = build_predefined_split_data(
             train_x, train_y, valid_x, valid_y
@@ -388,15 +550,27 @@ def run_sklearn_search_cv(
         cv_refit = False
     else:
         fit_x, fit_y = train_x, train_y
-        cv_obj = resolve_cv_splitter(
-            cv, train_y, rnd_seed, stratified=stratified
+        cv_obj = (
+            None
+            if preconfigured and use_grp
+            else resolve_cv_splits(
+                cv, train_x, train_y, rnd_seed, stratified=stratified,
+                groups=groups, coords=coords,
+            )
         )
         cv_refit = refit
 
-    if is_sklearn_search_cv(sk_estimator):
+    if preconfigured:
         search_obj = clone_sklearn_estimator(sk_estimator, extra=extra)
         if valid_x is not None:
             search_obj.set_params(cv=cv_obj, refit=False)
+        elif use_grp:
+            search_obj.set_params(
+                cv=resolve_cv_splits(
+                    search_obj.cv, train_x, train_y, rnd_seed,
+                    stratified=stratified, groups=groups, coords=coords,
+                )
+            )
     else:
         if param_space is None or (
             isinstance(param_space, Mapping) and not param_space
@@ -473,8 +647,14 @@ def run_optuna_search(
     func_name: str = "perform_sklearn_classifier_param_search",
     extra: str = "classification",
     use_pbar: bool = True,
+    groups: Optional[np.ndarray] = None,
+    coords: Optional[np.ndarray] = None,
 ) -> Tuple[Any, Dict[str, Any], float, pd.DataFrame, Any]:
-    """Execute Bayesian hyperparameter optimisation with Optuna."""
+    """
+    Execute Bayesian hyperparameter optimisation with Optuna. The optional
+    ``groups`` / ``coords`` of the training samples are used to make the
+    cross-validation folds (see :func:`resolve_cv_splits`).
+    """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
     if param_space is None:
@@ -490,8 +670,9 @@ def run_optuna_search(
     cv_obj = (
         None
         if valid_x is not None
-        else resolve_cv_splitter(
-            cv, train_y, rnd_seed, stratified=stratified
+        else resolve_cv_splits(
+            cv, train_x, train_y, rnd_seed, stratified=stratified,
+            groups=groups, coords=coords,
         )
     )
 

@@ -20,10 +20,10 @@ from rsgispy.imageprocess import (
     compute_spatial_intersection,
     ensure_file_exists,
     iter_dataset_windows,
-    maybe_pop_stats,
     normalise_creation_options,
     open_multi_image_datasets,
     open_output_dataset,
+    pop_stats_on_close,
 )
 from rsgispy.imageutils.metadata import get_file_img_extension
 from rsgispy.tools.archives import (
@@ -156,6 +156,9 @@ def parse_landsat_c2_qa_pixel(
             creation_opts=norm_opts,
         )
         dst.nodata = 0
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=0, thematic=False, use_pbar=use_pbar
+        )
         for bidx, bname in enumerate(QA_BAND_NAMES, start=1):
             dst.set_band_description(bidx, bname)
 
@@ -175,15 +178,6 @@ def parse_landsat_c2_qa_pixel(
                 )
                 band_i += 1
             dst.write(out_blk, window=win)
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=0,
-        thematic=False,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )
 
 
 def _extract_archive(input_file: str, dest_dir: str) -> str:
@@ -238,6 +232,7 @@ def _write_landsat_cloud_and_valid_masks(
             creation_opts=creation_opts,
         )
         cloud_dst.nodata = 0
+        pop_stats_on_close(cloud_dst, calc_stats, thematic=True, use_pbar=use_pbar)
 
         vld_dst = open_output_dataset(
             stack=stack,
@@ -250,6 +245,7 @@ def _write_landsat_cloud_and_valid_masks(
             creation_opts=creation_opts,
         )
         vld_dst.nodata = 0
+        pop_stats_on_close(vld_dst, calc_stats, thematic=True, use_pbar=use_pbar)
 
         for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             qa_arr = src.read(1, window=win).astype(np.uint32, copy=False)
@@ -265,21 +261,6 @@ def _write_landsat_cloud_and_valid_masks(
 
             vld_out = np.where(fill_bit, 0, 1).astype(np.uint8)
             vld_dst.write(vld_out, 1, window=win)
-
-    maybe_pop_stats(
-        output_img=cloud_msk_img,
-        calc_stats=calc_stats,
-        thematic=True,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )
-    maybe_pop_stats(
-        output_img=vld_msk_img,
-        calc_stats=calc_stats,
-        thematic=True,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )
 
 
 def process_landsat_c2_archive(
@@ -394,6 +375,13 @@ def process_landsat_c2_archive(
                 creation_opts=norm_opts,
             )
             dst.nodata = nd_val
+            pop_stats_on_close(
+                dst,
+                calc_stats,
+                no_data_val=nd_val,
+                thematic=False,
+                use_pbar=use_pbar,
+            )
             for bidx, bname in enumerate(spec.band_names, start=1):
                 dst.set_band_description(bidx, bname)
 
@@ -426,15 +414,6 @@ def process_landsat_c2_archive(
                     )
                 dst.write(out_blk, window=dst_win)
             _ = paths
-
-        maybe_pop_stats(
-            output_img=output_img,
-            calc_stats=calc_stats,
-            no_data_val=nd_val,
-            thematic=False,
-            use_pbar=use_pbar,
-            gdalformat=gdalformat,
-        )
 
         if inc_full_qa_pxl_img:
             qa_pxl_mband_img = os.path.join(

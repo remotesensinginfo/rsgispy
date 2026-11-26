@@ -19,6 +19,23 @@ ENV_VAR_BLOCK_SIZE = "RSGISPY_BLOCK_SIZE"
 ENV_VAR_RSGISLIB_BLOCK_SIZE = "RSGISLIB_BLOCK_SIZE"
 _INT_DTYPES = {"uint8", "int8", "uint16", "int16", "uint32", "int32"}
 
+#: Built-in GDAL creation options used when neither
+#: ``RSGISPY_IMG_CRT_OPTS_<FORMAT>`` nor ``RSGISLIB_IMG_CRT_OPTS_<FORMAT>`` is
+#: set. Keys are upper-case GDAL driver names; formats without an entry get no
+#: creation options. GeoTIFF outputs are tiled (GDAL's default 256 x 256 tiles)
+#: and DEFLATE-compressed, the same options that
+#: :func:`rsgispy.imageutils.envopts.set_env_vars_deflate_gtiff_outs` sets.
+DEFAULT_IMG_CREATION_OPTS: Dict[str, Dict[str, str]] = {
+    "GTIFF": {
+        "TILED": "YES",
+        "COMPRESS": "DEFLATE",
+        "INTERLEAVE": "BAND",
+        "BIGTIFF": "IF_SAFER",
+    },
+}
+ENV_VAR_IMG_CRT_OPTS_PREFIX = "RSGISPY_IMG_CRT_OPTS_"
+ENV_VAR_RSGISLIB_IMG_CRT_OPTS_PREFIX = "RSGISLIB_IMG_CRT_OPTS_"
+
 
 def get_default_block_size() -> int:
     """
@@ -110,37 +127,77 @@ def reset_default_block_size() -> None:
     os.environ.pop(ENV_VAR_RSGISLIB_BLOCK_SIZE, None)
 
 
+def _parse_img_creation_opts_str(raw_opts: str) -> Dict[str, str]:
+    """Parse colon-separated ``KEY=VALUE`` pairs into a dictionary."""
+    opts_dict: Dict[str, str] = {}
+    for item in raw_opts.split(":"):
+        item = item.strip()
+        if "=" in item:
+            key, val = item.split("=", 1)
+            opts_dict[key.strip()] = val.strip()
+    return opts_dict
+
+
 def get_gdal_img_creation_opts(gdalformat: str) -> Dict[str, str]:
     """
-    Retrieve image creation options for a given GDAL driver format from
-    environment variables ``RSGISPY_IMG_CRT_OPTS_<GDAL_FORMAT>`` or
-    ``RSGISLIB_IMG_CRT_OPTS_<GDAL_FORMAT>``, where options are specified as
-    colon-separated ``KEY=VALUE`` pairs.
+    Resolve the GDAL creation options used for new output images of the GDAL
+    driver ``gdalformat``.
+
+    The options are taken from the first of these that applies:
+
+    1. the ``RSGISPY_IMG_CRT_OPTS_<GDAL_FORMAT>`` environment variable, if it
+       is set;
+    2. otherwise the ``RSGISLIB_IMG_CRT_OPTS_<GDAL_FORMAT>`` environment
+       variable, if it is set;
+    3. otherwise the built-in default in
+       :data:`rsgispy.imageprocess.DEFAULT_IMG_CREATION_OPTS`. For GeoTIFF
+       (``'GTIFF'``) this is ``TILED=YES``, ``COMPRESS=DEFLATE``,
+       ``INTERLEAVE=BAND`` and ``BIGTIFF=IF_SAFER``; other formats (including
+       ``'COG'`` and ``'KEA'``) have no default and get ``{}``.
+
+    Environment variables hold colon-separated ``KEY=VALUE`` pairs (e.g.
+    ``TILED=YES:COMPRESS=LZW``). A variable that is set replaces the default
+    rather than being merged with it, and a variable set to an empty string
+    means "no creation options", which gives a plain striped, uncompressed
+    GeoTIFF. Explicit ``creation_opts`` passed to an rsgispy function are
+    merged on top of the resolved options (keys compared case-insensitively).
+    If they set ``BLOCKYSIZE`` but neither ``TILED`` nor ``BLOCKXSIZE`` (a
+    striped GeoTIFF, e.g. ``{'BLOCKYSIZE': 1}`` for one row per strip), the
+    resolved ``TILED`` and ``BLOCKXSIZE`` options are dropped, so the output
+    is striped rather than tiled. The environment is read on each call, and
+    rsgispy never sets these variables itself; use
+    :mod:`rsgispy.imageutils.envopts` to change them at runtime.
 
     :param gdalformat: GDAL format string (e.g., 'GTIFF', 'COG', 'KEA').
-    :return: Dictionary of creation option key-value strings.
+    :return: New dictionary of creation option key-value strings.
 
     .. code:: python
 
         import rsgispy.imageprocess
 
+        # {'TILED': 'YES', 'COMPRESS': 'DEFLATE', 'INTERLEAVE': 'BAND',
+        #  'BIGTIFF': 'IF_SAFER'} unless an environment variable is set.
         opts = rsgispy.imageprocess.get_gdal_img_creation_opts("GTIFF")
     """
     fmt_upper = gdalformat.upper().strip()
-    rsgispy_var = f"RSGISPY_IMG_CRT_OPTS_{fmt_upper}"
-    rsgislib_var = f"RSGISLIB_IMG_CRT_OPTS_{fmt_upper}"
+    for env_prefix in (
+        ENV_VAR_IMG_CRT_OPTS_PREFIX,
+        ENV_VAR_RSGISLIB_IMG_CRT_OPTS_PREFIX,
+    ):
+        raw_opts = os.environ.get(f"{env_prefix}{fmt_upper}")
+        if raw_opts is not None:
+            return _parse_img_creation_opts_str(raw_opts)
 
-    raw_opts = os.environ.get(rsgispy_var) or os.environ.get(rsgislib_var)
-    opts_dict: Dict[str, str] = {}
-    if raw_opts:
-        for item in raw_opts.split(":"):
-            item = item.strip()
-            if not item:
-                continue
-            if "=" in item:
-                key, val = item.split("=", 1)
-                opts_dict[key.strip()] = val.strip()
-    return opts_dict
+    facade = sys.modules.get("rsgispy.imageprocess")
+    defaults = (
+        getattr(facade, "DEFAULT_IMG_CREATION_OPTS", DEFAULT_IMG_CREATION_OPTS)
+        if facade is not None
+        else DEFAULT_IMG_CREATION_OPTS
+    )
+    for def_fmt, def_opts in defaults.items():
+        if str(def_fmt).upper().strip() == fmt_upper:
+            return {str(key): str(val) for key, val in def_opts.items()}
+    return {}
 
 
 def rsgis_dtype_from_np_dtype(
@@ -331,6 +388,94 @@ def resolve_nodata_and_fill(
         return None, 0.0
 
     return eff_nd, (float(eff_nd) if eff_nd is not None else 0.0)
+
+
+def _same_nodata(cur_val: Optional[float], new_val: Optional[float]) -> bool:
+    """Return ``True`` if two no-data values (``None``/NaN aware) are equal."""
+    if cur_val is None or new_val is None:
+        return cur_val is None and new_val is None
+    f_cur = float(cur_val)
+    f_new = float(new_val)
+    if math.isnan(f_cur) or math.isnan(f_new):
+        return math.isnan(f_cur) and math.isnan(f_new)
+    return f_cur == f_new
+
+
+def set_dataset_nodata(
+    dst: Any,
+    no_data_val: Optional[float],
+    img_band: Optional[int] = None,
+) -> None:
+    """
+    Set the no-data value of an open, writable rasterio dataset, safely for
+    every driver.
+
+    Use this instead of ``dst.nodata = no_data_val`` on a dataset that may
+    already have a no-data value (an existing file opened in ``'r+'`` mode, or
+    an output written with ``output_exists=True``):
+
+    * If the bands already have ``no_data_val``, nothing is written.
+    * Otherwise the value is set on all bands (or only on ``img_band``).
+    * GDAL's KEA driver (kealib) cannot replace an existing no-data value: it
+      reports a failure from ``SetNoDataValue`` (after writing the value to
+      the first band only), which rasterio raises as
+      ``ValueError: Invalid nodata value``. For KEA, changing a band that
+      already has a different no-data value therefore raises an
+      :class:`rsgispy.RSGISPyException` naming the format and the values,
+      before anything is written. Give KEA outputs the right no-data value
+      when they are created, or convert the file to another format.
+
+    :param dst: Open rasterio dataset in ``'w'`` or ``'r+'`` mode.
+    :param no_data_val: No-data value to set, or ``None`` to remove it.
+    :param img_band: Optional 1-based band index; if ``None`` (default) the
+                     value is set on all bands.
+
+    .. code:: python
+
+        import rasterio
+        import rsgispy.imageprocess
+
+        with rasterio.open("img.kea", "r+") as dst:
+            # Does nothing if every band already has -9999 as no data.
+            rsgispy.imageprocess.set_dataset_nodata(dst, -9999)
+    """
+    cur_vals = list(dst.nodatavals)
+    if img_band is None:
+        target_idxs = list(range(len(cur_vals)))
+    else:
+        if int(img_band) < 1 or int(img_band) > len(cur_vals):
+            raise rsgispy.RSGISPyException(
+                f"img_band {img_band} is out of range for image '{dst.name}' "
+                f"with {len(cur_vals)} band(s)."
+            )
+        target_idxs = [int(img_band) - 1]
+    new_vals = list(cur_vals)
+    for idx in target_idxs:
+        new_vals[idx] = no_data_val
+    if all(_same_nodata(cur, new) for cur, new in zip(cur_vals, new_vals)):
+        return
+
+    driver = str(dst.driver or "").upper()
+    if driver == "KEA" and no_data_val is not None:
+        if any(val is not None for val in cur_vals):
+            raise rsgispy.RSGISPyException(
+                f"Cannot change the no-data value of KEA image '{dst.name}' "
+                f"from {tuple(cur_vals)} to {no_data_val}: the GDAL KEA driver "
+                "(kealib) cannot replace an existing no-data value. Write the "
+                "KEA file with the required no-data value, or use another "
+                "format (e.g. GTIFF)."
+            )
+    try:
+        if img_band is None:
+            dst.nodata = no_data_val
+        else:
+            # pylint: disable=protected-access
+            dst._set_nodatavals(new_vals)
+    except ValueError as err:
+        raise rsgispy.RSGISPyException(
+            f"Could not set the no-data value of {driver or 'the'} image "
+            f"'{dst.name}' from {tuple(cur_vals)} to {no_data_val}: {err}"
+        ) from err
 
 
 def normalise_creation_options(

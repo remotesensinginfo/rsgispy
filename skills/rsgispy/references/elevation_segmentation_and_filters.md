@@ -51,7 +51,7 @@ Follows dual path / `GeoDataFrame` pattern (`out_vec_file=None` returns `GeoData
   - `flow_distance(flow_dir_img, streams_img, output_img, dem_img=None, distance_type='horizontal', allow_pure_python=False, *, ...)`
   - `trace_flow_path(flow_dir_img, pour_points_vec, out_vec_file, direction='downstream', flow_acc_img=None, *, out_format=None, out_vec_lyr=None, overwrite=True, no_data_val=None, use_pbar=True)`
 - **Streams & watersheds**:
-  - `extract_streams(input_img, output_img, threshold, threshold_units='cells', *, ...)`
+  - `extract_streams(input_img, output_img, threshold, threshold_units='cells', *, acc_units='auto', ...)` — `flow_accumulation` writes the tag `RSGISPY_FLOW_ACC_UNITS` (`cells`/`area`); `acc_units='auto'` reads it (untagged = cells) and converts the threshold, so cells and m² accumulations give the same network; a contradicting `acc_units` raises. `calc_twi`/`calc_spi`/`calc_ls_factor` raise if given a tagged flow accumulation (they need specific catchment area, m²/m).
   - `stream_link(streams_img, flow_dir_img, output_img, allow_pure_python=False, *, ...)`
   - `stream_order(streams_img, flow_dir_img, output_img, method='strahler', allow_pure_python=False, *, ...)`
   - `vectorise_streams(streams_img, flow_dir_img, out_vec_file, dem_img=None, flow_acc_img=None, order_method='strahler', allow_pure_python=False, *, ...)`

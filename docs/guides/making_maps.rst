@@ -279,14 +279,11 @@ Step 5 — Vector layers and choropleth maps
 GeoDataFrames (all in the CRS of the map). Give one value per layer for the
 fill colours, line colours, widths, transparency (``vec_fill_alphas``) and
 ``plot_zorders``. The z-order sets the drawing order: rasters are drawn at
-z-order 1 by default, so vectors over an image need a higher value. Use a
-fill colour of ``'none'`` to draw polygon outlines only.
-
-.. note::
-
-   For **line** layers, the line is drawn in the *fill* colour
-   (``vec_fill_clrs``), because Matplotlib uses the ``color`` argument for
-   lines; ``vec_line_clrs`` only affects polygon outlines and point markers.
+z-order 1 by default, so vectors over an image need a higher value.
+Polygons and points are filled with ``vec_fill_clrs`` and outlined with
+``vec_line_clrs``; use a fill colour of ``'none'`` to draw polygon outlines
+only. Lines are drawn in ``vec_line_clrs``, and a layer that mixes geometry
+types is split by type, so each part gets the right colours.
 
 A **choropleth** colours each polygon by an attribute.
 :func:`~rsgispy.mapping.vector.create_choropleth_vec_lyr_map` takes the column
@@ -525,11 +522,6 @@ Common problems
 * **Legend labels are numbers or classes are missing** — give
   ``classes_info`` with the names. Classes without a colour table entry, and
   class 0 (``ignore_zero=True``), are left out.
-* **Vector lines are invisible** — for line layers set the colour with
-  ``vec_fill_clrs`` (see the note in Step 5), not ``'none'``.
-* **The inset map has axis labels** — GeoPandas labels the axes from the
-  layer's CRS; clear them with ``set_xlabel('')`` and ``set_ylabel('')`` on
-  the axis returned by :func:`~rsgispy.mapping.layout.add_overview_maps`.
 * **"contextily is required"** — install the ``mapping`` extra; basemaps
   also need an internet connection (and some providers need an API key).
 

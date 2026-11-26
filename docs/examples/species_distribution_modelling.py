@@ -154,7 +154,6 @@ def run_workflow(
     )
     rf_mdl, train_acc, test_acc, test_auc = sdm.fit_sklearn_mdl(
         rf, train_vec, "train", test_vec, "test", analysis_vars,
-        roc_curve_plot=os.path.join(plots_dir, "roc_curve.png"),
         return_model=True,
     )
     print(f"Single model: train acc {train_acc:.3f}, test acc {test_acc:.3f}, "
@@ -181,13 +180,20 @@ def run_workflow(
     test_y = test_gdf["clsid"].to_numpy()
     # Median presence probability over the ensemble (as in the raster step).
     test_prob = np.median(
-        [mdl.predict_proba(test_gdf[analysis_vars])[:, 1] for mdl in mdls], axis=0
+        [sdm.get_positive_class_probs(mdl, test_gdf[analysis_vars]) for mdl in mdls],
+        axis=0,
     )
     names, scores = bin_accuracy_scores_prob(test_y, test_prob)
     ens_metrics = dict(zip(names, scores))
     print(ens_metrics)  # Test AUC, point-biserial r, Brier score, ...
+
+    # ROC curve of the ensemble on the test set.
+    fpr, tpr, ens_auc = sdm.calc_binary_roc_auc(test_y, test_prob)
+    sdm.plot_roc_curve(fpr, tpr, ens_auc, os.path.join(plots_dir, "roc_curve.png"),
+                       label="Ensemble")
     # [end-step-7-evaluate]
     out["ens_metrics"] = ens_metrics
+    out["ens_auc"] = ens_auc
 
     # [step-8-spatial-cv]
     from sklearn.model_selection import StratifiedKFold, cross_val_score
@@ -262,14 +268,12 @@ def run_workflow(
     out["agree_img"] = agree_img
 
     # [step-11-threshold]
-    from sklearn.metrics import roc_curve
     from rsgispy.imagecalc.maths import BandDefn, band_maths, calc_prop_true_exp
     from rsgispy.imageutils.stats import pop_thmt_img_stats
     from rsgispy.tools.accuracy import accuracy_scores_binary
 
     # Threshold maximising the true skill statistic (TSS = sens + spec - 1).
-    fpr, tpr, thresholds = roc_curve(test_y, test_prob)
-    prob_thres = float(thresholds[np.argmax(tpr - fpr)])
+    prob_thres = sdm.calc_binary_threshold(test_y, test_prob, method="max_tss")
     names, scores = accuracy_scores_binary(test_y, (test_prob >= prob_thres) * 1)
     bin_metrics = dict(zip(names, scores))
     print(f"Threshold {prob_thres:.3f}: TSS {bin_metrics['Hanssen-Kuiper skill']:.3f}")

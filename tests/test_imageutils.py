@@ -54,7 +54,11 @@ def test_env_vars_gtiff_and_cog_helpers(monkeypatch):
     monkeypatch.delenv("RSGISLIB_IMG_CRT_OPTS_COG", raising=False)
     monkeypatch.delenv("RSGISPY_IMG_CRT_OPTS_COG", raising=False)
 
-    assert rsgispy.imageutils.envopts.get_gdal_img_creation_opts("GTIFF") == {}
+    # With nothing configured GTIFF gets the built-in tiled DEFLATE defaults.
+    assert rsgispy.imageutils.envopts.get_gdal_img_creation_opts(
+        "GTIFF"
+    ) == rsgispy.imageutils.envopts.DEFAULT_IMG_CREATION_OPTS["GTIFF"]
+    assert rsgispy.imageutils.envopts.get_gdal_img_creation_opts("COG") == {}
 
     rsgispy.imageutils.envopts.set_env_vars_deflate_gtiff_outs(bigtiff=False)
     opts = rsgispy.imageutils.envopts.get_gdal_img_creation_opts("GTIFF")

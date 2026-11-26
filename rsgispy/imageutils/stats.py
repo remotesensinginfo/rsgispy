@@ -21,7 +21,10 @@ from rsgispy.imagecalc.stats import calc_basic_img_band_stats
 from rsgispy.imageprocess import (
     build_valid_mask,
     ensure_file_exists,
+    is_cog_layout,
     iter_single_image_band_blocks,
+    set_dataset_nodata,
+    update_cog,
 )
 from rsgispy.imageutils._overviews import (
     finalise_external_ovr,
@@ -129,6 +132,10 @@ def build_img_pyramids_multi_core(
     :param tmp_dir: Optional scratch directory for temporary scale/tile files
                     (e.g., fast local SSD). Automatically cleaned up on exit.
     :param compress: Compression algorithm for overview TIFFs (Default = ``'LZW'``).
+                     When ``external=False`` the rewritten base image instead
+                     takes the GeoTIFF creation options of
+                     :func:`rsgispy.imageprocess.get_gdal_img_creation_opts`
+                     (tiled and DEFLATE-compressed by default).
     :param ovr_block_size: Internal TIFF tile block size (power of 2 between
                            ``64`` and ``4096``, Default = ``128``).
     :param cascade: If ``True`` (default), generate scale ``lvl`` from the
@@ -531,7 +538,11 @@ def pop_thmt_img_stats(
     :param input_img: Path to the input thematic image file.
     :param add_clr_tab: Whether to compute statistics and add a colour table (Default = True).
     :param calc_pyramids: Whether to build overview pyramids (Default = True).
-    :param ignore_zero: Whether to treat pixel value 0 as no-data (Default = True).
+    :param ignore_zero: Whether to treat pixel value 0 as no-data and set it as
+                        the image no-data value (Default = True). For a KEA file
+                        that already has a different no-data value this raises
+                        :class:`rsgispy.RSGISPyException` (see
+                        :func:`rsgispy.imageprocess.set_dataset_nodata`).
     :param use_pbar: Whether to display a tqdm progress bar (Default = True).
     :param use_multi_core_pyramids: If ``True``, use
                                     :func:`build_img_pyramids_multi_core` instead
@@ -541,8 +552,22 @@ def pop_thmt_img_stats(
                     ``use_multi_core_pyramids=True`` (Default = ``1``).
     :param tile_size: Overview tile width and height in pixels at each scale
                       when ``use_multi_core_pyramids=True`` (Default = ``1024``).
-    :param ignore_cog: Whether to ignore breaking COG layout when modifying a COG
-                       file in place (Default = ``False``).
+    :param ignore_cog: Kept for compatibility. Cloud Optimised GeoTIFFs are
+                       detected from the file and never edited in place.
+
+    .. note::
+
+        A Cloud Optimised GeoTIFF (see
+        :func:`rsgispy.imageprocess.is_cog_layout`) is not edited in place,
+        which would break its layout. It is rebuilt with
+        :func:`rsgispy.imageprocess.update_cog`: copied to a temporary
+        GeoTIFF, given the statistics and colour table, and converted back
+        with its original compression and block size. Its overviews are
+        rebuilt with nearest-neighbour resampling (unless they already use
+        ``NEAREST`` or ``MODE``) and rsgispy's own pyramids are not added.
+        The rebuild decodes and re-encodes the whole image. To avoid it,
+        calculate the statistics when the COG is written (``calc_stats=True``
+        on rsgispy functions).
 
     .. note::
 
@@ -579,6 +604,25 @@ def pop_thmt_img_stats(
             raise rsgispy.RSGISPyException(
                 "This function only supports integer datasets"
             )
+        ovr_resamp = str(
+            src.tags(ns="IMAGE_STRUCTURE").get("OVERVIEW_RESAMPLING", "")
+        ).upper()
+
+    if is_cog_layout(input_img):
+        update_cog(
+            input_img,
+            lambda tmp_img: pop_thmt_img_stats(
+                tmp_img,
+                add_clr_tab=add_clr_tab,
+                calc_pyramids=False,
+                ignore_zero=ignore_zero,
+                use_pbar=use_pbar,
+            ),
+            overview_resampling=(
+                None if ovr_resamp in ("NEAREST", "MODE") else "NEAREST"
+            ),
+        )
+        return
 
     set_img_thematic(input_img, ignore_cog=ignore_cog)
 
@@ -592,7 +636,7 @@ def pop_thmt_img_stats(
         )
         with rasterio.open(input_img, "r+", **open_opts) as dst:
             if ignore_zero:
-                dst.nodata = 0
+                set_dataset_nodata(dst, 0)
 
             for idx, (hist, h_min, h_max) in enumerate(hist_info):
                 bidx = idx + 1
@@ -723,10 +767,17 @@ def pop_img_stats(
     pyramids on ``input_img`` using ``rasterio`` and :mod:`rsgispy.imagecalc`.
 
     :param input_img: Path to the input image file.
-    :param no_data_val: Optional no-data value to set and exclude from statistics.
+    :param no_data_val: Optional no-data value to set and exclude from
+                        statistics (if ``None``, the image's own no-data value
+                        is excluded). Setting the value the image already has
+                        writes nothing, so this works for KEA files; a KEA file
+                        whose existing no-data value differs raises
+                        :class:`rsgispy.RSGISPyException` because GDAL's KEA
+                        driver cannot replace it (see
+                        :func:`rsgispy.imageprocess.set_dataset_nodata`).
     :param calc_pyramids: Whether to build overview pyramids (Default = True).
-    :param ignore_cog: Whether to ignore breaking COG layout when modifying a COG
-                       file in place (Default = False).
+    :param ignore_cog: Kept for compatibility. Cloud Optimised GeoTIFFs are
+                       detected from the file and never edited in place.
     :param use_approx: Whether to record statistics as approximate in metadata
                        (Default = False).
     :param use_pbar: Whether to display a tqdm progress bar (Default = True).
@@ -738,6 +789,21 @@ def pop_img_stats(
                     ``use_multi_core_pyramids=True`` (Default = ``1``).
     :param tile_size: Overview tile width and height in pixels at each scale
                       when ``use_multi_core_pyramids=True`` (Default = ``1024``).
+
+    .. note::
+
+        A Cloud Optimised GeoTIFF (see
+        :func:`rsgispy.imageprocess.is_cog_layout`) is not edited in place,
+        which would break its layout. It is rebuilt with
+        :func:`rsgispy.imageprocess.update_cog`: copied to a temporary
+        GeoTIFF next to it, given the statistics, and converted back with its
+        original compression, predictor, block size and overview resampling.
+        The COG keeps overviews built by the COG driver; rsgispy's own
+        pyramids are not added. The rebuild decodes and re-encodes the whole
+        image, so it takes about as long as creating the COG and needs
+        temporary disk space for one compressed copy. To avoid it, calculate
+        the statistics when the COG is written (``calc_stats=True`` on rsgispy
+        functions, which do this before the COG is created).
 
     .. note::
 
@@ -764,6 +830,19 @@ def pop_img_stats(
             )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    if is_cog_layout(input_img):
+        update_cog(
+            input_img,
+            lambda tmp_img: pop_img_stats(
+                tmp_img,
+                no_data_val=no_data_val,
+                calc_pyramids=False,
+                use_approx=use_approx,
+                use_pbar=use_pbar,
+            ),
+        )
+        return
+
     eff_no_data = no_data_val
     if eff_no_data is None and os.path.exists(input_img):
         with rasterio.open(input_img, "r") as src_hdr:
@@ -793,7 +872,7 @@ def pop_img_stats(
 
     with rasterio.open(input_img, "r+", **open_opts) as dst:
         if no_data_val is not None:
-            dst.nodata = no_data_val
+            set_dataset_nodata(dst, no_data_val)
 
         for idx in range(dst.count):
             bidx = idx + 1

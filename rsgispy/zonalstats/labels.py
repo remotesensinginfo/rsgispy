@@ -46,10 +46,12 @@ from rsgispy.imageprocess import (
     normalise_creation_options,
     resolve_out_dtype,
     rsgis_dtype_from_np_dtype,
+    set_dataset_nodata,
     validate_band_index,
 )
 from rsgispy.tools.tables import write_dataframe_table
 from rsgispy.vectorprocess import VectorInput, finish_vec_output, read_vec_gdf
+from rsgispy.zonalstats._helpers import read_bands_native
 
 __all__ = [
     "LABEL_ZONAL_STATS",
@@ -515,12 +517,15 @@ def _block_reads(
     file_bands: Mapping[str, List[int]],
     win: Any,
 ) -> Dict[Tuple[str, int], np.ndarray]:
-    """Read all the needed bands for a window, one read per file."""
+    """
+    Read all the needed bands for a window, one read per file, each band in
+    its own data type (a file such as a VRT stack may mix data types).
+    """
     out: Dict[Tuple[str, int], np.ndarray] = {}
     for path, bands in file_bands.items():
-        arr = srcs[path].read(indexes=bands, window=win)
-        for b_i, band in enumerate(bands):
-            out[(path, band)] = arr[b_i].ravel()
+        arrs = read_bands_native(srcs[path], bands, window=win)
+        for band, arr in zip(bands, arrs):
+            out[(path, band)] = arr.ravel()
     return out
 
 
@@ -821,7 +826,7 @@ def calc_label_zonal_stats(
         import rsgispy.zonalstats.labels as zs_lbl
 
         df = zs_lbl.calc_label_zonal_stats(
-            "segments.kea",
+            "segments.tif",
             [
                 BandSpec("s2_sref.tif", name="s2", bands=(3, 4, 8),
                          band_names=("Red", "NIR", "SWIR1"), no_data_val=0),
@@ -1122,7 +1127,7 @@ def rasterise_label_values(
         import rsgispy.zonalstats.labels as zs_lbl
 
         zs_lbl.rasterise_label_values(
-            "segments.kea", [1, 2, 3], np.array([10, 20, 10], dtype=np.uint8),
+            "segments.tif", [1, 2, 3], np.array([10, 20, 10], dtype=np.uint8),
             "seg_classes.tif", thematic=True,
         )
     """
@@ -1273,7 +1278,7 @@ def _finalise_label_raster(
             )
             if out_no_data_val is not None and out_no_data_val != 0 and not is_cog:
                 with rasterio.open(out_path, "r+") as dst:
-                    dst.nodata = out_no_data_val
+                    set_dataset_nodata(dst, out_no_data_val)
     else:
         if not is_cog:
             set_img_not_thematic(out_path)

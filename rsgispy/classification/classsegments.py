@@ -132,7 +132,7 @@ def create_cls_segment_features(
         import rsgispy.classification.classsegments as cseg
 
         cfg = cseg.create_cls_segment_features(
-            "cls_config.json", "s2_segs.kea", "s2_segs.parquet",
+            "cls_config.json", "s2_segs.tif", "s2_segs.parquet",
             out_cfg_file="cls_seg_config.json",
             band_opts={"s2": {"no_data_val": 0}},
         )

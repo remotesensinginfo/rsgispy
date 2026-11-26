@@ -11,7 +11,10 @@ from matplotlib import ticker
 from rasterio.warp import transform_bounds
 
 import rsgispy
-from rsgispy.mapping._common import resolve_mpl_location
+from rsgispy.mapping._common import (
+    plot_vec_lyr_by_geom_type,
+    resolve_mpl_location,
+)
 
 __all__ = [
     "calc_y_fig_size",
@@ -245,6 +248,7 @@ def add_overview_maps(
 ) -> matplotlib.axes.Axes:
     """
     Add an inset overview map to ``ax`` using Matplotlib legend-style placement.
+    The inset has no ticks or axis labels.
 
     :param ax: Parent matplotlib axis.
     :param overview_lyr: GeoDataFrame used as the overview map backdrop.
@@ -260,7 +264,8 @@ def add_overview_maps(
     :param pt_clr: Colour of ``overview_pt`` marker (Default = ``'red'``).
     :param pt_size: Marker size for ``overview_pt`` (Default = 10.0).
     :param fill_clr: Polygon fill colour for ``overview_lyr`` (Default = ``'white'``).
-    :param line_clr: Edge line colour for ``overview_lyr`` (Default = ``'black'``).
+    :param line_clr: Colour of polygon outlines and line features in
+                     ``overview_lyr`` (Default = ``'black'``).
     :param line_width: Line width for ``overview_lyr`` (Default = 0.25).
     :param loc: Matplotlib legend placement string or integer code (Default =
                 ``'upper left'``). Supports ``'upper left'``, ``'upper right'``,
@@ -304,13 +309,16 @@ def add_overview_maps(
     ax_over.set_anchor(_LOC_TO_ANCHOR[norm_loc])
     ax_over.set_xticks([])
     ax_over.set_yticks([])
-    overview_lyr.plot(
-        ax=ax_over,
-        color=fill_clr,
-        edgecolor=line_clr,
-        linewidth=line_width,
-        alpha=1.0,
+    plot_vec_lyr_by_geom_type(
+        ax_over,
+        overview_lyr,
+        fill_clr=fill_clr,
+        line_clr=line_clr,
+        line_width=line_width,
     )
+    # GeoPandas labels the axes from the layer's CRS; not wanted on an inset.
+    ax_over.set_xlabel("")
+    ax_over.set_ylabel("")
     if overview_pt is not None:
         ax_over.scatter(overview_pt[0], overview_pt[1], color=pt_clr, s=pt_size)
     ax_over.set_xlim([overview_bbox[0], overview_bbox[1]])

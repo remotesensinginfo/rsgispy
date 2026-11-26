@@ -35,11 +35,15 @@ from rsgispy.imageutils.masking import ImageBandInfo
 from rsgispy.imageutils.metadata import set_img_no_data_value
 from rsgispy.tools._ml_data import (
     allocate_split_counts,
+    check_poly_id_col,
     extract_vector_samples_from_gdf,
+    get_group_labels,
     normalise_img_band_info_list as _normalise_img_band_info_list,
     read_ml_samples,
+    resolve_extract_split_group_col,
     resolve_img_band_info as _shared_resolve_img_band_info,
     resolve_split_proportions,
+    split_groups_stratified,
     write_ml_samples,
 )
 from rsgispy.tools.colours import hex_to_rgb, rgb_to_hex
@@ -709,7 +713,10 @@ def write_cls_samples(
     Write a classification sample :class:`pandas.DataFrame` to disk in Parquet
     (using Snappy compression by default) or any other pandas-supported format
     handled by :func:`rsgispy.tools.tables.write_dataframe_table` (e.g., CSV,
-    TSV, Feather, Excel, JSON, Pickle, HDF5).
+    TSV, Feather, Excel, JSON, Pickle, HDF5). Every column is written,
+    including a group column (``poly_id_col`` of
+    :func:`extract_class_training_samples`, e.g. ``'train_grp'``), so the
+    grouped split and group cross-validation also work on the files.
 
     :param samples_df: Sample :class:`pandas.DataFrame` to save.
     :param out_file: Output table file path (e.g., ``'train.parquet'``,
@@ -780,6 +787,8 @@ def extract_class_training_samples(
     internal_id_col: Optional[str] = None,
     class_name_col: Optional[str] = None,
     use_pbar: bool = True,
+    *,
+    poly_id_col: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Extract pixel training samples for every class defined in ``class_info`` across
@@ -791,7 +800,21 @@ def extract_class_training_samples(
     :func:`rsgispy.zonalstats.point.ext_point_band_values_file` (in memory,
     without modifying the source vector file) and polygon training layers are
     extracted using
-    :func:`rsgispy.zonalstats.polygon.export_poly_pxls_to_df`.
+    :func:`rsgispy.zonalstats.polygon.export_poly_pxls_to_df`. The images may
+    have bands of different data types (e.g. one VRT stacking ``uint16``
+    reflectance and ``float32`` indices).
+
+    With ``poly_id_col``, the source of each pixel is recorded in that column,
+    as in the segment workflow's ``train_grp`` column:
+    ``'<class name>:poly<n>'`` for the ``n``-th (0-based) polygon of the
+    class's training layer and ``'<class name>:pt<n>'`` for points. The pixels
+    of one polygon are strongly correlated, so pass the column as
+    ``group_col`` to :func:`split_class_samples` (so that a polygon is never
+    in two sets) and as ``groups`` to
+    :func:`~rsgispy.classification.classsklearn.perform_sklearn_classifier_param_search`
+    with :class:`~rsgispy.ml.cv.PolygonGroupKFold`. It is a string column, so
+    it is never used as a feature, and is kept by :func:`write_cls_samples`
+    and :func:`read_cls_samples` in every table format.
 
     :param img_band_info: Either a :class:`ClassificationConfig` instance or a
                           sequence of :class:`ImageBandInfo` objects.
@@ -822,8 +845,13 @@ def extract_class_training_samples(
     :param class_name_col: Optional column name for class names.
     :param use_pbar: If ``True``, display progress bars during extraction
                      (Default = ``True``).
+    :param poly_id_col: Optional name of a column recording the source polygon
+                        (or point) of each sample (e.g. ``'train_grp'``; it
+                        follows the class ID columns). When ``None`` (default)
+                        no column is added.
     :return: Combined :class:`pandas.DataFrame` containing class ID/name
-             columns and extracted band feature columns.
+             columns, the optional ``poly_id_col`` and coordinate columns and
+             the extracted band feature columns.
 
     .. code:: python
 
@@ -831,7 +859,7 @@ def extract_class_training_samples(
 
         cfg = cd.read_cls_config("cls_config.json")
         samples_df = cd.extract_class_training_samples(
-            cfg, out_file="all_samples.parquet"
+            cfg, out_file="all_samples.parquet", poly_id_col="train_grp"
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -845,6 +873,8 @@ def extract_class_training_samples(
     )
     resolved_imgs = resolve_img_band_info(cfg.img_band_info)
     all_feature_cols = [col for _, _, cols in resolved_imgs for col in cols]
+    meta_cols = [cfg.class_name_col, cfg.out_id_col, cfg.internal_id_col]
+    check_poly_id_col(poly_id_col, meta_cols + ["x", "y"] + all_feature_cols)
 
     chunks: List[pd.DataFrame] = []
     for cls_name, cls_obj in cfg.class_info.items():
@@ -872,6 +902,8 @@ def extract_class_training_samples(
             vec_def_epsg=vec_def_epsg,
             use_pbar=use_pbar,
             label=f"class '{cls_name}'",
+            group_col=poly_id_col,
+            group_prefix=f"{cls_name}:",
         )
 
         n_rows = len(cls_df)
@@ -882,9 +914,9 @@ def extract_class_training_samples(
             cls_df.insert(0, cfg.class_name_col, cls_name)
             chunks.append(cls_df)
 
-    meta_cols = [cfg.class_name_col, cfg.out_id_col, cfg.internal_id_col]
+    grp_cols = [poly_id_col] if poly_id_col is not None else []
     coord_cols = ["x", "y"] if include_coords else []
-    ordered_cols = meta_cols + coord_cols + all_feature_cols
+    ordered_cols = meta_cols + grp_cols + coord_cols + all_feature_cols
 
     if chunks:
         out_df = pd.concat(chunks, ignore_index=True)[ordered_cols]
@@ -894,6 +926,8 @@ def extract_class_training_samples(
             cfg.out_id_col: pd.Series(dtype="int64"),
             cfg.internal_id_col: pd.Series(dtype="int64"),
         }
+        for g_col in grp_cols:
+            empty_data[g_col] = pd.Series(dtype="object")
         for c_col in coord_cols:
             empty_data[c_col] = pd.Series(dtype="float64")
         for f_col in all_feature_cols:
@@ -954,12 +988,31 @@ def split_class_samples(
     n_test: Optional[Union[int, Mapping[Any, int]]] = None,
     n_valid: Optional[Union[int, Mapping[Any, int]]] = None,
     rnd_seed: Optional[int] = None,
+    *,
+    group_col: Optional[str] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Split a classification sample :class:`pandas.DataFrame` stratified per class
     into training, testing, and validation DataFrames, optionally saving each
     set in Parquet (Snappy compressed by default) or another pandas-supported
     tabular format.
+
+    By default the samples (pixels) of each class are split at random, so the
+    pixels of one training polygon usually end up in all three sets and the
+    test accuracy is optimistic. With ``group_col`` (e.g. the ``poly_id_col``
+    column from :func:`extract_class_training_samples`), whole groups are
+    assigned to one set, as in
+    :func:`~rsgispy.classification.classsegments.split_class_segment_samples`:
+    for each class the groups are taken in random order and each is put in
+    the set furthest below its target number of samples, after making sure
+    that every set gets at least one group of the class if there are enough
+    groups. The proportions are therefore met as closely as the group sizes
+    allow, and a warning is issued for a class with fewer groups than sets
+    (some sets then have no samples of that class). ``max_cls_smpls``
+    subsamples pixels at random before the split, and ``n_train`` /
+    ``n_test`` / ``n_valid`` become upper limits (sets above them are randomly
+    subsampled). A group whose samples have several classes is assigned with
+    the class of most of its samples.
 
     :param samples_df: Input sample :class:`pandas.DataFrame` containing a class
                        identifier column (``stratify_col``).
@@ -988,6 +1041,10 @@ def split_class_samples(
     :param n_valid: Optional explicit validation sample count (scalar or
                     mapping).
     :param rnd_seed: Optional random seed for reproducible splits.
+    :param group_col: Optional column of group labels (e.g. the source
+                      polygon of each pixel, ``'train_grp'``); all samples of
+                      a group are put in the same set. When ``None``
+                      (default) the samples are split at random.
     :return: Tuple ``(train_df, test_df, valid_df)`` of split DataFrames.
 
     .. code:: python
@@ -1003,6 +1060,7 @@ def split_class_samples(
             out_test_file="test.parquet",
             out_valid_file="valid.parquet",
             rnd_seed=42,
+            group_col="train_grp",  # whole training polygons per set
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -1016,6 +1074,9 @@ def split_class_samples(
             f"Stratification column '{stratify_col}' was not found in "
             f"samples_df columns {list(samples_df.columns)}."
         )
+    grp_labels = (
+        get_group_labels(samples_df, group_col) if group_col is not None else None
+    )
 
     train_p, test_p, valid_p = resolve_split_proportions(
         train_prop, test_prop, valid_prop
@@ -1025,30 +1086,23 @@ def split_class_samples(
     train_idx: List[int] = []
     test_idx: List[int] = []
     valid_idx: List[int] = []
+    capped_pos: List[np.ndarray] = []
 
     has_cls_name = class_name_col in samples_df.columns
-    grouped_pos = samples_df.groupby(stratify_col, sort=False).indices
-    for cls_key, raw_pos in grouped_pos.items():
-        cls_pos = np.asarray(raw_pos, dtype=np.intp).copy()
-        rng.shuffle(cls_pos)
-        cls_name = (
-            str(samples_df[class_name_col].iloc[int(cls_pos[0])])
-            if has_cls_name and len(cls_pos) > 0
-            else None
-        )
 
-        max_cap = _resolve_count_for_class(
-            max_cls_smpls, cls_key, cls_name, "max_cls_smpls"
-        )
-        if max_cap is not None and len(cls_pos) > max_cap:
-            cls_pos = cls_pos[:max_cap]
+    def _cls_name(cls_pos: np.ndarray) -> Optional[str]:
+        if has_cls_name and len(cls_pos) > 0:
+            return str(samples_df[class_name_col].iloc[int(cls_pos[0])])
+        return None
 
+    def _cls_counts(
+        cls_key: Any, n_rows: int, cls_name: Optional[str]
+    ) -> Tuple[int, int, int, bool]:
         c_tr = _resolve_count_for_class(n_train, cls_key, cls_name, "n_train")
         c_te = _resolve_count_for_class(n_test, cls_key, cls_name, "n_test")
         c_va = _resolve_count_for_class(n_valid, cls_key, cls_name, "n_valid")
-
         n_tr_c, n_te_c, n_va_c = allocate_split_counts(
-            len(cls_pos),
+            n_rows,
             train_p,
             test_p,
             valid_p,
@@ -1057,11 +1111,52 @@ def split_class_samples(
             c_va,
             group_label="class samples",
         )
+        return n_tr_c, n_te_c, n_va_c, any(
+            c is not None for c in (c_tr, c_te, c_va)
+        )
+
+    grouped_pos = samples_df.groupby(stratify_col, sort=False).indices
+    for cls_key, raw_pos in grouped_pos.items():
+        cls_pos = np.asarray(raw_pos, dtype=np.intp).copy()
+        rng.shuffle(cls_pos)
+        max_cap = _resolve_count_for_class(
+            max_cls_smpls, cls_key, _cls_name(cls_pos), "max_cls_smpls"
+        )
+        if max_cap is not None and len(cls_pos) > max_cap:
+            cls_pos = cls_pos[:max_cap]
+        if grp_labels is not None:
+            capped_pos.append(cls_pos)
+            continue
+
+        n_tr_c, n_te_c, n_va_c, _ = _cls_counts(
+            cls_key, len(cls_pos), _cls_name(cls_pos)
+        )
         test_end = n_tr_c + n_te_c
         valid_end = test_end + n_va_c
         train_idx.extend(cls_pos[:n_tr_c].tolist())
         test_idx.extend(cls_pos[n_tr_c:test_end].tolist())
         valid_idx.extend(cls_pos[test_end:valid_end].tolist())
+
+    if grp_labels is not None and capped_pos:
+        all_pos = np.concatenate(capped_pos)
+        strata = samples_df[stratify_col].to_numpy()[all_pos]
+        parts = split_groups_stratified(
+            strata,
+            grp_labels[all_pos],
+            lambda key, rows: _cls_counts(
+                key, len(rows), _cls_name(all_pos[strata == key])
+            ),
+            rng,
+            describe_stratum=lambda key: (
+                f"Class '{_cls_name(all_pos[strata == key])}' "
+                f"({stratify_col} {key})"
+                if has_cls_name
+                else f"Class {key} ({stratify_col})"
+            ),
+        )
+        train_idx, test_idx, valid_idx = (
+            all_pos[np.asarray(part, dtype=np.intp)].tolist() for part in parts
+        )
 
     train_df = samples_df.iloc[train_idx].reset_index(drop=True)
     test_df = samples_df.iloc[test_idx].reset_index(drop=True)
@@ -1109,12 +1204,23 @@ def extract_and_split_class_samples(
     n_valid: Optional[Union[int, Mapping[Any, int]]] = None,
     rnd_seed: Optional[int] = None,
     use_pbar: bool = True,
+    *,
+    poly_id_col: Optional[str] = None,
+    group_col: Optional[str] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Extract training samples across configured raster bands and vector classes,
     split them per class into training, testing, and validation DataFrames, and
     optionally write Parquet files (Snappy compressed by default) or another
     pandas-supported tabular format.
+
+    With ``group_col``, the source polygon (or point) of each pixel is recorded
+    in that column (see :func:`extract_class_training_samples`) and whole
+    polygons are assigned to the training, testing or validation set, still
+    stratified by class as far as the number of polygons allows (see
+    :func:`split_class_samples`). This avoids pixels of one polygon being used
+    both to train and to test a model. ``poly_id_col`` alone records the
+    polygons but keeps the random pixel split.
 
     :param img_band_info: Either a :class:`ClassificationConfig` instance or a
                           sequence of :class:`ImageBandInfo` objects.
@@ -1150,6 +1256,12 @@ def extract_and_split_class_samples(
     :param n_valid: Optional explicit validation sample count per class.
     :param rnd_seed: Optional random seed for reproducible splits.
     :param use_pbar: Display progress bars during extraction (Default = ``True``).
+    :param poly_id_col: Optional column recording the source polygon (or
+                        point) of each sample (Default = ``None``; set to
+                        ``group_col`` when only that is given).
+    :param group_col: Optional column by which the samples are grouped in the
+                      split (the polygons are recorded in it). When ``None``
+                      (default) the pixels are split at random.
     :return: Tuple ``(train_df, test_df, valid_df)``.
 
     .. code:: python
@@ -1162,12 +1274,14 @@ def extract_and_split_class_samples(
             out_train_file="train.parquet",
             out_test_file="test.parquet",
             out_valid_file="valid.parquet",
+            group_col="train_grp",  # whole polygons per set
             rnd_seed=42,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
     cfg = _coerce_config(img_band_info, class_info)
+    rec_col = resolve_extract_split_group_col(poly_id_col, group_col)
     samples_df = extract_class_training_samples(
         cfg,
         out_file=out_all_file,
@@ -1182,6 +1296,7 @@ def extract_and_split_class_samples(
         reproj_vec=reproj_vec,
         vec_def_epsg=vec_def_epsg,
         use_pbar=use_pbar,
+        poly_id_col=rec_col,
     )
     return split_class_samples(
         samples_df=samples_df,
@@ -1200,6 +1315,7 @@ def extract_and_split_class_samples(
         n_test=n_test,
         n_valid=n_valid,
         rnd_seed=rnd_seed,
+        group_col=group_col,
     )
 
 

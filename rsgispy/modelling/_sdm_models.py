@@ -166,7 +166,8 @@ def fit_sklearn_mdl(
     test_probs = get_positive_class_probs(fitted_mdl, test_x, pos_label=1)
     fpr, tpr, roc_auc = calc_binary_roc_auc(test_y, test_probs)
 
-    plot_roc_curve(fpr, tpr, roc_auc, out_file=roc_curve_plot)
+    if roc_curve_plot is not None:
+        plot_roc_curve(fpr, tpr, roc_auc, out_file=roc_curve_plot)
 
     if return_model:
         return fitted_mdl, train_acc_val, test_acc_val, roc_auc
@@ -237,7 +238,8 @@ def fit_sklearn_sgl_cls_mdl(
     test_scores = fitted_mdl.decision_function(test_x)
     fpr, tpr, roc_auc = calc_binary_roc_auc(test_y, test_scores)
 
-    plot_roc_curve(fpr, tpr, roc_auc, out_file=roc_curve_plot)
+    if roc_curve_plot is not None:
+        plot_roc_curve(fpr, tpr, roc_auc, out_file=roc_curve_plot)
 
     if return_model:
         return fitted_mdl, test_acc_val, roc_auc

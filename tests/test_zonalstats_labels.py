@@ -196,6 +196,34 @@ def test_matches_polygon_zonal_stats(scene, block_size):
     assert (df["f_b1_count"] == 0).sum() == 1
 
 
+def test_mixed_dtype_vrt_matches_separate_images(tmp_path, scene):
+    """A VRT stacking int16 and float32 bands gives the same statistics."""
+    from rsgispy.imageutils.vrt import create_stack_images_vrt
+
+    vrt = str(tmp_path / "mixed.vrt")
+    create_stack_images_vrt([scene["fval"], scene["ival"]], vrt)
+    with rasterio.open(vrt) as src:
+        assert src.dtypes == ("float32", "float32", "int16")
+    kwargs = dict(
+        stats=["count", "mean", "min", "max", "median", "mode"],
+        block_size=16,
+        use_pbar=False,
+    )
+    df_vrt = zs_lbl.calc_label_zonal_stats(
+        scene["lab"], BandSpec(vrt, name="v"), **kwargs
+    )
+    df_sep = zs_lbl.calc_label_zonal_stats(
+        scene["lab"],
+        [BandSpec(scene["fval"], name="f"), BandSpec(scene["ival"], name="i")],
+        **kwargs,
+    )
+    for stat in kwargs["stats"]:
+        for vrt_col, sep_col in (("v_b1", "f_b1"), ("v_b2", "f_b2"), ("v_b3", "i_b1")):
+            np.testing.assert_array_equal(
+                df_vrt[f"{vrt_col}_{stat}"], df_sep[f"{sep_col}_{stat}"]
+            )
+
+
 def test_block_size_invariance_and_hist_quantiles(scene):
     kwargs = dict(
         stats=["mean", "stddev", "median"],

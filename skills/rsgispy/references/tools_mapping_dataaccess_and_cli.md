@@ -14,6 +14,7 @@ Covers `rsgispy.mapping.*`, `rsgispy.dataaccess.*`, `rsgispy.droneutils`, all 29
   - `create_raster_cmap_img_map(ax, input_img, img_band, bbox=None, title_str=None, ..., cmap_name='viridis', norm_img_vals=False, use_log_norm=False, norm_vmin=None, norm_vmax=None, vals_under_white=False, print_norm_vals=False, ...)` -> `(Colormap, Normalize | None)`
 - **Vector layers (`mapping.vector`)**:
   - `create_vec_lyr_map(ax, gp_vecs, bbox, title_str=None, vec_fill_clrs='grey', vec_line_clrs='black', vec_line_widths=0.25, vec_fill_alphas=1.0, vec_markersize=None, show_scale_bar=True, ...)`
+  - Line layers are drawn in `vec_line_clrs` (polygons/points use `vec_fill_clrs` with `vec_line_clrs` edges; mixed layers are split by geometry type).
   - `create_choropleth_vec_lyr_map(ax, gp_vec, vec_col, bbox, title_str=None, vec_fill_cmap=None, vec_var_norm=None, ...)`
   - `create_vec_pt_density_map(ax, gp_vec, bbox, title_str=None, cmap_name='viridis', use_log_norm=False, density_norm_vmin=1.0, density_norm_vmax=None, density_dpi=72, ...)` -> `(Colormap, Normalize)`
 - **Basemaps (`mapping.basemaps`)**:
@@ -75,7 +76,7 @@ Covers `rsgispy.mapping.*`, `rsgispy.dataaccess.*`, `rsgispy.droneutils`, all 29
   - `web`: `find_web_imgs`, `find_web_files`.
   - `wmts`: `get_wmts_layer_list`, `get_wmts_as_img`.
 - **`stats` / `thresholding` / `accuracy` / `featureselection`**:
-  - `stats`: `mask_data_to_valid`, `calc_semivariogram`, `standardise_img_data`, `normalise_img_data`, `validate_percentiles_0_100`, `compute_nanpercentiles`, `resolve_metric_type`, `calc_similarity_metric`, `phase_cross_correlation_2d`.
+  - `stats`: `mask_data_to_valid`, `calc_semivariogram`, `standardise_img_data`, `normalise_img_data`, `validate_percentiles_0_100`, `compute_nanpercentiles`, `resolve_metric_type`, `calc_similarity_metric`, `phase_cross_correlation_2d` (integer peak, then re-correlation on the overlap with DFT-upsampled sub-pixel refinement; unbiased for windows ≥ 32 px with shifts below about a quarter of the window). `compute_nanpercentiles` is vectorised and matches `np.nanpercentile`.
   - `thresholding`: `get_nbins_histogram`, `get_bin_centres`, `calc_{otsu,yen,isodata,li,kurt_skew}_threshold`, `calc_hist_cross_entropy`.
   - `accuracy`: `bias_score`, `decompose_bias_variance`, `accuracy_scores_binary`, `bin_accuracy_scores_prob`.
   - `featureselection`: `cqv_threshold`, `calc_pandas_vif`, `lassolars_feature_selection`, `corr_feature_selection`, `breusch_pagan_test`.

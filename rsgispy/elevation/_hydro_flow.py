@@ -15,6 +15,8 @@ from shapely.geometry import LineString
 import rsgispy
 from rsgispy import RSGISPyException
 from rsgispy.elevation._hydro_common import (
+    FLOW_ACC_BAND_DESCS,
+    FLOW_ACC_UNITS_TAG,
     _call_topo_kernel,
     _d8_flat_resolve_in_memory,
     _run_optional_kernel,
@@ -286,10 +288,16 @@ def flow_accumulation(
         Path to the input flow direction raster (D8 ``uint8``, D-Inf
         ``float32``, or 8-band MFD ``float32``).
     output_img : str
-        Path to the output flow accumulation raster (``float32``).
+        Path to the output flow accumulation raster (``float32``). Its units
+        are recorded in the dataset metadata tag ``RSGISPY_FLOW_ACC_UNITS``
+        (``'cells'`` or ``'area'``) and in the band description
+        (``'Flow accumulation (cells)'`` or ``'Flow accumulation (m2)'``), so
+        :func:`extract_streams` can compare its threshold in the right units.
     weight_img : str or None, optional
         Optional spatially aligned per-cell runoff/weight raster
-        (Default = ``None``, unit weight ``1.0`` per cell).
+        (Default = ``None``, unit weight ``1.0`` per cell). With weights, the
+        output is the upslope sum of the weights (``'cells'``) or of the
+        weights times the pixel area (``'area'``).
     out_units : {'cells', 'area'}, optional
         Output units: contributing cell count (``'cells'``) or drainage area in
         square metres (``'area'``) (Default = ``'cells'``).
@@ -395,6 +403,8 @@ def flow_accumulation(
                 out_no_data_val=out_nd,
                 calc_stats=calc_stats,
                 use_pbar=use_pbar,
+                tags={FLOW_ACC_UNITS_TAG: units_norm},
+                band_descs=[FLOW_ACC_BAND_DESCS[units_norm]],
             )
             pbar.update(1)
 

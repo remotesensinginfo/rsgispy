@@ -18,10 +18,11 @@ from rsgispy.imageprocess import (
     cast_result_block,
     compute_spatial_intersection,
     iter_dataset_windows,
-    maybe_pop_stats,
     normalise_creation_options,
+    on_output_close,
     open_multi_image_datasets,
     open_output_dataset,
+    pop_stats_on_close,
     rsgis_dtype_from_np_dtype,
     validate_band_index,
 )
@@ -220,6 +221,7 @@ def mask_img(
         eff_nd = no_data_val if no_data_val is not None else in_ds.nodata
         if eff_nd is not None:
             dst.nodata = eff_nd
+        pop_stats_on_close(dst, calc_stats, no_data_val=eff_nd, use_pbar=use_pbar)
         for bidx in range(1, in_ds.count + 1):
             desc = in_ds.descriptions[bidx - 1]
             if desc:
@@ -255,13 +257,6 @@ def mask_img(
             data[:, is_masked] = float(out_value)
             out_arr = cast_result_block(data, win_h, win_w, out_np_dtype)
             dst.write(out_arr, window=out_win)
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=eff_nd,
-        use_pbar=use_pbar,
-    )
 
 
 def gen_finite_mask(
@@ -321,6 +316,16 @@ def gen_finite_mask(
         )
         if no_data_val is not None:
             dst.nodata = no_data_val
+        # Runs once the writer has closed (for a COG output, on the
+        # temporary GeoTIFF before it is converted).
+        on_output_close(dst, set_img_thematic)
+        pop_stats_on_close(
+            dst,
+            calc_stats,
+            no_data_val=no_data_val,
+            thematic=True,
+            use_pbar=use_pbar,
+        )
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
@@ -328,15 +333,6 @@ def gen_finite_mask(
             arr = in_ds.read(window=out_win, out_dtype=np.float64)
             finite_msk = build_valid_cube_mask(arr, axis=0).astype(out_np_dtype)
             dst.write(finite_msk, 1, window=out_win)
-
-    set_img_thematic(output_img)
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        thematic=True,
-        use_pbar=use_pbar,
-    )
 
 
 def gen_valid_mask(
@@ -401,6 +397,16 @@ def gen_valid_mask(
             output_exists=False,
             creation_opts=norm_opts,
         )
+        # Runs once the writer has closed (for a COG output, on the
+        # temporary GeoTIFF before it is converted).
+        on_output_close(dst, set_img_thematic)
+        pop_stats_on_close(
+            dst,
+            calc_stats,
+            no_data_val=no_data_val,
+            thematic=True,
+            use_pbar=use_pbar,
+        )
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
@@ -424,15 +430,6 @@ def gen_valid_mask(
                     axis=0,
                 )
             dst.write(valid.astype(out_np_dtype), 1, window=out_win)
-
-    set_img_thematic(output_img)
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        thematic=True,
-        use_pbar=use_pbar,
-    )
 
 
 def gen_img_edge_mask(
@@ -502,6 +499,16 @@ def gen_img_edge_mask(
         )
         if no_data_val is not None:
             dst.nodata = no_data_val
+        # Runs once the writer has closed (for a COG output, on the
+        # temporary GeoTIFF before it is converted).
+        on_output_close(dst, set_img_thematic)
+        pop_stats_on_close(
+            dst,
+            calc_stats,
+            no_data_val=no_data_val,
+            thematic=True,
+            use_pbar=use_pbar,
+        )
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
@@ -519,15 +526,6 @@ def gen_img_edge_mask(
                 | (cols >= grid.width - edge_px)
             )
             dst.write(edge.astype(out_np_dtype), 1, window=out_win)
-
-    set_img_thematic(output_img)
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        thematic=True,
-        use_pbar=use_pbar,
-    )
 
 
 def mask_all_band_zero_vals(
@@ -599,6 +597,7 @@ def mask_all_band_zero_vals(
         eff_nd = no_data_val if no_data_val is not None else in_ds.nodata
         if eff_nd is not None:
             dst.nodata = eff_nd
+        pop_stats_on_close(dst, calc_stats, no_data_val=eff_nd, use_pbar=use_pbar)
         for bidx in range(1, in_ds.count + 1):
             desc = in_ds.descriptions[bidx - 1]
             if desc:
@@ -615,13 +614,6 @@ def mask_all_band_zero_vals(
             data[replace_mask] = float(out_val)
             out_arr = cast_result_block(data, win_h, win_w, out_np_dtype)
             dst.write(out_arr, window=out_win)
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=eff_nd,
-        use_pbar=use_pbar,
-    )
 
 
 def create_valid_mask(
@@ -732,6 +724,16 @@ def create_valid_mask(
         )
         if no_data_val is not None:
             dst.nodata = no_data_val
+        # Runs once the writer has closed (for a COG output, on the
+        # temporary GeoTIFF before it is converted).
+        on_output_close(dst, set_img_thematic)
+        pop_stats_on_close(
+            dst,
+            calc_stats,
+            no_data_val=no_data_val,
+            thematic=True,
+            use_pbar=use_pbar,
+        )
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
@@ -758,12 +760,3 @@ def create_valid_mask(
                         no_data_val=float(eff_nd) if eff_nd is not None else None,
                     )
             dst.write(valid.astype(out_np_dtype), 1, window=out_win)
-
-    set_img_thematic(out_msk_path)
-    maybe_pop_stats(
-        output_img=out_msk_path,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        thematic=True,
-        use_pbar=use_pbar,
-    )

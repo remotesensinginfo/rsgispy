@@ -48,8 +48,9 @@ from rsgispy.imageprocess import (
     create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
-    maybe_pop_stats,
     normalise_creation_options,
+    on_output_close,
+    pop_stats_on_close,
     read_window_with_halo,
     validate_band_index,
 )
@@ -494,7 +495,6 @@ def _run_cloud_mask_inference(
     """Run tiled cloud mask inference over ``input_img`` writing ``output_img``."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    is_cog = gdalformat.upper().strip() == "COG"
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
         for bidx in img_bands:
@@ -512,6 +512,16 @@ def _run_cloud_mask_inference(
         )
         dst.nodata = CLOUDSEN12_NO_DATA
         dst.set_band_description(1, "CloudSEN12")
+        # Statistics, then the class colour table, once the writer has closed
+        # (for a COG output, before the temporary GeoTIFF is converted).
+        pop_stats_on_close(
+            dst,
+            calc_stats,
+            no_data_val=CLOUDSEN12_NO_DATA,
+            thematic=True,
+            use_pbar=use_pbar,
+        )
+        on_output_close(dst, _write_cloud_mask_colour_table)
 
         band_list = [int(b) for b in img_bands]
         for win in iter_dataset_windows(
@@ -545,24 +555,11 @@ def _run_cloud_mask_inference(
                 )
             dst.write(out_arr, 1, window=win)
 
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=CLOUDSEN12_NO_DATA,
-        thematic=True,
-        use_pbar=use_pbar,
-        gdalformat=gdalformat,
-    )
-    _write_cloud_mask_colour_table(output_img, ignore_cog=is_cog)
 
-
-def _write_cloud_mask_colour_table(output_img: str, ignore_cog: bool) -> None:
+def _write_cloud_mask_colour_table(output_img: str) -> None:
     """Write the CloudSEN12 class colour table onto band 1 of ``output_img``."""
-    open_opts: Dict[str, Any] = {}
-    if ignore_cog:
-        open_opts["IGNORE_COG_LAYOUT_BREAK"] = "YES"
     try:
-        with rasterio.open(output_img, "r+", **open_opts) as dst:
+        with rasterio.open(output_img, "r+") as dst:
             dst.write_colormap(1, _CLOUDSEN12_CLR_TAB)
             dst.colorinterp = [ColorInterp.palette]
     except Exception:  # pylint: disable=broad-exception-caught
@@ -872,7 +869,7 @@ def apply_cloudsen12_s2_sref_cloud_mask(
             "s2_l2a_clouds.tif",
             device="auto",
             weights_dir="./cloudsen12_weights",
-            gdalformat="KEA",
+            gdalformat="GTIFF",
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments

@@ -33,9 +33,11 @@ from rsgispy.imageprocess import (
     compute_spatial_intersection,
     create_output_from_dataset,
     ensure_file_exists,
+    fits_dtype_range,
     iter_dataset_windows,
     open_multi_image_datasets,
     open_output_dataset,
+    resolve_out_nodata,
 )
 from rsgispy.imagespectral.endmembers import (
     EndmemberInput,
@@ -102,6 +104,53 @@ __all__: List[str] = [
 ]
 
 
+def _check_out_no_data_val(
+    out_no_data_val: Optional[float], out_np_dtype: np.dtype = np.dtype("float32")
+) -> float:
+    """
+    Resolve and validate the output no-data value of an unmixing output.
+
+    ``None`` gives ``-9999`` (or, for integer data types that cannot hold it,
+    the type's maximum for unsigned and minimum for signed types). An explicit
+    value must be representable by ``out_np_dtype`` (``NaN`` is allowed for
+    floating-point outputs).
+    """
+    out_np_dtype = np.dtype(out_np_dtype)
+    if out_no_data_val is None:
+        return float(
+            resolve_out_nodata(
+                out_np_dtype,
+                None,
+                None,
+                default_float=-9999.0,
+                default_int=-9999.0,
+                clamp_int=True,
+                unsigned_clamp="max",
+            )
+        )
+    nd_val = float(out_no_data_val)
+    if math.isnan(nd_val) and np.issubdtype(out_np_dtype, np.floating):
+        return nd_val
+    if not fits_dtype_range(nd_val, out_np_dtype):
+        raise rsgispy.RSGISPyException(
+            f"out_no_data_val ({out_no_data_val}) cannot be represented by the "
+            f"output data type '{out_np_dtype.name}'."
+        )
+    return nd_val
+
+
+def _valid_pxls(flat: np.ndarray, nodatavals: Sequence[Optional[float]]) -> np.ndarray:
+    """
+    Return a boolean mask of the rows of a ``(n_pxls, n_bands)`` array that
+    are finite in every band and not equal to that band's no-data value.
+    """
+    vld = np.all(np.isfinite(flat), axis=1)
+    for b_idx, b_nd in enumerate(nodatavals[: flat.shape[1]]):
+        if b_nd is not None and math.isfinite(float(b_nd)):
+            vld &= flat[:, b_idx] != float(b_nd)
+    return vld
+
+
 def _build_simplex_weights(n_endmembers: int, step_res: float) -> np.ndarray:
     """
     Generate all non-negative endmember weight combinations summing to 1.0
@@ -161,6 +210,7 @@ def exhcon_linear_spec_unmix(
     *,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
+    out_no_data_val: Optional[float] = None,
     use_pbar: bool = True,
 ) -> None:
     """
@@ -170,7 +220,10 @@ def exhcon_linear_spec_unmix(
     searching all non-negative abundance combinations summing to 1.0 at grid
     step ``step_res``. The output raster contains ``m + 1`` bands named after
     the endmember columns followed by ``RMSE`` (scaled via
-    ``offset + gain * value``; zero-norm / invalid pixels are written as ``0``).
+    ``offset + gain * value``). Pixels that cannot be unmixed (a non-finite
+    value or the input image's no-data value in any band, or all bands zero,
+    so the spectrum has no direction) are written as ``out_no_data_val`` in
+    every band, which is also recorded as the output no-data value.
 
     :param input_img: Path to the input multi-band raster image file.
     :param output_img: Path to the output unmixed raster image file.
@@ -186,6 +239,11 @@ def exhcon_linear_spec_unmix(
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: ``rsgispy.TYPE_*`` output data type constant
                      (Default = ``rsgispy.TYPE_32FLOAT``).
+    :param out_no_data_val: Output no-data value for pixels that are not
+                            unmixed (Default = ``None``: ``-9999``, or for
+                            integer data types that cannot hold it the type's
+                            maximum (unsigned) or minimum (signed) value). It
+                            must be representable by ``datatype``.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
@@ -204,6 +262,7 @@ def exhcon_linear_spec_unmix(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-statements
     ensure_file_exists(input_img, "Input image")
     if endmembers is None:
         raise rsgispy.RSGISPyException("endmembers must be provided.")
@@ -225,6 +284,7 @@ def exhcon_linear_spec_unmix(
 
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
+    out_nd = _check_out_no_data_val(out_no_data_val, out_np_dtype)
     n_out_bands = m + 1
     chunk_size = 8192
 
@@ -244,6 +304,7 @@ def exhcon_linear_spec_unmix(
             out_rio_dtype=out_rio_dtype,
             count=n_out_bands,
         )
+        dst.nodata = out_nd
         for b_idx, b_name in enumerate(em_names + ["RMSE"], start=1):
             dst.set_band_description(b_idx, b_name)
 
@@ -253,9 +314,13 @@ def exhcon_linear_spec_unmix(
             blk = src.read(window=win).astype(np.float64, copy=False)
             flat = np.moveaxis(blk, 0, -1).reshape(-1, n_bands)
 
-            norms = np.linalg.norm(flat, axis=1)
-            valid = np.all(np.isfinite(flat), axis=1) & (norms > 0.0)
-            out_flat = np.zeros((flat.shape[0], n_out_bands), dtype=np.float64)
+            valid = _valid_pxls(flat, src.nodatavals)
+            norms = np.zeros(flat.shape[0], dtype=np.float64)
+            norms[valid] = np.linalg.norm(flat[valid], axis=1)
+            valid &= norms > 0.0
+            out_flat = np.full(
+                (flat.shape[0], n_out_bands), out_nd, dtype=np.float64
+            )
 
             if np.any(valid):
                 v_idx = np.flatnonzero(valid)
@@ -307,10 +372,18 @@ def _run_windowed_unmixer(
     file_format: Optional[str] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
+    out_no_data_val: float = -9999.0,
 ) -> None:
-    """Shared windowed linear spectral unmixing runner."""
+    """
+    Shared windowed linear spectral unmixing runner.
+
+    Pixels outside the valid mask, with a non-finite value, the input image's
+    no-data value or a value ``<= 0`` in any band are not unmixed and are
+    written as ``out_no_data_val`` in every band.
+    """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches
+    out_nd = _check_out_no_data_val(out_no_data_val)
     em_names, m, _, endmembers_arr = prepare_endmembers_array(
         endmembers, gain=gain, weight=weight, file_format=file_format
     )
@@ -341,6 +414,7 @@ def _run_windowed_unmixer(
             grid=grid,
             count=m,
         )
+        dst.nodata = out_nd
         for b_idx, b_name in enumerate(em_names, start=1):
             dst.set_band_description(b_idx, b_name)
 
@@ -361,7 +435,7 @@ def _run_windowed_unmixer(
                 win_h,
             )
 
-            out_flat = np.zeros((win_h * win_w, m), dtype=np.float32)
+            out_flat = np.full((win_h * win_w, m), out_nd, dtype=np.float32)
             if src_msk is not None:
                 msk_win = Window(
                     int(win.col_off) + msk_xoff,
@@ -385,7 +459,7 @@ def _run_windowed_unmixer(
 
                 vld = (
                     msk_vld
-                    & np.all(np.isfinite(img_flat), axis=1)
+                    & _valid_pxls(img_flat, src_img.nodatavals)
                     & np.all(img_flat > 0.0, axis=1)
                 )
                 if np.any(vld):
@@ -409,7 +483,7 @@ def _run_windowed_unmixer(
     if calc_stats:
         pop_img_stats(
             output_img,
-            no_data_val=0,
+            no_data_val=out_nd,
             calc_pyramids=True,
             use_pbar=use_pbar,
         )
@@ -436,6 +510,7 @@ def spec_unmix_ucls(
     file_format: Optional[str] = None,
     *,
     gdalformat: str = "GTIFF",
+    out_no_data_val: float = -9999.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -444,6 +519,15 @@ def spec_unmix_ucls(
     spectral unmixing using vectorised ``numpy.linalg.lstsq``.
 
     Requires only core ``numpy`` (no optional unmixing packages needed).
+
+    Pixels are not unmixed, and are written as ``out_no_data_val`` in every
+    band, when they are outside ``valid_msk_img``, or have a non-finite value,
+    the input image's no-data value or a value ``<= 0`` in any band. Values
+    ``<= 0`` are not valid reflectance: they are fill values (0 is a common
+    no-data value) or come from noise and atmospheric over-correction of dark
+    surfaces (e.g. water in the SWIR), and would give unreliable fractions.
+    Clip valid pixels to a small positive value first if they must be unmixed.
+    ``out_no_data_val`` is distinct from ``0``, which is a valid fraction.
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output unmixed abundance image file.
@@ -460,6 +544,9 @@ def spec_unmix_ucls(
     :param file_format: Optional format override when ``endmembers`` is a file
                         path (Default = ``None``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param out_no_data_val: Output no-data value written to every band for
+                            pixels that are not unmixed, and recorded as the
+                            output no-data value (Default = ``-9999.0``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -487,6 +574,7 @@ def spec_unmix_ucls(
         file_format=file_format,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        out_no_data_val=out_no_data_val,
     )
 
 
@@ -806,6 +894,7 @@ def spec_unmix_nnls(
     file_format: Optional[str] = None,
     *,
     gdalformat: str = "GTIFF",
+    out_no_data_val: float = -9999.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -821,6 +910,15 @@ def spec_unmix_nnls(
        it solves :math:`\\min_{x \\ge 0} \\| E^T x - y \\|_2` directly
        without squaring the system via normal equations, and requires only
        ``scipy`` (no ``pysptools`` or ``pyMCR``).
+
+    Pixels are not unmixed, and are written as ``out_no_data_val`` in every
+    band, when they are outside ``valid_msk_img``, or have a non-finite value,
+    the input image's no-data value or a value ``<= 0`` in any band. Values
+    ``<= 0`` are not valid reflectance: they are fill values (0 is a common
+    no-data value) or come from noise and atmospheric over-correction of dark
+    surfaces (e.g. water in the SWIR), and would give unreliable fractions.
+    Clip valid pixels to a small positive value first if they must be unmixed.
+    ``out_no_data_val`` is distinct from ``0``, which is a valid fraction.
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output unmixed abundance image file.
@@ -838,6 +936,9 @@ def spec_unmix_nnls(
     :param file_format: Optional format override when ``endmembers`` is a
                         file path (Default = ``None``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param out_no_data_val: Output no-data value written to every band for
+                            pixels that are not unmixed, and recorded as the
+                            output no-data value (Default = ``-9999.0``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during
@@ -866,6 +967,7 @@ def spec_unmix_nnls(
         file_format=file_format,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        out_no_data_val=out_no_data_val,
     )
 
 
@@ -879,6 +981,7 @@ def spec_unmix_fcls(
     file_format: Optional[str] = None,
     *,
     gdalformat: str = "GTIFF",
+    out_no_data_val: float = -9999.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -895,6 +998,15 @@ def spec_unmix_fcls(
        required by :func:`spec_unmix_spts_fcls` while delivering high
        accuracy and substantially faster runtime.
 
+    Pixels are not unmixed, and are written as ``out_no_data_val`` in every
+    band, when they are outside ``valid_msk_img``, or have a non-finite value,
+    the input image's no-data value or a value ``<= 0`` in any band. Values
+    ``<= 0`` are not valid reflectance: they are fill values (0 is a common
+    no-data value) or come from noise and atmospheric over-correction of dark
+    surfaces (e.g. water in the SWIR), and would give unreliable fractions.
+    Clip valid pixels to a small positive value first if they must be unmixed.
+    ``out_no_data_val`` is distinct from ``0``, which is a valid fraction.
+
     :param input_img: Path to the input image file.
     :param output_img: Path to the output unmixed abundance image file.
     :param endmembers: :class:`pandas.DataFrame` (columns = class names,
@@ -910,6 +1022,9 @@ def spec_unmix_fcls(
     :param file_format: Optional format override when ``endmembers`` is a
                         file path (Default = ``None``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param out_no_data_val: Output no-data value written to every band for
+                            pixels that are not unmixed, and recorded as the
+                            output no-data value (Default = ``-9999.0``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during
@@ -938,6 +1053,7 @@ def spec_unmix_fcls(
         file_format=file_format,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        out_no_data_val=out_no_data_val,
     )
 
 
@@ -952,6 +1068,7 @@ def spec_unmix_spts_ucls(
     file_format: Optional[str] = None,
     *,
     gdalformat: str = "GTIFF",
+    out_no_data_val: float = -9999.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -964,6 +1081,15 @@ def spec_unmix_spts_ucls(
        Prefer the recommended pure-NumPy :func:`spec_unmix_ucls` function
        for general workflows; this function is retained for ``pysptools``
        compatibility.
+
+    Pixels are not unmixed, and are written as ``out_no_data_val`` in every
+    band, when they are outside ``valid_msk_img``, or have a non-finite value,
+    the input image's no-data value or a value ``<= 0`` in any band. Values
+    ``<= 0`` are not valid reflectance: they are fill values (0 is a common
+    no-data value) or come from noise and atmospheric over-correction of dark
+    surfaces (e.g. water in the SWIR), and would give unreliable fractions.
+    Clip valid pixels to a small positive value first if they must be unmixed.
+    ``out_no_data_val`` is distinct from ``0``, which is a valid fraction.
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output unmixed abundance image file.
@@ -979,6 +1105,9 @@ def spec_unmix_spts_ucls(
     :param file_format: Optional format override when ``endmembers`` is a
                         file path (Default = ``None``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param out_no_data_val: Output no-data value written to every band for
+                            pixels that are not unmixed, and recorded as the
+                            output no-data value (Default = ``-9999.0``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -1009,6 +1138,7 @@ def spec_unmix_spts_ucls(
         file_format=file_format,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        out_no_data_val=out_no_data_val,
     )
 
 
@@ -1023,6 +1153,7 @@ def spec_unmix_spts_nnls(
     file_format: Optional[str] = None,
     *,
     gdalformat: str = "GTIFF",
+    out_no_data_val: float = -9999.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -1035,6 +1166,15 @@ def spec_unmix_spts_nnls(
        Prefer the recommended SciPy :func:`spec_unmix_nnls` function for
        general workflows; ``spec_unmix_nnls`` solves the direct NNLS
        problem without squaring normal equations.
+
+    Pixels are not unmixed, and are written as ``out_no_data_val`` in every
+    band, when they are outside ``valid_msk_img``, or have a non-finite value,
+    the input image's no-data value or a value ``<= 0`` in any band. Values
+    ``<= 0`` are not valid reflectance: they are fill values (0 is a common
+    no-data value) or come from noise and atmospheric over-correction of dark
+    surfaces (e.g. water in the SWIR), and would give unreliable fractions.
+    Clip valid pixels to a small positive value first if they must be unmixed.
+    ``out_no_data_val`` is distinct from ``0``, which is a valid fraction.
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output unmixed abundance image file.
@@ -1050,6 +1190,9 @@ def spec_unmix_spts_nnls(
     :param file_format: Optional format override when ``endmembers`` is a
                         file path (Default = ``None``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param out_no_data_val: Output no-data value written to every band for
+                            pixels that are not unmixed, and recorded as the
+                            output no-data value (Default = ``-9999.0``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -1080,6 +1223,7 @@ def spec_unmix_spts_nnls(
         file_format=file_format,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        out_no_data_val=out_no_data_val,
     )
 
 
@@ -1093,6 +1237,7 @@ def spec_unmix_spts_fcls(
     file_format: Optional[str] = None,
     *,
     gdalformat: str = "GTIFF",
+    out_no_data_val: float = -9999.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -1105,6 +1250,15 @@ def spec_unmix_spts_fcls(
        Prefer the recommended SciPy :func:`spec_unmix_fcls` function
        for general workflows; it does not require ``cvxopt`` or
        ``pysptools`` and runs substantially faster.
+
+    Pixels are not unmixed, and are written as ``out_no_data_val`` in every
+    band, when they are outside ``valid_msk_img``, or have a non-finite value,
+    the input image's no-data value or a value ``<= 0`` in any band. Values
+    ``<= 0`` are not valid reflectance: they are fill values (0 is a common
+    no-data value) or come from noise and atmospheric over-correction of dark
+    surfaces (e.g. water in the SWIR), and would give unreliable fractions.
+    Clip valid pixels to a small positive value first if they must be unmixed.
+    ``out_no_data_val`` is distinct from ``0``, which is a valid fraction.
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output unmixed abundance image file.
@@ -1119,6 +1273,9 @@ def spec_unmix_spts_fcls(
     :param file_format: Optional format override when ``endmembers`` is
                         a file path (Default = ``None``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param out_no_data_val: Output no-data value written to every band for
+                            pixels that are not unmixed, and recorded as the
+                            output no-data value (Default = ``-9999.0``).
     :param calc_stats: If ``True``, populate image statistics and
                        pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during
@@ -1156,6 +1313,7 @@ def spec_unmix_spts_fcls(
         file_format=file_format,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        out_no_data_val=out_no_data_val,
     )
 
 
@@ -1198,6 +1356,7 @@ def spec_unmix_pymcr_nnls(
     file_format: Optional[str] = None,
     *,
     gdalformat: str = "GTIFF",
+    out_no_data_val: float = -9999.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -1209,6 +1368,15 @@ def spec_unmix_pymcr_nnls(
 
        Prefer the recommended SciPy :func:`spec_unmix_nnls` function for
        general workflows.
+
+    Pixels are not unmixed, and are written as ``out_no_data_val`` in every
+    band, when they are outside ``valid_msk_img``, or have a non-finite value,
+    the input image's no-data value or a value ``<= 0`` in any band. Values
+    ``<= 0`` are not valid reflectance: they are fill values (0 is a common
+    no-data value) or come from noise and atmospheric over-correction of dark
+    surfaces (e.g. water in the SWIR), and would give unreliable fractions.
+    Clip valid pixels to a small positive value first if they must be unmixed.
+    ``out_no_data_val`` is distinct from ``0``, which is a valid fraction.
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output unmixed abundance image file.
@@ -1224,6 +1392,9 @@ def spec_unmix_pymcr_nnls(
     :param file_format: Optional format override when ``endmembers`` is a
                         file path (Default = ``None``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param out_no_data_val: Output no-data value written to every band for
+                            pixels that are not unmixed, and recorded as the
+                            output no-data value (Default = ``-9999.0``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -1258,6 +1429,7 @@ def spec_unmix_pymcr_nnls(
         file_format=file_format,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        out_no_data_val=out_no_data_val,
     )
 
 
@@ -1271,6 +1443,7 @@ def spec_unmix_pymcr_fcls(
     file_format: Optional[str] = None,
     *,
     gdalformat: str = "GTIFF",
+    out_no_data_val: float = -9999.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -1282,6 +1455,15 @@ def spec_unmix_pymcr_fcls(
 
        Prefer the recommended SciPy :func:`spec_unmix_fcls` function for
        general workflows.
+
+    Pixels are not unmixed, and are written as ``out_no_data_val`` in every
+    band, when they are outside ``valid_msk_img``, or have a non-finite value,
+    the input image's no-data value or a value ``<= 0`` in any band. Values
+    ``<= 0`` are not valid reflectance: they are fill values (0 is a common
+    no-data value) or come from noise and atmospheric over-correction of dark
+    surfaces (e.g. water in the SWIR), and would give unreliable fractions.
+    Clip valid pixels to a small positive value first if they must be unmixed.
+    ``out_no_data_val`` is distinct from ``0``, which is a valid fraction.
 
     :param input_img: Path to the input image file.
     :param output_img: Path to the output unmixed abundance image file.
@@ -1296,6 +1478,9 @@ def spec_unmix_pymcr_fcls(
     :param file_format: Optional format override when ``endmembers`` is a
                         file path (Default = ``None``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param out_no_data_val: Output no-data value written to every band for
+                            pixels that are not unmixed, and recorded as the
+                            output no-data value (Default = ``-9999.0``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -1330,6 +1515,7 @@ def spec_unmix_pymcr_fcls(
         file_format=file_format,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        out_no_data_val=out_no_data_val,
     )
 
 
@@ -1338,6 +1524,7 @@ def rescale_unmixing_results(
     output_img: str,
     *,
     gdalformat: str = "GTIFF",
+    out_no_data_val: float = -9999.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -1345,9 +1532,16 @@ def rescale_unmixing_results(
     Clamp negative abundances to zero and normalise each pixel's abundances
     so they sum to ``1.0`` across bands.
 
+    Pixels that are no data in ``input_img`` (its no-data value or a
+    non-finite value in any band) and pixels with no positive abundance,
+    which cannot be normalised, are written as ``out_no_data_val``.
+
     :param input_img: Path to the input unmixed abundance image file.
     :param output_img: Path to the output rescaled abundance image file.
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param out_no_data_val: Output no-data value, also recorded in the output
+                            (Default = ``-9999.0``; ``0`` is a valid
+                            abundance).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -1359,7 +1553,9 @@ def rescale_unmixing_results(
 
         su.rescale_unmixing_results("unmix_ucls.tif", "unmix_rescaled.tif")
     """
+    # pylint: disable=too-many-arguments,too-many-locals
     ensure_file_exists(input_img, "Input image")
+    out_nd = _check_out_no_data_val(out_no_data_val)
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
@@ -1371,23 +1567,28 @@ def rescale_unmixing_results(
             out_rio_dtype="float32",
             count=src.count,
         )
+        dst.nodata = out_nd
 
         for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
-            blk = src.read(window=win).astype(np.float32, copy=True)
-            blk[blk < 0.0] = 0.0
-            band_sum = np.sum(blk, axis=0, keepdims=True)
-            out_blk = np.zeros_like(blk, dtype=np.float32)
-            with np.errstate(divide="ignore", invalid="ignore"):
-                np.divide(blk, band_sum, out=out_blk, where=band_sum > 0.0)
-            out_blk = np.where(np.isfinite(out_blk), out_blk, 0.0).astype(
-                np.float32, copy=False
+            win_h = int(win.height)
+            win_w = int(win.width)
+            blk = src.read(window=win).astype(np.float64, copy=True)
+            flat = np.moveaxis(blk, 0, -1).reshape(-1, src.count)
+            vld = _valid_pxls(flat, src.nodatavals)
+            flat = np.where(flat < 0.0, 0.0, flat)
+            band_sum = np.sum(flat, axis=1)
+            vld &= np.isfinite(band_sum) & (band_sum > 0.0)
+            out_flat = np.full(flat.shape, out_nd, dtype=np.float32)
+            out_flat[vld] = flat[vld] / band_sum[vld, np.newaxis]
+            out_blk = np.moveaxis(
+                out_flat.reshape((win_h, win_w, src.count)), -1, 0
             )
             dst.write(out_blk, window=win)
 
     if calc_stats:
         pop_img_stats(
             output_img,
-            no_data_val=0,
+            no_data_val=out_nd,
             calc_pyramids=True,
             use_pbar=use_pbar,
         )
@@ -1400,12 +1601,17 @@ def predict_refl_linear_unmixing(
     file_format: Optional[str] = None,
     *,
     gdalformat: str = "GTIFF",
+    out_no_data_val: float = -9999.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
     Predict per-band reflectance values from unmixed abundance coefficients and
     an endmembers :class:`pandas.DataFrame` (or file path).
+
+    Pixels that are no data in ``in_unmix_coefs_img`` (its no-data value or a
+    non-finite value in any coefficient band, e.g. pixels the unmixing
+    skipped) are written as ``out_no_data_val``.
 
     :param in_unmix_coefs_img: Path to the input abundance coefficients image.
     :param output_img: Path to the output predicted reflectance image.
@@ -1415,6 +1621,8 @@ def predict_refl_linear_unmixing(
     :param file_format: Optional format override when ``endmembers`` is a file
                         path (Default = ``None``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param out_no_data_val: Output no-data value, also recorded in the output
+                            (Default = ``-9999.0``).
     :param calc_stats: If ``True``, populate image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -1430,6 +1638,7 @@ def predict_refl_linear_unmixing(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(in_unmix_coefs_img, "Input unmixing coefficients image")
+    out_nd = _check_out_no_data_val(out_no_data_val)
     em_df = coerce_endmembers_df(endmembers, file_format=file_format)
     endmembers_arr = em_df.to_numpy(dtype=np.float64).T
     m, n_bands = endmembers_arr.shape
@@ -1451,6 +1660,7 @@ def predict_refl_linear_unmixing(
             out_rio_dtype="float32",
             count=n_bands,
         )
+        dst.nodata = out_nd
         for b_idx, b_name in enumerate(band_names, start=1):
             dst.set_band_description(b_idx, b_name)
 
@@ -1461,9 +1671,11 @@ def predict_refl_linear_unmixing(
                 np.float64, copy=False
             )
             coefs_flat = np.moveaxis(blk, 0, -1).reshape(-1, m)
-            pred_flat = (coefs_flat @ endmembers_arr).astype(
-                np.float32, copy=False
+            vld = _valid_pxls(coefs_flat, src.nodatavals)
+            pred_flat = np.full(
+                (coefs_flat.shape[0], n_bands), out_nd, dtype=np.float32
             )
+            pred_flat[vld] = coefs_flat[vld] @ endmembers_arr
             out_blk = np.moveaxis(
                 pred_flat.reshape((win_h, win_w, n_bands)), -1, 0
             )
@@ -1472,7 +1684,7 @@ def predict_refl_linear_unmixing(
     if calc_stats:
         pop_img_stats(
             output_img,
-            no_data_val=0,
+            no_data_val=out_nd,
             calc_pyramids=True,
             use_pbar=use_pbar,
         )
@@ -1486,6 +1698,7 @@ def calc_unmixing_rmse_residual_err(
     file_format: Optional[str] = None,
     *,
     gdalformat: str = "GTIFF",
+    out_no_data_val: float = -9999.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -1494,7 +1707,9 @@ def calc_unmixing_rmse_residual_err(
     error against the original reference image.
 
     Output bands are: Band 1 ``RMSE``, Band 2 ``RMSPE`` (percentage), and
-    Band 3 ``Residual``.
+    Band 3 ``Residual``. Pixels that are zero in every band or no data in
+    ``input_img``, or no data in ``input_unmix_img`` (e.g. pixels the
+    unmixing skipped), are written as ``out_no_data_val``.
 
     :param input_img: Path to the original reference reflectance image file.
     :param input_unmix_img: Path to the unmixed abundance coefficients image.
@@ -1505,6 +1720,8 @@ def calc_unmixing_rmse_residual_err(
     :param file_format: Optional format override when ``endmembers`` is a file
                         path (Default = ``None``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param out_no_data_val: Output no-data value, also recorded in the output
+                            (Default = ``-9999.0``; ``0`` is a valid error).
     :param calc_stats: If ``True``, assign band names and calculate image
                        statistics and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -1519,6 +1736,7 @@ def calc_unmixing_rmse_residual_err(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    out_nd = _check_out_no_data_val(out_no_data_val)
     _, m, n_bands, endmembers_arr = prepare_endmembers_array(
         endmembers, file_format=file_format
     )
@@ -1550,6 +1768,7 @@ def calc_unmixing_rmse_residual_err(
             grid=grid,
             count=3,
         )
+        dst.nodata = out_nd
 
         orig_xoff, orig_yoff = grid.offsets[paths[0]]
         unmix_xoff, unmix_yoff = grid.offsets[paths[1]]
@@ -1582,10 +1801,12 @@ def calc_unmixing_rmse_residual_err(
             orig_flat = np.moveaxis(orig_blk, 0, -1).reshape(-1, n_bands)
             unmix_flat = np.moveaxis(unmix_blk, 0, -1).reshape(-1, m)
 
-            vld = np.logical_not(np.all(orig_flat == 0.0, axis=1)) & np.all(
-                np.isfinite(orig_flat), axis=1
+            vld = (
+                np.logical_not(np.all(orig_flat == 0.0, axis=1))
+                & _valid_pxls(orig_flat, src_orig.nodatavals)
+                & _valid_pxls(unmix_flat, src_unmix.nodatavals)
             )
-            out_flat = np.zeros((orig_flat.shape[0], 3), dtype=np.float32)
+            out_flat = np.full((orig_flat.shape[0], 3), out_nd, dtype=np.float32)
 
             if np.any(vld):
                 v_orig = orig_flat[vld]
@@ -1616,7 +1837,7 @@ def calc_unmixing_rmse_residual_err(
         set_band_names(output_img, ["RMSE", "RMSPE", "Residual"], feedback=False)
         pop_img_stats(
             output_img,
-            no_data_val=None,
+            no_data_val=out_nd,
             calc_pyramids=True,
             use_pbar=use_pbar,
         )
@@ -1630,12 +1851,19 @@ def summarise_multi_endmember_linear_unmixing(
     tmp_dir: str = "tmp",
     *,
     gdalformat: str = "GTIFF",
+    out_no_data_val: float = 999.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
     """
     Merge multiple linear spectral unmixing results by selecting the model with
     the lowest Root Mean Square Percentage Error (RMSPE) at each pixel.
+
+    A model is not considered at pixels where its abundances are no data (its
+    no-data value or a non-finite value in any band). Pixels with no usable
+    model, or that are zero in every band or no data in ``input_img``, are
+    written as ``out_no_data_val`` in ``out_unmix_img`` and ``0`` in
+    ``out_ref_img``.
 
     :param input_img: Path to the original input reflectance image file.
     :param out_unmix_img: Path to the combined output abundance image file.
@@ -1647,6 +1875,9 @@ def summarise_multi_endmember_linear_unmixing(
                                 objects describing each candidate unmixing run.
     :param tmp_dir: Retained for API compatibility (Default = ``'tmp'``).
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
+    :param out_no_data_val: No-data value of ``out_unmix_img``
+                            (Default = ``999.0``, as in earlier versions; pass
+                            ``-9999.0`` to match the unmixing functions).
     :param calc_stats: If ``True``, set band names and compute statistics and
                        pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -1669,6 +1900,7 @@ def summarise_multi_endmember_linear_unmixing(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     _ = tmp_dir
+    unmix_nodata = _check_out_no_data_val(out_no_data_val)
     if (
         not isinstance(in_unmixed_datasets, (list, tuple))
         or not in_unmixed_datasets
@@ -1750,7 +1982,6 @@ def summarise_multi_endmember_linear_unmixing(
             grid=grid,
             count=n_out_bands,
         )
-        unmix_nodata = 999.0
         dst_unmix.nodata = unmix_nodata
         for b_idx, b_name in enumerate(endmember_names, start=1):
             dst_unmix.set_band_description(b_idx, b_name)
@@ -1788,8 +2019,8 @@ def summarise_multi_endmember_linear_unmixing(
                 np.float64, copy=False
             )
             orig_flat = np.moveaxis(orig_blk, 0, -1).reshape(-1, src_orig.count)
-            vld = np.logical_not(np.all(orig_flat == 0.0, axis=1)) & np.all(
-                np.isfinite(orig_flat), axis=1
+            vld = np.logical_not(np.all(orig_flat == 0.0, axis=1)) & _valid_pxls(
+                orig_flat, src_orig.nodatavals
             )
 
             best_rmspe = np.full(n_pxls, np.inf, dtype=np.float64)
@@ -1828,7 +2059,10 @@ def summarise_multi_endmember_linear_unmixing(
                         )
                         * 100.0
                     )
-                    rmspe = np.where(np.isfinite(rmspe), rmspe, np.inf)
+                    coef_ok = _valid_pxls(v_coef, u_ds.nodatavals)
+                    rmspe = np.where(
+                        coef_ok & np.isfinite(rmspe), rmspe, np.inf
+                    )
 
                     v_idx = np.flatnonzero(vld)
                     better = rmspe < best_rmspe[v_idx]

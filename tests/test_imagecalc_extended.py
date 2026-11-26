@@ -442,6 +442,105 @@ def test_rescale_functions(tmp_path):
         )
 
 
+def test_rescale_img_pxl_vals_no_data(tmp_path):
+    """rescale_img_pxl_vals keeps valid zeros and writes out_no_data."""
+    # A distance raster: 0 m is valid, no header no data value.
+    dist = np.array([[[0.0, 500.0], [1000.0, 2000.0]]], dtype=np.float32)
+    dist_img = tmp_path / "dist.tif"
+    _write_raster(dist_img, dist)
+
+    out_img = tmp_path / "dist_memb.tif"
+    ic_resc.rescale_img_pxl_vals(
+        str(dist_img),
+        str(out_img),
+        [ic_resc.ImageBandRescale(band=1, in_min=0.0, in_max=1000.0,
+                                  out_min=1.0, out_max=0.0)],
+        trim_to_limits=True,
+        use_pbar=False,
+    )
+    with rasterio.open(out_img) as src:
+        # Default out_no_data for a float output is -9999.
+        assert src.nodata == -9999.0
+        np.testing.assert_allclose(src.read(1), [[1.0, 0.5], [0.0, 0.0]])
+
+    # The input band's no data value is used when no_data_val is None.
+    dist_nd_img = tmp_path / "dist_nd.tif"
+    dist_nd = np.array([[[0.0, 500.0], [5000.0, 2000.0]]], dtype=np.float32)
+    _write_raster(dist_nd_img, dist_nd, nodata=5000.0)
+    out_nd_img = tmp_path / "dist_nd_memb.tif"
+    ic_resc.rescale_img_pxl_vals(
+        str(dist_nd_img),
+        str(out_nd_img),
+        [ic_resc.ImageBandRescale(band=1, in_min=0.0, in_max=1000.0,
+                                  out_min=1.0, out_max=0.0, out_no_data=-1.0)],
+        use_pbar=False,
+    )
+    with rasterio.open(out_nd_img) as src:
+        assert src.nodata == -1.0
+        np.testing.assert_allclose(src.read(1), [[1.0, 0.5], [-1.0, 0.0]])
+
+    # An explicit no_data_val overrides the input band's value.
+    ic_resc.rescale_img_pxl_vals(
+        str(dist_nd_img),
+        str(out_nd_img),
+        [ic_resc.ImageBandRescale(band=1, in_min=0.0, in_max=1000.0,
+                                  no_data_val=0.0, out_min=1.0, out_max=0.0,
+                                  out_no_data=-1.0)],
+        use_pbar=False,
+    )
+    with rasterio.open(out_nd_img) as src:
+        np.testing.assert_allclose(src.read(1), [[-1.0, 0.5], [0.0, 0.0]])
+
+    # Integer output: the default out_no_data must fit the data type.
+    out_u8 = tmp_path / "dist_u8.tif"
+    ic_resc.rescale_img_pxl_vals(
+        str(dist_nd_img),
+        str(out_u8),
+        [ic_resc.ImageBandRescale(band=1, in_min=0.0, in_max=1000.0,
+                                  out_min=0.0, out_max=100.0)],
+        datatype=rsgispy.TYPE_8UINT,
+        use_pbar=False,
+    )
+    with rasterio.open(out_u8) as src:
+        assert src.nodata == 255.0
+        np.testing.assert_array_equal(src.read(1), [[0, 50], [255, 100]])
+
+    # An explicit out_no_data the output data type cannot hold is an error.
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_resc.rescale_img_pxl_vals(
+            str(dist_img),
+            str(tmp_path / "bad_u8.tif"),
+            [ic_resc.ImageBandRescale(band=1, in_min=0.0, in_max=1000.0,
+                                      out_min=0.0, out_max=100.0,
+                                      out_no_data=-9999.0)],
+            datatype=rsgispy.TYPE_8UINT,
+            use_pbar=False,
+        )
+
+    # Different out_no_data values per band: kept per band where the format
+    # supports it, an error for GeoTIFF (one no data value per file).
+    two_img = tmp_path / "two.tif"
+    _write_raster(two_img, np.concatenate([dist_nd, dist_nd]), nodata=5000.0)
+    cfgs = [
+        ic_resc.ImageBandRescale(band=1, in_min=0.0, in_max=1000.0,
+                                 out_min=0.0, out_max=1.0, out_no_data=-1.0),
+        ic_resc.ImageBandRescale(band=2, in_min=0.0, in_max=1000.0,
+                                 out_min=0.0, out_max=1.0, out_no_data=-2.0),
+    ]
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_resc.rescale_img_pxl_vals(
+            str(two_img), str(tmp_path / "two_out.tif"), cfgs, use_pbar=False
+        )
+    if "KEA" in rasterio.drivers.raster_driver_extensions().values():
+        two_kea = tmp_path / "two_out.kea"
+        ic_resc.rescale_img_pxl_vals(
+            str(two_img), str(two_kea), cfgs, gdalformat="KEA", use_pbar=False
+        )
+        with rasterio.open(two_kea) as src:
+            assert src.nodatavals == (-1.0, -2.0)
+            np.testing.assert_allclose(src.read(2), [[0.0, 0.5], [-2.0, 1.0]])
+
+
 def test_normalise_img_pxl_vals(tmp_path):
     """Test calc_img_norm_params, apply_img_norm_params, and normalise_img_pxl_vals."""
     in_p = tmp_path / "norm_in.tif"

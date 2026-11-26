@@ -15,6 +15,7 @@ import rsgispy
 from rsgispy import RSGISPyException
 from rsgispy.elevation._hydro_common import (
     _call_topo_kernel,
+    _resolve_flow_acc_units,
     _has_numba,
     _run_optional_kernel,
     _read_d8_grid,
@@ -40,12 +41,19 @@ from rsgispy.imageprocess import build_valid_mask, ensure_file_exists
 from rsgispy.vectorprocess import write_vec_gdf
 
 
+# Relative tolerance applied to a threshold converted between cells and m2,
+# so the float32 rounding of the stored accumulation cannot drop a pixel whose
+# accumulation equals the threshold.
+_ACC_UNITS_CONV_RTOL = 1e-6
+
+
 def extract_streams(
     input_img: str,
     output_img: str,
     threshold: float,
     threshold_units: str = "cells",
     *,
+    acc_units: str = "auto",
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
@@ -55,10 +63,16 @@ def extract_streams(
     """
     Extract a binary stream network raster from a flow accumulation grid.
 
+    A pixel is a stream when its accumulation is at least ``threshold``. The
+    threshold and the accumulation can each be in cells or in m²: the
+    threshold is converted with the pixel area when the units differ, so any
+    combination gives the same network.
+
     Parameters
     ----------
     input_img : str
-        Path to the input flow accumulation raster.
+        Path to the input flow accumulation raster (e.g. from
+        :func:`flow_accumulation`, in cells or in m²; see ``acc_units``).
     output_img : str
         Path to the output binary stream mask raster (``uint8``, ``1`` = stream,
         ``0`` = hillslope, ``255`` = nodata).
@@ -67,6 +81,15 @@ def extract_streams(
     threshold_units : {'cells', 'area'}, optional
         Units of ``threshold``: pixel count (``'cells'``) or square metres
         (``'area'``) (Default = ``'cells'``).
+    acc_units : {'auto', 'cells', 'area'}, optional
+        Units of the accumulation in ``input_img`` (Default = ``'auto'``).
+        ``'auto'`` reads the ``RSGISPY_FLOW_ACC_UNITS`` tag that
+        :func:`flow_accumulation` writes; a raster without the tag (e.g.
+        written by an older rsgispy version or another program) is assumed
+        to be in **cells**. ``'cells'`` or ``'area'`` (m²) state the units
+        explicitly, e.g. for an untagged raster in m²; a value that
+        contradicts the raster's tag raises
+        :class:`rsgispy.RSGISPyException`.
     gdalformat : str, optional
         GDAL/rasterio output driver name (Default = ``'GTIFF'``).
     datatype : int or None, optional
@@ -78,6 +101,18 @@ def extract_streams(
         (Default = ``True``).
     use_pbar : bool, optional
         Display a progress bar (Default = ``True``).
+
+    Examples
+    --------
+    .. code:: python
+
+        from rsgispy.elevation import hydrology
+
+        hydrology.flow_accumulation("fdir_d8.tif", "facc.tif", out_units="area")
+        # Channels start where at least 5 ha (50,000 m2) drain through a pixel.
+        hydrology.extract_streams(
+            "facc.tif", "streams.tif", threshold=50000, threshold_units="area"
+        )
     """
     # pylint: disable=too-many-arguments,too-many-locals
     units_norm = threshold_units.strip().lower()
@@ -96,21 +131,28 @@ def extract_streams(
     with _run_progress_steps("Extracting streams", 3, use_pbar) as pbar:
         with rasterio.open(input_img, "r") as src:
             dx, dy = _validate_projected_crs(src, input_img)
-            cell_thresh = (
-                float(threshold) / (dx * dy)
-                if units_norm == "area"
-                else float(threshold)
-            )
+            acc_units_eff = _resolve_flow_acc_units(src, input_img, acc_units)
+            # Threshold in the units of the accumulation.
+            if units_norm == acc_units_eff:
+                acc_thresh = float(threshold)
+            elif units_norm == "area":  # m2 threshold, accumulation in cells
+                acc_thresh = (
+                    float(threshold) / (dx * dy) * (1.0 - _ACC_UNITS_CONV_RTOL)
+                )
+            else:  # cells threshold, accumulation in m2
+                acc_thresh = (
+                    float(threshold) * (dx * dy) * (1.0 - _ACC_UNITS_CONV_RTOL)
+                )
             eff_nd = no_data_val if no_data_val is not None else src.nodata
             acc = src.read(1, out_dtype=np.float64)
             valid = build_valid_mask(acc, eff_nd)
             pbar.update(1)
 
             if _has_numba():
-                streams = extract_streams_njit(acc, valid, cell_thresh, fill_nd_int)
+                streams = extract_streams_njit(acc, valid, acc_thresh, fill_nd_int)
             else:
                 _warn_numpy_fallback("extract_streams")
-                streams = extract_streams_numpy(acc, valid, cell_thresh, fill_nd_int)
+                streams = extract_streams_numpy(acc, valid, acc_thresh, fill_nd_int)
             pbar.update(1)
 
             _write_raster_array(
@@ -339,7 +381,10 @@ def vectorise_streams(
         Optional aligned DEM raster to populate ``elev_start``, ``elev_end``,
         ``drop_m``, and ``slope`` attributes.
     flow_acc_img : str or None, optional
-        Optional aligned flow accumulation raster to populate ``max_acc``.
+        Optional aligned flow accumulation raster to populate ``max_acc``, the
+        largest accumulation along each reach, in the raster's units (cells
+        or m², as recorded in the ``RSGISPY_FLOW_ACC_UNITS`` tag written by
+        :func:`flow_accumulation`).
     order_method : {'strahler', 'shreve'}, optional
         Stream ordering method (Default = ``'strahler'``).
     allow_pure_python : bool, optional

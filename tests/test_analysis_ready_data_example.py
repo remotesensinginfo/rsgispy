@@ -40,11 +40,10 @@ def _load_example():
 
 @pytest.fixture(autouse=True)
 def _restore_creation_opts(monkeypatch):
-    """The example sets COG creation options in os.environ; restore them."""
+    """Run the example with rsgispy's default creation options."""
     for fmt in ("COG", "GTIFF"):
         for prefix in ("RSGISPY", "RSGISLIB"):
-            key = f"{prefix}_IMG_CRT_OPTS_{fmt}"
-            monkeypatch.setenv(key, os.environ.get(key, "COMPRESS=DEFLATE"))
+            monkeypatch.delenv(f"{prefix}_IMG_CRT_OPTS_{fmt}", raising=False)
 
 
 def _fake_cdse(monkeypatch, zips):
@@ -130,11 +129,12 @@ def test_worked_example_runs(tmp_path, monkeypatch):
         with rasterio.open(comp["ndvi"]) as src:
             assert src.count == 3
 
-    # Steps 7-8: COG mosaics covering both tiles, checked
+    # Steps 7-8: GeoTIFF mosaics covering both tiles, checked
     with rasterio.open(out["mosaics"]["sref"]) as src:
         assert src.width == 160 and src.count == 10
         assert src.tags(ns="IMAGE_STRUCTURE").get("COMPRESSION") == "DEFLATE"
-        assert src.tags(ns="IMAGE_STRUCTURE").get("LAYOUT") == "COG"
+        assert src.profile.get("tiled")  # the default GeoTIFF creation options
+        assert "STATISTICS_MEAN" in src.tags(1)
     assert out["sref_ok"] and out["ndvi_ok"]
 
 

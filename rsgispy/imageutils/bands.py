@@ -19,10 +19,10 @@ from rsgispy.imageprocess import (
     create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
-    maybe_pop_stats,
     normalise_creation_options,
     open_multi_image_datasets,
     open_output_dataset,
+    pop_stats_on_close,
     read_window_with_halo,
     rsgis_dtype_from_np_dtype,
     validate_band_index,
@@ -142,6 +142,7 @@ def select_img_bands(
         eff_nd = no_data_val if no_data_val is not None else src.nodata
         if eff_nd is not None:
             dst.nodata = eff_nd
+        pop_stats_on_close(dst, calc_stats, no_data_val=eff_nd, use_pbar=use_pbar)
         for out_idx, src_idx in enumerate(band_list, start=1):
             desc = src.descriptions[src_idx - 1]
             if desc:
@@ -160,13 +161,6 @@ def select_img_bands(
                 ),
                 window=win,
             )
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=eff_nd,
-        use_pbar=use_pbar,
-    )
 
 
 def stack_img_bands(
@@ -260,6 +254,9 @@ def stack_img_bands(
         )
         if no_data_val is not None:
             dst.nodata = no_data_val
+        pop_stats_on_close(
+            dst, calc_stats, no_data_val=no_data_val, use_pbar=use_pbar
+        )
         if band_names is not None:
             for idx, bname in enumerate(band_names, start=1):
                 dst.set_band_description(idx, str(bname))
@@ -293,13 +290,6 @@ def stack_img_bands(
                 cast_result_block(stacked, win_h, win_w, out_np_dtype),
                 window=dst_win,
             )
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=no_data_val,
-        use_pbar=use_pbar,
-    )
 
 
 def _sharpen_single_high_band(
@@ -568,6 +558,7 @@ def sharpen_low_res_bands(
             creation_opts=norm_opts,
         )
         dst.nodata = eff_nd
+        pop_stats_on_close(dst, calc_stats, no_data_val=eff_nd, use_pbar=use_pbar)
         for out_idx, binfo in enumerate(band_info, start=1):
             if binfo.name:
                 dst.set_band_description(out_idx, str(binfo.name))
@@ -628,10 +619,3 @@ def sharpen_low_res_bands(
                 ),
                 window=dst_win,
             )
-
-    maybe_pop_stats(
-        output_img=output_img,
-        calc_stats=calc_stats,
-        no_data_val=eff_nd,
-        use_pbar=use_pbar,
-    )

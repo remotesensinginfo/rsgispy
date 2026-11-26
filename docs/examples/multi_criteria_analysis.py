@@ -202,12 +202,12 @@ def run_workflow(
         )
 
     # A simple linear membership with rescale: 0 m -> 1, >= 1000 m -> 0.
-    # no_data_val must not be a real value (0 m is valid here).
+    # Pixels beyond max_dist (the distance image's no data value) are
+    # written as no data (-9999, the default out_no_data).
     rsgispy.imagecalc.rescale.rescale_img_pxl_vals(
         opath("dist_water.tif"), opath("f_water.tif"),
         [rsgispy.imagecalc.rescale.ImageBandRescale(
-            band=1, in_min=0.0, in_max=1000.0, no_data_val=-1.0,
-            out_min=1.0, out_max=0.0, out_no_data=0.0)],
+            band=1, in_min=0.0, in_max=1000.0, out_min=1.0, out_max=0.0)],
         trim_to_limits=True,
         use_pbar=use_pbar,
     )
@@ -242,8 +242,9 @@ def run_workflow(
         "mng_hist == 1 && mng == 0 ? 1 : 0.4",
         # decreasing sigmoid: 0.5 at 500 m from mangroves (propagule supply)
         "1 / (1 + exp((dmng - 500) / 100))",
-        # already 0-1 (linear, from rescale_img_pxl_vals)
-        "fwater",
+        # already 0-1 (linear, from rescale_img_pxl_vals); no data (further
+        # than max_dist from water) -> 0
+        "fwater < 0 ? 0 : fwater",
         # categorical: abandoned >= 5 yr, < 5 yr, no pond
         "pond == 3 ? 1 : (pond == 2 ? 0.8 : 0.5)",
         "prot == 0 ? 0.3 : prot / 100",
@@ -289,7 +290,6 @@ def run_workflow(
 
     # [step-5-combine]
     import rsgispy.imageutils.colourtable
-    import rsgispy.imageutils.metadata
 
     def calc_potential(wgts: Mapping[str, float], out_img: str) -> None:
         """Weighted linear combination x constraint -> class + score."""
@@ -311,9 +311,9 @@ def run_workflow(
             comb_defs,
             band_names=["potential", "score"],
             datatype=rsgispy.TYPE_8UINT,
+            no_data_val=255,
             use_pbar=use_pbar,
         )
-        rsgispy.imageutils.metadata.set_img_no_data_value(out_img, 255)
 
     potential_img = opath("restoration_potential.tif")
     calc_potential(weights, potential_img)
@@ -359,6 +359,7 @@ def run_workflow(
     out["sensitivity"] = sens_df
 
     # [step-7-summaries]
+    import rsgispy.imageutils.metadata
     import rsgispy.vector.create
     import rsgispy.vector.geoms
     import rsgispy.zonalstats.polygon as zonal
