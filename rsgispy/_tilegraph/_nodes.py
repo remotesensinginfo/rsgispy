@@ -432,7 +432,7 @@ class RasterSource(TileNode):
         reader = resources.raster_reader(self.path)
         count = int(reader.dataset.count)
         bands = self.bands if self.bands is not None else list(range(1, count + 1))
-        reader.register(self, bands, halo_y, halo_x)
+        reader.register(self, bands, halo_y, halo_x, self.dtype)
         return reader
 
     def evaluate(

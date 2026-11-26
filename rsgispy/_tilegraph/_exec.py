@@ -58,6 +58,22 @@ def halo_read_bounds(
     )
 
 
+def gdal_read_dtype(native: Any, target: Any) -> Optional[np.dtype]:
+    """
+    Return ``target`` when GDAL can read a band of dtype ``native`` directly
+    into ``target`` with exactly the values of ``raw.astype(target)`` (a safe,
+    value-preserving cast to a floating-point or wider integer type), else
+    ``None`` (read the native type and cast with NumPy).
+    """
+    src = np.dtype(native)
+    dst = np.dtype(target)
+    if src == dst or not np.can_cast(src, dst, casting="safe"):
+        return None
+    if dst.kind not in "fiu" or src.kind not in "fiu":
+        return None
+    return dst
+
+
 def _finish_read(
     raw: np.ndarray,
     dtype: np.dtype,
@@ -99,19 +115,30 @@ class SharedRasterReader:
     def __init__(self, dataset: rasterio.io.DatasetReader) -> None:
         self.dataset = dataset
         self._nodes: Dict[Any, Tuple[List[int], int, int]] = {}
+        self._dtypes: Dict[Any, Optional[np.dtype]] = {}
         self._union: List[int] = []
         self._index: Dict[int, int] = {}
         self._halo: Tuple[int, int] = (0, 0)
         self._shared = True
+        self._read_dtype: Optional[np.dtype] = None
         self._cache_key: Optional[Tuple[int, int, int, int]] = None
         self._cache: Optional[np.ndarray] = None
         self._cache_uses = 0
 
-    def register(self, node: Any, bands: Sequence[int], hy: int, hx: int) -> None:
+    def register(
+        self,
+        node: Any,
+        bands: Sequence[int],
+        hy: int,
+        hx: int,
+        dtype: Any = None,
+    ) -> None:
         """
-        Register a node reading ``bands`` (1-based) with a ``(hy, hx)`` halo.
+        Register a node reading ``bands`` (1-based) with a ``(hy, hx)`` halo
+        into blocks of ``dtype``.
         """
         self._nodes[node] = (list(bands), int(hy), int(hx))
+        self._dtypes[node] = None if dtype is None else np.dtype(dtype)
         union = sorted({b for b_list, _, _ in self._nodes.values() for b in b_list})
         self._union = union
         self._index = {b: i for i, b in enumerate(union)}
@@ -121,6 +148,20 @@ class SharedRasterReader:
         )
         dtypes = {self.dataset.dtypes[b - 1] for b in union}
         self._shared = len(self._nodes) > 1 and len(dtypes) == 1
+        # A single node lets GDAL convert while reading when the conversion
+        # is value preserving (e.g. int16 -> float64): no extra native copy.
+        # (Shared blocks stay native, so each node only casts its bands.)
+        wanted = set(self._dtypes.values())
+        self._read_dtype = None
+        if len(self._nodes) == 1 and len(dtypes) == 1 and None not in wanted:
+            self._read_dtype = gdal_read_dtype(next(iter(dtypes)), next(iter(wanted)))
+
+    def _read(self, bands: List[int], read_win: Window, dtype: Any) -> np.ndarray:
+        """Read ``bands``, converting in GDAL when that gives identical values."""
+        out_dtype = self._read_dtype
+        if out_dtype is None or np.dtype(dtype) != out_dtype:
+            return self.dataset.read(bands, window=read_win)
+        return self.dataset.read(bands, window=read_win, out_dtype=out_dtype)
 
     def read(self, node: Any, win: Window, dtype: Any, border: HaloBorder) -> TileTensor:
         """
@@ -141,7 +182,7 @@ class SharedRasterReader:
             read_win = Window(
                 bounds[1], bounds[0], bounds[3] - bounds[1], bounds[2] - bounds[0]
             )
-            raw = self.dataset.read(bands, window=read_win)
+            raw = self._read(bands, read_win, dtype)
             return _finish_read(raw, dtype, border, hy, hx, bounds[4:])
 
         key = (int(win.row_off), int(win.col_off), int(win.height), int(win.width))
@@ -149,6 +190,7 @@ class SharedRasterReader:
         big = halo_read_bounds(win, img_h, img_w, mhy, mhx)
         if self._cache_key != key:
             read_win = Window(big[1], big[0], big[3] - big[1], big[2] - big[0])
+            # Native type: each node casts only its own bands.
             self._cache = self.dataset.read(self._union, window=read_win)
             self._cache_key = key
             self._cache_uses = 0
