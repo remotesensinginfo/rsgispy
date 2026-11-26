@@ -14,6 +14,7 @@ Functions requiring ``scipy`` (:func:`slow_feature_analysis`,
 if ``scipy`` is not installed.
 """
 
+import json
 import warnings
 from contextlib import ExitStack
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -42,7 +43,7 @@ from rsgispy.imageutils.arrays import (
     get_img_data_as_arr,
 )
 from rsgispy.imageutils.checks import check_img_file_comparison
-from rsgispy.imageutils.colourtable import define_colour_table, set_img_thematic
+from rsgispy.imageutils.colourtable import CLASS_NAMES_TAG, define_colour_table, set_img_thematic
 from rsgispy.imageutils.metadata import get_img_band_count, get_img_size
 from rsgispy.imageutils.stats import pop_img_stats, pop_thmt_img_stats
 from rsgispy.tools.stats import standardise_img_data
@@ -74,6 +75,7 @@ __all__: List[str] = [
     "slow_feature_analysis",
     "multivariate_alteration_detection",
     "CHANGE_CLR_LUT",
+    "CHANGE_CLASS_NAMES",
 ]
 
 
@@ -86,6 +88,10 @@ CHANGE_CLR_LUT: Dict[int, Tuple[int, int, int, int]] = {
     1: (255, 0, 0, 255),
     255: (0, 0, 0, 0),
 }
+
+#: Class names of the binary change outputs (stored in the
+#: :data:`~rsgispy.imageutils.colourtable.CLASS_NAMES_TAG` band tag).
+CHANGE_CLASS_NAMES: Dict[str, str] = {"0": "No change", "1": "Change"}
 
 
 def _finish_binary_change_img(
@@ -127,9 +133,11 @@ def _finish_binary_change_img(
             )
     else:
         set_img_thematic(out_chng_img)
-    # Class names ("No change", "Change") to be added here once
-    # rsgispy.imageutils.colourtable.set_thematic_classes exists.
     define_colour_table(out_chng_img, CHANGE_CLR_LUT)
+    # Store the class names in the same tag that set_thematic_classes and
+    # get_thematic_classes use (the statistics above are kept as they are).
+    with rasterio.open(out_chng_img, "r+") as dst:
+        dst.update_tags(1, **{CLASS_NAMES_TAG: json.dumps(CHANGE_CLASS_NAMES)})
 
 
 def _validate_change_inputs(

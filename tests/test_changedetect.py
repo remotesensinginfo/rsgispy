@@ -831,3 +831,24 @@ def test_binary_change_output_is_thematic(tmp_path, method, calc_stats):
         assert float(tags["STATISTICS_MEAN"]) == pytest.approx(
             n_chng / (n_chng + n_none)
         )
+
+
+def test_binary_change_output_class_names(tmp_path):
+    """The binary change maps carry 'No change' / 'Change' class names."""
+    import rsgispy.changedetect.imgchngmthds as icm
+    from rsgispy.imageutils.colourtable import get_thematic_classes
+
+    rng = np.random.default_rng(3)
+    base = rng.integers(100, 1000, size=(3, 40, 40)).astype(np.uint16)
+    chng = base.copy()
+    chng[:, 10:20, 10:20] += 800
+    prof = dict(driver="GTiff", width=40, height=40, count=3, dtype="uint16",
+                crs="EPSG:32630", transform=rasterio.transform.from_origin(0, 400, 10, 10), nodata=0)
+    base_img, chng_img = str(tmp_path / "b.tif"), str(tmp_path / "c.tif")
+    for path, arr in ((base_img, base), (chng_img, chng)):
+        with rasterio.open(path, "w", **prof) as dst:
+            dst.write(arr)
+    out_bin = str(tmp_path / "bin.tif")
+    icm.change_vector_analysis(base_img, chng_img, out_bin, str(tmp_path / "dist.tif"), use_pbar=False)
+    names = {k: v[0] for k, v in get_thematic_classes(out_bin).items()}
+    assert names[0] == "No change" and names[1] == "Change"
