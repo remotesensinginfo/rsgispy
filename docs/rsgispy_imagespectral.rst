@@ -42,7 +42,7 @@ wrappers around these builders and give the same result):
    pred = predict_refl_linear_unmixing_node(fracs, "endmembers.csv")
    TileGraph([DiskSink(fracs, "fracs.tif"), DiskSink(pred, "pred_refl.tif")]).run()
 
-See :doc:`rsgispy_imageprocess` for the list of chainable operations.
+See :ref:`tilegraph-chainable` for the list of chainable operations.
 
 Submodules
 ----------

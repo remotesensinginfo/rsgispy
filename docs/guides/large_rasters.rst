@@ -263,23 +263,33 @@ memory and writes only the final outputs. The building blocks are:
   (a Python function per pixel block) and
   :class:`~rsgispy.imageprocess.WindowOp` (a moving-window function with a
   halo);
-* filter nodes — each filter that can be chained has a node builder next to
-  its file-based function, named after it without ``apply_`` and with
-  ``_node`` (e.g. :func:`~rsgispy.imagefilter.stats.median_filter_node`,
-  :func:`~rsgispy.imagefilter.sar.lee_filter_node`,
-  :func:`~rsgispy.imagefilter.edge.sobel_filter_node`; see
-  :doc:`../rsgispy_imageprocess` for the list);
+* node builders — every tile-local operation (filters, indices, value
+  transforms, masks, change detection, terrain and illumination,
+  morphology, the majority filter and model prediction) has a node builder
+  next to its file-based function, named after it without ``apply_`` and
+  with ``_node`` (e.g. :func:`~rsgispy.imagefilter.stats.median_filter_node`,
+  :func:`~rsgispy.imagecalc.calcindices.calc_indices_node`,
+  :func:`~rsgispy.elevation.terrain.slope_node`,
+  :func:`~rsgispy.ml.predict.predict_raster_node`). The table of
+  chainable operations (file-based function, node builder and
+  ``FilterStep`` kind), the operations that cannot be chained and why, and
+  the no-data convention of the builders (``no_data_val=None`` uses the
+  input node's no-data value) are in :ref:`tilegraph-chainable`;
 * band nodes — :class:`~rsgispy.imageprocess.SelectBands` (pick bands of a
   node by 1-based index) and :class:`~rsgispy.imageprocess.StackBands`
   (stack the bands of several nodes, keeping their band names);
 * :func:`rsgispy.imagefilter.chained.build_filter_chain_node`, which adds a
   sequence of filters (:class:`~rsgispy.imagefilter.chained.FilterStep`:
   window statistics such as ``'median'`` and ``'mean'``, ``'gaussian'``,
-  ``'sobel'``, the ``'lee'`` speckle filter, kernels and band maths) to a
-  graph and returns the last node;
-* sinks — :class:`~rsgispy.imageprocess.DiskSink` (write a raster) and
+  ``'sobel'``, the SAR speckle filters such as ``'lee'`` and
+  ``'refined_lee'``, ``'glcm'``, kernels and band maths) to a graph and
+  returns the last node;
+* sinks — :class:`~rsgispy.imageprocess.DiskSink` (write a raster),
   :class:`~rsgispy.imageprocess.MemorySink` (return a numpy array from
-  :meth:`~rsgispy.imageprocess.TileGraph.run`).
+  :meth:`~rsgispy.imageprocess.TileGraph.run`),
+  :class:`~rsgispy.imageprocess.StatsSink` (per-band statistics and a
+  histogram, in the same pass) and
+  :class:`~rsgispy.imageprocess.ZonalStatsSink` (statistics per label).
 
 The graph works out how many extra halo pixels each source must read: here
 the 3 x 3 median and the 5 x 5 mean need a 1 + 2 = 3 pixel halo around every
@@ -308,6 +318,10 @@ pixels that are no data in any input stay no data in the output (the NDVI no
 data value is 0 here, the input's; use a ternary expression as in step 7 if
 you need a different value). The NDVI from the graph equals the one from
 step 4 wherever the input is valid, which the test checks.
+
+``graph.run(n_jobs=4)`` evaluates the tiles on four threads, with identical
+results; for typical chains on a large image this is 3-4 times faster (see
+:ref:`tilegraph-parallel`).
 
 Step 6 — Filter chains
 ----------------------

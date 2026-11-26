@@ -212,7 +212,7 @@ result):
    med = calc_imgs_pxl_percentiles_node(rvis, [50], no_data_val=-999)
    TileGraph(DiskSink(med, "rvi_median.tif")).run()
 
-See :doc:`rsgispy_imageprocess` for the list of chainable operations.
+See :ref:`tilegraph-chainable` for the list of chainable operations.
 
 Band Mathematics, Spectral Indices & Value Rescaling
 ----------------------------------------------------

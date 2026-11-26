@@ -38,7 +38,8 @@ with filters, band maths or a majority filter in one
 :class:`~rsgispy.imageprocess.TileGraph` pass without intermediate files.
 The builders take the structuring element as the file functions do
 (``morph_op_file``, ``use_op_file``, ``op_size``). ``no_data_val`` is the
-input no-data value (pass it; it is not read from the source) and ``dtype``
+input no-data value (by default that of the source node; see
+:ref:`tilegraph-nodata`) and ``dtype``
 the NumPy type the result will be written as: openings, closings and top-hats
 round each step to an integer ``dtype``, as the file functions do. The
 file-based functions run the same nodes (``RasterSource -> node ->

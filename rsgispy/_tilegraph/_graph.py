@@ -445,6 +445,7 @@ class TileGraph:
         bundle of per-run states, so no two threads share a dataset handle
         or parser) and write the blocks in tile order from this thread.
         """
+        # pylint: disable=too-many-locals
         free: "queue.SimpleQueue[Dict[TileNode, Any]]" = queue.SimpleQueue()
         for bundle in bundles:
             free.put(bundle)
@@ -505,7 +506,7 @@ class TileGraph:
                  ``(C, H, W)`` NumPy array (and the results of any other sink
                  with ``returns_result = True``, e.g. :class:`StatsSink`).
         """
-        # pylint: disable=import-outside-toplevel
+        # pylint: disable=import-outside-toplevel,too-many-locals
         from rsgispy.imageprocess import IntersectionGrid, iter_dataset_windows
 
         n_workers = _resolve_n_jobs(n_jobs)
