@@ -145,3 +145,15 @@ TileGraph(DiskSink(smooth, "sar_lee_db_med.tif")).run()  # one pass, no temp fil
 - **Local minima**: `image_local_minima(..., sequencial_out=False, allow_equal=True, ...)`, `image_local_minima_combined_out(...)`
 - **Compound operators**: `image_opening(..., niters=1)`, `image_closing(..., niters=1)`, `image_black_top_hat`, `image_white_top_hat`
 - Common parameters: `(input_img, output_img, morph_op_file='', use_op_file=False, op_size=3, [tmp_img=None], *, gdalformat='GTIFF', datatype=None, no_data_val=None, calc_stats=True, use_pbar=True)`.
+- **Tile-graph nodes** (chain with filters / band maths / `majority_filter_node` in one `TileGraph` pass; the file functions run these same nodes): `image_dilate_node`, `image_erode_node`, `image_gradient_node` `(source, morph_op_file='', use_op_file=False, op_size=3, *, combined=False, dtype=None, no_data_val=None, name=None)`; `image_local_minima_node(source, sequencial_out=False, allow_equal=True, morph_op_file='', use_op_file=False, op_size=3, *, combined=False, no_data_val=None)` (binary only: `sequencial_out=True` raises, numbering is not tile-local); `image_opening_node`, `image_closing_node` `(source, ..., op_size=3, niters=1, *, dtype=None, no_data_val=None)`; `image_white_top_hat_node`, `image_black_top_hat_node`. `no_data_val` is the input no-data (not read from the source); pass `dtype=np.uint8` etc. when writing integers so opening/closing steps round as the file functions do.
+
+```python
+import numpy as np
+import rsgispy
+from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+from rsgispy.imagemorphology import image_closing_node, image_opening_node
+
+mask = RasterSource("cloud_mask.tif")
+clean = image_closing_node(image_opening_node(mask, op_size=3, dtype=np.uint8), op_size=5, dtype=np.uint8)
+TileGraph(DiskSink(clean, "cloud_mask_clean.tif", datatype=rsgispy.TYPE_8UINT)).run()
+```

@@ -78,6 +78,47 @@ raster without writing intermediate scaled GeoTIFFs:
        scaler=scaler,
    )
 
+Chaining
+--------
+
+The predictions are also available as tile-graph nodes,
+:func:`~rsgispy.ml.predict.predict_raster_node`,
+:func:`~rsgispy.ml.predict.predict_proba_raster_node` and
+:func:`~rsgispy.ml.predict.predict_quantiles_raster_node`, taking feature
+nodes, a fitted estimator, an optional
+:class:`~rsgispy.ml.scaling.FeatureScaler` and an optional mask node. Build
+the feature nodes of an :class:`~rsgispy.ml.stack.ImageFeatureStack` with
+:func:`~rsgispy.ml.predict.feature_stack_nodes` (or
+``stack.to_tile_nodes()``), or use any nodes (filters, indices, band maths)
+as features, so a speckle filter, dB conversion, indices, the model and a
+majority filter run in one :class:`~rsgispy.imageprocess.TileGraph` pass:
+
+.. code-block:: python
+
+   import numpy as np
+   import rsgispy
+   from rsgispy.classification.classpostprocess import majority_filter_node
+   from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+   from rsgispy.ml.predict import feature_stack_nodes, predict_raster_node
+
+   cls = predict_raster_node(
+       feature_stack_nodes(stack),
+       model,
+       scaler=scaler,
+       thematic=True,
+       mask=RasterSource("valid_mask.tif", bands=1),
+   )
+   smooth = majority_filter_node(cls, 3, dtype=np.uint8, no_data_val=0)
+   TileGraph(DiskSink(smooth, "classes_smooth.tif", datatype=rsgispy.TYPE_8UINT)).run()
+
+A pixel is predicted when it is inside the mask and every feature is finite
+and not its node's no-data value, as in the file-based functions, and the
+nodes give the same values. The file-based functions
+(:func:`~rsgispy.ml.predict.predict_raster` etc.) keep their own block loop:
+they also accept stacks whose rasters are not on one pixel grid (predicting
+over their intersection, reprojecting on the fly), while a tile graph needs
+all its rasters on the same grid.
+
 Submodules
 ----------
 
