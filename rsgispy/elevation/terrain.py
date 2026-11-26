@@ -9,30 +9,29 @@ it with other operations in a :class:`~rsgispy.imageprocess.TileGraph`
 without intermediate files.
 """
 
-from contextlib import ExitStack
 import math
 from typing import Any, Optional, Sequence, Tuple
 
 import numpy as np
-import rasterio
 
 import rsgispy
-from rsgispy._io import NodeMeta, TileContext, TileNode, TileTensor
+from rsgispy._io import (
+    DiskSink,
+    NodeMeta,
+    RasterSource,
+    TileContext,
+    TileGraph,
+    TileNode,
+    TileTensor,
+)
 from rsgispy.elevation._helpers import (
     Horn3x3Node as _Horn3x3Node,
     HornBlockFunc as _HornBlockFunc,
     calc_slope_aspect_from_diffs as _calc_slope_aspect_from_diffs,
-    process_pxl_res_dem_3x3 as _process_pxl_res_dem_3x3,
-    process_single_dem_3x3 as _process_single_dem_3x3,
+    run_terrain_node_to_file as _run_terrain_node_to_file,
     validate_slope_unit as _validate_slope_unit,
 )
-from rsgispy.imageprocess import (
-    cast_result_block,
-    create_output_from_dataset,
-    ensure_file_exists,
-    iter_dataset_windows,
-)
-from rsgispy.imageutils.stats import pop_img_stats
+from rsgispy.imageprocess import ensure_file_exists
 
 __all__ = [
     "slope",
@@ -238,26 +237,14 @@ def slope(
     # pylint: disable=too-many-arguments
     unit_norm = _validate_slope_unit(unit)
     eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
-
-    def _block(
-        dx: np.ndarray,
-        dy: np.ndarray,
-        n_vals: np.ndarray,
-        ew_res: float,
-        ns_res: float,
-    ) -> np.ndarray:
-        slope_rad, _, _ = _calc_slope_aspect_from_diffs(dx, dy, n_vals, ew_res, ns_res)
-        if unit_norm == "degrees":
-            return np.degrees(slope_rad)
-        return slope_rad
-
-    _process_single_dem_3x3(
+    _run_terrain_node_to_file(
+        lambda dem, _res, _res_nd: _make_slope_node(
+            dem, None, unit_norm, no_data_val=no_data_val, out_datatype=eff_dtype
+        ),
         input_img,
         output_img,
         gdalformat,
         eff_dtype,
-        _block,
-        no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
@@ -312,27 +299,20 @@ def slope_pxl_res_img(
     # pylint: disable=too-many-arguments
     unit_norm = _validate_slope_unit(unit)
     eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
-
-    def _block(
-        dx: np.ndarray,
-        dy: np.ndarray,
-        n_vals: np.ndarray,
-        ew_res: np.ndarray,
-        ns_res: np.ndarray,
-    ) -> np.ndarray:
-        slope_rad, _, _ = _calc_slope_aspect_from_diffs(dx, dy, n_vals, ew_res, ns_res)
-        if unit_norm == "degrees":
-            return np.degrees(slope_rad)
-        return slope_rad
-
-    _process_pxl_res_dem_3x3(
+    _run_terrain_node_to_file(
+        lambda dem, res, res_nd: _make_slope_node(
+            dem,
+            res,
+            unit_norm,
+            no_data_val=no_data_val,
+            out_datatype=eff_dtype,
+            res_nodata=res_nd,
+        ),
         in_dem_img,
-        in_pxl_res_img,
         output_img,
         gdalformat,
         eff_dtype,
-        _block,
-        no_data_val=no_data_val,
+        in_pxl_res_img=in_pxl_res_img,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
@@ -376,24 +356,14 @@ def aspect(
     """
     # pylint: disable=too-many-arguments
     eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
-
-    def _block(
-        dx: np.ndarray,
-        dy: np.ndarray,
-        n_vals: np.ndarray,
-        ew_res: float,
-        ns_res: float,
-    ) -> np.ndarray:
-        _, aspect_deg, _ = _calc_slope_aspect_from_diffs(dx, dy, n_vals, ew_res, ns_res)
-        return aspect_deg
-
-    _process_single_dem_3x3(
+    _run_terrain_node_to_file(
+        lambda dem, _res, _res_nd: _make_aspect_node(
+            dem, None, no_data_val=no_data_val, out_datatype=eff_dtype
+        ),
         input_img,
         output_img,
         gdalformat,
         eff_dtype,
-        _block,
-        no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
@@ -440,25 +410,15 @@ def aspect_pxl_res_img(
     """
     # pylint: disable=too-many-arguments
     eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
-
-    def _block(
-        dx: np.ndarray,
-        dy: np.ndarray,
-        n_vals: np.ndarray,
-        ew_res: np.ndarray,
-        ns_res: np.ndarray,
-    ) -> np.ndarray:
-        _, aspect_deg, _ = _calc_slope_aspect_from_diffs(dx, dy, n_vals, ew_res, ns_res)
-        return aspect_deg
-
-    _process_pxl_res_dem_3x3(
+    _run_terrain_node_to_file(
+        lambda dem, res, res_nd: _make_aspect_node(
+            dem, res, no_data_val=no_data_val, out_datatype=eff_dtype, res_nodata=res_nd
+        ),
         in_dem_img,
-        in_pxl_res_img,
         output_img,
         gdalformat,
         eff_dtype,
-        _block,
-        no_data_val=no_data_val,
+        in_pxl_res_img=in_pxl_res_img,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
@@ -500,57 +460,25 @@ def categorise_aspect(
             gdalformat="GTIFF",
         )
     """
-    # pylint: disable=too-many-arguments,too-many-locals
+    # pylint: disable=too-many-arguments
     ensure_file_exists(input_img)
     eff_dtype = rsgispy.TYPE_8UINT if datatype is None else int(datatype)
-    out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
-    out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
-
-    with ExitStack() as stack:
-        src = stack.enter_context(rasterio.open(input_img, "r"))
-        eff_nd = no_data_val if no_data_val is not None else src.nodata
-        dst = create_output_from_dataset(
-            stack=stack,
-            src=src,
-            output_img=output_img,
+    node = categorise_aspect_node(
+        RasterSource(input_img, bands=1), no_data_val=no_data_val
+    )
+    TileGraph(
+        DiskSink(
+            node,
+            output_img,
             gdalformat=gdalformat,
-            out_rio_dtype=out_rio_dtype,
-            count=1,
-        )
-
-        for out_win in iter_dataset_windows(
-            src.height, src.width, use_pbar=use_pbar
-        ):
-            arr = src.read(1, window=out_win, out_dtype=np.float64)
-            invalid_mask = np.isnan(arr)
-            if eff_nd is not None and not np.isnan(eff_nd):
-                invalid_mask |= arr == eff_nd
-            valid = ~invalid_mask
-            if np.any(arr[valid] < 0.0):
-                raise rsgispy.RSGISPyException(
-                    "The input image pixel values must be between 0 and 360 degrees."
-                )
-
-            norm = np.where(arr > 360.0, np.mod(arr, 360.0), arr)
-            out_cls = np.zeros(arr.shape, dtype=out_np_dtype)
-            bins = np.clip((norm[valid] // 45.0).astype(np.int64) + 1, 1, 8)
-            out_cls[valid] = bins.astype(out_np_dtype)
-            dst.write(
-                cast_result_block(
-                    out_cls, int(out_win.height), int(out_win.width), out_np_dtype
-                ),
-                1,
-                window=out_win,
-            )
-
-    if calc_stats:
-        pop_img_stats(
-            input_img=output_img,
-            no_data_val=None,
-            calc_pyramids=True,
-            ignore_cog=gdalformat.upper().strip() == "COG",
-            use_pbar=use_pbar,
-        )
+            datatype=eff_dtype,
+            nodata=None,
+            clamp_int=False,
+            calc_stats=calc_stats,
+            inherit_meta=False,
+        ),
+        block_size=None,
+    ).run(use_pbar=use_pbar)
 
 
 def slope_node(

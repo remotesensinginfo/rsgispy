@@ -162,6 +162,25 @@ def test_file_functions_without_stats(tmp_path):
         assert_matches_golden(ds.read(1), _GOLDEN["out_slope_deg_dem_a"])
 
 
+def test_file_functions_cog_output(tmp_path):
+    """COG outputs hold the golden values and statistics."""
+    dem = _input_path(tmp_path, "dem_a")
+    out = str(tmp_path / "hs_cog.tif")
+    elev_illum.hillshade(dem, out, 315.0, 45.0, gdalformat="COG", use_pbar=False)
+    with rasterio.open(out) as ds:
+        assert ds.tags(ns="IMAGE_STRUCTURE").get("LAYOUT") == "COG"
+        assert ds.nodata == 0.0
+        assert "STATISTICS_MEAN" in ds.tags(1)
+        np.testing.assert_array_equal(ds.read(1), _GOLDEN["out_hillshade_dem_a"])
+    out = str(tmp_path / "cat_cog.tif")
+    elev_terr.categorise_aspect(
+        _input_path(tmp_path, "asp_e"), out, gdalformat="COG", use_pbar=False
+    )
+    with rasterio.open(out) as ds:
+        assert ds.nodata is None
+        np.testing.assert_array_equal(ds.read(1), _GOLDEN["out_cat_asp_e"])
+
+
 def test_file_function_errors(tmp_path):
     """Invalid parameters and inputs raise RSGISPyException."""
     dem = _input_path(tmp_path, "dem_a")

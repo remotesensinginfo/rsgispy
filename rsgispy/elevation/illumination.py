@@ -28,8 +28,7 @@ from rsgispy.elevation._helpers import (
     HornBlockFunc as _HornBlockFunc,
     calc_slope_aspect_from_diffs as _calc_slope_aspect_from_diffs,
     prepare_3x3_horn_diffs as _prepare_3x3_horn_diffs,
-    process_pxl_res_dem_3x3 as _process_pxl_res_dem_3x3,
-    process_single_dem_3x3 as _process_single_dem_3x3,
+    run_terrain_node_to_file as _run_terrain_node_to_file,
     validate_sun_angles as _validate_sun_angles,
 )
 from rsgispy.imageprocess import (
@@ -258,23 +257,14 @@ def hillshade(
     # pylint: disable=too-many-arguments
     _validate_sun_angles(azimuth, zenith)
     eff_dtype = rsgispy.TYPE_8UINT if datatype is None else int(datatype)
-
-    def _block(
-        dx: np.ndarray,
-        dy: np.ndarray,
-        n_vals: np.ndarray,
-        ew_res: float,
-        ns_res: float,
-    ) -> np.ndarray:
-        return _calc_hillshade_block(dx, dy, n_vals, ew_res, ns_res, azimuth, zenith)
-
-    _process_single_dem_3x3(
+    _run_terrain_node_to_file(
+        lambda dem, _res, _res_nd: _make_hillshade_node(
+            dem, None, azimuth, zenith, no_data_val=no_data_val, out_datatype=eff_dtype
+        ),
         input_img,
         output_img,
         gdalformat,
         eff_dtype,
-        _block,
-        no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
@@ -328,24 +318,21 @@ def hillshade_pxl_res_img(
     # pylint: disable=too-many-arguments
     _validate_sun_angles(azimuth, zenith)
     eff_dtype = rsgispy.TYPE_8UINT if datatype is None else int(datatype)
-
-    def _block(
-        dx: np.ndarray,
-        dy: np.ndarray,
-        n_vals: np.ndarray,
-        ew_res: np.ndarray,
-        ns_res: np.ndarray,
-    ) -> np.ndarray:
-        return _calc_hillshade_block(dx, dy, n_vals, ew_res, ns_res, azimuth, zenith)
-
-    _process_pxl_res_dem_3x3(
+    _run_terrain_node_to_file(
+        lambda dem, res, res_nd: _make_hillshade_node(
+            dem,
+            res,
+            azimuth,
+            zenith,
+            no_data_val=no_data_val,
+            out_datatype=eff_dtype,
+            res_nodata=res_nd,
+        ),
         in_dem_img,
-        in_pxl_res_img,
         output_img,
         gdalformat,
         eff_dtype,
-        _block,
-        no_data_val=no_data_val,
+        in_pxl_res_img=in_pxl_res_img,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
@@ -665,33 +652,14 @@ def local_incidence_angle(
     # pylint: disable=too-many-arguments
     _validate_sun_angles(azimuth, zenith)
     eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
-
-    def _block(
-        dx: np.ndarray,
-        dy: np.ndarray,
-        n_vals: np.ndarray,
-        ew_res: float,
-        ns_res: float,
-    ) -> np.ndarray:
-        return _calc_ray_angle_block(
-            dx,
-            dy,
-            n_vals,
-            ew_res,
-            ns_res,
-            azimuth,
-            zenith,
-            flat_aspect_val=0.0,
-            fallback_val=float(zenith),
-        )
-
-    _process_single_dem_3x3(
+    _run_terrain_node_to_file(
+        lambda dem, _res, _res_nd: _make_ray_angle_node(
+            dem, azimuth, zenith, False, no_data_val=no_data_val, out_datatype=eff_dtype
+        ),
         input_img,
         output_img,
         gdalformat,
         eff_dtype,
-        _block,
-        no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
@@ -742,33 +710,14 @@ def local_exitance_angle(
     # pylint: disable=too-many-arguments
     _validate_sun_angles(azimuth, zenith)
     eff_dtype = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
-
-    def _block(
-        dx: np.ndarray,
-        dy: np.ndarray,
-        n_vals: np.ndarray,
-        ew_res: float,
-        ns_res: float,
-    ) -> np.ndarray:
-        return _calc_ray_angle_block(
-            dx,
-            dy,
-            n_vals,
-            ew_res,
-            ns_res,
-            azimuth,
-            zenith,
-            flat_aspect_val=0.0,
-            fallback_val=0.0,
-        )
-
-    _process_single_dem_3x3(
+    _run_terrain_node_to_file(
+        lambda dem, _res, _res_nd: _make_ray_angle_node(
+            dem, azimuth, zenith, True, no_data_val=no_data_val, out_datatype=eff_dtype
+        ),
         input_img,
         output_img,
         gdalformat,
         eff_dtype,
-        _block,
-        no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
     )
