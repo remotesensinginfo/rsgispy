@@ -256,3 +256,80 @@ def test_tutorial_dem_dinf_outlet_total_matches_d8_mfd(tutorial_land_dem):
         totals[mode] = a_arr[terminal].sum()
     for mode, total in totals.items():
         assert total == pytest.approx(n_valid, rel=1e-3), mode
+
+
+def _breach(tmp_path, name, dem, **kw):
+    dem_p = tmp_path / f"{name}_dem.tif"
+    out_p = tmp_path / f"{name}_breached.tif"
+    _write(dem_p, dem)
+    hydrology.breach_depressions(str(dem_p), str(out_p), use_pbar=False, **kw)
+    return _read(out_p).astype(np.float64), out_p
+
+
+@requires_numba
+def test_breach_to_higher_adjacent_edge_cell(tmp_path):
+    """
+    A pit at 196.27 m next to an edge cell at 196.81 m is breached through
+    that cell (a 0.54 m cut), not through high terrain to a lower edge cell.
+    """
+    r, c = np.indices((7, 12), dtype=np.float64)
+    dem = 300.0 + 0.5 * (r + c)  # drains to the (0, 0) corner, no flats
+    dem[1, 1] = 196.27
+    dem[0, 1] = 196.81
+    dem[6, 11] = 150.0  # a lower edge cell far away over the high terrain
+    out, _ = _breach(tmp_path, "edge", dem)
+    cut = np.asarray(dem, dtype=np.float32).astype(np.float64) - out
+    assert np.count_nonzero(cut > 1e-6) == 1
+    assert cut[0, 1] == pytest.approx(0.54, abs=1e-3)
+    assert out[0, 1] < out[1, 1]
+    assert cut.max() < 0.55
+
+
+@requires_numba
+def test_breach_cheapest_exit_through_edge(tmp_path):
+    """
+    A pit whose only lower cells are behind a high ridge is breached by the
+    short, shallow route to the DEM edge instead.
+    """
+    r, c = np.indices((15, 15), dtype=np.float64)
+    # A cone rising 2 m per pixel from the pit at (7, 3): the west edge is
+    # 6 m above the pit, while the lowland in the east (below the pit) is
+    # behind 16 m of cone.
+    dem = 100.0 + 2.0 * np.hypot(r - 7, c - 3)
+    dem[:, 12:] = 90.0 - 5.0 * (c[:, 12:] - 12)
+    out, out_p = _breach(tmp_path, "west", dem)
+    cut = np.asarray(dem, dtype=np.float32).astype(np.float64) - out
+    changed = cut > 1e-6
+    assert np.count_nonzero(changed) == 3
+    assert np.all(changed[7, 0:3])
+    assert cut.max() == pytest.approx(6.0, abs=1e-3)
+    assert np.all(np.diff(out[7, 0:4]) > 0.0)  # descends from the pit to the edge
+    fdir_p = tmp_path / "west_fdir.tif"
+    hydrology.flow_direction(str(out_p), str(fdir_p), method="d8", use_pbar=False)
+    assert int(_read(fdir_p)[7, 3]) == 16  # west
+
+
+@requires_numba
+def test_breach_numba_numpy_agree(tmp_path, monkeypatch):
+    """The numba and pure-Python breaching give the same result."""
+    rng = np.random.default_rng(7)
+    dem = 100.0 + np.cumsum(rng.normal(0.0, 1.0, (40, 40)), axis=0)
+    out_nb, _ = _breach(tmp_path, "nb", dem)
+    monkeypatch.setattr(hydrology, "HAS_NUMBA", False)
+    with disable_numba(), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        out_py, _ = _breach(tmp_path, "py", dem, allow_pure_python=True)
+    np.testing.assert_allclose(out_nb, out_py, rtol=0.0, atol=1e-5)
+
+
+@requires_numba
+@requires_tutorial_dem
+def test_tutorial_dem_unconstrained_breach_is_shallow(tutorial_land_dem):
+    """On the tutorial DEM the deepest unconstrained cut is a few metres."""
+    out_dir, dem_img = tutorial_land_dem
+    out = str(out_dir / "breached.tif")
+    hydrology.breach_depressions(dem_img, out, use_pbar=False)
+    raw = _read(dem_img).astype(np.float64)
+    vld = raw != -32768
+    cut = (raw - _read(out).astype(np.float64))[vld]
+    assert cut.max() < 15.0

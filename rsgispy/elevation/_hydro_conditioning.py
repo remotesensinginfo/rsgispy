@@ -315,6 +315,20 @@ def breach_depressions(
     Breach topographic depressions using Lindsay (2016) constrained least-cost
     channel carving.
 
+    From the bottom of each pit, the breach path is the one with the smallest
+    total cut (the depth each pixel must be lowered to the pit, times the step
+    length) to an outlet: a pixel lower than the pit, or a pixel on the DEM
+    edge or next to no data at any height (the flow leaves the DEM there, so
+    that pixel is cut to just below the pit). The path is carved as a
+    descending gradient from the pit to the outlet.
+
+    Without ``max_depth`` / ``max_length`` every pit is breached, however
+    deep or long the cut: a pit behind a real barrier (a dam, a closed basin,
+    a deep quarry) gets a trench through it. For real DEMs, set
+    ``max_depth`` and ``max_length`` (the pits that can't be breached within
+    them are filled when ``fill_remaining=True``), or use
+    :func:`condition_dem` with ``method='breach_and_fill'``.
+
     Parameters
     ----------
     input_img : str

@@ -287,6 +287,11 @@ def _grow_heap_arrays(
     return n_keys, n_rows, n_cols, new_cap
 
 
+# Relative drop per path step when a breach ends at an edge outlet higher
+# than the pit (2.5e-7 is about two float32 ulps of the elevation).
+BREACH_EDGE_DROP = 2.5e-7
+
+
 @njit
 def breach_depressions_kernel(
     dem: np.ndarray,
@@ -300,6 +305,15 @@ def breach_depressions_kernel(
 ) -> np.ndarray:
     """
     Lindsay (2016) constrained least-cost depression breaching kernel.
+
+    From each pit (in ascending elevation order) a Dijkstra search finds the
+    least-cost path to an outlet: a cell lower than the pit, or a cell on the
+    DEM edge or next to no data at any height (flow leaves the DEM there).
+    The cost of a step is the cut needed to bring the cell down to the pit
+    (``max(z - z_pit, 0)``) times the step length, so the path with the
+    smallest total cut wins and a short, shallow route beats a long, deep
+    one. The path is carved as a descending gradient from the pit to the
+    outlet; an edge outlet higher than the pit is cut to just below it.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
@@ -406,7 +420,9 @@ def breach_depressions_kernel(
                         if not valid[r + int(D8_DR[k]), c + int(D8_DC[k])]:
                             is_edge_outlet = True
                             break
-                if z_curr < z0 or (is_edge_outlet and z_curr <= z0):
+                # An edge / no-data-adjacent cell is an outlet at any height:
+                # its cut is already in the path cost.
+                if z_curr < z0 or is_edge_outlet:
                     found = True
                     rt = r
                     ct = c
@@ -430,7 +446,8 @@ def breach_depressions_kernel(
 
                 s_dist = _step_dist(k, dx, dy, diag_d)
                 excess = dz if dz > 0.0 else 0.0
-                # Tiny step-distance tie-breaker prefers shorter breach paths
+                # Cut depth x step length; the tiny step-distance tie-breaker
+                # prefers shorter breach paths through cells below the pit.
                 edge_cost = (excess + 1e-12) * s_dist
                 new_cost = cost_u + edge_cost
 
@@ -455,6 +472,11 @@ def breach_depressions_kernel(
             path_len = int(steps_arr[rt, ct])
             if path_len > 0:
                 zt = z_out[rt, ct]
+                if zt > z0:
+                    # Edge outlet higher than the pit: cut the path to a
+                    # gradient just below the pit (two float32 ulps per step)
+                    # so it still drains once written as float32.
+                    zt = z0 - float(path_len) * BREACH_EDGE_DROP * max(abs(z0), 1.0)
                 curr_r = rt
                 curr_c = ct
                 step_k = path_len
