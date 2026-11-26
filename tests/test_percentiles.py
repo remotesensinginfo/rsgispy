@@ -53,7 +53,10 @@ def test_compute_nanpercentiles_matches_numpy(n_layers, dtype, nan_frac):
     result = rstats.compute_nanpercentiles(stack, PCTS)
     assert result.shape == (len(PCTS), 23, 19)
     np.testing.assert_array_equal(np.isnan(result), np.isnan(expected))
-    np.testing.assert_allclose(result, expected, rtol=1e-12, atol=1e-12, equal_nan=True)
+    # compute_nanpercentiles interpolates in float64. Some NumPy versions
+    # interpolate float32 input in float32, so allow float32 rounding there.
+    tol = 1e-12 if dtype == np.float64 else 1e-6
+    np.testing.assert_allclose(result, expected, rtol=tol, atol=tol, equal_nan=True)
     # The input is not modified
     np.testing.assert_array_equal(stack, orig)
 

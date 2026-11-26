@@ -393,7 +393,11 @@ def update_cog(
     :param update_func: Callable receiving the path of the temporary GeoTIFF.
     :param overview_resampling: Optional overview resampling for the rebuilt
                                 COG (e.g. ``'NEAREST'``); by default the one
-                                recorded in the file is used.
+                                recorded in the file is used. Some GDAL
+                                versions do not record it, in which case the
+                                COG driver's default is used unless it is
+                                given here (thematic images always get
+                                ``'NEAREST'`` or keep ``'MODE'``).
 
     .. code:: python
 

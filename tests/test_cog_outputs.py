@@ -7,7 +7,10 @@ are left behind.
 """
 
 from contextlib import ExitStack
+import functools
+import importlib.util
 import os
+import tempfile
 import uuid
 import warnings
 import xml.etree.ElementTree as ET
@@ -43,6 +46,34 @@ except ImportError:  # pragma: no cover - GDAL Python bindings are optional
 
 WIDTH = 600
 HEIGHT = 520
+
+
+@functools.lru_cache(maxsize=None)
+def _gdal_records_overview_resampling():
+    """
+    Whether this GDAL stores ``OVERVIEW_RESAMPLING`` in a COG's
+    ``IMAGE_STRUCTURE`` metadata (GDAL 3.12 does; some older versions, e.g.
+    those bundled in rasterio wheels, do not). Where it is not recorded, the
+    tests check the overview values instead.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        src = os.path.join(tmp_dir, "src.tif")
+        with rasterio.open(
+            src, "w", driver="GTiff", width=1024, height=1024, count=1,
+            dtype="uint8", crs="EPSG:32630",
+            transform=from_origin(500000.0, 5200000.0, 10.0, 10.0),
+        ) as dst:
+            dst.write(np.zeros((1, 1024, 1024), dtype=np.uint8))
+        cog = os.path.join(tmp_dir, "cog.tif")
+        rasterio.shutil.copy(src, cog, driver="COG", OVERVIEW_RESAMPLING="AVERAGE")
+        with rasterio.open(cog) as cog_src:
+            return cog_src.tags(ns="IMAGE_STRUCTURE").get("OVERVIEW_RESAMPLING") == "AVERAGE"
+
+
+def _assert_overview_resampling(src, expected):
+    """Check the recorded overview resampling, where this GDAL records it."""
+    if _gdal_records_overview_resampling():
+        assert src.tags(ns="IMAGE_STRUCTURE").get("OVERVIEW_RESAMPLING") == expected
 
 
 @pytest.fixture(name="clean_crt_env")
@@ -337,7 +368,7 @@ def test_pop_img_stats_existing_cog(tmp_path, clean_crt_env):
         # The original layout and compression settings are kept.
         assert src.compression.name.upper() == "ZSTD"
         assert struct.get("PREDICTOR") == "3"
-        assert struct.get("OVERVIEW_RESAMPLING") == "AVERAGE"
+        _assert_overview_resampling(src, "AVERAGE")
         np.testing.assert_array_equal(src.read(), _ramp(2))
 
     # maybe_pop_stats (used after many writers) also keeps the COG layout.
@@ -365,7 +396,7 @@ def test_pop_thmt_img_stats_existing_cog(tmp_path, clean_crt_env):
         assert src.colorinterp[0] == ColorInterp.palette
         assert src.nodata == 0.0
         # Thematic overviews use nearest neighbour.
-        assert src.tags(ns="IMAGE_STRUCTURE").get("OVERVIEW_RESAMPLING") == "NEAREST"
+        _assert_overview_resampling(src, "NEAREST")
         assert set(np.unique(src.read(1, out_shape=(HEIGHT // 4, WIDTH // 4)))) <= set(
             range(5)
         )
@@ -724,13 +755,16 @@ def test_cog_outputs_with_stats_are_converted_once(tmp_path, clean_crt_env):
     )
     _check(out_pct, 1)
 
-    out_zones = out_dir / "zones.tif"
-    rsgispy.imageutils.rasterise.create_dist_zones_to_vec_lyr(
-        str(vec_file), "zones", str(in_img), str(out_zones),
-        recode_lut=[(1, (0.0, 500.0)), (2, (500.0, 2000.0))], gdalformat="COG",
-        calc_stats=True, use_pbar=False, creation_opts=jpeg_opts,
-    )
-    _check(out_zones, 1)
+    # create_dist_zones_to_vec_lyr needs scipy (the 'stats' extra).
+    has_scipy = importlib.util.find_spec("scipy") is not None
+    if has_scipy:
+        out_zones = out_dir / "zones.tif"
+        rsgispy.imageutils.rasterise.create_dist_zones_to_vec_lyr(
+            str(vec_file), "zones", str(in_img), str(out_zones),
+            recode_lut=[(1, (0.0, 500.0)), (2, (500.0, 2000.0))], gdalformat="COG",
+            calc_stats=True, use_pbar=False, creation_opts=jpeg_opts,
+        )
+        _check(out_zones, 1)
 
     # Thematic output: LAYER_TYPE and thematic statistics are added before
     # the conversion (set_img_thematic on the COG used to fail) and the
@@ -749,10 +783,13 @@ def test_cog_outputs_with_stats_are_converted_once(tmp_path, clean_crt_env):
     with rasterio.open(out_fin) as src:
         assert src.tags(1).get("LAYER_TYPE") == "thematic"
         assert "STATISTICS_MAXIMUM" in src.tags(1)
-        assert src.tags(ns="IMAGE_STRUCTURE").get("OVERVIEW_RESAMPLING") == "NEAREST"
-    _assert_no_temp_files(
-        out_dir, ["finite.tif", "masked.tif", "pct.tif", "sel.tif", "zones.tif"]
-    )
+        _assert_overview_resampling(src, "NEAREST")
+    with rasterio.open(out_fin, overview_level=0) as ovr:
+        assert set(np.unique(ovr.read(1)).tolist()) <= {0, 1}
+    expected_files = ["finite.tif", "masked.tif", "pct.tif", "sel.tif"]
+    if has_scipy:
+        expected_files.append("zones.tif")
+    _assert_no_temp_files(out_dir, expected_files)
 
 
 def _write_pam_category_names(img_path, names):
@@ -829,7 +866,7 @@ def test_thematic_cog_overviews_use_nearest(tmp_path, clean_crt_env, dtype):
             dst.write(cls, 1)
         _assert_valid_cog(out_cog, stats=False)
         with rasterio.open(out_cog) as src:
-            assert src.tags(ns="IMAGE_STRUCTURE")["OVERVIEW_RESAMPLING"] == exp_resamp
+            _assert_overview_resampling(src, exp_resamp)
             assert ("STATISTICS_MAXIMUM" in src.tags(1)) == calc_stats
         with rasterio.open(out_cog, overview_level=0) as ovr:
             assert set(np.unique(ovr.read(1)).tolist()) <= {1, 100, 1000}
@@ -842,7 +879,9 @@ def test_thematic_cog_overviews_use_nearest(tmp_path, clean_crt_env, dtype):
     thm_cog = tmp_path / "thm_cog.tif"
     rsgispy.imageprocess.write_cog(str(thm_img), str(thm_cog))
     with rasterio.open(thm_cog) as src:
-        assert src.tags(ns="IMAGE_STRUCTURE")["OVERVIEW_RESAMPLING"] == "NEAREST"
+        _assert_overview_resampling(src, "NEAREST")
+    with rasterio.open(thm_cog, overview_level=0) as ovr:
+        assert set(np.unique(ovr.read(1)).tolist()) <= {1, 100, 1000}
 
 
 def test_cog_output_to_gdal_virtual_path(tmp_path, clean_crt_env):

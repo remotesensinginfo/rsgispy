@@ -346,7 +346,9 @@ def compute_nanpercentiles(
     ``no_data_val``.
 
     The result equals ``np.nanpercentile(stack_arr, percentiles, axis=0)``
-    (NumPy's default ``method="linear"``) to floating-point precision, but is
+    (NumPy's default ``method="linear"``) to floating-point precision (the
+    interpolation is done in float64; some NumPy versions interpolate float32
+    input in float32, so results can differ in the last float32 digit), but is
     vectorised: the stack is sorted once along axis 0 (``NaN`` values sort to
     the end), the number of valid values ``n`` is counted for each pixel, and
     each percentile ``p`` is interpolated linearly between the sorted values
