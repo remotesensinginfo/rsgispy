@@ -29,7 +29,6 @@ from rsgispy._tilegraph._wrap import (
 from rsgispy.imageprocess import (
     IntersectionGrid,
     NodeMeta,
-    RasterSource,
     TileContext,
     TileNode,
     TileTensor,
@@ -660,7 +659,7 @@ def _stream_band_change_op(
         "std_params": std_params,
     }
     node = _band_change_node(
-        RasterSource(in_base_img, bands=base_bands),
+        GridRasterSource(in_base_img, grid, bands=base_bands),
         GridRasterSource(in_chng_img, grid, bands=chng_bands),
         "difference" if op_kind == "diff" else "ratio",
         vld_msk,

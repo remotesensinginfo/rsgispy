@@ -5,25 +5,30 @@ percentile calculation functions using ``rasterio``.
 
 from contextlib import ExitStack
 import math
-from typing import Any, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import rasterio
 from rasterio.windows import Window
 
 import rsgispy
+from rsgispy._tilegraph._wrap import (
+    GridRasterSource,
+    WrapperDiskSink,
+    run_wrapper_graph,
+)
 from rsgispy.imageprocess import (
     BandDefn,
-    IntersectionGrid,
+    NodeMeta,
+    TileContext,
+    TileNode,
+    TileTensor,
     compute_spatial_intersection,
     ensure_file_exists,
     fits_dtype_range,
-    iter_dataset_windows,
     iter_image_blocks,
     open_input_datasets,
     open_multi_image_datasets,
-    open_output_dataset,
-    pop_stats_on_close,
 )
 from rsgispy.tools.stats import (
     compute_nanpercentiles,
@@ -34,34 +39,10 @@ __all__ = [
     "calc_band_percentile",
     "calc_band_percentile_msk",
     "calc_imgs_pxl_percentiles",
+    "calc_imgs_pxl_percentiles_node",
     "calc_img_band_pxl_percentiles",
+    "calc_img_band_pxl_percentiles_node",
 ]
-
-
-def _read_grid_blocks(
-    datasets: Mapping[str, Any],
-    img_paths: Sequence[str],
-    grid: IntersectionGrid,
-    out_win: Window,
-    read_dtype: Any = np.float32,
-) -> List[np.ndarray]:
-    """Read ``read_dtype`` blocks aligned to ``out_win`` for each image in ``img_paths``."""
-    col_off = int(out_win.col_off)
-    row_off = int(out_win.row_off)
-    win_w = int(out_win.width)
-    win_h = int(out_win.height)
-    return [
-        datasets[path].read(
-            window=Window(
-                grid.offsets[path][0] + col_off,
-                grid.offsets[path][1] + row_off,
-                win_w,
-                win_h,
-            ),
-            out_dtype=read_dtype,
-        )
-        for path in img_paths
-    ]
 
 
 def _pct_label(percentile: float) -> str:
@@ -238,6 +219,193 @@ def calc_band_percentile_msk(
     return np.percentile(pxl_vals, percentiles, axis=0)
 
 
+class _PxlPercentilesNode(TileNode):
+    """
+    Per-pixel percentiles across the bands of all inputs (``per_band=False``)
+    or, for each band, across the inputs (``per_band=True``).
+    """
+
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+
+    def __init__(
+        self,
+        sources: Sequence[TileNode],
+        pcts: Sequence[float],
+        no_data_val: Optional[float],
+        out_np_dtype: Optional[np.dtype],
+        per_band: bool,
+        name: Optional[str] = None,
+    ) -> None:
+        src_list = tuple(sources)
+        if not src_list:
+            raise rsgispy.RSGISPyException("At least one input node is required.")
+        default = "calc_img_band_pxl_percentiles" if per_band else "calc_imgs_pxl_percentiles"
+        super().__init__(inputs=src_list, name=name or default)
+        self.pcts = [float(pct) for pct in pcts]
+        self.no_data_val = no_data_val
+        self.out_np_dtype = np.dtype(out_np_dtype) if out_np_dtype is not None else None
+        self.per_band = bool(per_band)
+
+    def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+        dtype = self.out_np_dtype if self.out_np_dtype is not None else np.dtype(np.float64)
+        if not self.per_band:
+            return NodeMeta(
+                n_bands=len(self.pcts),
+                band_names=tuple(_pct_label(pct) for pct in self.pcts),
+                dtype=dtype,
+                nodata=self.no_data_val,
+            )
+        counts = [meta.n_bands for meta in inputs]
+        if all(c is not None for c in counts) and len(set(counts)) > 1:
+            raise rsgispy.RSGISPyException(
+                "Input images have a different number of bands."
+            )
+        n_bands = counts[0]
+        names = None
+        if n_bands is not None:
+            first = inputs[0].band_names
+            base_names = [
+                first[b_idx] if first is not None else f"b{b_idx + 1}"
+                for b_idx in range(n_bands)
+            ]
+            names = tuple(f"{nm}_{_pct_label(pct)}" for nm in base_names for pct in self.pcts)
+        return NodeMeta(
+            n_bands=None if n_bands is None else n_bands * len(self.pcts),
+            band_names=names,
+            dtype=dtype,
+            nodata=self.no_data_val,
+        )
+
+    def _cast(self, arr: np.ndarray) -> np.ndarray:
+        if self.out_np_dtype is None:
+            return arr
+        return arr.astype(self.out_np_dtype, copy=False)
+
+    def evaluate(
+        self,
+        inputs: Sequence[TileTensor],
+        halo_y: int,
+        halo_x: int,
+        ctx: TileContext,
+        state: Any = None,
+    ) -> TileTensor:
+        aligned = [t.crop(halo_y, halo_x) for t in inputs]
+        blocks = [t.data for t in aligned]
+        if not self.per_band:
+            out = self._cast(
+                compute_nanpercentiles(
+                    np.concatenate(blocks, axis=0), self.pcts, self.no_data_val
+                )
+            )
+        else:
+            out = self._cast(
+                np.concatenate(
+                    [
+                        compute_nanpercentiles(
+                            np.stack([blk[b_idx] for blk in blocks], axis=0),
+                            self.pcts,
+                            self.no_data_val,
+                        )
+                        for b_idx in range(blocks[0].shape[0])
+                    ],
+                    axis=0,
+                )
+            )
+        return aligned[0].with_data(out)
+
+
+def calc_imgs_pxl_percentiles_node(
+    sources: Union[TileNode, Sequence[TileNode]],
+    percentiles: Sequence[float],
+    *,
+    no_data_val: Optional[float] = 0.0,
+    out_dtype: Any = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`calc_imgs_pxl_percentiles`: per-pixel
+    percentiles across all bands of all ``sources`` (e.g. a multi-date
+    stack), one output band per percentile named ``p<percentile>``, for
+    chaining in a :class:`~rsgispy.imageprocess.TileGraph` (e.g. a median
+    composite of index nodes).
+
+    The percentiles match ``numpy.nanpercentile`` (linear interpolation);
+    ``no_data_val`` values are ignored and written to pixels without valid
+    values. The blocks are ``float64`` unless ``out_dtype`` is given (then
+    cast with ``astype``, as :func:`calc_imgs_pxl_percentiles` does).
+
+    :param sources: Upstream node or nodes.
+    :param percentiles: Percentiles in ``[0, 100]``.
+    :param no_data_val: Input no-data value (Default = ``0.0``; ``None``
+                        ignores only ``NaN``).
+    :param out_dtype: Optional NumPy dtype of the output blocks.
+    :param name: Optional node name (Default = ``'calc_imgs_pxl_percentiles'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagecalc.calcindices import calc_indices_node
+        from rsgispy.imagecalc.percentiles import calc_imgs_pxl_percentiles_node
+
+        bands = {3: "red", 4: "nir"}
+        ndvis = [
+            calc_indices_node(RasterSource(img), bands, ["NDVI"])
+            for img in ["s2_t1.tif", "s2_t2.tif", "s2_t3.tif"]
+        ]
+        med = calc_imgs_pxl_percentiles_node(ndvis, [50], no_data_val=-999)
+        TileGraph(DiskSink(med, "ndvi_median.tif")).run()
+    """
+    validate_percentiles_0_100(percentiles)
+    pcts = [float(pct) for pct in np.atleast_1d(np.asarray(percentiles, dtype=np.float64))]
+    src_list = [sources] if isinstance(sources, TileNode) else list(sources)
+    return _PxlPercentilesNode(
+        src_list, pcts, no_data_val, out_dtype, per_band=False, name=name
+    )
+
+
+def calc_img_band_pxl_percentiles_node(
+    sources: Sequence[TileNode],
+    percentiles: Sequence[float],
+    *,
+    no_data_val: Optional[float] = 0.0,
+    out_dtype: Any = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`calc_img_band_pxl_percentiles`: for each band,
+    per-pixel percentiles across ``sources`` (which must have the same
+    number of bands). The output has ``n_bands * len(percentiles)`` bands
+    (band 1 percentiles, band 2 percentiles, ...) named
+    ``<band name>_p<percentile>`` from the first source's band names (or
+    ``b<band>_p<percentile>``).
+
+    :param sources: Upstream nodes (e.g. one per date).
+    :param percentiles: Percentiles in ``[0, 100]``.
+    :param no_data_val: Input no-data value (Default = ``0.0``; ``None``
+                        ignores only ``NaN``).
+    :param out_dtype: Optional NumPy dtype of the output blocks
+                      (Default = ``None``: ``float64``).
+    :param name: Optional node name
+                 (Default = ``'calc_img_band_pxl_percentiles'``).
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.imagecalc.percentiles import calc_img_band_pxl_percentiles_node
+
+        dates = [RasterSource(img) for img in ["t1.tif", "t2.tif", "t3.tif"]]
+        comp = calc_img_band_pxl_percentiles_node(dates, [50], no_data_val=0)
+        TileGraph(DiskSink(comp, "median_composite.tif")).run()
+    """
+    validate_percentiles_0_100(percentiles)
+    pcts = [float(pct) for pct in np.atleast_1d(np.asarray(percentiles, dtype=np.float64))]
+    return _PxlPercentilesNode(
+        list(sources), pcts, no_data_val, out_dtype, per_band=True, name=name
+    )
+
+
 def calc_imgs_pxl_percentiles(
     input_imgs: Sequence[str],
     output_img: str,
@@ -295,41 +463,29 @@ def calc_imgs_pxl_percentiles(
     with ExitStack() as stack:
         datasets, img_paths = open_multi_image_datasets(stack, input_imgs)
         grid = compute_spatial_intersection(datasets)
-        out_rio_dtype, out_np_dtype, read_dtype = _resolve_pct_output(
+        _, out_np_dtype, read_dtype = _resolve_pct_output(
             datasets, img_paths, no_data_val
         )
+        out_rsgis_dt = rsgispy.get_rsgis_datatype(datasets[img_paths[0]].dtypes[0])
 
-        dst = open_output_dataset(
-            stack=stack,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            out_rio_dtype=out_rio_dtype,
-            grid=grid,
-            count=len(pcts),
-            creation_opts=creation_opts,
-        )
-        if no_data_val is not None:
-            dst.nodata = no_data_val
-        pop_stats_on_close(
-            dst, calc_stats, no_data_val=no_data_val, use_pbar=use_pbar
-        )
-        for band_idx, pct in enumerate(pcts, start=1):
-            dst.set_band_description(band_idx, _pct_label(pct))
-
-        for out_win in iter_dataset_windows(
-            grid.height, grid.width, use_pbar=use_pbar
-        ):
-            img_blocks = _read_grid_blocks(
-                datasets, img_paths, grid, out_win, read_dtype=read_dtype
-            )
-            pct_arr = compute_nanpercentiles(
-                np.concatenate(img_blocks, axis=0),
-                pcts,
-                no_data_val,
-            )
-            dst.write(
-                pct_arr.astype(out_np_dtype, copy=False), window=out_win
-            )
+    sources = [
+        GridRasterSource(path, grid, grid.offsets[path], dtype=read_dtype)
+        for path in img_paths
+    ]
+    node = _PxlPercentilesNode(
+        sources, pcts, no_data_val, out_np_dtype, per_band=False
+    )
+    sink = WrapperDiskSink(
+        node,
+        output_img,
+        gdalformat=gdalformat,
+        datatype=out_rsgis_dt,
+        nodata=no_data_val,
+        band_names=[_pct_label(pct) for pct in pcts],
+        calc_stats=calc_stats,
+        creation_opts=creation_opts,
+    )
+    run_wrapper_graph(sink, use_pbar=use_pbar)
 
 
 def calc_img_band_pxl_percentiles(
@@ -401,47 +557,30 @@ def calc_img_band_pxl_percentiles(
                 )
 
         grid = compute_spatial_intersection(datasets)
-        out_rio_dtype, out_np_dtype, read_dtype = _resolve_pct_output(
+        _, out_np_dtype, read_dtype = _resolve_pct_output(
             datasets, img_paths, no_data_val
         )
+        out_rsgis_dt = rsgispy.get_rsgis_datatype(datasets[img_paths[0]].dtypes[0])
         in_names = datasets[img_paths[0]].descriptions
 
-        dst = open_output_dataset(
-            stack=stack,
-            output_img=output_img,
-            gdalformat=gdalformat,
-            out_rio_dtype=out_rio_dtype,
-            grid=grid,
-            count=n_bands * len(pcts),
-            creation_opts=creation_opts,
-        )
-        if no_data_val is not None:
-            dst.nodata = no_data_val
-        pop_stats_on_close(
-            dst, calc_stats, no_data_val=no_data_val, use_pbar=use_pbar
-        )
-        out_band = 1
-        for b_idx in range(n_bands):
-            base_name = in_names[b_idx] if in_names[b_idx] else f"b{b_idx + 1}"
-            for pct in pcts:
-                dst.set_band_description(out_band, f"{base_name}_{_pct_label(pct)}")
-                out_band += 1
-
-        for out_win in iter_dataset_windows(
-            grid.height, grid.width, use_pbar=use_pbar
-        ):
-            img_blocks = _read_grid_blocks(
-                datasets, img_paths, grid, out_win, read_dtype=read_dtype
-            )
-            out_percent_arrs = [
-                compute_nanpercentiles(
-                    np.stack([blk[b_idx] for blk in img_blocks], axis=0),
-                    pcts,
-                    no_data_val,
-                )
-                for b_idx in range(n_bands)
-            ]
-            out_arr = np.concatenate(out_percent_arrs, axis=0).astype(
-                out_np_dtype, copy=False
-            )
-            dst.write(out_arr, window=out_win)
+    base_names = [
+        in_names[b_idx] if in_names[b_idx] else f"b{b_idx + 1}" for b_idx in range(n_bands)
+    ]
+    sources = [
+        GridRasterSource(path, grid, grid.offsets[path], dtype=read_dtype)
+        for path in img_paths
+    ]
+    node = _PxlPercentilesNode(
+        sources, pcts, no_data_val, out_np_dtype, per_band=True
+    )
+    sink = WrapperDiskSink(
+        node,
+        output_img,
+        gdalformat=gdalformat,
+        datatype=out_rsgis_dt,
+        nodata=no_data_val,
+        band_names=[f"{name}_{_pct_label(pct)}" for name in base_names for pct in pcts],
+        calc_stats=calc_stats,
+        creation_opts=creation_opts,
+    )
+    run_wrapper_graph(sink, use_pbar=use_pbar)

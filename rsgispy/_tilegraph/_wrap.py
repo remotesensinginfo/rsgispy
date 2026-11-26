@@ -157,7 +157,11 @@ class GridRasterSource(TileNode):
             bounds[2] - bounds[0],
         )
         ds = state.reader
-        raw = ds.read(self.bands, window=read_win) if self.bands else ds.read(window=read_win)
+        # GDAL converts to the block dtype while reading (no extra copy).
+        if self.bands:
+            raw = ds.read(self.bands, window=read_win, out_dtype=self.dtype)
+        else:
+            raw = ds.read(window=read_win, out_dtype=self.dtype)
         return _finish_read(raw, self.dtype, self.border, halo_y, halo_x, bounds[4:])
 
     def describe_params(self) -> str:

@@ -328,3 +328,47 @@ def test_image_difference_node_with_std_params_and_mask(tmp_path):
     np.testing.assert_array_equal(_run_mem(Cast(node, np.float32)), _read(out_file))
     with pytest.raises(rsgispy.RSGISPyException, match="std_params"):
         icm.image_difference_node(RasterSource(base), RasterSource(chng), std_params=[1, 2])
+
+
+# --------------------------------------------------------------------------
+# Multi-date percentiles
+# --------------------------------------------------------------------------
+
+
+def test_index_median_composite_chain_matches_files(tmp_path):
+    import rsgispy.imagecalc.percentiles as ic_pct  # pylint: disable=import-outside-toplevel
+
+    imgs = []
+    for idx in range(3):
+        arr = np.rint(pg.pattern(2, 70 + idx, 0.0, 3000.0)).astype(np.uint16)
+        arr[:, idx:idx + 4, 5] = 0
+        imgs.append(pg.write_img(str(tmp_path / f"d{idx}.tif"), arr, nodata=0))
+    bands = {1: "red", 2: "nir"}
+    idx_files = []
+    for idx, img in enumerate(imgs):
+        idx_files.append(str(tmp_path / f"i{idx}.tif"))
+        ic_idx.calc_indices(img, idx_files[-1], bands, ["NDVI"], calc_stats=False,
+                            use_pbar=False)
+    med_file = str(tmp_path / "med.tif")
+    ic_pct.calc_imgs_pxl_percentiles(idx_files, med_file, [25, 50], no_data_val=-999,
+                                     calc_stats=False, use_pbar=False)
+    nodes = [ic_idx.calc_indices_node(RasterSource(img), bands, ["NDVI"]) for img in imgs]
+    med = ic_pct.calc_imgs_pxl_percentiles_node(nodes, [25, 50], no_data_val=-999,
+                                                out_dtype=np.float32)
+    meta = _meta(med)
+    assert (meta.band_names, meta.nodata) == (("p25", "p50"), -999)
+    np.testing.assert_array_equal(_run_mem(med, 23), _read(med_file))
+
+    band_file = str(tmp_path / "bpct.tif")
+    ic_pct.calc_img_band_pxl_percentiles(imgs, band_file, [50, 90], calc_stats=False,
+                                         use_pbar=False)
+    bnode = ic_pct.calc_img_band_pxl_percentiles_node(
+        [RasterSource(img, dtype=np.float32) for img in imgs], [50, 90], out_dtype=np.uint16
+    )
+    assert _meta(bnode).band_names == ("b1_p50", "b1_p90", "b2_p50", "b2_p90")
+    np.testing.assert_array_equal(_run_mem(bnode), _read(band_file))
+    with pytest.raises(rsgispy.RSGISPyException, match="different number of bands"):
+        TileGraph(MemorySink(ic_pct.calc_img_band_pxl_percentiles_node(
+            [RasterSource(imgs[0]), RasterSource(imgs[1], bands=1)], [50])))
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_pct.calc_imgs_pxl_percentiles_node(nodes, [150])
