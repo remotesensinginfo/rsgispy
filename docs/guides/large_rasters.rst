@@ -323,6 +323,11 @@ step 4 wherever the input is valid, which the test checks.
 results; for typical chains on a large image this is 3-4 times faster (see
 :ref:`tilegraph-parallel`).
 
+.. seealso::
+
+   :doc:`tile_graph` — a longer guide to tile graphs: node builders, a
+   worked chain, custom operations, statistics sinks and parallel tiles.
+
 Step 6 — Filter chains
 ----------------------
 
@@ -344,6 +349,11 @@ every step. A ``'band_math'`` step can use ``x`` (the result of the previous
 step), ``input`` (the original image) and any earlier step given a ``name``,
 e.g. ``FilterStep('band_math', params={'expr': 'input - x'})`` after a
 Gaussian smoothing gives an unsharp mask.
+
+.. seealso::
+
+   :doc:`tile_graph`, step 5, for unsharp masks, differences of Gaussians
+   and filter chains inside a larger graph.
 
 Step 7 — Tiling and mosaicking
 ------------------------------

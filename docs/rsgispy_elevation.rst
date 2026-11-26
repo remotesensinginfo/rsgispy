@@ -25,6 +25,11 @@ Terrain Derivatives & Illumination
 Chaining
 --------
 
+.. seealso::
+
+   :doc:`guides/tile_graph` — a guide to chaining operations in memory with a
+   tile graph, with a worked example.
+
 The terrain derivatives can also be used as nodes of an in-memory
 :class:`~rsgispy.imageprocess.TileGraph`, chained with filters, band maths
 and other nodes in one pass without intermediate files (e.g. smoothing →

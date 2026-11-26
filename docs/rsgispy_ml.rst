@@ -81,6 +81,11 @@ raster without writing intermediate scaled GeoTIFFs:
 Chaining
 --------
 
+.. seealso::
+
+   :doc:`guides/tile_graph` — a guide to chaining operations in memory with a
+   tile graph, with a worked example.
+
 The predictions are also available as tile-graph nodes,
 :func:`~rsgispy.ml.predict.predict_raster_node`,
 :func:`~rsgispy.ml.predict.predict_proba_raster_node` and
