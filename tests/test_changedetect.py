@@ -16,6 +16,7 @@ import rsgispy.changedetect
 import rsgispy.changedetect.imgchngmthds as icm
 import rsgispy.changedetect.pxloutlierchng as poc
 import rsgispy.tools.plotting as rplot
+from rsgispy.imageutils.colourtable import is_img_thematic
 
 
 def _write_raster(
@@ -787,3 +788,46 @@ def test_kmeans_threshold_reproducible(tmp_path, monkeypatch, method):
     assert runs[0][0]["threshold"] == runs[1][0]["threshold"]
     np.testing.assert_array_equal(runs[0][1], runs[1][1])
     np.testing.assert_array_equal(runs[0][2], runs[1][2])
+
+
+# ---------------------------------------------------------------------------
+# Thematic binary change outputs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.filterwarnings("ignore:.*did not converge:UserWarning")
+@pytest.mark.parametrize("method", _METHODS)
+@pytest.mark.parametrize("calc_stats", [True, False])
+def test_binary_change_output_is_thematic(tmp_path, method, calc_stats):
+    """The binary change map is thematic with a 0 / 1 colour table."""
+    base_path, chng_path, hole = _make_one_date_hole_pair(tmp_path)
+    kwargs = {"calc_stats": calc_stats}
+    if method != "cva":
+        kwargs["use_kmeans"] = False
+    _, out_bin, out_dist = _run_change_method(
+        method, base_path, chng_path, tmp_path, **kwargs
+    )
+    assert is_img_thematic(out_bin)
+    assert not is_img_thematic(out_dist)
+    with rasterio.open(out_bin) as src:
+        assert src.nodata == 255
+        cmap = src.colormap(1)
+        bin_arr = src.read(1)
+        tags = src.tags(1)
+    assert cmap[0] == icm.CHANGE_CLR_LUT[0]
+    assert cmap[1] == icm.CHANGE_CLR_LUT[1]
+    assert cmap[1] != cmap[0]
+    assert cmap[255][3] == 0  # no data is transparent
+    assert np.all(bin_arr[hole] == 255)
+    assert set(np.unique(bin_arr[~hole]).tolist()) == {0, 1}
+    if calc_stats:
+        assert tags["STATISTICS_HISTOBINFUNCTION"] == "direct"
+        # No data (255) is left out of the statistics.
+        assert tags["STATISTICS_MINIMUM"] == "0"
+        assert tags["STATISTICS_MAXIMUM"] == "1"
+        n_chng = int(np.sum(bin_arr == 1))
+        n_none = int(np.sum(bin_arr == 0))
+        assert tags["STATISTICS_HISTOBINVALUES"] == f"{n_none}|{n_chng}|"
+        assert float(tags["STATISTICS_MEAN"]) == pytest.approx(
+            n_chng / (n_chng + n_none)
+        )

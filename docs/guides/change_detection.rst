@@ -230,7 +230,9 @@ band counts. It writes two outputs:
   are ``-9999`` (``no_data_val``), which is set as the file's no data value;
 * ``out_chng_img`` — a ``uint8`` change mask (``1`` change, ``0`` no change,
   ``255`` no data), thresholded with Otsu's method, or with 2-class K-means
-  (``use_kmeans=True``).
+  (``use_kmeans=True``, seeded with ``rnd_seed`` so it is reproducible). It is
+  written as a thematic image with a colour table (no change grey, change
+  red, no data transparent), so it displays as classes in a GIS.
 
 Choose bands that respond to the change of interest (for vegetation loss red,
 NIR and both SWIR bands) and leave out noisy or redundant ones; every band adds

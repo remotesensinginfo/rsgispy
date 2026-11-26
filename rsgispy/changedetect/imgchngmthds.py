@@ -42,8 +42,9 @@ from rsgispy.imageutils.arrays import (
     get_img_data_as_arr,
 )
 from rsgispy.imageutils.checks import check_img_file_comparison
+from rsgispy.imageutils.colourtable import define_colour_table, set_img_thematic
 from rsgispy.imageutils.metadata import get_img_band_count, get_img_size
-from rsgispy.imageutils.stats import pop_img_stats
+from rsgispy.imageutils.stats import pop_img_stats, pop_thmt_img_stats
 from rsgispy.tools.stats import standardise_img_data
 from rsgispy.tools.thresholding import calc_otsu_threshold
 
@@ -72,7 +73,63 @@ __all__: List[str] = [
     "change_vector_analysis",
     "slow_feature_analysis",
     "multivariate_alteration_detection",
+    "CHANGE_CLR_LUT",
 ]
+
+
+#: Colour table of the binary change outputs of :func:`change_vector_analysis`,
+#: :func:`slow_feature_analysis` and :func:`multivariate_alteration_detection`:
+#: ``0`` no change (light grey), ``1`` change (red) and ``255`` no data
+#: (transparent), as ``(R, G, B, A)``.
+CHANGE_CLR_LUT: Dict[int, Tuple[int, int, int, int]] = {
+    0: (200, 200, 200, 255),
+    1: (255, 0, 0, 255),
+    255: (0, 0, 0, 0),
+}
+
+
+def _finish_binary_change_img(
+    out_chng_img: str, bin_flat: np.ndarray, calc_stats: bool, use_pbar: bool
+) -> None:
+    """
+    Mark the binary change image as thematic, optionally add thematic
+    statistics (excluding the no-data value ``255``) and pyramids, and write
+    :data:`CHANGE_CLR_LUT`.
+    """
+    if calc_stats:
+        pop_thmt_img_stats(
+            out_chng_img,
+            add_clr_tab=True,
+            calc_pyramids=True,
+            ignore_zero=False,
+            use_pbar=use_pbar,
+        )
+        # pop_thmt_img_stats counts every value, so replace its statistics
+        # with ones that leave out the no-data value (255).
+        hist = np.bincount(bin_flat[bin_flat != 255], minlength=2)[:2]
+        n_vld = int(hist.sum())
+        mean_v = float(hist[1]) / n_vld if n_vld > 0 else 0.0
+        mode_v = int(hist[1] > hist[0])
+        with rasterio.open(out_chng_img, "r+") as dst:
+            dst.update_tags(
+                1,
+                STATISTICS_MINIMUM=f"{int(hist[0] == 0) if n_vld else 0}",
+                STATISTICS_MAXIMUM=f"{int(hist[1] > 0)}",
+                STATISTICS_MEAN=f"{mean_v}",
+                STATISTICS_STDDEV=f"{float(np.sqrt(mean_v * (1.0 - mean_v)))}",
+                STATISTICS_MODE=f"{mode_v}",
+                STATISTICS_MEDIAN=f"{int(hist[1] > n_vld / 2.0)}",
+                STATISTICS_HISTOBINVALUES="|".join(map(str, hist.tolist())) + "|",
+                STATISTICS_HISTOMIN="0",
+                STATISTICS_HISTOMAX="1",
+                STATISTICS_HISTONUMBINS="2",
+                STATISTICS_EXCLUDEDVALUES="255",
+            )
+    else:
+        set_img_thematic(out_chng_img)
+    # Class names ("No change", "Change") to be added here once
+    # rsgispy.imageutils.colourtable.set_thematic_classes exists.
+    define_colour_table(out_chng_img, CHANGE_CLR_LUT)
 
 
 def _validate_change_inputs(
@@ -932,8 +989,10 @@ def change_vector_analysis(
 
     :param in_base_img: Path to the input base image file.
     :param in_chng_img: Path to the input change image file.
-    :param out_chng_img: Path to the output ``uint8`` binary change image file
-                         (``1`` = change, ``0`` = no change).
+    :param out_chng_img: Path to the output thematic ``uint8`` binary change
+                         image (``1`` = change, ``0`` = no change, ``255`` =
+                         no data) with the colour table
+                         :data:`CHANGE_CLR_LUT`.
     :param out_chng_dist_img: Path to the output change distance image file:
                               the magnitude of the difference vector, minus
                               the threshold used for the binary map when
@@ -976,6 +1035,7 @@ def change_vector_analysis(
     :param base_img_no_data: No-data value in ``in_base_img`` (Default = ``0``).
     :param chng_img_no_data: No-data value in ``in_chng_img`` (Default = ``0``).
     :param calc_stats: If ``True``, compute output image statistics and pyramids
+                       (thematic statistics for ``out_chng_img``)
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a progress bar during processing
                      (Default = ``True``).
@@ -1066,12 +1126,8 @@ def change_vector_analysis(
             calc_pyramids=True,
             use_pbar=use_pbar,
         )
-        pop_img_stats(
-            out_chng_img,
-            no_data_val=255,
-            calc_pyramids=True,
-            use_pbar=use_pbar,
-        )
+
+    _finish_binary_change_img(out_chng_img, chng_bin_flat, calc_stats, use_pbar)
 
     return {
         "threshold": float(chng_thres),
@@ -1114,7 +1170,10 @@ def slow_feature_analysis(
 
     :param in_base_img: Path to the input base image file.
     :param in_chng_img: Path to the input change image file.
-    :param out_chng_img: Path to the output ``uint8`` binary change image.
+    :param out_chng_img: Path to the output thematic ``uint8`` binary change
+                         image (``1`` = change, ``0`` = no change, ``255`` =
+                         no data) with the colour table
+                         :data:`CHANGE_CLR_LUT`.
     :param out_chng_dist_img: Path to the output change distance image: the
                               square root of the chi-square distance, minus
                               the threshold used for the binary map when
@@ -1164,6 +1223,7 @@ def slow_feature_analysis(
     :param base_img_no_data: No-data value in ``in_base_img`` (Default = ``0``).
     :param chng_img_no_data: No-data value in ``in_chng_img`` (Default = ``0``).
     :param calc_stats: If ``True``, compute output image statistics and pyramids
+                       (thematic statistics for ``out_chng_img``)
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during
                      iterations (Default = ``True``).
@@ -1358,12 +1418,8 @@ def slow_feature_analysis(
             calc_pyramids=True,
             use_pbar=use_pbar,
         )
-        pop_img_stats(
-            out_chng_img,
-            no_data_val=255,
-            calc_pyramids=True,
-            use_pbar=use_pbar,
-        )
+
+    _finish_binary_change_img(out_chng_img, bin_flat, calc_stats, use_pbar)
 
     return {
         "threshold": float(chng_thres),
@@ -1421,7 +1477,10 @@ def multivariate_alteration_detection(
 
     :param in_base_img: Path to the input base image file.
     :param in_chng_img: Path to the input change image file.
-    :param out_chng_img: Path to the output ``uint8`` binary change image.
+    :param out_chng_img: Path to the output thematic ``uint8`` binary change
+                         image (``1`` = change, ``0`` = no change, ``255`` =
+                         no data) with the colour table
+                         :data:`CHANGE_CLR_LUT`.
     :param out_chng_dist_img: Path to the output change distance image: the
                               square root of the chi-square distance (Default),
                               or that minus the threshold used for the binary
@@ -1478,6 +1537,7 @@ def multivariate_alteration_detection(
     :param base_img_no_data: No-data value in ``in_base_img`` (Default = ``0``).
     :param chng_img_no_data: No-data value in ``in_chng_img`` (Default = ``0``).
     :param calc_stats: If ``True``, compute output image statistics and pyramids
+                       (thematic statistics for ``out_chng_img``)
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during
                      iterations (Default = ``True``).
@@ -1713,12 +1773,8 @@ def multivariate_alteration_detection(
             calc_pyramids=True,
             use_pbar=use_pbar,
         )
-        pop_img_stats(
-            out_chng_img,
-            no_data_val=255,
-            calc_pyramids=True,
-            use_pbar=use_pbar,
-        )
+
+    _finish_binary_change_img(out_chng_img, bin_flat, calc_stats, use_pbar)
 
     return {
         "threshold": float(chng_thres),
