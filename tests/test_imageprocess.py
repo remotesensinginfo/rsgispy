@@ -269,9 +269,9 @@ def test_runtime_default_block_size_override(tmp_path, monkeypatch):
     assert blocks[0][0].width == 4
     assert blocks[0][0].height == 4
 
-    # 2. Reset removes env var override and restores DEFAULT_BLOCK_SIZE (512)
+    # 2. Reset removes env var override and restores DEFAULT_BLOCK_SIZE (256)
     rsgispy.imageprocess.reset_default_block_size()
-    assert rsgispy.imageprocess.get_default_block_size() == 512
+    assert rsgispy.imageprocess.get_default_block_size() == 256
     blocks_default = list(
         rsgispy.imageprocess.iter_single_image_band_blocks(
             str(in_img), use_pbar=False

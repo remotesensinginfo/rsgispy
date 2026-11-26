@@ -4,10 +4,12 @@ SAR backscatter adaptive speckle filters for raster imagery.
 
 from typing import List, Optional
 
+from rsgispy._io import TileNode
 from rsgispy.imagefilter._helpers import (
     make_lee_stat_fn,
     run_window_stat_filter,
     validate_positive,
+    window_stat_node,
 )
 from rsgispy.imagefilter._sar_helpers import (
     make_enhanced_frost_stat_fn,
@@ -26,6 +28,7 @@ __all__: List[str] = [
     "apply_kuan_filter",
     "apply_gamma_map_filter",
     "apply_refined_lee_filter",
+    "lee_filter_node",
 ]
 
 
@@ -401,4 +404,52 @@ def apply_refined_lee_filter(
         no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+    )
+
+
+def lee_filter_node(
+    source: TileNode,
+    filter_size: int = 3,
+    n_looks: float = 1.0,
+    *,
+    no_data_val: Optional[float] = None,
+    name: Optional[str] = None,
+) -> TileNode:
+    """
+    Tile-graph node of :func:`apply_lee_filter`: a Lee (1980) adaptive SAR
+    speckle filter of each band of ``source``, for chaining in a
+    :class:`~rsgispy.imageprocess.TileGraph` without intermediate files
+    (e.g. speckle filter, then dB conversion with a
+    :class:`~rsgispy.imageprocess.BandMathOp`).
+
+    The node outputs ``float64`` blocks with the bands (and band names) of
+    ``source``; its halo radius is half the window size.
+
+    :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
+    :param filter_size: Odd filter window width/height >= 3 (Default = ``3``).
+    :param n_looks: Equivalent number of looks (> 0; Default = ``1.0``).
+    :param no_data_val: Optional input no-data value: these pixels are
+                        ignored, and output pixels without a value are set to
+                        it (Default = ``None``; not read from ``source``, so
+                        pass the input's no-data value).
+    :param name: Optional node name (Default = ``'lee_filter'``).
+    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+
+    .. code:: python
+
+        from rsgispy.imageprocess import BandMathOp, DiskSink, RasterSource, TileGraph
+        from rsgispy.imagefilter.sar import lee_filter_node
+
+        sar = RasterSource("sar_linear.tif", nodata=0.0)
+        lee = lee_filter_node(sar, filter_size=5, n_looks=4, no_data_val=0.0)
+        db = BandMathOp({"x": lee}, "10 * log10(x)", nodata=0.0)
+        TileGraph(DiskSink(db, "sar_lee5_db.tif")).run()
+    """
+    looks = validate_positive(n_looks, "n_looks")
+    return window_stat_node(
+        source,
+        filter_size,
+        make_lee_stat_fn(looks),
+        no_data_val=no_data_val,
+        name=name or "lee_filter",
     )

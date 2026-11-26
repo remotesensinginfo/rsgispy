@@ -12,7 +12,7 @@ documented code is always tested.
 Run it on your own data with, e.g.::
 
     python large_rasters.py --s2 s2_sref_10m.tif --red-band 4 --nir-band 8 \\
-        --block-size 512 --tile-size 5000 --n-jobs 4 --out-dir outputs
+        --block-size 256 --tile-size 5000 --n-jobs 4 --out-dir outputs
 """
 
 import argparse
@@ -26,7 +26,7 @@ def run_workflow(
     red_band: int = 4,
     nir_band: int = 8,
     seg_bands: Sequence[int] = (2, 3, 4, 8, 11, 12),
-    block_size: int = 512,
+    block_size: int = 256,
     tile_size: int = 5000,
     n_jobs: int = 1,
     use_pbar: bool = True,
@@ -291,8 +291,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     parser.add_argument("--seg-bands", type=int, nargs="+",
                         default=[2, 3, 4, 8, 11, 12],
                         help="Bands used for segmentation.")
-    parser.add_argument("--block-size", type=int, default=512,
-                        help="Processing block size in pixels (Default: 512).")
+    parser.add_argument("--block-size", type=int, default=256,
+                        help="Processing block size in pixels (Default: 256).")
     parser.add_argument("--tile-size", type=int, default=5000,
                         help="Tile size in pixels (Default: 5000).")
     parser.add_argument("--n-jobs", type=int, default=1,

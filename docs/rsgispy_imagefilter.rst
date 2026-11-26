@@ -47,6 +47,43 @@ texture extraction:
        filter_size=5,
    )
 
+Chaining
+--------
+
+Most filters can also be used as nodes of an in-memory
+:class:`~rsgispy.imageprocess.TileGraph`, chained with other filters, band
+maths and indices in one pass without intermediate files. Each has a node
+builder next to its file-based function, named without ``apply_`` and with
+``_node``, which gives the same result:
+
+* :mod:`~rsgispy.imagefilter.stats`: ``median_filter_node``,
+  ``mean_filter_node``, ``min_filter_node``, ``max_filter_node``,
+  ``mode_filter_node``, ``stddev_filter_node``, ``range_filter_node``,
+  ``total_filter_node``, ``mean_diff_filter_node``,
+  ``mean_diff_abs_filter_node``, ``total_diff_filter_node``,
+  ``total_diff_abs_filter_node``, ``coeff_of_var_filter_node``,
+  ``norm_var_filter_node``, ``norm_var_sqrt_filter_node``,
+  ``norm_var_ln_filter_node``, ``texture_var_filter_node``;
+* :mod:`~rsgispy.imagefilter.smooth`: ``kuwahara_filter_node``,
+  ``gaussian_smooth_filter_node``, ``kernel_filter_node``;
+* :mod:`~rsgispy.imagefilter.edge`: ``sobel_filter_node``,
+  ``prewitt_filter_node``, ``laplacian_filter_node``;
+* :mod:`~rsgispy.imagefilter.sar`: ``lee_filter_node``.
+
+.. code-block:: python
+
+   from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+   from rsgispy.imagefilter.edge import sobel_filter_node
+   from rsgispy.imagefilter.stats import median_filter_node
+
+   src = RasterSource("input.tif")
+   edges = sobel_filter_node(median_filter_node(src, 3, no_data_val=0), no_data_val=0)
+   TileGraph(DiskSink(edges, "median_sobel.tif")).run()
+
+See :doc:`rsgispy_imageprocess` for the list of chainable operations and
+:func:`~rsgispy.imagefilter.chained.apply_filter_chain` for filter-only
+chains.
+
 Submodules
 ----------
 

@@ -28,16 +28,24 @@ Key guarantees
 from rsgispy._tilegraph import (
     ArraySource,
     BandMathOp,
+    Cast,
     DiskSink,
     HaloBorder,
     MemorySink,
+    NodeMeta,
     PointwiseOp,
     RasterSource,
+    SelectBands,
+    SourceGrid,
+    StackBands,
     TileContext,
     TileGraph,
     TileNode,
+    TileSink,
+    TileTensor,
     WindowOp,
     run_tile_graph,
+    same_bands_meta,
 )
 
 __all__ = [
@@ -53,4 +61,12 @@ __all__ = [
     "MemorySink",
     "TileGraph",
     "run_tile_graph",
+    "TileSink",
+    "TileTensor",
+    "NodeMeta",
+    "SourceGrid",
+    "SelectBands",
+    "StackBands",
+    "Cast",
+    "same_bands_meta",
 ]

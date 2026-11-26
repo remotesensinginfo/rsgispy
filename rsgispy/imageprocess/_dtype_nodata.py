@@ -14,7 +14,7 @@ import rasterio
 
 import rsgispy
 
-DEFAULT_BLOCK_SIZE = 512  # Match COG
+DEFAULT_BLOCK_SIZE = 256  # One GeoTIFF tile; faster than 512 for window filters
 ENV_VAR_BLOCK_SIZE = "RSGISPY_BLOCK_SIZE"
 ENV_VAR_RSGISLIB_BLOCK_SIZE = "RSGISLIB_BLOCK_SIZE"
 _INT_DTYPES = {"uint8", "int8", "uint16", "int16", "uint32", "int32"}
