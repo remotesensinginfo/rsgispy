@@ -49,6 +49,7 @@ Common rules:
 
 import colorsys
 import math
+import json
 import os
 import re
 from typing import (
@@ -85,7 +86,7 @@ from rsgispy.imageprocess import (
     infer_node_meta,
     normalise_creation_options,
 )
-from rsgispy.imageutils.colourtable import define_colour_table, set_img_thematic
+from rsgispy.imageutils.colourtable import CLASS_NAMES_TAG, define_colour_table, set_img_thematic
 from rsgispy.imageutils.stats import pop_thmt_img_stats
 from rsgispy.tools.stats import compute_nanpercentiles, validate_percentiles_0_100
 
@@ -122,6 +123,7 @@ LAND_CLASS = 1
 WATER_CLASS = 2
 #: Colours of the land / water mask (land green, water blue).
 LW_COLOURS = {LAND_CLASS: "#4CAF50", WATER_CLASS: "#1E88E5"}
+LW_CLASS_NAMES = {LAND_CLASS: "Land", WATER_CLASS: "Water"}
 
 QualitySpec = Union[int, str, Callable[[np.ndarray], np.ndarray]]
 SourcesArg = Union[TileNode, Sequence[TileNode]]
@@ -1682,6 +1684,11 @@ def _continuous_sink(
     )
 
 
+def _ref_class_names(paths: Sequence[str]) -> Dict[int, str]:
+    """Class names of the reference image: the input images' file names."""
+    return {idx + 1: os.path.basename(os.fspath(path)) for idx, path in enumerate(paths)}
+
+
 def _thematic_sink(
     node: TileNode,
     output_img: str,
@@ -1691,10 +1698,13 @@ def _thematic_sink(
     clr_lut: Mapping[int, Any],
     calc_stats: bool,
     creation_opts: Optional[Mapping[str, Any]],
+    class_names: Optional[Mapping[int, str]] = None,
 ) -> WrapperDiskSink:
     """
     Sink of a thematic output (no data 0): marked thematic, with thematic
-    statistics (when ``calc_stats``) and the colour table ``clr_lut``.
+    statistics (when ``calc_stats``), the colour table ``clr_lut`` and the
+    class names ``class_names`` (read back with
+    :func:`rsgispy.imageutils.colourtable.get_thematic_classes`).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     is_cog = str(gdalformat).upper() == "COG"
@@ -1707,6 +1717,10 @@ def _thematic_sink(
                 use_pbar=False,
             )
         define_colour_table(path, clr_lut)
+        if class_names:
+            with rasterio.open(path, "r+") as dst:
+                dst.update_tags(1, **{CLASS_NAMES_TAG: json.dumps(
+                    {str(int(k)): str(v) for k, v in class_names.items()})})
 
     return WrapperDiskSink(
         node,
@@ -1862,6 +1876,7 @@ def create_geomedian_composite(
         sinks.append(_thematic_sink(
             node.ref, out_ref_img, gdalformat, rsgispy.TYPE_16UINT, REF_BAND_NAME,
             _ref_colour_table(len(inputs.paths)), calc_stats, creation_opts,
+            _ref_class_names(inputs.paths),
         ))
     _run(sinks, block_size, use_pbar, n_jobs)
 
@@ -1889,6 +1904,7 @@ def _selection_sinks(
         sinks.append(_thematic_sink(
             node.ref, out_imgs["ref"], gdalformat, rsgispy.TYPE_16UINT,  # type: ignore[arg-type]
             REF_BAND_NAME, _ref_colour_table(len(inputs.paths)), calc_stats, creation_opts,
+            _ref_class_names(inputs.paths),
         ))
     if out_imgs.get("quality") is not None:
         sinks.append(_continuous_sink(
@@ -1898,7 +1914,7 @@ def _selection_sinks(
     if out_imgs.get("lw_msk") is not None:
         sinks.append(_thematic_sink(
             node.lw_msk, out_imgs["lw_msk"], gdalformat, rsgispy.TYPE_8UINT,  # type: ignore[arg-type]
-            LW_BAND_NAME, LW_COLOURS, calc_stats, creation_opts,
+            LW_BAND_NAME, LW_COLOURS, calc_stats, creation_opts, LW_CLASS_NAMES,
         ))
     return sinks
 

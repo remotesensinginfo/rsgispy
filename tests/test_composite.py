@@ -859,3 +859,30 @@ def test_no_nodata_in_inputs(tmp_path):
     with rasterio.open(out) as src:
         assert src.nodata is not None and np.isnan(src.nodata)
     assert np.all(np.isfinite(_read(out)))
+
+
+def test_thematic_outputs_have_class_names(tmp_path):
+    """The reference image and land/water mask store class names."""
+    from rsgispy.imageutils.colourtable import get_thematic_classes
+
+    rng = np.random.default_rng(11)
+    paths = []
+    for idx in range(3):
+        arr = rng.integers(100, 3000, size=(4, 16, 16)).astype(np.uint16)
+        path = str(tmp_path / f"img_{idx}.tif")
+        with rasterio.open(
+            path, "w", driver="GTiff", width=16, height=16, count=4, dtype="uint16", nodata=0,
+            crs="EPSG:32630", transform=rasterio.transform.from_origin(0, 160, 10, 10),
+        ) as dst:
+            dst.write(arr)
+        paths.append(path)
+    ref_img = str(tmp_path / "ref.tif")
+    lw_img = str(tmp_path / "lw.tif")
+    comp.create_land_water_composite(
+        paths, str(tmp_path / "comp.tif"), "b4", "b2", water_rule="b2 - b4",
+        out_ref_img=ref_img, out_lw_msk_img=lw_img, use_pbar=False,
+    )
+    ref_names = {k: v[0] for k, v in get_thematic_classes(ref_img).items()}
+    assert ref_names == {1: "img_0.tif", 2: "img_1.tif", 3: "img_2.tif"}
+    lw_names = {k: v[0] for k, v in get_thematic_classes(lw_img).items()}
+    assert lw_names == {1: "Land", 2: "Water"}
