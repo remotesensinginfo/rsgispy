@@ -171,6 +171,49 @@ histograms supporting fixed bin counts (``n_bins``), fixed bin widths
    for bin_info in cls_hist["bins"]:
        print(bin_info["value"], bin_info["count"], bin_info["proportion"])
 
+Chaining
+--------
+
+The pixel-wise functions of this subpackage can also be used as nodes of an
+in-memory :class:`~rsgispy.imageprocess.TileGraph`, chained with filters,
+masks and other operations in one pass without intermediate files. Each has a
+node builder next to its file-based function, named after it with ``_node``
+(the file-based functions are wrappers around them and give the same
+result):
+
+* :mod:`~rsgispy.imagecalc.calcindices`: ``calc_indices_node``,
+  ``calc_sar_indices_node`` (one band per index; ``Brightness_Scaled``
+  bounds and the ``DPSVI`` ``vv_max`` must be given in ``index_params``);
+* :mod:`~rsgispy.imagecalc.rescale`: ``rescale_img_pxl_vals_node``,
+  ``calc_img_rescale_node``, ``img_norm_params_node`` (applies parameters
+  from :func:`~rsgispy.imagecalc.rescale.calc_img_norm_params`);
+* :mod:`~rsgispy.imagecalc.encoding`: ``recode_int_raster_node``,
+  ``one_hot_category_encoding_node`` (categories given);
+* :mod:`~rsgispy.imagecalc.percentiles`: ``calc_imgs_pxl_percentiles_node``,
+  ``calc_img_band_pxl_percentiles_node`` (N inputs, e.g. dates).
+
+.. code-block:: python
+
+   from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+   from rsgispy.imagefilter.sar import lee_filter_node
+   from rsgispy.imagecalc.calcindices import calc_sar_indices_node
+   from rsgispy.imagecalc.percentiles import calc_imgs_pxl_percentiles_node
+
+   # Speckle filter -> SAR index for each date -> per-pixel median, one pass.
+   rvis = [
+       calc_sar_indices_node(
+           lee_filter_node(RasterSource(img), 7),
+           {1: "VV", 2: "VH"},
+           ["RVI_VV_VH"],
+           "power",
+       )
+       for img in ["s1_t1.tif", "s1_t2.tif", "s1_t3.tif"]
+   ]
+   med = calc_imgs_pxl_percentiles_node(rvis, [50], no_data_val=-999)
+   TileGraph(DiskSink(med, "rvi_median.tif")).run()
+
+See :doc:`rsgispy_imageprocess` for the list of chainable operations.
+
 Band Mathematics, Spectral Indices & Value Rescaling
 ----------------------------------------------------
 
