@@ -170,11 +170,33 @@ class _FixedLinear:
         return np.asarray(x_in, dtype=np.float64) @ self.coef + self.intercept
 
 
+def _fixed_forest(n_trees: int, depth: int, x_tr: Any, y_tr: Any) -> Any:
+    """
+    A fitted ``RandomForestRegressor`` whose trees are decision trees trained
+    on fixed, interleaved subsets of the samples. A forest's own bootstrap
+    and feature sampling build different trees in different scikit-learn
+    versions; single decision trees do not.
+    """
+    # pylint: disable=import-outside-toplevel
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.tree import DecisionTreeRegressor
+
+    forest = RandomForestRegressor(
+        n_estimators=n_trees, max_depth=depth, random_state=0
+    ).fit(x_tr, y_tr)
+    forest.estimators_ = [
+        DecisionTreeRegressor(max_depth=depth, random_state=0).fit(
+            x_tr[idx::n_trees], y_tr[idx::n_trees]
+        )
+        for idx in range(n_trees)
+    ]
+    return forest
+
+
 def _make_models(rng: np.random.Generator) -> Dict[str, Any]:
     """Small fixed-seed models trained on synthetic samples."""
     # pylint: disable=import-outside-toplevel
     import pandas as pd
-    from sklearn.ensemble import RandomForestRegressor
     from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
     from rsgispy.ml.scaling import FeatureScaler
@@ -194,12 +216,8 @@ def _make_models(rng: np.random.Generator) -> Dict[str, Any]:
     return {
         "clf": DecisionTreeClassifier(max_depth=4, random_state=0).fit(x_tr, y_cls),
         "bin": DecisionTreeClassifier(max_depth=3, random_state=0).fit(x_tr, y_bin),
-        "rf": RandomForestRegressor(
-            n_estimators=5, max_depth=5, random_state=0
-        ).fit(x_tr, y_reg),
-        "rf2": RandomForestRegressor(
-            n_estimators=4, max_depth=4, random_state=1
-        ).fit(x_tr, y_reg2),
+        "rf": _fixed_forest(5, 5, x_tr, y_reg),
+        "rf2": _fixed_forest(4, 4, x_tr, y_reg2),
         "scaler": scaler,
         "clf_sc": DecisionTreeClassifier(max_depth=4, random_state=0).fit(x_sc, y_cls),
         "df_reg": DecisionTreeRegressor(max_depth=5, random_state=0).fit(
