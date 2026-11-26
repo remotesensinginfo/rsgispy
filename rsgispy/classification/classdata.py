@@ -36,6 +36,7 @@ from rsgispy.imageutils.metadata import set_img_no_data_value
 from rsgispy.tools._ml_data import (
     allocate_split_counts,
     check_poly_id_col,
+    combine_ml_samples,
     extract_vector_samples_from_gdf,
     get_group_labels,
     normalise_img_band_info_list as _normalise_img_band_info_list,
@@ -61,6 +62,7 @@ __all__ = [
     "read_cls_config",
     "write_cls_samples",
     "read_cls_samples",
+    "combine_cls_samples",
     "extract_class_training_samples",
     "split_class_samples",
     "extract_and_split_class_samples",
@@ -767,6 +769,147 @@ def read_cls_samples(
         train_df = cd.read_cls_samples("train.parquet")
     """
     return read_ml_samples(in_file, in_format=in_format)
+
+
+def _check_cls_id_consistency(
+    combined: pd.DataFrame,
+    class_name_col: str,
+    id_cols: Sequence[str],
+) -> None:
+    """Raise if a class name has several IDs, or an ID several class names."""
+    pairs = combined[[class_name_col, *id_cols]].drop_duplicates()
+    for id_col in id_cols:
+        n_ids = pairs.groupby(class_name_col)[id_col].nunique()
+        bad_names = n_ids[n_ids > 1].index.tolist()
+        if bad_names:
+            cls_name = bad_names[0]
+            ids = sorted(
+                pairs.loc[pairs[class_name_col] == cls_name, id_col].unique().tolist()
+            )
+            raise rsgispy.RSGISPyException(
+                f"Class '{cls_name}' has different '{id_col}' values in the "
+                f"inputs ({ids}). Use the same class IDs in every sample table."
+            )
+        n_names = pairs.groupby(id_col)[class_name_col].nunique()
+        bad_ids = n_names[n_names > 1].index.tolist()
+        if bad_ids:
+            id_val = bad_ids[0]
+            cls_names = sorted(
+                pairs.loc[pairs[id_col] == id_val, class_name_col].unique().tolist()
+            )
+            raise rsgispy.RSGISPyException(
+                f"'{id_col}' {id_val} is used for different classes in the "
+                f"inputs ({cls_names}). Use the same class IDs in every sample table."
+            )
+
+
+def combine_cls_samples(
+    samples: Sequence[Union[pd.DataFrame, str, os.PathLike]],
+    *,
+    feat_cols: Optional[Sequence[str]] = None,
+    source_names: Optional[Sequence[str]] = None,
+    source_col: Optional[str] = None,
+    keep_xy: bool = False,
+    out_file: Optional[Union[str, os.PathLike]] = None,
+    group_col: Optional[str] = None,
+    class_name_col: str = "class_name",
+    out_id_col: str = "out_cls_id",
+    internal_id_col: str = "internal_cls_id",
+) -> pd.DataFrame:
+    """
+    Combine classification sample tables, e.g. the pixel samples of
+    :func:`extract_class_training_samples` and the segment samples of
+    :func:`~rsgispy.classification.classsegments.extract_class_segment_samples`,
+    into one sample table in the layout of :func:`read_cls_samples`, for
+    :func:`split_class_samples` and the training functions.
+
+    .. note::
+
+       Combining samples is only sound when the features mean the same thing
+       for every input, e.g. a pixel's value and a segment's mean value of the
+       same band. Features that only a segment has (e.g. the standard
+       deviation or shape measures) cannot be combined with pixel samples.
+       Name the pixel features as the segment features when extracting them
+       (``ImageBandInfo(..., band_names=seg_info.feature_cols)``).
+
+    The output has the class name, output ID and internal ID columns, then
+    ``group_col`` and ``source_col`` (when given), ``x`` and ``y`` (with
+    ``keep_xy``) and the feature columns; other columns (e.g. ``seg_id``,
+    ``n_hits``, ``pxl_count`` of the segment samples) are dropped. The rows
+    are those of the inputs in order (as ``pandas.concat`` with
+    ``ignore_index=True``).
+
+    :param samples: Sequence of sample DataFrames or sample files (any format
+                    read by :func:`read_cls_samples`).
+    :param feat_cols: Optional feature columns to keep (they must be in every
+                      input). When ``None``, the numeric columns other than the
+                      class, group, source and ``x``/``y`` columns, which must
+                      be the same in every input.
+    :param source_names: Optional name of each input, written to
+                         ``source_col`` (Default = the file name without its
+                         extension, or ``'input_<n>'`` for a DataFrame).
+    :param source_col: Optional name of a column recording the input of each
+                       row (e.g. ``'source'``), so a grouped split
+                       (``group_col`` of :func:`split_class_samples`) can keep
+                       the sources apart (Default = ``None``, no column).
+    :param keep_xy: If ``True``, keep the ``x`` and ``y`` columns, which must
+                    be in every input (Default = ``False``).
+    :param out_file: Optional output sample file, written with
+                     :func:`write_cls_samples`.
+    :param group_col: Optional group column to keep (e.g. ``'train_grp'``,
+                      the source polygon of each sample); it must be in every
+                      input (Default = ``None``).
+    :param class_name_col: Class name column (Default = ``'class_name'``).
+    :param out_id_col: Output class ID column (Default = ``'out_cls_id'``).
+    :param internal_id_col: Internal class ID column (Default =
+                            ``'internal_cls_id'``).
+    :return: The combined sample DataFrame.
+    :raises rsgispy.RSGISPyException: if the feature columns differ (without
+                                      ``feat_cols``), a column is missing, or
+                                      a class name has different IDs (or an
+                                      ID different class names) in the inputs.
+
+    .. code:: python
+
+        import rsgispy.classification.classdata as cd
+        import rsgispy.classification.classsegments as cseg
+
+        seg_df = cseg.extract_class_segment_samples("cls_seg_config.json")
+        feat_cols = cfg.seg_info.feature_cols  # e.g. ['Blue_mean', ...]
+        pxl_df = cd.extract_class_training_samples(
+            [cd.ImageBandInfo("sen2.tif", name="sen2", band_names=feat_cols)],
+            class_info,
+        )
+        smpls_df = cd.combine_cls_samples(
+            [seg_df, pxl_df],
+            feat_cols=feat_cols,
+            source_names=["segment", "pixel"],
+            source_col="source",
+            out_file="cls_smpls_combined.parquet",
+        )
+        train_df, test_df, valid_df = cd.split_class_samples(smpls_df)
+    """
+    # pylint: disable=too-many-arguments
+    id_cols = [out_id_col, internal_id_col]
+    key_cols = [class_name_col, *id_cols]
+    if len(set(key_cols)) != 3:
+        raise rsgispy.RSGISPyException(
+            "class_name_col, out_id_col and internal_id_col must be different."
+        )
+    combined = combine_ml_samples(
+        samples,
+        key_cols,
+        feat_cols=feat_cols,
+        source_names=source_names,
+        source_col=source_col,
+        keep_xy=keep_xy,
+        group_col=group_col,
+        label="samples",
+    )
+    _check_cls_id_consistency(combined, class_name_col, id_cols)
+    if out_file is not None:
+        write_cls_samples(combined, out_file)
+    return combined
 
 
 def extract_class_training_samples(

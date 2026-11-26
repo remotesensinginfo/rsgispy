@@ -11,7 +11,7 @@ rsgispy.regression
 Submodules
 ----------
 
-* :doc:`regression/regdata` — Image/band and continuous target training definitions, JSON configuration I/O, point/polygon vector sample extraction, and Parquet/tabular splitting.
+* :doc:`regression/regdata` — Image/band and continuous target training definitions, JSON configuration I/O, point/polygon vector sample extraction, combining sample tables, and Parquet/tabular splitting.
 * :doc:`regression/regsklearn` — Scikit-learn parameter search (Grid, Random, Optuna) with built-in standard regressor search spaces, univariate/multivariate training, and raster prediction.
 * :doc:`regression/regxgboost` — XGBoost univariate and multivariate Optuna hyperparameter optimisation, regressor training, and block-wise image regression.
 * :doc:`regression/reglightgbm` — LightGBM univariate and multivariate Optuna hyperparameter optimisation, regressor training, and block-wise image regression.
