@@ -171,6 +171,33 @@ histograms supporting fixed bin counts (``n_bins``), fixed bin widths
    for bin_info in cls_hist["bins"]:
        print(bin_info["value"], bin_info["count"], bin_info["proportion"])
 
+2D Image Histograms (Feature Space)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:func:`~rsgispy.imagecalc.stats.get_img_2d_histogram` counts the pixels of two
+bands (of one image, or of two images on the same pixel grid) in a 2D
+histogram, block by block. The result is the same as
+:func:`numpy.histogram2d` on the valid pixel values; when a range is not
+given, it is the range of the valid pixels:
+
+.. code-block:: python
+
+   import matplotlib.pyplot as plt
+   import numpy as np
+   import rsgispy.imagecalc.stats as imgstats
+
+   hist, x_edges, y_edges = imgstats.get_img_2d_histogram(
+       "sen2.tif", 3, 8, bins=200, x_range=(0, 5000), y_range=(0, 5000),
+       no_data_val=0,
+   )
+   # The histogram is indexed [x, y], so it is transposed for imshow.
+   fig, ax = plt.subplots()
+   ax.imshow(
+       np.ma.masked_equal(hist / hist.sum(), 0).T,
+       origin="lower",
+       extent=[x_edges[0], x_edges[-1], y_edges[0], y_edges[-1]],
+   )
+
 Chaining
 --------
 
@@ -240,7 +267,7 @@ Band Mathematics, Spectral Indices & Value Rescaling
 Statistics, Percentiles & Comparison
 ------------------------------------
 
-* :doc:`imagecalc/stats` — Basic band statistics, streaming histograms (:func:`~rsgispy.imagecalc.stats.get_img_histogram`), unique values, multi-image summaries, and mask probabilities.
+* :doc:`imagecalc/stats` — Basic band statistics, streaming histograms (:func:`~rsgispy.imagecalc.stats.get_img_histogram`, :func:`~rsgispy.imagecalc.stats.get_img_2d_histogram`), unique values, multi-image summaries, and mask probabilities.
 * :doc:`imagecalc/percentiles` — Band percentiles and pixel-wise cross-band/cross-image percentiles.
 * :doc:`imagecalc/comparison` — Image difference, equality tests, correlation, mutual info, EMD, and similarity metrics.
 
