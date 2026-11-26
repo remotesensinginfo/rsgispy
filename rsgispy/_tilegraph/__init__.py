@@ -23,6 +23,7 @@ from rsgispy._tilegraph._nodes import (
     WindowOp,
     same_bands_meta,
 )
+from rsgispy._tilegraph._stats import RasterStats, StatsSink, ZonalStatsSink
 
 __all__ = [
     "HaloBorder",
@@ -43,6 +44,9 @@ __all__ = [
     "Cast",
     "DiskSink",
     "MemorySink",
+    "StatsSink",
+    "ZonalStatsSink",
+    "RasterStats",
     "TileGraph",
     "run_tile_graph",
 ]
