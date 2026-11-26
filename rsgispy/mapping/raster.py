@@ -13,6 +13,7 @@ import rasterio
 
 import rsgispy
 from rsgispy.imageprocess import bbox_from_dataset
+from rsgispy.imageutils.colourtable import get_thematic_classes
 from rsgispy.mapping._legend import create_companion_legend_axis
 from rsgispy.mapping.elements import (
     NORTH_ARROW_STYLE_TRIANGLE,
@@ -249,7 +250,13 @@ def create_thematic_raster_map(
                         categorical classification legend (Default = ``False``).
     :param classes_info: Optional class label/colour definitions (dict,
                          ``ClassificationConfig``, or JSON path) passed to the
-                         legend builder (Default = ``None``).
+                         legend builder. If ``None``, the class names and
+                         colours stored in the first image by
+                         :func:`~rsgispy.imageutils.colourtable.set_thematic_classes`
+                         are used (see
+                         :func:`~rsgispy.imageutils.colourtable.get_thematic_classes`),
+                         or, when none are stored, every colour table entry
+                         as ``Class <value>`` (Default = ``None``).
     :param legend_position: Companion axis side when ``legend_overlay=False`` and
                             ``legend_ax`` is ``None`` (``'right'``, ``'left'``,
                             ``'bottom'``, or ``'top'``; Default = ``'right'``).
@@ -274,6 +281,14 @@ def create_thematic_raster_map(
 
         import matplotlib.pyplot as plt
         import rsgispy.mapping.raster as map_raster
+
+        fig, ax = plt.subplots()
+        # The legend uses the names stored by set_thematic_classes.
+        map_raster.create_thematic_raster_map(
+            ax=ax,
+            input_img="landcover.tif",
+            show_legend=True,
+        )
 
         fig, ax = plt.subplots()
         map_raster.create_thematic_raster_map(
@@ -344,6 +359,9 @@ def create_thematic_raster_map(
 
     if show_legend:
         extra_kw = dict(legend_kwargs or {})
+        if classes_info is None:
+            # Use the class names stored by set_thematic_classes, if any.
+            classes_info = get_thematic_classes(input_imgs[0]) or None
         if legend_ax is not None:
             add_categorical_legend_axis(
                 ax=legend_ax,
