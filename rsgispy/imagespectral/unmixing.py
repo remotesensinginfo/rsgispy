@@ -382,7 +382,7 @@ class _UnmixNode(TileNode):
     endmember.
     """
 
-    # pylint: disable=too-many-instance-attributes
+    # pylint: disable=too-many-instance-attributes,too-many-arguments
 
     def __init__(
         self,
@@ -481,7 +481,7 @@ def _unmix_node(
     file_format)`` and ``settings`` ``(valid_msk_val, out_no_data_val,
     no_data_val)``.
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     endmembers, gain, weight, file_format = params
     valid_msk_val, out_no_data_val, no_data_val = settings
     out_nd = _check_out_no_data_val(out_no_data_val)
@@ -1860,7 +1860,7 @@ def _predict_refl_endmembers(
 class _PredictReflNode(TileNode):
     """Predicted reflectance ``coefs @ endmembers`` (``float32`` blocks)."""
 
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
 
     def __init__(
         self,
@@ -1959,6 +1959,7 @@ def predict_refl_linear_unmixing_node(
         pred = predict_refl_linear_unmixing_node(fracs, "endmembers.csv")
         TileGraph(DiskSink(pred, "pred_refl.tif")).run()
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     out_nd = _check_out_no_data_val(out_no_data_val)
     endmembers_arr, band_names = _predict_refl_endmembers(endmembers, file_format)
     return _PredictReflNode(
@@ -2008,7 +2009,7 @@ def predict_refl_linear_unmixing(
             "unmix.tif", "pred_refl.tif", "endmembers.csv"
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(in_unmix_coefs_img, "Input unmixing coefficients image")
     out_nd = _check_out_no_data_val(out_no_data_val)
     endmembers_arr, band_names = _predict_refl_endmembers(endmembers, file_format)

@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 """
 The imagecalc.rescale module provides gain/offset and per-band min-max raster
 pixel rescaling utilities using ``rasterio``.
@@ -200,6 +201,7 @@ class _RescalePxlNode(TileNode):
     """Node of :func:`rescale_img_pxl_vals_node`."""
 
     # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-instance-attributes,too-many-locals
 
     def __init__(
         self,
@@ -351,6 +353,7 @@ def _calc_img_rescale_block(
     Rescale a block from ``(c_offset, c_gain)`` to ``(n_offset, n_gain)``;
     ``params`` is ``(c_no_data_val, c_offset, scale, n_offset, n_no_data_val)``.
     """
+    # pylint: disable=too-many-locals
     c_nd, c_off, scale, n_off, n_nd = params
     in_block = np.asarray(in_block, dtype=np.float64)
     win_h, win_w = int(in_block.shape[1]), int(in_block.shape[2])
@@ -887,6 +890,7 @@ def _apply_norm_block(
     in_block: np.ndarray, norm: _NormApply, out_np_dtype: np.dtype
 ) -> np.ndarray:
     """Normalise a ``(n_selected_bands, H, W)`` ``float64`` block."""
+    # pylint: disable=too-many-locals
     win_h, win_w = int(in_block.shape[1]), int(in_block.shape[2])
     band_specs = norm.band_specs
     eff_out_nd = norm.eff_out_nd

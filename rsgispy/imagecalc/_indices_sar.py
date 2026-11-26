@@ -149,6 +149,7 @@ def _sar_block_fn(
         positions: Mapping[int, int],
         shape: Tuple[int, ...],
     ) -> np.ndarray:
+        # pylint: disable=too-many-locals
         phys_bands, base_invalid = scale_bands(data, setup, positions)
         need_power = any(spec.units == "power" for _, spec in setup.resolved_indices)
         need_db = any(spec.units == "dB" for _, spec in setup.resolved_indices)
@@ -260,7 +261,7 @@ def calc_sar_indices_node(
         )
         TileGraph(DiskSink(idx, "s1_indices.tif")).run()
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     norm_units = normalise_sar_units(in_units)
     out_np_dtype = np.dtype(out_dtype)
     out_nd = _resolve_out_nodata(out_no_data_val, out_np_dtype)

@@ -424,7 +424,7 @@ def finish_indices_setup(
     Resolve the scaling ``(in_gain, in_offset, out_gain, out_offset)`` and
     the no-data values of the bands the indices need.
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     in_gain, in_offset, out_gain, out_offset = scaling
     req_band_set: List[str] = []
     seen_bands = set()
@@ -488,7 +488,7 @@ def calc_index_band(
     ``(bands, invalid_masks)`` of its domain; ``out_fmt`` is
     ``(out_nd, out_np_dtype)``.
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     domain_bands, domain_invalid = domain
     out_name, spec = setup.resolved_indices[idx_pos]
     req_invalid = np.zeros((int(shape[0]), int(shape[1])), dtype=bool)
@@ -627,7 +627,7 @@ def calc_indices_node(
         smooth = median_filter_node(idx, 3, no_data_val=-999.0)
         TileGraph(DiskSink(smooth, "indices_med3.tif")).run()
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     out_np_dtype = np.dtype(out_dtype)
     out_nd = _resolve_out_nodata(out_no_data_val, out_np_dtype)
     parsed_idx_params = _resolve_index_params(index_params)

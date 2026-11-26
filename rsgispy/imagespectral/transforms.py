@@ -289,7 +289,8 @@ class _LinearProjectionNode(TileNode):
     other pixels are set to the output no-data value.
     """
 
-    # pylint: disable=too-many-instance-attributes
+    # pylint: disable=too-many-instance-attributes,too-many-arguments
+    # pylint: disable=too-many-positional-arguments,too-many-locals
 
     def __init__(
         self,

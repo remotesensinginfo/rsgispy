@@ -418,6 +418,7 @@ class _BandChangeNode(TileNode):
         ctx: TileContext,
         state: Any = None,
     ) -> TileTensor:
+        # pylint: disable=too-many-locals
         aligned = [t.crop(halo_y, halo_x) for t in inputs]
         b_blk = np.nan_to_num(
             np.asarray(aligned[0].data, dtype=np.float64),
