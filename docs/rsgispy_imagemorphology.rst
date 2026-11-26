@@ -25,6 +25,48 @@ Creating a circular structuring element and dilating a raster image:
        datatype=rsgispy.TYPE_8UINT,
    )
 
+Chaining
+--------
+
+Every operation also has a node builder, named after the function with
+``_node`` (``image_dilate_node``, ``image_erode_node``,
+``image_gradient_node``, ``image_local_minima_node``,
+``image_opening_node``, ``image_closing_node``,
+``image_white_top_hat_node``, ``image_black_top_hat_node``; the
+``*_combined_out`` variants are ``combined=True``), for chaining morphology
+with filters, band maths or a majority filter in one
+:class:`~rsgispy.imageprocess.TileGraph` pass without intermediate files.
+The builders take the structuring element as the file functions do
+(``morph_op_file``, ``use_op_file``, ``op_size``). ``no_data_val`` is the
+input no-data value (pass it; it is not read from the source) and ``dtype``
+the NumPy type the result will be written as: openings, closings and top-hats
+round each step to an integer ``dtype``, as the file functions do. The
+file-based functions run the same nodes (``RasterSource -> node ->
+DiskSink``), so the results are identical.
+
+Sequentially numbered local minima (``sequencial_out=True``) are numbered in
+raster scan order, which depends on the whole image, so they are only
+available from :func:`~rsgispy.imagemorphology.image_local_minima` and
+:func:`~rsgispy.imagemorphology.image_local_minima_combined_out`.
+
+.. code-block:: python
+
+   import numpy as np
+   import rsgispy
+   from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+   from rsgispy.imagemorphology import image_closing_node, image_opening_node
+
+   mask = RasterSource("cloud_mask.tif")
+   # Remove small specks, then fill small holes, in one pass.
+   clean = image_closing_node(
+       image_opening_node(mask, op_size=3, dtype=np.uint8),
+       op_size=5,
+       dtype=np.uint8,
+   )
+   TileGraph(
+       DiskSink(clean, "cloud_mask_clean.tif", datatype=rsgispy.TYPE_8UINT)
+   ).run()
+
 API Reference
 -------------
 

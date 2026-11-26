@@ -8,6 +8,17 @@ rsgispy.classification
 .. automodule:: rsgispy.classification
    :no-index:
 
+Chaining
+--------
+
+The majority filter is also a tile-graph node,
+:func:`~rsgispy.classification.classpostprocess.majority_filter_node`, for
+smoothing a classification in the same
+:class:`~rsgispy.imageprocess.TileGraph` pass that predicts it (see
+:doc:`classification/classpostprocess` and the "Chaining" section of
+:doc:`rsgispy_ml`). The sieve filter works on connected components of the
+whole image and has no node.
+
 Submodules
 ----------
 
@@ -21,7 +32,7 @@ Submodules
 * :doc:`classification/classrefpts` — Random and stratified random reference point generation and accuracy point population.
 * :doc:`classification/classaccuracymetrics` — Image area-weighted and point-only classification accuracy statistics and bootstrap confidence intervals.
 * :doc:`classification/classsegments` — Object-based (segment) classification: segment feature creation, one-sample-per-segment training data extraction and group-aware splitting, chunked application of scikit-learn/XGBoost/LightGBM/CatBoost classifiers to segment vector layers, rasterising with class colours, segment clustering, and accuracy points. See the :doc:`guides/segment_ml_workflow` guide.
-* :doc:`classification/classpostprocess` — Thematic classification post-processing (moving-window majority/modal filter and 4/8-connected sieve clump elimination).
+* :doc:`classification/classpostprocess` — Thematic classification post-processing (moving-window majority/modal filter, also as a tile-graph node, and 4/8-connected sieve clump elimination).
 
 .. toctree::
    :maxdepth: 1

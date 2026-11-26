@@ -323,7 +323,7 @@ def test_imagemorphology_v1_signatures_and_defaults(tmp_path):
     raster_fns = [
         getattr(rimorph, name)
         for name in rimorph.__all__
-        if name != "create_circular_op"
+        if name != "create_circular_op" and not name.endswith("_node")
     ]
     assert len(raster_fns) == 12
     for fn in raster_fns:

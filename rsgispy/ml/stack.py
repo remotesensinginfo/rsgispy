@@ -377,6 +377,22 @@ class ImageFeatureStack:
         """Total number of expanded feature bands."""
         return len(self.resolve_band_specs())
 
+    def to_tile_nodes(self) -> List[Any]:
+        """
+        Return the tile-graph source nodes of the stack (one per band spec),
+        see :func:`rsgispy.ml.predict.feature_stack_nodes`.
+
+        .. code:: python
+
+            from rsgispy.ml.predict import predict_raster_node
+
+            pred = predict_raster_node(stack.to_tile_nodes(), model, scaler=stack.scaler)
+        """
+        # pylint: disable-next=import-outside-toplevel,cyclic-import
+        from rsgispy.ml.predict import feature_stack_nodes
+
+        return feature_stack_nodes(self)
+
     def get_bbox(self) -> rsgispy.BBox:
         """Return the spatial intersection bounding box of all stack rasters."""
         paths = list(dict.fromkeys(s.file_name for s in self.specs))
