@@ -140,3 +140,15 @@ Spatial Manipulation, Warping & Mosaicking
    imageutils/masking
    imageutils/warp
    imageutils/spatial
+
+Composites
+----------
+
+* :doc:`imageutils/composite` — Per-pixel composites of a stack of
+  observations: geomedian, quality mosaic (max. NDVI), land / water (max.
+  NDVI / NDWI), medoid and per-band percentile composites.
+
+.. toctree::
+   :maxdepth: 1
+
+   imageutils/composite

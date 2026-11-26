@@ -428,6 +428,12 @@ def calc_imgs_pxl_percentiles(
     ``numpy.nanpercentile`` (linear interpolation) and are cast to the output
     data type (truncated for integer types).
 
+    All the bands of all the images are pooled into one set of values per
+    pixel, so this cannot make a multi-band composite; for per-band
+    percentiles (e.g. a median composite of each band) use
+    :func:`rsgispy.imageutils.composite.create_percentile_composite` (or
+    :func:`calc_img_band_pxl_percentiles`).
+
     :param input_imgs: Sequence of input image paths (all bands are stacked).
     :param output_img: Path to the output image file.
     :param percentiles: Sequence of percentiles in ``[0, 100]``.
@@ -513,7 +519,10 @@ def calc_img_band_pxl_percentiles(
     (:func:`rsgispy.imageprocess.get_default_block_size`), so memory use does
     not depend on the image size. The percentiles match
     ``numpy.nanpercentile`` (linear interpolation) and are cast to the output
-    data type (truncated for integer types).
+    data type (truncated for integer types). Each band uses its own valid
+    values; :func:`rsgispy.imageutils.composite.create_percentile_composite`
+    also offers the all-bands validity rule, a band selection, a count output
+    and rounding to integer types.
 
     :param input_imgs: Sequence of input image paths with identical band counts.
     :param output_img: Path to the output image file.
