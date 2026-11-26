@@ -218,57 +218,64 @@ def plot_semivariogram(
         fig, axs = rsgispy.tools.stats.plot_semivariogram(vario_df, dist_label="Distance (m)")
     """
     # pylint: disable=too-many-arguments,too-many-locals,import-outside-toplevel
-    from rsgispy.tools.plotting import get_fig_axs, save_plot
+    from rsgispy.tools.plotting import (
+        CATEGORICAL_COLOURS,
+        get_fig_axs,
+        rsgispy_plot_style,
+        save_plot,
+    )
 
-    if axs is None:
-        import matplotlib.pyplot as plt
+    with rsgispy_plot_style():
+        if axs is None:
+            import matplotlib.pyplot as plt
 
-        fig, ax_arr = plt.subplots(
-            2,
-            1,
-            figsize=figsize,
-            sharex=True,
-            gridspec_kw={"height_ratios": [1, 4], "hspace": 0.05},
+            fig, ax_arr = plt.subplots(
+                2,
+                1,
+                figsize=figsize,
+                sharex=True,
+                gridspec_kw={"height_ratios": [1, 4], "hspace": 0.05},
+            )
+        else:
+            fig, ax_arr = get_fig_axs(axs, nrows=2, ncols=1)
+        count_ax = ax_arr.ravel()[0]
+        vario_ax = ax_arr.ravel()[1]
+
+        dists = np.asarray(vario_df["distance"], dtype=float)
+        semivar = np.asarray(vario_df["semivariance"], dtype=float)
+        counts = np.asarray(vario_df["count"], dtype=float)
+
+        vario_ax.scatter(dists, semivar, s=28, color=CATEGORICAL_COLOURS[0], zorder=3)
+        vario_ax.set_xlabel(dist_label)
+        vario_ax.set_ylabel("Semi-variance")
+        if normalised:
+            vario_ax.set_xlim([0, 1.05])
+            vario_ax.set_ylim([0, 1.05])
+        vario_ax.grid(False)
+        vario_ax.vlines(
+            dists,
+            *vario_ax.get_ybound(),
+            colors="#e5e5e5",
+            linestyles="dashed",
         )
-    else:
-        fig, ax_arr = get_fig_axs(axs, nrows=2, ncols=1)
-    count_ax = ax_arr.ravel()[0]
-    vario_ax = ax_arr.ravel()[1]
 
-    dists = np.asarray(vario_df["distance"], dtype=float)
-    semivar = np.asarray(vario_df["semivariance"], dtype=float)
-    counts = np.asarray(vario_df["count"], dtype=float)
-
-    vario_ax.scatter(dists, semivar)
-    vario_ax.set_xlabel(dist_label)
-    vario_ax.set_ylabel("Semi-Variance")
-    if normalised:
-        vario_ax.set_xlim([0, 1.05])
-        vario_ax.set_ylim([0, 1.05])
-    vario_ax.grid(False)
-    vario_ax.vlines(
-        dists,
-        *vario_ax.get_ybound(),
-        colors=(0.85, 0.85, 0.85),
-        linestyles="dashed",
-    )
-
-    bar_width = (np.max(dists) * 0.7) / max(1, len(counts)) if dists.size else 1.0
-    count_ax.bar(dists, counts, width=bar_width, align="center", color="red")
-    count_ax.tick_params(labelbottom=False)
-    count_ax.grid(False)
-    count_ax.vlines(
-        dists,
-        *count_ax.get_ybound(),
-        colors=(0.85, 0.85, 0.85),
-        linestyles="dashed",
-    )
-    count_ax.set_ylabel("N")
-    if title is not None:
-        count_ax.set_title(title)
-    if out_plot_file is not None:
-        save_plot(fig, out_plot_file, out_dpi=out_dpi)
-    return fig, np.array([count_ax, vario_ax], dtype=object)
+        bar_width = (np.max(dists) * 0.7) / max(1, len(counts)) if dists.size else 1.0
+        count_ax.bar(dists, counts, width=bar_width, align="center", color="#9a9a9a")
+        count_ax.tick_params(labelbottom=False)
+        count_ax.grid(False)
+        count_ax.vlines(
+            dists,
+            *count_ax.get_ybound(),
+            colors="#e5e5e5",
+            linestyles="dashed",
+        )
+        count_ax.set_ylabel("Pairs")
+        count_ax.grid(axis="x", visible=False)
+        if title is not None:
+            count_ax.set_title(title)
+        if out_plot_file is not None:
+            save_plot(fig, out_plot_file, out_dpi=out_dpi)
+        return fig, np.array([count_ax, vario_ax], dtype=object)
 
 
 def standardise_img_data(img_data: np.ndarray) -> np.ndarray:

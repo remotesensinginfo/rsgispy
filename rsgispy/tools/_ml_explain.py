@@ -21,7 +21,16 @@ from rsgispy.tools._sklearn import (
     sklearn,
 )
 from rsgispy.tools.files import ensure_parent_dir
-from rsgispy.tools.plotting import PLOT_DPI, get_fig_ax, save_plot
+from rsgispy.tools.plotting import (
+    CATEGORICAL_COLOURS,
+    DIVERGING_CMAP,
+    OKABE_ITO_COLOURS,
+    PLOT_DPI,
+    get_fig_ax,
+    rsgispy_plot_style,
+    save_plot,
+    use_plot_style,
+)
 
 try:
     import scipy.stats  # pylint: disable=import-error
@@ -92,6 +101,7 @@ def finalise_plot(
         plt.close(fig)
 
 
+@use_plot_style
 def _plot_class_feature_distribution(
     data_df: pd.DataFrame,
     col_name: str,
@@ -155,6 +165,7 @@ def plot_class_feature_distributions(
     return out_files
 
 
+@use_plot_style
 def plot_correlation_heatmap(
     corr_df: pd.DataFrame,
     var_names: Optional[Sequence[str]] = None,
@@ -171,39 +182,43 @@ def plot_correlation_heatmap(
     """
     # pylint: disable=too-many-arguments
     names = list(var_names) if var_names is not None else [str(c) for c in corr_df.columns]
+    n_vars = len(names)
     if figsize is None:
-        side = max(4.0, 0.45 * len(names) + 2.0)
+        side = min(14.0, max(4.0, 0.5 * n_vars + 2.0))
         figsize = (side + 1.0, side)
-    mask = np.triu(np.ones_like(corr_df, dtype=bool))
-    fig, ax = get_fig_ax(ax, figsize=figsize)
-    if HAVE_SEABORN:
-        cmap = sns.diverging_palette(230, 20, as_cmap=True)
-        sns.heatmap(
-            corr_df,
-            mask=mask,
-            cmap=cmap,
-            vmin=-1.0,
-            vmax=1.0,
-            center=0,
-            square=True,
-            linewidths=0.5,
-            cbar_kws={"shrink": 0.5},
-            ax=ax,
-        )
+    # The lower triangle without the diagonal: rows 2..n against columns 1..n-1.
+    corr_vals = np.asarray(corr_df, dtype=float)
+    if n_vars > 1:
+        corr_vals = corr_vals[1:, :-1]
+        row_names, col_names = names[1:], names[:-1]
     else:
-        masked_vals = np.ma.array(corr_df.to_numpy(dtype=float), mask=mask)
-        im = ax.imshow(masked_vals, cmap="coolwarm", vmin=-1.0, vmax=1.0)
-        fig.colorbar(im, ax=ax, shrink=0.5)
-        ticks = range(len(names))
-        ax.set_xticks(ticks)
-        ax.set_xticklabels(names, rotation=45, ha="right")
-        ax.set_yticks(ticks)
-        ax.set_yticklabels(names)
+        row_names, col_names = names, names
+    masked_vals = np.ma.array(corr_vals, mask=np.triu(np.ones_like(corr_vals, dtype=bool), k=1))
+    fig, ax = get_fig_ax(ax, figsize=figsize)
+    im = ax.imshow(masked_vals, cmap=DIVERGING_CMAP, vmin=-1.0, vmax=1.0)
+    cbar = fig.colorbar(im, ax=ax, shrink=0.7)
+    cbar.set_label("Correlation")
+    if n_vars <= 15:
+        for r_i in range(masked_vals.shape[0]):
+            for c_i in range(r_i + 1):
+                val = corr_vals[r_i, c_i]
+                ax.text(
+                    c_i, r_i, f"{val:.2f}", ha="center", va="center", fontsize=8,
+                    color="white" if abs(val) > 0.6 else "#262626",
+                )
+    ax.set_xticks(range(len(col_names)))
+    ax.set_xticklabels(col_names, rotation=45, ha="right")
+    ax.set_yticks(range(len(row_names)))
+    ax.set_yticklabels(row_names)
+    ax.grid(False)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
     if out_plot_file is not None:
         save_plot(fig, out_plot_file, out_dpi=out_dpi)
     return fig, ax
 
 
+@use_plot_style
 def plot_jackknife_bars(
     var_names: Sequence[str],
     leave_vals: Sequence[float],
@@ -224,30 +239,34 @@ def plot_jackknife_bars(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     n_vars = len(var_names)
-    var_idx = list(range(n_vars))
-    plt_height = (0.5 * n_vars) + 1.5
-    var_idx_all = var_idx + [n_vars]
+    var_idx = np.arange(n_vars, dtype=float)
+    plt_height = max(3.0, (0.55 * n_vars) + 1.8)
     all_var_names = list(var_names) + ["All"]
 
     fig, ax = get_fig_ax(ax, figsize=(8, plt_height))
-    ax.barh(var_idx, leave_vals, height=0.8, color="#1E88E5", label="Without Var")
-    ax.barh(var_idx, only_vals, height=0.8, color="#FFC107", label="Only Var")
-    ax.barh([n_vars], [all_val], height=0.8, color="#D81B60", label="All Vars")
-    ax.set_yticks(var_idx_all, labels=all_var_names)
+    bar_h = 0.4
+    ax.barh(var_idx + bar_h / 2, leave_vals, height=bar_h,
+            color=CATEGORICAL_COLOURS[0], label="Without variable")
+    ax.barh(var_idx - bar_h / 2, only_vals, height=bar_h,
+            color=CATEGORICAL_COLOURS[3], label="Only variable")
+    ax.barh([n_vars], [all_val], height=2 * bar_h,
+            color=CATEGORICAL_COLOURS[1], label="All variables")
+    ax.set_yticks(list(var_idx) + [n_vars], labels=all_var_names)
+    ax.grid(axis="y", visible=False)
     ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.legend(
         loc="upper center",
-        bbox_to_anchor=(0.5, -0.11),
-        fancybox=True,
-        shadow=False,
+        bbox_to_anchor=(0.5, -0.72 / plt_height),
         ncol=3,
+        frameon=False,
     )
     if out_plot_file is not None:
         save_plot(fig, out_plot_file, out_dpi=out_dpi)
     return fig, ax
 
 
+@use_plot_style
 def plot_feature_importance_bars(
     features: Sequence[str],
     importances: Sequence[float],
@@ -281,10 +300,12 @@ def plot_feature_importance_bars(
         y_pos,
         sorted_vals,
         xerr=sorted_errs,
-        color="#1E88E5",
-        ecolor="#0D47A1",
+        color=CATEGORICAL_COLOURS[0],
+        ecolor="#262626",
         capsize=3,
+        height=0.7,
     )
+    ax.grid(axis="y", visible=False)
     ax.set_yticks(y_pos)
     ax.set_yticklabels(sorted_feats)
     ax.set_title(title)
@@ -735,6 +756,7 @@ def _shap_col_importances(
     )
 
 
+@use_plot_style
 def _plot_boruta_shap_boxplots(
     history: Mapping[str, Sequence[float]],
     status: Mapping[str, str],
@@ -759,11 +781,11 @@ def _plot_boruta_shap_boxplots(
         entries.append(("ShadowMax", list(shadow_max_hist), "ShadowMax"))
 
     colour_map = {
-        "Confirmed": "#2E7D32",
-        "Tentative": "#F9A825",
-        "Rejected": "#C62828",
-        "ShadowMean": "#64B5F6",
-        "ShadowMax": "#1565C0",
+        "Confirmed": OKABE_ITO_COLOURS["bluish_green"],
+        "Tentative": OKABE_ITO_COLOURS["orange"],
+        "Rejected": OKABE_ITO_COLOURS["vermillion"],
+        "ShadowMean": "#bdbdbd",
+        "ShadowMax": "#737373",
     }
 
     fig_height = max(3.5, 0.45 * len(entries) + 1.5)
@@ -787,8 +809,20 @@ def _plot_boruta_shap_boxplots(
         median.set_color("#111111")
         median.set_linewidth(1.4)
 
-    ax.set_xlabel("Mean |SHAP| Importance")
-    ax.set_title("BorutaShap Feature Importance Distributions")
+    from matplotlib.patches import Patch  # pylint: disable=import-outside-toplevel
+
+    present = []
+    for _, _, dec in entries:
+        if dec not in present:
+            present.append(dec)
+    ax.legend(
+        handles=[Patch(facecolor=colour_map.get(dec, "#90A4AE"), label=dec) for dec in present],
+        loc="lower right",
+        title="Decision",
+    )
+    ax.grid(axis="y", visible=False)
+    ax.set_xlabel("Mean |SHAP| importance")
+    ax.set_title("BorutaShap feature importance")
     return fig, ax
 
 
@@ -1022,6 +1056,7 @@ def _eval_feature_response(
     return np.mean(reshaped, axis=0)
 
 
+@use_plot_style
 def _plot_single_feature_response(
     feat: str,
     x_plot_vals: np.ndarray,
@@ -1070,7 +1105,7 @@ def _plot_single_feature_response(
                     ax.scatter(
                         x_df[feat].to_numpy(),
                         observed_y_df[lbl].to_numpy(),
-                        color="#90CAF9",
+                        color=OKABE_ITO_COLOURS["sky_blue"],
                         alpha=0.35,
                         s=14,
                         edgecolors="none",
@@ -1079,12 +1114,11 @@ def _plot_single_feature_response(
                 ax.plot(
                     x_plot_vals,
                     preds_2d[:, out_idx],
-                    color="#1E88E5",
+                    color=CATEGORICAL_COLOURS[0],
                     linewidth=2.0,
                     label="Predicted Response",
                 )
                 ax.set_ylabel(lbl)
-                ax.grid(alpha=0.25)
                 if p_i == 0:
                     ax.set_title(f"{feat} Response Functions")
                 if plot_samples:
@@ -1106,7 +1140,7 @@ def _plot_single_feature_response(
                 ax.scatter(
                     x_df[feat].to_numpy(),
                     observed_y_df[single_lbl].to_numpy(),
-                    color="#90CAF9",
+                    color=OKABE_ITO_COLOURS["sky_blue"],
                     alpha=0.35,
                     s=14,
                     edgecolors="none",
@@ -1137,7 +1171,6 @@ def _plot_single_feature_response(
                 not multi_panel and output_labels
             ):
                 ax.legend(loc="best")
-        fig.tight_layout()
     finally:
         finalise_plot(fig, out_file=out_plot_path)
 
@@ -1276,106 +1309,103 @@ def run_variable_response_curves(
                 plot_samples=plot_samples,
             )
 
-    if out_grid_plot is not None and cached_curves:
-        n_feats = len(cached_curves)
-        if multi_panel and len(eff_indices) > 1:
-            n_rows = len(eff_indices)
-            n_cols = n_feats
-            fig, axes = plt.subplots(
-                n_rows,
-                n_cols,
-                figsize=(max(4.0, 3.6 * n_cols), max(3.2, 2.8 * n_rows)),
-                squeeze=False,
-            )
-            try:
-                for c_i, (feat, x_plot_vals, preds_2d) in enumerate(cached_curves):
-                    for r_i, out_idx in enumerate(eff_indices):
+    with rsgispy_plot_style():
+        if out_grid_plot is not None and cached_curves:
+            n_feats = len(cached_curves)
+            if multi_panel and len(eff_indices) > 1:
+                n_rows = len(eff_indices)
+                n_cols = n_feats
+                fig, axes = plt.subplots(
+                    n_rows,
+                    n_cols,
+                    figsize=(max(4.0, 3.6 * n_cols), max(3.2, 2.8 * n_rows)),
+                    squeeze=False,
+                )
+                try:
+                    for c_i, (feat, x_plot_vals, preds_2d) in enumerate(cached_curves):
+                        for r_i, out_idx in enumerate(eff_indices):
+                            ax = axes[r_i, c_i]
+                            lbl = (
+                                str(output_labels[out_idx])
+                                if out_idx < len(output_labels)
+                                else f"target_{out_idx}"
+                            )
+                            if (
+                                plot_samples
+                                and observed_y_df is not None
+                                and lbl in observed_y_df.columns
+                            ):
+                                ax.scatter(
+                                    x_df[feat].to_numpy(),
+                                    observed_y_df[lbl].to_numpy(),
+                                    color=OKABE_ITO_COLOURS["sky_blue"],
+                                    alpha=0.3,
+                                    s=10,
+                                    edgecolors="none",
+                                )
+                            ax.plot(x_plot_vals, preds_2d[:, out_idx], color=CATEGORICAL_COLOURS[0])
+                            if r_i == n_rows - 1:
+                                ax.set_xlabel(feat)
+                            if c_i == 0:
+                                ax.set_ylabel(lbl)
+                    fig.suptitle("Response function matrix")
+                finally:
+                    finalise_plot(fig, out_file=out_grid_plot)
+            else:
+                n_cols = min(3, n_feats)
+                n_rows = int(math.ceil(n_feats / float(n_cols)))
+                fig, axes = plt.subplots(
+                    n_rows,
+                    n_cols,
+                    figsize=(4.2 * n_cols, 3.4 * n_rows),
+                    squeeze=False,
+                )
+                try:
+                    for idx, (feat, x_plot_vals, preds_2d) in enumerate(cached_curves):
+                        r_i, c_i = divmod(idx, n_cols)
                         ax = axes[r_i, c_i]
-                        lbl = (
-                            str(output_labels[out_idx])
-                            if out_idx < len(output_labels)
-                            else f"target_{out_idx}"
+                        single_lbl = (
+                            str(output_labels[eff_indices[0]])
+                            if eff_indices and eff_indices[0] < len(output_labels)
+                            else ylabel
                         )
                         if (
                             plot_samples
                             and observed_y_df is not None
-                            and lbl in observed_y_df.columns
+                            and len(eff_indices) == 1
+                            and single_lbl in observed_y_df.columns
                         ):
                             ax.scatter(
                                 x_df[feat].to_numpy(),
-                                observed_y_df[lbl].to_numpy(),
-                                color="#90CAF9",
+                                observed_y_df[single_lbl].to_numpy(),
+                                color=OKABE_ITO_COLOURS["sky_blue"],
                                 alpha=0.3,
                                 s=10,
                                 edgecolors="none",
                             )
-                        ax.plot(x_plot_vals, preds_2d[:, out_idx], color="#1E88E5")
-                        ax.grid(alpha=0.25)
-                        if r_i == n_rows - 1:
-                            ax.set_xlabel(feat)
-                        if c_i == 0:
-                            ax.set_ylabel(lbl)
-                fig.suptitle("Response Function Matrix", y=1.01)
-                fig.tight_layout()
-            finally:
-                finalise_plot(fig, out_file=out_grid_plot)
-        else:
-            n_cols = min(3, n_feats)
-            n_rows = int(math.ceil(n_feats / float(n_cols)))
-            fig, axes = plt.subplots(
-                n_rows,
-                n_cols,
-                figsize=(4.2 * n_cols, 3.4 * n_rows),
-                squeeze=False,
-            )
-            try:
-                for idx, (feat, x_plot_vals, preds_2d) in enumerate(cached_curves):
-                    r_i, c_i = divmod(idx, n_cols)
-                    ax = axes[r_i, c_i]
-                    single_lbl = (
-                        str(output_labels[eff_indices[0]])
-                        if eff_indices and eff_indices[0] < len(output_labels)
-                        else ylabel
-                    )
-                    if (
-                        plot_samples
-                        and observed_y_df is not None
-                        and len(eff_indices) == 1
-                        and single_lbl in observed_y_df.columns
-                    ):
-                        ax.scatter(
-                            x_df[feat].to_numpy(),
-                            observed_y_df[single_lbl].to_numpy(),
-                            color="#90CAF9",
-                            alpha=0.3,
-                            s=10,
-                            edgecolors="none",
+                        for out_idx in eff_indices:
+                            lbl = (
+                                str(output_labels[out_idx])
+                                if out_idx < len(output_labels)
+                                else f"out_{out_idx}"
+                            )
+                            ax.plot(x_plot_vals, preds_2d[:, out_idx], label=lbl)
+                        ax.set_xlabel(feat)
+                        ax.set_ylabel(
+                            single_lbl
+                            if (multi_panel and len(eff_indices) == 1)
+                            else ylabel
                         )
-                    for out_idx in eff_indices:
-                        lbl = (
-                            str(output_labels[out_idx])
-                            if out_idx < len(output_labels)
-                            else f"out_{out_idx}"
-                        )
-                        ax.plot(x_plot_vals, preds_2d[:, out_idx], label=lbl)
-                    ax.set_xlabel(feat)
-                    ax.set_ylabel(
-                        single_lbl
-                        if (multi_panel and len(eff_indices) == 1)
-                        else ylabel
-                    )
-                    ax.set_title(feat)
-                    ax.grid(alpha=0.25)
-                    if ylim is not None:
-                        ax.set_ylim(list(ylim))
-                    if len(eff_indices) > 1:
-                        ax.legend(fontsize=8)
-                for idx in range(n_feats, n_rows * n_cols):
-                    r_i, c_i = divmod(idx, n_cols)
-                    axes[r_i, c_i].set_visible(False)
-                fig.tight_layout()
-            finally:
-                finalise_plot(fig, out_file=out_grid_plot)
+                        ax.set_title(feat)
+                        if ylim is not None:
+                            ax.set_ylim(list(ylim))
+                        if len(eff_indices) > 1:
+                            ax.legend(fontsize=8)
+                    for idx in range(n_feats, n_rows * n_cols):
+                        r_i, c_i = divmod(idx, n_cols)
+                        axes[r_i, c_i].set_visible(False)
+                finally:
+                    finalise_plot(fig, out_file=out_grid_plot)
 
     resp_df = pd.DataFrame(data=response_vals)
     if out_file is not None:

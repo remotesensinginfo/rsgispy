@@ -23,6 +23,7 @@ from rsgispy.mapping.elements import (
 )
 import rsgispy.tools.files
 import rsgispy.tools.plotting
+from rsgispy.tools.plotting import use_plot_style
 
 __all__ = [
     "add_contextily_basemap",
@@ -30,6 +31,7 @@ __all__ = [
 ]
 
 
+@use_plot_style(plot_type="map")
 def add_contextily_basemap(
     ax: matplotlib.axes.Axes,
     epsg_crs: int,
@@ -133,6 +135,7 @@ def _update_wmts_xml(
     tree.write(out_xml_path)
 
 
+@use_plot_style(plot_type="map")
 def create_wmts_img_map(
     ax: matplotlib.axes.Axes,
     wmts_url: str,

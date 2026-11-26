@@ -27,6 +27,7 @@ from rsgispy.mapping.legend import (
     add_categorical_legend_axis,
 )
 import rsgispy.tools.plotting
+from rsgispy.tools.plotting import use_plot_style
 
 __all__ = [
     "create_raster_img_map",
@@ -52,6 +53,7 @@ def _read_raster_map_meta(
     return img_bbox, epsg_code, nodata_val
 
 
+@use_plot_style(plot_type="map")
 def create_raster_img_map(
     ax: matplotlib.axes.Axes,
     input_img: str,
@@ -198,6 +200,7 @@ def create_raster_img_map(
     return img_artist
 
 
+@use_plot_style(plot_type="map")
 def create_thematic_raster_map(
     ax: matplotlib.axes.Axes,
     input_img: Union[str, List[str]],
@@ -419,6 +422,7 @@ def create_thematic_raster_map(
     return img_artists
 
 
+@use_plot_style(plot_type="map")
 def create_raster_cmap_img_map(
     ax: matplotlib.axes.Axes,
     input_img: str,

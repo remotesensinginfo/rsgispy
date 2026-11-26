@@ -44,7 +44,13 @@ from rsgispy.imageprocess import (
 )
 from rsgispy.imageutils.stats import pop_img_stats, pop_thmt_img_stats
 from rsgispy.tools._ml_explain import finalise_plot
-from rsgispy.tools.plotting import PLOT_DPI, get_fig_ax, save_plot
+from rsgispy.tools.plotting import (
+    PLOT_DPI,
+    REF_LINE_COLOUR,
+    get_fig_ax,
+    save_plot,
+    use_plot_style,
+)
 from rsgispy.tools._sklearn import (
     HAVE_SKLEARN,
     check_sklearn_available as _check_sklearn_available,
@@ -540,6 +546,7 @@ def calc_binary_threshold(
     return float(thresholds[best_idx])
 
 
+@use_plot_style
 def plot_roc_curve(
     fpr: Union[np.ndarray, Sequence[float]],
     tpr: Union[np.ndarray, Sequence[float]],
@@ -589,11 +596,13 @@ def plot_roc_curve(
         )
     fig, ax = get_fig_ax(ax, figsize=figsize)
     ax.plot(fpr_arr, tpr_arr, label=f"{label} (AUC = {roc_auc:.3f})")
-    ax.plot([0.0, 1.0], [0.0, 1.0], linestyle="--", color="grey")
+    ax.plot([0.0, 1.0], [0.0, 1.0], linestyle="--", color=REF_LINE_COLOUR,
+            linewidth=1.0, label="Random model")
     ax.set_xlim([0.0, 1.0])
-    ax.set_ylim([0.0, 1.05])
-    ax.set_xlabel("False Positive Rate")
-    ax.set_ylabel("True Positive Rate")
+    ax.set_ylim([0.0, 1.02])
+    ax.set_aspect("equal")
+    ax.set_xlabel("False positive rate (1 - specificity)")
+    ax.set_ylabel("True positive rate (sensitivity)")
     ax.set_title(title)
     ax.legend(loc="lower right")
     if out_plot_file is not None:

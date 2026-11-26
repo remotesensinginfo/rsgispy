@@ -571,7 +571,7 @@ def plot_endmembers(
         )
     """
     # pylint: disable=too-many-arguments,too-many-locals,import-outside-toplevel
-    from rsgispy.tools.plotting import get_fig_ax, save_plot
+    from rsgispy.tools.plotting import get_fig_ax, rsgispy_plot_style, save_plot
 
     df = coerce_endmembers_df(endmembers, gain=gain, file_format=file_format)
     n_bands, n_endmembers = df.shape
@@ -601,19 +601,20 @@ def plot_endmembers(
         x_vals = list(range(n_bands))
         x_axis_lbl = "Band"
 
-    arr = df.to_numpy(dtype=np.float64)
-    fig, ax = get_fig_ax(ax, figsize=figsize)
-    for i in range(n_endmembers):
-        ax.plot(x_vals, arr[:, i], label=labels[i])
+    with rsgispy_plot_style():
+        arr = df.to_numpy(dtype=np.float64)
+        fig, ax = get_fig_ax(ax, figsize=figsize)
+        for i in range(n_endmembers):
+            ax.plot(x_vals, arr[:, i], label=labels[i], marker="o", markersize=3.5)
 
-    if plot_title is not None:
-        ax.set_title(plot_title)
-    ax.set_xlabel(x_axis_lbl)
-    ax.set_ylabel(y_label)
-    ax.legend()
-    if out_plot_file is not None:
-        save_plot(fig, out_plot_file, out_dpi=out_dpi)
-    return fig, ax
+        if plot_title is not None:
+            ax.set_title(plot_title)
+        ax.set_xlabel(x_axis_lbl)
+        ax.set_ylabel(y_label)
+        ax.legend(title="Endmember")
+        if out_plot_file is not None:
+            save_plot(fig, out_plot_file, out_dpi=out_dpi)
+        return fig, ax
 
 
 def are_endmembers_equal(

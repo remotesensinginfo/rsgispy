@@ -11,6 +11,12 @@ from matplotlib.offsetbox import AnchoredOffsetbox
 
 import rsgispy
 
+#: Shared style of the boxes behind map elements (scale bar, north arrow,
+#: legends, panel labels).
+MAP_BOX_ALPHA = 0.9
+MAP_BOX_EDGE_COLOUR = "#cccccc"
+MAP_BOX_EDGE_WIDTH = 0.6
+
 _POLY_GEOM_TYPES = ("Polygon", "MultiPolygon")
 _LINE_GEOM_TYPES = ("LineString", "MultiLineString", "LinearRing")
 _POINT_GEOM_TYPES = ("Point", "MultiPoint")
@@ -70,7 +76,7 @@ def add_map_colour_bar(
     ``mappable.colorbar``.
     """
     fig = ax.get_figure()
-    cbar = fig.colorbar(mappable, ax=ax, shrink=0.85, pad=0.02)
+    cbar = fig.colorbar(mappable, ax=ax, shrink=0.85, pad=0.07)
     if cbar_label is not None:
         cbar.set_label(cbar_label)
     return cbar

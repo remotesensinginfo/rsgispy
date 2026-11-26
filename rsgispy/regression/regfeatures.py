@@ -55,7 +55,7 @@ from rsgispy.tools.featureselection import (
     cqv_threshold,
 )
 from rsgispy.tools.files import ensure_parent_dir
-from rsgispy.tools.plotting import get_fig_ax
+from rsgispy.tools.plotting import CATEGORICAL_COLOURS, get_fig_ax, use_plot_style
 
 __all__ = [
     "target_scatter_plots",
@@ -162,6 +162,7 @@ def _predict_1d_target(
 # ---------------------------------------------------------------------------
 
 
+@use_plot_style
 def _plot_target_scatter(
     x_vals: np.ndarray,
     y_vals: np.ndarray,
@@ -176,10 +177,9 @@ def _plot_target_scatter(
     ax.scatter(
         x_vals,
         y_vals,
-        color="#1E88E5",
-        alpha=0.55,
-        s=20,
-        edgecolors="none",
+        color=CATEGORICAL_COLOURS[0],
+        alpha=0.6,
+        s=18,
     )
     r_val = 0.0
     if np.std(x_vals) > 0.0 and np.std(y_vals) > 0.0:
@@ -192,16 +192,14 @@ def _plot_target_scatter(
         ax.plot(
             x_line,
             slope * x_line + intercept,
-            color="#D81B60",
+            color=CATEGORICAL_COLOURS[1],
             linestyle="--",
-            linewidth=1.8,
             label=f"Trend (r = {r_val:.3f})",
         )
         ax.legend(loc="best")
     ax.set_xlabel(f_col)
     ax.set_ylabel(t_col)
-    ax.set_title(f"{f_col} vs {t_col} (r = {r_val:.3f})")
-    ax.grid(alpha=0.25)
+    ax.set_title(f"{t_col} against {f_col} (r = {r_val:.3f})")
     return fig, ax
 
 

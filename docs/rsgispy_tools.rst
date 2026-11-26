@@ -58,7 +58,20 @@ a notebook, call the plotting function on the returned data, e.g.
 :func:`~rsgispy.classification.classfeatures.comparison_box_plots`) save and
 close each figure and return the list of files written.
 
-**Writing a new plotting function** in rsgispy: get the figure with
+**House style.** Every plotting function applies the rsgispy house style
+(:func:`~rsgispy.tools.plotting.get_plot_style_rc`) with
+:func:`matplotlib.rc_context` while it runs, so your global ``rcParams`` are
+never changed (importing rsgispy changes nothing either). Use
+:func:`~rsgispy.tools.plotting.rsgispy_plot_style` to draw your own plots
+in the same style; the colours are
+:data:`~rsgispy.tools.plotting.CATEGORICAL_COLOURS` (Okabe–Ito),
+:data:`~rsgispy.tools.plotting.SEQUENTIAL_CMAP` and
+:data:`~rsgispy.tools.plotting.DIVERGING_CMAP`. The :doc:`guides/plot_gallery`
+shows every plot.
+
+**Writing a new plotting function** in rsgispy: decorate it with
+:func:`~rsgispy.tools.plotting.use_plot_style` (``plot_type="map"`` for maps
+and map elements), get the figure with
 :func:`~rsgispy.tools.plotting.get_fig_ax` or
 :func:`~rsgispy.tools.plotting.get_fig_axs`, save with
 :func:`~rsgispy.tools.plotting.save_plot`, return ``(fig, ax)``, and add a
@@ -68,6 +81,7 @@ case to ``tests/test_plotting_convention.py``.
 
    import rsgispy.tools.plotting as rplot
 
+   @rplot.use_plot_style
    def plot_values(vals, *, title=None, figsize=(6.4, 4.2), ax=None,
                    out_plot_file=None, out_dpi=rplot.PLOT_DPI):
        fig, ax = rplot.get_fig_ax(ax, figsize=figsize)
@@ -123,7 +137,7 @@ Geometry, Projections, UTM & Tile Caches
 Visualisation & Imaging
 -----------------------
 
-* :doc:`tools/plotting` — Reading raster arrays and applying image stretches for Matplotlib.
+* :doc:`tools/plotting` — The house plot style, figure and saving helpers, raster arrays and image stretches for Matplotlib.
 * :doc:`tools/colours` — Hex and RGB colour conversions.
 * :doc:`tools/imaging` — GIF animations, EXIF reading, PDF image extraction, and QR codes.
 * :doc:`tools/wmts` — Querying WMTS capabilities and downloading WMTS imagery.

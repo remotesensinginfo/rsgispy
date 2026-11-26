@@ -1,17 +1,32 @@
 """
-The tools.plotting module provides the helpers every rsgispy plotting
-function uses (:func:`get_fig_ax`, :func:`get_fig_axs`, :func:`save_plot`
-and :func:`add_stats_text_box`), functions for reading raster data into
-NumPy arrays and applying image stretches for visualisation with Matplotlib,
-and generic plots (:func:`plot_histogram_threshold`).
+The tools.plotting module provides the rsgispy house plot style
+(:func:`rsgispy_plot_style`, :func:`use_plot_style`) and the helpers every
+rsgispy plotting function uses (:func:`get_fig_ax`, :func:`get_fig_axs`,
+:func:`save_plot` and :func:`add_stats_text_box`), functions for reading
+raster data into NumPy arrays and applying image stretches for visualisation
+with Matplotlib, and generic plots (:func:`plot_histogram_threshold`).
 
 See :ref:`plotting_conventions` for the conventions every rsgispy plotting
 function follows.
 """
 
+import contextlib
+import functools
 import math
 import os
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeVar,
+    Union,
+)
 
 import matplotlib
 from matplotlib.patches import Patch
@@ -25,7 +40,15 @@ import rsgispy
 from rsgispy.imageprocess import ensure_file_exists
 
 __all__ = [
+    "OKABE_ITO_COLOURS",
+    "CATEGORICAL_COLOURS",
+    "SEQUENTIAL_CMAP",
+    "DIVERGING_CMAP",
     "PLOT_DPI",
+    "REF_LINE_COLOUR",
+    "get_plot_style_rc",
+    "rsgispy_plot_style",
+    "use_plot_style",
     "get_fig_ax",
     "get_fig_axs",
     "save_plot",
@@ -40,11 +63,199 @@ __all__ = [
     "plot_histogram_threshold",
 ]
 
+#: The Okabe-Ito colour-blind-safe palette (Okabe and Ito, 2008), by name.
+OKABE_ITO_COLOURS: Dict[str, str] = {
+    "black": "#000000",
+    "orange": "#E69F00",
+    "sky_blue": "#56B4E9",
+    "bluish_green": "#009E73",
+    "yellow": "#F0E442",
+    "blue": "#0072B2",
+    "vermillion": "#D55E00",
+    "reddish_purple": "#CC79A7",
+}
+
+#: The colour cycle for categories: the Okabe-Ito colours, ordered so the
+#: first ones are the most distinct. The first colour is used for a single
+#: series and the second for reference or fitted lines.
+CATEGORICAL_COLOURS: List[str] = [
+    OKABE_ITO_COLOURS["blue"],
+    OKABE_ITO_COLOURS["vermillion"],
+    OKABE_ITO_COLOURS["bluish_green"],
+    OKABE_ITO_COLOURS["orange"],
+    OKABE_ITO_COLOURS["reddish_purple"],
+    OKABE_ITO_COLOURS["sky_blue"],
+    OKABE_ITO_COLOURS["yellow"],
+    OKABE_ITO_COLOURS["black"],
+]
+
+#: Default colour map for sequential data.
+SEQUENTIAL_CMAP = "viridis"
+#: Default colour map for differences and residuals (centre it on zero).
+DIVERGING_CMAP = "RdBu_r"
 #: Default resolution (dots per inch) of saved plots.
 PLOT_DPI = 300
 
 #: Colour of 1:1 and zero reference lines.
 REF_LINE_COLOUR = "#4d4d4d"
+
+_PLOT_TYPES = ("chart", "map")
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def get_plot_style_rc(plot_type: str = "chart") -> Dict[str, Any]:
+    """
+    Get the Matplotlib ``rcParams`` of the rsgispy house plot style, as
+    applied by :func:`rsgispy_plot_style`.
+
+    The style uses font sizes readable at the default figure sizes, the
+    colour-blind-safe :data:`CATEGORICAL_COLOURS` cycle, ``viridis`` for
+    images, constrained layout (so labels, colour bars and legends do not
+    overlap or clip) and legends with a light frame. Charts
+    (``plot_type="chart"``) have light grid lines and no top or right spines;
+    maps (``plot_type="map"``) keep all four spines and have no grid.
+
+    :param plot_type: ``'chart'`` (Default) or ``'map'``.
+    :return: Dictionary of ``rcParams`` values.
+
+    .. code:: python
+
+        import rsgispy.tools.plotting as rplot
+
+        map_rc = rplot.get_plot_style_rc("map")
+    """
+    if plot_type not in _PLOT_TYPES:
+        raise rsgispy.RSGISPyException(
+            f"plot_type must be one of {_PLOT_TYPES}, not '{plot_type}'."
+        )
+    is_chart = plot_type == "chart"
+    return {
+        "figure.constrained_layout.use": True,
+        "figure.facecolor": "white",
+        "figure.titlesize": 13,
+        "figure.titleweight": "bold",
+        "font.size": 10,
+        "axes.titlesize": 11.5,
+        "axes.titleweight": "bold",
+        "axes.titlepad": 8.0,
+        "axes.labelsize": 10.5,
+        "axes.labelcolor": "#262626",
+        "axes.edgecolor": "#4d4d4d",
+        "axes.linewidth": 0.8,
+        "axes.facecolor": "white",
+        "axes.axisbelow": True,
+        "axes.spines.top": not is_chart,
+        "axes.spines.right": not is_chart,
+        "axes.grid": is_chart,
+        "axes.prop_cycle": matplotlib.cycler(color=CATEGORICAL_COLOURS),
+        "grid.color": "#dddddd",
+        "grid.linewidth": 0.6,
+        "grid.alpha": 1.0,
+        "xtick.labelsize": 9,
+        "ytick.labelsize": 9,
+        "xtick.color": "#4d4d4d",
+        "ytick.color": "#4d4d4d",
+        "xtick.labelcolor": "#262626",
+        "ytick.labelcolor": "#262626",
+        "legend.fontsize": 9,
+        "legend.title_fontsize": 9.5,
+        "legend.frameon": True,
+        "legend.framealpha": 0.9,
+        "legend.edgecolor": "#cccccc",
+        "legend.fancybox": False,
+        "lines.linewidth": 1.6,
+        "lines.markersize": 5.0,
+        "patch.linewidth": 0.6,
+        "scatter.edgecolors": "none",
+        "image.cmap": SEQUENTIAL_CMAP,
+        "savefig.dpi": PLOT_DPI,
+        "savefig.bbox": "tight",
+        "savefig.facecolor": "white",
+    }
+
+
+@contextlib.contextmanager
+def rsgispy_plot_style(
+    plot_type: str = "chart",
+    rc: Optional[Mapping[str, Any]] = None,
+) -> Iterator[None]:
+    """
+    Context manager applying the rsgispy house plot style
+    (:func:`get_plot_style_rc`) with :func:`matplotlib.rc_context`. The
+    previous ``rcParams`` are restored on exit, so the style never changes
+    the global Matplotlib settings. Every rsgispy plotting function applies
+    it internally (see :func:`use_plot_style`); use it to give your own plots
+    the same look.
+
+    The layout, spines, grid and colour cycle of a figure or axis are fixed
+    when it is created, so create them inside the context.
+
+    :param plot_type: ``'chart'`` (Default) or ``'map'`` (all spines, no grid).
+    :param rc: Optional ``rcParams`` overriding the house style.
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import rsgispy.tools.plotting as rplot
+
+        with rplot.rsgispy_plot_style():
+            fig, ax = plt.subplots()
+            ax.plot([0, 1, 2], [0, 1, 4], label="Data")
+            ax.legend()
+        rplot.save_plot(fig, "my_plot.png")
+    """
+    style_rc = get_plot_style_rc(plot_type)
+    if rc is not None:
+        style_rc.update(dict(rc))
+    with matplotlib.rc_context(rc=style_rc):
+        yield
+
+
+def use_plot_style(func: Optional[_F] = None, *, plot_type: str = "chart") -> Any:
+    """
+    Decorator running the decorated function inside
+    :func:`rsgispy_plot_style`, so a plotting function applies the house
+    style without changing the user's ``rcParams``. Use it on every rsgispy
+    plotting function: ``plot_type="chart"`` for plots and
+    ``plot_type="map"`` for functions that draw maps or map elements.
+
+    :param func: Function to decorate (when used without arguments).
+    :param plot_type: ``'chart'`` (Default) or ``'map'``.
+    :return: The decorated function, or a decorator when ``func`` is ``None``.
+
+    .. code:: python
+
+        import rsgispy.tools.plotting as rplot
+
+        @rplot.use_plot_style
+        def plot_my_values(vals, ax=None, out_plot_file=None, out_dpi=300):
+            fig, ax = rplot.get_fig_ax(ax, figsize=(6.0, 4.0))
+            ax.plot(vals)
+            if out_plot_file is not None:
+                rplot.save_plot(fig, out_plot_file, out_dpi=out_dpi)
+            return fig, ax
+
+        @rplot.use_plot_style(plot_type="map")
+        def add_my_layer(ax):
+            ...
+    """
+    if plot_type not in _PLOT_TYPES:
+        raise rsgispy.RSGISPyException(
+            f"plot_type must be one of {_PLOT_TYPES}, not '{plot_type}'."
+        )
+
+    def _decorate(in_func: _F) -> _F:
+        @functools.wraps(in_func)
+        def _wrapper(*args: Any, **kwargs: Any) -> Any:
+            with rsgispy_plot_style(plot_type=plot_type):
+                return in_func(*args, **kwargs)
+
+        return _wrapper  # type: ignore[return-value]
+
+    if func is not None:
+        return _decorate(func)
+    return _decorate
 
 
 def get_fig_ax(
@@ -853,13 +1064,15 @@ def stdev_stretch_np_arr(
     )
 
 
+@use_plot_style
 def plot_histogram_threshold(
     data: np.ndarray,
     threshold: Optional[float] = None,
     *,
     title_str: Optional[str] = None,
     x_label: Optional[str] = None,
-    hist_clr: str = "gray",
+    hist_clr: str = "#9a9a9a",
+    threshold_label: Optional[str] = None,
     n_bins: Optional[int] = None,
     figsize: Tuple[float, float] = (6.4, 4.2),
     ax: Optional[Any] = None,
@@ -875,7 +1088,10 @@ def plot_histogram_threshold(
     :param threshold: Optional threshold value drawn as a vertical line.
     :param title_str: Optional plot title.
     :param x_label: Optional x-axis label (Default = ``'Value'``).
-    :param hist_clr: Colour of the histogram bars (Default = ``'gray'``).
+    :param hist_clr: Colour of the histogram bars (Default = ``'#9a9a9a'``,
+                     a mid grey).
+    :param threshold_label: Legend label of the threshold line (Default =
+                            ``'Threshold = <value>'``).
     :param n_bins: Number of histogram bins (estimated with the
                    Freedman-Diaconis rule if ``None``).
     :param figsize: Size of a new figure in inches (Default = ``(6.4, 4.2)``).
@@ -915,9 +1131,21 @@ def plot_histogram_threshold(
             n_bins = min(50, max(1, int(data_arr.size)))
 
     fig, ax = get_fig_ax(ax, figsize=figsize)
-    ax.hist(data_arr, bins=n_bins, color=hist_clr)
+    ax.hist(data_arr, bins=n_bins, color=hist_clr, edgecolor="none")
+    ax.grid(axis="x", visible=False)
     if threshold is not None:
-        ax.axvline(x=threshold, color="red")
+        ax.axvline(
+            x=threshold,
+            color=OKABE_ITO_COLOURS["vermillion"],
+            linestyle="--",
+            linewidth=1.8,
+            label=(
+                threshold_label
+                if threshold_label is not None
+                else f"Threshold = {threshold:.3g}"
+            ),
+        )
+        ax.legend(loc="upper right")
     if title_str is not None:
         ax.set_title(title_str)
     ax.set_xlabel(x_label if x_label is not None else "Value")

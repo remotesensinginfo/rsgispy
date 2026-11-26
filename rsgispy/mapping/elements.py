@@ -17,13 +17,20 @@ from matplotlib.offsetbox import (
 )
 from matplotlib.patches import Polygon, Rectangle
 from matplotlib.text import Text
+from matplotlib.ticker import MaxNLocator
 from matplotlib.transforms import Affine2D
 import numpy as np
 import pyproj
 import pyproj.exceptions
 
 import rsgispy
-from rsgispy.mapping._common import resolve_mpl_location
+from rsgispy.mapping._common import (
+    MAP_BOX_ALPHA,
+    MAP_BOX_EDGE_COLOUR,
+    MAP_BOX_EDGE_WIDTH,
+    resolve_mpl_location,
+)
+from rsgispy.tools.plotting import use_plot_style
 
 #: Scale bar style: solid horizontal bar (default).
 SCALEBAR_STYLE_SOLID = "solid"
@@ -255,7 +262,7 @@ class MapScaleBar(AnchoredOffsetbox):
         colour: str = "black",
         alt_colour: str = "white",
         box_colour: str = "white",
-        box_alpha: float = 0.8,
+        box_alpha: float = MAP_BOX_ALPHA,
         frameon: bool = True,
         font_size: float = 9.0,
         bar_height: float = 5.0,
@@ -293,7 +300,8 @@ class MapScaleBar(AnchoredOffsetbox):
         if frameon:
             self.patch.set_facecolor(box_colour)
             self.patch.set_alpha(box_alpha)
-            self.patch.set_edgecolor("none")
+            self.patch.set_edgecolor(MAP_BOX_EDGE_COLOUR)
+            self.patch.set_linewidth(MAP_BOX_EDGE_WIDTH)
         self._populate_drawing(est_pts)
 
     def _estimate_initial_bar_pts(self) -> float:
@@ -480,7 +488,7 @@ class MapNorthArrow(AnchoredOffsetbox):
         label: str = "N",
         font_size: float = 10.0,
         box_colour: str = "white",
-        box_alpha: float = 0.8,
+        box_alpha: float = MAP_BOX_ALPHA,
         frameon: bool = True,
         pad: float = 0.4,
         borderpad: float = 0.5,
@@ -531,7 +539,8 @@ class MapNorthArrow(AnchoredOffsetbox):
         if frameon:
             self.patch.set_facecolor(box_colour)
             self.patch.set_alpha(box_alpha)
-            self.patch.set_edgecolor("none")
+            self.patch.set_edgecolor(MAP_BOX_EDGE_COLOUR)
+            self.patch.set_linewidth(MAP_BOX_EDGE_WIDTH)
 
 
 def _rotate_points(
@@ -648,6 +657,7 @@ def _build_north_arrow_drawing(
     return da
 
 
+@use_plot_style(plot_type="map")
 def add_scale_bar(
     ax: matplotlib.axes.Axes,
     epsg_code: Optional[int] = None,
@@ -662,7 +672,7 @@ def add_scale_bar(
     colour: str = "black",
     alt_colour: str = "white",
     box_colour: str = "white",
-    box_alpha: float = 0.8,
+    box_alpha: float = MAP_BOX_ALPHA,
     frameon: bool = True,
     font_size: float = 9.0,
     bar_height: float = 5.0,
@@ -695,7 +705,7 @@ def add_scale_bar(
     :param colour: Primary bar/text colour (Default = ``'black'``).
     :param alt_colour: Secondary segment colour for alternating style (Default = ``'white'``).
     :param box_colour: Background box fill colour (Default = ``'white'``).
-    :param box_alpha: Background box opacity (Default = 0.8).
+    :param box_alpha: Background box opacity (Default = 0.9).
     :param frameon: Whether to draw a background box behind the scale bar (Default = True).
     :param font_size: Label font size in points (Default = 9.0).
     :param bar_height: Bar height in points (Default = 5.0).
@@ -801,6 +811,7 @@ def add_scale_bar(
     return artist
 
 
+@use_plot_style(plot_type="map")
 def add_north_arrow(
     ax: matplotlib.axes.Axes,
     loc: str = "upper left",
@@ -811,7 +822,7 @@ def add_north_arrow(
     label: str = "N",
     font_size: float = 10.0,
     box_colour: str = "white",
-    box_alpha: float = 0.8,
+    box_alpha: float = MAP_BOX_ALPHA,
     frameon: bool = True,
     pad: float = 0.4,
     borderpad: float = 0.5,
@@ -832,7 +843,7 @@ def add_north_arrow(
     :param label: Label drawn above the arrow symbol (Default = ``'N'``).
     :param font_size: Label font size in points (Default = 10.0).
     :param box_colour: Background box fill colour (Default = ``'white'``).
-    :param box_alpha: Background box opacity (Default = 0.8).
+    :param box_alpha: Background box opacity (Default = 0.9).
     :param frameon: Whether to draw a background box (Default = True).
     :param pad: Internal box padding (Default = 0.4).
     :param borderpad: Margin between box and axis edges (Default = 0.5).
@@ -904,9 +915,14 @@ def _finalise_map_axis(
     """Apply common map formatting options (grid, axis, scale bar, north arrow, title)."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     if use_grid:
-        ax.grid()
+        ax.grid(color="#d9d9d9", linewidth=0.6)
     if not show_map_axis:
         ax.set_axis_off()
+    else:
+        # Projected coordinates have long tick labels: keep few enough not to overlap.
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
+        ax.tick_params(labelsize=8)
     if show_scale_bar:
         add_scale_bar(
             ax=ax,
@@ -926,6 +942,7 @@ def _finalise_map_axis(
         ax.set_title(title_str)
 
 
+@use_plot_style(plot_type="map")
 def draw_bboxes_to_axis(
     ax: matplotlib.axes.Axes,
     bboxes: Sequence[Tuple[float, float, float, float]],
@@ -1037,6 +1054,7 @@ def draw_bboxes_to_axis(
     return rects
 
 
+@use_plot_style(plot_type="map")
 def add_axis_label(
     ax: matplotlib.axes.Axes,
     lbl_text: str,
@@ -1077,5 +1095,11 @@ def add_axis_label(
         fontsize=lbl_font_size,
         ha="left",
         va="top",
-        bbox={"facecolor": fill_clr, "edgecolor": "none", "pad": padding},
+        bbox={
+            "facecolor": fill_clr,
+            "edgecolor": MAP_BOX_EDGE_COLOUR,
+            "linewidth": MAP_BOX_EDGE_WIDTH,
+            "alpha": MAP_BOX_ALPHA,
+            "pad": padding,
+        },
     )

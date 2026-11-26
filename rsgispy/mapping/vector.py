@@ -13,6 +13,7 @@ import matplotlib.colors
 
 import rsgispy
 from rsgispy.mapping._common import add_map_colour_bar, plot_vec_lyr_by_geom_type
+from rsgispy.tools.plotting import use_plot_style
 from rsgispy.mapping.elements import (
     NORTH_ARROW_STYLE_TRIANGLE,
     SCALEBAR_STYLE_SOLID,
@@ -57,6 +58,7 @@ def _resolve_layer_param(
     return param
 
 
+@use_plot_style(plot_type="map")
 def create_vec_lyr_map(
     ax: matplotlib.axes.Axes,
     gp_vecs: Union[
@@ -208,6 +210,7 @@ def create_vec_lyr_map(
     return list(ax.collections[n_colls_start:])
 
 
+@use_plot_style(plot_type="map")
 def create_choropleth_vec_lyr_map(
     ax: matplotlib.axes.Axes,
     gp_vec: gpd.GeoDataFrame,
@@ -345,6 +348,7 @@ def create_choropleth_vec_lyr_map(
     return coll
 
 
+@use_plot_style(plot_type="map")
 def create_vec_pt_density_map(
     ax: matplotlib.axes.Axes,
     gp_vec: gpd.GeoDataFrame,

@@ -11,6 +11,7 @@ from matplotlib import ticker
 from rasterio.warp import transform_bounds
 
 import rsgispy
+from rsgispy.tools.plotting import use_plot_style
 from rsgispy.mapping._common import (
     plot_vec_lyr_by_geom_type,
     resolve_mpl_location,
@@ -229,6 +230,7 @@ def _calc_inset_bounds(
     return norm_loc, bounds
 
 
+@use_plot_style(plot_type="map")
 def add_overview_maps(
     ax: matplotlib.axes.Axes,
     overview_lyr: gpd.GeoDataFrame,

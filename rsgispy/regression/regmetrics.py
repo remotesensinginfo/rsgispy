@@ -26,7 +26,7 @@ from rsgispy.tools._ml_data import (
     resolve_rng,
     summarise_bootstrap_interval,
 )
-from rsgispy.tools.plotting import PLOT_DPI, get_fig_axs, save_plot
+from rsgispy.tools.plotting import PLOT_DPI, get_fig_axs, save_plot, use_plot_style
 from rsgispy.tools.files import ensure_parent_dir
 import rsgispy.tools.jsonio
 from rsgispy.vector.attrs import write_vec_column_to_layer
@@ -596,6 +596,7 @@ def _prepare_2d_eval_arrays(
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
+@use_plot_style
 def plot_pred_vs_obs(
     in_data: Union[VectorInput, pd.DataFrame, str, os.PathLike],
     vec_lyr: Optional[str] = None,
@@ -728,6 +729,7 @@ def plot_pred_vs_obs(
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
+@use_plot_style
 def plot_residuals(
     in_data: Union[VectorInput, pd.DataFrame, str, os.PathLike],
     vec_lyr: Optional[str] = None,

@@ -30,11 +30,12 @@ from rsgispy.tools.featureselection import (
     lassolars_feature_selection,
 )
 from rsgispy.tools.files import ensure_parent_dir
-from rsgispy.tools.plotting import get_fig_ax
+from rsgispy.tools.plotting import CATEGORICAL_COLOURS, get_fig_ax, use_plot_style
 
 _VALID_CORR_METHODS = {"pearson", "spearman", "kendall"}
 
 
+@use_plot_style
 def _plot_rfecv_scores(
     n_feats: np.ndarray,
     mean_scores: np.ndarray,
@@ -43,16 +44,16 @@ def _plot_rfecv_scores(
 ) -> Tuple[Any, Any]:
     """Plot the RFECV cross-validation score against the number of features."""
     fig, ax = get_fig_ax(ax, figsize=(7, 4))
-    ax.plot(n_feats, mean_scores, marker="o", color="#1E88E5")
+    ax.plot(n_feats, mean_scores, marker="o", color=CATEGORICAL_COLOURS[0])
     ax.axvline(
         x=n_optimal,
-        color="#D81B60",
+        color=CATEGORICAL_COLOURS[1],
         linestyle="--",
         label=f"Optimal = {n_optimal}",
     )
-    ax.set_xlabel("Number of Selected Features")
+    ax.set_xlabel("Number of selected features")
     ax.set_ylabel("CV Score")
-    ax.set_title("RFECV Feature Selection")
+    ax.set_title("RFECV feature selection")
     ax.legend()
     return fig, ax
 

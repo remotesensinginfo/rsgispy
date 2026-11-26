@@ -193,6 +193,10 @@ yourself, e.g. one bar for several panels with ``fig.colorbar(img, ax=axs)``.
 Every map function returns the artist it drew (see
 :ref:`plotting_conventions`).
 
+The map functions draw in the rsgispy house style (one box style for the
+scale bar, north arrow and legends, and readable tick labels) without
+changing your Matplotlib settings; see the :doc:`plot_gallery`.
+
 Choosing a colour map:
 
 * **Sequential** data (a fraction, a score, elevation): use a perceptually
