@@ -15,6 +15,7 @@ import pytest
 import rasterio
 
 import rsgispy
+from rsgispy.imageutils.colourtable import get_thematic_classes
 from tile_graph_scene import make_tile_graph_scene
 
 pytest.importorskip("sklearn")
@@ -61,6 +62,8 @@ def test_worked_example_runs(scene, tmp_path, block_size, n_jobs):
         truth = ref.read(1)
         assert src.dtypes[0] == "uint8"
         assert src.nodata == 0
+        assert src.colormap(1)[1][:3] == (31, 120, 180)
+    assert get_thematic_classes(out["cls_img"]) == mod.CLASSES
     valid = cls > 0
     assert not valid[:, :2].any()  # the no data strip stays no data
     assert (cls[valid] == truth[valid]).mean() > 0.95

@@ -295,10 +295,10 @@ Points to note:
   and no data value from its input unless you give ``band_names`` or
   ``nodata``. The class map nodes name their band ``class`` (unless you give
   ``band_names``).
-* For a class map, give the ``DiskSink`` its classes:
-  ``DiskSink(smooth, "landcover.tif", classes={1: ("Water", "#1f78b4"),
-  2: ("Forest", "#33a02c")})`` marks the file thematic, writes the colour
-  table and the class names (read them with
+* For a class map, give the ``DiskSink`` its classes, as the example does
+  with ``CLASSES`` (``{1: ("Water", "#1f78b4"), 2: ("Forest", "#33a02c"),
+  ...}``, defined at the top of the script): this marks the file thematic,
+  writes the colour table and the class names (read them with
   :func:`~rsgispy.imageutils.colourtable.get_thematic_classes`) and builds
   thematic statistics and pyramids when it closes, so no
   ``set_img_thematic`` / ``define_colour_table`` / ``pop_thmt_img_stats``

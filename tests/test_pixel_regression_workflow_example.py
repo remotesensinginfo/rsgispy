@@ -47,11 +47,15 @@ def test_worked_example_runs(tmp_path):
         cv_block_size=200.0,
         n_trees=50,
         use_gbdt=importlib.util.find_spec("xgboost") is not None,
+        n_kfold_repeats=2,
         use_pbar=False,
     )
     assert out["n_train"] > 0
     assert out["rf_metrics"]["test_r2"] > 0.8
     assert out["nested_cv"].overall_metrics["r2"] > 0.8
+    kf_summary = out["kfold_summary"].loc["canopy_cover"]
+    assert kf_summary.loc["r2", "mean"] > 0.7
+    assert {"mse", "nrmse", "nbias"} <= set(kf_summary.index)
     assert out["val_metrics"]["r2"] > 0.8
     assert 0.75 <= out["coverage"] <= 1.0
     with rasterio.open(out["pred_img"]) as src:

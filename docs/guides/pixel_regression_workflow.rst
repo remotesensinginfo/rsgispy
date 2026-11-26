@@ -266,6 +266,29 @@ sample locations to see where the model performs badly.
    :end-before: # [end-step-6-spatial-cv]
    :dedent: 4
 
+One cross-validation gives one estimate; how much it would change with
+another split is not known.
+:func:`~rsgispy.regression.regsklearn.perform_kfold_fit` repeats a k-fold
+(``n_repeats`` times, each with a different random split) and returns the
+:func:`~rsgispy.regression.regmetrics.calc_reg_metrics` metrics of every
+fold and the out-of-fold predictions; with ``groups`` (e.g. the
+``train_grp`` column) the pixels of a plot are never split between the
+training and test folds. :func:`~rsgispy.regression.regsklearn.summarise_kfold_metrics`
+gives the mean, median, standard deviation and 5th and 95th percentiles of
+each metric. For a small number of field plots,
+:func:`~rsgispy.regression.regsklearn.perform_jackknife_fit` leaves out one
+plot at a time and also reports the influence of each plot.
+
+.. literalinclude:: ../examples/pixel_regression_workflow.py
+   :language: python
+   :start-after: # [step-6-repeated-kfold]
+   :end-before: # [end-step-6-repeated-kfold]
+   :dedent: 4
+
+The folds here are groups of plots, not spatial blocks, so the estimate is
+for new plots among the training plots rather than for new areas; the
+spread over the repeats shows how much a single split can be trusted.
+
 Step 7 — Interpreting the model
 -------------------------------
 
