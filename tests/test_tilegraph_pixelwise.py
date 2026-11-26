@@ -18,6 +18,7 @@ import rsgispy.imagecalc.encoding as ic_enc
 import rsgispy.imagecalc.rescale as ic_resc
 import rsgispy.imagefilter.sar as if_sar
 import rsgispy.imagefilter.stats as if_stats
+import rsgispy.imageutils.masking as iu_msk
 from rsgispy.imageprocess import (
     ArraySource,
     Cast,
@@ -204,3 +205,71 @@ def test_recode_then_one_hot_chain_matches_files(tmp_path):
         ic_enc.one_hot_category_encoding_node(rec, {2: 0})
     with pytest.raises(rsgispy.RSGISPyException, match="must not be None"):
         ic_enc.recode_int_raster_node(rec, None)
+
+
+# --------------------------------------------------------------------------
+# Masks
+# --------------------------------------------------------------------------
+
+
+def test_indices_then_mask_img_chain_matches_files(tmp_path):
+    img = pg._s2_cube(str(tmp_path))  # pylint: disable=protected-access
+    msk = pg._mask_img(str(tmp_path))  # pylint: disable=protected-access
+    idx_file = str(tmp_path / "idx.tif")
+    ic_idx.calc_indices(img, idx_file, {3: "red", 4: "nir"}, ["NDVI"], in_gain=10000.0,
+                        calc_stats=False, use_pbar=False)
+    masked_file = str(tmp_path / "masked.tif")
+    iu_msk.mask_img(idx_file, msk, masked_file, -999.0, 0, calc_stats=False, use_pbar=False)
+
+    idx = ic_idx.calc_indices_node(RasterSource(img), {3: "red", 4: "nir"}, ["NDVI"],
+                                   in_gain=10000.0)
+    masked = iu_msk.mask_img_node(idx, RasterSource(msk), -999.0, 0)
+    meta = _meta(masked)
+    assert (meta.band_names, meta.nodata) == (("NDVI",), -999.0)
+    out = str(tmp_path / "chain.tif")
+    TileGraph(DiskSink(masked, out, clamp_int=False), block_size=23).run(use_pbar=False)
+    np.testing.assert_array_equal(_read(out), _read(masked_file))
+    with pytest.raises(rsgispy.RSGISPyException, match="at least one"):
+        iu_msk.mask_img_node(idx, RasterSource(msk), 0, [])
+
+
+def test_mask_nodes_match_files(tmp_path):
+    img = pg._s2_cube(str(tmp_path))  # pylint: disable=protected-access
+    flt = pg._float_cube(str(tmp_path), "fl.tif", 3, 5)  # pylint: disable=protected-access
+    files = {k: str(tmp_path / f"{k}.tif") for k in ("finite", "valid", "zero", "cvm")}
+    iu_msk.gen_finite_mask(flt, files["finite"], calc_stats=False, use_pbar=False)
+    iu_msk.gen_valid_mask([img, flt], files["valid"], calc_stats=False, use_pbar=False)
+    iu_msk.mask_all_band_zero_vals(flt, files["zero"], out_val=3.0, calc_stats=False,
+                                   use_pbar=False)
+    iu_msk.create_valid_mask([iu_msk.ImageBandInfo(img, "a", [2, 3]),
+                              iu_msk.ImageBandInfo(flt, "b")], files["cvm"],
+                             calc_stats=False, use_pbar=False)
+    nodes = {
+        "finite": iu_msk.gen_finite_mask_node(RasterSource(flt)),
+        "valid": iu_msk.gen_valid_mask_node([RasterSource(img), RasterSource(flt)]),
+        "zero": Cast(iu_msk.mask_all_band_zero_vals_node(RasterSource(flt), 3.0),
+                     np.float32),
+        "cvm": iu_msk.create_valid_mask_node([RasterSource(img, bands=[2, 3]),
+                                              RasterSource(flt)]),
+    }
+    for key, node in nodes.items():
+        np.testing.assert_array_equal(_run_mem(node), _read(files[key]), err_msg=key)
+    assert _meta(nodes["valid"]).dtype == np.uint8
+
+
+def test_edge_mask_node_with_halo_matches_files(tmp_path):
+    img = pg._class_img(str(tmp_path))  # pylint: disable=protected-access
+    edge_file = str(tmp_path / "edge.tif")
+    iu_msk.gen_img_edge_mask(img, edge_file, 3, calc_stats=False, use_pbar=False)
+    mean_file = str(tmp_path / "mean.tif")
+    if_stats.apply_mean_filter(edge_file, mean_file, 5, datatype=rsgispy.TYPE_32FLOAT,
+                               calc_stats=False, use_pbar=False)
+    edge = iu_msk.gen_img_edge_mask_node(RasterSource(img), 3)
+    np.testing.assert_array_equal(_run_mem(edge), _read(edge_file))
+    # A downstream window needs the edge mask on a halo.
+    mean = if_stats.mean_filter_node(edge, 5)
+    out = str(tmp_path / "chain.tif")
+    TileGraph(DiskSink(mean, out), block_size=16).run(use_pbar=False)
+    np.testing.assert_array_equal(_read(out), _read(mean_file))
+    with pytest.raises(rsgispy.RSGISPyException, match="non-negative"):
+        iu_msk.gen_img_edge_mask_node(RasterSource(img), -1)

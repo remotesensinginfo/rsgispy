@@ -232,7 +232,8 @@ class WrapperDiskSink(DiskSink):
         names = run["band_names"]
         if names is not None:
             for b_idx, b_name in enumerate(names, start=1):
-                dst.set_band_description(b_idx, str(b_name))
+                if b_name is not None:  # None: leave the band unnamed
+                    dst.set_band_description(b_idx, str(b_name))
         for action in self.close_actions:
             on_output_close(dst, action)
         pop_stats_on_close(
