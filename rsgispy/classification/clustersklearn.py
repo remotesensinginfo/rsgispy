@@ -19,6 +19,9 @@ interface as :mod:`rsgispy.classification.classsklearn`:
    using ``predict()``. This is substantially faster and much more
    memory-efficient for large datasets while remaining free of tile boundary
    artefacts.
+3. :func:`apply_img_pixel_clusterer` — Applies a clusterer fitted by
+   :func:`img_pixel_sample_cluster` (or saved to a ``.joblib`` file) to
+   another image, block by block, with the same prediction code.
 """
 
 from contextlib import ExitStack
@@ -45,7 +48,10 @@ from rsgispy.classification.classdata import (
     ImageBandInfo,
     read_cls_config,
 )
-from rsgispy.classification.classsklearn import save_sklearn_classifier
+from rsgispy.classification.classsklearn import (
+    load_sklearn_classifier,
+    save_sklearn_classifier,
+)
 from rsgispy.imageprocess import (
     IntersectionGrid,
     compute_spatial_intersection,
@@ -71,10 +77,12 @@ __all__ = [
     "ClusterImageInput",
     "img_pixel_cluster",
     "img_pixel_sample_cluster",
+    "apply_img_pixel_clusterer",
 ]
 
 ClusterImageInput = Union[
     ClassificationConfig,
+    ImageBandInfo,
     Sequence[ImageBandInfo],
     str,
     os.PathLike,
@@ -84,12 +92,25 @@ ClusterImageInput = Union[
 def _resolve_cluster_band_specs(
     img_band_info: ClusterImageInput,
 ) -> List[Tuple[str, int, str]]:
-    """Resolve ordered ``(img_path, band_1based, col_name)`` feature specs."""
+    """
+    Resolve ordered ``(img_path, band_1based, col_name)`` feature specs.
+
+    A path ending in ``.json`` is read as a classification config; any other
+    path is an image whose bands are all used.
+    """
     if isinstance(img_band_info, ClassificationConfig):
         return resolve_apply_band_specs(cfg=img_band_info, img_band_info=None)
+    if isinstance(img_band_info, ImageBandInfo):
+        return resolve_apply_band_specs(cfg=None, img_band_info=[img_band_info])
     if isinstance(img_band_info, (str, os.PathLike)):
-        cfg = read_cls_config(img_band_info)
-        return resolve_apply_band_specs(cfg=cfg, img_band_info=None)
+        in_path = os.fspath(img_band_info)
+        if os.path.splitext(in_path)[1].lower() == ".json":
+            cfg = read_cls_config(in_path)
+            return resolve_apply_band_specs(cfg=cfg, img_band_info=None)
+        ensure_file_exists(in_path, label="Input image")
+        return resolve_apply_band_specs(
+            cfg=None, img_band_info=[ImageBandInfo(in_path, bands=None)]
+        )
     return resolve_apply_band_specs(cfg=None, img_band_info=img_band_info)
 
 
@@ -376,10 +397,11 @@ def img_pixel_cluster(
     reserved as output nodata (and any negative outlier/noise labels such as
     ``-1`` from ``DBSCAN`` map to nodata).
 
-    :param img_band_info: Input image/band definition as a
+    :param img_band_info: Input image/band definition: an image path (all its
+                          bands), a
                           :class:`~rsgispy.classification.classdata.ClassificationConfig`,
-                          JSON classification configuration file path, or
-                          sequence of
+                          a JSON classification configuration file path
+                          (``.json``), or a sequence of
                           :class:`~rsgispy.classification.classdata.ImageBandInfo`
                           objects.
     :param output_img: Path to output classified cluster raster image.
@@ -667,6 +689,92 @@ def _extract_cluster_sample_matrix(
     return smpl
 
 
+def _write_cluster_predictions(
+    stack: ExitStack,
+    fitted_est: Any,
+    opened: Tuple[
+        Dict[str, DatasetReader],
+        DatasetReader,
+        str,
+        Optional[DatasetReader],
+        Optional[str],
+        IntersectionGrid,
+        bool,
+    ],
+    band_specs: Sequence[Tuple[str, int, str]],
+    out_cls_path: str,
+    *,
+    img_msk_val: int,
+    no_data_val: Optional[float],
+    out_id_offset: int,
+    gdalformat: str,
+    datatype: Optional[int],
+    out_no_data_val: Optional[int],
+    block_size: Optional[int],
+    creation_opts: Optional[Mapping[str, Any]],
+    use_pbar: bool,
+) -> Tuple[int, str, np.dtype]:
+    """
+    Apply a fitted clusterer's ``predict()`` block by block to the opened
+    datasets (from :func:`_open_cluster_datasets`) and write the cluster IDs.
+
+    :return: ``(eff_nodata, out_rio_dtype, out_np_dtype)`` of the output.
+    """
+    # pylint: disable=too-many-arguments,too-many-locals
+    datasets, ref_ds, ref_path, msk_ds, msk_path, grid, all_compat = opened
+    max_raw_id = _infer_max_raw_cluster_id(fitted_est)
+    max_out_id = max_raw_id + int(out_id_offset)
+    expected_ids = list(range(int(out_id_offset), max_out_id + 1))
+    eff_nodata = resolve_out_nodata(out_no_data_val, expected_ids)
+    out_rio_dtype, out_np_dtype = _resolve_cluster_out_dtype(
+        datatype, max_out_id, eff_nodata
+    )
+
+    out_dst = open_output_dataset(
+        stack=stack,
+        output_img=out_cls_path,
+        gdalformat=gdalformat,
+        out_rio_dtype=out_rio_dtype,
+        grid=grid,
+        count=1,
+        creation_opts=creation_opts,
+    )
+    out_dst.nodata = eff_nodata
+
+    for out_win in iter_dataset_windows(
+        grid.height, grid.width, block_size=block_size, use_pbar=use_pbar
+    ):
+        win_h = int(out_win.height)
+        win_w = int(out_win.width)
+        roi_idx = _extract_block_roi_idx(
+            msk_ds, msk_path, grid, out_win, img_msk_val
+        )
+        cls_flat = np.full(win_h * win_w, eff_nodata, dtype=out_np_dtype)
+        if roi_idx.size > 0:
+            feat_arrays = read_feature_block(
+                band_specs=band_specs,
+                datasets=datasets,
+                ref_ds=ref_ds,
+                grid=grid,
+                out_win=out_win,
+                all_compatible=all_compat,
+                ref_path=ref_path,
+                explicit_no_data=no_data_val,
+            )
+            valid_feats, valid_idx = extract_roi_feature_matrix(
+                feat_arrays, roi_idx
+            )
+            if valid_idx.size > 0:
+                raw_preds = np.asarray(
+                    fitted_est.predict(valid_feats), dtype=np.int64
+                )
+                cls_flat[valid_idx] = _map_labels_to_output(
+                    raw_preds, out_id_offset, eff_nodata, out_np_dtype
+                )
+        out_dst.write(cls_flat.reshape((win_h, win_w)), 1, window=out_win)
+    return eff_nodata, out_rio_dtype, out_np_dtype
+
+
 def img_pixel_sample_cluster(
     img_band_info: ClusterImageInput,
     output_img: Union[str, os.PathLike],
@@ -710,10 +818,11 @@ def img_pixel_sample_cluster(
     (e.g., ``KMeans``, ``MiniBatchKMeans``, ``BisectingKMeans``, ``Birch``,
     ``MeanShift``, ``AffinityPropagation``, or ``GaussianMixture``).
 
-    :param img_band_info: Input image/band definition as a
+    :param img_band_info: Input image/band definition: an image path (all its
+                          bands), a
                           :class:`~rsgispy.classification.classdata.ClassificationConfig`,
-                          JSON classification configuration file path, or
-                          sequence of
+                          a JSON classification configuration file path
+                          (``.json``), or a sequence of
                           :class:`~rsgispy.classification.classdata.ImageBandInfo`
                           objects.
     :param output_img: Path to output classified cluster raster image.
@@ -842,62 +951,28 @@ def img_pixel_sample_cluster(
             )
         check_sklearn_estimator_fitted(fitted_est, label="clusterer")
 
-        max_raw_id = _infer_max_raw_cluster_id(fitted_est)
-        max_out_id = max_raw_id + int(out_id_offset)
-        expected_ids = list(range(int(out_id_offset), max_out_id + 1))
-        eff_nodata = resolve_out_nodata(out_no_data_val, expected_ids)
-        out_rio_dtype, out_np_dtype = _resolve_cluster_out_dtype(
-            datatype, max_out_id, eff_nodata
-        )
-
-        out_dst = open_output_dataset(
-            stack=stack,
-            output_img=out_cls_path,
+        out_info = _write_cluster_predictions(
+            stack,
+            fitted_est,
+            (datasets, ref_ds, ref_path, msk_ds, msk_path, grid, all_compat),
+            band_specs,
+            out_cls_path,
+            img_msk_val=img_msk_val,
+            no_data_val=no_data_val,
+            out_id_offset=out_id_offset,
             gdalformat=gdalformat,
-            out_rio_dtype=out_rio_dtype,
-            grid=grid,
-            count=1,
+            datatype=datatype,
+            out_no_data_val=out_no_data_val,
+            block_size=block_size,
             creation_opts=c_opts,
+            use_pbar=use_pbar,
         )
-        out_dst.nodata = eff_nodata
-
-        for out_win in iter_dataset_windows(
-            grid.height, grid.width, block_size=block_size, use_pbar=use_pbar
-        ):
-            win_h = int(out_win.height)
-            win_w = int(out_win.width)
-            roi_idx = _extract_block_roi_idx(
-                msk_ds, msk_path, grid, out_win, img_msk_val
-            )
-            cls_flat = np.full(win_h * win_w, eff_nodata, dtype=out_np_dtype)
-            if roi_idx.size > 0:
-                feat_arrays = read_feature_block(
-                    band_specs=band_specs,
-                    datasets=datasets,
-                    ref_ds=ref_ds,
-                    grid=grid,
-                    out_win=out_win,
-                    all_compatible=all_compat,
-                    ref_path=ref_path,
-                    explicit_no_data=no_data_val,
-                )
-                valid_feats, valid_idx = extract_roi_feature_matrix(
-                    feat_arrays, roi_idx
-                )
-                if valid_idx.size > 0:
-                    raw_preds = np.asarray(
-                        fitted_est.predict(valid_feats), dtype=np.int64
-                    )
-                    cls_flat[valid_idx] = _map_labels_to_output(
-                        raw_preds, out_id_offset, eff_nodata, out_np_dtype
-                    )
-            out_dst.write(cls_flat.reshape((win_h, win_w)), 1, window=out_win)
 
     finalise_thematic_output_img(
         out_cls_path=out_cls_path,
-        eff_nodata=eff_nodata,
-        out_rio_dtype=out_rio_dtype,
-        out_np_dtype=out_np_dtype,
+        eff_nodata=out_info[0],
+        out_rio_dtype=out_info[1],
+        out_np_dtype=out_info[2],
         calc_stats=calc_stats,
         add_clr_tab=add_clr_tab,
         clr_lut=None,
@@ -908,3 +983,174 @@ def img_pixel_sample_cluster(
     if return_model:
         return fitted_est
     return None
+
+
+_PREDICT_CLUSTERERS = (
+    "KMeans, MiniBatchKMeans, BisectingKMeans, Birch, MeanShift, "
+    "AffinityPropagation, GaussianMixture or BayesianGaussianMixture"
+)
+
+
+def _check_apply_clusterer(clusterer: Any, n_feats: int) -> None:
+    """Raise if ``clusterer`` cannot be applied to ``n_feats`` image bands."""
+    if not hasattr(clusterer, "predict"):
+        raise rsgispy.RSGISPyException(
+            f"The clusterer ({type(clusterer).__name__}) has no predict() method, "
+            "so it cannot be applied to other pixels (e.g. DBSCAN, OPTICS, "
+            "AgglomerativeClustering and SpectralClustering only label the "
+            "pixels they were fitted on). Use a clusterer with predict(): "
+            f"{_PREDICT_CLUSTERERS}."
+        )
+    check_sklearn_estimator_fitted(clusterer, label="clusterer")
+    n_fit = getattr(clusterer, "n_features_in_", None)
+    if isinstance(n_fit, (int, np.integer)) and int(n_fit) != int(n_feats):
+        raise rsgispy.RSGISPyException(
+            f"The clusterer was fitted on {int(n_fit)} bands but img_band_info "
+            f"gives {int(n_feats)} bands. Use the same bands, in the same order, "
+            "as the image the clusterer was fitted on."
+        )
+
+
+def apply_img_pixel_clusterer(
+    img_band_info: ClusterImageInput,
+    clusterer: Union[Any, str, os.PathLike],
+    output_img: Union[str, os.PathLike],
+    *,
+    in_msk_img: Optional[Union[str, os.PathLike]] = None,
+    img_msk_val: int = 1,
+    no_data_val: Optional[float] = None,
+    out_id_offset: int = 1,
+    gdalformat: str = "GTIFF",
+    datatype: Optional[int] = None,
+    out_no_data_val: Optional[int] = None,
+    calc_stats: bool = True,
+    add_clr_tab: bool = True,
+    block_size: Optional[int] = None,
+    creation_opts: Optional[Mapping[str, Any]] = None,
+    use_pbar: bool = True,
+) -> None:
+    """
+    Apply a **fitted** ``scikit-learn`` clusterer to an image, block by block,
+    with ``predict()``: for example a clusterer fitted on one image (or date)
+    by :func:`img_pixel_sample_cluster` (``return_model=True`` or
+    ``out_model_file``) applied to another, so the cluster IDs mean the same
+    thing in both outputs.
+
+    The prediction code is shared with :func:`img_pixel_sample_cluster`:
+    applied to the image the clusterer was fitted on, with the same
+    ``out_id_offset``, mask and no-data options, the output is identical to
+    that function's output. Cluster ``k`` (``0``-based) is written as
+    ``k + out_id_offset``. The bands must be the same, in the same order, as
+    those the clusterer was fitted on.
+
+    Only clusterers with ``predict()`` can be applied: ``KMeans``,
+    ``MiniBatchKMeans``, ``BisectingKMeans``, ``Birch``, ``MeanShift``,
+    ``AffinityPropagation``, ``GaussianMixture`` and
+    ``BayesianGaussianMixture``. ``DBSCAN``, ``OPTICS``,
+    ``AgglomerativeClustering`` and ``SpectralClustering`` only label the
+    pixels they were fitted on (use :func:`img_pixel_cluster`).
+
+    In a :class:`~rsgispy.imageprocess.TileGraph`, apply a fitted clusterer
+    with :func:`~rsgispy.ml.predict.predict_raster_node` (``thematic=True``)
+    and a ``lut`` adding the offset, e.g. ``lut={k: k + 1 for k in
+    range(n_clusters)}``, which gives the same cluster IDs as this function.
+
+    :param img_band_info: Input image/band definition: an image path (all its
+                          bands), a
+                          :class:`~rsgispy.classification.classdata.ClassificationConfig`,
+                          a JSON classification configuration file path
+                          (``.json``), or a sequence of
+                          :class:`~rsgispy.classification.classdata.ImageBandInfo`
+                          objects.
+    :param clusterer: Fitted clusterer with ``predict()``, or the path to the
+                      ``.joblib`` file saved with ``out_model_file`` by
+                      :func:`img_pixel_sample_cluster` or
+                      :func:`img_pixel_cluster`.
+    :param output_img: Path to the output cluster image.
+    :param in_msk_img: Optional mask image path restricting prediction to
+                       where band 1 equals ``img_msk_val``.
+    :param img_msk_val: Pixel value within ``in_msk_img`` identifying ROI
+                        pixels (Default = ``1``).
+    :param no_data_val: Optional explicit input no-data value overriding the
+                        raster band metadata.
+    :param out_id_offset: Non-negative offset added to cluster labels ``>= 0``
+                          (Default = ``1`` so clusters are ``1..K`` with ``0``
+                          as no data).
+    :param gdalformat: Output GDAL/rasterio driver name (Default = ``'GTIFF'``).
+    :param datatype: Optional ``rsgispy.TYPE_*`` integer datatype for
+                     ``output_img``. When ``None`` (default), the smallest
+                     unsigned integer datatype fitting all cluster IDs and no
+                     data.
+    :param out_no_data_val: Optional unsigned integer no-data value for
+                            ``output_img``. Defaults to ``0`` when unused by
+                            cluster IDs, otherwise the next unused value.
+    :param calc_stats: If ``True`` (default), compute thematic image
+                       statistics, histogram, and pyramids.
+    :param add_clr_tab: If ``True`` (default) and ``calc_stats=True``,
+                        populate an RGB colour table for integer outputs.
+    :param block_size: Optional raster processing block size in pixels.
+    :param creation_opts: Optional GDAL creation options mapping.
+    :param use_pbar: Display tqdm progress bars (Default = ``True``).
+
+    .. code:: python
+
+        from sklearn.cluster import KMeans
+        import rsgispy.classification.clustersklearn as clsk
+
+        # Fit on one image and save the clusterer...
+        clsk.img_pixel_sample_cluster(
+            "sen2_2018.tif",
+            "clusters_2018.tif",
+            clusterer=KMeans(n_clusters=10, n_init=10, random_state=42),
+            no_data_val=0,
+            out_model_file="kmeans.joblib",
+        )
+        # ...and apply it to a second image with the same bands.
+        clsk.apply_img_pixel_clusterer(
+            "sen2_2019.tif", "kmeans.joblib", "clusters_2019.tif", no_data_val=0
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-locals
+    check_sklearn_available("apply_img_pixel_clusterer")
+    if isinstance(clusterer, (str, os.PathLike)):
+        clusterer = load_sklearn_classifier(clusterer)
+    band_specs = _resolve_cluster_band_specs(img_band_info)
+    _check_apply_clusterer(clusterer, len(band_specs))
+    _validate_cluster_options(
+        clusterer=clusterer,
+        use_mean_shift_est_band_width=False,
+        out_id_offset=out_id_offset,
+        require_predict=True,
+        func_name="apply_img_pixel_clusterer",
+    )
+    out_cls_path = ensure_parent_dir(output_img)
+    c_opts = normalise_creation_options(creation_opts)
+
+    with ExitStack() as stack:
+        out_info = _write_cluster_predictions(
+            stack,
+            clusterer,
+            _open_cluster_datasets(stack, band_specs, in_msk_img),
+            band_specs,
+            out_cls_path,
+            img_msk_val=img_msk_val,
+            no_data_val=no_data_val,
+            out_id_offset=out_id_offset,
+            gdalformat=gdalformat,
+            datatype=datatype,
+            out_no_data_val=out_no_data_val,
+            block_size=block_size,
+            creation_opts=c_opts,
+            use_pbar=use_pbar,
+        )
+
+    finalise_thematic_output_img(
+        out_cls_path=out_cls_path,
+        eff_nodata=out_info[0],
+        out_rio_dtype=out_info[1],
+        out_np_dtype=out_info[2],
+        calc_stats=calc_stats,
+        add_clr_tab=add_clr_tab,
+        clr_lut=None,
+        use_pbar=use_pbar,
+    )
