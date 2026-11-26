@@ -98,7 +98,9 @@ The building blocks are:
   in the metadata) and :class:`~rsgispy.imageprocess.SetBandNames` (rename
   the bands of any node, in the metadata), and the node builders of the
   chainable operations below;
-* **sinks**: :class:`~rsgispy.imageprocess.DiskSink` (write a raster),
+* **sinks**: :class:`~rsgispy.imageprocess.DiskSink` (write a raster; with
+  ``thematic=True``, ``colour_table=`` or ``classes=`` a class map with its
+  colour table, class names and thematic statistics),
   :class:`~rsgispy.imageprocess.MemorySink` (return an array),
   :class:`~rsgispy.imageprocess.StatsSink` (per-band statistics and
   histograms), :class:`~rsgispy.imageprocess.ZonalStatsSink` (statistics

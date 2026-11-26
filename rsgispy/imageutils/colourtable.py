@@ -476,7 +476,8 @@ def _apply_thematic_classes(
         clr_interps = list(dst.colorinterp)
         clr_interps[img_band - 1] = ColorInterp.palette
         dst.colorinterp = clr_interps
-        dst.update_tags(img_band, **{CLASS_NAMES_TAG: names_json})
+        if all_names:
+            dst.update_tags(img_band, **{CLASS_NAMES_TAG: names_json})
 
 
 def set_thematic_classes(

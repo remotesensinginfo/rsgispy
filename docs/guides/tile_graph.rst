@@ -293,7 +293,18 @@ Points to note:
   indices, are written as ``float32``. Pass ``datatype`` (e.g.
   ``rsgispy.TYPE_64FLOAT``) to choose another. It also takes the band names
   and no data value from its input unless you give ``band_names`` or
-  ``nodata``.
+  ``nodata``. The class map nodes name their band ``class`` (unless you give
+  ``band_names``).
+* For a class map, give the ``DiskSink`` its classes:
+  ``DiskSink(smooth, "landcover.tif", classes={1: ("Water", "#1f78b4"),
+  2: ("Forest", "#33a02c")})`` marks the file thematic, writes the colour
+  table and the class names (read them with
+  :func:`~rsgispy.imageutils.colourtable.get_thematic_classes`) and builds
+  thematic statistics and pyramids when it closes, so no
+  ``set_img_thematic`` / ``define_colour_table`` / ``pop_thmt_img_stats``
+  calls are needed afterwards. ``colour_table={...}`` gives the colours
+  only, and ``thematic=True`` alone marks the file thematic with thematic
+  statistics.
 * :meth:`~rsgispy.imageprocess.TileGraph.describe` prints the grid, the
   block size and every node with its inputs, parameters, halo and metadata.
   For this graph the Sentinel-2 source is read with a 3-pixel halo: 2 for the
