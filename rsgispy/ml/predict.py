@@ -959,7 +959,9 @@ def feature_stack_nodes(
 
         stack = ImageFeatureStack([BandSpec("s2.tif", name="s2"), BandSpec("dem.tif")])
         feats = feature_stack_nodes(stack)
-        print(TileGraph(DiskSink(StackBands(feats), "features.tif")).describe())
+        # One no-data value for the stacked features (see StackBands).
+        stacked = StackBands(feats, no_data_val="auto")
+        print(TileGraph(DiskSink(stacked, "features.tif")).describe())
         pred = predict_raster_node(feats, rf_model, scaler=stack.scaler)
     """
     stack_obj = _coerce_feature_stack(feature_stack)

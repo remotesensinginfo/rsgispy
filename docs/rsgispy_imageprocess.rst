@@ -385,6 +385,32 @@ the output value). :func:`~rsgispy.imageprocess.resolve_input_nodata` and
 :func:`~rsgispy.imageprocess.infer_node_meta` apply the rule in custom
 builders.
 
+**Stacking inputs with different no-data values.** A node has one no-data
+value for all its bands, and the sinks treat a pixel that is invalid in any
+band as invalid. :class:`~rsgispy.imageprocess.StackBands` keeps that rule
+working when its inputs disagree (e.g. Sentinel-2 bands with no data ``0``
+and an index with ``-999``):
+
+* ``no_data_val=None`` (the default): the bands are stacked unchanged; the
+  stack has the inputs' no-data value when they share one, else none
+  (``None``), with a :class:`UserWarning`, because a
+  :class:`~rsgispy.imageprocess.SampleSink` or
+  :func:`~rsgispy.ml.predict.predict_raster_node` on it would then not skip
+  the inputs' no-data pixels;
+* ``no_data_val=<value>``: every band of a pixel where any input is invalid
+  (its own no-data value, or not finite) is set to ``value``, the stack's
+  no-data value;
+* ``no_data_val='auto'``: the same with the first input's no-data value, or
+  NaN for a floating-point stack whose first input has none (an integer
+  stack then needs a value).
+
+``describe()`` shows the stack's no-data value and whether it masks across
+its inputs. The internal ``[labels, values]`` stacks that
+:class:`~rsgispy.imageprocess.SampleSink` and
+:class:`~rsgispy.imageprocess.ZonalStatsSink` add are shown as
+``SampleSink input stack '...' (internal)``; they apply each input's own
+no-data value and do not mask.
+
 Before rsgispy 0.4 the filter, morphology and majority-filter builders (and
 :func:`~rsgispy.imagefilter.chained.build_filter_chain_node`) ignored the
 input's no-data value when ``no_data_val`` was ``None``; wrap the input in

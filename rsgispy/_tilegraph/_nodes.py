@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 import os
+import warnings
 from contextlib import ExitStack
 from typing import (
     Any,
@@ -848,12 +849,42 @@ class StackBands(TileNode):
     Stack the bands of several nodes into one multi-band output (in the
     order given), carrying the band names through.
 
+    **No data.** The stack has one no-data value for all its bands:
+
+    * with ``no_data_val=None`` (the default), the bands are stacked
+      unchanged. When every input has the same no-data value (or none has
+      one) the stack has that value. When they differ the stack has none
+      (``None``) and a :class:`UserWarning` says so: the sinks would then not
+      exclude the inputs' no-data pixels;
+    * with ``no_data_val`` given, every band of a pixel where any input is
+      invalid (equal to that input's own no-data value, or not finite) is set
+      to ``no_data_val``, which becomes the stack's no-data value. This keeps
+      the sinks' rule (a pixel invalid in any band is invalid) working for
+      every input, e.g. Sentinel-2 bands with no data ``0`` stacked with an
+      index with no data ``-999``;
+    * with ``no_data_val='auto'``, the same, with the first input's no-data
+      value when it has one, else NaN for a floating-point stack; for any
+      other stack :class:`rsgispy.RSGISPyException` asks for a value.
+
+    ``TileGraph.describe()`` shows the stack's no-data value and whether
+    invalid pixels are masked across the inputs. A valid value equal to the
+    stack's no-data value becomes no data downstream, so choose
+    ``no_data_val`` outside the data range of every input. Masking makes,
+    e.g., a valid slope of ``0`` no data where an aspect band stacked with it
+    has its no-data value (flat pixels), so leave ``no_data_val=None`` when
+    the bands' values are needed as they are.
+
     :param sources: Sequence of upstream :class:`TileNode` objects.
     :param name: Optional node identifier.
     :param band_names: Optional names of the stacked bands, one per band
                        (Default = ``None``: the inputs' names). Use it when
                        inputs have the same band names, e.g. two filters of
                        the same bands.
+    :param no_data_val: No-data value of the stack, written into every band
+                        of a pixel where any input is invalid, or ``'auto'``
+                        (Default = ``None``: the inputs' shared no-data value,
+                        nothing masked; see above). It must fit the stack's
+                        data type (the NumPy result type of the inputs).
 
     .. code:: python
 
@@ -866,6 +897,13 @@ class StackBands(TileNode):
             band_names=["value", "mean5", "stddev5"],
         )
         TileGraph(DiskSink(stack, "features.tif")).run()
+
+        # Sentinel-2 (no data 0) with an index (no data -999): the stack
+        # writes -999 into every band where either input is no data, so a
+        # SampleSink or predict_raster_node on it skips those pixels.
+        s2 = RasterSource("s2.tif", bands=[4, 8])
+        ndvi = RasterSource("ndvi.tif")
+        feats = StackBands([s2, ndvi], no_data_val=-999)
     """
 
     def __init__(
@@ -874,14 +912,30 @@ class StackBands(TileNode):
         name: Optional[str] = None,
         *,
         band_names: Optional[Sequence[str]] = None,
+        no_data_val: Optional[Union[float, str]] = None,
     ) -> None:
         src_list = tuple(sources)
         if not src_list:
             raise rsgispy.RSGISPyException("StackBands requires at least one input.")
         super().__init__(inputs=src_list, name=name)
         self.band_names = _band_names_arg(band_names)
+        if isinstance(no_data_val, str):
+            if no_data_val != "auto":
+                raise rsgispy.RSGISPyException(
+                    f"StackBands no_data_val must be a number, 'auto' or None, "
+                    f"got {no_data_val!r}."
+                )
+            self.no_data_val: Optional[Union[float, str]] = no_data_val
+        else:
+            self.no_data_val = None if no_data_val is None else float(no_data_val)
+        # (stack no-data value, each input's no-data value) when invalid
+        # pixels are masked across the inputs; set by infer_meta.
+        self._nodata_plan: Optional[Tuple[float, Tuple[Optional[float], ...]]] = None
+        self._nodata_differ = False
+        self._input_nodatas: Tuple[Optional[float], ...] = ()
 
-    def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+    def _stacked_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+        """Bands, names and dtype of the stack; the shared no-data value or ``None``."""
         counts = [m.n_bands for m in inputs]
         n_bands = (
             sum(c for c in counts if c is not None)
@@ -912,6 +966,53 @@ class StackBands(TileNode):
                 n_bands = len(names)
         return NodeMeta(n_bands=n_bands, band_names=names, dtype=dtype, nodata=nodata)
 
+    def _resolve_nodata(self, inputs: Sequence[NodeMeta], dtype: Any) -> Optional[float]:
+        """The stack's no-data value; sets the masking plan (see the class docs)."""
+        nodatas = tuple(m.nodata for m in inputs)
+        self._nodata_plan = None
+        self._nodata_differ = not all(_same_nodata(nodatas[0], n) for n in nodatas)
+        self._input_nodatas = nodatas
+        if self.no_data_val is None:
+            if self._nodata_differ:
+                warnings.warn(
+                    f"{self.label}: the inputs have different no-data values "
+                    f"{list(nodatas)}, so the stack has no no-data value and sinks "
+                    "will not exclude the inputs' no-data pixels. Give "
+                    "StackBands(..., no_data_val=<value>) or no_data_val='auto' to "
+                    "write one no-data value into every band of a pixel where any "
+                    "input is invalid.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                return None
+            return nodatas[0]
+        if self.no_data_val != "auto":
+            target = float(self.no_data_val)
+        elif nodatas[0] is not None:
+            target = float(nodatas[0])
+        elif dtype is not None and np.issubdtype(np.dtype(dtype), np.floating):
+            target = float("nan")
+        else:
+            raise rsgispy.RSGISPyException(
+                f"{self.label}: no_data_val='auto' but the first input has no "
+                f"no-data value and the stack is not floating point (dtype="
+                f"{None if dtype is None else np.dtype(dtype)}); give "
+                "StackBands(..., no_data_val=<value>)."
+            )
+        if dtype is not None and not _nodata_fits(target, np.dtype(dtype)):
+            raise rsgispy.RSGISPyException(
+                f"{self.label}: the no-data value {target!r} does not fit the "
+                f"stack's data type {np.dtype(dtype)}; give a no_data_val that "
+                "fits it (or Cast an input)."
+            )
+        if any(n is not None for n in nodatas) or not math.isnan(target):
+            self._nodata_plan = (target, nodatas)
+        return target
+
+    def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+        meta = self._stacked_meta(inputs)
+        return meta.replace(nodata=self._resolve_nodata(inputs, meta.dtype))
+
     def evaluate(
         self,
         inputs: Sequence[TileTensor],
@@ -921,12 +1022,37 @@ class StackBands(TileNode):
         state: Any = None,
     ) -> TileTensor:
         aligned = [t.crop(halo_y, halo_x) for t in inputs]
-        return aligned[0].with_data(np.concatenate([t.data for t in aligned], axis=0))
+        data = np.concatenate([t.data for t in aligned], axis=0)
+        plan = self._nodata_plan
+        if plan is not None:
+            # pylint: disable-next=import-outside-toplevel
+            from rsgispy.imageprocess import build_valid_mask
+
+            target, nodatas = plan
+            invalid = np.zeros(data.shape[1:], dtype=bool)
+            for tensor, nodata in zip(aligned, nodatas):
+                invalid |= ~np.all(build_valid_mask(tensor.data, nodata), axis=0)
+            if np.any(invalid):
+                data[:, invalid] = target
+        return aligned[0].with_data(data)
 
     def describe_params(self) -> str:
+        parts = []
         if self.band_names is not None:
-            return f"band_names={list(self.band_names)}"
-        return ""
+            parts.append(f"band_names={list(self.band_names)}")
+        if self.no_data_val is not None:
+            parts.append(f"no_data_val={self.no_data_val!r}")
+        if self._nodata_plan is not None:
+            parts.append(
+                f"nodata={self._nodata_plan[0]!r} where invalid in any input "
+                f"(inputs' nodata={list(self._nodata_plan[1])})"
+            )
+        elif self._nodata_differ and self.no_data_val is None:
+            parts.append(
+                f"inputs' nodata={list(self._input_nodatas)} differ: stack nodata=None, "
+                "not masked (give no_data_val)"
+            )
+        return " ".join(parts)
 
 
 class Cast(TileNode):

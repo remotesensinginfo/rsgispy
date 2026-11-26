@@ -373,6 +373,16 @@ prediction nodes ``no_data_val`` is the value written where no prediction is
 made. :func:`~rsgispy.imageprocess.resolve_input_nodata` applies the rule in
 your own builders.
 
+A stack has one no-data value. When the inputs of a
+:class:`~rsgispy.imageprocess.StackBands` have different ones (e.g.
+Sentinel-2 bands with ``0`` and an index with ``-999``), give
+``no_data_val``: ``StackBands([s2, ndvi], no_data_val=-999)`` writes
+``-999`` into every band of a pixel where any input is invalid, so the
+training samples and the predictions skip those pixels
+(``no_data_val='auto'`` uses the first input's value, or NaN). Without it
+the bands are stacked unchanged, the stack has no no-data value and a
+warning says so (see :ref:`tilegraph-nodata`).
+
 Step 7 — Halos and block size
 -----------------------------
 
