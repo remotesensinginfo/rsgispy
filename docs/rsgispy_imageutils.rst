@@ -71,7 +71,7 @@ functions are wrappers around them and give the same result. The mask of
    masked = mask_img_node(img, water, 0, 1, no_data_val=0)
    TileGraph(DiskSink(masked, "s2_land.tif", datatype=rsgispy.TYPE_16UINT)).run()
 
-See :doc:`rsgispy_imageprocess` for the list of chainable operations.
+See :ref:`tilegraph-chainable` for the list of chainable operations.
 
 Configuration, Metadata & Validation
 ------------------------------------

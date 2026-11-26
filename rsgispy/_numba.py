@@ -90,6 +90,31 @@ _STATE = threading.local()
 _WARNED: Set[str] = set()
 _WARNED_LOCK = threading.Lock()
 
+# numba's ``workqueue`` threading layer (used when neither TBB nor OpenMP is
+# available, e.g. with the macOS wheels) aborts the process when parallel
+# kernels are launched from more than one thread at once, as the tile graph
+# does with ``n_jobs > 1``. Parallel kernel launches are therefore serialised
+# unless the active layer is known to be thread-safe.
+_PARALLEL_LOCK = threading.RLock()
+_THREADSAFE_LAYERS = ("tbb", "omp")
+_PARALLEL_THREADSAFE = False
+
+
+def _parallel_launch_threadsafe() -> bool:
+    """
+    ``True`` once numba's threading layer is known to be thread-safe (TBB or
+    OpenMP). Before the first parallel kernel has run the layer is not chosen
+    yet, so this returns ``False``.
+    """
+    global _PARALLEL_THREADSAFE  # pylint: disable=global-statement
+    if not _PARALLEL_THREADSAFE and _NUMBA_IMPORTED:
+        try:
+            layer = numba.threading_layer()
+        except ValueError:  # no parallel kernel has run yet
+            return False
+        _PARALLEL_THREADSAFE = layer in _THREADSAFE_LAYERS
+    return _PARALLEL_THREADSAFE
+
 
 def _noop_decorator(*args: Any, **kwargs: Any) -> Any:
     """No-op stand-in for ``numba.njit`` supporting both decorator forms."""
@@ -212,6 +237,7 @@ class OptionalJitFunction:
         self.py_func = py_func
         self.fallback = fallback if fallback is not None else py_func
         self.jit_options = dict(jit_options)
+        self.is_parallel = bool(self.jit_options.get("parallel", False))
         self.fallback_desc = fallback_desc
         self.warn = warn
         self._dispatcher: Any = None
@@ -261,6 +287,9 @@ class OptionalJitFunction:
             disp = self.jit_func
             if disp is not None:
                 try:
+                    if self.is_parallel and not _parallel_launch_threadsafe():
+                        with _PARALLEL_LOCK:
+                            return disp(*args, **kwargs)
                     return disp(*args, **kwargs)
                 except _COMPILE_ERRORS as err:
                     # Typing/lowering failure: stop retrying compilation and

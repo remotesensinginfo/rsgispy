@@ -555,3 +555,52 @@ def test_builders_validate_like_file_functions():
         if_chained.build_filter_chain_node(src, [if_chained.FilterStep("lee", 3, {"n_looks": -2})])
     assert if_stats.median_filter_node(src).name == "median_filter"
     assert if_stats.median_filter_node(src, name="m").name == "m"
+
+
+@pytest.mark.parametrize(
+    "file_dtype,node_dtype",
+    [
+        ("uint8", np.float64),
+        ("int16", np.float64),
+        ("uint16", np.float32),
+        ("float32", np.float64),
+        ("int32", np.float32),  # not a safe cast: read native, cast in NumPy
+        ("float32", np.uint8),  # narrowing: read native, cast in NumPy
+    ],
+)
+def test_raster_source_read_dtype_matches_numpy_cast(tmp_path, file_dtype, node_dtype):
+    """GDAL-side conversion (when used) gives exactly ``raw.astype(dtype)``."""
+    from rsgispy._tilegraph._exec import gdal_read_dtype
+
+    rng = np.random.default_rng(5)
+    if np.issubdtype(np.dtype(file_dtype), np.integer):
+        info = np.iinfo(file_dtype)
+        arr = rng.integers(info.min, info.max, size=(2, 45, 39), endpoint=True)
+    else:
+        arr = rng.normal(0.0, 300.0, size=(2, 45, 39))
+        arr[0, :3, :3] = np.nan
+        arr[1, 4, 4] = -np.inf
+    arr = arr.astype(file_dtype)
+    path = str(tmp_path / f"in_{file_dtype}.tif")
+    with rasterio.open(
+        path, "w", driver="GTiff", height=45, width=39, count=2, dtype=file_dtype,
+        crs="EPSG:32630", transform=rasterio.transform.from_origin(0, 0, 10, 10),
+    ) as dst:
+        dst.write(arr)
+    with np.errstate(invalid="ignore"):
+        expected = arr.astype(node_dtype)
+    single = MemorySink(RasterSource(path, dtype=node_dtype), name="single")
+    shared = [
+        MemorySink(RasterSource(path, bands=b, dtype=node_dtype), name=f"b{b}")
+        for b in (1, 2)
+    ]
+    with np.errstate(invalid="ignore"):
+        res = TileGraph([single] + shared, block_size=16).run(use_pbar=False)
+        alone = TileGraph(
+            MemorySink(RasterSource(path, dtype=node_dtype), name="x"), block_size=16
+        ).run(use_pbar=False)["x"]
+    for out in (res["single"], alone, np.concatenate([res["b1"], res["b2"]])):
+        assert out.dtype == np.dtype(node_dtype)
+        np.testing.assert_array_equal(out, expected)
+    safe = np.can_cast(file_dtype, node_dtype, casting="safe")
+    assert (gdal_read_dtype(file_dtype, node_dtype) is not None) == bool(safe)

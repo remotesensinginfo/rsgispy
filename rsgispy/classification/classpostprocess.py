@@ -26,7 +26,7 @@ from typing import Any, Mapping, Optional, Sequence, Union
 
 import numpy as np
 
-from rsgispy._io import TileNode
+from rsgispy._io import TileNode, resolve_input_nodata
 from rsgispy.classification._postprocess_helpers import (
     majority_window_node,
     run_majority_filter,
@@ -62,8 +62,8 @@ def majority_filter_node(
     ``filter_size // 2``.
 
     The node outputs ``float64`` blocks with the bands (and band names) of
-    ``source``. ``no_data_val`` is the input no-data value (not read from
-    ``source``, so pass the input's no-data value); output pixels without a
+    ``source``. ``no_data_val`` is the input no-data value (by default that of
+    ``source``'s metadata; see :ref:`tilegraph-nodata`); output pixels without a
     value (invalid centres) are set to it when it can be stored in
     ``dtype``, otherwise to ``-9999`` (float ``dtype``) or ``0`` (integer
     ``dtype``), and to NaN (0 for integer ``dtype``) when ``no_data_val`` is
@@ -79,7 +79,8 @@ def majority_filter_node(
                                otherwise ties go to the smallest class.
     :param dtype: NumPy dtype of the raster the result will be written to
                   (Default = ``None``, ``float64``).
-    :param no_data_val: Input no-data value (Default = ``None``).
+    :param no_data_val: Input no-data value (Default = ``None``: that of
+                        ``source``'s metadata).
     :param name: Optional node name (Default = ``'majority_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -107,7 +108,8 @@ def majority_filter_node(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     size = validate_filter_size(filter_size)
     np_dtype = np.dtype(np.float64 if dtype is None else dtype)
-    eff_nd = float(no_data_val) if no_data_val is not None else None
+    in_nd = resolve_input_nodata(source, no_data_val)
+    eff_nd = float(in_nd) if in_nd is not None else None
     return majority_window_node(
         source=source,
         size=size,

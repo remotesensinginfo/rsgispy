@@ -20,6 +20,7 @@ from rsgispy._io import (
     TileGraph,
     TileNode,
     WindowOp,
+    resolve_input_nodata,
     same_bands_meta,
 )
 from rsgispy.imageprocess import (
@@ -826,13 +827,17 @@ def _make_tile_stat_op(
     border: Optional[HaloBorder] = None,
     name: Optional[str] = None,
 ) -> FilterWindowOp:
-    """Build a :class:`FilterWindowOp` running ``tile_fn`` band-by-band."""
+    """
+    Build a :class:`FilterWindowOp` running ``tile_fn`` band-by-band; the
+    input no-data value is ``no_data_val`` or, when ``None``, that of
+    ``source``'s metadata (:func:`~rsgispy.imageprocess.resolve_input_nodata`).
+    """
     # pylint: disable=too-many-arguments
     return FilterWindowOp(
         source,
         win_shape,
         tile_fn,
-        no_data_val=no_data_val,
+        no_data_val=resolve_input_nodata(source, no_data_val),
         border=border,
         name=name,
     )

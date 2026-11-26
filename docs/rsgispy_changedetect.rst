@@ -36,7 +36,7 @@ them in a first pass).
    TileGraph(DiskSink(dndvi, "dndvi.tif")).run()
 
 CVA, ISFA and IR-MAD need whole-image statistics and stay file-based. See
-:doc:`rsgispy_imageprocess` for the list of chainable operations.
+:ref:`tilegraph-chainable` for the list of chainable operations.
 
 Submodules
 ----------

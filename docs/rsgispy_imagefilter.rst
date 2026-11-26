@@ -57,8 +57,9 @@ builder next to its file-based function, named without ``apply_`` and with
 ``_node``, taking ``(source, <the function's processing parameters>, *,
 no_data_val=None, name=None)``; the file options (``gdalformat``,
 ``datatype``, ``calc_stats``) belong to the
-:class:`~rsgispy.imageprocess.DiskSink`. ``no_data_val`` is not read from
-the source, so pass the input's no-data value. Each builder also has a
+:class:`~rsgispy.imageprocess.DiskSink`. ``no_data_val`` defaults to the
+no-data value of the source node (see :ref:`tilegraph-nodata`; use
+:class:`~rsgispy.imageprocess.SetNoData` to turn it off). Each builder also has a
 :class:`~rsgispy.imagefilter.chained.FilterStep` kind for
 :func:`~rsgispy.imagefilter.chained.apply_filter_chain`.
 
@@ -236,7 +237,8 @@ The same chain with ``FilterStep`` kinds (the parameters go in ``params``):
        ],
    )
 
-See :doc:`rsgispy_imageprocess` for the other chainable operations and the
+See :ref:`tilegraph-chainable` for the table of all chainable operations
+(file-based function, node builder and ``FilterStep`` kind) and the
 operations that cannot be chained.
 
 Submodules

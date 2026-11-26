@@ -457,8 +457,8 @@ def lee_filter_node(
     :param n_looks: Equivalent number of looks (> 0; Default = ``1.0``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'lee_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -506,8 +506,8 @@ def enhanced_lee_filter_node(
     :param damping: Exponential damping factor (> 0; Default = ``1.0``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'enhanced_lee_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -555,8 +555,8 @@ def frost_filter_node(
     :param damping: Exponential damping factor (> 0; Default = ``1.0``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'frost_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -604,8 +604,8 @@ def enhanced_frost_filter_node(
     :param damping: Exponential damping factor (> 0; Default = ``1.0``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'enhanced_frost_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -653,8 +653,8 @@ def kuan_filter_node(
     :param n_looks: Equivalent number of looks (> 0; Default = ``1.0``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'kuan_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -699,8 +699,8 @@ def gamma_map_filter_node(
     :param n_looks: Equivalent number of looks (> 0; Default = ``1.0``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'gamma_map_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -746,8 +746,8 @@ def refined_lee_filter_node(
     :param n_looks: Equivalent number of looks (> 0; Default = ``1.0``).
     :param no_data_val: Optional input no-data value: these pixels are
                         ignored, and output pixels without a value are set to
-                        it (Default = ``None``; not read from ``source``, so
-                        pass the input's no-data value).
+                        it (Default = ``None``: the no-data value of
+                        ``source``'s metadata; see :ref:`tilegraph-nodata`).
     :param name: Optional node name (Default = ``'refined_lee_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
