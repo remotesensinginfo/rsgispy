@@ -26,7 +26,7 @@ from typing import Any, Mapping, Optional, Sequence, Union
 
 import numpy as np
 
-from rsgispy._io import TileNode, resolve_input_nodata
+from rsgispy._io import Cast, TileNode, resolve_input_nodata
 from rsgispy.classification._postprocess_helpers import (
     majority_window_node,
     run_majority_filter,
@@ -61,8 +61,10 @@ def majority_filter_node(
     pixels and ``no_data_val`` pixels are not counted; the halo radius is
     ``filter_size // 2``.
 
-    The node outputs ``float64`` blocks with the bands (and band names) of
-    ``source``. ``no_data_val`` is the input no-data value (by default that of
+    The node outputs blocks of type ``dtype`` (``float64`` when it is
+    ``None``) with the bands (and band names) of ``source``, so a
+    :class:`~rsgispy.imageprocess.DiskSink` without ``datatype`` writes that
+    type. ``no_data_val`` is the input no-data value (by default that of
     ``source``'s metadata; see :ref:`tilegraph-nodata`); output pixels without a
     value (invalid centres) are set to it when it can be stored in
     ``dtype``, otherwise to ``-9999`` (float ``dtype``) or ``0`` (integer
@@ -77,17 +79,17 @@ def majority_filter_node(
     :param keep_centre_on_tie: Keep the centre class when it is tied with
                                the most frequent class (Default = ``True``);
                                otherwise ties go to the smallest class.
-    :param dtype: NumPy dtype of the raster the result will be written to
-                  (Default = ``None``, ``float64``).
+    :param dtype: NumPy dtype of the output blocks and of the raster the
+                  result will be written to, e.g. ``np.uint8`` for a class
+                  map (Default = ``None``, ``float64``).
     :param no_data_val: Input no-data value (Default = ``None``: that of
                         ``source``'s metadata).
     :param name: Optional node name (Default = ``'majority_filter'``).
-    :return: :class:`~rsgispy.imageprocess.WindowOp` node.
+    :return: :class:`~rsgispy.imageprocess.TileNode`.
 
     .. code:: python
 
         import numpy as np
-        import rsgispy
         from rsgispy.imageprocess import DiskSink, TileGraph
         from rsgispy.classification.classpostprocess import majority_filter_node
         from rsgispy.ml.predict import feature_stack_nodes, predict_raster_node
@@ -101,16 +103,14 @@ def majority_filter_node(
             dtype=np.uint8,
             no_data_val=0,
         )
-        TileGraph(
-            DiskSink(smooth, "landcover.tif", datatype=rsgispy.TYPE_8UINT)
-        ).run()
+        TileGraph(DiskSink(smooth, "landcover.tif")).run()  # uint8
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     size = validate_filter_size(filter_size)
     np_dtype = np.dtype(np.float64 if dtype is None else dtype)
     in_nd = resolve_input_nodata(source, no_data_val)
     eff_nd = float(in_nd) if in_nd is not None else None
-    return majority_window_node(
+    node: TileNode = majority_window_node(
         source=source,
         size=size,
         eff_nd=eff_nd,
@@ -119,6 +119,11 @@ def majority_filter_node(
         keep_centre_on_tie=keep_centre_on_tie,
         name=name or "majority_filter",
     )
+    if dtype is not None and np_dtype != np.float64:
+        # The values are already those of an output of type ``dtype`` (classes,
+        # and a no-data value that fits it), so the cast is exact.
+        node = Cast(node, np_dtype, name=f"{name or 'majority_filter'}_cast")
+    return node
 
 
 def apply_majority_filter(

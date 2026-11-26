@@ -49,6 +49,11 @@ def test_worked_example_runs(scene, tmp_path, block_size, n_jobs):
         block_size=block_size, n_jobs=n_jobs, use_pbar=False,
     )
     assert out["n_train"] > 100
+    samples = out["samples"]
+    assert list(samples.columns) == ["class_name", "out_cls_id", "internal_cls_id",
+                                     "x", "y", "NDVI_med", "NDWI_med", "NDVI_sd",
+                                     "NDWI_sd"]
+    assert set(samples["out_cls_id"]) == {1, 2, 3, 4}
 
     with rasterio.open(out["cls_img"]) as src, \
             rasterio.open(scene["classes"]) as ref:
@@ -67,7 +72,7 @@ def test_worked_example_runs(scene, tmp_path, block_size, n_jobs):
     with rasterio.open(out["hshade_img"]) as src:
         assert src.dtypes[0] == "uint8"
     for key in ("slope_img", "sharp_img", "dog_img", "dem_edges_img",
-                "steep_veg_img", "ndvi_z_img"):
+                "steep_veg_img", "indices_z_img"):
         assert os.path.exists(out[key]), key
 
     nodata = out["nodata"]
@@ -82,10 +87,13 @@ def test_worked_example_runs(scene, tmp_path, block_size, n_jobs):
     assert set(per_class.index) == {1, 2, 3, 4}
     assert per_class.loc[2, "NDVI_mean"] > per_class.loc[1, "NDVI_mean"]
 
-    with rasterio.open(out["ndvi_z_img"]) as src:
-        z_val = src.read(1)
-        z_val = z_val[z_val != src.nodata]
-    assert abs(float(z_val.mean())) < 0.05
+    with rasterio.open(out["indices_z_img"]) as src:
+        assert src.descriptions == ("NDVI", "NDWI")
+        for band in (1, 2):
+            z_val = src.read(band)
+            z_val = z_val[(z_val != src.nodata) & np.isfinite(z_val)]
+            assert abs(float(z_val.mean())) < 1e-3
+            assert float(z_val.std()) == pytest.approx(1.0, rel=1e-3)
 
     with rasterio.open(out["steep_veg_img"]) as src:
         assert set(np.unique(src.read(1))) <= {0, 1, 255}

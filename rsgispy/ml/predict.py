@@ -23,6 +23,7 @@ skip reading tiles outside the mask.
 """
 
 from contextlib import ExitStack
+import math
 import os
 from typing import (
     Any,
@@ -111,6 +112,41 @@ def _apply_lut_1d(vals: np.ndarray, lut: Mapping[Any, Any]) -> np.ndarray:
         key = int(val) if isinstance(val, (int, np.integer)) else val
         out[idx] = lut.get(key, val)
     return out
+
+
+def _uint8_label_outputs(
+    estimator: Any,
+    threshold: Optional[float],
+    lut: Optional[Mapping[Any, Any]],
+    fill_value: float,
+) -> bool:
+    """
+    ``True`` when every value a single-output label prediction can produce
+    (the thresholded 0/1 or the estimator's ``classes_``, mapped through
+    ``lut``, and ``fill_value``) is an integer in ``[0, 255]``, so the blocks
+    can be ``uint8`` without changing any value.
+    """
+    if threshold is not None:
+        values: List[Any] = [0, 1]
+    else:
+        classes = getattr(estimator, "classes_", None)
+        if classes is None:
+            return False
+        cls_arr = np.asarray(classes)
+        if cls_arr.ndim != 1 or cls_arr.size == 0:
+            return False
+        values = list(cls_arr.tolist())
+    if lut:
+        values = [lut.get(int(v) if isinstance(v, (int, np.integer)) else v, v) for v in values]
+    values.append(fill_value)
+    for val in values:
+        try:
+            f_val = float(val)
+        except (TypeError, ValueError):
+            return False
+        if not (math.isfinite(f_val) and f_val.is_integer() and 0.0 <= f_val <= 255.0):
+            return False
+    return True
 
 
 def _model_input(x_valid: np.ndarray, use_df: bool, df_cols: Sequence[str]) -> Any:
@@ -1012,6 +1048,8 @@ class PredictionOp(TileNode):
     :param band_names: Optional output band names.
     :param nodata: Output no-data value (metadata).
     :param name: Optional node name.
+    :param out_dtype: Data type of the output blocks (Default = ``None``:
+                      ``float64``); every output value must be exact in it.
     """
 
     # pylint: disable=too-many-instance-attributes
@@ -1030,6 +1068,7 @@ class PredictionOp(TileNode):
         band_names: Optional[Sequence[str]] = None,
         nodata: Optional[float] = None,
         name: Optional[str] = None,
+        out_dtype: Any = None,
     ) -> None:
         # pylint: disable=too-many-arguments
         feat_list = [features] if isinstance(features, TileNode) else list(features)
@@ -1059,6 +1098,7 @@ class PredictionOp(TileNode):
         self.scaler = scaler
         self.band_names = tuple(band_names) if band_names is not None else None
         self.nodata = nodata
+        self.out_dtype = np.dtype(np.float64 if out_dtype is None else out_dtype)
         self.use_df = _needs_dataframe_input(estimator) if estimator is not None else False
         self._in_nodata: List[Optional[float]] = [None] * len(feat_list)
         self._df_cols: Optional[List[str]] = None
@@ -1088,7 +1128,7 @@ class PredictionOp(TileNode):
         return NodeMeta(
             n_bands=self.n_out,
             band_names=self.band_names,
-            dtype=np.float64,
+            dtype=self.out_dtype,
             nodata=self.nodata,
         )
 
@@ -1144,7 +1184,10 @@ class PredictionOp(TileNode):
                 )
             out[:, valid_idx] = vals
         # pylint: disable-next=too-many-function-args
-        return aligned[0].with_data(out.reshape(self.n_out, height, width))
+        out_blk = out.reshape(self.n_out, height, width)
+        if self.out_dtype != np.float64:
+            out_blk = out_blk.astype(self.out_dtype)
+        return aligned[0].with_data(out_blk)
 
     def describe_params(self) -> str:
         return (
@@ -1179,7 +1222,10 @@ def predict_raster_node(
     :func:`feature_stack_nodes`, or from any nodes). A pixel is predicted
     when it is inside ``mask`` (``mask == img_msk_val``, if given) and every
     feature is finite and not its input's no-data value; other pixels get
-    ``no_data_val``. The node outputs ``float64`` blocks, one band per model
+    ``no_data_val``. The node outputs ``float64`` blocks (``uint8`` for a
+    single thematic or thresholded output when every class, after ``lut``,
+    and ``no_data_val`` are integers from 0 to 255, the type
+    :func:`predict_raster` writes by default), one band per model
     output (``n_outputs``, else the estimator's ``n_outputs_``, else
     ``len(band_names)``, else 1).
 
@@ -1255,6 +1301,14 @@ def predict_raster_node(
             return preds.T.astype(np.float64, copy=False)
         return preds.ravel().astype(np.float64, copy=False)[np.newaxis, :]
 
+    # Thematic / thresholded output is uint8 (as predict_raster writes by
+    # default) when every possible value fits exactly; otherwise float64.
+    out_dtype = (
+        np.uint8
+        if is_thematic and n_out == 1
+        and _uint8_label_outputs(estimator, threshold, lut, eff_nd)
+        else None
+    )
     return PredictionOp(
         features,
         _compute,
@@ -1267,6 +1321,7 @@ def predict_raster_node(
         band_names=band_names,
         nodata=eff_nd,
         name=name or "predict_raster",
+        out_dtype=out_dtype,
     )
 
 

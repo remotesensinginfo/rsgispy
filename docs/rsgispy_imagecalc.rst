@@ -191,7 +191,11 @@ result):
   bounds and the ``DPSVI`` ``vv_max`` must be given in ``index_params``);
 * :mod:`~rsgispy.imagecalc.rescale`: ``rescale_img_pxl_vals_node``,
   ``calc_img_rescale_node``, ``img_norm_params_node`` (applies parameters
-  from :func:`~rsgispy.imagecalc.rescale.calc_img_norm_params`);
+  from :func:`~rsgispy.imagecalc.rescale.calc_img_norm_params`, or from the
+  statistics of any node with
+  :func:`~rsgispy.imagecalc.rescale.norm_params_from_stats` and a
+  :class:`~rsgispy.imageprocess.StatsSink`, in two passes without writing a
+  file);
 * :mod:`~rsgispy.imagecalc.encoding`: ``recode_int_raster_node``,
   ``one_hot_category_encoding_node`` (categories given);
 * :mod:`~rsgispy.imagecalc.percentiles`: ``calc_imgs_pxl_percentiles_node``,

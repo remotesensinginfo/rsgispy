@@ -92,14 +92,18 @@ The building blocks are:
   :class:`~rsgispy.imageprocess.BandMathOp`, the band nodes
   :class:`~rsgispy.imageprocess.SelectBands` (1-based band selection),
   :class:`~rsgispy.imageprocess.StackBands` (stack the bands of several
-  nodes, keeping band names), :class:`~rsgispy.imageprocess.Cast` and
+  nodes, keeping band names; both take ``band_names=`` to rename the
+  result), :class:`~rsgispy.imageprocess.Cast`,
   :class:`~rsgispy.imageprocess.SetNoData` (set or clear the no-data value
-  in the metadata), and the node builders of the chainable operations below;
+  in the metadata) and :class:`~rsgispy.imageprocess.SetBandNames` (rename
+  the bands of any node, in the metadata), and the node builders of the
+  chainable operations below;
 * **sinks**: :class:`~rsgispy.imageprocess.DiskSink` (write a raster),
   :class:`~rsgispy.imageprocess.MemorySink` (return an array),
   :class:`~rsgispy.imageprocess.StatsSink` (per-band statistics and
-  histograms) and :class:`~rsgispy.imageprocess.ZonalStatsSink` (statistics
-  per label).
+  histograms), :class:`~rsgispy.imageprocess.ZonalStatsSink` (statistics
+  per label) and :class:`~rsgispy.imageprocess.SampleSink` (training
+  samples: the feature values of labelled pixels).
 
 When a graph is built it is checked before any pixel is read:
 
@@ -114,6 +118,26 @@ When a graph is built it is checked before any pixel is read:
   names raise :class:`rsgispy.RSGISPyException`. A ``DiskSink`` without
   ``band_names`` or ``nodata`` uses those of its input (pass
   ``inherit_meta=False`` to turn this off).
+* **Output data type**: a ``DiskSink`` without ``datatype`` writes the data
+  type of its input node (:func:`~rsgispy.imageprocess.datatype_from_meta`):
+  integer and ``float32`` nodes keep their type, ``bool`` is written as
+  ``uint8``, and ``float64`` nodes (the blocks of most filters and indices)
+  or nodes of unknown type as ``float32``; ``describe()`` shows the type
+  chosen. Pass ``datatype`` to choose another (e.g.
+  ``rsgispy.TYPE_64FLOAT``). **Changed in rsgispy 0.4**: the default was
+  always ``TYPE_32FLOAT``. Graphs that write these nodes without
+  ``datatype`` now get integer files: the masks of
+  ``gen_valid_mask_node``, ``gen_finite_mask_node``,
+  ``gen_img_edge_mask_node`` and ``create_valid_mask_node``,
+  ``one_hot_category_encoding_node``, ``recode_int_raster_node``,
+  ``categorise_aspect_node``, ``hillshade_node``, the class output of
+  ``spectral_angle_mapper_node`` and ``spectral_correlation_mapper_node``,
+  ``majority_filter_node`` with an integer ``dtype``, a thematic or
+  thresholded ``predict_raster_node`` (``uint8`` when every class fits),
+  builders given an integer ``out_dtype``, a
+  :class:`~rsgispy.imageprocess.Cast` to an integer type, and integer
+  ``RasterSource`` / ``ArraySource`` nodes. The file-based functions are
+  unchanged.
 * :meth:`~rsgispy.imageprocess.TileGraph.describe` returns a text listing of
   the nodes with their inputs, parameters, halos and metadata.
 
@@ -399,6 +423,45 @@ minimum, maximum and standard deviation of each value band per label.
        ]
    ).run()
    print(res["ndvi_stats"].to_dataframe())
+
+:func:`~rsgispy.imagecalc.rescale.norm_params_from_stats` turns a
+``RasterStats`` into the normalisation parameters of
+:func:`~rsgispy.imagecalc.rescale.calc_img_norm_params`, for
+:func:`~rsgispy.imagecalc.rescale.img_norm_params_node` in a second pass,
+without writing the node to a file.
+
+Training samples
+~~~~~~~~~~~~~~~~
+
+:class:`~rsgispy.imageprocess.SampleSink` takes a feature node and a
+single-band label node (class IDs, with the label no-data value, e.g. ``0``,
+for unlabelled pixels) and returns a pandas ``DataFrame`` of the
+labelled pixels in the layout of the classification sample tables
+(``class_name``, ``out_cls_id``, ``internal_cls_id``, ``x``, ``y`` and one
+column per feature band, named after the band names). A pixel is sampled
+when its label and every feature are valid. With ``max_per_class`` at most
+that many pixels are kept per class, chosen by a pseudo-random key of each
+pixel's position and ``rnd_seed``, so the sample is the same for any block
+size and ``n_jobs`` and memory use stays bounded.
+
+.. code-block:: python
+
+   from sklearn.ensemble import RandomForestClassifier
+   from rsgispy.imageprocess import RasterSource, SampleSink, StackBands, TileGraph
+   from rsgispy.imagecalc.calcindices import calc_indices_node
+   from rsgispy.imagefilter.stats import stddev_filter_node
+
+   idx = calc_indices_node(RasterSource("s2.tif"),
+                           {2: "Green", 3: "Red", 4: "NIR"}, ["NDVI", "NDWI"])
+   feats = StackBands([idx, stddev_filter_node(idx, 5)],
+                      band_names=["NDVI", "NDWI", "NDVI_sd", "NDWI_sd"])
+   samples = TileGraph(
+       SampleSink(feats, RasterSource("train_labels.tif"),
+                  max_per_class=5000, name="samples")
+   ).run()["samples"]
+   cols = ["NDVI", "NDWI", "NDVI_sd", "NDWI_sd"]
+   clf = RandomForestClassifier().fit(samples[cols].to_numpy(),
+                                      samples["out_cls_id"])
 
 .. _tilegraph-parallel:
 

@@ -255,6 +255,15 @@ def _normalise_radius(
     return (ry, rx)
 
 
+def _fits_int(value: float, np_dtype: np.dtype) -> bool:
+    """``True`` if ``value`` is an integer that ``np_dtype`` can store."""
+    val = float(value)
+    if not np.isfinite(val) or not val.is_integer():
+        return False
+    info = np.iinfo(np_dtype)
+    return info.min <= val <= info.max
+
+
 def _pad_3d(
     arr: np.ndarray,
     pad_top: int,
@@ -268,6 +277,12 @@ def _pad_3d(
         return arr
     pad_width = ((0, 0), (pad_top, pad_bottom), (pad_left, pad_right))
     if border.mode == "constant":
+        if np.issubdtype(arr.dtype, np.integer) and not _fits_int(
+            border.fill_value, arr.dtype
+        ):
+            # e.g. a NaN fill around integer blocks: pad a float64 copy, as
+            # the fill cannot be stored in the integer type.
+            arr = arr.astype(np.float64)
         return np.pad(
             arr,
             pad_width=pad_width,
