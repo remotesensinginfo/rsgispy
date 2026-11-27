@@ -245,6 +245,7 @@ def create_wmts_img_map(
                 out_epsg=bbox_epsg,
                 interp_method=rsgispy.INTERP_CUBIC,
                 gdalformat="GTIFF",
+                use_pbar=False,
             )
             if os.path.exists(wmts_raw_img):
                 os.remove(wmts_raw_img)

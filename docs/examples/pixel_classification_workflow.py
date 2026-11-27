@@ -89,7 +89,7 @@ def run_workflow(
           use_pbar=use_pbar)
     slope_img = os.path.join(out_dir, "slope.tif")
     resample_img_to_match(s2_img, slope_dem_img, slope_img,
-                          interp_method=rsgispy.INTERP_BILINEAR)
+                          interp_method=rsgispy.INTERP_BILINEAR, use_pbar=use_pbar)
 
     # The Sentinel-2 bands to use, as a virtual image (no copy).
     s2_vrt = os.path.join(out_dir, "s2_bands.vrt")

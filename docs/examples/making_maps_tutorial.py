@@ -48,7 +48,8 @@ def run(data_dir: str, out_dir: str, use_pbar: bool = True,
     s2_img = os.path.join(out_dir, "s2_aber_20m.tif")
     vmsk_img = os.path.join(out_dir, "s2_aber_20m_vmsk.tif")
     for in_img, sub_img in ((s2_scene, s2_img), (vmsk_scene, vmsk_img)):
-        gdal_translate(in_img, sub_img, proj_win=(x_min, y_max, x_max, y_min))
+        gdal_translate(in_img, sub_img, proj_win=(x_min, y_max, x_max, y_min),
+                       use_pbar=use_pbar)
 
     # Land cover: the random forest classification of the tutorial notebook
     # 04_image_classification/03_supervised_pixel_classification (same
@@ -99,7 +100,7 @@ def run(data_dir: str, out_dir: str, use_pbar: bool = True,
     # The DEM, on the same area. The sea is 0 m in this DEM: set it to no data.
     dem_sub = os.path.join(out_dir, "dem_aber_10m_sea.tif")
     gdal_translate(os.path.join(data_dir, "dem_10m_osgb.tif"), dem_sub,
-                   proj_win=(x_min, y_max, x_max, y_min))
+                   proj_win=(x_min, y_max, x_max, y_min), use_pbar=use_pbar)
     dem_img = os.path.join(out_dir, "dem_aber_10m.tif")
     band_maths(dem_img, "dem <= 0 ? -32768 : dem", [BandDefn("dem", dem_sub, 1)],
                datatype=rsgispy.TYPE_32FLOAT, no_data_val=-32768, use_pbar=use_pbar)
@@ -108,7 +109,8 @@ def run(data_dir: str, out_dir: str, use_pbar: bool = True,
     # catchments are complete) at 20 m (see the hydrology guide).
     dem_20m = os.path.join(out_dir, "dem_20m.tif")
     gdal_translate(os.path.join(data_dir, "dem_10m_osgb.tif"), dem_20m,
-                   target_res=(20, 20), resample_alg=rsgispy.INTERP_AVERAGE)
+                   target_res=(20, 20), resample_alg=rsgispy.INTERP_AVERAGE,
+                   use_pbar=use_pbar)
     dem_land = os.path.join(out_dir, "dem_20m_land.tif")
     band_maths(dem_land, "dem <= 0 ? -32768 : dem", [BandDefn("dem", dem_20m, 1)],
                datatype=rsgispy.TYPE_32FLOAT, no_data_val=-32768, use_pbar=use_pbar)

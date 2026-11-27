@@ -375,6 +375,7 @@ def get_wmts_as_img(
                 max_x=wmts_bbox[1],
                 min_y=wmts_bbox[2],
                 max_y=wmts_bbox[3],
+                use_pbar=False,
             )
             rsgispy.imageutils.warp.gdal_warp(
                 input_img=clipped_img,
@@ -383,6 +384,7 @@ def get_wmts_as_img(
                 interp_method=rsgispy.INTERP_CUBIC,
                 gdalformat=gdalformat,
                 use_multi_threaded=False,
+                use_pbar=False,
             )
         else:
             rsgispy.imageutils.subsetting.subset_bbox(
@@ -394,4 +396,5 @@ def get_wmts_as_img(
                 max_x=wmts_bbox[1],
                 min_y=wmts_bbox[2],
                 max_y=wmts_bbox[3],
+                use_pbar=False,
             )

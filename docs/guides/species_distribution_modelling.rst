@@ -555,13 +555,13 @@ learnt:
    flush_dist                         0.980000               0.826970
    impr_grass_dist                    0.986667               0.565000
                           ST   ST_conf
-   winter_temp      0.309467  0.097853
-   ledges_dist      0.776935  0.188845
-   calc_grass_dist  0.120805  0.065092
-   rock_dist        0.017680  0.005980
-   scree_dist       0.040084  0.017268
-   flush_dist       0.081254  0.035577
-   impr_grass_dist  0.059072  0.028876
+   winter_temp      0.474379  0.160828
+   ledges_dist      0.777793  0.238578
+   calc_grass_dist  0.144966  0.071002
+   rock_dist        0.017230  0.008926
+   scree_dist       0.049139  0.020974
+   flush_dist       0.116557  0.068653
+   impr_grass_dist  0.077702  0.039031
 
 .. figure:: images/sdm_response_temp.png
    :width: 80%
@@ -583,13 +583,14 @@ informative variable alone (AUC 0.92), removing it lowers the AUC most (from
 index; its response curve (``ledges_dist_resp``) is about 0.87 up to 600 m
 from a ledge, falls in steps between 600 and 900 m, and is below 0.1 beyond
 900 m. Winter temperature is
-second (AUC 0.87 alone; Sobol ``ST`` 0.31), then the distance to flushes and
+second (AUC 0.87 alone; Sobol ``ST`` 0.47), then the distance to flushes and
 springs. Removing any other single variable barely changes the AUC, partly
 because of correlated partners (scree and ledges, ``r = 0.68``) and partly
 because the 11 test presences cannot resolve small differences. The Sobol
-indices change a little from run to run (the SALib samples are not seeded),
-and the wide ``ST_conf`` of ``ledges_dist`` shows that more samples would be
-needed for precise values; the ranking is stable.
+sample is seeded (``rnd_seed``, default ``42``), so the indices are the same
+on every run; with another seed they change a little, and the wide ``ST_conf`` of
+``ledges_dist`` shows that more samples would be needed for precise values.
+The ranking is stable.
 
 **When the methods disagree**, it is
 usually because of correlated variables (jackknife "leave out" scores barely

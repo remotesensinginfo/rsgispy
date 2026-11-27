@@ -1601,6 +1601,7 @@ def calc_salib_feature_sensitivity(
     sobol_overall_file: Optional[Union[str, os.PathLike]] = None,
     sobol_first_file: Optional[Union[str, os.PathLike]] = None,
     sobol_second_file: Optional[Union[str, os.PathLike]] = None,
+    rnd_seed: Optional[int] = 42,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Perform SALib Sobol sensitivity analysis quantifying first-order,
@@ -1622,6 +1623,9 @@ def calc_salib_feature_sensitivity(
     :param sobol_overall_file: Optional total-order Sobol CSV output path.
     :param sobol_first_file: Optional first-order Sobol CSV output path.
     :param sobol_second_file: Optional second-order Sobol CSV output path.
+    :param rnd_seed: Seed for the Sobol sample and the bootstrap confidence
+                     intervals, so the indices are the same on every run
+                     (Default = ``42``; ``None`` for a different sample each run).
     :return: Tuple ``(total_Si, first_Si, second_Si)`` DataFrames.
 
     .. code:: python
@@ -1668,4 +1672,5 @@ def calc_salib_feature_sensitivity(
         sobol_overall_file=sobol_overall_file,
         sobol_first_file=sobol_first_file,
         sobol_second_file=sobol_second_file,
+        rnd_seed=rnd_seed,
     )

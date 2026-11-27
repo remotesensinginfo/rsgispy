@@ -512,8 +512,17 @@ def create_companion_legend_axis(
     labelspacing: float = 0.45,
     borderpad: float = 0.6,
 ) -> Tuple[matplotlib.axes.Axes, matplotlib.legend.Legend]:
-    """Create a companion legend axis adjacent to ``ax`` and draw the legend."""
+    """
+    Create a companion legend axis adjacent to ``ax`` and draw the legend.
+
+    Without ``ncols`` and ``nrows``, a legend on the ``'bottom'`` or ``'top'``
+    is laid out to be at most about 40 % of the map's height and as wide as
+    the figure: it gets as many columns as it needs and, if it still does not
+    fit, a smaller font (down to 7 pt). Pass ``ncols`` or ``nrows`` to set the
+    layout yourself.
+    """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-statements
     pos_key = str(position).strip().lower()
     if pos_key not in ("right", "left", "bottom", "top"):
         raise rsgispy.RSGISPyException(
@@ -550,7 +559,44 @@ def create_companion_legend_axis(
         prefer_vertical=is_side,
     )
 
-    if size is None:
+    handles = build_legend_handles(
+        entries,
+        swatch_shape=swatch_shape,
+        swatch_edge_colour=swatch_edge_colour,
+        swatch_linewidth=swatch_linewidth,
+        swatch_size=swatch_size,
+    )
+    style_kw = dict(
+        title=title,
+        title_fontsize=title_fontsize,
+        frameon=frameon,
+        facecolor=facecolor,
+        edgecolor=edgecolor,
+        framealpha=framealpha,
+        fancybox=fancybox,
+        columnspacing=columnspacing,
+        handletextpad=handletextpad,
+        labelspacing=labelspacing,
+        borderpad=borderpad,
+    )
+    measured_h: Optional[float] = None
+    if not is_side and ncols is None and nrows is None:
+        # Above or below the map the legend must not be taller than about 40 %
+        # of the map, but may be as wide as the figure: measure the drawn
+        # legend and use more columns (and, if needed, a smaller font).
+        fig_w = float(ax.figure.get_size_inches()[0])
+        fit = _fit_horizontal_legend(
+            ax.figure, handles, len(entries), fig_w * 0.96, avail_h, fontsize,
+            style_kw,
+        )
+        if fit is not None:
+            eff_cols, fontsize, measured_h = fit
+            eff_rows = math.ceil(len(entries) / eff_cols)
+
+    if size is None and measured_h is not None:
+        pct = int(np.clip(math.ceil((measured_h + 0.05) / max(ax_h, 1.0) * 100.0), 5, 60))
+        eff_size = f"{pct}%"
+    elif size is None:
         max_chars = _max_label_chars([e.label for e in entries])
         if is_side:
             est_w = eff_cols * (0.85 + max_chars * max(0.055, 0.0085 * fontsize))
@@ -576,33 +622,74 @@ def create_companion_legend_axis(
         "top": ("lower center", (0.5, 0.0)),
     }
     loc_str, anchor = loc_map[pos_key]
-    handles = build_legend_handles(
-        entries,
-        swatch_shape=swatch_shape,
-        swatch_edge_colour=swatch_edge_colour,
-        swatch_linewidth=swatch_linewidth,
-        swatch_size=swatch_size,
-    )
     lgd = _style_legend(
         ax=leg_ax,
         handles=handles,
         eff_cols=eff_cols,
         loc=loc_str,
         bbox_to_anchor=anchor,
-        title=title,
         fontsize=fontsize,
-        title_fontsize=title_fontsize,
-        frameon=frameon,
-        facecolor=facecolor,
-        edgecolor=edgecolor,
-        framealpha=framealpha,
-        fancybox=fancybox,
-        columnspacing=columnspacing,
-        handletextpad=handletextpad,
-        labelspacing=labelspacing,
-        borderpad=borderpad,
+        **style_kw,
     )
     return leg_ax, lgd
+
+
+MIN_AUTO_LEGEND_FONTSIZE = 7.0
+
+
+def _fit_horizontal_legend(
+    fig: Any,
+    handles: Sequence[Any],
+    n_items: int,
+    avail_w: float,
+    avail_h: float,
+    fontsize: float,
+    style_kw: Mapping[str, Any],
+) -> Optional[Tuple[int, float, float]]:
+    """
+    Choose the columns and font size of a legend above or below a map by
+    drawing candidate legends and measuring them: the largest font size (from
+    ``fontsize`` down to :data:`MIN_AUTO_LEGEND_FONTSIZE`) and, for it, the
+    fewest columns for which the legend is at most ``avail_w`` x ``avail_h``
+    inches. If none fits, the shortest legend within ``avail_w`` at the
+    smallest font size is used. Returns ``(ncols, fontsize, height_in)``, or
+    ``None`` if the figure cannot be measured (the estimated layout is then
+    used).
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    try:
+        renderer = fig.canvas.get_renderer()
+    except (AttributeError, RuntimeError):  # pragma: no cover - non-Agg canvases
+        return None
+    font_sizes = [float(fontsize)]
+    while font_sizes[-1] - 0.5 >= MIN_AUTO_LEGEND_FONTSIZE:
+        font_sizes.append(font_sizes[-1] - 0.5)
+    tmp_ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
+    tmp_ax.set_axis_off()
+    try:
+        fallback: Optional[Tuple[int, float, float]] = None
+        for f_size in font_sizes:
+            prev_rows = None
+            for n_cols in range(1, n_items + 1):
+                n_rows = math.ceil(n_items / n_cols)
+                if n_rows == prev_rows:
+                    continue  # the same number of rows with more columns
+                prev_rows = n_rows
+                lgd = _style_legend(ax=tmp_ax, handles=handles, eff_cols=n_cols,
+                                    loc="center", bbox_to_anchor=None,
+                                    fontsize=f_size, **style_kw)
+                bbox = lgd.get_window_extent(renderer)
+                lgd.remove()
+                width, height = bbox.width / fig.dpi, bbox.height / fig.dpi
+                if width > avail_w:
+                    break  # more columns only make it wider
+                if height <= avail_h:
+                    return n_cols, f_size, height
+                if f_size == font_sizes[-1] and (fallback is None or height < fallback[2]):
+                    fallback = (n_cols, f_size, height)
+        return fallback
+    finally:
+        fig.delaxes(tmp_ax)
 
 
 def save_standalone_legend(
