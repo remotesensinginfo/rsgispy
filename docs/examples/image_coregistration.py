@@ -195,6 +195,7 @@ def run_workflow(
             gcp_x_col="x_match",  # true X of each point
             gcp_y_col="y_match",  # true Y of each point
             calc_stats=False,
+            use_pbar=use_pbar,
         )
         gcp_warp_img = os.path.join(out_dir, "flt_warped_gcps.tif")
         imreg_warp.warp_with_gcps(

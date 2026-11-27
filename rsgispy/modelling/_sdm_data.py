@@ -719,6 +719,7 @@ def comparison_box_plots(
     out_dir: str = "boxplots",
     cls_col: str = "clsid",
     box_plots: bool = False,
+    use_pbar: bool = True,
 ) -> List[str]:
     """
     Create distribution comparison plots (violin or box plots) grouped by
@@ -730,6 +731,7 @@ def comparison_box_plots(
     :param out_dir: Output directory where ``<var>_comp_plot.png`` images are saved.
     :param cls_col: Class column name (Default = ``'clsid'``).
     :param box_plots: If ``True``, render box plots; if ``False``, violin plots.
+    :param use_pbar: Display a progress bar over the covariates (Default = ``True``).
     :return: List of the plot files written (one per covariate; each figure is
              closed after it is saved).
 
@@ -748,6 +750,7 @@ def comparison_box_plots(
         cls_col=cls_col,
         out_dir=out_dir,
         box_plots=box_plots,
+        use_pbar=use_pbar,
     )
 
 

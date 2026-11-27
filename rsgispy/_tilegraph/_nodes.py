@@ -1577,7 +1577,7 @@ class DiskSink(TileSink):
         # temporary GeoTIFF is converted).
         if self._thematic_out:
             # NEAREST COG overviews; the statistics are built on close below.
-            pop_stats_on_close(dst, False, thematic=True)
+            pop_stats_on_close(dst, False, thematic=True, use_pbar=run["use_pbar"])
             stage = get_output_stage(dst)
             is_cog = stage is not None and stage.is_cog
             nodata = run["nodata"]

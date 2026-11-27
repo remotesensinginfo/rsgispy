@@ -636,10 +636,13 @@ def run_salib_sobol_sensitivity(
     sobol_overall_file: Optional[Union[str, os.PathLike]] = None,
     sobol_first_file: Optional[Union[str, os.PathLike]] = None,
     sobol_second_file: Optional[Union[str, os.PathLike]] = None,
+    rnd_seed: Optional[int] = 42,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Execute SALib Sobol global sensitivity analysis over ``analysis_vars`` using
-    ``predict_1d_fn`` and save optional CSV tables and plots.
+    ``predict_1d_fn`` and save optional CSV tables and plots. ``rnd_seed``
+    seeds the scrambled Sobol sample and the bootstrap confidence intervals
+    (``None`` for a different sample on each run).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
@@ -662,12 +665,15 @@ def run_salib_sobol_sensitivity(
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
-        param_values = SALib.sample.sobol.sample(problem, N=int(n_samples))
+        param_values = SALib.sample.sobol.sample(
+            problem, N=int(n_samples), seed=rnd_seed
+        )
     param_df = pd.DataFrame(data=param_values, columns=var_list)
 
     pred_y = np.asarray(predict_1d_fn(param_df), dtype=np.float64).ravel()
     si = SALib.analyze.sobol.analyze(
-        problem, pred_y, calc_second_order=True, print_to_console=False
+        problem, pred_y, calc_second_order=True, print_to_console=False,
+        seed=rnd_seed,
     )
     total_si, first_si, second_si = si.to_df()
 

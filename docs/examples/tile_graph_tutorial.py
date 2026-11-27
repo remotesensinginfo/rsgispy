@@ -41,7 +41,8 @@ def run(data_dir: str, out_dir: str, use_pbar: bool = True) -> Dict[str, Any]:
     # The DEM on the image's 20 m grid (a tile graph does not resample).
     dem_img = os.path.join(out_dir, "dem_20m.tif")
     resample_img_to_match(s2_img, os.path.join(data_dir, "dem_10m_osgb.tif"),
-                          dem_img, interp_method=rsgispy.INTERP_BILINEAR)
+                          dem_img, interp_method=rsgispy.INTERP_BILINEAR,
+                          use_pbar=use_pbar)
 
     # The training polygons (one layer per class) as one raster of class IDs,
     # 0 = unlabelled; the classes and colours of the tutorial notebook.

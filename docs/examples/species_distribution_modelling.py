@@ -112,7 +112,8 @@ def run_workflow(
     # [step-4-explore]
     plots_dir = os.path.join(out_dir, "plots")
     sdm.comparison_box_plots(env_vars, data_vec, "samples",
-                             out_dir=os.path.join(plots_dir, "violins"))
+                             out_dir=os.path.join(plots_dir, "violins"),
+                             use_pbar=use_pbar)
     corr_df = sdm.correlation_matrix(
         env_vars, data_vec, "samples",
         out_corr_file=os.path.join(out_dir, "correlation_matrix.csv"),

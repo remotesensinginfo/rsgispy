@@ -106,13 +106,13 @@ def run_workflow(
     rsgispy.imageutils.warp.resample_img_to_match(
         s2_img, dem_img, opath("dem_10m.tif"),
         interp_method=rsgispy.INTERP_BILINEAR,
-        datatype=rsgispy.TYPE_32FLOAT, no_data_val=dem_no_data,
+        datatype=rsgispy.TYPE_32FLOAT, no_data_val=dem_no_data, use_pbar=use_pbar,
     )
     for name, in_img in (("mng_now", mng_now_img), ("mng_hist", mng_hist_img)):
         rsgispy.imageutils.warp.resample_img_to_match(
             s2_img, in_img, opath(f"{name}_10m.tif"),
             interp_method=rsgispy.INTERP_NEAREST_NEIGHBOUR,
-            datatype=rsgispy.TYPE_8UINT,
+            datatype=rsgispy.TYPE_8UINT, use_pbar=use_pbar,
         )
 
     # Mangrove and water indices (input reflectance x 10000, no data 0).

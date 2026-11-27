@@ -68,7 +68,7 @@ def run_workflow(
     slope(dem_img, slope_dem_img, no_data_val=-9999.0, use_pbar=use_pbar)
     slope_img = os.path.join(out_dir, "slope.tif")
     resample_img_to_match(s2_img, slope_dem_img, slope_img,
-                          interp_method=rsgispy.INTERP_BILINEAR)
+                          interp_method=rsgispy.INTERP_BILINEAR, use_pbar=use_pbar)
     # One virtual stack (no copy) of the uint16 bands and float32 layers.
     s2_vrt = os.path.join(out_dir, "s2_bands.vrt")
     create_vrt_band_subset(s2_img, s2_vrt, list(s2_bands))
