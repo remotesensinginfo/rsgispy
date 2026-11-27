@@ -996,6 +996,8 @@ def select_features_boruta_shap(
     out_plot_file: Optional[Union[str, os.PathLike]] = None,
     use_pbar: bool = True,
     return_scores: bool = False,
+    *,
+    linear_perturbation: str = "interventional",
 ) -> Union[List[str], Tuple[List[str], pd.DataFrame]]:
     """
     Select classification features using **BorutaShap**, combining the Boruta
@@ -1066,6 +1068,16 @@ def select_features_boruta_shap(
                                default).
     :param use_linear_explainer: Use ``shap.LinearExplainer`` when ``True``
                                  (Default = ``False``).
+    :param linear_perturbation: How ``shap.LinearExplainer`` handles
+                                correlated variables (keyword only):
+                                ``'interventional'`` (Default; the ``shap``
+                                default, each variable's SHAP value is
+                                ``coef * (x - mean(x))`` so a variable with a
+                                coefficient of ~0 gets ~0 SHAP values) or
+                                ``'correlation_dependent'`` (effects are shared
+                                between correlated variables, so a variable with
+                                a coefficient of ~0 can get large SHAP values).
+                                Only used when a linear explainer is chosen.
     :param use_internal_id: Train against ``internal_cls_id`` when ``True``.
     :param rnd_seed: Optional random seed for reproducible shadow shuffling,
                      estimator training, and subsampling.
@@ -1178,6 +1190,7 @@ def select_features_boruta_shap(
         subsample_n_smpls=subsample_n_smpls,
         use_tree_explainer=use_tree_explainer,
         use_linear_explainer=use_linear_explainer,
+        linear_perturbation=linear_perturbation,
         rnd_seed=rnd_seed,
         out_plot_file=out_plot_file,
         use_pbar=use_pbar,
@@ -1587,6 +1600,8 @@ def calc_shap_feature_contributions(
     use_tree_explainer: bool = False,
     use_linear_explainer: bool = False,
     rnd_seed: Optional[int] = None,
+    *,
+    linear_perturbation: str = "interventional",
 ) -> pd.DataFrame:
     """
     Compute SHAP feature contributions for a fitted ``scikit-learn`` classifier
@@ -1613,6 +1628,16 @@ def calc_shap_feature_contributions(
     :param subsample_n_smpls: Optional subsample count for SHAP evaluation.
     :param use_tree_explainer: Use ``shap.TreeExplainer`` when ``True``.
     :param use_linear_explainer: Use ``shap.LinearExplainer`` when ``True``.
+    :param linear_perturbation: How ``shap.LinearExplainer`` handles
+                                correlated variables (keyword only):
+                                ``'interventional'`` (Default; the ``shap``
+                                default, each variable's SHAP value is
+                                ``coef * (x - mean(x))`` so a variable with a
+                                coefficient of ~0 gets ~0 SHAP values) or
+                                ``'correlation_dependent'`` (effects are shared
+                                between correlated variables, so a variable with
+                                a coefficient of ~0 can get large SHAP values).
+                                Only used when a linear explainer is chosen.
     :param rnd_seed: Optional random seed for subsampling.
     :return: :class:`pandas.DataFrame` of mean absolute SHAP contributions per
              feature (and per class when multiclass).
@@ -1674,6 +1699,7 @@ def calc_shap_feature_contributions(
         subsample_n_smpls=subsample_n_smpls,
         use_tree_explainer=use_tree_explainer,
         use_linear_explainer=use_linear_explainer,
+        linear_perturbation=linear_perturbation,
         target_class_idx=target_idx,
         class_labels=class_labels if class_labels else None,
         rnd_seed=rnd_seed,
