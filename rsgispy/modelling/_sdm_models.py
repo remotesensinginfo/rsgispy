@@ -3,6 +3,9 @@ Model training, hyperparameter search, k-fold ensemble fitting, explainability,
 and variable importance routines for :mod:`rsgispy.modelling.species_distribution`.
 """
 
+# pylint: disable=too-many-lines
+
+import warnings
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -24,6 +27,8 @@ from rsgispy.modelling._helpers import (
     sklearn,
     validate_fixed_var_vals,
 )
+from rsgispy.ml.cv import _iter_cv_splits
+from rsgispy.modelling._sdm_eval import calc_boyce_index, calc_sdm_eval_metrics
 from rsgispy.tools._ml_explain import (
     finalise_plot,
     plot_jackknife_bars,
@@ -317,7 +322,119 @@ def _ensure_all_classes_in_fold(
     return updated_idx
 
 
+_KFOLD_DEFAULTS = {"n_kfolds": 10, "fold_prop": 0.6, "sel_replacement": True}
+_SCORE_COLS = [
+    "fold",
+    "n_train",
+    "n_val",
+    "train_auc",
+    "train_tss",
+    "val_auc",
+    "val_tss",
+    "val_boyce",
+    "test_auc",
+    "test_tss",
+]
+
+
+def _fold_metrics(
+    y_true: np.ndarray, scores: np.ndarray, prefix: str, boyce: bool = False
+) -> Dict[str, float]:
+    """AUC and TSS (and optionally the Boyce index, with the absences as
+    background) of one set of samples; ``NaN`` when only one class is present."""
+    keys = [f"{prefix}_auc", f"{prefix}_tss"] + ([f"{prefix}_boyce"] if boyce else [])
+    out = {key: float("nan") for key in keys}
+    y_arr = (np.asarray(y_true) == 1).astype(np.uint8)
+    if np.unique(y_arr).size < 2:
+        return out
+    metrics = calc_sdm_eval_metrics(y_arr, scores)
+    out[f"{prefix}_auc"] = metrics["auc"]
+    out[f"{prefix}_tss"] = metrics["tss"]
+    if boyce:
+        try:
+            out[f"{prefix}_boyce"] = float(
+                calc_boyce_index(scores[y_arr == 1], scores[y_arr == 0])["boyce"]
+            )
+        except rsgispy.RSGISPyException:
+            pass
+    return out
+
+
+def _geom_coords(gdf: Any) -> np.ndarray:
+    """``(n, 2)`` point coordinates of ``gdf`` (centroids for non-points)."""
+    geoms = gdf.geometry
+    pts = geoms.where(geoms.geom_type == "Point", geoms.centroid)
+    return np.column_stack([pts.x.to_numpy(), pts.y.to_numpy()]).astype(np.float64)
+
+
+# pylint: disable=too-many-arguments,too-many-positional-arguments
+def _resolve_cv_splits(
+    cv: Any,
+    train_x: pd.DataFrame,
+    train_y: np.ndarray,
+    train_gdf: Any,
+    groups_col: Optional[str],
+    kfold_args: Mapping[str, Any],
+) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """Validate ``cv`` and return its ``(train_idx, val_idx)`` splits."""
+    is_int = isinstance(cv, (int, np.integer)) and not isinstance(cv, bool)
+    is_splitter = not isinstance(cv, (str, bytes, bool)) and callable(
+        getattr(cv, "split", None)
+    )
+    if not ((is_int and int(cv) >= 2) or is_splitter):
+        raise rsgispy.RSGISPyException(
+            "cv must be a splitter with a split() method (e.g. "
+            "rsgispy.ml.cv.SpatialBlockKFold) or an integer >= 2."
+        )
+    changed = [k for k, v in kfold_args.items() if v != _KFOLD_DEFAULTS[k]]
+    if changed:
+        warnings.warn(
+            f"{', '.join(changed)} are ignored when cv is given; each cv fold "
+            "fits one ensemble member.",
+            UserWarning,
+            stacklevel=3,
+        )
+    groups = None
+    if groups_col is not None:
+        validate_columns_exist(train_gdf, [groups_col])
+        groups = train_gdf[groups_col].to_numpy()
+    cv_obj = int(cv) if is_int else cv
+    splits = _iter_cv_splits(
+        cv_obj, train_x, train_y, _geom_coords(train_gdf), groups
+    )
+    if not splits:
+        raise rsgispy.RSGISPyException("cv produced no splits.")
+    return [
+        (np.asarray(tr, dtype=np.intp), np.asarray(va, dtype=np.intp))
+        for tr, va in splits
+    ]
+
+
+def _check_cv_fold(fold_i: int, tr_y: np.ndarray, val_y: np.ndarray) -> None:
+    hint = (
+        "Use larger blocks (block_size), fewer splits, or stratify=True in "
+        "rsgispy.ml.cv.SpatialBlockKFold."
+    )
+    if not np.any(tr_y == 1) or not np.any(tr_y != 1):
+        raise rsgispy.RSGISPyException(
+            f"cv fold {fold_i} has only one class in its training rows. {hint}"
+        )
+    if not np.any(val_y == 1):
+        raise rsgispy.RSGISPyException(
+            f"cv fold {fold_i} has no presences in its held-out rows, so it "
+            f"cannot be evaluated. {hint}"
+        )
+
+
+def _print_score_range(label: str, vals: Sequence[float]) -> None:
+    arr = np.asarray(vals, dtype=np.float64)
+    if arr.size == 0 or np.all(np.isnan(arr)):
+        return
+    print(f"{label}: {np.nanmin(arr)} - {np.nanmedian(arr)} - {np.nanmax(arr)}")
+
+
 # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+# pylint: disable=too-many-statements,too-many-branches
 def fit_kfold_sklearn_mdls(
     est_cls_obj: Any,
     train_vec_file: VectorInput,
@@ -333,11 +450,31 @@ def fit_kfold_sklearn_mdls(
     use_pbar: bool = True,
     *,
     sample_weight_col: Optional[str] = None,
-) -> List[Any]:
+    cv: Optional[Any] = None,
+    groups_col: Optional[str] = None,
+    return_scores: bool = False,
+) -> Union[List[Any], Tuple[List[Any], pd.DataFrame]]:
     """
-    Fit an ensemble of cleanly cloned ``scikit-learn`` binary classifiers across
-    ``n_kfolds`` random training subsets without mutating ``est_cls_obj`` or
-    global NumPy random state.
+    Fit an ensemble of cleanly cloned ``scikit-learn`` binary classifiers without
+    mutating ``est_cls_obj`` or global NumPy random state.
+
+    By default each of the ``n_kfolds`` members is fitted on a random subset
+    (``fold_prop`` of the training rows, drawn with or without replacement)
+    and scored on the separate test set. Nearby samples then end up on both
+    sides, so with spatially autocorrelated samples the scores are optimistic.
+
+    With ``cv`` (e.g. :class:`rsgispy.ml.cv.SpatialBlockKFold`), each cv fold
+    fits one member on that fold's training rows, and the member is also scored
+    on the fold's held-out rows (out-of-fold AUC, TSS and Boyce index, with the
+    held-out absences as background), which are spatially separate from its
+    training rows. ``n_kfolds``, ``fold_prop`` and ``sel_replacement`` are then
+    ignored (with a warning if changed from their defaults). Coordinates are
+    taken from the training geometries (centroids for non-points); group labels
+    for :class:`rsgispy.ml.cv.PolygonGroupKFold` or scikit-learn group
+    splitters come from ``groups_col``. An integer ``cv`` means that many
+    :class:`~rsgispy.ml.cv.SpatialBlockKFold` folds. Every fold must have both
+    classes in its training rows and at least one presence in its held-out
+    rows.
 
     :param est_cls_obj: Base ``scikit-learn`` classifier estimator.
     :param train_vec_file: Training vector path or GeoDataFrame.
@@ -355,17 +492,27 @@ def fit_kfold_sklearn_mdls(
                               weights passed to the estimator's ``fit``
                               (e.g. from :func:`calc_bias_weights`;
                               Default = ``None``).
-    :return: List of cleanly cloned and fitted ``scikit-learn`` estimators.
+    :param cv: Optional cross-validation splitter or integer (Default = ``None``).
+    :param groups_col: Optional training column of group labels passed to ``cv``.
+    :param return_scores: Also return a :class:`pandas.DataFrame` with one row
+                          per member: ``fold``, ``n_train``, ``n_val``,
+                          ``train_auc``, ``train_tss``, ``val_auc``,
+                          ``val_tss``, ``val_boyce`` (``NaN`` without ``cv``),
+                          ``test_auc`` and ``test_tss`` (Default = ``False``).
+    :return: List of cleanly cloned and fitted ``scikit-learn`` estimators, or
+             ``(models, scores_df)`` when ``return_scores=True``.
 
     .. code:: python
 
         from sklearn.ensemble import RandomForestClassifier
+        from rsgispy.ml.cv import SpatialBlockKFold
         import rsgispy.modelling.species_distribution as sdm
 
-        mdls = sdm.fit_kfold_sklearn_mdls(
+        mdls, scores_df = sdm.fit_kfold_sklearn_mdls(
             RandomForestClassifier(n_estimators=20),
-            train_gdf, None, test_gdf, None, ["v1", "v2"],
-            n_kfolds=5, rnd_seed=42,
+            train_gdf, None, test_gdf, None, ["v1", "v2"], rnd_seed=42,
+            cv=SpatialBlockKFold(n_splits=5, block_size=1000.0, stratify=True),
+            return_scores=True,
         )
     """
     check_sklearn_available("fit_kfold_sklearn_mdls")
@@ -395,27 +542,52 @@ def fit_kfold_sklearn_mdls(
     n_train = train_y.shape[0]
     if n_train == 0:
         raise rsgispy.RSGISPyException("Training dataset must not be empty.")
-    n_fold_size = max(1, int(n_train * fold_prop))
     unique_classes = np.unique(train_y)
-    if unique_classes.size > 1 and n_fold_size < unique_classes.size:
-        raise rsgispy.RSGISPyException(
-            f"Computed fold size ({n_fold_size}) is smaller than the number "
-            f"of classes ({unique_classes.size}). Increase fold_prop or "
-            "provide more training samples."
+
+    cv_splits: Optional[List[Tuple[np.ndarray, np.ndarray]]] = None
+    if cv is not None:
+        cv_splits = _resolve_cv_splits(
+            cv,
+            train_x,
+            train_y,
+            train_gdf,
+            groups_col,
+            {
+                "n_kfolds": n_kfolds,
+                "fold_prop": fold_prop,
+                "sel_replacement": sel_replacement,
+            },
         )
+        for fold_i, (tr_idx, val_idx) in enumerate(cv_splits):
+            _check_cv_fold(fold_i, train_y[tr_idx], train_y[val_idx])
+    else:
+        n_fold_size = max(1, int(n_train * fold_prop))
+        if unique_classes.size > 1 and n_fold_size < unique_classes.size:
+            raise rsgispy.RSGISPyException(
+                f"Computed fold size ({n_fold_size}) is smaller than the number "
+                f"of classes ({unique_classes.size}). Increase fold_prop or "
+                "provide more training samples."
+            )
 
     train_scores: List[float] = []
     test_scores: List[float] = []
     roc_scores: List[float] = []
+    val_roc_scores: List[float] = []
+    score_rows: List[Dict[str, float]] = []
     est_cls_objs: List[Any] = []
 
+    n_members = len(cv_splits) if cv_splits is not None else n_kfolds
     pbar = rsgispy.get_tqdm()
-    for _ in pbar(range(n_kfolds), disable=not use_pbar):
-        train_idx = rng.choice(n_train, size=n_fold_size, replace=sel_replacement)
-        if unique_classes.size > 1:
-            train_idx = _ensure_all_classes_in_fold(
-                train_idx, train_y, unique_classes, rng
-            )
+    for fold_i in pbar(range(n_members), disable=not use_pbar):
+        val_idx: Optional[np.ndarray] = None
+        if cv_splits is not None:
+            train_idx, val_idx = cv_splits[fold_i]
+        else:
+            train_idx = rng.choice(n_train, size=n_fold_size, replace=sel_replacement)
+            if unique_classes.size > 1:
+                train_idx = _ensure_all_classes_in_fold(
+                    train_idx, train_y, unique_classes, rng
+                )
 
         train_y_set = train_y[train_idx]
         train_x_set = train_x.iloc[train_idx]
@@ -438,22 +610,51 @@ def fit_kfold_sklearn_mdls(
         _, _, roc_auc = calc_binary_roc_auc(test_y, test_probs)
         roc_scores.append(roc_auc)
 
-    print(
-        f"ROC: {np.min(roc_scores)} - {np.median(roc_scores)} - {np.max(roc_scores)}"
-    )
-    print(
-        f"Train: {np.min(train_scores)} - {np.median(train_scores)} - "
-        f"{np.max(train_scores)}"
-    )
-    print(
-        f"Test: {np.min(test_scores)} - {np.median(test_scores)} - "
-        f"{np.max(test_scores)}"
-    )
+        if val_idx is not None or return_scores:
+            row: Dict[str, float] = {
+                "fold": float(fold_i),
+                "n_train": float(train_idx.size),
+                "n_val": float(val_idx.size) if val_idx is not None else float("nan"),
+            }
+            row.update(
+                _fold_metrics(
+                    train_y_set,
+                    get_positive_class_probs(est_cls_fold, train_x_set, pos_label=1),
+                    "train",
+                )
+            )
+            if val_idx is not None:
+                val_metrics = _fold_metrics(
+                    train_y[val_idx],
+                    get_positive_class_probs(
+                        est_cls_fold, train_x.iloc[val_idx], pos_label=1
+                    ),
+                    "val",
+                    boyce=True,
+                )
+                val_roc_scores.append(val_metrics["val_auc"])
+            else:
+                val_metrics = {
+                    k: float("nan") for k in ("val_auc", "val_tss", "val_boyce")
+                }
+            row.update(val_metrics)
+            row.update(_fold_metrics(test_y, test_probs, "test"))
+            score_rows.append(row)
 
+    _print_score_range("ROC", roc_scores)
+    _print_score_range("Train", train_scores)
+    _print_score_range("Test", test_scores)
+    _print_score_range("Validation (out-of-fold) ROC", val_roc_scores)
+
+    if return_scores:
+        scores_df = pd.DataFrame(score_rows, columns=_SCORE_COLS)
+        scores_df["fold"] = scores_df["fold"].astype(int)
+        return est_cls_objs, scores_df
     return est_cls_objs
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+# pylint: disable=too-many-statements,too-many-branches
 def fit_kfold_sklearn_sgl_cls_mdls(
     est_cls_obj: Any,
     train_vec_file: VectorInput,
@@ -469,13 +670,25 @@ def fit_kfold_sklearn_sgl_cls_mdls(
     use_pbar: bool = True,
     *,
     sample_weight_col: Optional[str] = None,
-) -> List[Any]:
+    cv: Optional[Any] = None,
+    groups_col: Optional[str] = None,
+    return_scores: bool = False,
+) -> Union[List[Any], Tuple[List[Any], pd.DataFrame]]:
     """
     Fit an ensemble of cleanly cloned single-class / outlier ``scikit-learn``
-    estimators across ``n_kfolds`` random presence subsets.
+    estimators, by default across ``n_kfolds`` random presence subsets.
+
+    With ``cv`` (see :func:`fit_kfold_sklearn_mdls`), the training layer must
+    contain ``cls_col`` with presences (``1``) and absences: each cv fold fits
+    one member on the **presences** of its training rows and scores it on its
+    held-out presences and absences (out-of-fold AUC, TSS and Boyce index from
+    ``decision_function``). ``n_kfolds``, ``fold_prop`` and
+    ``sel_replacement`` are then ignored.
 
     :param est_cls_obj: Base single-class ``scikit-learn`` estimator.
-    :param train_vec_file: Presence-only training vector path or GeoDataFrame.
+    :param train_vec_file: Presence-only training vector path or GeoDataFrame
+                           (presences and absences with ``cls_col`` when
+                           ``cv`` is given).
     :param train_vec_lyr: Training vector layer name.
     :param test_vec_file: Testing vector path or GeoDataFrame with ``cls_col``.
     :param test_vec_lyr: Testing vector layer name.
@@ -490,7 +703,14 @@ def fit_kfold_sklearn_sgl_cls_mdls(
                               weights passed to the estimator's ``fit``
                               (e.g. from :func:`calc_bias_weights`;
                               Default = ``None``).
-    :return: List of cleanly cloned and fitted ``scikit-learn`` estimators.
+    :param cv: Optional cross-validation splitter or integer (Default = ``None``).
+    :param groups_col: Optional training column of group labels passed to ``cv``.
+    :param return_scores: Also return a per-member scores
+                          :class:`pandas.DataFrame` (columns as
+                          :func:`fit_kfold_sklearn_mdls`; ``train_*`` are
+                          ``NaN`` without ``cv``) (Default = ``False``).
+    :return: List of cleanly cloned and fitted ``scikit-learn`` estimators, or
+             ``(models, scores_df)`` when ``return_scores=True``.
 
     .. code:: python
 
@@ -528,14 +748,45 @@ def fit_kfold_sklearn_sgl_cls_mdls(
 
     n_train = train_x.shape[0]
     n_fold_size = max(1, int(n_train * fold_prop))
+    cv_splits: Optional[List[Tuple[np.ndarray, np.ndarray]]] = None
+    train_y: Optional[np.ndarray] = None
+    if cv is not None:
+        if cls_col not in train_gdf.columns:
+            raise rsgispy.RSGISPyException(
+                f"With cv, the training layer needs the class column '{cls_col}' "
+                "with presences (1) and absences, so held-out rows can be scored."
+            )
+        train_y = train_gdf[cls_col].to_numpy()
+        cv_splits = _resolve_cv_splits(
+            cv,
+            train_x,
+            train_y,
+            train_gdf,
+            groups_col,
+            {
+                "n_kfolds": n_kfolds,
+                "fold_prop": fold_prop,
+                "sel_replacement": sel_replacement,
+            },
+        )
+        for fold_i, (tr_idx, val_idx) in enumerate(cv_splits):
+            _check_cv_fold(fold_i, train_y[tr_idx], train_y[val_idx])
 
     test_scores: List[float] = []
     roc_scores: List[float] = []
+    val_roc_scores: List[float] = []
+    score_rows: List[Dict[str, float]] = []
     est_cls_objs: List[Any] = []
 
+    n_members = len(cv_splits) if cv_splits is not None else n_kfolds
     pbar = rsgispy.get_tqdm()
-    for _ in pbar(range(n_kfolds), disable=not use_pbar):
-        train_idx = rng.choice(n_train, size=n_fold_size, replace=sel_replacement)
+    for fold_i in pbar(range(n_members), disable=not use_pbar):
+        val_idx: Optional[np.ndarray] = None
+        if cv_splits is not None and train_y is not None:
+            all_tr_idx, val_idx = cv_splits[fold_i]
+            train_idx = all_tr_idx[train_y[all_tr_idx] == 1]
+        else:
+            train_idx = rng.choice(n_train, size=n_fold_size, replace=sel_replacement)
         train_x_set = train_x.iloc[train_idx]
 
         fold_seed = int(rng.integers(0, 2**31 - 1)) if rnd_seed is not None else None
@@ -556,14 +807,44 @@ def fit_kfold_sklearn_sgl_cls_mdls(
         _, _, roc_auc = calc_binary_roc_auc(test_y, test_probs)
         roc_scores.append(roc_auc)
 
-    print(
-        f"ROC: {np.min(roc_scores)} - {np.median(roc_scores)} - {np.max(roc_scores)}"
-    )
-    print(
-        f"Test: {np.min(test_scores)} - {np.median(test_scores)} - "
-        f"{np.max(test_scores)}"
-    )
+        if val_idx is not None or return_scores:
+            row: Dict[str, float] = {
+                "fold": float(fold_i),
+                "n_train": float(train_idx.size),
+                "n_val": float(val_idx.size) if val_idx is not None else float("nan"),
+            }
+            if val_idx is not None and train_y is not None:
+                row.update(
+                    _fold_metrics(
+                        train_y[all_tr_idx],
+                        est_cls_fold.decision_function(train_x.iloc[all_tr_idx]),
+                        "train",
+                    )
+                )
+                val_metrics = _fold_metrics(
+                    train_y[val_idx],
+                    est_cls_fold.decision_function(train_x.iloc[val_idx]),
+                    "val",
+                    boyce=True,
+                )
+                val_roc_scores.append(val_metrics["val_auc"])
+            else:
+                row.update({"train_auc": float("nan"), "train_tss": float("nan")})
+                val_metrics = {
+                    k: float("nan") for k in ("val_auc", "val_tss", "val_boyce")
+                }
+            row.update(val_metrics)
+            row.update(_fold_metrics(test_y, test_probs, "test"))
+            score_rows.append(row)
 
+    _print_score_range("ROC", roc_scores)
+    _print_score_range("Test", test_scores)
+    _print_score_range("Validation (out-of-fold) ROC", val_roc_scores)
+
+    if return_scores:
+        scores_df = pd.DataFrame(score_rows, columns=_SCORE_COLS)
+        scores_df["fold"] = scores_df["fold"].astype(int)
+        return est_cls_objs, scores_df
     return est_cls_objs
 
 
