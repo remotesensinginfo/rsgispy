@@ -701,3 +701,74 @@ def test_tune_estimator_rejects_direction_conflicting_with_metric():
             n_trials=2,
             use_pbar=False,
         )
+
+
+def _binary_stack_and_clf(files):
+    b1, b2, b3 = files["arrays"]
+    stack = ImageFeatureStack(
+        [BandSpec(files["img1"], bands=(1, 2)), BandSpec(files["img2"], bands=(1,))]
+    )
+    valid = np.isfinite(b1) & (b1 != -9999.0) & np.isfinite(b2) & (b3 != -9999.0)
+    X = np.column_stack([b1[valid], b2[valid], b3[valid]])
+    y = np.where(X[:, 0] + X[:, 1] > 40.0, 1, 0)
+    clf = RandomForestClassifier(n_estimators=10, max_depth=4, random_state=0).fit(X, y)
+    return stack, clf, valid
+
+
+def test_predict_raster_threshold_nodata_does_not_collide_with_absence(
+    synthetic_stack_files, tmp_path
+):
+    """Thresholded 0/1 output must not use 0 (the absence class) as nodata."""
+    stack, clf, valid = _binary_stack_and_clf(synthetic_stack_files)
+    out = str(tmp_path / "thr.tif")
+    predict_raster(clf, stack, out, threshold=0.5, use_pbar=False, calc_stats=False)
+    with rasterio.open(out) as src:
+        arr = src.read(1)
+        nd = src.nodata
+    assert nd is not None and nd not in (0, 1)
+    assert set(np.unique(arr[valid]).tolist()) == {0, 1}
+    assert arr[0, 0] == nd
+
+
+def test_predict_raster_thematic_class_zero_uses_free_nodata(
+    synthetic_stack_files, tmp_path
+):
+    """thematic=True with a class 0 picks a nodata value that is not a class."""
+    stack, clf, valid = _binary_stack_and_clf(synthetic_stack_files)
+    out = str(tmp_path / "them.tif")
+    predict_raster(clf, stack, out, thematic=True, use_pbar=False, calc_stats=False)
+    with rasterio.open(out) as src:
+        nd = src.nodata
+        arr = src.read(1)
+    assert nd not in (0, 1)
+    assert 0 in np.unique(arr[valid])
+
+
+def test_predict_raster_explicit_nodata_colliding_with_class_raises(
+    synthetic_stack_files, tmp_path
+):
+    """An explicit no_data_val equal to an output class raises."""
+    stack, clf, _ = _binary_stack_and_clf(synthetic_stack_files)
+    with pytest.raises(rsgispy.RSGISPyException, match="no_data_val"):
+        predict_raster(
+            clf, stack, str(tmp_path / "x.tif"), threshold=0.5, no_data_val=0,
+            use_pbar=False,
+        )
+
+
+def test_predict_proba_raster_class_img_nodata_not_a_class(
+    synthetic_stack_files, tmp_path
+):
+    """out_class_img must not use a class label (here 0) as its nodata."""
+    stack, clf, valid = _binary_stack_and_clf(synthetic_stack_files)
+    cls_out = str(tmp_path / "cls.tif")
+    predict_proba_raster(
+        clf, stack, str(tmp_path / "prob.tif"), out_class_img=cls_out,
+        use_pbar=False, calc_stats=False,
+    )
+    with rasterio.open(cls_out) as src:
+        nd = src.nodata
+        arr = src.read(1)
+    assert nd not in (0, 1)
+    assert arr[0, 0] == nd
+    assert 0 in np.unique(arr[valid])

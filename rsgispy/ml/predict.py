@@ -119,6 +119,81 @@ def _apply_lut_1d(vals: np.ndarray, lut: Mapping[Any, Any]) -> np.ndarray:
     return out
 
 
+def _known_label_values(
+    estimator: Any,
+    threshold: Optional[float],
+    lut: Optional[Mapping[Any, Any]],
+) -> Optional[List[Any]]:
+    """
+    Every value a single-output label prediction can produce (the thresholded
+    0/1 or the estimator's ``classes_``), mapped through ``lut``, or ``None``
+    when the estimator does not expose its classes.
+    """
+    if threshold is not None:
+        values: List[Any] = [0, 1]
+    else:
+        classes = getattr(estimator, "classes_", None)
+        if classes is None:
+            return None
+        cls_arr = np.asarray(classes)
+        if cls_arr.ndim != 1 or cls_arr.size == 0:
+            return None
+        values = list(cls_arr.tolist())
+    if lut:
+        values = [
+            lut.get(int(v) if isinstance(v, (int, np.integer)) else v, v)
+            for v in values
+        ]
+    return values
+
+
+def _label_value_set(values: Sequence[Any]) -> set:
+    """Numeric label values as floats (non-numeric labels are skipped)."""
+    out = set()
+    for val in values:
+        try:
+            out.add(float(val))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _resolve_label_nodata(
+    no_data_val: Optional[float],
+    out_np_dt: np.dtype,
+    label_values: Optional[Sequence[Any]],
+) -> float:
+    """
+    Output nodata for ``predict_raster``.
+
+    An explicit ``no_data_val`` that equals an output label raises. Otherwise
+    integer outputs default to ``0`` unless ``0`` is an output label (e.g. the
+    absence class of a thresholded map), in which case the largest, then the
+    smallest, value of the output type that is not a label is used. Floating
+    outputs default to ``-9999``.
+    """
+    labels = _label_value_set(label_values) if label_values is not None else set()
+    if no_data_val is not None:
+        if float(no_data_val) in labels:
+            raise rsgispy.RSGISPyException(
+                f"no_data_val={no_data_val} is also an output class value, so "
+                "those pixels would be read as no data. Choose a no_data_val "
+                "that is not one of the output classes "
+                f"({sorted(labels)})."
+            )
+        return no_data_val
+    if not np.issubdtype(out_np_dt, np.integer):
+        return -9999.0
+    info = np.iinfo(out_np_dt)
+    for cand in (0, int(info.max), int(info.min)):
+        if float(cand) not in labels:
+            return cand
+    raise rsgispy.RSGISPyException(
+        "Could not find a no data value for the output type that is not an "
+        "output class value; pass no_data_val or a wider datatype."
+    )
+
+
 def _uint8_label_outputs(
     estimator: Any,
     threshold: Optional[float],
@@ -131,19 +206,10 @@ def _uint8_label_outputs(
     ``lut``, and ``fill_value``) is an integer in ``[0, 255]``, so the blocks
     can be ``uint8`` without changing any value.
     """
-    if threshold is not None:
-        values: List[Any] = [0, 1]
-    else:
-        classes = getattr(estimator, "classes_", None)
-        if classes is None:
-            return False
-        cls_arr = np.asarray(classes)
-        if cls_arr.ndim != 1 or cls_arr.size == 0:
-            return False
-        values = list(cls_arr.tolist())
-    if lut:
-        values = [lut.get(int(v) if isinstance(v, (int, np.integer)) else v, v) for v in values]
-    values.append(fill_value)
+    values = _known_label_values(estimator, threshold, lut)
+    if values is None:
+        return False
+    values = list(values) + [fill_value]
     for val in values:
         try:
             f_val = float(val)
@@ -478,8 +544,15 @@ def predict_raster(
     :param datatype: Optional ``rsgispy.TYPE_*`` constant. Defaults to
                      :data:`rsgispy.TYPE_8UINT` when ``thematic=True`` or
                      ``threshold is not None``, else :data:`rsgispy.TYPE_32FLOAT`.
-    :param no_data_val: Optional output nodata fill value (defaults to ``0`` for
-                        integer outputs or ``-9999.0`` for floating outputs).
+    :param no_data_val: Optional output nodata fill value. The default is
+                        ``-9999.0`` for floating outputs and ``0`` for integer
+                        outputs, unless ``0`` is an output class (always for
+                        ``threshold``, where 0 is the absence class, and for a
+                        ``thematic`` classifier whose ``classes_``, after
+                        ``lut``, include 0): the largest value of the output
+                        type that is not a class is then used (e.g. ``255``
+                        for ``uint8``). A ``no_data_val`` that equals an output
+                        class raises :class:`rsgispy.RSGISPyException`.
     :param calc_stats: Populate raster statistics and pyramids (Default = ``True``).
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
     :param creation_opts: Optional GDAL/rasterio creation options mapping.
@@ -498,10 +571,10 @@ def predict_raster(
         out_dt = int(datatype)
     out_rio_dt = rsgispy.get_rasterio_datatype(out_dt)
     out_np_dt = np.dtype(rsgispy.get_numpy_datatype(out_dt))
-    eff_nd = (
-        no_data_val
-        if no_data_val is not None
-        else (0 if np.issubdtype(out_np_dt, np.integer) else -9999.0)
+    eff_nd = _resolve_label_nodata(
+        no_data_val,
+        out_np_dt,
+        _known_label_values(estimator, threshold, lut) if is_thematic else None,
     )
 
     use_df = _needs_dataframe_input(estimator)
@@ -681,7 +754,9 @@ def predict_proba_raster(
     :param img_msk_val: Mask value indicating ROI pixels (Default = ``1``).
     :param scaler: Optional :class:`~rsgispy.ml.scaling.FeatureScaler` override.
     :param class_names: Optional band names for each class probability band.
-    :param out_class_img: Optional path to also save argmax class raster.
+    :param out_class_img: Optional path to also save argmax class raster
+                          (``int32``; no data is ``0``, or the largest
+                          ``int32`` value when ``0`` is a class label).
     :param out_entropy_img: Optional path to also save Shannon entropy raster.
     :param lut: Optional mapping from estimator class labels to output IDs for
                 ``out_class_img``.
@@ -761,6 +836,11 @@ def predict_proba_raster(
         )
         cls_out_dt = np.dtype(np.int32)
         cls_rio_dt = "int32"
+        cls_labels = _known_label_values(estimator, None, lut)
+        # Without classes_ the labels are argmax indices, which start at 0.
+        cls_nd = _resolve_label_nodata(
+            None, cls_out_dt, cls_labels if cls_labels is not None else [0]
+        )
 
         for out_win, grid, valid_idx, x_valid in stack_obj.iter_blocks(
             in_msk_img=in_msk_img,
@@ -803,7 +883,7 @@ def predict_proba_raster(
                         count=1,
                         creation_opts=norm_opts,
                     )
-                    cls_dst.nodata = 0
+                    cls_dst.nodata = cls_nd
                 if ent_path is not None:
                     ent_dst = open_output_dataset(
                         stack=stack,
@@ -842,7 +922,7 @@ def predict_proba_raster(
             prob_dst.write(prob_blk, window=out_win)
 
             if cls_dst is not None:
-                cls_flat = np.zeros(win_h * win_w, dtype=np.int64)
+                cls_flat = np.full(win_h * win_w, cls_nd, dtype=np.int64)
                 if probs is not None:
                     cls_flat[valid_idx] = _proba_class_labels(probs, est_classes, lut)
                 cls_dst.write(
@@ -895,7 +975,7 @@ def predict_proba_raster(
         _finalise_raster_output(
             out_path=cls_path,
             out_rio_dt="int32",
-            nodata=0,
+            nodata=cls_nd,
             band_names=["predicted_class"],
             thematic=True,
             calc_stats=calc_stats,
@@ -1382,7 +1462,8 @@ def predict_raster_node(
     :param threshold: Optional probability threshold in ``(0, 1)``: output
                       ``predict_proba[:, -1] >= threshold`` (binary).
     :param thematic: The output is a class map: the default ``no_data_val``
-                     is ``0`` (Default = ``False``).
+                     is ``0``, or ``255`` when ``0`` is an output class
+                     (Default = ``False``).
     :param band_names: Optional output band names (Default = ``None``:
                        ``'class'`` for a thematic or thresholded output, or
                        ``'class_1'``, ``'class_2'``, ... for several outputs;
@@ -1392,9 +1473,12 @@ def predict_raster_node(
     :param img_msk_val: Mask value of the pixels to predict (Default = ``1``).
     :param n_outputs: Number of model outputs (Default = ``None``, see above).
     :param no_data_val: Output value of pixels not predicted (Default =
-                        ``0`` when ``thematic`` or ``threshold`` is set, else
-                        ``-9999.0``, as :func:`predict_raster` with its
-                        default data types).
+                        ``0`` when ``thematic`` or ``threshold`` is set, or
+                        ``255`` when ``0`` is an output class (always for
+                        ``threshold``), else ``-9999.0``, as
+                        :func:`predict_raster` with its default data types).
+                        A value equal to an output class raises
+                        :class:`rsgispy.RSGISPyException`.
     :param name: Optional node name (Default = ``'predict_raster'``).
     :return: Prediction :class:`~rsgispy.imageprocess.TileNode`.
 
@@ -1426,10 +1510,12 @@ def predict_raster_node(
             "Estimator must implement predict_proba() when threshold is given."
         )
     is_thematic = bool(thematic or threshold is not None)
-    eff_nd = (
-        float(no_data_val)
-        if no_data_val is not None
-        else (0.0 if is_thematic else -9999.0)
+    eff_nd = float(
+        _resolve_label_nodata(
+            no_data_val,
+            np.dtype(np.uint8) if is_thematic else np.dtype(np.float64),
+            _known_label_values(estimator, threshold, lut) if is_thematic else None,
+        )
     )
     n_out_attr = getattr(estimator, "n_outputs_", None)
     if n_outputs is not None:
@@ -1500,8 +1586,9 @@ def predict_proba_raster_node(
 
     The node has one band per class (``len(estimator.classes_)``, else
     ``n_classes``, else 2), named ``prob_<class>``; with ``with_class`` a
-    band with the most probable class (mapped through ``lut``; ``0`` where
-    not predicted) is appended, and with ``with_entropy`` a band with the
+    band with the most probable class (mapped through ``lut``; ``0``, or
+    the largest ``int32`` value when ``0`` is a class, where not predicted)
+    is appended, and with ``with_entropy`` a band with the
     normalised Shannon entropy (``-9999`` where not predicted), and with
     ``with_conf`` a band with the ``[0, 1]`` confidence
     (:func:`calc_proba_confidence` with ``conf_method``; ``-9999`` where not
@@ -1575,7 +1662,17 @@ def predict_proba_raster_node(
         names = [f"prob_{c}" for c in est_classes]
     fills = [eff_nd] * n_cls
     if with_class:
-        fills.append(0.0)
+        cls_labels = _known_label_values(estimator, None, lut)
+        # Without classes_ the labels are argmax indices, which start at 0.
+        fills.append(
+            float(
+                _resolve_label_nodata(
+                    None,
+                    np.dtype(np.int32),
+                    cls_labels if cls_labels is not None else [0],
+                )
+            )
+        )
     if with_entropy:
         fills.append(-9999.0)
     if with_conf:
