@@ -1,6 +1,6 @@
 # Mapping, Data Access, Drone Utilities, General Tools & CLI
 
-Covers `rsgispy.mapping.*`, `rsgispy.dataaccess.*`, `rsgispy.droneutils`, all 29 `rsgispy.tools.*` modules, and all 11 CLI entrypoints in `rsgispy` v0.4.0.
+Covers `rsgispy.mapping.*`, `rsgispy.dataaccess.*`, `rsgispy.droneutils`, all 29 `rsgispy.tools.*` modules, and all 11 CLI entrypoints in `rsgispy` v0.4.1.
 
 ---
 

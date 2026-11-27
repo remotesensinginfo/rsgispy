@@ -5,7 +5,7 @@ description: Generate idiomatic Python code using rsgispy (v0.4.x), the pure-Pyt
 
 # rsgispy Coding Guide
 
-`rsgispy` (v0.4.0) is a **pure-Python** replacement for RSGISLib with **zero** `osgeo` or `rsgislib` dependencies. Full online documentation is available at <https://rsgispy.readthedocs.io>.
+`rsgispy` (v0.4.1) is a **pure-Python** replacement for RSGISLib with **zero** `osgeo` or `rsgislib` dependencies. Full online documentation is available at <https://rsgispy.readthedocs.io>.
 
 > Always verify exact module paths, function names, and parameter names against the tables below or the bundled files in `references/`—do **not** invent RSGISLib-style camelCase names (`bandMath`, `calcSlope`) or guess unverified identifiers.
 

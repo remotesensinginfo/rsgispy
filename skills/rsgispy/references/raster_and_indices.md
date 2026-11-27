@@ -1,6 +1,6 @@
 # Raster Processing, Band Maths, Spectral Indices & Image Utilities
 
-Covers top-level `BBox` & `imageprocess` (including `TileGraph`), `imagecalc.*`, and all `imageutils.*` submodules in `rsgispy` v0.4.0.
+Covers top-level `BBox` & `imageprocess` (including `TileGraph`), `imagecalc.*`, and all `imageutils.*` submodules in `rsgispy` v0.4.1.
 
 ---
 
