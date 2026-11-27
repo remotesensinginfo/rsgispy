@@ -37,6 +37,21 @@ Why band maths?
 * The data are processed in blocks, so memory use does not grow with the
   image size.
 
+.. seealso::
+
+   The rsgispy tutorials show the building blocks of this guide in notebooks
+   you can run:
+   :tutorial:`rule-based classification <04_image_classification/01_rule_based_classification.ipynb>`
+   (spectral indices and a rule base written for ``band_maths``, section 4),
+   :tutorial:`preparing the datasets for a species distribution model <11_case_study_species_distribution/01_prepare_datasets.ipynb>`
+   (rasterising vector layers and distance images, section 11) and
+   :tutorial:`map-to-map change <06_change_detection/02_map_to_map_change.ipynb>`
+   (mapping mangrove gain and loss between two dates, section 6). The
+   tutorial data has no DEM, aquaculture ponds or protected areas for a
+   mangrove coast, so the figures on this page come from the synthetic
+   scene of the test suite. See :doc:`../tutorials` for how to get the
+   tutorials and their data.
+
 .. contents:: Contents
    :local:
    :depth: 1

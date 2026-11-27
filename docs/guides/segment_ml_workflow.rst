@@ -25,6 +25,13 @@ Why segments?
   classifications.
 * There are far fewer segments than pixels, so applying a model is fast.
 
+.. seealso::
+
+   The rsgispy tutorials cover this in a notebook you can run:
+   :tutorial:`Object-based classification <04_image_classification/04_object_based_classification.ipynb>`
+   (section 4), which also shows how to add pixel samples to the few segment
+   samples. See :doc:`../tutorials` for how to get them and their data.
+
 .. contents:: Contents
    :local:
    :depth: 1
@@ -73,14 +80,39 @@ Overview
             └─► 12. Clustering (unsupervised)
 
 The code in this guide comes from the example script
-``docs/examples/segment_ml_workflow.py`` (included below step by step), which
-is run by the rsgispy test suite on synthetic data. The scenario is a
-Sentinel-2 surface reflectance image (e.g., the 10 m stack from
+``docs/examples/segment_ml_workflow.py`` (included below step by step). The
+scenario is a Sentinel-2 surface reflectance image (e.g., the 10 m stack from
 :func:`~rsgispy.imagecalibration.sensorlvl2data.create_stacked_sen2_esa_l2a_img`,
 with no data value 0) and a slope image derived from a DEM on the same grid.
 The land cover classes (e.g., Water, Forest, Grassland, Urban) each have a
 training vector file of points and/or polygons, and a set of field plots
 gives canopy cover for the regression example.
+
+The figures and printed outputs on this page come from the rsgispy tutorial
+data: a 36 x 30 km area around Aberystwyth (1800 x 1500 pixels) of the 20 m
+Sentinel-2 image of 29 June 2018
+(:tutorial-data:`sen2_20180629_t30uvd_orb037_osgb_stdsref_20m.tif`), the
+slope from the 10 m DEM (:tutorial-data:`dem_10m_osgb.tif`), the training
+polygons of the tutorial notebook
+(:tutorial-data:`cls_data/aber_sen2_cls_training.gpkg`, nine classes, with
+the long and short grass merged) and, as the second scene, the 10 m image of
+27 May 2021 (:tutorial-data:`sen2_20210527_aber.tif`), averaged onto the
+20 m grid. The training polygons were drawn for a pixel classification and
+are often smaller than a segment, so each polygon is replaced by one point
+inside it; two thirds of the points of each class train the model and the
+other third are the accuracy points. The tutorial data have no canopy cover
+plots, so the regression (step 11) is not run on them. The script
+``docs/examples/segment_ml_workflow_tutorial.py`` prepares these inputs and
+calls the example:
+
+.. literalinclude:: ../examples/segment_ml_workflow_tutorial.py
+   :language: python
+   :start-after: # [tutorial-data]
+   :end-before: # [end-tutorial-data]
+   :dedent: 4
+
+The rsgispy test suite runs the same example (including the regression) on a
+small synthetic scene.
 
 Step 1 — Segmentation
 ---------------------
@@ -139,7 +171,9 @@ features as an attribute-only Parquet table.
    :end-before: # [end-step-2-features]
    :dedent: 4
 
-The printed feature list looks like:
+The segmentation of the tutorial image gives 84,449 segments (median size
+19 pixels, 0.76 ha) and 32 features: four statistics of each of the six
+bands and the slope, and four shape metrics:
 
 .. code-block:: text
 
@@ -206,6 +240,28 @@ is in ``samples.attrs['report']``.
    :end-before: # [end-step-4-samples]
    :dedent: 4
 
+For the tutorial data, the 108 training points give 94 segment samples (some
+points of a class fall in the same segment) and a warning for each class with
+fewer than ten samples:
+
+.. code-block:: text
+
+   class_name
+   Artificial_Surfaces    13
+   Bare_Rock_Sand         10
+   NonPhoto_Veg           10
+   Bracken                 9
+   Scrub                   8
+   Conifer_Forest          7
+   Grass                   6
+   Water                   2
+   Deciduous_Forest        1
+   66 training and 28 test segments
+
+These are the training samples; the 28 test segments include one of each of
+Water and Deciduous_Forest. Classes with so few samples are poorly
+represented by the model, which the note below discusses.
+
 .. note::
 
    **Small sample sizes.** Hundreds of training points or polygons give
@@ -243,6 +299,13 @@ those features only.
    :end-before: # [end-step-5-features-explore]
    :dedent: 4
 
+For the tutorial data, the 32 features fall into five clusters of
+correlated features, and one feature is kept from each:
+
+.. code-block:: text
+
+   Selected features: ['Blue_mean', 'SWIR1_min', 'NIR_max', 'shp_area', 'shp_compactness']
+
 Step 6 — Training and optimising
 --------------------------------
 
@@ -267,6 +330,17 @@ to optimise it):
    :start-after: # [step-6b-train-gbdt]
    :end-before: # [end-step-6b-train-gbdt]
    :dedent: 4
+
+For the tutorial data the two models print:
+
+.. code-block:: text
+
+   {'train_accuracy': 1.0, 'train_bal_accuracy': 1.0, 'test_accuracy': 0.929, 'test_bal_accuracy': 0.889}
+   {'train_accuracy': 1.0, 'train_bal_accuracy': 1.0, 'test_accuracy': 0.893, 'test_bal_accuracy': 0.861}
+
+Both models fit the training segments perfectly. The test accuracies come
+from only 28 segments (one segment changes them by 0.036), so the difference
+between the Random Forest and XGBoost is not meaningful.
 
 Step 7 — Applying the classifier to the segments
 ------------------------------------------------
@@ -299,6 +373,25 @@ creation time) is stored in the file metadata.
    :end-before: # [end-step-7-apply]
    :dedent: 4
 
+The first rows of the classified layer of the tutorial data (the geometry
+column is not shown) are segments of the sea in the north-west corner of the
+image:
+
+.. code-block:: text
+
+      seg_id  cls_id cls_name cls_colour  cls_red  cls_green  cls_blue  cls_prob_max
+   0       1       9    Water    #0000ff        0          0       255         0.735
+   1       2       9    Water    #0000ff        0          0       255         0.695
+   2       3       9    Water    #0000ff        0          0       255         0.545
+   3       4       9    Water    #0000ff        0          0       255         0.385
+   4       5       9    Water    #0000ff        0          0       255         0.295
+
+The low maximum probabilities of some of these segments (below 0.4) show
+that the model is unsure of them: the Water training points in this area are
+all on lakes, which are darker in the blue band and brighter in the NIR than
+the sea, so the sea is not much like any training segment. Training data
+should cover all the forms of a class that are in the image.
+
 Step 8 — Rasterising the classification
 ---------------------------------------
 
@@ -321,6 +414,19 @@ result if needed, but segment classifications rarely need it.
    :start-after: # [step-8-rasterise]
    :end-before: # [end-step-8-rasterise]
    :dedent: 4
+
+.. figure:: images/segment_ml_classification.png
+   :alt: Three maps of a 4 x 4 km area east of Aberystwyth: the Sentinel-2
+         image in near-infrared, short-wave infrared and red, the segment
+         boundaries in yellow over the image, and the segment classification,
+         mostly grass, scrub and non-photosynthetic vegetation in the fields
+         and bracken, scrub and forest on the slopes.
+   :width: 100%
+
+   The Sentinel-2 image (NIR, SWIR1, red) of a 4 x 4 km area east of
+   Aberystwyth, its segments, and the rasterised segment classification.
+   The segments follow the field boundaries, so the classification has no
+   salt and pepper noise. Contains modified Copernicus Sentinel data (2018).
 
 Step 9 — Accuracy assessment
 ----------------------------
@@ -345,6 +451,14 @@ the map in each class) and ``quantity_metrics["Proportion Correct (C)"]``.
    :end-before: # [end-step-9-accuracy]
    :dedent: 4
 
+For the 50 accuracy points of the tutorial data this prints
+``0.9 0.9734440740740741``: 45 of the 50 points are correct, and the
+area-weighted proportion correct is 0.97. Treat both with caution: the points
+come from polygons drawn by an analyst (not a probability sample of the
+map), there are only two to nine per class, and the area-weighted value
+gives the most weight to the commonest classes. The 95 % confidence interval
+of an accuracy of 0.9 from 50 points is about ±0.08.
+
 Step 10 — Applying the model to another scene
 ---------------------------------------------
 
@@ -363,6 +477,30 @@ missing band). The new scene must be comparable to the training scene
    :end-before: # [end-step-10-new-scene]
    :dedent: 4
 
+The tutorial data show why the scenes must be comparable. The second image
+was taken on 27 May 2021, a month earlier in the growing season than the
+training image, and its fields are brighter in the NIR and much darker in
+the SWIR. The model, which has only seen June 2018, labels 68 % of the
+pixels that were Grass in 2018 as Bracken (Bracken covers 46 % of the area in
+2021, against 9 % in 2018), while most of the town (60 %), the conifer
+forest (77 %) and the water (85 %) keep their class:
+
+.. figure:: images/segment_ml_new_scene.png
+   :alt: Three maps of a 9 x 9 km area around Aberystwyth: the Sentinel-2
+         image of 27 May 2021, the classification of the June 2018 image,
+         mostly grass and scrub, and the classification of the May 2021
+         image with the same model, mostly bracken and scrub.
+   :width: 100%
+
+   The Sentinel-2 image (NIR, SWIR1, red) of 27 May 2021 around Aberystwyth,
+   the segment classification of 29 June 2018, and the classification of
+   the 2021 image with the same model. Contains modified Copernicus Sentinel
+   data (2018, 2021).
+
+A model is only as general as its training data: to classify other dates,
+train with samples from several dates (or seasons), or train a model for
+each season.
+
 Step 11 — Segment regression
 ----------------------------
 
@@ -376,6 +514,8 @@ or the median taken with ``reg_agg='median'``, and their number recorded in
 for tree ensembles, prediction quantiles; the result is rasterised with
 :func:`~rsgispy.regression.regsegments.rasterise_segment_regression`.
 Several targets can be predicted at once by giving a list of target columns.
+The tutorial data have no canopy cover plots, so the tutorial script passes
+``plots_vec=None`` and this step is skipped; it runs in the synthetic test.
 
 .. literalinclude:: ../examples/segment_ml_workflow.py
    :language: python

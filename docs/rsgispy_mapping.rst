@@ -9,6 +9,8 @@ and ``pyproj``, organised into thematic submodules:
 
    Guide: :doc:`guides/making_maps`
 
+   Tutorials: :tutorial-dir:`section 2, making maps <02_making_maps>` (:doc:`tutorials`)
+
 * :doc:`mapping/layout` — Figure sizing, axis extent, tick spacing, inset overview maps, and maps side by side (``create_map_panels``).
 * :doc:`mapping/elements` — Scale bars, north arrows, bounding boxes, and axis labels.
 * :doc:`mapping/raster` — Continuous, colour-mapped, and thematic raster map layers.

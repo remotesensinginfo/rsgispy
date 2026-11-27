@@ -8,6 +8,8 @@ model (DEM) analysis utilities using ``rasterio`` and ``numpy``.
 
    Guide: :doc:`guides/hydrology_workflow`
 
+   Tutorials: :tutorial:`hydrological analysis <08_hydrology/01_hydrological_analysis.ipynb>` (:doc:`tutorials`)
+
 Terrain Derivatives & Illumination
 ----------------------------------
 

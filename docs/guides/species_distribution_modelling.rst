@@ -27,6 +27,15 @@ and 1, not the probability that the species occurs in a pixel. If you have
 real absences from systematic surveys, use them instead of pseudo-absences
 (see step 3).
 
+.. seealso::
+
+   The rsgispy tutorials cover this in notebooks you can run:
+   :tutorial:`Prepare the datasets <11_case_study_species_distribution/01_prepare_datasets.ipynb>`
+   and
+   :tutorial:`Species distribution modelling <11_case_study_species_distribution/02_species_distribution_modelling.ipynb>`
+   (section 11, the Snowdon beetle case study, with a logistic regression).
+   See :doc:`../tutorials` for how to get them and their data.
+
 .. contents:: Contents
    :local:
    :depth: 1
@@ -81,21 +90,42 @@ Overview
 
 The code in this guide comes from the example script
 ``docs/examples/species_distribution_modelling.py`` (included below step by
-step), which is run by the rsgispy test suite on synthetic data. The scenario
-is a plant species with presence records (for example a GBIF download, or your
-own survey points) and four environmental layers at 100 m resolution in a
-projected (metre) coordinate system:
+step). Its ``run_workflow`` function takes a dictionary of environmental
+rasters, a study area mask and a layer of presence points. All layers, and the
+study area mask (``1`` inside the study area, ``0`` outside), must be on
+**the same pixel grid** (CRS, resolution and extent). Resample them first if
+necessary, with :func:`rsgispy.imageutils.warp.resample_img_to_match`
+(bilinear for continuous layers, nearest neighbour for categorical ones).
 
-* elevation from a DEM;
-* mean annual temperature and annual precipitation (e.g. WorldClim or CHELSA
-  layers, as two bands of one file);
-* NDVI from a cloud-free Sentinel-2 or Landsat composite.
+The figures and printed outputs on this page come from the Snowdon beetle
+(*Chrysolina cerealis*) data of the rsgispy tutorials: a 170 km² study area in
+Snowdonia (:tutorial-data:`sdm/environmental_data/Study_Area.geojson`), the
+beetle records (:tutorial-data:`sdm/sightings/Chrysolina_cerealis.csv`),
+20 m rasters of elevation
+(:tutorial-data:`sdm/environmental_data/Elevation.tif`) and mean winter
+temperature (:tutorial-data:`sdm/environmental_data/Mean_Winter_Temp.tif`) on
+the British National Grid, and the Natural Resources Wales Phase 1 habitat map
+(:tutorial-data:`sdm/environmental_data/Phase1_Veg.geojson`). The beetle is
+rare: in Britain it lives only on a few mountains of Snowdonia, where it
+feeds on wild thyme on mountain ledges, grassland and rocks. As in the
+tutorial notebooks, the habitat map is turned into rasters of the
+**distance to** each habitat of interest, because a record a few metres from a
+habitat patch says more about the species than the habitat class of the
+record's own pixel. The script below prepares those inputs and runs the
+example; the rsgispy test suite runs the same ``run_workflow`` code on a small
+synthetic scene (``tests/sdm_scene.py``).
 
-All layers, and the study area mask (``1`` inside the study area, ``0``
-outside), must be on **the same pixel grid** (CRS, resolution and extent).
-Resample them first if necessary, with
-:func:`rsgispy.imageutils.warp.resample_img_to_match` (bilinear for
-continuous layers, nearest neighbour for categorical ones).
+.. literalinclude:: ../examples/species_distribution_modelling_tutorial.py
+   :language: python
+   :start-after: # [tutorial-data]
+   :end-before: # [end-tutorial-data]
+   :dedent:
+
+The preparation of the records matters as much as the modelling. Of the 119
+records, 19 are located to 2 km or worse (some at the centre of a 10 km
+square), which is meaningless at 20 m, and the remaining 100 records fall in
+only 34 pixels: they are repeat visits to a few well-known sites. Keeping one
+record per pixel leaves 34 presences.
 
 Step 1 — Environmental variables
 --------------------------------
@@ -202,14 +232,17 @@ pseudo-absences.
 
 .. code-block:: text
 
-   80 presences and 300 pseudo-absences
-   ['elevation', 'temp', 'precip', 'ndvi']
+   34 presences and 1000 pseudo-absences
+   ['elevation', 'winter_temp', 'ledges_dist', 'calc_grass_dist', 'rock_dist', 'scree_dist', 'flush_dist', 'impr_grass_dist']
 
 **Thin the presences** before this step if records are clustered: several
 records in one pixel are duplicates as far as the model is concerned, and a
 dense cluster of records from one well-surveyed site makes that site dominate
 the model. Keeping one record per pixel (or per few pixels) is a simple and
-effective first step.
+effective first step; for the Snowdon beetle it reduces 100 usable records to
+34 presences (see the tutorial script above). With 34 presences and 1000
+pseudo-absences, the classes are very unbalanced, which the random forest
+handles with ``class_weight='balanced'`` (step 6).
 
 Step 4 — Exploring the data and checking collinearity
 -----------------------------------------------------
@@ -237,26 +270,42 @@ check for strongly correlated variables:
 
 .. code-block:: text
 
-              elevation  temp  precip  ndvi
-   elevation       1.00 -0.97    0.20 -0.20
-   temp           -0.97  1.00   -0.41  0.03
-   precip          0.20 -0.41    1.00  0.60
-   ndvi           -0.20  0.03    0.60  1.00
-   elevation     90.0
-   temp         100.8
-   precip         5.9
-   ndvi           2.0
+                    elevation  winter_temp  ledges_dist  calc_grass_dist  rock_dist  scree_dist  flush_dist  impr_grass_dist
+   elevation             1.00        -0.95        -0.43            -0.22       0.04       -0.48        0.27             0.63
+   winter_temp          -0.95         1.00         0.46             0.34      -0.12        0.45       -0.21            -0.69
+   ledges_dist          -0.43         0.46         1.00             0.32      -0.02        0.68       -0.11            -0.38
+   calc_grass_dist      -0.22         0.34         0.32             1.00       0.02        0.26        0.03            -0.23
+   rock_dist             0.04        -0.12        -0.02             0.02       1.00        0.34        0.07             0.09
+   scree_dist           -0.48         0.45         0.68             0.26       0.34        1.00       -0.12            -0.36
+   flush_dist            0.27        -0.21        -0.11             0.03       0.07       -0.12        1.00             0.18
+   impr_grass_dist       0.63        -0.69        -0.38            -0.23       0.09       -0.36        0.18             1.00
+   elevation          13.1
+   winter_temp        15.2
+   ledges_dist         2.3
+   calc_grass_dist     1.4
+   rock_dist           1.5
+   scree_dist          2.9
+   flush_dist          1.1
+   impr_grass_dist     2.0
+   Name: VIF, dtype: float64
+
+(In a narrow terminal pandas abbreviates the correlation table with ``...``;
+``pandas.set_option("display.max_columns", None)`` prints all the columns.)
 
 Common rules of thumb are to keep only one of each pair with ``|r| > 0.7`` and
 to remove variables until every VIF is below 10 (or 5 for a stricter check).
-Here temperature is calculated from elevation (a lapse rate), so the two are
-almost perfectly correlated. Collinear variables do not reduce the predictive
+Here mean winter temperature falls with elevation (``r = -0.95``), and these
+two are the only variables
+with a VIF above 10. The distances to scree and to species-rich ledges are
+also related (``r = 0.68``: ledges are often next to scree), but below the
+thresholds. Collinear variables do not reduce the predictive
 accuracy of a random forest much, but they split the importance between them,
 make response curves hard to interpret, and make the model unreliable when it
 is applied to places or times where the correlation is different (e.g. future
 climates). When you choose which variable of a pair to keep, prefer the one
 with the more direct ecological effect: here temperature, not elevation, so the
-example is run with ``drop_vars=['elevation']``.
+example is run with ``drop_vars=['elevation']`` (as in the tutorial
+notebook).
 
 Step 5 — Training and test sets
 -------------------------------
@@ -310,10 +359,18 @@ pseudo-absences.
 
 .. code-block:: text
 
-   Single model: train acc 0.925, test acc 0.886, test AUC 0.945
-   ROC: 0.912 - 0.929 - 0.933
-   Train: 0.937 - 0.943 - 0.969
-   Test: 0.868 - 0.886 - 0.904
+   Classifier Train Score = 98.62%
+   Classifier Test Score = 96.46%
+   Single model: train acc 0.986, test acc 0.965, test AUC 0.986
+   ROC: 0.9515151515151515 - 0.9706060606060606 - 0.9818181818181818
+   Train: 0.976905311778291 - 0.9919168591224019 - 0.9953810623556582
+   Test: 0.954983922829582 - 0.9694533762057878 - 0.977491961414791
+
+With 96.5 % of the test points being pseudo-absences, an accuracy of 0.965 is
+no better than predicting "absent" everywhere; the AUC, which does not depend
+on the class proportions, is the more useful number. The test set has only 11
+presences, so all the test scores here are uncertain: one presence more or
+less correctly ranked changes the AUC by a few hundredths.
 
 To tune the hyperparameters, wrap the model in a scikit-learn search object and
 use :func:`~rsgispy.modelling.species_distribution.search_mdl_params`, e.g.
@@ -366,8 +423,13 @@ prediction with the test labels:
 
 .. code-block:: text
 
-   {'Test AUC': 0.936, 'Point-Biserial r': 0.726, 'Av. Precision': 0.750,
-    'Brier Score': 0.084, 'Log-Loss Score': 0.276}
+   {'Test AUC': 0.981, 'Point-Biserial r': 0.658, 'Av. Precision': 0.718, 'Brier Score': 0.022, 'Log-Loss Score': 0.075}
+
+The ensemble ranks the presences well (AUC 0.98), but the average precision
+(0.72) is much lower: with 11 presences among 311 test points, even a small
+false positive rate puts many pseudo-absences among the highest scores. The
+low Brier score mostly reflects the many pseudo-absences correctly given
+probabilities near 0.
 
 :func:`~rsgispy.modelling.species_distribution.calc_binary_roc_auc` returns
 the ensemble's ROC curve and AUC, and
@@ -408,21 +470,29 @@ argument. Here the same random forest is evaluated with 5-fold random and
 
 .. code-block:: text
 
-   Random CV AUC  0.945 +/- 0.012
-   Spatial CV AUC 0.941 +/- 0.047
+   Random CV AUC  0.973 +/- 0.020
+   Spatial CV AUC 0.929 +/- 0.033
 
-The synthetic data have smooth covariates and scattered presences, so the gap
-is small; with real, clustered records, spatial AUCs 0.05–0.2 lower than random
-ones are common. The larger standard deviation of the spatial scores is
-expected: blocks differ in how hard they are to predict. Report the spatial
-cross-validation score as the accuracy of the model.
+The Snowdon beetle example uses 1 km blocks (``cv_block_size=1000.0``). The
+spatial AUC is 0.04 lower than the random one: when whole 1 km blocks are left
+out, the model has to predict presences at sites it has not seen, and it does
+less well. With more strongly clustered records, spatial AUCs 0.05–0.2 lower
+than random ones are common. The larger standard deviation of the spatial
+scores is expected: blocks differ in how hard they are to predict. Report the
+spatial cross-validation score as the accuracy of the model.
 
 Choosing ``block_size``: blocks should be larger than the distance over which
 the covariates (or the model residuals) are autocorrelated, which can be
 estimated from an empirical semivariogram
 (:func:`rsgispy.vector.stats.calc_empirical_semivariogram`), but small enough
 that there are several blocks per fold. Blocks that are too large leave whole
-environmental zones out of the training data and make the score pessimistic.
+environmental zones out of the training data and make the score pessimistic,
+and with clustered presences they can leave a fold without any presence, so
+its AUC cannot be computed and ``cross_val_score`` returns ``nan``. Here most
+of the 34 presences are within 2 km of each other: with 2 km blocks two of
+the five folds have no presence, while with 1 km blocks every fold has at
+least two. Check the number of presences in each test fold
+(``[data_y[test].sum() for _, test in blk_splits]``).
 With ``block_size=None`` a size is chosen from the sample extent. Other
 splitters in :mod:`rsgispy.ml.cv` are k-means clusters of the sample locations
 (``method='kmeans'``), a buffer around each test point
@@ -476,24 +546,52 @@ learnt:
 
 .. code-block:: text
 
-           roc_test_acc_leave_var_out  roc_test_acc_only_var
-   temp                      0.924537               0.719907
-   precip                    0.888889               0.857407
-   ndvi                      0.941667               0.742130
+                    roc_test_acc_leave_var_out  roc_test_acc_only_var
+   winter_temp                        0.983939               0.870152
+   ledges_dist                        0.966364               0.919091
+   calc_grass_dist                    0.986667               0.627121
+   rock_dist                          0.983939               0.653636
+   scree_dist                         0.984848               0.668636
+   flush_dist                         0.980000               0.826970
+   impr_grass_dist                    0.986667               0.565000
+                          ST   ST_conf
+   winter_temp      0.309467  0.097853
+   ledges_dist      0.776935  0.188845
+   calc_grass_dist  0.120805  0.065092
+   rock_dist        0.017680  0.005980
+   scree_dist       0.040084  0.017268
+   flush_dist       0.081254  0.035577
+   impr_grass_dist  0.059072  0.028876
 
 .. figure:: images/sdm_response_temp.png
-   :width: 70%
-   :alt: Response curve of the presence probability to mean annual temperature
+   :width: 80%
+   :alt: Response curve of the Snowdon beetle presence probability to mean
+         winter temperature, high between about 2.7 and 3.05 degrees C
 
-   Temperature response curve of the random forest for the synthetic data:
-   high suitability between about 10 and 12 °C, falling sharply above 12 °C
-   (the simulated optimum is 11 °C). Random forest responses are step-like and
-   flat outside the training range. (Regenerate it by running the example
-   script; it is written to ``plots/response_curves/temp_response_curve.png``
-   in the output directory.)
+   Response of the random forest to mean winter temperature, with the other
+   variables held at their mean at the presences. The predicted probability is
+   high (about 0.85–0.9) between about 2.7 and 3.05 °C, the range of the
+   training presences (ticks at the bottom), lower on the coldest summits and
+   low in the warmer valleys. Random forest responses are step-like and flat
+   beyond the last split. (Drawn from ``response_curves.csv`` by
+   ``make_figures`` in the tutorial script; the example itself writes
+   ``plots/response_curves/winter_temp_response_curve.png``.)
 
-Here precipitation is the most informative variable alone, and removing it
-lowers the AUC most (from 0.945 to 0.889). **When the methods disagree**, it is
+For the Snowdon beetle the distance to upland species-rich ledges is the most
+informative variable alone (AUC 0.92), removing it lowers the AUC most (from
+0.986 with all the variables to 0.966), and it has the largest total Sobol
+index; its response curve (``ledges_dist_resp``) is about 0.87 up to 600 m
+from a ledge, falls in steps between 600 and 900 m, and is below 0.1 beyond
+900 m. Winter temperature is
+second (AUC 0.87 alone; Sobol ``ST`` 0.31), then the distance to flushes and
+springs. Removing any other single variable barely changes the AUC, partly
+because of correlated partners (scree and ledges, ``r = 0.68``) and partly
+because the 11 test presences cannot resolve small differences. The Sobol
+indices change a little from run to run (the SALib samples are not seeded),
+and the wide ``ST_conf`` of ``ledges_dist`` shows that more samples would be
+needed for precise values; the ranking is stable.
+
+**When the methods disagree**, it is
 usually because of correlated variables (jackknife "leave out" scores barely
 change when a correlated partner can take over, while SHAP and Sobol may split
 the effect between them) or interactions (which Sobol ``ST`` and SHAP capture
@@ -535,6 +633,17 @@ applies your own function to the variable table of each block of valid pixels.
 To display the map, use
 :func:`rsgispy.mapping.raster.create_raster_cmap_img_map` with a sequential
 colour map.
+
+.. figure:: images/sdm_probability.png
+   :width: 100%
+   :alt: Map of the median presence probability of the Snowdon beetle over the
+         study area in Snowdonia, with the presence records
+
+   Median presence probability of the 10-model ensemble for the Snowdon
+   beetle (``sdm_probability.tif``), with the 34 presences (red circles). The
+   suitable areas are around the cluster of records in the south-west of the
+   study area and a few smaller patches elsewhere; most of the study area
+   has a probability near 0.
 
 Step 11 — Thresholding to presence/absence
 ------------------------------------------
@@ -578,8 +687,14 @@ suitable, with statistics and a colour table added by
 
 .. code-block:: text
 
-   Threshold 0.327: TSS 0.817
-   26.4 % of the study area is predicted suitable
+   Threshold 0.189: TSS 0.923
+   8.8 % of the study area is predicted suitable
+
+At the maximum-TSS threshold of 0.189, all 11 test presences are above the
+threshold (sensitivity 1.0) and 92.3 % of the test pseudo-absences below it
+(specificity 0.923). The suitable area is 8.8 % of the 170 km² valid area,
+about 15 km². With so few test presences, the threshold itself is
+uncertain: a different split could move it noticeably.
 
 The threshold is chosen and evaluated on the same test set here, which flatters
 the TSS slightly; for a strict assessment choose it on one set (e.g. the

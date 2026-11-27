@@ -5,6 +5,8 @@ rsgispy.regression
 
    Guides: :doc:`guides/pixel_regression_workflow`, :doc:`guides/segment_ml_workflow`
 
+   Tutorials: :tutorial-dir:`section 5, regression <05_regression>`, :tutorial-dir:`ICESat-2 bathymetry case study <10_case_study_icesat2_bathymetry>` (:doc:`tutorials`)
+
 .. automodule:: rsgispy.regression
    :no-index:
 

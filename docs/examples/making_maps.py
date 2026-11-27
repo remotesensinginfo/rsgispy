@@ -16,7 +16,7 @@ Run it on your own data with, e.g.::
 
 import argparse
 import os
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 
 def run_workflow(
@@ -36,6 +36,9 @@ def run_workflow(
     wmts_url: Optional[str] = None,
     wmts_lyr: Optional[str] = None,
     dem_img: Optional[str] = None,
+    user_stretch: Tuple[float, float] = (0, 1500),
+    score_label: str = "Score",
+    forest_vals: Sequence[int] = (2,),
 ) -> Dict[str, Any]:
     """
     Run the worked example. ``s2_img`` is a surface reflectance stack,
@@ -45,7 +48,10 @@ def run_workflow(
     layer (e.g. country outlines) for the inset map. ``classes_info`` gives the
     class names (``{pixel value: name}``, a ``ClassificationConfig`` or its
     JSON file). ``dem_img`` is an optional DEM for the hillshaded maps.
-    Figures are written to ``out_dir``.
+    ``user_stretch`` is the (min, max) of the fixed stretch, ``score_label``
+    names the continuous raster and ``forest_vals`` are the land cover pixel
+    values counted as forest in the choropleth. Figures are written to
+    ``out_dir``.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-statements,import-outside-toplevel
@@ -87,8 +93,8 @@ def run_workflow(
         ("b) 2 standard deviations", rsgispy.IMG_STRETCH_STDEV,
          {"stch_n_stdevs": 2.0}),
         ("c) Cumulative 2-98 %", rsgispy.IMG_STRETCH_CUMULATIVE, {}),
-        ("d) User 0-1500", rsgispy.IMG_STRETCH_USER,
-         {"stch_min_max_vals": [{"min": 0, "max": 1500}] * 3}),
+        (f"d) User {user_stretch[0]:g}-{user_stretch[1]:g}", rsgispy.IMG_STRETCH_USER,
+         {"stch_min_max_vals": [{"min": user_stretch[0], "max": user_stretch[1]}] * 3}),
     ]
     fig, axs = plt.subplots(2, 2, figsize=(fig_width, fig_height))
     for ax, (label, stretch, kwargs) in zip(axs.ravel(), stretches):
@@ -125,8 +131,8 @@ def run_workflow(
         ax, score_img, img_band=1,
         cmap_name="viridis",  # perceptually uniform, colour-blind safe
         norm_img_vals=True, norm_vmin=0.0, norm_vmax=1.0,  # fixed range
-        title_str="Score", scale_bar_loc="lower right",
-        show_colour_bar=True, cbar_label="Score (0-1)",
+        title_str=score_label, scale_bar_loc="lower right",
+        show_colour_bar=True, cbar_label=score_label,
     )
     # The image artist is returned, so you can also add the colour bar
     # yourself (e.g. one bar for several panels): fig.colorbar(img).
@@ -175,6 +181,7 @@ def run_workflow(
         classes_info=classes_info,  # names; colours come from the colour table
         legend_title="Land cover",
         legend_position="bottom",  # companion axis below the map
+        legend_ncols=3,  # or None: chosen from the space available
         legend_kwargs={"only_present_in_img": True},
     )
     map_layout.define_map_tick_spacing(ax, tick_spacing)
@@ -220,12 +227,14 @@ def run_workflow(
     fig.savefig(out["vec_map"], dpi=dpi, bbox_inches="tight")
     plt.close(fig)
 
-    # Choropleth: percentage of forest (class 2) in each region.
+    # Choropleth: percentage of forest (the forest_vals classes) in each region.
     regions = rsgispy.zonalstats.polygon.calc_zonal_band_pxl_counts(
-        regions, cls_img, img_band=1, vals_lut={2: "forest_pxls"},
+        regions, cls_img, img_band=1,
+        vals_lut={val: f"pxls_{val}" for val in forest_vals},  # one column each
         total_field="total_pxls", use_pbar=False,
     )
-    regions["forest_pct"] = 100.0 * regions["forest_pxls"] / regions["total_pxls"]
+    forest_pxls = regions[[f"pxls_{val}" for val in forest_vals]].sum(axis=1)
+    regions["forest_pct"] = 100.0 * forest_pxls / regions["total_pxls"]
     print(regions[["name", "forest_pct"]])
 
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
@@ -318,7 +327,7 @@ def run_workflow(
              "title": "Sentinel-2"},
             {"panel_type": "thematic", "input_img": cls_img, "title": "Land cover"},
             {"panel_type": "cmap", "input_img": score_img, "vmin": 0.0, "vmax": 1.0,
-             "show_colour_bar": True, "cbar_label": "Score", "title": "Score"},
+             "show_colour_bar": True, "cbar_label": score_label, "title": score_label},
         ],
         bbox=zoom_bbox,
         classes_info=classes_info,

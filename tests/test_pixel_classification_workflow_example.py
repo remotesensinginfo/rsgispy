@@ -94,11 +94,15 @@ def test_guide_markers_exist():
         script = f_obj.read()
     with open(GUIDE, encoding="utf-8") as f_obj:
         guide = f_obj.read()
-    markers = [
-        line.split(":start-after:")[1].strip()
-        for line in guide.splitlines()
-        if ":start-after:" in line
-    ]
+    # Only the markers of the blocks included from the example script (the
+    # guide also includes the tutorial-data script).
+    markers = []
+    included = ""
+    for line in guide.splitlines():
+        if "literalinclude::" in line:
+            included = line.split("literalinclude::")[1].strip()
+        elif ":start-after:" in line and included.endswith("/pixel_classification_workflow.py"):
+            markers.append(line.split(":start-after:")[1].strip())
     assert len(markers) >= 12
     for marker in markers:
         assert marker in script

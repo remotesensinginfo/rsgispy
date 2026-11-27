@@ -5,6 +5,8 @@ rsgispy.modelling
 
    Guide: :doc:`guides/species_distribution_modelling`
 
+   Tutorials: :tutorial-dir:`species distribution modelling case study <11_case_study_species_distribution>` (:doc:`tutorials`)
+
 .. automodule:: rsgispy.modelling
    :no-index:
 

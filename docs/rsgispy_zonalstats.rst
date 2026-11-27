@@ -9,6 +9,8 @@ label raster (e.g., segments) using ``rasterio`` and ``geopandas``.
 
    Guide: :doc:`guides/zonal_stats_and_vectors`
 
+   Tutorials: :tutorial:`zonal statistics <03_vector_data_and_zonal_stats/01_zonal_statistics.ipynb>` (:doc:`tutorials`)
+
 Modules
 -------
 

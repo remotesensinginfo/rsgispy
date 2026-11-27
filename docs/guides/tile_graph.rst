@@ -28,6 +28,16 @@ Step 5 of :doc:`large_rasters` is a short introduction; this guide goes
 further. The reference for every class and the full table of chainable
 operations is :ref:`tilegraph-chainable` in :mod:`rsgispy.imageprocess`.
 
+.. seealso::
+
+   The rsgispy tutorials cover this in a notebook you can run:
+   :tutorial:`Chaining indices, classification and filtering in a tile graph
+   <09_tile_graph_workflows/01_indices_classification_filtering.ipynb>`
+   (section 9), which classifies the same Sentinel-2 image with a random
+   forest, compares the filtered and unfiltered maps and times the graph with
+   ``n_jobs``. See :doc:`../tutorials` for how to get the notebooks and their
+   data.
+
 .. contents:: Contents
    :local:
    :depth: 1
@@ -124,13 +134,35 @@ Overview
   11. Check the graph against the file-based functions
 
 The code comes from the example script ``docs/examples/tile_graph.py``
-(included below step by step), which the rsgispy test suite runs on a small
-synthetic scene. The scenario is a Sentinel-2 surface reflectance image with
-no data value 0 (e.g. the 10 m stack from
+(included below step by step). The scenario is a Sentinel-2 surface
+reflectance image with no data value 0 (e.g. the 10 m stack from
 :func:`~rsgispy.imagecalibration.sensorlvl2data.create_stacked_sen2_esa_l2a_img`),
 a DEM resampled to the same grid (e.g. with
 :func:`~rsgispy.imageutils.warp.resample_img_to_match`) and a raster of
 training class IDs (e.g. rasterised training polygons, 0 = unlabelled).
+
+**The data on this page.** The printed outputs and the figure on this page
+come from the data of the rsgispy tutorials: the 20 m Sentinel-2 image of
+29 June 2018, :tutorial-data:`sen2_20180629_t30uvd_orb037_osgb_stdsref_20m.tif`
+(British National Grid, reflectance x 1000, no data value 0), subset to a
+36 x 30 km area around Aberystwyth, west Wales (1800 x 1500 pixels); the
+10 m DEM :tutorial-data:`dem_10m_osgb.tif`, resampled to the image's grid;
+and the training polygons of ten land cover classes,
+:tutorial-data:`cls_data/aber_sen2_cls_training.gpkg` (one layer per class),
+rasterised onto the same grid. The script
+``docs/examples/tile_graph_tutorial.py`` prepares these inputs and runs the
+example (under a minute):
+
+.. literalinclude:: ../examples/tile_graph_tutorial.py
+   :language: python
+   :start-after: # [tutorial-data]
+   :end-before: # [end-tutorial-data]
+   :dedent: 4
+
+The rsgispy test suite runs the same example on a small synthetic scene
+(``tests/tile_graph_scene.py``: four classes, a no data strip at the image
+edge and a DEM), with several block sizes and ``n_jobs``, so the code on this
+page is always tested.
 
 Step 1 — Sources, grids and metadata
 ------------------------------------
@@ -149,6 +181,14 @@ does the same for a NumPy array already in memory, with a ``transform`` and
    :start-after: # [step-1-sources]
    :end-before: # [end-step-1-sources]
    :dedent: 4
+
+For the tutorial image this prints:
+
+.. code-block:: text
+
+   NodeMeta(n_bands=10, band_names=('Blue', 'Green', 'Red', 'RE_B5', 'RE_B6',
+   'RE_B7', 'NIR_B8', 'NIR_B8A', 'SWIR1', 'SWIR2'), dtype=dtype('float64'),
+   nodata=0.0)
 
 Every node carries metadata, a :class:`~rsgispy.imageprocess.NodeMeta`: the
 number of bands, the band names, the data type and the no data value.
@@ -247,9 +287,12 @@ works with :func:`~rsgispy.classification.classdata.write_cls_samples` and
 the split functions of :mod:`rsgispy.classification.classdata`. With
 ``max_per_class`` it keeps a random sample of at most that many pixels per
 class, so memory use stays small on any image, and the sample is the same
-for any block size and ``n_jobs`` (``rnd_seed`` chooses another). A decision
-tree is enough for this synthetic scene; with real data use the training and
-feature selection tools of :doc:`pixel_classification_workflow`.
+for any block size and ``n_jobs`` (``rnd_seed`` chooses another). A small
+decision tree on four index features keeps the example short, but it is too
+simple to separate ten land cover classes well (see the map in step 4); with
+real data use more features, a stronger model and the training, feature
+selection and accuracy assessment tools of
+:doc:`pixel_classification_workflow`.
 
 .. literalinclude:: ../examples/tile_graph.py
    :language: python
@@ -276,6 +319,57 @@ the DEM: four outputs in one pass over the data.
    :start-after: # [step-4-graph]
    :end-before: # [end-step-4-graph]
    :dedent: 4
+
+``describe()`` prints (the paths are shortened here):
+
+.. code-block:: text
+
+   TileGraph: 15 node(s), 4 sink(s), block_size=256
+     grid: 1500 rows x 1800 columns, crs=EPSG:27700, transform=(20.0, 0.0, 254997.3321426216, 0.0, -20.0, 299002.255157026)
+     [0] RasterSource 's2' (path='sen2_20180629_aber_20m.tif' bands=all)
+         halo=(3, 3) radius=(0, 0) bands=10 names=['Blue', 'Green', 'Red', 'RE_B5', 'RE_B6', 'RE_B7', 'NIR_B8', 'NIR_B8A', 'SWIR1', 'SWIR2'] dtype=float64 nodata=0.0
+     [1] IndicesNode 'calc_indices' <- [0] (indices=['NDVI', 'NDWI'] dtype=float32)
+         halo=(3, 3) radius=(0, 0) bands=2 names=['NDVI', 'NDWI'] dtype=float32 nodata=-999.0
+     [2] FilterWindowOp 'median_filter' <- [1] (radius=(1, 1) border=edge)
+         halo=(1, 1) radius=(1, 1) bands=2 names=['NDVI', 'NDWI'] dtype=float64 nodata=-999.0
+     [3] FilterWindowOp 'stddev_filter' <- [1] (radius=(2, 2) border=edge)
+         halo=(1, 1) radius=(2, 2) bands=2 names=['NDVI', 'NDWI'] dtype=float64 nodata=-999.0
+     [4] StackBands <- [2], [3] (band_names=['NDVI_med', 'NDWI_med', 'NDVI_sd', 'NDWI_sd'])
+         halo=(1, 1) radius=(0, 0) bands=4 names=['NDVI_med', 'NDWI_med', 'NDVI_sd', 'NDWI_sd'] dtype=float64 nodata=-999.0
+     [5] PredictionOp 'predict_raster' <- [4] (estimator=DecisionTreeClassifier outputs=1 mask=no)
+         halo=(1, 1) radius=(0, 0) bands=1 names=['class'] dtype=uint8 nodata=0.0
+     [6] WindowOp 'majority_filter' <- [5] (radius=(1, 1) border=constant)
+         halo=(0, 0) radius=(1, 1) bands=1 names=['class'] dtype=float64 nodata=0.0
+     [7] Cast 'majority_filter_cast' <- [6] (dtype=uint8)
+         halo=(0, 0) radius=(0, 0) bands=1 names=['class'] dtype=uint8 nodata=0.0
+     [8] DiskSink <- [7] (output='s2_cls.tif' format=GTIFF datatype=uint8 (from input) thematic classes=10)
+         halo=(0, 0) radius=(0, 0) bands=1 names=['class'] dtype=uint8 nodata=0.0
+     [9] DiskSink <- [4] (output='s2_features.tif' format=GTIFF datatype=float32 (from input))
+         halo=(0, 0) radius=(0, 0) bands=4 names=['NDVI_med', 'NDWI_med', 'NDVI_sd', 'NDWI_sd'] dtype=float64 nodata=-999.0
+     [10] RasterSource 'dem' (path='dem_20m.tif' bands=all)
+         halo=(1, 1) radius=(0, 0) bands=1 dtype=float64 nodata=-32768.0
+     [11] Horn3x3Node 'slope' <- [10] (slope unit=degrees no_data_val=from input)
+         halo=(0, 0) radius=(1, 1) bands=1 dtype=float64 nodata=-32768.0
+     [12] DiskSink <- [11] (output='slope.tif' format=GTIFF datatype=float32 (from input))
+         halo=(0, 0) radius=(0, 0) bands=1 dtype=float64 nodata=-32768.0
+     [13] Horn3x3Node 'hillshade' <- [10] (hillshade azimuth=315.0 zenith=45.0 no_data_val=from input)
+         halo=(0, 0) radius=(1, 1) bands=1 dtype=uint8 nodata=0.0
+     [14] DiskSink <- [13] (output='hillshade.tif' format=GTIFF datatype=uint8 (from input))
+         halo=(0, 0) radius=(0, 0) bands=1 dtype=uint8 nodata=0.0
+
+.. figure:: images/tile_graph_cls_map.png
+   :alt: False colour Sentinel-2 image of the Aberystwyth area (left) and the
+         ten-class map written by the graph (right), with a legend.
+   :width: 100%
+
+   The tutorial Sentinel-2 image (NIR, SWIR1 and red as red, green and blue)
+   and the smoothed class map written by the graph (``s2_cls.tif``). The map
+   shows what one pass of the chain produces, not a good land cover map: a
+   depth-6 decision tree on NDVI and NDWI features maps the sea, the Dyfi
+   estuary and the reservoirs as water and finds the urban area of
+   Aberystwyth, but confuses the vegetation classes, for example mapping
+   much of the upland vegetation in the east as conifer forest. Contains modified
+   Copernicus Sentinel data (2018).
 
 Points to note:
 
@@ -373,9 +467,12 @@ Every node carries a no data value, and all builders follow one rule (see
    :dedent: 4
 
 The first two results are identical: the NIR band's no data value (0) comes
-from the file. In the third, ``0`` is an ordinary value, so the median
-filter mixes the no data strip at the edge of the image into the pixels next
-to it.
+from the file. In the third, ``0`` is an ordinary value, so the median filter
+mixes no data pixels (e.g. outside the swath of a Sentinel-2 tile, or masked
+clouds) into the valid pixels next to them. The tutorial image has no pixels
+with the value 0 in this area, so all three results are the same here; the
+synthetic scene of the test suite has a no data strip at its edge, and the
+test checks that the third result differs next to it.
 
 A few builders keep the meaning of their file-based function's parameter
 instead: ``gen_valid_mask_node`` and the percentile nodes default to ``0``
@@ -519,6 +616,36 @@ of each class of the map from step 4:
    :end-before: # [end-step-9-stats]
    :dedent: 4
 
+For the tutorial image this prints:
+
+.. code-block:: text
+
+           count       min       max      mean       std
+   band
+   NDVI  2700000 -0.730769  0.958810  0.671663  0.270267
+   NDWI  2700000 -0.922958  0.831325 -0.587673  0.367985
+          NDVI_count  NDVI_mean  NDVI_min  ...  NDWI_min  NDWI_max  NDWI_std
+   label                                   ...
+   1           63778   0.325974 -0.092784  ... -0.807692  0.606557  0.232031
+   2           44851   0.061664 -0.412698  ... -0.739796  0.740741  0.304173
+   3          747797   0.853616  0.308475  ... -0.890196 -0.288462  0.029612
+   4           53939   0.909040  0.479412  ... -0.898601 -0.512346  0.015836
+   5           14398   0.924664  0.722543  ... -0.922958 -0.650970  0.012552
+   6          575991   0.679372  0.006227  ... -0.842932 -0.177650  0.033473
+   7           59829   0.461079  0.222535  ... -0.817556 -0.288136  0.034086
+   8          864642   0.739924  0.125964  ... -0.853659 -0.011236  0.052642
+   9          229386  -0.046142 -0.730769  ... -0.771930  0.831325  0.198524
+   10          45389   0.907111  0.601476  ... -0.851351 -0.610390  0.013497
+
+   [10 rows x 10 columns]
+
+All 2.7 million pixels are valid. The labels are the class IDs of the map:
+water (9) has a mean NDVI below 0, artificial surfaces (1) and bare rock and
+sand (2) are low, and the forest, long grass and bracken classes (3, 4, 5
+and 10) are above 0.85. The counts are the pixels of each class in the map,
+so (at 0.04 ha per 20 m pixel) Scrub (8) covers about 346 km² of the
+1080 km² area.
+
 Some operations need whole-image parameters, such as a mean and standard
 deviation for a z-score. These take **two passes**: calculate the
 statistics first, then give them to a node. Here
@@ -594,12 +721,14 @@ the edges of the image and no data:
    :end-before: # [end-step-11-check]
    :dedent: 4
 
-The class map and the features are bit-for-bit identical here, and the
-example's test runs this check with several block sizes and with
-``n_jobs=2``. Use :func:`numpy.testing.assert_allclose` instead of
-``assert_array_equal`` when the steps write intermediate files in a smaller
-data type than the graph keeps in memory (e.g. ``float32`` files between
-steps that compute in ``float64``).
+The features and the class maps are bit-for-bit identical, and the example's
+test runs this check with several block sizes and with ``n_jobs=2``. The
+moving-window statistics are always calculated in ``float64``, so it does not
+matter that the graph passes the indices to the filters as ``float32`` values
+in memory while the file-based filters read them from a file. Where steps
+write intermediate files in a smaller data type than the graph keeps in
+memory (e.g. integers), compare with :func:`numpy.testing.assert_allclose`
+instead.
 
 To find where a graph goes wrong, add a ``MemorySink`` on intermediate
 nodes and compare them step by step, or print ``graph.describe()`` to check

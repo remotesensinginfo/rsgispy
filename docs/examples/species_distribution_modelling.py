@@ -184,8 +184,8 @@ def run_workflow(
         axis=0,
     )
     names, scores = bin_accuracy_scores_prob(test_y, test_prob)
-    ens_metrics = dict(zip(names, scores))
-    print(ens_metrics)  # Test AUC, point-biserial r, Brier score, ...
+    ens_metrics = dict(zip(names, (float(score) for score in scores)))
+    print({name: round(score, 3) for name, score in ens_metrics.items()})
 
     # ROC curve of the ensemble on the test set.
     fpr, tpr, ens_auc = sdm.calc_binary_roc_auc(test_y, test_prob)

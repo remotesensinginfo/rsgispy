@@ -41,6 +41,18 @@ This guide shows all three and how to check the result. The
 :func:`~rsgispy.imageregistration.warping.coregister_images` to align the
 dates of a Sentinel-2 time series before compositing.
 
+.. seealso::
+
+   The rsgispy tutorials do not have a co-registration notebook, but the
+   images used on this page come from them: the 2021 Sentinel-2 image of
+   Aberystwyth is introduced in
+   :tutorial:`Image basics and NDVI <01_getting_started/01_image_basics_and_ndvi.ipynb>`
+   (section 1), and
+   :tutorial:`Image-to-image change detection <06_change_detection/03_image_to_image_change.ipynb>`
+   (section 6) compares two dates pixel by pixel, which only works for
+   co-registered images. See :doc:`../tutorials` for how to get the
+   notebooks and their data.
+
 .. contents:: Contents
    :local:
    :depth: 1
@@ -83,10 +95,32 @@ Overview
 The code in this guide comes from the example script
 ``docs/examples/image_coregistration.py`` (included below step by step), which
 is run by the rsgispy test suite on a synthetic 160 × 160 pixel, 10 m image
-pair. The floating image is shifted by 23 m east and 14 m south and rotated by
-0.3° relative to the reference, has a different brightness (a gain and offset,
-as between two sensors or dates), a cloud and a strip of no data. Run it on
-your own data from the command line, for example:
+pair. The outputs on this page come from two Sentinel-2 images of
+Aberystwyth from the rsgispy tutorials:
+
+* the **reference** is the 20 m image of 29 June 2018,
+  :tutorial-data:`sen2_20180629_t30uvd_orb037_osgb_stdsref_20m.tif`, cut to
+  the extent of the other image (466 × 473 pixels, 9.3 × 9.5 km);
+* the **floating** image is the 10 m image of 27 May 2021,
+  :tutorial-data:`sen2_20210527_aber.tif`, averaged to the 20 m reference
+  grid. The two products are already well aligned (a whole-image offset of
+  at most a quarter of a pixel, 5 m), so to have something to correct the
+  script adds a **known misregistration** while resampling: the features
+  move 23 m east and 14 m south and are rotated by 0.3° clockwise about the
+  image centre, which moves the corners by up to 35 m more. The GCPs (step
+  8) are six points spread over the image whose true coordinates come from
+  the same known distortion.
+
+Everything else is real: three years of land change, a different season
+and atmosphere, and the sea, which has no texture to match. The NIR band (B8A, band 8) is used in both images:
+
+.. literalinclude:: ../examples/image_coregistration_tutorial.py
+   :language: python
+   :start-after: # [tutorial-data]
+   :end-before: # [end-tutorial-data]
+   :dedent: 4
+
+Run the example on your own data from the command line, for example:
 
 .. code-block:: bash
 
@@ -141,19 +175,22 @@ metric value at the best shift and the number of pixels compared.
    :end-before: # [end-step-1-measure]
    :dedent: 4
 
-Output for the synthetic pair:
+Output for the tutorial pair (rounded):
 
 .. code-block:: text
 
-   {'correlation': 0.756, 'norm_mutual_info': 0.131}
-   {'x_offset_map': -22.5, 'y_offset_map': 15.0, 'x_offset_pxl': -2.25,
-    'y_offset_pxl': 1.5, 'metric_value': 0.972, 'metric_name': 'correlation',
-    'n_valid_pxls': 24486}
+   {'correlation': 0.829, 'norm_mutual_info': 0.150}
+   {'x_offset_map': -20.0, 'y_offset_map': 20.0, 'x_offset_pxl': -1.0,
+    'y_offset_pxl': 1.0, 'metric_value': 0.846, 'metric_name': 'correlation',
+    'n_valid_pxls': 219376}
 
 The offset is the correction to apply to the floating image: features
-are 22.5 m too far east and 15 m too far south, so the image must move
-−22.5 m in X and +15 m in Y (the true shift is 23 m and 14 m; the estimate is
-limited to 0.25 pixels and slightly affected by the rotation). If the best
+are about 20 m too far east and 20 m too far south, so the image must move
+−20 m in X and +20 m in Y. The expected correction is about −23 m and +19 m
+(the added 23 m and 14 m, plus the 5 m by which the two dates already
+differed in Y); the estimate is limited to 0.25 pixels (5 m) and affected by
+the rotation. The correlation is well below 1 even after the shift
+(``metric_value``): the land changed between the dates. If the best
 shift is at the edge of the search window (±``search_area`` pixels in the
 example), the true offset
 may be larger: increase ``x_search`` / ``y_search``.
@@ -242,8 +279,10 @@ text formats selected with ``output_type``, e.g.
 
 **Check:** the offsets should be consistent (a small standard deviation of
 ``dx_map``/``dy_map``) or vary smoothly across the image; view the tie points
-in a GIS over both images. Here the mean offset is about −23 m / +13 m, and it
-varies by a few metres across the image because of the rotation.
+in a GIS over both images. Here 26 tie points are matched (windows on the
+sea, or where the land changed between the dates, are rejected),
+with a mean offset of about −27 m / +11 m. The offsets vary from −45 to −5 m
+in X and from −5 to +40 m in Y across the image because of the rotation.
 
 Step 4 — Removing outlier tie points
 ------------------------------------
@@ -264,7 +303,8 @@ agree with it:
   the data.
 
 Choose ``residual_thres`` from the accuracy you need and the pixel size: one
-pixel (here 10 m) is a good start; lower it when the tie points are precise.
+pixel is a good start; lower it when the tie points are precise (the
+tutorial pair uses 10 m, half of its 20 m pixels).
 With ``return_model=True`` the function also returns diagnostics: the number
 of input points, inliers and outliers, and the RMSE and maximum residual of
 the inliers (map units). The inliers have an extra ``residual`` column. They
@@ -279,8 +319,12 @@ warping functions.
 
 .. code-block:: text
 
-   {'n_input': 25, 'n_inliers': 25, 'n_outliers': 0, 'rmse': 1.44,
-    'max_residual': ...}
+   {'n_input': 26, 'n_inliers': 25, 'n_outliers': 1, 'rmse': 4.26,
+    'max_residual': 6.90}
+
+One tie point disagrees with the affine model by more than 10 m and is
+removed; the other 25 fit it with an RMSE of 4.3 m (about a fifth of a
+pixel).
 
 **Check:** the inlier RMSE should be a fraction of a pixel. If most points are
 outliers, the images may not overlap where you think, the search area may be
@@ -323,12 +367,11 @@ whose check point error is close to the lowest.
 
 .. code-block:: text
 
-   Check point RMSE (m): {'shift': 3.4, 'affine': 1.7, 'poly2': 1.4}
+   Check point RMSE (m): {'shift': 18.6, 'affine': 5.7, 'poly2': 5.5}
 
-The shift cannot represent the rotation (its error is about a third of a
-pixel at the check points), while the affine and second order polynomial
-models are both well below a pixel; the affine model is chosen as the
-simpler of the two.
+The shift cannot represent the rotation (its error is almost a pixel at the
+check points), while the affine and second order polynomial models are both
+well below a pixel; the affine model is chosen as the simpler of the two.
 
 Step 6 — Warping with the tie points
 ------------------------------------
@@ -405,7 +448,7 @@ Three checks, all computed against the reference image:
 * the **residual offset** — running
   :func:`~rsgispy.imageregistration.shift.find_image_offset` on the
   registered image — should be close to zero (here it is measured to 0.25
-  pixels, i.e. 2.5 m);
+  pixels, i.e. 5 m);
 * a **difference image**
   (:func:`rsgispy.imagecalc.comparison.calc_img_difference`, reference minus
   registered) should not show the bright and dark fringes along edges that
@@ -420,13 +463,19 @@ Three checks, all computed against the reference image:
 
 .. code-block:: text
 
-   before {'correlation': 0.756, 'norm_mutual_info': 0.131, 'resid_offset_m': 27.042}
-   shift {'correlation': 0.966, 'norm_mutual_info': 0.375, 'resid_offset_m': 0.0}
-   affine {'correlation': 0.989, 'norm_mutual_info': 0.586, 'resid_offset_m': 0.0}
-   gcps {'correlation': 0.989, 'norm_mutual_info': 0.59, 'resid_offset_m': 0.0}
+   before {'correlation': 0.829, 'norm_mutual_info': 0.15, 'resid_offset_m': 28.284}
+   shift {'correlation': 0.846, 'norm_mutual_info': 0.161, 'resid_offset_m': 5.0}
+   affine {'correlation': 0.857, 'norm_mutual_info': 0.182, 'resid_offset_m': 0.0}
+   gcps {'correlation': 0.857, 'norm_mutual_info': 0.183, 'resid_offset_m': 5.0}
 
-The whole-image shift removes most of the offset, but the affine warp (from
-tie points or GCPs) also corrects the rotation and gives the best match. For
+The whole-image shift removes most of the offset, but the affine warp from
+the tie points also corrects the rotation and gives the best match, with no
+measurable residual offset. The metrics improve much less than they would
+for two copies of the same image, because most of the difference between the
+dates is real change; the residual offset is the clearer check. The GCP warp
+matches as well but is still 5 m off: its points only describe the
+misregistration that the script added, not the 5 m by which the two dates
+already differed, which the tie points measured from the images. For
 a more independent check, measure the positions of a few features that were
 not used as tie points or GCPs in both images and report their RMSE.
 

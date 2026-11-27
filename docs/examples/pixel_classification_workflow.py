@@ -28,6 +28,7 @@ def run_workflow(
     acc_pts_vec: Optional[str] = None,
     s2_bands: Sequence[int] = (1, 2, 3, 7, 9, 10),
     s2_band_names: Sequence[str] = ("Blue", "Green", "Red", "NIR", "SWIR1", "SWIR2"),
+    refl_gain: float = 10000.0,
     max_cls_smpls: int = 20000,
     cv_block_size: float = 2000.0,
     n_trees: int = 300,
@@ -35,6 +36,8 @@ def run_workflow(
     mmu_pxls: int = 10,
     n_acc_smpls: int = 500,
     salib_n_samples: int = 256,
+    response_class: str = "Forest",
+    shap_class: str = "Water",
     use_glcm: bool = True,
     use_gbdt: bool = True,
     use_boruta: bool = True,
@@ -47,8 +50,11 @@ def run_workflow(
     ``(training vector file, output class ID, colour)``. ``acc_pts_vec`` holds
     labelled accuracy assessment points with the reference class name in a
     ``ref_name`` column; if it is ``None`` the accuracy assessment is skipped
-    (the stratified random sample to label is still created). The ``use_*``
-    options switch off steps that need optional dependencies.
+    (the stratified random sample to label is still created). ``refl_gain``
+    is the scale factor of the reflectance (e.g. 10000 for reflectance
+    x 10000). ``response_class`` and ``shap_class`` are the classes whose
+    probability the response curves and the SHAP and Sobol analyses explain.
+    The ``use_*`` options switch off steps that need optional dependencies.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-statements,import-outside-toplevel
@@ -64,14 +70,14 @@ def run_workflow(
     from rsgispy.imageutils.vrt import create_stack_images_vrt, create_vrt_band_subset
     from rsgispy.imageutils.warp import resample_img_to_match
 
-    # Spectral indices (input reflectance is scaled by 10000, no data = 0).
+    # Spectral indices (reflectance x refl_gain, no data = 0).
     idx_img = os.path.join(out_dir, "s2_indices.tif")
     calc_indices(
         s2_img,
         idx_img,
         band_names={b: n.lower() for b, n in zip(s2_bands, s2_band_names)},
         indices=["NDVI", "MNDWI", "NDBI"],
-        in_gain=10000.0,
+        in_gain=refl_gain,
         no_data_val=0,
         out_no_data_val=-9999.0,
         use_pbar=use_pbar,
@@ -96,10 +102,12 @@ def run_workflow(
         create_vrt_band_subset(s2_img, nir_vrt,
                                [s2_bands[s2_band_names.index("NIR")]])
         glcm_img = os.path.join(out_dir, "nir_glcm.tif")
-        apply_glcm_filter(nir_vrt, glcm_img, properties=["homogeneity", "entropy"],
+        # The output's no data value is the input's (0), so use properties
+        # that are never 0 (entropy and contrast are 0 in uniform water).
+        apply_glcm_filter(nir_vrt, glcm_img, properties=["homogeneity", "energy"],
                           filter_size=5, no_data_val=0, use_pbar=use_pbar)
         feat_imgs.append(glcm_img)
-        feat_names += ["NIR_homogeneity", "NIR_entropy"]
+        feat_names += ["NIR_homogeneity", "NIR_energy"]
 
     # One virtual stack (no copy) of every feature: the uint16 reflectance and
     # the float32 derived layers, each band keeping its own no data value.
@@ -332,22 +340,22 @@ def run_workflow(
     print(jk_df)
     cfeat.calc_feature_response_curves(
         sel_cfg_file, rf_fitted, train_file,
-        out_file=os.path.join(interp_dir, "response_forest.csv"),
-        response_plots_dir=os.path.join(interp_dir, "response_forest"),
-        target_class="Forest",  # probability of the Forest class
+        out_file=os.path.join(interp_dir, "response_curves.csv"),
+        response_plots_dir=os.path.join(interp_dir, "response_curves"),
+        target_class=response_class,  # e.g. the probability of Forest
         use_pbar=use_pbar,
     )
     if use_shap:
         cfeat.calc_shap_feature_contributions(
-            sel_cfg_file, rf_fitted, test_file, target_class="Water",
-            shap_summary_plot=os.path.join(interp_dir, "shap_water.png"),
+            sel_cfg_file, rf_fitted, test_file, target_class=shap_class,
+            shap_summary_plot=os.path.join(interp_dir, "shap_summary.png"),
             subsample_n_smpls=500, use_tree_explainer=True, rnd_seed=42,
         )
     if use_salib:
         sobol_total, _, _ = cfeat.calc_salib_feature_sensitivity(
-            sel_cfg_file, rf_fitted, train_file, target_class="Water",
+            sel_cfg_file, rf_fitted, train_file, target_class=shap_class,
             n_samples=salib_n_samples,
-            sobol_plot_file=os.path.join(interp_dir, "sobol_water.png"),
+            sobol_plot_file=os.path.join(interp_dir, "sobol.png"),
         )
         print(sobol_total)
     # [end-step-7-interpret]

@@ -11,6 +11,8 @@ and `rasterio <https://rasterio.readthedocs.io/>`_.
 
    Guides: :doc:`guides/multi_criteria_analysis`, :doc:`guides/large_rasters`
 
+   Tutorials: :tutorial:`image basics and NDVI <01_getting_started/01_image_basics_and_ndvi.ipynb>`, :tutorial:`rule-based classification <04_image_classification/01_rule_based_classification.ipynb>` (:doc:`tutorials`)
+
 Examples
 --------
 

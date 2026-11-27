@@ -26,7 +26,19 @@ how that works and which choices affect speed, memory use and file sizes:
   GeoParquet.
 
 The example script runs each technique on a small image so that it can be
-tested; the text gives the guidance for real data.
+tested; the printed outputs on this page come from a real Sentinel-2 scene,
+and the text gives the guidance for larger data.
+
+.. seealso::
+
+   The rsgispy tutorials cover tile graphs in a notebook you can run:
+   :tutorial:`Chaining indices, classification and filtering in a tile graph <09_tile_graph_workflows/01_indices_classification_filtering.ipynb>`
+   (section 9) builds a whole classification as one tile graph, collects
+   training samples without writing the features to disk and compares the
+   run time with ``n_jobs``; segmentation and segment statistics are used in
+   :tutorial:`Object-based classification <04_image_classification/04_object_based_classification.ipynb>`
+   (section 4). See :doc:`../tutorials` for how to get the notebooks and
+   their data.
 
 .. contents:: Contents
    :local:
@@ -72,6 +84,24 @@ value 0 (e.g. from
 :func:`~rsgispy.imagecalibration.sensorlvl2data.create_stacked_sen2_esa_l2a_img`;
 see :doc:`analysis_ready_data`), in a projected CRS.
 
+The printed outputs on this page come from the 20 m Sentinel-2 scene of
+mid-Wales in the rsgispy tutorials,
+:tutorial-data:`sen2_20180629_t30uvd_orb037_osgb_stdsref_20m.tif`
+(29 June 2018, 3295 x 2880 pixels, 10 bands, reflectance x 10000, no data
+0, British National Grid). It is not a large image (181 MiB), but it is
+big enough to show the techniques at work; the script
+``docs/examples/large_rasters_tutorial.py`` sets the band numbers for its
+band order and splits it into 1024 pixel tiles so that there are several
+tiles to process in parallel:
+
+.. literalinclude:: ../examples/large_rasters_tutorial.py
+   :language: python
+   :start-after: # [tutorial-data]
+   :end-before: # [end-tutorial-data]
+   :dedent: 4
+
+The whole run takes about half a minute on a laptop.
+
 Step 1 — Estimating memory
 --------------------------
 
@@ -87,6 +117,13 @@ temporary arrays of the same size while it is processed.
    :start-after: # [step-1-memory]
    :end-before: # [end-step-1-memory]
    :dedent: 4
+
+For the tutorial scene this prints:
+
+.. code-block:: text
+
+   3295 x 2880 pixels, 10 bands (uint16): 181.0 MiB if read at once
+   One 256 x 256 block of all bands as float64: 5.0 MiB
 
 For a 10,980 x 10,980 pixel, 10-band ``uint16`` Sentinel-2 image this gives
 about 2.2 GiB as ``uint16`` (9.0 GiB as float64), but only 5 MiB for a
@@ -373,6 +410,13 @@ for given bounding boxes instead.
    :end-before: # [end-step-7-tiles]
    :dedent: 4
 
+With 1024 pixel tiles the tutorial scene is cut into 4 x 3 tiles (those on
+the right and bottom edges are smaller):
+
+.. code-block:: text
+
+   12 tiles mosaicked into large_tutorial/ndvi_tiles.vrt
+
 The mosaic is a VRT (step 3), so it costs nothing to create; write it to a
 real file with :func:`~rsgispy.imageutils.warp.gdal_translate` (step 8) or
 :func:`~rsgispy.imageutils.mosaic.create_img_mosaic` when it is final. For
@@ -498,6 +542,11 @@ bound memory and use several cores:
    :start-after: # [step-9-segments]
    :end-before: # [end-step-9-segments]
    :dedent: 4
+
+The tutorial scene (9.5 million pixels) gives ``274217 segments``, an
+average of about 35 pixels (1.4 ha) each, from 12 tiles segmented by 4
+worker processes. The memory needed for the statistics table and the
+polygons grows with this number, not with the number of pixels.
 
 The outputs are the label image ``s2_segs.tif`` (segment IDs ``1..N``, 0 = no
 data), a Parquet table with one row per segment (``seg_id``, ``pxl_count``,

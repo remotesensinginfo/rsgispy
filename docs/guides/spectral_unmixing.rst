@@ -45,6 +45,19 @@ with rsgispy on your own images:
    area they are **illustrative**: check them against your own data (see
    `Checking the results`_) before trusting the maps.
 
+.. seealso::
+
+   The rsgispy tutorials cover this in notebooks you can run:
+   :tutorial:`Linear spectral unmixing <07_spectral_analysis/03_spectral_unmixing.ipynb>`
+   (section 7) unmixes a HyMap hyperspectral image with endmembers chosen
+   with the pixel purity index, and compares the solvers and their errors;
+   :tutorial:`Landsat composites <10_case_study_icesat2_bathymetry/02_landsat_composites.ipynb>`
+   (section 10) compares the median, geomedian, medoid and best-pixel
+   composites of Step 1. The Landsat images used on this page are those of
+   the :tutorial-dir:`change detection notebooks <06_change_detection>`
+   (section 6). See :doc:`../tutorials` for how to get the notebooks and their
+   data.
+
 .. contents:: Contents
    :local:
    :depth: 1
@@ -156,12 +169,31 @@ the rsgispy test suite runs on a synthetic floodplain with known fractions
 * a **DEM** in metres (TropWet uses the ~90 m SRTM), in any projection and
   resolution covering the area.
 
-The synthetic scene is 60 x 80 pixels of 30 m on five dates, with blocks of
-known mixtures: a lake, emergent flooded vegetation, a forest, a wet-looking
-mixture on a hillside, wet sand, a flood that covers parts of the
-floodplain on one to five of the dates, sparse vegetation, scrub, dunes, a
-freshly burned area, a mixed area, and a no data strip; one date has a cloud
-over part of the lake.
+The figures and outputs on this page come from the Landsat images of the
+rsgispy tutorials: the northern **Rufiji delta**, Tanzania, a tropical delta
+of mangroves, tidal channels and floodplain farmland, on two dates,
+:tutorial-data:`chg_data/LS5TM_19970716_vmsk_mclds_topshad_rad_srefdem_stdsref_subset.tif`
+(Landsat 5 TM, 16 July 1997) and
+:tutorial-data:`chg_data/LS8_20180608_vmsk_mclds_topshad_rad_srefdem_stdsref_subset.tif`
+(Landsat 8 OLI, 8 June 2018). They are cloud-masked surface reflectance
+x **1000** (not 10000) with no data 0, so ``refl_scale=1000``. The script
+``docs/examples/spectral_unmixing_tutorial.py`` cuts out the 27 x 23 km
+(900 x 767 pixels) area used in the change detection notebooks, keeps the
+six bands in the order above, and runs the example:
+
+.. literalinclude:: ../examples/spectral_unmixing_tutorial.py
+   :language: python
+   :start-after: # [tutorial-data]
+   :end-before: # [end-tutorial-data]
+   :dedent: 4
+
+Two things differ from a real TropWet analysis, and the text below points
+out where they show. **Two dates, 21 years apart,** are not a season of
+observations: their median is the mean of the two, and the water frequency
+(Step 8) can only be 0, 50 or 100 %. And the tutorial data has **no DEM** of
+the delta, so the script makes a flat one (0 m everywhere), which switches
+the slope mask (Step 6) off; the delta itself is flat. The test suite runs
+the same code on a synthetic floodplain with known fractions.
 
 Step 1 — Median composite
 -------------------------
@@ -169,7 +201,8 @@ Step 1 — Median composite
 TropWet works on a **median composite** of all the cloud-free observations
 in a date range (e.g. the peak of the flood season). The median removes
 remaining clouds, shadows and noise that the cloud mask missed, without the
-blur of a mean. Choose the date range carefully: a composite over a whole
+blur of a mean (with only two dates, as in the tutorial data, the median is
+the mean of the two). Choose the date range carefully: a composite over a whole
 year mixes flooded and dry conditions.
 
 :func:`~rsgispy.imageutils.composite.create_percentile_composite`
@@ -229,9 +262,10 @@ water, 2 = vegetation, 3 = sand, 0 = not pure). The water and vegetation
 rules pick the clearly wet and the clearly green pixels. The sand rule is
 very narrow (NDVI between 0.16 and 0.17): it picks bright, unvegetated
 surfaces with a slight red edge, and excludes both wet soil (higher MNDWI)
-and anything with more than a trace of vegetation. In the synthetic scene
-the sand spectrum has an NDVI of 0.165; with real data the window may catch
-few pixels, or the wrong surface, so look at where the pixels are.
+and anything with more than a trace of vegetation. With real data the window
+may catch few pixels, or the wrong surface, so look at where the pixels are.
+In the Rufiji delta it catches only 181 of the 690,300 pixels, on the sand
+and mud banks along the rivers and on the beaches.
 
 :func:`~rsgispy.imagecalc.stats.count_pxls_of_val` counts the pure pixels
 per endmember; the script stops with an error if any endmember has fewer than
@@ -253,23 +287,29 @@ nm) sets the x axis.
 
 .. code-block:: text
 
-   Pure pixels per endmember: {'Water': 400, 'Vegetation': 400, 'Sand': 296}
-          Water  Vegetation    Sand
+   Pure pixels per endmember: {'Water': 179686, 'Vegetation': 325297, 'Sand': 181}
+          Water  Vegetation   Sand
    band
-   Blue   700.0       301.0  1200.0
-   Green  800.0       800.0  1600.0
-   Red    649.0       300.0  2000.0
-   NIR    300.0      4000.0  2791.0
-   SWIR1  120.0      1799.0  2400.0
-   SWIR2   70.0       800.0  2000.0
+   Blue    58.0        25.0   63.0
+   Green   80.0        47.0   97.0
+   Red     64.0        34.0  104.0
+   NIR     32.0       317.0  146.0
+   SWIR1   12.0       123.0  103.0
+   SWIR2   11.0        55.0   66.0
+
+Water comes from the sea and the channels, vegetation from the mangroves,
+and the 181 sand pixels give a dark spectrum (0.06–0.15 reflectance): most
+of them are wet or partly covered by water, so the "sand" endmember is
+closer to wet mud than to dry sand.
 
 .. figure:: images/unmix_endmembers.png
    :width: 60%
    :alt: Reflectance spectra of the water, vegetation and sand endmembers
          against wavelength.
 
-   The endmembers selected automatically from the synthetic scene, plotted
-   with :func:`~rsgispy.imagespectral.endmembers.plot_endmembers`.
+   The endmembers selected automatically from the Rufiji delta composite,
+   plotted with :func:`~rsgispy.imagespectral.endmembers.plot_endmembers`.
+   Landsat data courtesy of the U.S. Geological Survey.
 
 How to check the endmembers:
 
@@ -290,9 +330,9 @@ How to check the endmembers:
   vegetation can still pass NDVI > 0.7; the vegetation endmember is then a
   little "softer" than pure canopy, and pure canopy gets fractions slightly
   outside the expected range (handled by the constraints, Step 4). The same
-  applies to turbid or vegetated water and MNDWI. In the synthetic scene the
-  thresholds select only the pure blocks, so the endmembers match the true
-  spectra; with real data expect some contamination.
+  applies to turbid or vegetated water and MNDWI. In the delta the water is
+  turbid (green reflectance 0.08, NIR 0.03), and the sand pixels are mixed
+  with water: expect some contamination with real data.
 
 Step 4 — Unmixing and quality check
 -----------------------------------
@@ -337,26 +377,29 @@ residual):
 .. code-block:: text
 
          neg_pct  sum_min  sum_max  rmse_median  rmse_p99
-   fcls     0.00     1.00     1.00         9.19    267.68
-   ucls    58.01     0.32     1.05         7.20     73.17
+   fcls     0.00     1.00     1.00        18.24    129.91
+   ucls    95.36    -0.95     1.92         6.25     34.66
 
 How to read this:
 
-* Without constraints, 58 % of the pixels have at least one negative
-  fraction: wherever an endmember is absent, noise pushes its fraction a
-  little below zero. The sums go down to 0.32, in the burned area, which is
-  darker than any mixture of the endmembers.
+* Without constraints, 95 % of the pixels have at least one negative
+  fraction, and the sums range from −0.95 to 1.92: many surfaces in the
+  delta are outside the triangle of the three endmembers, and the
+  unconstrained fit extrapolates to reach them.
 * The unconstrained RMSE is always lower, because the model has more
   freedom; that does not make its fractions better. Compare errors between
   models with the same constraints.
-* The **median** FCLS RMSE (9.2, i.e. 0.0009 reflectance) is close to the
-  noise of the data, so most pixels are explained by the three endmembers.
-  The **99th percentile** is much higher: map the RMSE (``*_fcls_err.tif``)
-  and look for patterns. Here every pixel with an RMSE above 30 is in the
-  burned area (where it is 250 or more), a
-  surface that is not a mixture of water, vegetation and sand. With real
-  data, look for clouds, shadows, burn scars, crops at a different stage, or
-  urban areas.
+* The **median** FCLS RMSE is 18 (0.018 reflectance), but it differs a lot
+  between surfaces: about 8 in open water and 22 in dense vegetation, but
+  45 in Dry Sparse Vegetation (Step 7). Map the RMSE
+  (``*_fcls_err.tif``) and look for patterns. Here 10 % of the pixels have
+  an RMSE above 50, and most of the 13,632 pixels above 100 are Dry Sparse
+  Vegetation (Step 7): bright bare fields and salt flats (median SWIR1
+  reflectance 0.33), much brighter than the dark sand endmember (0.10), so
+  no mixture of the three endmembers fits them. A brighter sand endmember (see
+  `Other ways to choose endmembers`_) would fix that. With other data, look
+  also for clouds, shadows, burn scars, crops at a different stage, or urban
+  areas.
 
 :func:`~rsgispy.imagespectral.unmixing.predict_refl_linear_unmixing`
 writes the modelled reflectance, to compare with the image band by band.
@@ -394,16 +437,24 @@ which pixels were changed.
 
 .. code-block:: text
 
-   BAI threshold (mean + 1 sd): 3852.0
-   400 pixels corrected for burn scars
+   BAI threshold (mean + 1 sd): 11823.8
+   220 pixels corrected for burn scars
 
-All 400 corrected pixels are in the burned patch, where the water fraction
-was about 70 %; the genuine wet sand (50 % water, 50 % sand) has a much lower
-BAI and is not changed. The threshold is relative to the image: in a scene
-with no burn scars the mean plus one standard deviation still passes the
-pixels with the highest BAI (open water is also high), which is why the NDWS
-and vegetation conditions are needed too. Check the flagged pixels against fire products (e.g. MODIS burned
-area) or a later image.
+The flagged pixels in the delta are not burn scars: they lie at the edge of
+the water, along the coast and the channels (95 % of them within six pixels
+of permanent water), and 205 of the 220 were water on one date and land on
+the other. Their composite is a mixture of turbid water and wet sand or mud,
+with a red reflectance close to 0.1 and a NIR reflectance close to 0.06, the
+charcoal point of the BAI. Their water fraction (about 70 %) moves to sand,
+so they become Dry Bare Sand: a false correction, but a small one (220
+pixels). The threshold is relative to the image and,
+because the BAI rises steeply near the charcoal point, a few very high
+values dominate the statistics (mean 588, standard deviation 11,236; the 34
+pixels exactly at the charcoal point have an infinite BAI, which the
+statistics skip). In a scene with no burn scars the rule still flags the
+pixels with the highest BAI, which is why the NDWS and vegetation conditions
+are needed too. Check the flagged pixels against fire products (e.g. MODIS
+burned area) or a later image.
 
 Step 6 — Slope mask
 -------------------
@@ -425,7 +476,8 @@ grid would create.
    :end-before: # [end-step-6-slope]
    :dedent: 4
 
-A 90 m DEM smooths small features: levées, banks and narrow channels have a
+The tutorial data has no DEM of the Rufiji delta, so there the slope is 0
+everywhere and no pixel is masked. A 90 m DEM smooths small features: levées, banks and narrow channels have a
 slope below 2.5 degrees at that resolution even if they are steep on the
 ground. That is usually what you want for a floodplain mask, but a finer
 DEM changes the result for the same threshold.
@@ -462,18 +514,21 @@ The area of each class (pixel count x pixel area) is written to
 
                                       class  pixels  area_ha  percent
    value
-   1                        Open Water (OW)     640     57.6     13.9
-   2      Emergent Flooded Vegetation (EFV)     400     36.0      8.7
-   3                    Wet Bare Sand (WBS)     400     36.0      8.7
-   4                  Dense Vegetation (GV)     400     36.0      8.7
-   5            Dry Sparse Vegetation (DSV)     960     86.4     20.8
-   6                    Dry Bare Sand (DBS)    1080     97.2     23.4
-   7                          Mixed / Other     740     66.6     16.0
+   1                        Open Water (OW)  173453  15610.8     25.1
+   2      Emergent Flooded Vegetation (EFV)   28985   2608.6      4.2
+   3                    Wet Bare Sand (WBS)   15320   1378.8      2.2
+   4                  Dense Vegetation (GV)  370451  33340.6     53.7
+   5            Dry Sparse Vegetation (DSV)   90140   8112.6     13.1
+   6                    Dry Bare Sand (DBS)    5493    494.4      0.8
+   7                          Mixed / Other    6458    581.2      0.9
 
-In the synthetic scene every block gets its expected class: the burned
-patch is Dry Bare Sand (it would be Wet Bare Sand without Step 5), and the
-wet-looking hillside (45 % water, 55 % vegetation) is Mixed / Other instead
-of Emergent Flooded Vegetation because of the slope mask. GeoTIFF has no
+In the delta, Dense Vegetation is mostly mangrove forest, and Open Water the
+channels and the sea. Wet Bare Sand lines the shore, the channel banks and
+the sand bars, and Emergent Flooded Vegetation is mostly in the east of the
+delta, where the mangroves are cut by many small creeks and pools. The
+farmland and grassland inland, and the bare areas between the mangroves,
+are Dry Sparse Vegetation, the class with the highest unmixing error
+(Step 4): treat it with caution here. GeoTIFF has no
 attribute table for class names, so the names are stored as a band tag
 inside the file; read them back (with the colours) with
 :func:`~rsgispy.imageutils.colourtable.get_thematic_classes`.
@@ -501,9 +556,11 @@ frequency (%), with −1 where there was no valid observation.
 Always look at the number of observations next to the frequency: 100 % from
 one observation is much weaker evidence than 100 % from twenty, and cloudy
 seasons are often the wet seasons, so wet conditions can be under-sampled.
-In the synthetic scene the flood strips give 20, 40, 60, 80 and 100 % as
-designed, and the cloud-covered corner of the lake has four observations
-instead of five but is still water in all of them. Burn scars are rarely
+With the two tutorial dates the frequency can only be 0, 50 or 100 %. The
+27,124 pixels at 50 % (water in 1997 or in 2018, not both) lie along the
+coast, the channel banks and the sand bars, where the tide and the channels
+changed between the dates; 40,142 pixels, mostly sea, have one observation
+because they are masked in the 2018 image. Burn scars are rarely
 above 75 % water, so the per-date maps are not burn corrected; apply Step 5
 to each date if burned areas reach that level in your data.
 
@@ -527,16 +584,17 @@ from :func:`~rsgispy.mapping.legend.add_categorical_legend`. See
 .. figure:: images/unmix_tropwet_maps.png
    :width: 100%
    :alt: Fraction RGB image, water frequency and TropWet classes for the
-         synthetic floodplain.
+         northern Rufiji delta, Tanzania.
 
    (a) Sand, vegetation and water fractions as red, green and blue, (b)
-   water frequency across the five dates and (c) TropWet classes of the
-   synthetic scene. The no data strip on the right is left blank.
+   water frequency across the two dates (1997 and 2018) and (c) TropWet
+   classes of the northern Rufiji delta. Landsat data courtesy of the U.S.
+   Geological Survey.
 
-The figures on this page were made by running the example on the default
-synthetic scene (``make_unmix_scene`` in ``tests/unmix_scene.py``), halving
-the size of the endmember plot and reducing both PNGs to 128 colours with
-Pillow (``Image.quantize(colors=128)``).
+The figures on this page were made with
+``docs/examples/spectral_unmixing_tutorial.py`` (see `Overview`_), halving
+the size of the endmember plot and reducing the PNGs to 128 (endmembers) and
+256 (maps) colours with Pillow (``Image.quantize``).
 
 Checking the results
 --------------------

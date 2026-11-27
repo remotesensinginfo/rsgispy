@@ -204,6 +204,8 @@ For multi-step analyses, follow the step order of the matching guide in the rsgi
 | Block processing, `TileGraph`, VRTs, tiling, `n_jobs` | `large_rasters` |
 | Chaining operations in memory: `*_node` builders, `FilterStep`, custom `WindowOp`/`PointwiseOp`/`TileNode`, `SampleSink`, `StatsSink`/`ZonalStatsSink`, `norm_params_from_stats`, `run(n_jobs=...)` | `tile_graph` |
 
+For step-by-step examples on real data (Sentinel-2, Landsat, a DEM, HyMap, lidar, ICESat-2, species sightings), point users to the rsgispy tutorials: https://github.com/petebunting/rsgispy-tutorials (Jupyter notebooks, data via Git LFS; `docs/tutorials.rst` lists the notebooks and the matching guides).
+
 Workflow notes from the guides:
 - Pass `no_data_val=` (and `calc_stats=True` if wanted) to `band_maths`; the expression must still produce the no-data value (e.g. `"b1 == 0 ? -9999 : b1 * 2"`).
 - `hydrology.flow_accumulation` records its units in the raster (tag `RSGISPY_FLOW_ACC_UNITS`); `extract_streams(..., threshold_units=..., acc_units="auto")` converts the threshold, so cells and m² accumulations both work. For an untagged accumulation in m², pass `acc_units="area"`. `calc_twi` / `calc_spi` / `calc_ls_factor` need specific catchment area (m²/m), not a raw accumulation, and raise if given a tagged accumulation.

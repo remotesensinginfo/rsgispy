@@ -9,6 +9,8 @@ detection methods and per-class pixel outlier change detection using
 
    Guide: :doc:`guides/change_detection`
 
+   Tutorials: :tutorial-dir:`section 6, change detection <06_change_detection>` (:doc:`tutorials`)
+
 Chaining
 --------
 

@@ -180,13 +180,26 @@ individual functions is merged on top. To change the options from Python, use
    # Back to the built-in defaults
    rsgispy.imageutils.envopts.reset_img_creation_opts()
 
+Tutorials
+---------
+
+The `rsgispy tutorials <https://github.com/petebunting/rsgispy-tutorials>`_
+are Jupyter notebooks that teach rsgispy step by step on real data
+(Sentinel-2, Landsat, a DEM, hyperspectral, lidar, ICESat-2 and species
+sightings), from a first NDVI to classification, regression, change
+detection, hydrology and two case studies. :doc:`tutorials` explains how to
+get them and their data, and lists every notebook.
+
 Guides
 ------
 
 The guides walk through complete analyses, from input data to final
 products, and show how functions from several subpackages fit together.
 Each guide's code is taken from a runnable example script in
-``docs/examples/`` that is tested on small synthetic data.
+``docs/examples/`` that the test suite runs on small synthetic data. Where
+the tutorial data suits a guide, its figures and outputs were made by running
+the same script on that data, and each guide links to the tutorial notebooks
+that cover the same methods.
 
 * :doc:`guides/migrating_from_rsgislib` — Moving existing RSGISLib scripts to rsgispy.
 * :doc:`guides/analysis_ready_data` — Downloading, stacking and cloud masking Sentinel-2, and building cloud-free composites.
@@ -233,6 +246,12 @@ Package Overview
 * :doc:`rsgispy_vector` — Consolidated vector I/O, geometry creation, geometric operations, attribute tables, spatial statistics, and selection (accepting file paths or GeoDataFrames).
 * :doc:`rsgispy_vectorprocess` — Shared low-level vector I/O, CRS, bounding-box, and attribute helpers.
 * :doc:`rsgispy_zonalstats` — Polygon and point zonal statistics extraction.
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Tutorials
+
+   tutorials
 
 .. toctree::
    :maxdepth: 2

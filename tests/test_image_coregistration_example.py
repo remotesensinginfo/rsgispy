@@ -79,7 +79,8 @@ def test_guide_markers_exist():
     markers = [
         line.split(":start-after:")[1].strip()
         for line in guide.splitlines()
-        if ":start-after:" in line
+        # the [tutorial-data] marker is in the *_tutorial.py script
+        if ":start-after:" in line and "tutorial-data" not in line
     ]
     assert len(markers) >= 9
     for marker in markers:

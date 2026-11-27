@@ -10,6 +10,8 @@ feature transformations, and pre-processing using ``rasterio``, ``numpy``, and
 
    Guide: :doc:`guides/spectral_unmixing`
 
+   Tutorials: :tutorial:`spectral analysis intro <07_spectral_analysis/01_spectral_analysis_intro.ipynb>`, :tutorial:`hyperspectral image analysis <07_spectral_analysis/02_hyperspectral_image_analysis.ipynb>`, :tutorial:`spectral unmixing <07_spectral_analysis/03_spectral_unmixing.ipynb>` (:doc:`tutorials`)
+
 Chaining
 --------
 

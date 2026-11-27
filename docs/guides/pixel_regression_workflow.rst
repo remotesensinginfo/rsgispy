@@ -21,6 +21,18 @@ guide concentrates on:
 * every prediction is uncertain, and a map of **prediction intervals** is
   often as important as the map of predictions.
 
+.. seealso::
+
+   The rsgispy tutorials cover regression in notebooks you can run:
+   :tutorial-dir:`section 5 <05_regression>` (forest inventory from airborne
+   lidar: exploring the data, feature selection, linear and multivariate
+   regression, e.g.
+   :tutorial:`Multivariate regression <05_regression/05_multivariate_regression.ipynb>`
+   and :tutorial:`Comparing regressors <05_regression/06_compare_regressors.ipynb>`)
+   and a pixel regression of water depth from ICESat-2 points and Landsat,
+   :tutorial:`Landsat composite bathymetry <10_case_study_icesat2_bathymetry/03_landsat_composite_bathymetry.ipynb>`
+   (section 10). See :doc:`../tutorials` for how to get them and their data.
+
 .. contents:: Contents
    :local:
    :depth: 1
