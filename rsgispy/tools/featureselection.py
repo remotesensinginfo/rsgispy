@@ -108,9 +108,13 @@ def cqv_threshold(
     highthreshold: float = 0.75,
 ) -> List[str]:
     """
-    Filter features based on the Coefficient of Quartile Variation (CQV).
+    Filter features based on the Coefficient of Quartile Variation (CQV),
+    ``(Q3 - Q1) / |Q3 + Q1|``.
 
-    Predictors with CQV in ``[lowthreshold, highthreshold]`` are retained.
+    Predictors with CQV in ``[lowthreshold, highthreshold]`` are retained. The
+    absolute value in the denominator keeps the CQV positive for features
+    whose values are mostly negative (e.g. SAR backscatter in dB); features
+    whose quartiles sum to zero have no defined CQV and are not retained.
 
     :param df: Pandas DataFrame containing predictor columns.
     :param cols: Optional list of column names to inspect (at least 2).
@@ -138,7 +142,7 @@ def cqv_threshold(
     print(f"Calculating CQV for {len(cols)} predictor variables...")
     q1 = np.percentile(x_vals, 25, axis=0).astype(np.float64)
     q3 = np.percentile(x_vals, 75, axis=0).astype(np.float64)
-    denom = q3 + q1
+    denom = np.abs(q3 + q1)
     cqv = np.divide(
         q3 - q1,
         denom,
@@ -296,11 +300,18 @@ def lassolars_feature_selection(
     Perform L1 regularisation-based feature selection using ``LassoLars`` in
     scikit-learn.
 
+    The predictors are standardised (z-scores) before fitting, so the
+    selection does not depend on their units and ``alpha_val`` applies to
+    standardised coefficients. Each dependent variable is fitted separately
+    (with its own BIC-selected ``alpha`` when ``alpha_val`` is ``None``) and a
+    predictor is selected when it is selected for any dependent variable.
+
     :param df: Pandas DataFrame containing dependent and independent variables.
     :param dep_vars: List of dependent variable column names.
     :param ind_vars: List of independent (predictor) variable column names.
-    :param alpha_val: Regularisation parameter ``alpha``; estimated via BIC
-                      with ``LassoLarsIC`` when ``None``.
+    :param alpha_val: Regularisation parameter ``alpha`` for the standardised
+                      predictors; estimated via BIC with ``LassoLarsIC`` for
+                      each dependent variable when ``None``.
     :return: List of selected predictor column names.
 
     .. code:: python
@@ -320,35 +331,44 @@ def lassolars_feature_selection(
     rsgispy.check_optional_dep(
         HAVE_SKLEARN, "lassolars_feature_selection", "scikit-learn", "stats"
     )
-    x_vals = df[ind_vars].values
-    y_vals = df[dep_vars].values
+    x_vals = np.asarray(df[ind_vars].values, dtype=np.float64)
+    y_vals = np.asarray(df[dep_vars].values, dtype=np.float64)
+    if y_vals.ndim == 1:
+        y_vals = y_vals[:, np.newaxis]
 
-    if alpha_val is None:
-        ic_est = sklearn.linear_model.LassoLarsIC("bic")
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore", category=sklearn.exceptions.ConvergenceWarning
-            )
-            ic_est.fit(x_vals, y_vals[:, -1])
-        optimal_alpha = float(ic_est.alpha_)
-    else:
-        optimal_alpha = float(alpha_val)
+    # Standardise the predictors so the L1 penalty, and so the selection,
+    # does not depend on their units (constant columns are left at 0).
+    x_mean = x_vals.mean(axis=0)
+    x_std = x_vals.std(axis=0)
+    x_std[x_std == 0.0] = 1.0
+    x_z = (x_vals - x_mean) / x_std
 
-    print(
-        f"Using regularisation parameter (alpha) for the Lasso estimator of: "
-        f"{optimal_alpha}"
-    )
-
-    estimator = sklearn.linear_model.LassoLars(alpha=optimal_alpha)
+    selected = np.zeros(len(ind_vars), dtype=bool)
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore", category=sklearn.exceptions.ConvergenceWarning
         )
-        estimator.fit(x_vals, y_vals)
+        for tgt_idx, tgt_name in enumerate(dep_vars):
+            y_tgt = y_vals[:, tgt_idx]
+            if alpha_val is None:
+                ic_est = sklearn.linear_model.LassoLarsIC("bic")
+                ic_est.fit(x_z, y_tgt)
+                optimal_alpha = float(ic_est.alpha_)
+            else:
+                optimal_alpha = float(alpha_val)
+            print(
+                "Using regularisation parameter (alpha) for the Lasso "
+                f"estimator of '{tgt_name}': {optimal_alpha}"
+            )
+            estimator = sklearn.linear_model.LassoLars(alpha=optimal_alpha)
+            estimator.fit(x_z, y_tgt)
+            selector = sklearn.feature_selection.SelectFromModel(
+                estimator, prefit=True
+            )
+            selected |= selector.get_support()
 
-    selector = sklearn.feature_selection.SelectFromModel(estimator, prefit=True)
     ind_vars_arr = np.array(ind_vars)
-    return [str(col) for col in ind_vars_arr[selector.get_support()]]
+    return [str(col) for col in ind_vars_arr[selected]]
 
 
 def breusch_pagan_test(
