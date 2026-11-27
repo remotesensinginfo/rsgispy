@@ -30,8 +30,10 @@ import pandas as pd  # noqa: E402
 
 import rsgispy  # noqa: E402
 import rsgispy.imagespectral.endmembers as spec_em  # noqa: E402
+import rsgispy.imagespectral.spectra as spec_spectra  # noqa: E402
 import rsgispy.imageutils.metadata  # noqa: E402
 import rsgispy.mapping.elements as map_elements  # noqa: E402
+import rsgispy.mapping.layout as map_layout  # noqa: E402
 import rsgispy.mapping.legend as map_legend  # noqa: E402
 import rsgispy.mapping.raster as map_raster  # noqa: E402
 import rsgispy.mapping.vector as map_vector  # noqa: E402
@@ -100,6 +102,15 @@ def make_tables(seed: int = 42) -> Dict[str, object]:
     }
 
 
+def _leaf_spectrum(wvls: np.ndarray, chl: float) -> np.ndarray:
+    """A synthetic leaf reflectance spectrum for a chlorophyll content."""
+    red_edge = 0.05 + 0.42 / (1.0 + np.exp(-(wvls - (700.0 + 0.2 * chl)) / 15.0))
+    chl_abs = 1.0 - (0.3 + 0.006 * chl) * np.exp(-0.5 * ((wvls - 670.0) / 30.0) ** 2)
+    blue_abs = 1.0 - 0.5 * np.exp(-0.5 * ((wvls - 450.0) / 40.0) ** 2)
+    green = 1.0 + 0.6 * np.exp(-0.5 * ((wvls - 550.0) / 25.0) ** 2) * (1.0 - chl / 120.0)
+    return np.clip(red_edge * chl_abs * blue_abs * green, 0.01, None)
+
+
 def _gallery_plots(scene: Dict[str, str], tbl: Dict[str, object]) -> List[Tuple[str, Callable[[], object]]]:
     """(name, function returning a figure) for every plot in the gallery."""
     # pylint: disable=too-many-locals,too-many-statements
@@ -146,6 +157,26 @@ def _gallery_plots(scene: Dict[str, str], tbl: Dict[str, object]) -> List[Tuple[
             plot_title="Endmember spectra", y_label="Reflectance",
         )
         fig.axes[0].set_xlabel("Wavelength (nm)")
+        return fig
+
+    def spectra_plot():
+        wvls = np.arange(400.0, 1001.0, 5.0)
+        chl = [10, 20, 40, 60, 80]
+        spec_df = pd.DataFrame(
+            {f"{c} µg/cm²": _leaf_spectrum(wvls, c) for c in chl}, index=wvls
+        )
+        fig, _ = spec_spectra.plot_spectra(
+            spec_df, cmap_name="viridis", legend_title="Chlorophyll",
+            title="Leaf spectra",
+        )
+        return fig
+
+    def continuum_removal():
+        wvls = np.arange(400.0, 1001.0, 5.0)
+        cr_info = spec_spectra.calc_continuum_removal(
+            _leaf_spectrum(wvls, 40), wvls, start_wvl=530, stop_wvl=760
+        )
+        fig, _ = spec_spectra.plot_continuum_removal(cr_info, title="Chlorophyll 40 µg/cm²")
         return fig
 
     def semivariogram():
@@ -297,12 +328,30 @@ def _gallery_plots(scene: Dict[str, str], tbl: Dict[str, object]) -> List[Tuple[
                                           loc="lower left", title="Land cover")
         map_elements.add_axis_label(ax, "(a)")
 
+    def map_panels():
+        fig, _ = map_layout.create_map_panels(
+            [
+                {"panel_type": "rgb", "input_img": scene["s2"], "bands": [3, 2, 1],
+                 "title": "Sentinel-2", "map_kw": {"no_data_out_clr": (1.0, 1.0, 1.0)}},
+                {"panel_type": "thematic", "input_img": scene["cls"], "title": "Land cover"},
+                {"panel_type": "vector", "vec": regions, "base_img": scene["s2"],
+                 "base_bands": [3, 2, 1], "title": "Regions over the image",
+                 "map_kw": {"vec_fill_clrs": "none", "vec_line_clrs": "yellow",
+                            "vec_line_widths": 1.5}},
+            ],
+            classes_info=CLASS_NAMES, legend_title="Land cover", legend_position="bottom",
+            scale_bar_loc="lower right",
+        )
+        return fig
+
     return [
         ("plot_histogram_threshold", hist_threshold),
         ("plot_img_histogram", img_histogram),
         ("plot_2d_img_histogram", img_2d_histogram),
         ("plot_roc_curve", roc_curve),
         ("plot_endmembers", endmembers),
+        ("plot_spectra", spectra_plot),
+        ("plot_continuum_removal", continuum_removal),
         ("plot_semivariogram", semivariogram),
         ("plot_pred_vs_obs", pred_vs_obs),
         ("plot_pred_vs_obs_multi", pred_vs_obs_multi),
@@ -322,6 +371,7 @@ def _gallery_plots(scene: Dict[str, str], tbl: Dict[str, object]) -> List[Tuple[
         ("create_vec_lyr_map", map_figure(vector_map)),
         ("create_choropleth_vec_lyr_map", map_figure(choropleth_map)),
         ("map_elements", map_figure(elements_map)),
+        ("create_map_panels", map_panels),
     ]
 
 

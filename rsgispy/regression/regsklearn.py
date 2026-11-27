@@ -92,6 +92,9 @@ __all__ = [
     "perform_kfold_fit",
     "summarise_kfold_metrics",
     "perform_jackknife_fit",
+    "get_linear_model_coefs",
+    "get_linear_model_equation",
+    "get_linear_model_band_maths_exp",
 ]
 
 
@@ -1473,3 +1476,225 @@ def perform_jackknife_fit(
         "influence": influence,
         "coef_stats": coef_stats,
     }
+
+
+def _model_feature_names(model: Any, feat_names: Optional[Sequence[str]]) -> List[str]:
+    """The feature names of a fitted model (given, or from ``feature_names_in_``)."""
+    n_feats = getattr(model, "n_features_in_", None)
+    if feat_names is not None:
+        names = [str(n) for n in feat_names]
+        if n_feats is not None and len(names) != int(n_feats):
+            raise rsgispy.RSGISPyException(
+                f"{len(names)} feature names were given for a model with "
+                f"{n_feats} features."
+            )
+        return names
+    if hasattr(model, "feature_names_in_"):
+        return [str(n) for n in model.feature_names_in_]
+    if n_feats is None:
+        raise rsgispy.RSGISPyException(
+            "The model is not fitted, or feat_names must be given."
+        )
+    return [f"x{i + 1}" for i in range(int(n_feats))]
+
+
+def get_linear_model_coefs(
+    model: Any,
+    feat_names: Optional[Sequence[str]] = None,
+    target_names: Optional[Sequence[str]] = None,
+) -> pd.DataFrame:
+    """
+    The intercept and coefficients of a fitted linear regressor, in the units
+    of the input features. A linear model (e.g. ``LinearRegression``,
+    ``Ridge``, ``Lasso``, ``LassoLars``) gives its ``intercept_`` and
+    ``coef_``. A pipeline or ``TransformedTargetRegressor`` that is linear
+    overall (e.g. a ``StandardScaler`` followed by a linear model) is
+    evaluated at the origin and at a unit step along each feature, so the
+    scaling is folded into the coefficients; a model that is not linear in
+    its inputs raises an exception.
+
+    :param model: Fitted regressor or pipeline.
+    :param feat_names: Optional feature names (Default = the names the model
+                       was fitted with, or ``x1``, ``x2``, …).
+    :param target_names: Optional target names (Default = ``y1``, ``y2``, …).
+    :return: :class:`pandas.DataFrame` with one row per target and the
+             columns ``intercept`` and one per feature.
+
+    .. code:: python
+
+        import rsgispy.regression.regsklearn as regsk
+
+        coefs_df = regsk.get_linear_model_coefs(vol_mdl, feat_names=ind_vars)
+    """
+    names = _model_feature_names(model, feat_names)
+    n_feats = len(names)
+    est = _final_estimator(model)
+    is_plain = est is model and hasattr(model, "coef_")
+    if is_plain:
+        coef = np.atleast_2d(np.asarray(model.coef_, dtype=np.float64))
+        if coef.shape[1] != n_feats and coef.shape[0] == n_feats:
+            coef = coef.T
+        intercept = np.broadcast_to(
+            np.atleast_1d(np.asarray(getattr(model, "intercept_", 0.0), dtype=np.float64)),
+            (coef.shape[0],),
+        )
+        coefs = np.column_stack([intercept, coef])
+    else:
+        coefs = _probe_affine_coefs(model, names)
+    n_tgts = coefs.shape[0]
+    if target_names is None:
+        target_names = [f"y{i + 1}" for i in range(n_tgts)]
+    elif len(target_names) != n_tgts:
+        raise rsgispy.RSGISPyException(
+            f"{len(target_names)} target names were given for a model with "
+            f"{n_tgts} targets."
+        )
+    return pd.DataFrame(
+        coefs,
+        index=pd.Index([str(t) for t in target_names], name="target"),
+        columns=["intercept", *names],
+    )
+
+
+def _probe_affine_coefs(model: Any, names: Sequence[str]) -> np.ndarray:
+    """
+    Intercept and coefficients ``(targets, 1 + features)`` of a model that is
+    affine in its inputs, from its predictions at the origin and unit steps;
+    raises if predictions at other points do not match.
+    """
+    n_feats = len(names)
+    use_df = hasattr(model, "feature_names_in_")
+
+    def _predict(x_arr: np.ndarray) -> np.ndarray:
+        x_in = pd.DataFrame(x_arr, columns=list(model.feature_names_in_)) if use_df else x_arr
+        pred = np.asarray(model.predict(x_in), dtype=np.float64)
+        return pred.reshape(x_arr.shape[0], -1)
+
+    probe = np.vstack([np.zeros((1, n_feats)), np.eye(n_feats)])
+    pred = _predict(probe)
+    intercept = pred[0]
+    coef = pred[1:] - intercept  # (features, targets)
+    rng = np.random.default_rng(0)
+    check_x = rng.uniform(-10.0, 10.0, (8, n_feats))
+    check_pred = _predict(check_x)
+    lin_pred = intercept + check_x @ coef
+    scale = max(1.0, float(np.max(np.abs(check_pred))))
+    if not np.allclose(check_pred, lin_pred, rtol=1e-6, atol=1e-8 * scale):
+        raise rsgispy.RSGISPyException(
+            "The model is not linear in its input features, so it has no "
+            "linear equation."
+        )
+    return np.column_stack([intercept, coef.T])
+
+
+def _fmt_coef(val: float, precision: int) -> str:
+    """Format a coefficient with ``precision`` decimals (scientific if tiny)."""
+    if val != 0 and abs(val) < 10.0 ** (-precision):
+        return f"{val:.{precision}e}"
+    return f"{val:.{precision}f}"
+
+
+def get_linear_model_equation(
+    model: Any,
+    feat_names: Optional[Sequence[str]] = None,
+    target_name: Optional[Union[str, Sequence[str]]] = None,
+    precision: int = 3,
+) -> Union[str, List[str]]:
+    """
+    Write a fitted linear regressor (or a pipeline that is linear overall,
+    see :func:`get_linear_model_coefs`) as an equation, e.g.
+    ``'vol = 12.345 + 0.250 * h_mean - 3.100 * cover'``.
+
+    :param model: Fitted regressor or pipeline.
+    :param feat_names: Optional feature names (Default = the names the model
+                       was fitted with, or ``x1``, ``x2``, …).
+    :param target_name: Name of the target, or a list of names for a
+                        multi-target model (Default = ``y``, or ``y1``, …).
+    :param precision: Number of decimal places (Default = 3); values smaller
+                      than ``10**-precision`` are written in scientific
+                      notation.
+    :return: The equation, or a list of equations (one per target) for a
+             multi-target model.
+
+    .. code:: python
+
+        import rsgispy.regression.regsklearn as regsk
+
+        print(regsk.get_linear_model_equation(vol_mdl, ind_vars, "vol"))
+    """
+    coefs_df = get_linear_model_coefs(model, feat_names)
+    n_tgts = coefs_df.shape[0]
+    if target_name is None:
+        tgt_names = ["y"] if n_tgts == 1 else list(coefs_df.index)
+    elif isinstance(target_name, str):
+        tgt_names = [target_name]
+    else:
+        tgt_names = [str(t) for t in target_name]
+    if len(tgt_names) != n_tgts:
+        raise rsgispy.RSGISPyException(
+            f"{len(tgt_names)} target names were given for a model with "
+            f"{n_tgts} targets."
+        )
+    eqns = []
+    for tgt, (_, row) in zip(tgt_names, coefs_df.iterrows()):
+        terms = [_fmt_coef(float(row["intercept"]), precision)]
+        for feat in coefs_df.columns[1:]:
+            val = float(row[feat])
+            sign = "-" if val < 0 else "+"
+            terms.append(f"{sign} {_fmt_coef(abs(val), precision)} * {feat}")
+        eqns.append(f"{tgt} = {' '.join(terms)}")
+    return eqns[0] if n_tgts == 1 else eqns
+
+
+def get_linear_model_band_maths_exp(
+    model: Any,
+    feat_names: Optional[Sequence[str]] = None,
+    valid_msk_name: Optional[str] = None,
+    out_no_data_val: float = 0.0,
+) -> Union[str, List[str]]:
+    """
+    Write a fitted linear regressor (or a pipeline that is linear overall,
+    see :func:`get_linear_model_coefs`) as a
+    :func:`~rsgispy.imagecalc.maths.band_maths` expression, to apply the
+    model to an image. The coefficients are written in full precision. Name
+    each :class:`~rsgispy.imagecalc.maths.BandDefn` as the feature it
+    holds.
+
+    :param model: Fitted regressor or pipeline.
+    :param feat_names: Optional feature (band variable) names (Default = the
+                       names the model was fitted with, or ``x1``, ``x2``,
+                       …).
+    :param valid_msk_name: Optional band variable of a valid mask: the model
+                           is applied where it is 1 and ``out_no_data_val``
+                           is written elsewhere (Default = None).
+    :param out_no_data_val: Output value outside the valid mask (Default =
+                            0).
+    :return: The expression, or a list of expressions (one per target) for a
+             multi-target model.
+
+    .. code:: python
+
+        import rsgispy
+        from rsgispy.imagecalc.maths import BandDefn, band_maths
+        import rsgispy.regression.regsklearn as regsk
+
+        band_defns = [BandDefn("vld_msk", "vld_msk.tif", 1)] + [
+            BandDefn(var, "als_metrics.tif", band) for var, band in var_bands
+        ]
+        exp = regsk.get_linear_model_band_maths_exp(
+            vol_mdl, ind_vars, valid_msk_name="vld_msk"
+        )
+        band_maths("volume.tif", exp, band_defns, datatype=rsgispy.TYPE_32FLOAT,
+                   no_data_val=0)
+    """
+    coefs_df = get_linear_model_coefs(model, feat_names)
+    exps = []
+    for _, row in coefs_df.iterrows():
+        terms = [repr(float(row["intercept"]))]
+        for feat in coefs_df.columns[1:]:
+            terms.append(f"({float(row[feat])!r} * {feat})")
+        exp = " + ".join(terms)
+        if valid_msk_name is not None:
+            exp = f"{valid_msk_name}==1?{exp}:{out_no_data_val!r}"
+        exps.append(exp)
+    return exps[0] if len(exps) == 1 else exps

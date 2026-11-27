@@ -114,6 +114,17 @@ Spectra and spatial statistics
 .. image:: images/gallery/plot_endmembers.png
    :width: 70%
 
+:func:`rsgispy.imagespectral.spectra.plot_spectra` (any spectra; here
+coloured by chlorophyll content with ``cmap_name``) and
+:func:`rsgispy.imagespectral.spectra.plot_continuum_removal` (the result of
+:func:`~rsgispy.imagespectral.spectra.calc_continuum_removal`):
+
+.. image:: images/gallery/plot_spectra.png
+   :width: 70%
+
+.. image:: images/gallery/plot_continuum_removal.png
+   :width: 100%
+
 .. image:: images/gallery/plot_semivariogram.png
    :width: 75%
 
@@ -160,3 +171,11 @@ box, a categorical legend and a panel label) share one box style:
 
 .. image:: images/gallery/map_elements.png
    :width: 60%
+
+:func:`rsgispy.mapping.layout.create_map_panels` draws maps side by side over
+one extent, with one legend for the thematic panels and one scale bar and
+north arrow (here an image, a land cover map, and vector layers over the
+image):
+
+.. image:: images/gallery/create_map_panels.png
+   :width: 100%

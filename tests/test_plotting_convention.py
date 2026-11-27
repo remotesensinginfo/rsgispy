@@ -34,7 +34,9 @@ from rasterio.transform import from_origin
 from shapely.geometry import box
 
 import rsgispy.imagespectral.endmembers as em
+import rsgispy.imagespectral.spectra as spectra
 import rsgispy.mapping.elements as map_elements
+import rsgispy.mapping.layout as map_layout
 import rsgispy.mapping.legend as map_legend
 import rsgispy.mapping.raster as map_raster
 import rsgispy.mapping.vector as map_vector
@@ -174,6 +176,24 @@ FIGURE_CASES = [
         lambda d, ax, out: em.plot_endmembers(d["em_df"], ax=ax, out_plot_file=out),
     ),
     (
+        "plot_spectra",
+        1,
+        lambda d, ax, out: spectra.plot_spectra(
+            d["em_df"], [480.0, 560.0, 660.0, 860.0], ax=ax, out_plot_file=out
+        ),
+    ),
+    (
+        "plot_continuum_removal",
+        2,
+        lambda d, ax, out: spectra.plot_continuum_removal(
+            spectra.calc_continuum_removal(
+                [0.3, 0.2, 0.1, 0.25, 0.4], [500.0, 550.0, 600.0, 650.0, 700.0]
+            ),
+            axs=ax,
+            out_plot_file=out,
+        ),
+    ),
+    (
         "plot_semivariogram",
         2,
         lambda d, ax, out: rstats.plot_semivariogram(
@@ -227,6 +247,18 @@ FIGURE_CASES = [
         lambda d, ax, out: ml_explain.plot_jackknife_bars(
             ["a", "b"], [0.7, 0.6], [0.5, 0.4], 0.8, "Jackknife", "Accuracy",
             ax=ax, out_plot_file=out,
+        ),
+    ),
+    (
+        "create_map_panels",
+        2,
+        lambda d, ax, out: map_layout.create_map_panels(
+            [
+                {"panel_type": "rgb", "input_img": d["cont_img"], "title": "Image"},
+                {"panel_type": "thematic", "input_img": d["cls_img"], "title": "Classes"},
+            ],
+            axs=ax,
+            out_plot_file=out,
         ),
     ),
     (

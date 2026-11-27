@@ -14,6 +14,12 @@ spectral feature transformations, and spectral pre-processing using
   utilities (:func:`~rsgispy.imagespectral.indices.calc_area_under_curve`)
 * :mod:`rsgispy.imagespectral.preprocessing` — Savitzky-Golay spectral
   smoothing, outlier masking, and polynomial NaN gap-filling
+* :mod:`rsgispy.imagespectral.spectra` — continuum removal (convex hull
+  quotient) and absorption features of a spectrum or an image
+  (:func:`~rsgispy.imagespectral.spectra.calc_continuum_removal`,
+  :func:`~rsgispy.imagespectral.spectra.calc_continuum_removal_img`), and
+  spectra plots (:func:`~rsgispy.imagespectral.spectra.plot_spectra`,
+  :func:`~rsgispy.imagespectral.spectra.plot_continuum_removal`)
 * :mod:`rsgispy.imagespectral.transforms` — ZCA noise whitening, windowed/incremental
   PCA, Minimum Noise Fraction (MNF), Tasseled Cap transformations, and
   streaming histogram matching

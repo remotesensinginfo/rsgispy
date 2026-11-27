@@ -465,6 +465,34 @@ stretch is then computed for the zoomed area.
    The composed map from Steps 6–8: thematic raster, river, alternating scale
    bar, compass north arrow, zoom box and inset overview map.
 
+Several maps side by side
+-------------------------
+
+To compare maps of the same area (an image and its classification, two
+classifications, a change distance and the change over the image), use
+:func:`~rsgispy.mapping.layout.create_map_panels`. It takes a list of panels,
+each a ``dict`` (or a :class:`~rsgispy.mapping.layout.MapPanel`) naming the
+panel type (``'rgb'``, ``'cmap'``, ``'thematic'`` or ``'vector'``), its data and
+a title, and draws them with the functions of Steps 2–5 over one ``bbox``.
+A panel can have a ``base_img`` drawn below it (e.g. a change mask over the
+image); ``map_kw`` passes other arguments to the drawing function. The
+thematic panels share one legend (``legend_position`` ``'right'`` or
+``'bottom'``), ``'cmap'`` panels can have a colour bar, and one scale bar and
+north arrow are drawn on the first panel. ``ncols`` sets the panels per row.
+It returns ``(fig, axs)``, with one axis per panel.
+
+.. literalinclude:: ../examples/making_maps.py
+   :language: python
+   :start-after: # [step-panels]
+   :end-before: # [end-step-panels]
+   :dedent: 4
+
+.. figure:: images/maps_panels.png
+   :width: 100%
+   :alt: Three map panels: the image, the land cover and the score.
+
+   The zoom area as three panels, with one legend and one scale bar.
+
 Step 9 — Basemaps (optional, online)
 ------------------------------------
 
@@ -515,7 +543,7 @@ keep them small. From the repository root:
                             sc["rivers"], sc["overview"], "/tmp/maps",
                             CLASS_NAMES, dpi=100, dem_img=sc["dem"])
    for name in ["maps_rgb_stretches", "maps_score", "maps_relief", "maps_land_cover",
-                "maps_choropleth", "maps_final"]:
+                "maps_choropleth", "maps_final", "maps_panels"]:
        img = Image.open(f"/tmp/maps/{name}.png").convert("RGB")
        img.quantize(colors=128).save(f"docs/guides/images/{name}.png",
                                      optimize=True)

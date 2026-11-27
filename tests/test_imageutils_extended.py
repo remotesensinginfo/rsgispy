@@ -101,6 +101,17 @@ def test_band_names_datatypes_formats_and_metadata(tmp_path):
         == "842nm"
     )
 
+    band_info = iu_meta.get_img_band_info(str(img))
+    assert band_info.index.tolist() == [1, 2]
+    assert band_info.index.name == "band"
+    assert band_info["name"].tolist() == ["Red", "NIR"]
+    assert band_info["datatype"].tolist() == ["float32", "float32"]
+    assert band_info.loc[2, "WAVELENGTH"] == "842nm"
+    assert band_info.loc[1, "WAVELENGTH"] is None or band_info.isna().loc[1, "WAVELENGTH"]
+    assert iu_meta.get_img_band_info(str(img), bands=[2])["name"].tolist() == ["NIR"]
+    with pytest.raises(rsgispy.RSGISPyException):
+        iu_meta.get_img_band_info(str(img), bands=[3])
+
     renamed = tmp_path / "meta_renamed.tif"
     iu_meta.rename_gdal_layer(str(img), str(renamed))
     assert not img.exists()

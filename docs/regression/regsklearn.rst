@@ -174,6 +174,40 @@ CatBoost scikit-learn wrappers.
     print(jk["coef_stats"]["Vol / ha"])  # bias, std_err, 95% interval
     print(jk["influence"]["Vol / ha"].nlargest(5, "pred_shift_rmse"))
 
+Linear Model Equations
+----------------------
+
+For a fitted linear model (``LinearRegression``, ``Ridge``, ``Lasso``,
+``LassoLars`` …, or a pipeline that is linear overall, such as a
+``StandardScaler`` followed by a linear model),
+:func:`~rsgispy.regression.regsklearn.get_linear_model_coefs` returns the
+intercept and coefficients in the units of the input features,
+:func:`~rsgispy.regression.regsklearn.get_linear_model_equation` writes the
+model as an equation for a report, and
+:func:`~rsgispy.regression.regsklearn.get_linear_model_band_maths_exp` writes
+it as a :func:`~rsgispy.imagecalc.maths.band_maths` expression, to apply it
+to an image of the features (an alternative to
+:func:`~rsgispy.regression.regsklearn.apply_sklearn_regressor` that needs no
+saved model):
+
+.. code-block:: python
+
+    from sklearn.linear_model import LinearRegression
+    import rsgispy
+    from rsgispy.imagecalc.maths import BandDefn, band_maths
+    import rsgispy.regression.regsklearn as rsk
+
+    vol_mdl = LinearRegression().fit(df[ind_vars], df["Vol / ha"])
+    print(rsk.get_linear_model_equation(vol_mdl, target_name="vol", precision=4))
+    # vol = -12.3456 + 0.8123 * h_p95 + 1.2004 * cover ...
+
+    band_defns = [BandDefn("vld_msk", "valid_mask.tif", 1)] + [
+        BandDefn(var, "als_metrics.tif", band) for band, var in enumerate(ind_vars, 1)
+    ]
+    exp = rsk.get_linear_model_band_maths_exp(vol_mdl, valid_msk_name="vld_msk")
+    band_maths("volume.tif", exp, band_defns, datatype=rsgispy.TYPE_32FLOAT,
+               no_data_val=0)
+
 Standard Parameter Search Spaces
 --------------------------------
 
