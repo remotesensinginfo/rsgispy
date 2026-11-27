@@ -104,7 +104,6 @@ def resample_img_to_match(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    _ = use_pbar
     ensure_file_exists(in_ref_img, label="Reference image")
     ensure_file_exists(in_process_img, label="Input process image")
 
@@ -132,7 +131,7 @@ def resample_img_to_match(
             datatype=datatype,
             no_data_val=no_data_val,
             calc_stats=False,
-            use_pbar=False,
+            use_pbar=use_pbar,
             creation_opts=stage.write_opts,
         )
 
@@ -156,7 +155,7 @@ def resample_img_to_match(
                 stage.path,
                 no_data_val=no_data_val,
                 calc_pyramids=not stage.is_cog,
-                use_pbar=False,
+                use_pbar=use_pbar,
             )
 
 
@@ -198,7 +197,7 @@ def reproject_image(
     out_epsg: int,
     interp_method: Union[int, Resampling] = rsgispy.INTERP_NEAREST_NEIGHBOUR,
     in_epsg: Optional[int] = None,
-    out_pxl_res: Union[float, int, str] = "image",
+    out_pxl_res: Union[float, int, str] = "auto",
     snap_to_grid: bool = True,
     multicore: bool = False,
     *,
@@ -221,7 +220,7 @@ def reproject_image(
     :param in_epsg: Optional EPSG integer code overriding the input image projection.
     :param out_pxl_res: Output resolution mode: ``'image'`` (match input resolution),
                         ``'auto'`` (maintain input dimensions), or a numeric value
-                        for square pixel resolution (Default = 'image').
+                        for square pixel resolution (Default = 'auto').
     :param snap_to_grid: Whether to snap the top-left pixel to a multiple of the
                          output pixel resolution (Default = True).
     :param multicore: Whether to use multiple CPU threads for warping (Default = False).
@@ -247,7 +246,6 @@ def reproject_image(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-statements
-    _ = use_pbar
     ensure_file_exists(input_img)
 
     resampling_alg = rsgispy.get_rasterio_interp_type(interp_method)
@@ -342,7 +340,7 @@ def reproject_image(
             datatype=rsgis_dtype,
             no_data_val=eff_nd,
             calc_stats=False,
-            use_pbar=False,
+            use_pbar=use_pbar,
             creation_opts=stage.write_opts,
         )
 
@@ -368,7 +366,7 @@ def reproject_image(
                 stage.path,
                 no_data_val=eff_nd,
                 calc_pyramids=not stage.is_cog,
-                use_pbar=False,
+                use_pbar=use_pbar,
             )
 
 
