@@ -25,6 +25,14 @@ Covers `rsgispy.mapping.*`, `rsgispy.dataaccess.*`, `rsgispy.droneutils`, all 29
   - Constants: `SCALEBAR_STYLE_{SOLID,ALTERNATING,TICKS}`, `SCALEBAR_UNIT_{METRES,KILOMETRES}`, `NORTH_ARROW_STYLE_{TRIANGLE,ARROW,COMPASS,SIMPLE}`.
   - Classes & helpers: `MapScaleBar`, `MapNorthArrow`, `add_scale_bar(...)`, `add_north_arrow(...)`, `draw_bboxes_to_axis(...)` -> list of `Rectangle`, `add_axis_label(...)` -> `Text`.
 - **Layout (`mapping.layout`)**: `calc_y_fig_size(bbox, fig_x_size)`, `define_axis_extent(ax, bbox)`, `define_map_tick_spacing(ax, tick_spacing)`, `get_overview_info(...)`, `add_overview_maps(...)`.
+  - `create_map_panels(panels, ncols=None, bbox=None, figsize=None, *, suptitle=None, show_map_axis=False, show_scale_bar=True, scale_bar_loc='upper right', show_north_arrow=True, north_arrow_loc='upper left', show_legend=True, classes_info=None, legend_title=None, legend_position='right'|'bottom', axs=None, out_plot_file=None, out_dpi=300) -> (fig, axs)` — maps side by side over one extent (an image and its classifications, a change distance and the change over the image). Each panel is a `MapPanel` or dict: `panel_type` `'rgb'` (`bands`, `img_stch`, default cumulative) / `'cmap'` (`bands`=one band, `cmap_name`, `vmin`, `vmax`, `show_colour_bar`, `cbar_label`) / `'thematic'` (`classes_info`, `in_legend`) / `'vector'` (`vec`), plus `input_img`, `title`, `base_img`/`base_bands`/`base_stch` (drawn below), `map_kw` (extra args for the drawing function). One shared legend of the thematic classes found in `bbox` (`fig.legends[-1]`), one scale bar and north arrow on the first panel; `axs[i]` is panel i.
+    ```python
+    fig, axs = map_layout.create_map_panels(
+        [{"panel_type": "rgb", "input_img": "s2.tif", "bands": [8, 9, 3], "title": "Sentinel-2"},
+         {"panel_type": "thematic", "input_img": "cls.tif", "title": "Classification"},
+         {"panel_type": "thematic", "input_img": "chng.tif", "base_img": "s2.tif", "base_bands": [8, 9, 3], "in_legend": False}],
+        bbox=sub_bbox, legend_title="Land cover")
+    ```
 - **Categorical legends (`mapping.legend`)**: `calc_categorical_legend_layout`, `create_categorical_legend_patches`, `add_categorical_legend`, `add_categorical_legend_axis`, `save_categorical_legend_img`.
 
 ---
