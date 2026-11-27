@@ -71,7 +71,12 @@ __all__ = [
     "predict_raster_node",
     "predict_proba_raster_node",
     "predict_quantiles_raster_node",
+    "calc_proba_confidence",
+    "CONF_METHODS",
 ]
+
+CONF_METHODS: Tuple[str, ...] = ("margin", "max_prob", "entropy")
+"""Per-pixel classification confidence methods (see :func:`calc_proba_confidence`)."""
 
 
 def _coerce_feature_stack(
@@ -200,6 +205,76 @@ def _proba_entropy(probs: np.ndarray, n_classes: int) -> np.ndarray:
     p_clip = np.clip(probs, 1e-12, 1.0)
     denom = np.log(float(max(n_classes, 2)))
     return -np.sum(p_clip * np.log(p_clip), axis=1) / denom
+
+
+def check_conf_method(conf_method: str) -> str:
+    """Validate a confidence method name (one of :data:`CONF_METHODS`)."""
+    if not isinstance(conf_method, str) or conf_method not in CONF_METHODS:
+        raise rsgispy.RSGISPyException(
+            f"conf_method must be one of {list(CONF_METHODS)}, got {conf_method!r}."
+        )
+    return conf_method
+
+
+def calc_proba_confidence(
+    probs: np.ndarray, conf_method: str = "margin"
+) -> np.ndarray:
+    """
+    Per-sample classification confidence in ``[0, 1]`` (``0`` = low
+    confidence, ``1`` = confident) from class probabilities, as written to
+    the ``out_conf_img`` outputs of :func:`predict_proba_raster` and the
+    ``apply_*_classifier`` functions of :mod:`rsgispy.classification`.
+
+    With ``K`` classes and ``p1 >= p2`` the two largest probabilities:
+
+    * ``'margin'`` (default): ``p1 - p2`` (for two classes ``|2p - 1|``);
+    * ``'max_prob'``: ``(p1 - 1/K) / (1 - 1/K)``, the maximum probability
+      rescaled so a uniform prediction gives ``0``;
+    * ``'entropy'``: ``1 -`` the Shannon entropy normalised by ``log(K)``.
+
+    The values are only as good as the probabilities: random forest and
+    gradient-boosted tree probabilities are not calibrated, so a confidence
+    is a ranking of pixels, not the expected accuracy. Calibrate the model
+    (e.g., :class:`sklearn.calibration.CalibratedClassifierCV`) and check the
+    confidence against reference data
+    (:func:`~rsgispy.classification.classaccuracymetrics.calc_confidence_reliability`).
+
+    :param probs: Class probabilities ``(n_samples, n_classes)`` (a 1D array
+                  is taken as the positive-class probability of a binary
+                  model).
+    :param conf_method: ``'margin'``, ``'max_prob'`` or ``'entropy'``
+                        (Default = ``'margin'``).
+    :return: ``float64`` array ``(n_samples,)`` of confidences in ``[0, 1]``.
+
+    .. code:: python
+
+        import numpy as np
+        from rsgispy.ml.predict import calc_proba_confidence
+
+        probs = np.array([[0.7, 0.2, 0.1], [0.4, 0.4, 0.2]])
+        calc_proba_confidence(probs)  # array([0.5, 0.0])
+    """
+    check_conf_method(conf_method)
+    p_arr = np.asarray(probs, dtype=np.float64)
+    if p_arr.ndim == 1:
+        p_arr = np.column_stack([1.0 - p_arr, p_arr])
+    if p_arr.ndim != 2:
+        raise rsgispy.RSGISPyException(
+            f"probs must be a 1D or 2D array, got {p_arr.ndim} dimensions."
+        )
+    n_cls = int(p_arr.shape[1])
+    if n_cls == 1:
+        p_arr = np.column_stack([1.0 - p_arr[:, 0], p_arr[:, 0]])
+        n_cls = 2
+    if conf_method == "margin":
+        top2 = np.partition(p_arr, n_cls - 2, axis=1)[:, n_cls - 2 :]
+        conf = top2[:, 1] - top2[:, 0]
+    elif conf_method == "max_prob":
+        inv_k = 1.0 / n_cls
+        conf = (np.max(p_arr, axis=1) - inv_k) / (1.0 - inv_k)
+    else:
+        conf = 1.0 - _proba_entropy(p_arr, n_cls)
+    return np.clip(conf, 0.0, 1.0)
 
 
 class _QuantilePredictor:
@@ -579,12 +654,24 @@ def predict_proba_raster(
     calc_stats: bool = True,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
+    out_conf_img: Optional[Union[str, os.PathLike]] = None,
+    conf_method: str = "margin",
 ) -> None:
     """
     Apply a fitted probabilistic classifier tile-by-tile across
     ``feature_stack``, writing per-class probabilities to ``output_img`` and
-    optionally writing hard argmax classes (``out_class_img``) and normalised
-    Shannon entropy (``out_entropy_img``) in the same single pass.
+    optionally writing hard argmax classes (``out_class_img``), normalised
+    Shannon entropy (``out_entropy_img``) and a ``[0, 1]`` confidence
+    (``out_conf_img``) in the same single pass.
+
+    The confidence raster (``float32``, ``0`` = low confidence, ``1`` =
+    confident, ``-9999`` where not predicted) is computed by
+    :func:`calc_proba_confidence` with ``conf_method``: ``'margin'``
+    (best minus second-best probability), ``'max_prob'`` (rescaled maximum
+    probability) or ``'entropy'`` (``1 -`` normalised entropy). It ranks
+    pixels by how decisive the model is; it is not the expected accuracy
+    unless the probabilities are calibrated, so check it against reference
+    data.
 
     :param estimator: Fitted classifier implementing ``.predict_proba(X)``.
     :param feature_stack: :class:`~rsgispy.ml.stack.ImageFeatureStack` or
@@ -609,6 +696,25 @@ def predict_proba_raster(
     :param calc_stats: Populate raster statistics and pyramids (Default = ``True``).
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
     :param creation_opts: Optional GDAL/rasterio creation options mapping.
+    :param out_conf_img: Optional path to also save a ``float32`` per-pixel
+                         confidence raster in ``[0, 1]`` (Default = ``None``).
+    :param conf_method: Confidence method for ``out_conf_img``:
+                        ``'margin'``, ``'max_prob'`` or ``'entropy'``
+                        (Default = ``'margin'``).
+
+    .. code:: python
+
+        from rsgispy.ml.predict import predict_proba_raster
+
+        predict_proba_raster(
+            clf,
+            stack,
+            "probs.tif",
+            in_msk_img="valid_mask.tif",
+            out_class_img="class.tif",
+            out_conf_img="confidence.tif",
+            conf_method="margin",
+        )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
@@ -616,6 +722,7 @@ def predict_proba_raster(
         raise rsgispy.RSGISPyException(
             "Estimator must implement predict_proba() for predict_proba_raster."
         )
+    check_conf_method(conf_method)
     stack_obj = _coerce_feature_stack(feature_stack)
     out_path = os.fspath(output_img)
     ensure_parent_dir(out_path)
@@ -625,6 +732,9 @@ def predict_proba_raster(
         ensure_parent_dir(cls_path)
     if ent_path:
         ensure_parent_dir(ent_path)
+    conf_path = os.fspath(out_conf_img) if out_conf_img is not None else None
+    if conf_path:
+        ensure_parent_dir(conf_path)
 
     norm_opts = normalise_creation_options(creation_opts)
     out_dt = rsgispy.TYPE_32FLOAT if datatype is None else int(datatype)
@@ -645,6 +755,7 @@ def predict_proba_raster(
         prob_dst = None
         cls_dst = None
         ent_dst = None
+        conf_dst = None
         n_classes: Optional[int] = (
             len(est_classes) if est_classes is not None else None
         )
@@ -704,6 +815,17 @@ def predict_proba_raster(
                         creation_opts=norm_opts,
                     )
                     ent_dst.nodata = -9999.0
+                if conf_path is not None:
+                    conf_dst = open_output_dataset(
+                        stack=stack,
+                        output_img=conf_path,
+                        gdalformat=gdalformat,
+                        out_rio_dtype="float32",
+                        grid=grid,
+                        count=1,
+                        creation_opts=norm_opts,
+                    )
+                    conf_dst.nodata = -9999.0
 
             eff_n_cls = int(prob_dst.count)
             prob_flat = np.full(
@@ -744,6 +866,16 @@ def predict_proba_raster(
                     window=out_win,
                 )
 
+            if conf_dst is not None:
+                conf_flat = np.full(win_h * win_w, -9999.0, dtype=np.float64)
+                if probs is not None:
+                    conf_flat[valid_idx] = calc_proba_confidence(probs, conf_method)
+                conf_dst.write(
+                    conf_flat.reshape(win_h, win_w).astype(np.float32),
+                    1,
+                    window=out_win,
+                )
+
     eff_names: Optional[List[str]] = None
     if class_names is not None:
         eff_names = [f"prob_{c}" for c in class_names]
@@ -775,6 +907,16 @@ def predict_proba_raster(
             out_rio_dt="float32",
             nodata=-9999.0,
             band_names=["shannon_entropy"],
+            thematic=False,
+            calc_stats=calc_stats,
+            use_pbar=use_pbar,
+        )
+    if conf_path is not None:
+        _finalise_raster_output(
+            out_path=conf_path,
+            out_rio_dt="float32",
+            nodata=-9999.0,
+            band_names=[f"confidence_{conf_method}"],
             thematic=False,
             calc_stats=calc_stats,
             use_pbar=use_pbar,
@@ -1343,6 +1485,8 @@ def predict_proba_raster_node(
     *,
     with_class: bool = False,
     with_entropy: bool = False,
+    with_conf: bool = False,
+    conf_method: str = "margin",
     mask: Optional[TileNode] = None,
     img_msk_val: int = 1,
     n_classes: Optional[int] = None,
@@ -1358,9 +1502,11 @@ def predict_proba_raster_node(
     ``n_classes``, else 2), named ``prob_<class>``; with ``with_class`` a
     band with the most probable class (mapped through ``lut``; ``0`` where
     not predicted) is appended, and with ``with_entropy`` a band with the
-    normalised Shannon entropy (``-9999`` where not predicted), as the
-    ``out_class_img`` / ``out_entropy_img`` outputs of
-    :func:`predict_proba_raster`. Route the bands to separate sinks with
+    normalised Shannon entropy (``-9999`` where not predicted), and with
+    ``with_conf`` a band with the ``[0, 1]`` confidence
+    (:func:`calc_proba_confidence` with ``conf_method``; ``-9999`` where not
+    predicted), as the ``out_class_img`` / ``out_entropy_img`` /
+    ``out_conf_img`` outputs of :func:`predict_proba_raster`. Route the bands to separate sinks with
     :class:`~rsgispy.imageprocess.SelectBands`; the model runs once per tile.
 
     :param features: Feature node or sequence of feature nodes.
@@ -1373,6 +1519,11 @@ def predict_proba_raster_node(
     :param with_class: Append the most probable class band
                        (Default = ``False``).
     :param with_entropy: Append the entropy band (Default = ``False``).
+    :param with_conf: Append the confidence band, after the entropy band
+                      (Default = ``False``).
+    :param conf_method: Confidence method of the ``with_conf`` band:
+                        ``'margin'``, ``'max_prob'`` or ``'entropy'``
+                        (Default = ``'margin'``).
     :param mask: Optional mask :class:`~rsgispy.imageprocess.TileNode`
                  (band 1 used).
     :param img_msk_val: Mask value of the pixels to predict (Default = ``1``).
@@ -1408,6 +1559,7 @@ def predict_proba_raster_node(
         raise rsgispy.RSGISPyException(
             "Estimator must implement predict_proba() for predict_proba_raster_node."
         )
+    check_conf_method(conf_method)
     est_classes = getattr(estimator, "classes_", None)
     if est_classes is not None:
         n_cls = len(est_classes)
@@ -1426,6 +1578,8 @@ def predict_proba_raster_node(
         fills.append(0.0)
     if with_entropy:
         fills.append(-9999.0)
+    if with_conf:
+        fills.append(-9999.0)
     if names is not None:
         if len(names) != n_cls:
             raise rsgispy.RSGISPyException(
@@ -1433,7 +1587,7 @@ def predict_proba_raster_node(
             )
         names += (["predicted_class"] if with_class else []) + (
             ["shannon_entropy"] if with_entropy else []
-        )
+        ) + ([f"confidence_{conf_method}"] if with_conf else [])
 
     def _compute(x_in: Any, x_valid: np.ndarray) -> np.ndarray:
         del x_valid
@@ -1450,6 +1604,8 @@ def predict_proba_raster_node(
             )
         if with_entropy:
             rows.append(_proba_entropy(probs, n_cls)[np.newaxis])
+        if with_conf:
+            rows.append(calc_proba_confidence(probs, conf_method)[np.newaxis])
         return np.concatenate(rows, axis=0)
 
     return PredictionOp(

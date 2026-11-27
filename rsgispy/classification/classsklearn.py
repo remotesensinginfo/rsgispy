@@ -603,6 +603,8 @@ def apply_sklearn_classifier(
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
+    out_conf_img: Optional[Union[str, os.PathLike]] = None,
+    conf_method: str = "margin",
 ) -> None:
     """
     Apply a trained ``scikit-learn`` (or compatible) classifier block-by-block
@@ -662,6 +664,20 @@ def apply_sklearn_classifier(
     :param creation_opts: Optional GDAL creation options mapping.
     :param use_pbar: Display a tqdm progress bar during classification
                      (Default = ``True``).
+    :param out_conf_img: Optional output ``float32`` per-pixel confidence
+                         raster in ``[0, 1]`` (``0`` = low confidence, ``1``
+                         = confident, ``-9999`` outside the mask), computed
+                         from the same ``predict_proba`` call (requires
+                         classifier ``predict_proba``; Default = ``None``).
+    :param conf_method: Confidence method for ``out_conf_img``: ``'margin'``
+                        (best minus second-best class probability; binary
+                        ``|2p - 1|``), ``'max_prob'`` (maximum probability
+                        rescaled so ``1/K`` gives ``0``) or ``'entropy'``
+                        (``1 -`` normalised Shannon entropy)
+                        (Default = ``'margin'``). Tree-ensemble
+                        probabilities are not calibrated, so confidence is
+                        not the expected accuracy; see
+                        :func:`~rsgispy.ml.predict.calc_proba_confidence`.
 
     .. code:: python
 
@@ -674,6 +690,7 @@ def apply_sklearn_classifier(
             img_msk_val=1,
             output_img="classified.tif",
             out_score_img="class_probs.tif",
+            out_conf_img="class_conf.tif",
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -705,4 +722,6 @@ def apply_sklearn_classifier(
         creation_opts=creation_opts,
         use_pbar=use_pbar,
         binary=False,
+        out_conf_img=out_conf_img,
+        conf_method=conf_method,
     )

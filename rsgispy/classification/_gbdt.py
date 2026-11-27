@@ -539,6 +539,8 @@ def apply_gbdt_classifier(
     score_all_classes: bool = False,
     use_gpu: bool = False,
     gpu_device_id: Optional[int] = None,
+    out_conf_img: Optional[Union[str, os.PathLike]] = None,
+    conf_method: str = "margin",
 ) -> None:
     """
     Apply a trained GBDT binary or multi-class classifier block-by-block to
@@ -581,6 +583,8 @@ def apply_gbdt_classifier(
             pos_class=pos_class,
             pred_threshold=pred_threshold,
             score_all_classes=score_all_classes,
+            out_conf_img=out_conf_img,
+            conf_method=conf_method,
             predict_kwargs=predict_kwargs,
         )
 
