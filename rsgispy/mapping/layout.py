@@ -758,10 +758,17 @@ def create_map_panels(
         n_cols = min(n_cols, n_panels)
         n_rows = int(np.ceil(n_panels / n_cols))
         if figsize is None:
-            panel_h = min(max(calc_y_fig_size(bbox, _DEFAULT_PANEL_WIDTH), 2.5), 8.0)
-            cbar_w = 1.0 if any(p.show_colour_bar for p in panel_list) else 0.0
+            # Size each panel to the map's shape, so tall, narrow or wide
+            # extents don't leave large gaps between the panels.
+            panel_w = float(_DEFAULT_PANEL_WIDTH)
+            panel_h = calc_y_fig_size(bbox, panel_w)
+            if panel_h > 8.0:
+                panel_w = max(panel_w * 8.0 / panel_h, 1.5)
+                panel_h = 8.0
+            panel_h = max(panel_h, 2.5)
+            cbar_w = 0.9 if any(p.show_colour_bar for p in panel_list) else 0.0
             figsize = (
-                n_cols * _DEFAULT_PANEL_WIDTH + cbar_w,
+                n_cols * (panel_w + cbar_w),
                 n_rows * (panel_h + 0.4) + (0.4 if suptitle else 0.0),
             )
         fig, grid_axs = get_fig_axs(None, nrows=n_rows, ncols=n_cols, figsize=figsize)
@@ -772,6 +779,9 @@ def create_map_panels(
 
     for ax, panel in zip(panel_axs, panel_list):
         _draw_map_panel(ax, panel, bbox, show_map_axis)
+        # Keep every map centred in its cell (a colour bar must not pull it
+        # to one side).
+        ax.set_anchor("C")
 
     if show_scale_bar:
         add_scale_bar(
