@@ -1,6 +1,6 @@
 # ML Pipeline Core, Classification, Regression & Species Distribution Modelling
 
-Covers `rsgispy.ml.*`, `rsgispy.classification.*`, `rsgispy.regression.*`, and `rsgispy.modelling.species_distribution` in `rsgispy` v0.4.0.
+Covers `rsgispy.ml.*`, `rsgispy.classification.*`, `rsgispy.regression.*`, and `rsgispy.modelling.species_distribution` in `rsgispy` v0.4.1.
 
 ---
 

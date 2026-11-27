@@ -7,6 +7,7 @@ sensitivity.
 
 import importlib.util
 import inspect
+import warnings
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -668,6 +669,108 @@ def test_shap_feature_contributions(tmp_path):
         rnd_seed=42,
     )
     assert "mean_abs_shap" in kern_shap.columns
+    assert plt.get_fignums() == []
+
+
+def _shap_scale_data():
+    """Small 3-class / 2-class dataset for the SHAP dependence scale tests."""
+    rng = np.random.default_rng(0)
+    x_df = pd.DataFrame(rng.normal(size=(200, 3)), columns=["a", "b", "c"])
+    y_multi = (x_df["a"] > 0.3).astype(int) + (x_df["b"] > 0).astype(int)
+    y_bin = (x_df["a"] + x_df["b"] > 0).astype(int)
+    return x_df, y_multi.to_numpy(), y_bin.to_numpy()
+
+
+def _xgb_classifier():
+    xgb = pytest.importorskip("xgboost")
+    return xgb.XGBClassifier(n_estimators=20, max_depth=3, random_state=0)
+
+
+@pytest.mark.parametrize(
+    "est_factory, multiclass, out_idx",
+    [
+        (_xgb_classifier, True, 0),
+        (_xgb_classifier, True, 2),
+        (_xgb_classifier, False, -1),
+        (lambda: RandomForestClassifier(n_estimators=15, random_state=0), True, 1),
+        (lambda: RandomForestClassifier(n_estimators=15, random_state=0), False, 1),
+    ],
+)
+def test_shap_dependence_model_fn_on_shap_scale(est_factory, multiclass, out_idx):
+    """
+    The partial dependence model function must be on the scale of the SHAP
+    values (log-odds margin for XGBoost, probability for a random forest), so
+    the SHAP values drawn over the dependence curve are comparable with it.
+    """
+    pytest.importorskip("shap")
+    from rsgispy.tools._ml_explain import (
+        _build_shap_explainer,
+        _resolve_dependence_model_fn,
+    )
+
+    x_df, y_multi, y_bin = _shap_scale_data()
+    est = est_factory()
+    est.fit(x_df, y_multi if multiclass else y_bin)
+    expl = _build_shap_explainer(est, x_df, list(x_df.columns), use_tree_explainer=True)(x_df)
+    if np.asarray(expl.values).ndim == 3:
+        expl = expl[:, :, out_idx]
+    else:
+        out_idx = -1
+
+    model_fn, on_scale = _resolve_dependence_model_fn(
+        est, x_df, expl, "classification", out_idx
+    )
+    assert on_scale
+    explained = np.asarray(expl.values).sum(axis=1) + np.asarray(expl.base_values)
+    np.testing.assert_allclose(model_fn(x_df), explained, rtol=1e-3, atol=1e-3)
+    if type(est).__name__ == "XGBClassifier":
+        # The margin, not a probability: values outside [0, 1] must occur.
+        out_vals = model_fn(x_df)
+        assert out_vals.min() < 0.0 or out_vals.max() > 1.0
+
+
+def test_shap_dependence_model_fn_unmatched_scale_warns():
+    """When no model output matches the SHAP values, warn and drop the overlay."""
+    pytest.importorskip("shap")
+    from types import SimpleNamespace
+
+    from rsgispy.tools._ml_explain import _resolve_dependence_model_fn
+
+    x_df, _, y_bin = _shap_scale_data()
+    est = RandomForestClassifier(n_estimators=10, random_state=0).fit(x_df, y_bin)
+    fake_expl = SimpleNamespace(
+        values=np.zeros((len(x_df), 3)), base_values=np.full(len(x_df), 50.0)
+    )
+    with pytest.warns(UserWarning, match="without the SHAP values"):
+        model_fn, on_scale = _resolve_dependence_model_fn(
+            est, x_df, fake_expl, "classification", -1
+        )
+    assert not on_scale
+    np.testing.assert_allclose(model_fn(x_df), est.predict_proba(x_df)[:, -1])
+
+
+def test_shap_depend_plots_xgboost_multiclass(tmp_path):
+    """SHAP dependence plots for a multi-class XGBoost model, without a scale warning."""
+    pytest.importorskip("shap")
+    fix = _make_synthetic_dataset(tmp_path, include_collinear=False)
+    xgb_clf = _xgb_classifier()
+    feats = ["f1", "f2", "f3"]
+    xgb_clf.fit(fix["train_df"][feats], fix["train_df"]["internal_cls_id"])
+
+    dep_dir = tmp_path / "shap_depend_xgb"
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message=".*without the SHAP values.*")
+        rcf.calc_shap_feature_contributions(
+            fix["cfg"],
+            xgb_clf,
+            fix["train_df"],
+            feature_cols=feats,
+            target_class="Water",
+            shap_depend_plots_dir=dep_dir,
+            use_tree_explainer=True,
+            rnd_seed=42,
+        )
+    assert {p.name for p in dep_dir.iterdir()} == {f"shap_depends_{f}.png" for f in feats}
     assert plt.get_fignums() == []
 
 

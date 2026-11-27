@@ -558,6 +558,116 @@ def _build_shap_explainer(
     return shap.KernelExplainer(pred_callable, eval_x)
 
 
+def _select_output_col(preds: Any, out_idx: int) -> np.ndarray:
+    """Return output column ``out_idx`` of a 2D prediction (1D unchanged)."""
+    arr = np.asarray(preds, dtype=float)
+    if arr.ndim == 2:
+        return arr[:, out_idx] if arr.shape[1] > 1 else arr[:, 0]
+    return arr.ravel()
+
+
+def _dependence_model_fn_candidates(
+    est_cls_obj: Any, task: str, out_idx: int
+) -> List[Tuple[str, Callable[[Any], np.ndarray]]]:
+    """
+    Candidate model output functions for a SHAP partial dependence plot, on the
+    scales a SHAP explainer can explain: the prediction (regression), or the
+    class probability, raw margin or log-odds (classification).
+    """
+    if task == "regression":
+        return [("prediction", lambda x: _select_output_col(est_cls_obj.predict(x), out_idx))]
+
+    def _proba(x: Any) -> np.ndarray:
+        return _select_output_col(est_cls_obj.predict_proba(x), out_idx)
+
+    cands: List[Tuple[str, Callable[[Any], np.ndarray]]] = [("probability", _proba)]
+    est_name = type(est_cls_obj).__name__
+    if hasattr(est_cls_obj, "get_booster"):  # XGBoost
+        cands.append((
+            "margin",
+            lambda x: _select_output_col(est_cls_obj.predict(x, output_margin=True), out_idx),
+        ))
+    elif est_name.startswith("LGBM"):  # LightGBM
+        cands.append((
+            "margin",
+            lambda x: _select_output_col(est_cls_obj.predict(x, raw_score=True), out_idx),
+        ))
+    elif est_name.startswith("CatBoost"):  # CatBoost
+        cands.append((
+            "margin",
+            lambda x: _select_output_col(
+                est_cls_obj.predict(x, prediction_type="RawFormulaVal"), out_idx
+            ),
+        ))
+    if hasattr(est_cls_obj, "decision_function"):
+        cands.append((
+            "decision_function",
+            lambda x: _select_output_col(est_cls_obj.decision_function(x), out_idx),
+        ))
+
+    def _log_odds(x: Any) -> np.ndarray:
+        prob = np.clip(_proba(x), 1e-12, 1.0 - 1e-12)
+        return np.log(prob / (1.0 - prob))
+
+    cands.append(("log-odds", _log_odds))
+    return cands
+
+
+def _resolve_dependence_model_fn(
+    est_cls_obj: Any,
+    eval_x: pd.DataFrame,
+    shap_expl: Any,
+    task: str,
+    out_idx: int,
+    n_check: int = 50,
+) -> Tuple[Callable[[Any], np.ndarray], bool]:
+    """
+    Choose the model output function for ``shap.partial_dependence_plot`` so
+    the partial dependence curve is on the same scale as the SHAP values drawn
+    over it.
+
+    SHAP values explain the model output on the explainer's own scale (e.g.
+    ``shap.TreeExplainer`` explains the raw log-odds margin of a gradient
+    boosted classifier but the probability of a random forest). The scale is
+    found from SHAP's additivity property: ``base_value + sum(SHAP values)``
+    equals the explained output for each sample. Each candidate output
+    (:func:`_dependence_model_fn_candidates`) is checked on the first
+    ``n_check`` samples and the first which matches is returned with ``True``.
+    When none matches, the probability (classification) or prediction
+    (regression) is returned with ``False``, and the caller must not draw the
+    SHAP values over the curve.
+    """
+    cands = _dependence_model_fn_candidates(est_cls_obj, task, out_idx)
+    try:
+        vals = np.asarray(shap_expl.values, dtype=float)
+        base = np.asarray(shap_expl.base_values, dtype=float)
+        n_rows = min(n_check, vals.shape[0])
+        explained = vals[:n_rows].sum(axis=1) + np.broadcast_to(
+            base.reshape(-1) if base.ndim else base, (vals.shape[0],)
+        )[:n_rows]
+    except (AttributeError, TypeError, ValueError):
+        return cands[0][1], False
+
+    check_x = eval_x.iloc[:n_rows]
+    for _, cand_fn in cands:
+        try:
+            cand_out = np.asarray(cand_fn(check_x), dtype=float).ravel()
+        except (AttributeError, TypeError, ValueError, NotImplementedError):
+            continue
+        if cand_out.shape == explained.shape and np.allclose(
+            cand_out, explained, rtol=1e-3, atol=1e-3
+        ):
+            return cand_fn, True
+
+    warnings.warn(
+        "The SHAP values are not on the scale of any model output checked "
+        "(prediction, probability, margin or log-odds), so the SHAP partial "
+        "dependence plots are drawn without the SHAP values.",
+        stacklevel=3,
+    )
+    return cands[0][1], False
+
+
 def run_shap_explainer(
     est_cls_obj: Any,
     train_x: pd.DataFrame,
@@ -661,22 +771,19 @@ def run_shap_explainer(
         depend_dir = os.fspath(shap_depend_plots_dir)
         os.makedirs(depend_dir, exist_ok=True)
         sample_ind = min(100, max(0, len(train_x_smpl) - 1))
-        base_pred_fn = (
-            est_cls_obj.predict if task == "regression" else est_cls_obj.predict_proba
-        )
         if shap_vals_arr is not None and shap_vals_arr.ndim == 3:
             eff_idx = -1 if target_class_idx is None else int(target_class_idx)
-            norm_idx = (
-                eff_idx if eff_idx >= 0 else shap_vals_arr.shape[2] + eff_idx
-            )
-
-            def _dep_pred(x_arr: Any, _idx: int = norm_idx) -> np.ndarray:
-                preds = np.asarray(base_pred_fn(x_arr))
-                return preds[:, _idx] if preds.ndim == 2 else preds.ravel()
-
-            model_fn: Callable[[Any], np.ndarray] = _dep_pred
+            out_idx = eff_idx if eff_idx >= 0 else shap_vals_arr.shape[2] + eff_idx
         else:
-            model_fn = base_pred_fn
+            # One set of SHAP values: a regression or the positive class of a
+            # binary classifier (the last output column).
+            out_idx = -1
+        model_fn, shap_on_scale = _resolve_dependence_model_fn(
+            est_cls_obj, train_x_smpl, shap_2d, task, out_idx
+        )
+        # The SHAP values are only drawn when they are on the same scale as
+        # the partial dependence curve (see _resolve_dependence_model_fn).
+        overlay_vals = shap_2d[sample_ind:sample_ind + 1, :] if shap_on_scale else None
 
         for name in var_list:
             out_plot_file = os.path.join(depend_dir, f"shap_depends_{name}.png")
@@ -688,7 +795,7 @@ def run_shap_explainer(
                 feature_expected_value=True,
                 show=False,
                 ice=False,
-                shap_values=shap_2d[sample_ind:sample_ind + 1, :],
+                shap_values=overlay_vals,
             )
             if isinstance(pdp_res, tuple):
                 fig = pdp_res[0]

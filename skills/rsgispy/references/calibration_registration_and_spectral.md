@@ -1,6 +1,6 @@
 # Image Calibration, Co-Registration, Change Detection & Spectral Processing
 
-Covers `rsgispy.imagecalibration.*`, `rsgispy.imageregistration.*`, `rsgispy.changedetect.*`, and `rsgispy.imagespectral.*` in `rsgispy` v0.4.0.
+Covers `rsgispy.imagecalibration.*`, `rsgispy.imageregistration.*`, `rsgispy.changedetect.*`, and `rsgispy.imagespectral.*` in `rsgispy` v0.4.1.
 
 ---
 
