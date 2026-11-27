@@ -4,9 +4,11 @@ SALib Sobol sensitivity helpers reused across :mod:`rsgispy.classification`,
 :mod:`rsgispy.regression`, and :mod:`rsgispy.modelling`.
 """
 
+import ast
 import inspect
 import math
 import os
+import threading
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 import warnings
 
@@ -375,6 +377,115 @@ def _subsample_shap_df(
     return train_x
 
 
+_XGB_SHAP_PATCH_LOCK = threading.Lock()
+
+
+def _is_xgb_model(est_obj: Any) -> bool:
+    """Return True if ``est_obj`` is an XGBoost estimator or Booster."""
+    return hasattr(est_obj, "get_booster") or type(est_obj).__name__ == "Booster"
+
+
+def _parse_xgb_base_offset(raw_base_score: str, name_obj: str) -> Any:
+    """
+    Parse an XGBoost ``base_score`` JSON/UBJSON string (e.g. ``'[4.9E-1]'`` or
+    a per-class vector) and apply the link transform expected by ``shap``.
+    """
+    parsed = ast.literal_eval(raw_base_score)
+    if isinstance(parsed, (list, tuple, np.ndarray)):
+        arr = np.asarray(parsed, dtype=float)
+        base_score: Any = float(arr[0]) if arr.size == 1 else arr
+    else:
+        base_score = float(parsed)
+
+    if name_obj in ("binary:logistic", "reg:logistic"):
+        prob = np.asarray(base_score, dtype=float)
+        offset = np.log(prob / (1.0 - prob))
+        return float(offset) if offset.ndim == 0 else offset
+    if name_obj in (
+        "reg:gamma",
+        "reg:tweedie",
+        "count:poisson",
+        "survival:cox",
+        "survival:aft",
+    ):
+        offset = np.log(np.asarray(base_score, dtype=float))
+        return float(offset) if offset.ndim == 0 else offset
+    return base_score
+
+
+def _create_tree_explainer(est_obj: Any, feature_names: Sequence[str]) -> Any:
+    """
+    Construct ``shap.TreeExplainer``, working around an incompatibility between
+    ``shap < 0.50`` (the latest release on Python 3.10) and ``xgboost >= 3.1``
+    where ``learner_model_param['base_score']`` is serialised as a bracketed
+    string such as ``'[4.9E-1]'`` or ``'[0.1,0.2,-0.3]'`` and older ``shap``
+    calls ``float(base_score)``.
+    """
+    var_list = list(feature_names)
+    try:
+        return shap.TreeExplainer(est_obj, feature_names=var_list)
+    except ValueError as exc:
+        if "could not convert string to float" not in str(exc) or not _is_xgb_model(
+            est_obj
+        ):
+            raise
+
+    import shap.explainers._tree as shap_tree  # pylint: disable=import-error,import-outside-toplevel
+
+    orig_decode = getattr(shap_tree, "decode_ubjson_buffer", None)
+    if orig_decode is None:
+        raise ValueError(
+            "Unable to parse XGBoost base_score in this version of shap."
+        )
+
+    captured: Dict[str, Any] = {}
+
+    def _patched_decode(fd: Any) -> Any:
+        jmodel = orig_decode(fd)
+        try:
+            learner = jmodel["learner"]
+            lmp = learner["learner_model_param"]
+            raw_bs = lmp.get("base_score")
+            if isinstance(raw_bs, str) and raw_bs.lstrip().startswith("["):
+                captured["raw_base_score"] = raw_bs
+                captured["name_obj"] = learner.get("objective", {}).get("name", "")
+                lmp["base_score"] = "0.5"
+        except (KeyError, TypeError, AttributeError):
+            pass
+        return jmodel
+
+    with _XGB_SHAP_PATCH_LOCK:
+        shap_tree.decode_ubjson_buffer = _patched_decode
+        try:
+            explainer = shap.TreeExplainer(est_obj, feature_names=var_list)
+        finally:
+            shap_tree.decode_ubjson_buffer = orig_decode
+
+    if "raw_base_score" in captured:
+        true_offset = _parse_xgb_base_offset(
+            captured["raw_base_score"], captured["name_obj"]
+        )
+        old_offset = np.asarray(
+            explainer.model.base_offset, dtype=explainer.model.internal_dtype
+        ).copy()
+        new_offset = np.broadcast_to(
+            np.asarray(true_offset, dtype=explainer.model.internal_dtype),
+            old_offset.shape,
+        ).copy()
+        explainer.model.base_offset = new_offset
+        if explainer.expected_value is not None:
+            exp_val = (
+                np.asarray(explainer.expected_value, dtype=float)
+                - old_offset
+                + new_offset
+            )
+            if exp_val.ndim == 0 or (exp_val.ndim == 1 and exp_val.size == 1):
+                explainer.expected_value = float(np.ravel(exp_val)[0])
+            else:
+                explainer.expected_value = exp_val
+    return explainer
+
+
 class _MultiOutputTreeShapWrapper:
     """Explain each sub-estimator of MultiOutputRegressor using TreeExplainer."""
 
@@ -384,7 +495,7 @@ class _MultiOutputTreeShapWrapper:
         feature_names: Sequence[str],
     ) -> None:
         self._explainers = [
-            shap.TreeExplainer(sub_est, feature_names=list(feature_names))
+            _create_tree_explainer(sub_est, feature_names)
             for sub_est in estimators
         ]
 
@@ -519,7 +630,7 @@ def _build_shap_explainer(
     if use_tree_explainer is True:
         if is_multi_out_wrap:
             return _MultiOutputTreeShapWrapper(est_cls_obj.estimators_, var_list)
-        return shap.TreeExplainer(est_cls_obj, feature_names=var_list)
+        return _create_tree_explainer(est_cls_obj, var_list)
     if use_linear_explainer:
         return _make_linear_explainer(est_cls_obj, eval_x, linear_perturbation)
     if use_tree_explainer is None:
@@ -542,7 +653,7 @@ def _build_shap_explainer(
                 pass
         if _is_tree_like_estimator(est_cls_obj):
             try:
-                return shap.TreeExplainer(est_cls_obj, feature_names=var_list)
+                return _create_tree_explainer(est_cls_obj, var_list)
             except shap_fallback_errs:
                 pass
         if _is_linear_in_inputs(est_cls_obj, eval_x, task):

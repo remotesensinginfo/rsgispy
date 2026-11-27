@@ -774,6 +774,43 @@ def test_shap_depend_plots_xgboost_multiclass(tmp_path):
     assert plt.get_fignums() == []
 
 
+@pytest.mark.parametrize("multiclass", [False, True])
+def test_shap_tree_explainer_xgb_bracketed_base_score_fallback(monkeypatch, multiclass):
+    """Simulate older shap (<0.50 on Python 3.10) failing float(base_score) on XGBoost >=3.1."""
+    import io
+
+    shap = pytest.importorskip("shap")
+    import shap.explainers._tree as shap_tree
+
+    from rsgispy.tools._ml_explain import _create_tree_explainer
+
+    x_df, y_multi, y_bin = _shap_scale_data()
+    est = _xgb_classifier().fit(x_df, y_multi if multiclass else y_bin)
+    ref_explainer = shap.TreeExplainer(est, feature_names=list(x_df.columns))
+    ref_exp = ref_explainer(x_df)
+
+    orig_init = shap_tree.XGBTreeModelLoader.__init__
+
+    def _legacy_init(self, xgb_model):
+        raw = xgb_model.save_raw(raw_format="ubj")
+        with io.BytesIO(raw) as fd:
+            jmodel = shap_tree.decode_ubjson_buffer(fd)
+        raw_bs = jmodel["learner"]["learner_model_param"]["base_score"]
+        if isinstance(raw_bs, str):
+            float(raw_bs)
+        return orig_init(self, xgb_model)
+
+    monkeypatch.setattr(shap_tree.XGBTreeModelLoader, "__init__", _legacy_init)
+
+    explainer = _create_tree_explainer(est, list(x_df.columns))
+    exp = explainer(x_df)
+    np.testing.assert_allclose(exp.values, ref_exp.values, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(exp.base_values, ref_exp.base_values, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(
+        explainer.expected_value, ref_explainer.expected_value, rtol=1e-6, atol=1e-6
+    )
+
+
 def test_salib_feature_sensitivity(tmp_path):
     """Test SALib Sobol sensitivity analysis when SALib is installed."""
     pytest.importorskip("SALib")
