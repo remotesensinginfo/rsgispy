@@ -190,3 +190,21 @@ def test_map_legend_from_stored_names(tmp_path):
     )
     assert [t.get_text() for t in ax.get_legend().get_texts()] == ["A", "B", "C"]
     plt.close(fig)
+
+
+def test_colour_table_round_trip_from_get_colour_tab_info(tmp_path):
+    """The output of get_colour_tab_info can be written with define_colour_table."""
+    from rsgispy.imageutils.colourtable import define_colour_table, get_colour_tab_info
+
+    imgs = []
+    for name in ("a.tif", "b.tif"):
+        path = str(tmp_path / name)
+        with rasterio.open(
+            path, "w", driver="GTiff", width=4, height=4, count=1, dtype="uint8",
+            crs="EPSG:32630", transform=rasterio.transform.from_origin(0, 40, 10, 10),
+        ) as dst:
+            dst.write(np.arange(16, dtype=np.uint8).reshape(1, 4, 4) % 3)
+        imgs.append(path)
+    define_colour_table(imgs[0], {1: "#ff0000", 2: (0, 128, 255)})
+    define_colour_table(imgs[1], get_colour_tab_info(imgs[0]))
+    assert get_colour_tab_info(imgs[1]) == get_colour_tab_info(imgs[0])

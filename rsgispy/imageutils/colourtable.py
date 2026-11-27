@@ -251,9 +251,13 @@ def get_colour_tab_info_for_def(
 
 
 def _parse_colour_entry(
-    clr_spec: Union[str, Sequence[int]]
+    clr_spec: Union[str, Sequence[int], Mapping[str, int]]
 ) -> Tuple[int, int, int, int]:
-    """Parse a hex string or RGB/RGBA sequence into a validated ``(r, g, b, a)`` tuple."""
+    """
+    Parse a hex string, an RGB/RGBA sequence or a ``{'red', 'green', 'blue',
+    'alpha'}`` dict (as returned by :func:`get_colour_tab_info`) into a
+    validated ``(r, g, b, a)`` tuple.
+    """
     if isinstance(clr_spec, str):
         hex_str = clr_spec.strip().lstrip("#")
         if len(hex_str) == 8:
@@ -268,6 +272,12 @@ def _parse_colour_entry(
         else:
             red, green, blue = hex_to_rgb(clr_spec)
             alpha = 255
+    elif isinstance(clr_spec, Mapping) and {"red", "green", "blue"} <= set(clr_spec):
+        # {'red', 'green', 'blue'[, 'alpha']}, as returned by get_colour_tab_info.
+        red = int(clr_spec["red"])
+        green = int(clr_spec["green"])
+        blue = int(clr_spec["blue"])
+        alpha = int(clr_spec.get("alpha", 255))
     elif isinstance(clr_spec, (list, tuple)) and len(clr_spec) in (3, 4):
         red = int(clr_spec[0])
         green = int(clr_spec[1])
@@ -275,7 +285,8 @@ def _parse_colour_entry(
         alpha = int(clr_spec[3]) if len(clr_spec) == 4 else 255
     else:
         raise rsgispy.RSGISPyException(
-            "Colour entry must be a hex string or a sequence of 3 (RGB) or 4 (RGBA) ints."
+            "Colour entry must be a hex string, a sequence of 3 (RGB) or 4 (RGBA) ints, "
+            "or a dict with 'red', 'green', 'blue' (and 'alpha') keys."
         )
 
     for comp_name, comp_val in (
@@ -301,7 +312,9 @@ def define_colour_table(
 
     :param input_img: Path to the image file to update.
     :param clr_lut: Mapping from integer pixel values to hex strings (e.g., ``'#FF0000'``),
-                    ``[R, G, B]`` sequences, or ``[R, G, B, A]`` sequences.
+                    ``[R, G, B]`` sequences, ``[R, G, B, A]`` sequences, or
+                    ``{'red', 'green', 'blue', 'alpha'}`` dicts, so the output of
+                    :func:`get_colour_tab_info` can be copied to another image.
     :param img_band: 1-based band index (Default = ``1``).
 
     .. code:: python
