@@ -861,6 +861,8 @@ def shap_sklearn_mdl_explainer(
     subsample_n_smpls: Optional[int] = None,
     use_tree_explainer: Optional[bool] = None,
     use_linear_explainer: bool = False,
+    *,
+    linear_perturbation: str = "interventional",
 ) -> None:
     """
     Compute SHAP feature explanations and generate summary, heatmap, scatter,
@@ -879,6 +881,22 @@ def shap_sklearn_mdl_explainer(
     :param subsample_n_smpls: Optional subsample size for SHAP evaluation.
     :param use_tree_explainer: Use ``shap.TreeExplainer`` when ``True``.
     :param use_linear_explainer: Use ``shap.LinearExplainer`` when ``True``.
+    :param linear_perturbation: How ``shap.LinearExplainer`` handles
+                                correlated variables (keyword only):
+                                ``'interventional'`` (Default; the ``shap``
+                                default, each variable's SHAP value is
+                                ``coef * (x - mean(x))`` so a variable with a
+                                coefficient of ~0 gets ~0 SHAP values) or
+                                ``'correlation_dependent'`` (effects are shared
+                                between correlated variables, so a variable with
+                                a coefficient of ~0 can get large SHAP values).
+                                Only used when a linear explainer is chosen;
+                                with ``use_tree_explainer=None`` a linear
+                                explainer is only picked for models whose output
+                                is linear in ``analysis_vars`` (e.g. not
+                                ``MaxentClassifier``, whose coefficients apply to
+                                derived features), otherwise the model-agnostic
+                                ``shap.KernelExplainer`` is used.
 
     .. code:: python
 
@@ -906,6 +924,7 @@ def shap_sklearn_mdl_explainer(
         subsample_n_smpls=subsample_n_smpls,
         use_tree_explainer=use_tree_explainer,
         use_linear_explainer=use_linear_explainer,
+        linear_perturbation=linear_perturbation,
         target_class_idx=-1,
     )
 
@@ -935,13 +954,17 @@ def salib_sklearn_mdl_sensitivity(
     :param analysis_vars: Ordered predictor column names.
     :param n_samples: Base Saltelli sample count (Default = ``10000``).
     :param sobol_plot_file: Optional output Sobol sensitivity plot path.
-    :param sobol_overall_file: Optional total-order Sobol CSV output path.
-    :param sobol_first_file: Optional first-order Sobol CSV output path.
-    :param sobol_second_file: Optional second-order Sobol CSV output path.
+    :param sobol_overall_file: Optional total-order Sobol CSV output path
+                               (first column ``variable``).
+    :param sobol_first_file: Optional first-order Sobol CSV output path
+                             (first column ``variable``).
+    :param sobol_second_file: Optional second-order Sobol CSV output path
+                              (first columns ``variable_1``, ``variable_2``).
     :param rnd_seed: Seed for the Sobol sample and the bootstrap confidence
                      intervals, so the indices are the same on every run
                      (Default = ``42``; ``None`` for a different sample each run).
-    :return: Tuple ``(total_Si, first_Si, second_Si)`` DataFrames.
+    :return: Tuple ``(total_Si, first_Si, second_Si)`` DataFrames indexed by
+             variable name (``(variable_1, variable_2)`` for second order).
 
     .. code:: python
 

@@ -416,6 +416,72 @@ def _is_tree_like_estimator(est_obj: Any) -> bool:
     return False
 
 
+_LINEAR_PERTURBATIONS = ("interventional", "correlation_dependent")
+
+
+def _check_linear_perturbation(linear_perturbation: str) -> None:
+    """Raise if ``linear_perturbation`` is not a supported option."""
+    if linear_perturbation not in _LINEAR_PERTURBATIONS:
+        raise rsgispy.RSGISPyException(
+            f"linear_perturbation must be one of {_LINEAR_PERTURBATIONS}, "
+            f"got {linear_perturbation!r}."
+        )
+
+
+def _make_linear_explainer(
+    est_obj: Any, eval_x: pd.DataFrame, linear_perturbation: str
+) -> Any:
+    """
+    Create a ``shap.LinearExplainer`` with the masker matching
+    ``linear_perturbation``: ``'interventional'`` uses
+    ``shap.maskers.Independent`` (each variable's SHAP value is
+    ``coef * (x - mean(x))``, so a variable with a zero coefficient gets zero
+    SHAP values); ``'correlation_dependent'`` uses ``shap.maskers.Impute``,
+    which shares effects between correlated variables.
+    """
+    _check_linear_perturbation(linear_perturbation)
+    if linear_perturbation == "correlation_dependent":
+        masker = shap.maskers.Impute(eval_x)
+    else:
+        masker = shap.maskers.Independent(eval_x, max_samples=len(eval_x))
+    return shap.LinearExplainer(est_obj, masker)
+
+
+def _is_linear_in_inputs(est_obj: Any, eval_x: Any, task: str) -> bool:
+    """
+    Return ``True`` if ``est_obj`` has a ``coef_`` with one coefficient per
+    input variable and its margin (``decision_function`` for classifiers,
+    ``predict`` for regressors) equals ``X @ coef_.T + intercept_`` on
+    ``eval_x``. Models whose coefficients apply to derived features
+    (e.g. ``MaxentClassifier``) return ``False``.
+    """
+    if not hasattr(est_obj, "coef_"):
+        return False
+    try:
+        x_arr = np.asarray(eval_x, dtype=np.float64)
+        coef = np.atleast_2d(np.asarray(est_obj.coef_, dtype=np.float64))
+        if x_arr.ndim != 2 or coef.shape[-1] != x_arr.shape[1]:
+            return False
+        intercept = np.asarray(
+            getattr(est_obj, "intercept_", 0.0), dtype=np.float64
+        )
+        lin_out = x_arr[: min(50, len(x_arr))] @ coef.T + intercept
+        x_chk = eval_x[: min(50, len(x_arr))]
+        if task == "regression" or not hasattr(est_obj, "decision_function"):
+            mdl_out = np.asarray(est_obj.predict(x_chk), dtype=np.float64)
+        else:
+            mdl_out = np.asarray(
+                est_obj.decision_function(x_chk), dtype=np.float64
+            )
+        lin_out = np.squeeze(lin_out)
+        mdl_out = np.squeeze(mdl_out)
+        if lin_out.shape != mdl_out.shape:
+            return False
+        return bool(np.allclose(lin_out, mdl_out, rtol=1e-6, atol=1e-8))
+    except (TypeError, ValueError, AttributeError, IndexError):
+        return False
+
+
 def _build_shap_explainer(
     est_cls_obj: Any,
     eval_x: pd.DataFrame,
@@ -423,9 +489,20 @@ def _build_shap_explainer(
     use_tree_explainer: Optional[bool] = None,
     use_linear_explainer: bool = False,
     task: str = "classification",
+    *,
+    linear_perturbation: str = "interventional",
 ) -> Any:
-    """Create a SHAP explainer (Tree, Linear, Kernel, or auto-detected)."""
+    """
+    Create a SHAP explainer (Tree, Linear, Kernel, or auto-detected).
+
+    With ``use_tree_explainer=None`` a ``shap.LinearExplainer`` is only used
+    when the estimator's output is linear in the input variables (checked
+    numerically by :func:`_is_linear_in_inputs`); estimators whose ``coef_``
+    applies to derived features (e.g. ``MaxentClassifier``) fall back to the
+    model-agnostic ``shap.KernelExplainer``.
+    """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
+    _check_linear_perturbation(linear_perturbation)
     if use_tree_explainer is True and use_linear_explainer:
         raise rsgispy.RSGISPyException(
             "You can only use one explainer: use_tree_explainer and "
@@ -444,11 +521,7 @@ def _build_shap_explainer(
             return _MultiOutputTreeShapWrapper(est_cls_obj.estimators_, var_list)
         return shap.TreeExplainer(est_cls_obj, feature_names=var_list)
     if use_linear_explainer:
-        return shap.LinearExplainer(
-            est_cls_obj,
-            eval_x,
-            feature_perturbation="correlation_dependent",
-        )
+        return _make_linear_explainer(est_cls_obj, eval_x, linear_perturbation)
     if use_tree_explainer is None:
         shap_fallback_errs = (
             TypeError,
@@ -472,12 +545,10 @@ def _build_shap_explainer(
                 return shap.TreeExplainer(est_cls_obj, feature_names=var_list)
             except shap_fallback_errs:
                 pass
-        if hasattr(est_cls_obj, "coef_"):
+        if _is_linear_in_inputs(est_cls_obj, eval_x, task):
             try:
-                return shap.LinearExplainer(
-                    est_cls_obj,
-                    eval_x,
-                    feature_perturbation="correlation_dependent",
+                return _make_linear_explainer(
+                    est_cls_obj, eval_x, linear_perturbation
                 )
             except shap_fallback_errs:
                 pass
@@ -504,11 +575,15 @@ def run_shap_explainer(
     class_labels: Optional[Sequence[str]] = None,
     rnd_seed: Optional[int] = None,
     task: str = "classification",
+    *,
+    linear_perturbation: str = "interventional",
 ) -> pd.DataFrame:
     """
     Compute SHAP feature explanations for a fitted ``scikit-learn`` classifier
     or regressor and generate summary, heatmap, scatter, and partial dependence
-    plots.
+    plots. ``linear_perturbation`` (``'interventional'`` or
+    ``'correlation_dependent'``) sets how ``shap.LinearExplainer`` treats
+    correlated variables (see :func:`_make_linear_explainer`).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches
@@ -531,6 +606,7 @@ def run_shap_explainer(
         use_tree_explainer=use_tree_explainer,
         use_linear_explainer=use_linear_explainer,
         task=task,
+        linear_perturbation=linear_perturbation,
     )
 
     raw_shap_values = explainer(train_x_smpl)
@@ -677,12 +753,18 @@ def run_salib_sobol_sensitivity(
     )
     total_si, first_si, second_si = si.to_df()
 
+    total_si.index.name = "variable"
+    first_si.index.name = "variable"
+    second_si.index = pd.MultiIndex.from_tuples(
+        [tuple(pair) for pair in second_si.index],
+        names=["variable_1", "variable_2"],
+    )
     if sobol_overall_file is not None:
-        total_si.to_csv(ensure_parent_dir(sobol_overall_file), index=False)
+        total_si.to_csv(ensure_parent_dir(sobol_overall_file), index=True)
     if sobol_first_file is not None:
-        first_si.to_csv(ensure_parent_dir(sobol_first_file), index=False)
+        first_si.to_csv(ensure_parent_dir(sobol_first_file), index=True)
     if sobol_second_file is not None:
-        second_si.to_csv(ensure_parent_dir(sobol_second_file), index=False)
+        second_si.to_csv(ensure_parent_dir(sobol_second_file), index=True)
 
     if sobol_plot_file is not None:
         plt_width = ((len(var_list) * 0.4) * 3) + 2
@@ -819,6 +901,8 @@ def run_boruta_shap_selection(
     out_plot_file: Optional[Union[str, os.PathLike]] = None,
     use_pbar: bool = True,
     task: str = "classification",
+    *,
+    linear_perturbation: str = "interventional",
 ) -> Tuple[List[str], pd.DataFrame]:
     """
     Execute the Boruta-SHAP all-relevant feature selection algorithm.
@@ -907,6 +991,7 @@ def run_boruta_shap_selection(
             use_tree_explainer=use_tree_explainer,
             use_linear_explainer=use_linear_explainer,
             task=task,
+            linear_perturbation=linear_perturbation,
         )
         raw_shap = explainer(eval_x)
         col_imps = _shap_col_importances(raw_shap, target_class_idx)

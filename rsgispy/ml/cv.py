@@ -131,28 +131,53 @@ def _assign_blocks_to_folds(
         classes = np.unique(y_arr)
         n_cls = classes.size
         cls_to_i = {c: i for i, c in enumerate(classes)}
-        fold_cls_counts = np.zeros((n_splits, n_cls), dtype=np.int64)
+        y_idx = np.array([cls_to_i[val] for val in y_arr], dtype=np.int64)
+        blk_hists = np.zeros((n_blocks, n_cls), dtype=np.int64)
+        for b_idx, blk_id in enumerate(ordered_blocks):
+            blk_hists[b_idx] = np.bincount(
+                y_idx[block_ids == blk_id], minlength=n_cls
+            )
+        cls_totals = blk_hists.sum(axis=0).astype(np.float64)
+        # Classes from rarest to most common; blocks holding the rarest class
+        # are assigned first (most rare-class samples first, then by size), so
+        # minority-class blocks are spread over the folds before the majority
+        # class fills them.
+        rare_order = np.argsort(cls_totals, kind="mergesort")
+        sort_keys = [sizes] + [blk_hists[:, c] for c in rare_order[::-1]]
+        blk_order = np.lexsort([-k for k in sort_keys])
+        fold_cls_counts = np.zeros((n_splits, n_cls), dtype=np.float64)
         fold_totals = np.zeros(n_splits, dtype=np.int64)
-        for blk_id, blk_sz in zip(ordered_blocks, sizes):
-            blk_y = y_arr[block_ids == blk_id]
-            blk_hist = np.zeros(n_cls, dtype=np.int64)
-            for val in blk_y:
-                blk_hist[cls_to_i[val]] += 1
-            # Pick fold minimising class imbalance (tie-break by smallest total)
-            best_fold = 0
+        n_total = float(max(1, int(sizes.sum())))
+        for b_idx in blk_order:
+            blk_id = ordered_blocks[b_idx]
+            blk_hist = blk_hists[b_idx]
+            # A fold with none of a class the block contains is preferred
+            # (rarest class first), so every fold gets each class whenever
+            # at least n_splits blocks contain it.
+            cand = np.arange(n_splits)
+            for c_idx in rare_order:
+                if blk_hist[c_idx] == 0:
+                    continue
+                empty = cand[fold_cls_counts[cand, c_idx] == 0]
+                if empty.size > 0:
+                    cand = empty
+            # Among candidates, minimise the variance across folds of each
+            # class's share of its total (so the majority class does not
+            # dominate), tie-breaking on the smallest fold.
+            best_fold = int(cand[0])
             best_cost = float("inf")
-            for f_idx in range(n_splits):
+            for f_idx in cand:
                 trial = fold_cls_counts.copy()
                 trial[f_idx] += blk_hist
-                cost = float(np.var(trial, axis=0).sum()) + 1e-6 * float(
-                    fold_totals[f_idx]
+                cost = float(np.var(trial / cls_totals, axis=0).sum()) + 1e-9 * (
+                    float(fold_totals[f_idx]) / n_total
                 )
                 if cost < best_cost:
                     best_cost = cost
-                    best_fold = f_idx
+                    best_fold = int(f_idx)
             block_to_fold[int(blk_id)] = best_fold
             fold_cls_counts[best_fold] += blk_hist
-            fold_totals[best_fold] += int(blk_sz)
+            fold_totals[best_fold] += int(sizes[b_idx])
     else:
         fold_totals = np.zeros(n_splits, dtype=np.int64)
         for blk_id, blk_sz in zip(ordered_blocks, sizes):
@@ -177,7 +202,12 @@ class SpatialBlockKFold:
     :param method: Spatial partitioning strategy: ``'grid'`` (Default),
                    ``'checkerboard'``, or ``'kmeans'``.
     :param stratify: If ``True``, assign spatial blocks to folds to balance
-                     class frequencies in ``y`` (Default = ``False``).
+                     class frequencies in ``y`` (Default = ``False``). Each
+                     class is balanced as a share of its own total, so a rare
+                     class (e.g. presences among many background points) is
+                     spread too: blocks containing the rarest class are
+                     assigned first and every fold gets samples of a class
+                     whenever at least ``n_splits`` blocks contain it.
     :param shuffle: Randomly permute blocks before fold assignment
                     (Default = ``True``).
     :param rnd_seed: Optional random seed (Default = ``42``).

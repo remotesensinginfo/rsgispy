@@ -821,7 +821,16 @@ learnt:
   :func:`~rsgispy.modelling.species_distribution.shap_sklearn_mdl_explainer`
   (optional ``shap`` package) splits each prediction into contributions of the
   variables; the summary plot shows which variables matter most and in which
-  direction, sample by sample.
+  direction, sample by sample. For linear models (e.g. logistic regression)
+  ``linear_perturbation`` sets how correlated variables are treated:
+  ``'interventional'`` (the default, as in ``shap``) gives each variable
+  ``coef × (x − mean(x))``, so a variable with a coefficient near zero gets
+  SHAP values near zero; ``'correlation_dependent'`` shares the effect between
+  correlated variables, so such a variable can still get large SHAP values.
+  With ``use_tree_explainer=None`` the linear explainer is only used when the
+  model output is linear in the input variables; ``MaxentClassifier`` (whose
+  coefficients apply to the derived hinge/product features) and other models
+  use the model-agnostic ``KernelExplainer`` (slow: set ``subsample_n_smpls``).
 * **Sobol sensitivity** —
   :func:`~rsgispy.modelling.species_distribution.salib_sklearn_mdl_sensitivity`
   (optional ``SALib`` package) samples the variables over their training
@@ -830,7 +839,8 @@ learnt:
   interactions; ``ST`` much larger than ``S1`` indicates strong interactions.
   The model is evaluated ``n_samples × (2 × n_vars + 2)`` times, and
   ``n_samples`` should be a power of 2. Wide ``ST_conf`` intervals mean
-  ``n_samples`` is too small.
+  ``n_samples`` is too small. The CSV files start with a ``variable`` column
+  (``variable_1``, ``variable_2`` for the second-order pairs).
 
 .. literalinclude:: ../examples/species_distribution_modelling.py
    :language: python
