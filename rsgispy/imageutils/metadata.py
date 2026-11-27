@@ -9,6 +9,7 @@ import shutil
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
+import pandas as pd
 import pyproj
 import rasterio
 import rasterio.crs
@@ -31,6 +32,7 @@ from rsgispy.tools.geometry import (
 )
 
 __all__ = [
+    "get_img_band_info",
     "get_img_no_data_value",
     "set_img_no_data_value",
     "get_img_res",
@@ -1069,6 +1071,48 @@ def get_img_band_metadata_fields_dict(
     with rasterio.open(input_img, "r") as src:
         _validate_band_index(img_band, src.count, input_img)
         return dict(src.tags(img_band))
+
+
+def get_img_band_info(
+    input_img: str,
+    bands: Optional[Sequence[int]] = None,
+) -> pd.DataFrame:
+    """
+    Summarise the bands of ``input_img`` in a table: the band name
+    (description), data type, no data value, colour interpretation and every
+    band metadata item (e.g. ``wavelength`` and ``fwhm`` written with
+    :func:`set_img_band_metadata`).
+
+    :param input_img: Path to the input image file.
+    :param bands: Optional 1-based band indices (Default = all bands).
+    :return: :class:`pandas.DataFrame` indexed by band number, with the
+             columns ``name``, ``datatype``, ``no_data``, ``colour_interp``
+             and one column per metadata item (empty where a band does not
+             have it).
+
+    .. code:: python
+
+        import rsgispy.imageutils.metadata
+
+        band_info = rsgispy.imageutils.metadata.get_img_band_info("hymap.tif")
+        print(band_info.head())  # the first 5 bands
+    """
+    _ensure_img_exists(input_img)
+    with rasterio.open(input_img, "r") as src:
+        band_list = list(range(1, src.count + 1)) if bands is None else [int(b) for b in bands]
+        rows = []
+        for band in band_list:
+            _validate_band_index(band, src.count, input_img)
+            row: Dict[str, Any] = {
+                "name": src.descriptions[band - 1] or "",
+                "datatype": src.dtypes[band - 1],
+                "no_data": src.nodatavals[band - 1],
+                "colour_interp": src.colorinterp[band - 1].name,
+            }
+            for key, val in src.tags(band).items():
+                row.setdefault(key, val)
+            rows.append(row)
+    return pd.DataFrame(rows, index=pd.Index(band_list, name="band"))
 
 
 def set_img_metadata(
