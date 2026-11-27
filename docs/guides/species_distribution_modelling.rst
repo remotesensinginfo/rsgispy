@@ -832,6 +832,26 @@ colour map.
    study area and a few smaller patches elsewhere; most of the study area
    has a probability near 0.
 
+**Ensemble uncertainty.** The median hides how much the members disagree.
+With ``uncertainty``,
+:func:`~rsgispy.modelling.species_distribution.pred_ensemble_sklearn_mdls_prob`
+(and :func:`~rsgispy.modelling.species_distribution.pred_ensemble_sklearn_sgl_cls_mdls_prob`)
+writes extra bands after the median, computed from the same predictions:
+``"std"``, ``"iqr"`` (interquartile range), ``"min"``, ``"max"`` and ``"cv"``
+(coefficient of variation). Band descriptions name the bands. Areas of high
+spread are where the prediction depends most on which samples a member was
+trained on; show them alongside the map rather than leaving them out.
+
+.. code-block:: python
+
+   sdm.pred_ensemble_sklearn_mdls_prob(
+       mdls, "valid_mask.tif", 1, env_vars, analysis_vars, "sdm_prob_unc.tif",
+       uncertainty=["std", "iqr"],
+   )  # band 1 median, band 2 std, band 3 iqr
+
+The ``*_cls`` ensemble functions already write the fraction of members
+predicting presence, which is itself a measure of agreement.
+
 Step 11 — Thresholding to presence/absence
 ------------------------------------------
 
@@ -888,6 +908,77 @@ the TSS slightly; for a strict assessment choose it on one set (e.g. the
 out-of-fold predictions of spatial cross-validation) and report the accuracy on
 another. Multiply ``suit_prop`` by the valid area (number of pixels with
 ``valid_mask.tif == 1`` × pixel area) to get the suitable area in m².
+
+Projecting to other scenarios
+-----------------------------
+
+A fitted model can be applied to other environmental conditions, such as a
+future climate or another region, by predicting with rasters of those
+conditions.
+:func:`~rsgispy.modelling.species_distribution.copy_env_vars_for_scenario`
+copies ``env_vars``, replacing the rasters of the variables that change and
+keeping everything else, including the normalisation coefficients from the
+training data; variables that do not change (e.g. terrain) keep their
+rasters. The scenario rasters must be on the same grid as the mask.
+
+.. code-block:: python
+
+   future_vars = sdm.copy_env_vars_for_scenario(
+       env_vars, {"winter_temp": "winter_temp_2080.tif"}
+   )
+   sdm.pred_ensemble_sklearn_mdls_prob(
+       mdls, "valid_mask.tif", 1, future_vars, analysis_vars,
+       "sdm_prob_2080.tif", uncertainty=["std"],
+   )
+
+**Check where the projection extrapolates.** A model has only seen the
+conditions in its training data; outside them its predictions follow from
+how the algorithm extends the fitted curves (flat for a random forest, ever
+rising or falling for a GLM), not from the data. Two maps show where this
+happens; compare the scenario rasters with the training samples:
+
+* :func:`~rsgispy.modelling.species_distribution.calc_mess` — the
+  multivariate environmental similarity surface (MESS; Elith et al. 2010):
+  negative where at least one variable is outside the range of the training
+  data. ``out_mod_var_img`` adds a thematic map of the most dissimilar
+  variable at each pixel, which shows *which* variable is out of range.
+* :func:`~rsgispy.modelling.species_distribution.calc_exdet` — ExDet
+  (Mesgaran et al. 2014), a two-band raster: NT1 (negative where variables are
+  outside their range, like MESS) and NT2, which finds *combinations* of
+  values not seen together in the training data even though each is within
+  its range (NT2 > 1 where NT1 = 0), e.g. warm and wet where the species was
+  only recorded where it is warm and dry or cool and wet.
+
+.. code-block:: python
+
+   sdm.calc_mess(
+       train_gdf, None, "valid_mask.tif", 1, future_vars, analysis_vars,
+       "mess_2080.tif", out_mod_var_img="mess_mod_2080.tif",
+   )
+   sdm.calc_exdet(
+       train_gdf, None, "valid_mask.tif", 1, future_vars, analysis_vars,
+       "exdet_2080.tif",
+   )
+
+The reference samples are those the model was trained on, with the raw
+(un-normalised) variable values. Mask out, hatch or report separately the
+areas where MESS < 0 or NT2 > 1 rather than presenting their predictions
+as reliable.
+
+**Range change.** Threshold the current and scenario maps with the same
+threshold (step 11), then
+:func:`~rsgispy.modelling.species_distribution.calc_range_change` writes a
+thematic map of the pixels where the species is absent in both, lost, gained
+or stable, and returns the areas and the percentage loss, gain and net change
+relative to the current range (optionally also as a CSV file):
+
+.. code-block:: python
+
+   summary = sdm.calc_range_change(
+       "sdm_bin_current.tif", "sdm_bin_2080.tif", "range_change_2080.tif",
+       in_msk_img="valid_mask.tif", out_csv="range_change_2080.csv",
+   )
+   print(summary["pct_loss"], summary["pct_gain"], summary["pct_net_change"])
 
 Performance and large datasets
 ------------------------------

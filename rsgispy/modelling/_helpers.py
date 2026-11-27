@@ -826,13 +826,16 @@ def run_env_block_pipeline(
     block_size: Optional[int] = None,
     use_pbar: bool = True,
     fixed_vars: Optional[Collection[str]] = None,
+    out_band_names: Optional[Sequence[str]] = None,
 ) -> None:
     """
     Execute a shared streaming :mod:`rsgispy.imageprocess` block pipeline
     across a mask raster and environmental covariate layers, writing output
     blocks and optionally populating image statistics and overviews.
     Variables in ``fixed_vars`` are not opened or read (their values are
-    supplied as constants by ``block_eval_fn``).
+    supplied as constants by ``block_eval_fn``). With ``out_band_names`` the
+    output has one band per name (set as band descriptions) and
+    ``block_eval_fn`` must return a ``(n_bands, win_h, win_w)`` array.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     resolved_vars = resolve_analysis_vars(env_vars, analysis_vars)
@@ -845,6 +848,9 @@ def run_env_block_pipeline(
     )
     out_np_dtype = np.dtype(out_rio_dtype)
     out_path = ensure_parent_dir(output_img)
+    n_out_bands = len(out_band_names) if out_band_names is not None else 1
+    if n_out_bands < 1:
+        raise rsgispy.RSGISPyException("out_band_names must not be empty.")
 
     with ExitStack() as stack:
         datasets = open_input_datasets(stack, band_defs)
@@ -855,8 +861,11 @@ def run_env_block_pipeline(
             gdalformat=gdalformat,
             out_rio_dtype=out_rio_dtype,
             grid=grid,
-            count=1,
+            count=n_out_bands,
         )
+        if out_band_names is not None:
+            for band_idx, band_name in enumerate(out_band_names, start=1):
+                dst.set_band_description(band_idx, str(band_name))
         if no_data_val is not None:
             dst.nodata = (
                 int(no_data_val)
@@ -878,7 +887,15 @@ def run_env_block_pipeline(
                 resolved_vars, var_keys, block_vars, datasets, win_h, win_w
             )
             out_arr = cast_result_block(raw_block, win_h, win_w, out_np_dtype)
-            dst.write(out_arr, 1, window=out_win)
+            if out_band_names is None:
+                dst.write(out_arr, 1, window=out_win)
+            else:
+                if out_arr.ndim != 3 or out_arr.shape[0] != n_out_bands:
+                    raise rsgispy.RSGISPyException(
+                        f"block_eval_fn returned shape {out_arr.shape}; expected "
+                        f"({n_out_bands}, {win_h}, {win_w})."
+                    )
+                dst.write(out_arr, window=out_win)
 
     if calc_stats:
         if thematic:
@@ -951,6 +968,7 @@ def predict_raster_from_env_vars(
     use_pbar: bool = True,
     out_rio_dtype: Optional[str] = None,
     fixed_var_vals: Optional[Mapping[str, float]] = None,
+    out_band_names: Optional[Sequence[str]] = None,
 ) -> None:
     """
     Apply any prediction function to the environmental variables of every
@@ -1019,6 +1037,11 @@ def predict_raster_from_env_vars(
                            habitat suitability "as if everywhere were surveyed
                            equally", e.g. at the maximum (or a high quantile)
                            of the bias covariate.
+    :param out_band_names: Optional names of the output bands for a multi-band
+                           output (Default = ``None``: one band). ``predict_fn``
+                           must then return an array of shape
+                           ``(len(out_band_names), n_rows)``; the names are set
+                           as band descriptions.
 
     .. code:: python
 
@@ -1056,7 +1079,8 @@ def predict_raster_from_env_vars(
         win_h: int,
         win_w: int,
     ) -> np.ndarray:
-        out_flat = np.full(win_h * win_w, fill_val, dtype=np.float64)
+        n_bands = len(out_band_names) if out_band_names is not None else 1
+        out_flat = np.full((n_bands, win_h * win_w), fill_val, dtype=np.float64)
         env_mat, valid_idx = build_env_block_matrix(
             block_vars=block_vars,
             var_keys=var_keys,
@@ -1069,14 +1093,26 @@ def predict_raster_from_env_vars(
         )
         if valid_idx.size > 0:
             env_pxl_df = pd.DataFrame(data=env_mat, columns=resolved_vars)
-            preds = np.asarray(predict_fn(env_pxl_df), dtype=np.float64).ravel()
-            if preds.size != valid_idx.size:
-                raise rsgispy.RSGISPyException(
-                    f"predict_fn returned {preds.size} values for "
-                    f"{valid_idx.size} pixels; it must return one value per row."
-                )
-            out_flat[valid_idx] = preds
-        return out_flat.reshape((win_h, win_w))
+            preds = np.asarray(predict_fn(env_pxl_df), dtype=np.float64)
+            if out_band_names is None:
+                preds = preds.ravel()
+                if preds.size != valid_idx.size:
+                    raise rsgispy.RSGISPyException(
+                        f"predict_fn returned {preds.size} values for "
+                        f"{valid_idx.size} pixels; it must return one value per row."
+                    )
+                out_flat[0, valid_idx] = preds
+            else:
+                if preds.shape != (n_bands, valid_idx.size):
+                    raise rsgispy.RSGISPyException(
+                        f"predict_fn returned shape {preds.shape}; with "
+                        f"{n_bands} out_band_names it must return "
+                        f"({n_bands}, {valid_idx.size})."
+                    )
+                out_flat[:, valid_idx] = preds
+        if out_band_names is None:
+            return out_flat[0].reshape((win_h, win_w))
+        return out_flat.reshape((n_bands, win_h, win_w))
 
     run_env_block_pipeline(
         in_msk_img=os.fspath(in_msk_img),
@@ -1092,4 +1128,5 @@ def predict_raster_from_env_vars(
         block_size=block_size,
         use_pbar=use_pbar,
         fixed_vars=list(fixed) if fixed else None,
+        out_band_names=out_band_names,
     )

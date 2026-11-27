@@ -18,6 +18,11 @@ rsgispy.modelling
    and the continuous Boyce index
    (:func:`rsgispy.modelling.species_distribution.calc_boyce_index`).
 
+   Projection to other scenarios: :func:`rsgispy.modelling.species_distribution.copy_env_vars_for_scenario`,
+   extrapolation maps (:func:`rsgispy.modelling.species_distribution.calc_mess`,
+   :func:`rsgispy.modelling.species_distribution.calc_exdet`) and
+   :func:`rsgispy.modelling.species_distribution.calc_range_change`.
+
    Sampling bias: :func:`rsgispy.modelling.species_distribution.create_bias_grid`,
    ``bias_img`` in :func:`rsgispy.modelling.species_distribution.gen_pseudo_absences_smpls`,
    ``fixed_var_vals`` in the ``pred_*`` functions and

@@ -3,7 +3,7 @@ Single-model and ensemble block-wise spatial raster prediction routines for
 :mod:`rsgispy.modelling.species_distribution`.
 """
 
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -46,6 +46,37 @@ def _validate_uint8_nodata(out_no_data_val: int) -> float:
     return float(int(out_no_data_val))
 
 
+def _ens_cv(stack: np.ndarray) -> np.ndarray:
+    mean = np.mean(stack, axis=0)
+    std = np.std(stack, axis=0)
+    return np.divide(std, np.abs(mean), out=np.zeros_like(std), where=mean != 0)
+
+
+_UNCERTAINTY_FNS: Dict[str, Callable[[np.ndarray], np.ndarray]] = {
+    "std": lambda stack: np.std(stack, axis=0),
+    "iqr": lambda stack: np.subtract(*np.percentile(stack, [75.0, 25.0], axis=0)),
+    "min": lambda stack: np.min(stack, axis=0),
+    "max": lambda stack: np.max(stack, axis=0),
+    "cv": _ens_cv,
+}
+
+def _validate_uncertainty(uncertainty: Optional[Sequence[str]]) -> List[str]:
+    if uncertainty is None:
+        return []
+    if isinstance(uncertainty, str):
+        uncertainty = [uncertainty]
+    stats = [str(stat).strip().lower() for stat in uncertainty]
+    unknown = [stat for stat in stats if stat not in _UNCERTAINTY_FNS]
+    if unknown:
+        raise rsgispy.RSGISPyException(
+            f"Unsupported uncertainty statistic(s) {unknown}; use any of "
+            f"{list(_UNCERTAINTY_FNS)}."
+        )
+    if len(set(stats)) != len(stats):
+        raise rsgispy.RSGISPyException("uncertainty statistics must be unique.")
+    return stats
+
+
 # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
 def _pred_ensemble_sklearn_mdls(
     est_cls_objs: Sequence[Any],
@@ -65,17 +96,26 @@ def _pred_ensemble_sklearn_mdls(
     block_size: Optional[int] = None,
     use_pbar: bool = True,
     fixed_var_vals: Optional[Mapping[str, float]] = None,
+    uncertainty: Optional[Sequence[str]] = None,
+    main_band_name: str = "median",
 ) -> None:
-    """Shared streaming block-prediction engine for ensemble SDM functions."""
+    """Shared streaming block-prediction engine for ensemble SDM functions.
+    With ``uncertainty``, extra bands of across-member statistics follow the
+    aggregated band, all computed from the same per-block prediction stack."""
     _ = tmp_dir  # Retained for legacy signature compatibility; streaming needs no tmp.
     if not est_cls_objs:
         raise rsgispy.RSGISPyException("est_cls_objs must not be empty.")
+    unc_stats = _validate_uncertainty(uncertainty)
 
     nd_val = float(out_no_data_val)
 
     def _ensemble_predict(env_df: pd.DataFrame) -> np.ndarray:
         stack = np.vstack([model_predict_fn(mdl, env_df) for mdl in est_cls_objs])
-        return agg_fn(stack)
+        if not unc_stats:
+            return agg_fn(stack)
+        return np.vstack(
+            [agg_fn(stack)] + [_UNCERTAINTY_FNS[stat](stack) for stat in unc_stats]
+        )
 
     predict_raster_from_env_vars(
         in_msk_img=in_msk_img,
@@ -94,6 +134,7 @@ def _pred_ensemble_sklearn_mdls(
         block_size=block_size,
         use_pbar=use_pbar,
         fixed_var_vals=fixed_var_vals,
+        out_band_names=[main_band_name] + unc_stats if unc_stats else None,
     )
 
 
@@ -387,11 +428,15 @@ def pred_ensemble_sklearn_mdls_prob(
     block_size: Optional[int] = None,
     use_pbar: bool = True,
     fixed_var_vals: Optional[Mapping[str, float]] = None,
+    uncertainty: Optional[Sequence[str]] = None,
 ) -> None:
     """
     Predict ensemble species presence probability across ``est_cls_objs`` by
     computing the median probability per pixel in a single streaming pass via
-    :mod:`rsgispy.imageprocess` (writing no intermediate raster files).
+    :mod:`rsgispy.imageprocess` (writing no intermediate raster files). With
+    ``uncertainty``, bands describing the spread of the members' probabilities
+    (e.g. standard deviation, interquartile range) follow the median band, so
+    the map's uncertainty can be shown alongside it.
 
     :param est_cls_objs: Sequence of fitted ``scikit-learn`` classifiers.
     :param in_msk_img: Path to ROI mask image.
@@ -409,6 +454,13 @@ def pred_ensemble_sklearn_mdls_prob(
                            for every pixel instead of reading that variable's
                            raster, e.g. to hold a sampling-bias covariate
                            constant (see :func:`predict_raster_from_env_vars`).
+    :param uncertainty: Optional across-member statistics written as extra
+                        bands after the median, in the order given: any of
+                        ``"std"`` (standard deviation), ``"iqr"``
+                        (interquartile range), ``"min"``, ``"max"`` and
+                        ``"cv"`` (coefficient of variation, ``std / |mean|``;
+                        ``0`` where the mean is ``0``). Band descriptions name
+                        each band. Default ``None`` writes the median only.
 
     .. code:: python
 
@@ -437,6 +489,8 @@ def pred_ensemble_sklearn_mdls_prob(
         block_size=block_size,
         use_pbar=use_pbar,
         fixed_var_vals=fixed_var_vals,
+        uncertainty=uncertainty,
+        main_band_name="median",
     )
 
 
@@ -526,6 +580,7 @@ def pred_ensemble_sklearn_sgl_cls_mdls_prob(
     block_size: Optional[int] = None,
     use_pbar: bool = True,
     fixed_var_vals: Optional[Mapping[str, float]] = None,
+    uncertainty: Optional[Sequence[str]] = None,
 ) -> None:
     """
     Predict median suitability/density score across an ensemble of fitted
@@ -548,6 +603,13 @@ def pred_ensemble_sklearn_sgl_cls_mdls_prob(
                            for every pixel instead of reading that variable's
                            raster, e.g. to hold a sampling-bias covariate
                            constant (see :func:`predict_raster_from_env_vars`).
+    :param uncertainty: Optional across-member statistics written as extra
+                        bands after the median, in the order given: any of
+                        ``"std"`` (standard deviation), ``"iqr"``
+                        (interquartile range), ``"min"``, ``"max"`` and
+                        ``"cv"`` (coefficient of variation, ``std / |mean|``;
+                        ``0`` where the mean is ``0``). Band descriptions name
+                        each band. Default ``None`` writes the median only.
 
     .. code:: python
 
@@ -574,6 +636,8 @@ def pred_ensemble_sklearn_sgl_cls_mdls_prob(
         block_size=block_size,
         use_pbar=use_pbar,
         fixed_var_vals=fixed_var_vals,
+        uncertainty=uncertainty,
+        main_band_name="median_score",
     )
 
 
