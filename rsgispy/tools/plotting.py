@@ -4,7 +4,8 @@ The tools.plotting module provides the rsgispy house plot style
 rsgispy plotting function uses (:func:`get_fig_ax`, :func:`get_fig_axs`,
 :func:`save_plot` and :func:`add_stats_text_box`), functions for reading
 raster data into NumPy arrays and applying image stretches for visualisation
-with Matplotlib, and generic plots (:func:`plot_histogram_threshold` and
+with Matplotlib, and generic plots (:func:`plot_histogram_threshold`,
+:func:`plot_img_histogram`, :func:`plot_2d_img_histogram` and
 :func:`plot_qq`).
 
 See :ref:`plotting_conventions` for the conventions every rsgispy plotting
@@ -62,6 +63,10 @@ __all__ = [
     "cumulative_stretch_np_arr",
     "stdev_stretch_np_arr",
     "plot_histogram_threshold",
+    "plot_img_histogram",
+    "plot_2d_img_histogram",
+    "draw_histogram",
+    "THRESHOLD_COLOURS",
     "plot_qq",
     "draw_qq",
     "describe_shapiro",
@@ -1117,7 +1122,7 @@ def plot_histogram_threshold(
             vals, threshold=4.0, title_str="Threshold", out_plot_file="hist_thres.png"
         )
     """
-    # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-arguments,too-many-locals
     # pylint: disable=import-outside-toplevel
     from rsgispy.tools.thresholding import get_nbins_histogram
 
@@ -1136,22 +1141,16 @@ def plot_histogram_threshold(
         else:
             n_bins = min(50, max(1, int(data_arr.size)))
 
+    counts, bin_edges = np.histogram(data_arr, bins=n_bins)
     fig, ax = get_fig_ax(ax, figsize=figsize)
-    ax.hist(data_arr, bins=n_bins, color=hist_clr, edgecolor="none")
-    ax.grid(axis="x", visible=False)
-    if threshold is not None:
-        ax.axvline(
-            x=threshold,
-            color=OKABE_ITO_COLOURS["vermillion"],
-            linestyle="--",
-            linewidth=1.8,
-            label=(
-                threshold_label
-                if threshold_label is not None
-                else f"Threshold = {threshold:.3g}"
-            ),
-        )
-        ax.legend(loc="upper right")
+    draw_histogram(
+        ax,
+        counts,
+        bin_edges,
+        thresholds=threshold,
+        threshold_labels=threshold_label,
+        hist_clr=hist_clr,
+    )
     if title_str is not None:
         ax.set_title(title_str)
     ax.set_xlabel(x_label if x_label is not None else "Value")
@@ -1159,6 +1158,469 @@ def plot_histogram_threshold(
     if out_plot_file is not None:
         save_plot(fig, out_plot_file, out_dpi=out_dpi)
     return fig, ax
+
+
+#: Colours of the threshold lines on histograms, in order.
+THRESHOLD_COLOURS: List[str] = [
+    OKABE_ITO_COLOURS["vermillion"],
+    OKABE_ITO_COLOURS["bluish_green"],
+    OKABE_ITO_COLOURS["orange"],
+    OKABE_ITO_COLOURS["reddish_purple"],
+    OKABE_ITO_COLOURS["sky_blue"],
+    OKABE_ITO_COLOURS["black"],
+]
+
+
+def _as_list(vals: Any) -> List[Any]:
+    """``None`` -> ``[]``, a scalar or string -> ``[vals]``, else a list."""
+    if vals is None:
+        return []
+    if isinstance(vals, (str, bytes)) or np.ndim(vals) == 0:
+        return [vals]
+    return list(vals)
+
+
+def draw_histogram(
+    ax: Any,
+    counts: Union[np.ndarray, Sequence[float]],
+    bin_edges: Union[np.ndarray, Sequence[float]],
+    thresholds: Optional[Union[float, Sequence[float]]] = None,
+    threshold_labels: Optional[Union[str, Sequence[str]]] = None,
+    hist_clr: str = "#9a9a9a",
+    log_y: bool = False,
+) -> Any:
+    """
+    Draw a histogram from its counts and bin edges on ``ax`` as bars, with
+    optional thresholds as labelled, dashed vertical lines (and a legend).
+    Used by :func:`plot_histogram_threshold` and :func:`plot_img_histogram`
+    so the two look the same; no axis labels or title are set.
+
+    :param ax: Matplotlib axis.
+    :param counts: Count (or any height) of each bin.
+    :param bin_edges: Bin edges (``len(counts) + 1`` values).
+    :param thresholds: Optional threshold, or list of thresholds, drawn as
+                       vertical lines.
+    :param threshold_labels: Optional legend label, or one label per
+                             threshold (Default = ``'Threshold = <value>'``).
+    :param hist_clr: Colour of the bars (Default = ``'#9a9a9a'``, a mid grey).
+    :param log_y: Use a logarithmic y axis (Default = ``False``).
+    :return: The bars (``matplotlib.container.BarContainer``).
+
+    .. code:: python
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import rsgispy.tools.plotting as rplot
+
+        counts, edges = np.histogram(np.random.default_rng(0).normal(size=500), bins=30)
+        fig, ax = plt.subplots()
+        rplot.draw_histogram(ax, counts, edges, thresholds=[-1.0, 1.0],
+                             threshold_labels=["Low", "High"])
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    counts_arr = np.asarray(counts, dtype=float)
+    edges_arr = np.asarray(bin_edges, dtype=float)
+    if edges_arr.size != counts_arr.size + 1:
+        raise rsgispy.RSGISPyException(
+            f"bin_edges must have one more value than counts ({counts_arr.size} "
+            f"counts, {edges_arr.size} edges)."
+        )
+    bars = ax.bar(
+        edges_arr[:-1],
+        counts_arr,
+        width=np.diff(edges_arr),
+        align="edge",
+        color=hist_clr,
+        edgecolor="none",
+        linewidth=0,
+    )
+    ax.grid(axis="x", visible=False)
+    if log_y:
+        ax.set_yscale("log")
+
+    thres_lst = [float(val) for val in _as_list(thresholds)]
+    lbl_lst = _as_list(threshold_labels)
+    if lbl_lst and len(lbl_lst) != len(thres_lst):
+        raise rsgispy.RSGISPyException(
+            f"{len(thres_lst)} threshold(s) but {len(lbl_lst)} threshold label(s)."
+        )
+    for idx, thres in enumerate(thres_lst):
+        ax.axvline(
+            x=thres,
+            color=THRESHOLD_COLOURS[idx % len(THRESHOLD_COLOURS)],
+            linestyle="--",
+            linewidth=1.8,
+            label=str(lbl_lst[idx]) if lbl_lst else f"Threshold = {thres:.3g}",
+        )
+    if thres_lst:
+        ax.legend(loc="upper right")
+    return bars
+
+
+@use_plot_style
+def plot_img_histogram(
+    input_img: Union[str, os.PathLike],
+    img_band: int = 1,
+    *,
+    n_bins: int = 200,
+    val_range: Optional[Tuple[float, float]] = None,
+    no_data_val: Optional[float] = None,
+    in_msk_img: Optional[Union[str, os.PathLike]] = None,
+    img_msk_val: int = 1,
+    thresholds: Optional[Union[float, Sequence[float]]] = None,
+    threshold_labels: Optional[Union[str, Sequence[str]]] = None,
+    log_y: bool = False,
+    title: Optional[str] = None,
+    x_label: Optional[str] = None,
+    hist_clr: str = "#9a9a9a",
+    hist_data: Optional[Mapping[str, Any]] = None,
+    figsize: Tuple[float, float] = (6.4, 4.2),
+    ax: Optional[Any] = None,
+    out_plot_file: Optional[Union[str, os.PathLike]] = None,
+    out_dpi: int = PLOT_DPI,
+    use_pbar: bool = True,
+) -> Tuple[Any, Any]:
+    """
+    Plot the histogram of an image band (e.g. a change distance or an index),
+    optionally with thresholds drawn as labelled vertical lines. The histogram
+    is computed block by block with
+    :func:`~rsgispy.imagecalc.stats.get_img_histogram`, so it works on images
+    of any size, and drawn as :func:`plot_histogram_threshold` draws a
+    histogram of an array.
+
+    :param input_img: Path to the input image.
+    :param img_band: 1-based band to plot (Default = ``1``).
+    :param n_bins: Number of bins (Default = ``200``).
+    :param val_range: Optional ``(min, max)`` of the values counted and of the
+                      bins (Default = the range of the valid pixels).
+    :param no_data_val: Optional no-data value (Default = the band's no-data
+                        value from the image header, if any).
+    :param in_msk_img: Optional mask image; only pixels equal to
+                       ``img_msk_val`` are counted.
+    :param img_msk_val: Mask value of the pixels to count (Default = ``1``).
+    :param thresholds: Optional threshold, or list of thresholds, drawn as
+                       vertical lines.
+    :param threshold_labels: Optional legend label, or one label per
+                             threshold (Default = ``'Threshold = <value>'``).
+    :param log_y: Use a logarithmic y axis, e.g. to see the tails of a
+                  change distance (Default = ``False``).
+    :param title: Optional plot title.
+    :param x_label: Optional x-axis label (Default = the band name).
+    :param hist_clr: Colour of the bars (Default = ``'#9a9a9a'``).
+    :param hist_data: Optional histogram from
+                      :func:`~rsgispy.imagecalc.stats.get_img_histogram`
+                      (with ``counts`` and ``bin_edges``), so the image is not
+                      read again; the image arguments are then not used
+                      (except ``input_img`` and ``img_band`` for the default
+                      x-axis label).
+    :param figsize: Size of a new figure in inches (Default = ``(6.4, 4.2)``).
+    :param ax: Optional Matplotlib axis to draw on (Default = a new figure).
+    :param out_plot_file: Optional output image file; the figure is saved
+                          and left open (Default = ``None``).
+    :param out_dpi: Resolution of the saved image (Default = ``300``).
+    :param use_pbar: Show a progress bar while the histogram is computed
+                     (Default = ``True``).
+    :return: Tuple ``(fig, ax)``.
+
+    .. code:: python
+
+        import rsgispy.tools.plotting as rplot
+
+        fig, ax = rplot.plot_img_histogram(
+            "cva_distance.tif",
+            n_bins=200,
+            val_range=(-3, 8),
+            in_msk_img="analysis_mask.tif",
+            thresholds=0.0,
+            threshold_labels="Change threshold",
+            title="CVA change distance",
+            x_label="Change distance",
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-locals
+    # pylint: disable=import-outside-toplevel
+    from rsgispy.imagecalc.stats import get_img_histogram
+
+    if hist_data is None:
+        hist_data = get_img_histogram(
+            input_img,
+            img_band=img_band,
+            n_bins=n_bins,
+            val_range=val_range,
+            no_data_val=no_data_val,
+            in_msk_img=in_msk_img,
+            img_msk_val=img_msk_val,
+            use_pbar=use_pbar,
+        )
+    if x_label is None:
+        x_label = _get_band_name(input_img, img_band)
+
+    fig, ax = get_fig_ax(ax, figsize=figsize)
+    draw_histogram(
+        ax,
+        hist_data["counts"],
+        hist_data["bin_edges"],
+        thresholds=thresholds,
+        threshold_labels=threshold_labels,
+        hist_clr=hist_clr,
+        log_y=log_y,
+    )
+    if title is not None:
+        ax.set_title(title)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel("Pixel count")
+    if out_plot_file is not None:
+        save_plot(fig, out_plot_file, out_dpi=out_dpi)
+    return fig, ax
+
+
+def _get_band_name(input_img: Union[str, os.PathLike], band: int) -> str:
+    """The band's description in ``input_img``, or ``'Band <n>'``."""
+    with rasterio.open(input_img, "r") as src:
+        if 1 <= band <= src.count and src.descriptions[band - 1]:
+            return str(src.descriptions[band - 1])
+    return f"Band {band}"
+
+
+@use_plot_style
+def plot_2d_img_histogram(
+    input_img: Union[str, os.PathLike],
+    x_band: int,
+    y_band: int,
+    *,
+    y_img: Optional[Union[str, os.PathLike]] = None,
+    bins: Union[int, Sequence[int]] = 256,
+    x_range: Optional[Tuple[float, float]] = None,
+    y_range: Optional[Tuple[float, float]] = None,
+    no_data_val: Optional[float] = None,
+    in_msk_img: Optional[Union[str, os.PathLike]] = None,
+    img_msk_val: int = 1,
+    val_scale: float = 1.0,
+    normalise: bool = True,
+    log_scale: bool = True,
+    cmap: str = SEQUENTIAL_CMAP,
+    x_label: Optional[str] = None,
+    y_label: Optional[str] = None,
+    title: Optional[str] = None,
+    hist_data: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None,
+    points: Optional[
+        Union[Mapping[str, Tuple[float, float]], Sequence[Tuple[float, float]]]
+    ] = None,
+    point_labels: Optional[Sequence[str]] = None,
+    show_colour_bar: bool = True,
+    figsize: Tuple[float, float] = (6.4, 5.4),
+    ax: Optional[Any] = None,
+    out_plot_file: Optional[Union[str, os.PathLike]] = None,
+    out_dpi: int = PLOT_DPI,
+    use_pbar: bool = True,
+) -> Tuple[Any, Any]:
+    """
+    Plot the 2D histogram (feature space) of two image bands, e.g. NIR
+    against red, to see the clusters and edges of the data (endmembers are
+    often at the corners of the feature space). The histogram is computed
+    block by block with :func:`~rsgispy.imagecalc.stats.get_img_2d_histogram`.
+
+    Empty bins are white. The values are divided by ``val_scale`` (e.g. 100
+    for reflectance x 10,000 to give %); ``x_range``, ``y_range`` and
+    ``points`` are in the image units. The axis aspect is equal when the two
+    ranges are equal. Points (e.g. endmembers) can be marked and labelled.
+
+    :param input_img: Path to the input image (x band and, by default, y band).
+    :param x_band: 1-based band of the x values in ``input_img``.
+    :param y_band: 1-based band of the y values in ``y_img`` (or in
+                   ``input_img`` when ``y_img`` is ``None``).
+    :param y_img: Optional second image, on the same pixel grid, providing
+                  ``y_band`` (Default = ``None``).
+    :param bins: Number of bins of both axes, or ``[n_x_bins, n_y_bins]``
+                 (Default = ``256``).
+    :param x_range: Optional ``(min, max)`` of the x values in image units
+                    (Default = the range of the valid pixels).
+    :param y_range: Optional ``(min, max)`` of the y values, as ``x_range``.
+    :param no_data_val: Optional no-data value of both bands (Default = the
+                        bands' no-data values from the image headers).
+    :param in_msk_img: Optional mask image; only pixels equal to
+                       ``img_msk_val`` are counted.
+    :param img_msk_val: Mask value of the pixels to count (Default = ``1``).
+    :param val_scale: Divide the values by this for plotting (Default =
+                      ``1.0``).
+    :param normalise: Plot the proportion of the pixels in each bin (the
+                      histogram divided by its sum) instead of the count
+                      (Default = ``True``).
+    :param log_scale: Use a logarithmic colour scale, so sparse bins at the
+                      edges of the feature space are visible (Default =
+                      ``True``).
+    :param cmap: Matplotlib colour map name (Default = ``'viridis'``).
+    :param x_label: Optional x-axis label (Default = the x band name).
+    :param y_label: Optional y-axis label (Default = the y band name).
+    :param title: Optional plot title.
+    :param hist_data: Optional ``(hist, x_edges, y_edges)`` from
+                      :func:`~rsgispy.imagecalc.stats.get_img_2d_histogram`,
+                      so the image is not read again; the histogram arguments
+                      are then not used (except the bands and images for the
+                      default axis labels).
+    :param points: Optional points to mark, in image units: a list of
+                   ``(x, y)`` or a dict ``{label: (x, y)}`` (e.g. the
+                   endmembers' values in the two bands).
+    :param point_labels: Optional labels of the points when ``points`` is a
+                         list (one per point).
+    :param show_colour_bar: Draw a colour bar (Default = ``True``).
+    :param figsize: Size of a new figure in inches (Default = ``(6.4, 5.4)``).
+    :param ax: Optional Matplotlib axis to draw on (Default = a new figure).
+    :param out_plot_file: Optional output image file; the figure is saved
+                          and left open (Default = ``None``).
+    :param out_dpi: Resolution of the saved image (Default = ``300``).
+    :param use_pbar: Show a progress bar while the histogram is computed
+                     (Default = ``True``).
+    :return: Tuple ``(fig, ax)``; the histogram image is ``ax.images[0]``.
+
+    .. code:: python
+
+        import rsgispy.tools.plotting as rplot
+
+        # NIR (band 42) against red (band 13) of a HyMap image (reflectance
+        # x 10,000), in %, with two endmembers marked.
+        fig, ax = rplot.plot_2d_img_histogram(
+            "hymap.tif",
+            x_band=42,
+            y_band=13,
+            bins=100,
+            x_range=(1, 6000),
+            y_range=(1, 6000),
+            val_scale=100,
+            x_label="NIR reflectance (%)",
+            y_label="Red reflectance (%)",
+            points={"Vegetation": (4200, 300), "Soil": (2500, 1900)},
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-locals
+    # pylint: disable=import-outside-toplevel
+    import matplotlib.colors as mcolors
+
+    from rsgispy.imagecalc.stats import get_img_2d_histogram
+
+    if val_scale == 0:
+        raise rsgispy.RSGISPyException("val_scale must not be 0.")
+    if hist_data is None:
+        hist_data = get_img_2d_histogram(
+            input_img,
+            x_band,
+            y_band,
+            y_img=y_img,
+            bins=bins,
+            x_range=x_range,
+            y_range=y_range,
+            no_data_val=no_data_val,
+            in_msk_img=in_msk_img,
+            img_msk_val=img_msk_val,
+            use_pbar=use_pbar,
+        )
+    hist, x_edges, y_edges = hist_data
+    hist = np.asarray(hist, dtype=np.float64)
+    x_edges = np.asarray(x_edges, dtype=np.float64) / val_scale
+    y_edges = np.asarray(y_edges, dtype=np.float64) / val_scale
+    total = float(hist.sum())
+    if normalise and total > 0:
+        hist = hist / total
+    # Empty bins are masked (drawn white); indexed [x, y] so transposed.
+    plot_hist = np.ma.masked_less_equal(hist.T, 0.0)
+
+    c_norm: Optional[mcolors.Normalize] = None
+    if np.any(hist > 0.0):
+        h_min = float(hist[hist > 0.0].min())
+        h_max = float(hist.max())
+        if log_scale:
+            c_norm = mcolors.LogNorm(vmin=h_min, vmax=max(h_max, h_min * 1.0001))
+        else:
+            c_norm = mcolors.Normalize(vmin=0.0, vmax=h_max)
+    c_cmap = matplotlib.colormaps[cmap].with_extremes(bad="white")
+
+    fig, ax = get_fig_ax(ax, figsize=figsize)
+    extent = (x_edges[0], x_edges[-1], y_edges[0], y_edges[-1])
+    equal_ranges = np.isclose(x_edges[0], y_edges[0]) and np.isclose(
+        x_edges[-1], y_edges[-1]
+    )
+    hist_img = ax.imshow(
+        plot_hist,
+        cmap=c_cmap,
+        norm=c_norm,
+        origin="lower",
+        extent=extent,
+        aspect="equal" if equal_ranges else "auto",
+        interpolation="nearest",
+    )
+
+    if points is not None:
+        _draw_feature_space_points(ax, points, point_labels, val_scale)
+
+    if show_colour_bar:
+        cbar = fig.colorbar(hist_img, ax=ax, shrink=0.85)
+        cbar.set_label("Proportion of pixels" if normalise else "Pixel count")
+    if x_label is None:
+        x_label = _get_band_name(input_img, x_band)
+    if y_label is None:
+        y_label = _get_band_name(y_img if y_img is not None else input_img, y_band)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    if title is not None:
+        ax.set_title(title)
+    if out_plot_file is not None:
+        save_plot(fig, out_plot_file, out_dpi=out_dpi)
+    return fig, ax
+
+
+def _draw_feature_space_points(
+    ax: Any,
+    points: Union[Mapping[str, Tuple[float, float]], Sequence[Tuple[float, float]]],
+    point_labels: Optional[Sequence[str]],
+    val_scale: float,
+) -> None:
+    """Mark (and label) points, given in image units, on a 2D histogram."""
+    if isinstance(points, Mapping):
+        point_labels = [str(key) for key in points]
+        pt_vals = list(points.values())
+    else:
+        pt_vals = list(points)
+    if point_labels is not None and len(point_labels) != len(pt_vals):
+        raise rsgispy.RSGISPyException(
+            f"{len(pt_vals)} point(s) but {len(point_labels)} point label(s)."
+        )
+    # Bright colours that stand out on viridis-like colour maps.
+    pt_clrs = [
+        OKABE_ITO_COLOURS["vermillion"],
+        OKABE_ITO_COLOURS["sky_blue"],
+        OKABE_ITO_COLOURS["reddish_purple"],
+        OKABE_ITO_COLOURS["yellow"],
+        OKABE_ITO_COLOURS["orange"],
+        OKABE_ITO_COLOURS["bluish_green"],
+    ]
+    for idx, (pt_x, pt_y) in enumerate(pt_vals):
+        x_val = float(pt_x) / val_scale
+        y_val = float(pt_y) / val_scale
+        ax.scatter(
+            [x_val],
+            [y_val],
+            s=60,
+            marker="o",
+            color=pt_clrs[idx % len(pt_clrs)],
+            edgecolors="black",
+            linewidths=1.0,
+            zorder=3,
+        )
+        if point_labels is not None:
+            ax.annotate(
+                str(point_labels[idx]),
+                (x_val, y_val),
+                xytext=(6, 6),
+                textcoords="offset points",
+                fontsize="small",
+                zorder=4,
+                bbox={
+                    "boxstyle": "round,pad=0.2",
+                    "facecolor": "white",
+                    "edgecolor": "none",
+                    "alpha": 0.8,
+                },
+            )
 
 
 def describe_shapiro(stat: float, p_val: float, alpha: float = 0.05) -> str:

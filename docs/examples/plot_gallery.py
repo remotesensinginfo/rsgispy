@@ -115,6 +115,26 @@ def _gallery_plots(scene: Dict[str, str], tbl: Dict[str, object]) -> List[Tuple[
         )
         return fig
 
+    def img_histogram():
+        fig, _ = rplot.plot_img_histogram(
+            scene["score"], n_bins=60, val_range=(0.0, 1.0), thresholds=[0.4, 0.7],
+            threshold_labels=["Moderate (0.4)", "High (0.7)"],
+            title="Suitability score with class thresholds", x_label="Score (0-1)",
+            use_pbar=False,
+        )
+        return fig
+
+    def img_2d_histogram():
+        # The class spectra of the synthetic scene, as "endmembers".
+        spectra = {"Water": (150, 300), "Forest": (3500, 300), "Grass": (2500, 600),
+                   "Urban": (1800, 1400)}
+        fig, _ = rplot.plot_2d_img_histogram(
+            scene["s2"], x_band=4, y_band=3, bins=100, x_range=(0, 4500), y_range=(0, 4500),
+            val_scale=100, x_label="NIR reflectance (%)", y_label="Red reflectance (%)",
+            title="Feature space: NIR v red", points=spectra, use_pbar=False,
+        )
+        return fig
+
     def roc_curve():
         fpr, tpr, roc_auc = tbl["roc"]
         fig, _ = sdm.plot_roc_curve(fpr, tpr, roc_auc, label="Ensemble")
@@ -279,6 +299,8 @@ def _gallery_plots(scene: Dict[str, str], tbl: Dict[str, object]) -> List[Tuple[
 
     return [
         ("plot_histogram_threshold", hist_threshold),
+        ("plot_img_histogram", img_histogram),
+        ("plot_2d_img_histogram", img_2d_histogram),
         ("plot_roc_curve", roc_curve),
         ("plot_endmembers", endmembers),
         ("plot_semivariogram", semivariogram),

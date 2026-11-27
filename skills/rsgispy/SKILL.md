@@ -62,7 +62,7 @@ description: Generate idiomatic Python code using rsgispy (v0.3.x), the pure-Pyt
 | Cartographic mapping | `rsgispy.mapping.*` | `create_raster_img_map`, `create_thematic_raster_map`, `create_shaded_cmap_img_map`, `add_hillshade`, `create_vec_lyr_map`, `add_contextily_basemap`, `add_categorical_legend`, `MapScaleBar`, `MapNorthArrow` | `tools_mapping_dataaccess_and_cli.md` |
 | Satellite / OSM data access | `rsgispy.dataaccess.*` | `copernicus_odata`, `nasa_cmr`, `openstreetmap`, `planet_data_api`, `usgs_m2m` | `tools_mapping_dataaccess_and_cli.md` |
 | Drone flightline & EXIF utilities | `rsgispy.droneutils` | `split_photos_by_time`, `create_flightline_vec`, `define_extern_gps_in_imgs` | `tools_mapping_dataaccess_and_cli.md` |
-| General & sensor tools | `rsgispy.tools.*` | `sensors` (`read_landsat_mtl_to_dict`, `read_sen2_l2a_mtd_to_dict`), `geometry`, `utm`, `projection`, `dates`, `files`, `tables`, `thresholding`, `stats`, `plotting` | `tools_mapping_dataaccess_and_cli.md` |
+| General & sensor tools | `rsgispy.tools.*` | `sensors` (`read_landsat_mtl_to_dict`, `read_sen2_l2a_mtd_to_dict`), `geometry`, `utm`, `projection`, `dates`, `files`, `tables`, `thresholding`, `stats`, `plotting` (`plot_img_histogram`, `plot_2d_img_histogram`, `plot_qq`) | `tools_mapping_dataaccess_and_cli.md` |
 | Command-line tools | `rsgispy.cli.*` | `rsgisimginfo`, `rsgiscalcimgstats`, `rsgisvectools`, `rsgisbatchconvert2cog`, `rsgisbuildimglut`, `rsgischkgdalfile`, `rsgisfilehash`, `rsgisproj`, `rsgisuserpassfile`, `rsgiswgs84imgres`, `rsgiscopybandnames` | `tools_mapping_dataaccess_and_cli.md` |
 
 ## Essential Patterns

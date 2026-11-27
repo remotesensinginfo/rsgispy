@@ -29,6 +29,22 @@ histogram with an automatic change threshold
 .. image:: images/gallery/plot_histogram_threshold.png
    :width: 70%
 
+:func:`rsgispy.tools.plotting.plot_img_histogram` draws the histogram of an
+image band in the same way, computed block by block (so for images of any
+size), with any number of labelled thresholds:
+
+.. image:: images/gallery/plot_img_histogram.png
+   :width: 70%
+
+:func:`rsgispy.tools.plotting.plot_2d_img_histogram` draws the 2D histogram
+(feature space) of two bands, here NIR against red reflectance with the
+class spectra of the scene marked as points (e.g. endmembers,
+:doc:`spectral_unmixing`). The colour scale is logarithmic so sparse bins at
+the edges of the feature space show:
+
+.. image:: images/gallery/plot_2d_img_histogram.png
+   :width: 65%
+
 Regression accuracy
 -------------------
 

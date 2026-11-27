@@ -198,6 +198,25 @@ given, it is the range of the valid pixels:
        extent=[x_edges[0], x_edges[-1], y_edges[0], y_edges[-1]],
    )
 
+:func:`rsgispy.tools.plotting.plot_2d_img_histogram` does this for you (with
+a log colour scale, empty bins in white, the band names as axis labels and
+optional marked points, e.g. endmembers), and
+:func:`rsgispy.tools.plotting.plot_img_histogram` plots the histogram of one
+band with thresholds; pass ``hist_data=`` to plot a histogram already
+computed:
+
+.. code-block:: python
+
+   import rsgispy.tools.plotting as rplot
+
+   fig, ax = rplot.plot_2d_img_histogram(
+       "sen2.tif", 8, 3, bins=200, x_range=(0, 5000), y_range=(0, 5000),
+       no_data_val=0, val_scale=100,
+       x_label="NIR reflectance (%)", y_label="Red reflectance (%)",
+   )
+   fig, ax = rplot.plot_img_histogram("ndvi.tif", val_range=(-1, 1),
+                                      thresholds=0.3, threshold_labels="Vegetation")
+
 Chaining
 --------
 

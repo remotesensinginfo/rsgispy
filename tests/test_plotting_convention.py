@@ -148,6 +148,22 @@ FIGURE_CASES = [
         ),
     ),
     (
+        "plot_img_histogram",
+        1,
+        lambda d, ax, out: rplot.plot_img_histogram(
+            d["cont_img"], 1, n_bins=20, thresholds=[30.0, 60.0], use_pbar=False,
+            ax=ax, out_plot_file=out,
+        ),
+    ),
+    (
+        "plot_2d_img_histogram",
+        1,
+        lambda d, ax, out: rplot.plot_2d_img_histogram(
+            d["cont_img"], 1, 2, bins=20, points={"A": (20.0, 80.0)}, use_pbar=False,
+            ax=ax, out_plot_file=out,
+        ),
+    ),
+    (
         "plot_roc_curve",
         1,
         lambda d, ax, out: sdm.plot_roc_curve(*_fpr_tpr(), 0.8, ax=ax, out_plot_file=out),
