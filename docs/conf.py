@@ -22,7 +22,19 @@ extensions = [
     "sphinx.ext.viewcode",
     "sphinx.ext.napoleon",
     "sphinx.ext.intersphinx",
+    "sphinx.ext.extlinks",
 ]
+
+# Links to the rsgispy tutorials (Jupyter notebooks with real data):
+#   :tutorial:`Hydrological analysis <08_hydrology/01_hydrological_analysis.ipynb>`
+#   :tutorial-dir:`section 5 <05_regression>` (a folder)
+#   :tutorial-data:`dem_10m_osgb.tif`
+TUTORIALS_URL = "https://github.com/petebunting/rsgispy-tutorials"
+extlinks = {
+    "tutorial": (f"{TUTORIALS_URL}/blob/main/%s", "%s"),
+    "tutorial-dir": (f"{TUTORIALS_URL}/tree/main/%s", "%s"),
+    "tutorial-data": (f"{TUTORIALS_URL}/blob/main/data/%s", "%s"),
+}
 
 templates_path = []
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]

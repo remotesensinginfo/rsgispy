@@ -24,7 +24,7 @@ def run_workflow(
     s2_img: str,
     slope_img: str,
     train_vecs: Mapping[str, Tuple[str, int, str]],
-    plots_vec: str,
+    plots_vec: Optional[str],
     acc_pts_vec: str,
     out_dir: str,
     s2_img_new: Optional[str] = None,
@@ -40,8 +40,9 @@ def run_workflow(
     """
     Run the worked example. ``train_vecs`` maps each class name to
     ``(training vector file, output class ID, colour)``; ``plots_vec`` holds
-    canopy cover plots (``canopy_cover`` column) and ``acc_pts_vec`` accuracy
-    points with the reference class name in ``ref_name``.
+    canopy cover plots (``canopy_cover`` column; ``None`` skips the
+    regression) and ``acc_pts_vec`` accuracy points with the reference class
+    name in ``ref_name``.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-statements,import-outside-toplevel
@@ -245,36 +246,38 @@ def run_workflow(
     # [end-step-10-new-scene]
 
     # [step-11-regression]
-    from sklearn.ensemble import RandomForestRegressor
-    from rsgispy.regression.regdata import RegressionConfig
-    import rsgispy.regression.regsegments as rsegs
-    import rsgispy.regression.regsklearn as rsk
+    if plots_vec is not None:
+        from sklearn.ensemble import RandomForestRegressor
+        from rsgispy.regression.regdata import RegressionConfig
+        import rsgispy.regression.regsegments as rsegs
+        import rsgispy.regression.regsklearn as rsk
 
-    # Reuse the classification segment features for the regression.
-    reg_cfg = RegressionConfig(
-        img_band_info, "canopy_cover", vec_file=plots_vec, seg_info=cls_cfg.seg_info
-    )
-    reg_train, reg_test, _ = rsegs.extract_and_split_reg_segment_samples(
-        reg_cfg, test_prop=0.3, valid_prop=0.0, rnd_seed=42
-    )
-    rf_reg, reg_metrics = rsk.train_sklearn_regressor(
-        reg_cfg, RandomForestRegressor(n_estimators=200, random_state=42),
-        reg_train, test_data=reg_test, return_model=True,
-    )
-    print({k: round(v, 3) for k, v in reg_metrics.items() if "r2" in k})
-    reg_vec = os.path.join(out_dir, "s2_segs_canopy.parquet")
-    rsegs.apply_sklearn_regressor_segments(
-        reg_cfg, rf_reg, reg_vec, out_quantiles=[0.05, 0.95], copy_cols=[],
-        use_pbar=use_pbar,
-    )
-    rsegs.rasterise_segment_regression(
-        reg_cfg, reg_vec, os.path.join(out_dir, "canopy_cover.tif"),
-        pred_cols=["pred_canopy_cover", "pred_canopy_cover_q0.05",
-                   "pred_canopy_cover_q0.95"],
-        use_pbar=use_pbar,
-    )
+        # Reuse the classification segment features for the regression.
+        reg_cfg = RegressionConfig(
+            img_band_info, "canopy_cover", vec_file=plots_vec,
+            seg_info=cls_cfg.seg_info,
+        )
+        reg_train, reg_test, _ = rsegs.extract_and_split_reg_segment_samples(
+            reg_cfg, test_prop=0.3, valid_prop=0.0, rnd_seed=42
+        )
+        rf_reg, reg_metrics = rsk.train_sklearn_regressor(
+            reg_cfg, RandomForestRegressor(n_estimators=200, random_state=42),
+            reg_train, test_data=reg_test, return_model=True,
+        )
+        print({k: round(v, 3) for k, v in reg_metrics.items() if "r2" in k})
+        reg_vec = os.path.join(out_dir, "s2_segs_canopy.parquet")
+        rsegs.apply_sklearn_regressor_segments(
+            reg_cfg, rf_reg, reg_vec, out_quantiles=[0.05, 0.95], copy_cols=[],
+            use_pbar=use_pbar,
+        )
+        rsegs.rasterise_segment_regression(
+            reg_cfg, reg_vec, os.path.join(out_dir, "canopy_cover.tif"),
+            pred_cols=["pred_canopy_cover", "pred_canopy_cover_q0.05",
+                       "pred_canopy_cover_q0.95"],
+            use_pbar=use_pbar,
+        )
+        out["reg_vec"] = reg_vec
     # [end-step-11-regression]
-    out["reg_vec"] = reg_vec
 
     # [step-12-clustering]
     from sklearn.cluster import KMeans
@@ -305,7 +308,8 @@ def main() -> None:
     parser.add_argument("--slope", required=True, help="Slope image")
     parser.add_argument("--train", nargs="+", required=True,
                         help="CLASS=vector_file entries")
-    parser.add_argument("--plots", required=True, help="Canopy cover plots")
+    parser.add_argument("--plots", default=None,
+                        help="Canopy cover plots (optional, for the regression)")
     parser.add_argument("--acc-pts", required=True, help="Accuracy points")
     parser.add_argument("--s2-new", default=None, help="Second scene S2 stack")
     parser.add_argument("--slope-new", default=None, help="Second scene slope")

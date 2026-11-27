@@ -6,17 +6,20 @@ synthetic data and writes one PNG per plot. The images are shown in
 
 The synthetic scene comes from ``tests/maps_scene.py`` (the data of the
 "Making maps" guide); the tables (regression results, endmembers, ROC curve,
-feature importances) are made here with a fixed random seed.
+feature importances) are made here with a fixed random seed. All the data of
+the plots are in one dictionary (``make_inputs``), so they can be replaced:
+the images in the guide were drawn with real data from the rsgispy tutorials
+where a plot is about data (``plot_gallery_tutorial.py``).
 
-Regenerate the documentation images (from the repository root) with::
+Draw the gallery from the synthetic data with::
 
-    python docs/examples/plot_gallery.py --out-dir docs/guides/images/gallery --dpi 90
+    python docs/examples/plot_gallery.py --out-dir plot_gallery --dpi 90
 """
 
 import argparse
 import os
 import sys
-from typing import Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import matplotlib
 
@@ -48,8 +51,18 @@ TESTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, 
 CLASS_NAMES = {1: "Water", 2: "Forest", 3: "Grass", 4: "Urban"}
 
 
-def make_tables(seed: int = 42) -> Dict[str, object]:
-    """Synthetic tables for the non-map plots."""
+def make_inputs(scene_dir: str, seed: int = 42) -> Dict[str, Any]:
+    """
+    The data of every gallery plot, from the synthetic scene of
+    ``tests/maps_scene.py`` (written to ``scene_dir``) and synthetic tables.
+    Each plot reads its entry of the returned dictionary, so any entry can be
+    replaced with real data (see ``plot_gallery_tutorial.py``).
+    """
+    # pylint: disable=too-many-locals
+    sys.path.insert(0, TESTS_DIR)
+    from maps_scene import make_maps_scene  # pylint: disable=import-outside-toplevel,import-error
+
+    scene = make_maps_scene(scene_dir)
     rng = np.random.default_rng(seed)
     obs = rng.uniform(5.0, 95.0, 150)
     # Tree-model-like predictions: shrunk towards the mean, with noise.
@@ -60,7 +73,6 @@ def make_tables(seed: int = 42) -> Dict[str, object]:
         "cover_obs": obs, "cover_pred": pred,
         "height_obs": height_obs, "height_pred": height_pred,
     })
-    wavelengths = [482.0, 562.0, 655.0, 865.0, 1609.0, 2201.0]
     em_df = pd.DataFrame(
         {
             "Water": [0.06, 0.05, 0.03, 0.01, 0.005, 0.003],
@@ -71,7 +83,6 @@ def make_tables(seed: int = 42) -> Dict[str, object]:
     )
     y_true = np.concatenate([np.zeros(200), np.ones(200)])
     scores = np.concatenate([rng.beta(2, 5, 200), rng.beta(5, 2, 200)])
-    fpr, tpr, roc_auc = sdm.calc_binary_roc_auc(y_true, scores)
     feats = ["NDVI", "NDWI", "Elevation", "Slope", "B11", "B12", "Texture"]
     # Features from two latent factors, so the correlations vary in sign and size.
     latent = rng.normal(size=(300, 2))
@@ -80,25 +91,64 @@ def make_tables(seed: int = 42) -> Dict[str, object]:
     corr_df = pd.DataFrame(
         latent @ loadings.T + rng.normal(0.0, 0.4, (300, len(feats))), columns=feats
     ).corr()
-    coords = rng.uniform(0.0, 2000.0, (300, 2))
+    lags = np.linspace(40.0, 1000.0, 20)
     vario_df = pd.DataFrame({
-        "distance": np.linspace(40.0, 1000.0, 20),
-        "semivariance": 1.0 - np.exp(-np.linspace(40.0, 1000.0, 20) / 300.0)
-        + rng.normal(0.0, 0.03, 20),
+        "distance": lags,
+        "semivariance": 1.0 - np.exp(-lags / 300.0) + rng.normal(0.0, 0.03, 20),
         "count": np.linspace(400, 2000, 20).astype(int),
     })
+    importances = rng.uniform(0.01, 0.3, len(feats))
+    importance_errs = rng.uniform(0.005, 0.03, len(feats))
+    dndvi = np.concatenate([rng.normal(0.0, 0.05, 4000), rng.normal(0.35, 0.08, 600)])
+    wvls = np.arange(400.0, 1001.0, 5.0)
+    regions = gpd.read_file(scene["regions"])
+    regions["forest_pct"] = [62.0, 35.0, 48.0, 12.0]
     return {
-        "eval_df": eval_df,
-        "em_df": em_df,
-        "wavelengths": wavelengths,
-        "roc": (fpr, tpr, roc_auc),
+        # Histograms
+        "hist_threshold": {"data": dndvi, "threshold": 0.18, "x_label": "dNDVI",
+                           "title_str": "dNDVI with the Otsu threshold"},
+        "img_histogram": {
+            "input_img": scene["score"], "n_bins": 60, "val_range": (0.0, 1.0),
+            "thresholds": [0.4, 0.7], "threshold_labels": ["Moderate (0.4)", "High (0.7)"],
+            "title": "Suitability score with class thresholds", "x_label": "Score (0-1)",
+        },
+        "img_2d_histogram": {
+            "input_img": scene["s2"], "x_band": 4, "y_band": 3, "bins": 100,
+            "x_range": (0, 4500), "y_range": (0, 4500), "val_scale": 100,
+            "x_label": "NIR reflectance (%)", "y_label": "Red reflectance (%)",
+            "title": "Feature space: NIR v red",
+            # The class spectra of the synthetic scene, as "endmembers".
+            "points": {"Water": (150, 300), "Forest": (3500, 300), "Grass": (2500, 600),
+                       "Urban": (1800, 1400)},
+        },
+        # Spectra
+        "endmembers": {"endmembers": em_df, "plot_title": "Endmember spectra",
+                       "wavelengths": [482.0, 562.0, 655.0, 865.0, 1609.0, 2201.0]},
+        "spectra": {
+            "spectra": pd.DataFrame({f"{c} µg/cm²": _leaf_spectrum(wvls, c)
+                                     for c in [10, 20, 40, 60, 80]}, index=wvls),
+            "cmap_name": "viridis", "legend_title": "Chlorophyll", "title": "Leaf spectra",
+        },
+        "continuum_removal": {"spectrum": _leaf_spectrum(wvls, 40), "wavelengths": wvls,
+                              "start_wvl": 530, "stop_wvl": 760,
+                              "title": "Chlorophyll 40 µg/cm²"},
+        "semivariogram": {"vario_df": vario_df, "title": "Empirical semivariogram",
+                          "dist_label": "Distance (m)"},
+        # Regression: one or more targets (observed and predicted columns)
+        "regression": {"in_data": eval_df, "ref_cols": ["cover_obs", "height_obs"],
+                       "pred_cols": ["cover_pred", "height_pred"],
+                       "target_names": ["Canopy cover (%)", "Height (m)"]},
+        "qq_values": rng.gamma(2.0, 2.0, 200),
+        # Classification and feature diagnostics
+        "roc": sdm.calc_binary_roc_auc(y_true, scores),
         "corr_df": corr_df,
         "feats": feats,
-        "importances": rng.uniform(0.01, 0.3, len(feats)),
-        "importance_errs": rng.uniform(0.005, 0.03, len(feats)),
-        "vario_df": vario_df,
-        "coords": coords,
-        "dndvi": np.concatenate([rng.normal(0.0, 0.05, 4000), rng.normal(0.35, 0.08, 600)]),
+        "importances": (importances, importance_errs),
+        # Maps
+        "s2": scene["s2"], "rgb_bands": [3, 2, 1], "cls": scene["cls"],
+        "classes_info": CLASS_NAMES, "score": scene["score"],
+        "score_title": "Suitability score", "score_label": "Score (0-1)",
+        "dem": scene["dem"], "regions": regions, "rivers": gpd.read_file(scene["rivers"]),
     }
 
 
@@ -111,131 +161,92 @@ def _leaf_spectrum(wvls: np.ndarray, chl: float) -> np.ndarray:
     return np.clip(red_edge * chl_abs * blue_abs * green, 0.01, None)
 
 
-def _gallery_plots(scene: Dict[str, str], tbl: Dict[str, object]) -> List[Tuple[str, Callable[[], object]]]:
+def _gallery_plots(d: Dict[str, Any]) -> List[Tuple[str, Callable[[], object]]]:
     """(name, function returning a figure) for every plot in the gallery."""
     # pylint: disable=too-many-locals,too-many-statements
-    bbox = rsgispy.imageutils.metadata.get_img_bbox(scene["s2"])
-    regions = gpd.read_file(scene["regions"])
-    rivers = gpd.read_file(scene["rivers"])
-    regions["forest_pct"] = [62.0, 35.0, 48.0, 12.0]
-    eval_df = tbl["eval_df"]
+    bbox = rsgispy.imageutils.metadata.get_img_bbox(d["s2"])
+    reg = d["regression"]
+    reg_one = {"in_data": reg["in_data"], "ref_col": reg["ref_cols"][0],
+               "pred_col": reg["pred_cols"][0], "target_names": reg["target_names"][:1]}
 
     def hist_threshold():
-        fig, _ = rplot.plot_histogram_threshold(
-            tbl["dndvi"], 0.18, title_str="dNDVI with the Otsu threshold", x_label="dNDVI"
-        )
+        fig, _ = rplot.plot_histogram_threshold(**d["hist_threshold"])
         return fig
 
     def img_histogram():
-        fig, _ = rplot.plot_img_histogram(
-            scene["score"], n_bins=60, val_range=(0.0, 1.0), thresholds=[0.4, 0.7],
-            threshold_labels=["Moderate (0.4)", "High (0.7)"],
-            title="Suitability score with class thresholds", x_label="Score (0-1)",
-            use_pbar=False,
-        )
+        fig, _ = rplot.plot_img_histogram(**d["img_histogram"], use_pbar=False)
         return fig
 
     def img_2d_histogram():
-        # The class spectra of the synthetic scene, as "endmembers".
-        spectra = {"Water": (150, 300), "Forest": (3500, 300), "Grass": (2500, 600),
-                   "Urban": (1800, 1400)}
-        fig, _ = rplot.plot_2d_img_histogram(
-            scene["s2"], x_band=4, y_band=3, bins=100, x_range=(0, 4500), y_range=(0, 4500),
-            val_scale=100, x_label="NIR reflectance (%)", y_label="Red reflectance (%)",
-            title="Feature space: NIR v red", points=spectra, use_pbar=False,
-        )
+        fig, _ = rplot.plot_2d_img_histogram(**d["img_2d_histogram"], use_pbar=False)
         return fig
 
     def roc_curve():
-        fpr, tpr, roc_auc = tbl["roc"]
+        fpr, tpr, roc_auc = d["roc"]
         fig, _ = sdm.plot_roc_curve(fpr, tpr, roc_auc, label="Ensemble")
         return fig
 
     def endmembers():
-        fig, _ = spec_em.plot_endmembers(
-            tbl["em_df"], wavelengths=tbl["wavelengths"],
-            plot_title="Endmember spectra", y_label="Reflectance",
-        )
+        fig, _ = spec_em.plot_endmembers(**d["endmembers"])
         fig.axes[0].set_xlabel("Wavelength (nm)")
         return fig
 
     def spectra_plot():
-        wvls = np.arange(400.0, 1001.0, 5.0)
-        chl = [10, 20, 40, 60, 80]
-        spec_df = pd.DataFrame(
-            {f"{c} µg/cm²": _leaf_spectrum(wvls, c) for c in chl}, index=wvls
-        )
-        fig, _ = spec_spectra.plot_spectra(
-            spec_df, cmap_name="viridis", legend_title="Chlorophyll",
-            title="Leaf spectra",
-        )
+        fig, _ = spec_spectra.plot_spectra(**d["spectra"])
         return fig
 
     def continuum_removal():
-        wvls = np.arange(400.0, 1001.0, 5.0)
-        cr_info = spec_spectra.calc_continuum_removal(
-            _leaf_spectrum(wvls, 40), wvls, start_wvl=530, stop_wvl=760
+        cr_kw = dict(d["continuum_removal"])
+        title = cr_kw.pop("title")
+        fig, _ = spec_spectra.plot_continuum_removal(
+            spec_spectra.calc_continuum_removal(**cr_kw), title=title
         )
-        fig, _ = spec_spectra.plot_continuum_removal(cr_info, title="Chlorophyll 40 µg/cm²")
         return fig
 
     def semivariogram():
-        fig, _ = rstats.plot_semivariogram(
-            tbl["vario_df"], title="Empirical semivariogram", dist_label="Distance (m)"
-        )
+        fig, _ = rstats.plot_semivariogram(**d["semivariogram"])
         return fig
 
     def pred_vs_obs():
-        fig, _ = rmet.plot_pred_vs_obs(eval_df, ref_col="cover_obs", pred_col="cover_pred",
-                                       target_names=["Canopy cover (%)"])
+        fig, _ = rmet.plot_pred_vs_obs(**reg_one)
         return fig
 
     def pred_vs_obs_multi():
-        fig, _ = rmet.plot_pred_vs_obs(
-            eval_df, ref_cols=["cover_obs", "height_obs"],
-            pred_cols=["cover_pred", "height_pred"],
-            target_names=["Canopy cover (%)", "Height (m)"],
-        )
+        fig, _ = rmet.plot_pred_vs_obs(**reg)
         return fig
 
     def residuals():
-        fig, _ = rmet.plot_residuals(eval_df, ref_col="cover_obs", pred_col="cover_pred",
-                                     target_names=["Canopy cover (%)"])
+        fig, _ = rmet.plot_residuals(**reg_one)
         return fig
 
     def residuals_multi():
-        fig, _ = rmet.plot_residuals(
-            eval_df, ref_cols=["cover_obs", "height_obs"],
-            pred_cols=["cover_pred", "height_pred"],
-            target_names=["Canopy cover (%)", "Height (m)"],
-        )
+        fig, _ = rmet.plot_residuals(**reg)
         return fig
 
     def qq_residuals():
-        fig, _ = rmet.plot_qq_residuals(eval_df, ref_col="cover_obs", pred_col="cover_pred",
-                                        target_names=["Canopy cover (%)"])
+        fig, _ = rmet.plot_qq_residuals(**reg_one)
         return fig
 
     def qq_values():
-        rng = np.random.default_rng(3)
-        fig, _ = rplot.plot_qq(rng.gamma(2.0, 2.0, 200), title="Q-Q plot of skewed values")
+        fig, _ = rplot.plot_qq(d["qq_values"], title="Q-Q plot of skewed values")
         return fig
 
     def correlation_heatmap():
-        fig, _ = ml_explain.plot_correlation_heatmap(tbl["corr_df"])
+        fig, _ = ml_explain.plot_correlation_heatmap(d["corr_df"])
         return fig
 
     def jackknife_bars():
-        n_feats = len(tbl["feats"])
+        n_feats = len(d["feats"])
         fig, _ = ml_explain.plot_jackknife_bars(
-            tbl["feats"], np.linspace(0.80, 0.86, n_feats), np.linspace(0.40, 0.70, n_feats),
+            d["feats"], np.linspace(0.80, 0.86, n_feats), np.linspace(0.40, 0.70, n_feats),
             0.88, "Jackknife accuracy", "Test accuracy",
         )
         return fig
 
     def importance_bars():
+        importances, errors = d["importances"]
         fig, _ = ml_explain.plot_feature_importance_bars(
-            tbl["feats"], tbl["importances"], errors=tbl["importance_errs"],
+            d["feats"], importances, errors=errors,
             title="Permutation importance", xlabel="Mean decrease in accuracy",
         )
         return fig
@@ -243,9 +254,9 @@ def _gallery_plots(scene: Dict[str, str], tbl: Dict[str, object]) -> List[Tuple[
     def boruta_boxplots():
         rng = np.random.default_rng(1)
         history = {f: list(rng.normal(m, 0.02, 30)) for f, m in
-                   zip(tbl["feats"], [0.3, 0.25, 0.2, 0.05, 0.12, 0.02, 0.08])}
-        status = dict(zip(tbl["feats"], ["Confirmed", "Confirmed", "Confirmed", "Rejected",
-                                         "Tentative", "Rejected", "Tentative"]))
+                   zip(d["feats"], [0.3, 0.25, 0.2, 0.05, 0.12, 0.02, 0.08])}
+        status = dict(zip(d["feats"], ["Confirmed", "Confirmed", "Confirmed", "Rejected",
+                                       "Tentative", "Rejected", "Tentative"]))
         fig, _ = ml_explain._plot_boruta_shap_boxplots(  # pylint: disable=protected-access
             history, status, list(rng.normal(0.1, 0.02, 30)), list(rng.normal(0.04, 0.01, 30))
         )
@@ -260,86 +271,88 @@ def _gallery_plots(scene: Dict[str, str], tbl: Dict[str, object]) -> List[Tuple[
 
     def rgb_map(ax):
         map_raster.create_raster_img_map(
-            ax, scene["s2"], img_bands=[3, 2, 1], img_stch=rsgispy.IMG_STRETCH_CUMULATIVE,
+            ax, d["s2"], img_bands=d["rgb_bands"], img_stch=rsgispy.IMG_STRETCH_CUMULATIVE,
             title_str="Sentinel-2 true colour", show_north_arrow=True,
             scale_bar_loc="lower right", no_data_out_clr=(1.0, 1.0, 1.0),
         )
 
     def cmap_map(ax):
         map_raster.create_raster_cmap_img_map(
-            ax, scene["score"], 1, norm_img_vals=True, norm_vmin=0.0, norm_vmax=1.0,
-            title_str="Suitability score", show_colour_bar=True, cbar_label="Score (0-1)",
+            ax, d["score"], 1, norm_img_vals=True, norm_vmin=0.0, norm_vmax=1.0,
+            title_str=d["score_title"], show_colour_bar=True, cbar_label=d["score_label"],
             scale_bar_loc="lower right",
         )
 
     def thematic_map(ax):
         map_raster.create_thematic_raster_map(
-            ax, scene["cls"], title_str="Land cover", show_legend=True,
-            classes_info=CLASS_NAMES, legend_title="Land cover", legend_position="bottom",
-            scale_bar_loc="lower right",
+            ax, d["cls"], title_str="Land cover", show_legend=True,
+            classes_info=d["classes_info"], legend_title="Land cover", legend_position="bottom",
+            legend_ncols=2, scale_bar_loc="lower right",
         )
 
     def shaded_cmap_map(ax):
         map_raster.create_shaded_cmap_img_map(
-            ax, scene["dem"], dem_img=scene["dem"], cmap_name="viridis",
+            ax, d["dem"], dem_img=d["dem"], cmap_name="viridis",
             title_str="Elevation over a hillshade", cbar_label="Elevation (m)",
             scale_bar_loc="lower right",
         )
 
     def hillshade_map(ax):
         map_raster.create_thematic_raster_map(
-            ax, scene["cls"], title_str="Land cover with a hillshade",
+            ax, d["cls"], title_str="Land cover with a hillshade",
             scale_bar_loc="lower right", show_north_arrow=True,
         )
-        map_raster.add_hillshade(ax, dem_img=scene["dem"], alpha=0.35)
+        map_raster.add_hillshade(ax, dem_img=d["dem"], alpha=0.35)
 
     def vector_map(ax):
         map_raster.create_raster_img_map(
-            ax, scene["s2"], img_bands=[3, 2, 1], img_stch=rsgispy.IMG_STRETCH_CUMULATIVE,
+            ax, d["s2"], img_bands=d["rgb_bands"], img_stch=rsgispy.IMG_STRETCH_CUMULATIVE,
             show_scale_bar=False,
         )
         map_vector.create_vec_lyr_map(
-            ax, [regions, rivers], bbox, vec_fill_clrs=["none", "none"],
+            ax, [d["regions"], d["rivers"]], bbox, vec_fill_clrs=["none", "none"],
             vec_line_clrs=["yellow", "deepskyblue"], vec_line_widths=[1.0, 2.0],
             plot_zorders=[2, 3], title_str="Regions and rivers", scale_bar_loc="lower right",
         )
 
     def choropleth_map(ax):
         map_vector.create_choropleth_vec_lyr_map(
-            ax, regions, "forest_pct", bbox, vec_fill_cmap="viridis", vec_line_width=0.6,
+            ax, d["regions"], "forest_pct", bbox, vec_fill_cmap="viridis", vec_line_width=0.6,
             title_str="Forest cover by region", show_colour_bar=True, cbar_label="Forest (%)",
             scale_bar_loc="lower right",
         )
 
     def elements_map(ax):
-        map_raster.create_thematic_raster_map(ax, scene["cls"], show_scale_bar=False,
+        map_raster.create_thematic_raster_map(ax, d["cls"], show_scale_bar=False,
                                               title_str="Map elements")
         map_elements.add_scale_bar(ax, epsg_code=bbox.epsg, loc="lower right",
                                    style=map_elements.SCALEBAR_STYLE_ALTERNATING)
         map_elements.add_north_arrow(ax, loc="upper right",
                                      style=map_elements.NORTH_ARROW_STYLE_COMPASS)
+        # A box a quarter of the map's width and height, at its centre.
         x_mid, y_mid = (bbox[0] + bbox[1]) / 2, (bbox[2] + bbox[3]) / 2
+        dx, dy = (bbox[1] - bbox[0]) / 8, (bbox[3] - bbox[2]) / 8
         map_elements.draw_bboxes_to_axis(
-            ax, [(x_mid - 200, x_mid + 200, y_mid - 150, y_mid + 150)], bbox_labels=["Zoom"],
+            ax, [(x_mid - dx, x_mid + dx, y_mid - dy, y_mid + dy)], bbox_labels=["Zoom"],
             rect_clr="red", line_width=1.5, lbl_pos="above", lbl_font_size=9,
             lbl_font_clr="red", lbl_fill_clr="white",
         )
-        map_legend.add_categorical_legend(ax, classes_info=CLASS_NAMES, input_img=scene["cls"],
-                                          loc="lower left", title="Land cover")
+        map_legend.add_categorical_legend(ax, classes_info=d["classes_info"], input_img=d["cls"],
+                                          loc="lower left", title="Land cover", ncols=2,
+                                          fontsize=7)
         map_elements.add_axis_label(ax, "(a)")
 
     def map_panels():
         fig, _ = map_layout.create_map_panels(
             [
-                {"panel_type": "rgb", "input_img": scene["s2"], "bands": [3, 2, 1],
+                {"panel_type": "rgb", "input_img": d["s2"], "bands": d["rgb_bands"],
                  "title": "Sentinel-2", "map_kw": {"no_data_out_clr": (1.0, 1.0, 1.0)}},
-                {"panel_type": "thematic", "input_img": scene["cls"], "title": "Land cover"},
-                {"panel_type": "vector", "vec": regions, "base_img": scene["s2"],
-                 "base_bands": [3, 2, 1], "title": "Regions over the image",
-                 "map_kw": {"vec_fill_clrs": "none", "vec_line_clrs": "yellow",
-                            "vec_line_widths": 1.5}},
+                {"panel_type": "thematic", "input_img": d["cls"], "title": "Land cover"},
+                {"panel_type": "vector", "vec": d["rivers"], "base_img": d["s2"],
+                 "base_bands": d["rgb_bands"], "title": "Rivers over the image",
+                 "map_kw": {"vec_line_clrs": "deepskyblue", "vec_line_widths": 1.5}},
             ],
-            classes_info=CLASS_NAMES, legend_title="Land cover", legend_position="bottom",
+            classes_info=d["classes_info"], legend_title="Land cover", legend_position="bottom",
             scale_bar_loc="lower right",
         )
         return fig
@@ -375,16 +388,18 @@ def _gallery_plots(scene: Dict[str, str], tbl: Dict[str, object]) -> List[Tuple[
     ]
 
 
-def run_gallery(out_dir: str, scene_dir: str = None, dpi: int = 90) -> Dict[str, str]:
-    """Write every gallery plot to ``out_dir`` and return ``{name: png path}``."""
-    sys.path.insert(0, TESTS_DIR)
-    from maps_scene import make_maps_scene  # pylint: disable=import-outside-toplevel,import-error
-
+def run_gallery(out_dir: str, scene_dir: Optional[str] = None, dpi: int = 90,
+                inputs: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    """
+    Write every gallery plot to ``out_dir`` and return ``{name: png path}``.
+    ``inputs`` is the data of the plots (by default ``make_inputs``, the
+    synthetic data, with the scene written to ``scene_dir``).
+    """
     os.makedirs(out_dir, exist_ok=True)
-    scene = make_maps_scene(scene_dir or os.path.join(out_dir, "_scene"))
-    tbl = make_tables()
+    if inputs is None:
+        inputs = make_inputs(scene_dir or os.path.join(out_dir, "_scene"))
     out: Dict[str, str] = {}
-    for name, make_fig in _gallery_plots(scene, tbl):
+    for name, make_fig in _gallery_plots(inputs):
         fig = make_fig()
         out[name] = rplot.save_plot(fig, os.path.join(out_dir, f"{name}.png"), out_dpi=dpi, close=True)
     return out

@@ -5,6 +5,8 @@ rsgispy.classification
 
    Guides: :doc:`guides/pixel_classification_workflow`, :doc:`guides/segment_ml_workflow`, :doc:`guides/change_detection`
 
+   Tutorials: :tutorial:`rule-based <04_image_classification/01_rule_based_classification.ipynb>`, :tutorial:`unsupervised <04_image_classification/02_unsupervised_classification.ipynb>`, :tutorial:`supervised pixel <04_image_classification/03_supervised_pixel_classification.ipynb>`, :tutorial:`object-based <04_image_classification/04_object_based_classification.ipynb>`, :tutorial:`tile-graph classification <09_tile_graph_workflows/01_indices_classification_filtering.ipynb>` (:doc:`tutorials`)
+
 .. automodule:: rsgispy.classification
    :no-index:
 

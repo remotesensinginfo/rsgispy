@@ -35,6 +35,21 @@ calibrate or terrain correct SAR data. The guide then covers speckle
 filtering, checking the filter, converting between dB and linear power, SAR
 indices, texture and building a feature stack for classification.
 
+.. seealso::
+
+   The rsgispy tutorials use Sentinel-1 data in notebooks you can run:
+   :tutorial:`Zonal statistics <03_vector_data_and_zonal_stats/01_zonal_statistics.ipynb>`
+   (section 3) follows the cropping cycles of rice fields in the Mekong
+   Delta through a year of monthly mean Sentinel-1 backscatter
+   (:tutorial-data:`Sentinel1_MonthlyMean_2018_lin_100000_Geog_subset.tif`),
+   and :tutorial:`Downloading Sentinel-1 data <12_downloading_data/05_copernicus_odata_sen1.ipynb>`
+   (section 12) searches for and downloads Sentinel-1 scenes from the
+   Copernicus Data Space Ecosystem. See :doc:`../tutorials` for how to get
+   the notebooks and their data. The figures and outputs on this page come
+   from a synthetic scene, because the tutorial image has one polarisation
+   (the SAR indices need two) and, as a mean of each month's acquisitions,
+   much less speckle than a single image.
+
 .. contents:: Contents
    :local:
    :depth: 1

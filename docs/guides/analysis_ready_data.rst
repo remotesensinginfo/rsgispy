@@ -37,6 +37,19 @@ The outputs of this guide are the inputs of the other guides: for example the
 :doc:`change detection <change_detection>` and the
 :doc:`map making <making_maps>` guides.
 
+.. seealso::
+
+   The rsgispy tutorials cover parts of this in notebooks you can run:
+   :tutorial:`Downloading Sentinel-2 data <12_downloading_data/06_copernicus_odata_sen2.ipynb>`
+   and :tutorial:`Finding and downloading Landsat scenes <12_downloading_data/01_dwnld_usgs_landsat_scenes.ipynb>`
+   (section 12) search for and download scenes (step 1), and
+   :tutorial:`Landsat composites <10_case_study_icesat2_bathymetry/02_landsat_composites.ipynb>`
+   (section 10) compares median, percentile, geomedian, medoid and
+   best-pixel composites of eleven cloud-masked Landsat scenes (step 6). See
+   :doc:`../tutorials` for how to get the notebooks and their data. The
+   tutorial data has no Sentinel-2 ``.SAFE`` products, so the outputs on this
+   page come from a synthetic scene.
+
 .. contents:: Contents
    :local:
    :depth: 1

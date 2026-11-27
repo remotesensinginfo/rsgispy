@@ -22,6 +22,15 @@ Why migrate?
   geomedian, medoid and percentile composites)
   is only in rsgispy.
 
+.. seealso::
+
+   The `RSGISLib tutorials <https://github.com/remotesensinginfo/rsgislib-tutorials>`_
+   have been ported to rsgispy as the
+   `rsgispy tutorials <https://github.com/petebunting/rsgispy-tutorials>`_
+   (see :doc:`../tutorials`). Comparing a notebook in the two repositories
+   shows the port of a complete analysis, and the notebooks point out the
+   differences in "RSGISLib users" notes.
+
 .. contents:: Contents
    :local:
    :depth: 1

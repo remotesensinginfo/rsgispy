@@ -256,7 +256,8 @@ def run_workflow(
                           os.path.join(out_dir, "gauge_main_stems.gpkg"),
                           direction="upstream", flow_acc_img=facc_d8,
                           use_pbar=use_pbar)
-    print(gpd.read_file(wsheds_vec).drop(columns="geometry"))
+    print(gpd.read_file(gauges_snap).drop(columns="geometry").to_string())
+    print(gpd.read_file(wsheds_vec).drop(columns="geometry").round(1).to_string())
     # [end-step-6-catchments]
     out["gauges_snap"] = gauges_snap
     out["wsheds_img"] = wsheds_img
@@ -298,7 +299,7 @@ def run_workflow(
         )
     wsheds_gdf = gpd.read_file(wsheds_vec).merge(ws_stats, on="watershed_id")
     wsheds_gdf.to_file(wsheds_vec)
-    print(ws_stats.round(3))
+    print(ws_stats.round(3).to_string())
     # [end-step-7-catchment-stats]
     out["ws_stats"] = ws_stats
 
@@ -362,25 +363,32 @@ def run_workflow(
 
     hshade_img = os.path.join(out_dir, "hillshade.tif")
     hillshade(cond_dem, hshade_img, azimuth=315.0, zenith=45.0, use_pbar=use_pbar)
-    bbox = get_img_bbox(cond_dem)
+    # Zoom on the gauged watersheds, with a 5% margin, within the DEM.
+    dem_bbox = get_img_bbox(cond_dem)  # [MinX, MaxX, MinY, MaxY]
+    ws_minx, ws_miny, ws_maxx, ws_maxy = wsheds_gdf.total_bounds
+    margin = 0.05 * max(ws_maxx - ws_minx, ws_maxy - ws_miny)
+    bbox = [max(ws_minx - margin, dem_bbox[0]), min(ws_maxx + margin, dem_bbox[1]),
+            max(ws_miny - margin, dem_bbox[2]), min(ws_maxy + margin, dem_bbox[3])]
 
-    fig, ax = plt.subplots(figsize=(6, 6))
+    fig, ax = plt.subplots(figsize=(7, 6))
     create_raster_img_map(ax, hshade_img, img_bands=[1],
                           img_stch=rsgispy.IMG_STRETCH_LINEAR, bbox=bbox,
                           show_scale_bar=False, show_map_axis=False)
     create_vec_lyr_map(
         ax,
         [gpd.read_file(os.path.join(out_dir, "subcatchments.gpkg")),
-         wsheds_gdf, streams_gdf, gpd.read_file(gauges_snap)],
+         wsheds_gdf, streams_gdf,
+         gpd.read_file(os.path.join(out_dir, "gauge_main_stems.gpkg")),
+         gpd.read_file(gauges_snap)],
         bbox,
         title_str="Streams, subcatchments and gauged watersheds",
         # Polygons with the fill colour "none" are drawn as outlines; lines
-        # (the streams) are drawn in the line colour.
-        vec_fill_clrs=["none", "none", "none", "#e31a1c"],
-        vec_line_clrs=["#666666", "#e31a1c", "#1f78b4", "#000000"],
-        vec_line_widths=[0.5, 1.5, 1.5, 0.5],
-        vec_markersize=30,
-        plot_zorders=[2, 3, 4, 5],
+        # (the streams and main stems) are drawn in the line colour.
+        vec_fill_clrs=["none", "none", "none", "none", "#e31a1c"],
+        vec_line_clrs=["#666666", "#e31a1c", "#1f78b4", "#08306b", "#000000"],
+        vec_line_widths=[0.5, 1.5, 1.0, 2.0, 0.5],
+        vec_markersize=40,
+        plot_zorders=[2, 3, 4, 5, 6],
         show_map_axis=False,
         show_north_arrow=True,
     )

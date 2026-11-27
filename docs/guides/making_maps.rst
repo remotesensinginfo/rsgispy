@@ -27,6 +27,18 @@ Why use ``rsgispy.mapping`` rather than plain Matplotlib?
   the figure layout and can mix rsgispy layers with any other Matplotlib
   plotting.
 
+.. seealso::
+
+   The rsgispy tutorials cover this in notebooks you can run:
+   :tutorial:`an introduction to Matplotlib <02_making_maps/01_intro_matplotlib.ipynb>`,
+   :tutorial:`maps from EO data <02_making_maps/02_maps_from_eo_data.ipynb>`,
+   :tutorial:`maps from vector data <02_making_maps/03_maps_from_vector_data.ipynb>` and
+   :tutorial:`combining data sources <02_making_maps/04_combining_data_sources.ipynb>`
+   (section 2), and
+   :tutorial:`supervised pixel classification <04_image_classification/03_supervised_pixel_classification.ipynb>`,
+   which makes the land cover map used here. See :doc:`../tutorials` for how to
+   get them and their data.
+
 .. contents:: Contents
    :local:
    :depth: 1
@@ -86,8 +98,45 @@ rsgispy test suite runs on synthetic data. The inputs are:
 * ``overview.gpkg`` — a small-scale layer (e.g. country outlines, in any CRS)
   for the inset map.
 
-The figures on this page were made from the synthetic scene in
-``tests/maps_scene.py`` (see `Regenerating the figures`_).
+The figures and printed outputs on this page come from the data of the
+rsgispy tutorials, for a 24 x 18 km area around Aberystwyth (Wales) in the
+British National Grid (EPSG:27700): the coast, the town, the Rheidol and
+Ystwyth valleys and the conifer plantations to the east. The script
+``docs/examples/making_maps_tutorial.py`` prepares the inputs and runs the
+example:
+
+* the RGB maps use the 20 m Sentinel-2 image of 29 June 2018
+  (:tutorial-data:`sen2_20180629_t30uvd_orb037_osgb_stdsref_20m.tif`, ten
+  bands from Blue to SWIR2, reflectance x 1000), cut to the area;
+* the land cover is the random forest classification of the
+  :tutorial:`supervised pixel classification notebook <04_image_classification/03_supervised_pixel_classification.ipynb>`:
+  the same ten classes, colours, training polygons
+  (:tutorial-data:`cls_data/aber_sen2_cls_training.gpkg`) and classifier
+  parameters (100 trees, maximum depth 16), trained on 350 pixels per class
+  from the whole image and applied to the area. The notebook reports a test
+  accuracy of 0.99, optimistic because the test pixels come from the same
+  polygons as the training pixels, and the map has not been checked against
+  independent data, so treat it as an illustration;
+* the continuous raster is the NDVI, (NIR − red) / (NIR + red), with water
+  (from the land cover) set to no data;
+* the DEM is :tutorial-data:`dem_10m_osgb.tif`, cut to the area, with the sea
+  (0 m in this DEM) set to no data;
+* the rivers are the channels draining more than 10 km², derived from the
+  whole DEM at 20 m with :mod:`rsgispy.elevation.hydrology` (as in
+  :doc:`hydrology_workflow`);
+* the regions are the 108 squares of a 2 km grid, named by row (A–I, from
+  the north) and column (1–12, from the west);
+* the inset map uses the country outlines of
+  :tutorial-data:`country.geojson`.
+
+.. literalinclude:: ../examples/making_maps_tutorial.py
+   :language: python
+   :start-after: # [tutorial-data]
+   :end-before: # [end-tutorial-data]
+   :dedent: 4
+
+The test suite runs the same example on a small synthetic scene
+(``tests/maps_scene.py``), so the code on this page is always tested.
 
 A short note on Matplotlib: a *figure* is the whole image and holds one or
 more *axes* (map panels). Every rsgispy mapping function takes the axis to
@@ -128,7 +177,7 @@ few degrees means the data are in a geographic CRS; see `Common problems`_):
 
 .. code-block:: text
 
-   Map extent 1600 m wide; figure 6.7 x 5.03 in; ticks every 400 m
+   Map extent 24020 m wide; figure 6.7 x 5.03 in; ticks every 6000 m
 
 Step 2 — RGB images and stretches
 ---------------------------------
@@ -155,7 +204,9 @@ look of the image a lot:
    (:func:`~rsgispy.tools.plotting.manual_stretch_np_arr`). Use this to compare
    images: the same reflectance has the same colour in every map, which is not
    true of the statistical stretches. For Sentinel-2 surface reflectance x
-   10000, 0–1500 (visible bands) or 0–3000 (with NIR/SWIR) are typical.
+   10000, 0–1500 (visible bands) or 0–3000 (with NIR/SWIR) are typical; the
+   tutorial image is reflectance x 1000, so the figures use 0–150
+   (``user_stretch`` of the example).
 ``rsgispy.IMG_STRETCH_NONE``
    No stretch; for data already scaled to 0–1 (or 0–255 integers).
 
@@ -165,8 +216,10 @@ data value, or ``no_data_val``) are excluded from the statistics and drawn in
 ``no_data_out_clr`` (white here); otherwise they are transparent.
 
 For band combinations, use the band numbers of your stack: ``(3, 2, 1)`` is
-true colour for a Blue, Green, Red, NIR stack; NIR, Red, Green (``(4, 3, 2)``)
-is the standard false colour composite in which vegetation is red. Panel labels
+true colour for a stack that starts Blue, Green, Red (as the tutorial image
+does); NIR, Red, Green is the standard false colour composite in which
+vegetation is red (``(4, 3, 2)`` for a Blue, Green, Red, NIR stack,
+``(7, 3, 2)`` for the ten-band tutorial image). Panel labels
 are added with :func:`~rsgispy.mapping.elements.add_axis_label`.
 
 .. literalinclude:: ../examples/making_maps.py
@@ -177,11 +230,16 @@ are added with :func:`~rsgispy.mapping.elements.add_axis_label`.
 
 .. figure:: images/maps_rgb_stretches.png
    :width: 100%
-   :alt: The same true colour image with four different stretches.
+   :alt: The Sentinel-2 image of Aberystwyth with four stretches: linear (almost black), standard deviation, cumulative and user.
 
-   The same image with four stretches. The linear stretch is dominated by
-   the brightest pixels; the fixed user stretch keeps colours comparable
-   between images.
+   The same image with four stretches. The linear stretch is dominated by a
+   few very bright pixels (maxima of 800–950, while 98 % of the pixels are
+   below 90–160), so the image is almost black. The statistical stretches (b,
+   c) stretch each band to its own range, which makes the grassland bright
+   green; the user stretch, the same for the three bands, keeps the relative
+   brightness of the bands (the grassland looks browner) and keeps the
+   colours comparable between images. Contains modified Copernicus Sentinel
+   data (2018).
 
 Step 3 — Continuous single-band maps
 ------------------------------------
@@ -227,10 +285,13 @@ values below ``norm_vmin`` in white.
 
 .. figure:: images/maps_score.png
    :width: 80%
-   :alt: A continuous score drawn with the viridis colour map and a colour bar.
+   :alt: The NDVI of the Aberystwyth area drawn with the viridis colour map and a colour bar.
 
-   A continuous 0–1 score with a fixed colour bar range. Water (no data) is
-   transparent.
+   The NDVI with a fixed 0–1 colour bar range: highest (about 0.85–0.9,
+   yellow) in the woods and long grass, about 0.7 on short grass and scrub,
+   and lowest on the town and the beaches (0.2–0.4). Water (no data: the
+   sea, the lakes and the wider rivers) is transparent. Contains modified
+   Copernicus Sentinel data (2018).
 
 Relief: hillshaded maps
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -264,10 +325,13 @@ to make any raster layer semi-transparent.
 
 .. figure:: images/maps_relief.png
    :width: 100%
-   :alt: Elevation shaded by its hillshade, and land cover with a hillshade over it.
+   :alt: Elevation of the Aberystwyth area shaded by its hillshade, and the land cover with a hillshade over it.
 
-   a) The elevation shaded by its own hillshade; b) a hillshade over the land
-   cover. Both hillshades were made in memory from the DEM.
+   a) The elevation (sea level to 750 m on the uplands in the north-east)
+   shaded by its own hillshade: the valleys of the Rheidol and the Ystwyth run
+   west to the sea at Aberystwyth; b) a hillshade over the land cover. Both
+   hillshades were made in memory from the DEM. The sea is no data in the DEM
+   (white in a). Contains modified Copernicus Sentinel data (2018).
 
 Step 4 — Thematic maps and categorical legends
 ----------------------------------------------
@@ -299,7 +363,8 @@ Where the legend goes:
   figures that share one legend.
 
 The number of rows and columns is chosen from the space available and the
-label lengths (or set ``legend_ncols``/``legend_nrows``). Further options go
+label lengths, or set with ``legend_ncols``/``legend_nrows`` (here three
+columns, so the ten classes of the tutorial data fit in four rows). Further options go
 in ``legend_kwargs`` and are passed to
 :func:`~rsgispy.mapping.legend.add_categorical_legend`; for example
 ``only_present_in_img=True`` leaves out classes that do not occur in the
@@ -315,9 +380,12 @@ poster, use :func:`~rsgispy.mapping.legend.save_categorical_legend_img`.
 
 .. figure:: images/maps_land_cover.png
    :width: 70%
-   :alt: A land cover map with a legend below it.
+   :alt: The land cover map of the Aberystwyth area with a legend of ten classes below it.
 
-   A thematic map with its legend in a companion axis below the map.
+   The random forest land cover map with its legend in a companion axis
+   below the map. Short grass covers 46 % of the area, scrub 15 %, long
+   grass 10 % and forest 13 % (conifer 5 %, deciduous 8 %). Contains
+   modified Copernicus Sentinel data (2018).
 
 Step 5 — Vector layers and choropleth maps
 ------------------------------------------
@@ -337,8 +405,10 @@ A **choropleth** colours each polygon by an attribute.
 name, a colour map and an optional normalisation (use a fixed range, e.g. 0
 to 100 % with ``matplotlib.colors.Normalize``, so the colour bar matches
 the map). Here the attribute is the percentage of forest pixels in each
-region, counted from the land cover map with
-:func:`~rsgispy.zonalstats.polygon.calc_zonal_band_pxl_counts`; any column
+region (``forest_vals``: the conifer and deciduous forest classes, 3 and 4),
+counted from the land cover map with
+:func:`~rsgispy.zonalstats.polygon.calc_zonal_band_pxl_counts`, which writes
+one column of pixel counts per class value; any column
 works, e.g. mean values from
 :func:`~rsgispy.zonalstats.polygon.calc_zonal_band_stats` or the area of each
 restoration potential class from :doc:`multi_criteria_analysis`.
@@ -355,21 +425,37 @@ values around a reference.
    :dedent: 4
 
 The printed table is a check that the zonal statistics worked (percentages
-between 0 and 100, and different between regions):
+between 0 and 100, and different between regions). pandas shows the first
+and last five of the 108 squares:
 
 .. code-block:: text
 
-            name  forest_pct
-   0  North West   28.888889
-   1  North East   29.431818
-   2  South West    5.578704
-   3  South East   57.329545
+       name  forest_pct
+   0     A1        0.00
+   1     A2        0.87
+   2     A3        1.15
+   3     A4        4.86
+   4     A5        5.72
+   ..   ...         ...
+   103   I8       64.66
+   104   I9       15.89
+   105  I10        2.28
+   106  I11       24.45
+   107  I12        2.72
+
+   [108 rows x 2 columns]
+
+The percentages are of the whole square, so the squares on the coast (A1 is
+all sea) include the sea. Half the squares have less than 9 % forest; the
+most wooded are in the south (I8, 65 %) and the east (E12, 60 %), with the
+conifer plantations.
 
 .. figure:: images/maps_choropleth.png
    :width: 70%
-   :alt: Four regions coloured by the percentage of forest.
+   :alt: A 2 km grid over the Aberystwyth area, each square coloured by its percentage of forest.
 
-   Choropleth of the percentage of forest per region.
+   Choropleth of the percentage of forest in each 2 km square, on a fixed 0
+   to 100 % scale. Contains modified Copernicus Sentinel data (2018).
 
 To show point density (e.g. thousands of observations), use
 :func:`~rsgispy.mapping.vector.create_vec_pt_density_map`, which needs an axis
@@ -460,10 +546,12 @@ stretch is then computed for the zoomed area.
 
 .. figure:: images/maps_final.png
    :width: 80%
-   :alt: Land cover map with a river, compass, scale bar, zoom box and inset.
+   :alt: Land cover map of the Aberystwyth area with rivers, compass, scale bar, zoom box and an inset map of Great Britain and Ireland.
 
-   The composed map from Steps 6–8: thematic raster, river, alternating scale
-   bar, compass north arrow, zoom box and inset overview map.
+   The composed map from Steps 6–8: land cover, rivers, alternating scale
+   bar, compass north arrow, zoom box and an inset overview map (±5° around
+   the study area, from the country outlines). Contains modified Copernicus
+   Sentinel data (2018).
 
 Several maps side by side
 -------------------------
@@ -489,9 +577,12 @@ It returns ``(fig, axs)``, with one axis per panel.
 
 .. figure:: images/maps_panels.png
    :width: 100%
-   :alt: Three map panels: the image, the land cover and the score.
+   :alt: Three map panels of the Rheidol valley: the Sentinel-2 image, the land cover and the NDVI.
 
-   The zoom area as three panels, with one legend and one scale bar.
+   The zoom area (the Rheidol valley east of Aberystwyth) as three panels,
+   with one legend, one scale bar and one north arrow. The conifer and
+   deciduous woods on the valley sides stand out in all three. Contains
+   modified Copernicus Sentinel data (2018).
 
 Step 9 — Basemaps (optional, online)
 ------------------------------------
@@ -524,29 +615,25 @@ own imagery (Step 2), as tile services change over time.
 Regenerating the figures
 ------------------------
 
-The figures on this page are made by running the example on the synthetic
-scene used by the tests, at 100 dpi, and reducing the PNGs to 128 colours to
-keep them small. From the repository root:
+The figures on this page are made by running the example on the tutorial
+data at 100 dpi (see `Overview`_), with the data folder of a clone of the
+rsgispy tutorials. From ``docs/examples``:
+
+.. code-block:: bash
+
+   python making_maps_tutorial.py --data-dir ~/rsgispy-tutorials/data \
+       --out-dir maps_tutorial
+
+It takes about half a minute. PNGs over 400 KB were reduced to 256 colours
+to keep them small:
 
 .. code-block:: python
 
-   import sys
-   sys.path[:0] = ["tests", "docs/examples"]
-   import matplotlib
-   matplotlib.use("Agg")
    from PIL import Image
-   from maps_scene import CLASS_NAMES, make_maps_scene
-   import making_maps
 
-   sc = make_maps_scene("/tmp/maps_data")
-   making_maps.run_workflow(sc["s2"], sc["cls"], sc["score"], sc["regions"],
-                            sc["rivers"], sc["overview"], "/tmp/maps",
-                            CLASS_NAMES, dpi=100, dem_img=sc["dem"])
-   for name in ["maps_rgb_stretches", "maps_score", "maps_relief", "maps_land_cover",
-                "maps_choropleth", "maps_final", "maps_panels"]:
-       img = Image.open(f"/tmp/maps/{name}.png").convert("RGB")
-       img.quantize(colors=128).save(f"docs/guides/images/{name}.png",
-                                     optimize=True)
+   img = Image.open("maps_tutorial/maps_panels.png").convert("RGB")
+   img.quantize(colors=256, method=Image.Quantize.FASTOCTREE).save(
+       "docs/guides/images/maps_panels.png", optimize=True)
 
 Performance and large datasets
 ------------------------------

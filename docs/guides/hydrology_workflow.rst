@@ -30,6 +30,14 @@ Why each stage is needed:
    (e.g. UTM). Geographic (latitude/longitude) rasters raise
    :class:`~rsgispy.RSGISPyException`. Step 1 shows how to reproject.
 
+.. seealso::
+
+   The rsgispy tutorials cover this in a notebook you can run:
+   :tutorial:`Hydrological analysis <08_hydrology/01_hydrological_analysis.ipynb>`
+   (section 8), which also maps the flow directions, accumulations, HAND and
+   terrain indices. See :doc:`../tutorials` for how to get the notebooks and
+   their data.
+
 .. contents:: Contents
    :local:
    :depth: 1
@@ -82,14 +90,11 @@ Overview
                                   10. hillshade + streams + catchments map
 
 The code in this guide comes from the example script
-``docs/examples/hydrology_workflow.py`` (included below step by step), which
-the rsgispy test suite runs end to end on a small synthetic DEM
-(``tests/hydro_scene.py``: two tributary valleys joining a main valley, a
-road embankment that dams the main valley, and a closed pit). The scenario
-is a DEM delivered in geographic coordinates, such as the Copernicus GLO-30
-or SRTM DEMs, a vector file of river gauges (with an integer ``gauge_id``
-column), optionally a vector file of mapped rivers and a land cover raster.
-Run it on your own data with:
+``docs/examples/hydrology_workflow.py`` (included below step by step). Its
+inputs are a DEM (in any CRS; if it is in geographic coordinates, such as
+the Copernicus GLO-30 or SRTM DEMs, it is reprojected), a vector file of
+river gauges (with an integer ``gauge_id`` column) and, optionally, a vector
+file of mapped rivers and a land cover raster. Run it on your own data with:
 
 .. code-block:: bash
 
@@ -97,6 +102,37 @@ Run it on your own data with:
        --out-epsg 32630 --out-res 30 --gauges gauges.gpkg \
        --rivers mapped_rivers.gpkg --landcover landcover.tif \
        --stream-threshold 500000 --out-dir hydro_out
+
+**The data on this page.** The printed outputs and the map on this page come
+from the 10 m DEM of the rsgispy tutorials,
+:tutorial-data:`dem_10m_osgb.tif` (about 37 x 38 km around Aberystwyth, west
+Wales, covering the Rheidol and Ystwyth valleys from the Pumlumon uplands to
+the sea; British National Grid, EPSG:27700), and two Natural Resources Wales
+gauging stations: the Rheidol at Llanbadarn Fawr and the Ystwyth at Pont
+Llolwyn, whose catchment areas published by the UK National River Flow
+Archive are about 182 km² and 170 km². The script
+``docs/examples/hydrology_workflow_tutorial.py`` prepares the inputs and
+runs the example (about two minutes):
+
+.. literalinclude:: ../examples/hydrology_workflow_tutorial.py
+   :language: python
+   :start-after: # [tutorial-data]
+   :end-before: # [end-tutorial-data]
+   :dedent: 4
+
+The DEM is already in metres on the British National Grid, so it is not
+reprojected. Its sea is not no data but has an elevation of 0 m (about 8% of
+the image), so the script sets it to no data first: otherwise the sea is a
+huge flat that every river drains into and wanders across to the image edge,
+instead of leaving the DEM at the coast. The gauge coordinates were read from
+a map to about 100 m, which sets ``snap_dist`` (Step 6). The tutorial data
+has no mapped rivers or land cover for this area, so those optional inputs
+are not used. The rsgispy test suite runs the same example end to end on a
+small synthetic DEM (``tests/hydro_scene.py``: a DEM in geographic
+coordinates, which is reprojected to UTM, with two tributary valleys joining
+a main valley, a road embankment that dams the main valley, a closed pit,
+mapped rivers and a land cover raster), so the code on this page is always
+tested.
 
 Step 1 — Preparing the DEM
 --------------------------
@@ -131,12 +167,19 @@ elevations), and is the elevation range plausible?
    :end-before: # [end-step-1-prepare]
    :dedent: 4
 
-For the synthetic DEM this prints:
+For the tutorial DEM (not reprojected) this prints:
 
 .. code-block:: text
 
-   CRS: EPSG:32630, size: 74 x 74, nodata: -9999.0
-   Pixel size: 10.0 x 10.0 m; elevation 120.1 to 215.2 m (mean 159.6 m)
+   CRS: EPSG:27700, size: 3726 x 3757, nodata: -32768.0
+   Pixel size: 10.0 x 10.0 m; elevation 0.0 to 750.4 m (mean 293.6 m)
+
+The CRS is the British National Grid, in metres, and the no data value is
+set. The elevations run from the coast (the lowest land pixels, in the
+estuaries and on the coastal bog, are just above 0 m) to the summit of
+Pumlumon Fawr (752 m on maps). The mean is the mean of the land only: before
+the sea was set to no data it was 270.3 m, pulled down by the 0 m sea
+pixels.
 
 Optional preparation:
 
@@ -183,14 +226,19 @@ its spill level (``filled - original``, metres).
 
 .. code-block:: text
 
-   3 sinks covering 53 pixels; deepest 2.40 m
+   21887 sinks covering 270128 pixels; deepest 8.74 m
 
-How to read the result: thousands of tiny, shallow sinks are normal in a
-30 m DEM and are noise. A few large, deep sinks need a closer look: they may
+How to read the result: thousands of tiny, shallow sinks are normal and are
+noise. Here the 21,887 sinks cover only 2.1% of the land, about a third of
+them are a single pixel and most are less than 0.5 m deep (the tutorial
+notebook counts them). A few large, deep sinks need a closer look: they may
 be real (lakes, quarries, karst depressions that really do not drain) or
-artefacts such as an embankment or a bridge deck blocking a river. Overlay
-the sink raster on imagery to decide. Long, narrow sinks upstream of a road
-are the typical case for breaching rather than filling (Step 3).
+artefacts such as an embankment or a bridge deck blocking a river. In this
+DEM the largest sink (about 1.7 km²) is the Nant-y-moch reservoir, a real
+lake, the deepest (8.74 m) is a corrie lake below Pumlumon Fawr, and the
+flat Cors Fochno raised bog in the north has many large, shallow sinks.
+Overlay the sink raster on imagery to decide. Long, narrow sinks upstream
+of a road are the typical case for breaching rather than filling (Step 3).
 
 Step 3 — Conditioning the DEM
 -----------------------------
@@ -217,8 +265,9 @@ where the cut is at most ``max_breach_depth`` metres deep and at most
 limits from the barriers you expect: road and rail embankments are typically
 2–10 m high and a few pixels wide, so ``max_breach_depth=5`` and
 ``max_breach_length`` of about 10–20 pixels at 30 m (more at finer
-resolution) are reasonable starting points. ``method='fill'`` and
-``method='breach'`` run one method only.
+resolution; the tutorial script uses 30 pixels, 300 m at 10 m) are
+reasonable starting points. ``method='fill'`` and ``method='breach'`` run
+one method only.
 
 If mapped rivers are available (national hydrography, OpenStreetMap
 waterways), pass them as ``streams_vec`` to **burn** them into the DEM before
@@ -260,16 +309,22 @@ the same way (``flat_routing=True``).
 
 .. code-block:: text
 
-   fill: 0.95% of pixels changed, from 0.00 to 2.40 m
-   breach: 0.13% of pixels changed, from -3.00 to 0.00 m
-   condition_dem: 0.66% of pixels changed, from -5.00 to 0.00 m
-   Filled DEM: 53 flat pixels
+   fill: 1.92% of pixels changed, from 0.00 to 8.74 m
+   breach: 0.58% of pixels changed, from -8.82 to 0.00 m
+   condition_dem: 0.77% of pixels changed, from -6.39 to 8.74 m
+   Filled DEM: 345011 flat pixels
 
-(The percentages are of all the pixels in the image.) Breaching changed far
-fewer pixels than filling, and the combined method lowered pixels only (by up
-to 5 m, the 3 m breach through the embankment plus the 2 m burn). On real
-data, look at the difference image: large raised areas mean big fills (check
-whether they are real lakes), and long negative lines away from the mapped
+(The percentages are of all the pixels in the image, including the sea.)
+Filling changed the most pixels, all raised, by up to the depth of the
+deepest sink, and it left 34.5 km² of flats. Breaching changed less than a
+third as many pixels, all lowered; without limits it drained every sink,
+including the corrie lake, whose rim it cut by 8.8 m. The combined method
+changed 0.77% of the pixels: it breached the shallow, short obstructions
+(cutting no more than about 6 m, the 5 m limit plus the small gradient given
+to the breach channel) and filled the sinks it could not breach within the
+limits (the reservoir, the bog pools and the corrie lake, raised by up to
+8.74 m). Look at the difference image: large raised areas mean big fills
+(check whether they are real lakes), and long negative lines away from the
 rivers mean breach limits that are too generous.
 
 Step 4 — Flow routing
@@ -318,12 +373,16 @@ flow path, used in time-of-concentration formulas).
 
 .. code-block:: text
 
-   D8: largest contributing area 0.410 km2
-   Dinf: largest contributing area 0.410 km2
-   MFD: largest contributing area 0.410 km2
+   D8: largest contributing area 193.254 km2
+   Dinf: largest contributing area 193.243 km2
+   MFD: largest contributing area 193.121 km2
 
-All three methods agree at the outlet, as they must: the whole DEM drains
-through it. How to check routing worked: display the accumulation raster
+The largest contributing area is the Ystwyth where it reaches the sea, and
+the three methods agree to within 0.1%: the same rivers reach the coast
+whichever way the water is split on the hillslopes (D-Infinity and MFD can
+send a little water across low divides, so their totals for a river differ
+slightly from D8's). How to check
+routing worked: display the accumulation raster
 with a logarithmic stretch; the valleys should appear as continuous bright
 lines that end at the DEM edge or at real sinks. Lines that stop in the
 middle of a valley show a sink that was not removed.
@@ -382,17 +441,29 @@ directions:
 
 .. code-block:: text
 
-   3 reaches, 954 m of channel, maximum Strahler order 2
+   627 reaches, 934078 m of channel, maximum Strahler order 4
 
-The stream table for the synthetic DEM (two first-order tributaries joining
-the second-order main channel):
+With a 1 km² threshold the 1,289 km² of land has 934 km of channel, a
+drainage density of 0.72 km/km². The first rows of the stream table
+(``streams_gdf.drop(columns="geometry").head().round(2)``; ``max_acc`` is in
+cells of 100 m², as the D8 accumulation is in cells):
 
 .. code-block:: text
 
-      link_id  down_link_id  order  length_m  elev_start  elev_end  drop_m  slope  max_acc
-   0        1             3      1    322.13      137.43    129.66    7.77   0.02   1041.0
-   1        2             3      1    312.13      137.26    129.66    7.60   0.02    986.0
-   2        3            -1      2    320.00      129.66    118.06   11.60   0.04   4095.0
+      link_id  down_link_id  order  length_m  elev_start  elev_end  drop_m  slope   max_acc
+   0        1            -1      3   1119.12       55.91     46.41    9.50   0.01  357394.0
+   1        2            -1      2   2038.53      124.97     89.58   35.38   0.02   95360.0
+   2        3            -1      2    746.69        1.84      1.26    0.58   0.00   56173.0
+   3        4             3      1     14.14        1.84      1.84    0.00   0.00   10042.0
+   4        5             2      1   1450.12      188.62    124.97   63.66   0.04   18046.0
+
+Reaches 1 to 3 end at the northern edge of the DEM (``down_link_id`` -1),
+which cuts the Dyfi catchment. There are 340 first-order, 163 second-order,
+120 third-order and 4 fourth-order reaches: the Rheidol and the Ystwyth are
+third-order rivers with this threshold. These are counts of reaches (links
+between confluences), not of rivers: every tributary that joins a river
+starts a new reach. A smaller threshold adds first-order streams and raises
+the order of every river downstream of them.
 
 Step 6 — Catchments
 -------------------
@@ -449,13 +520,27 @@ gives the main stem of the river above each gauge with its
 
 .. code-block:: text
 
-      watershed_id   area_m2  perimeter_m    elev_min   elev_mean    elev_max
-   0             1  281600.0       2540.0  118.537605  160.158118  215.177948
-   1             2  100300.0       1320.0  130.938766  157.951259  214.477188
+      gauge_id                        name  snap_dist_m  snapped_acc
+   0         1  Rheidol at Llanbadarn Fawr   100.000000    1832325.0
+   1         2     Ystwyth at Pont Llolwyn    90.553851    1754052.0
+      watershed_id      area_m2  perimeter_m  elev_min  elev_mean  elev_max
+   0             1  183232500.0     130440.0       3.2      343.1     750.4
+   1             2  175405200.0     128100.0      11.6      261.7     610.5
 
-Gauge 2 is on a tributary upstream of gauge 1, so watershed 1 is the
-incremental area (2816 pixels): its snapped accumulation is 3819 pixels,
-which is 2816 plus the 1003 pixels of watershed 2.
+Both gauges moved 90–100 m onto the river, the positional error of their
+coordinates, and ``snapped_acc`` (in cells of 100 m²) gives catchments of
+183.2 km² above the Rheidol gauge and 175.4 km² above the Ystwyth gauge,
+the same as the polygon areas because the gauges are not nested. The
+published areas are about 182 and 170 km², so the Rheidol is within 1% and
+the Ystwyth within about 3%: the flow routing works, given that the gauge
+positions are approximate and the published areas were themselves derived
+from maps or a coarser DEM. The Rheidol gauge moved the full ``snap_dist``;
+when a gauge moves the full distance, check on the map that it moved along
+its own river and not onto another one. The Rheidol's catchment reaches the
+summit of Pumlumon Fawr (``elev_max`` 750.4 m) and is higher on average than
+the Ystwyth's. Had the river mouths also been given as points (as in the
+tutorial notebook), the gauges would be nested inside them and the mouths'
+watersheds would be only the few km² between each gauge and the sea.
 
 Step 7 — Summarising the catchments
 -----------------------------------
@@ -490,13 +575,19 @@ polygons.
 
 .. code-block:: text
 
-      watershed_id  pxl_count  slope_mean  slope_max  dist_stream_mean  dist_stream_max  lc_mode  prop_forest  prop_grassland  prop_urban
-   1             1       2816      14.478     30.444           143.663          336.569      1.0        0.775           0.189       0.036
-   2             2       1003      14.564     26.127           110.296          294.558      1.0        0.784           0.216       0.000
+      watershed_id  pxl_count  slope_mean  slope_max  dist_stream_mean  dist_stream_max
+   1             1    1832325      11.835     61.321           646.976         2937.645
+   2             2    1754052       9.722     61.967           704.600         2788.356
 
-Slopes are in degrees and distances in metres; the land cover proportions
-of each catchment add up to 1. The same approach works for the
-subcatchment or basin rasters of Step 6.
+Slopes are in degrees and distances in metres. The Rheidol's catchment
+(watershed 1) is steeper on average than the Ystwyth's, and in both a pixel
+is on average about 650–700 m from a stream along its flow path (with a
+1 km² threshold). The tutorial data has no land cover for this area, so there
+are no land cover columns; with a land cover raster (``landcover_img``, as in
+the test scene) the table also has the most common class (``lc_mode``) and
+one ``prop_<class name>`` column per class, which add up to 1 for each
+catchment. The same approach works for the subcatchment or basin rasters of
+Step 6.
 
 Step 8 — HAND and flood mapping
 -------------------------------
@@ -529,10 +620,18 @@ estimates, not as a replacement for a hydraulic model.
 
 .. code-block:: text
 
-   Stage 0.5 m: 1.44 ha inundated
-   Stage 1 m: 2.46 ha inundated
-   Stage 2 m: 4.01 ha inundated
-   Stage 5 m: 8.53 ha inundated
+   Stage 1 m: 4971.96 ha inundated
+   Stage 2 m: 7937.37 ha inundated
+   Stage 5 m: 13451.83 ha inundated
+   Stage 10 m: 19882.94 ha inundated
+
+The tutorial script uses the stages 1, 2, 5 and 10 m. A 1 m rise floods
+about 50 km², 3.9% of the 1,289 km² of land, and a 10 m rise about
+199 km² (15%). These areas are large because the same stage is applied
+along all 934 km of channel, including the small upland streams of the
+1 km² network, where a 5 or 10 m rise is not realistic; for a flood map of
+the main rivers, use a larger threshold or a stage raster that is zero away
+from the rivers of interest.
 
 The flooded area is the proportion of pixels with a depth greater than zero
 (:func:`~rsgispy.imagecalc.maths.calc_prop_true_exp`) multiplied by the
@@ -589,9 +688,16 @@ its units with ``slope_units``.
 
 .. code-block:: text
 
-   TWI: 3.18 to 15.34 (mean 6.06)
-   SPI: 0.23 to 2898.81 (mean 40.75)
-   LS: 0.17 to 29.62 (mean 9.93)
+   TWI: 2.07 to 23.67 (mean 6.90)
+   SPI: 0.00 to 5868154.00 (mean 543.66)
+   LS: 0.00 to 2951.38 (mean 8.02)
+
+The mean TWI of 6.9 is typical of hillslopes; most pixels with a TWI above
+15 are on the stream network, and the rest on flat valley floors. SPI and LS
+show how skewed these indices are: their maxima are on river channels, where
+the specific catchment area is very large, while the means are small.
+Use percentiles or a logarithmic stretch, not the minimum and maximum, to
+display them; the zero minima are flat pixels.
 
 Step 10 — Mapping the results
 -----------------------------
@@ -604,6 +710,9 @@ layers on top with :func:`rsgispy.mapping.vector.create_vec_lyr_map`. The
 vector layers are drawn in order with the ``plot_zorders`` given. Lines are
 drawn in the line colour, and a fill colour of ``'none'`` draws polygons as
 outlines only.
+The map is zoomed on the gauged watersheds (their bounds plus a 5% margin,
+kept within the DEM) and adds the main stems traced upstream from the
+gauges.
 
 .. literalinclude:: ../examples/hydrology_workflow.py
    :language: python
@@ -612,18 +721,21 @@ outlines only.
    :dedent: 4
 
 .. figure:: images/hydrology_map.png
-   :alt: Hillshade of the synthetic DEM with two tributaries joining a main
-         river, reach subcatchments, two gauged watersheds and the snapped
-         gauges.
-   :width: 70%
+   :alt: Hillshade of the Rheidol and Ystwyth valleys east of Aberystwyth
+         with the modelled streams, reach subcatchments, the watersheds
+         above the two gauging stations, their main stems and the snapped
+         gauges near the coast.
+   :width: 80%
 
-   The synthetic catchment: streams (blue), reach subcatchments (grey),
-   gauged watersheds (red) and snapped gauges (red points). The
-   embankment across the main valley and the pit between the tributaries
-   are visible in the hillshade. The figure is written by Step 10 when the
-   example is run on the test scene (``tests/hydro_scene.py``); copy
-   ``hydrology_map.png`` from the output directory to
-   ``docs/guides/images/`` to regenerate it.
+   The Rheidol (north) and Ystwyth (south) catchments above the gauging
+   stations at Llanbadarn Fawr and Pont Llolwyn: streams with a 1 km²
+   threshold (blue), reach subcatchments (grey), gauged watersheds (red),
+   main stems traced upstream from the gauges (dark blue) and snapped gauges
+   (red points). The Rheidol's main stem runs from the uplands north of the
+   Nant-y-moch reservoir south to Devil's Bridge and then west to the
+   coast. Made with ``docs/examples/hydrology_workflow_tutorial.py`` from
+   the tutorial DEM; copy ``hydrology_map.png`` from its output directory
+   to ``docs/guides/images/`` to regenerate it.
 
 For a thematic map of a raster output (e.g. the Strahler orders or the
 watershed IDs), :func:`rsgispy.mapping.raster.create_thematic_raster_map`

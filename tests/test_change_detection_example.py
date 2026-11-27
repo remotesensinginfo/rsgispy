@@ -104,7 +104,7 @@ def test_guide_markers_exist():
     markers = [
         line.split(":start-after:")[1].strip()
         for line in guide.splitlines()
-        if ":start-after:" in line
+        if ":start-after:" in line and "[step-" in line
     ]
     assert len(markers) >= 7
     for marker in markers:

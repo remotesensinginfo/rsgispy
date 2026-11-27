@@ -39,6 +39,7 @@ def run_workflow(
     ref_col: str = "ref_cls",
     band_map: Optional[Mapping[int, str]] = None,
     cva_bands: Sequence[int] = (3, 7, 9, 10),
+    in_gain: float = 10000.0,
     thres_method: str = "li",
     n_acc_pts: int = 500,
     use_pbar: bool = True,
@@ -48,7 +49,8 @@ def run_workflow(
     in which ``forest_id`` is forest; ``acc_pts_vec`` (optional) holds
     accuracy points labelled with the reference class name ("Change" or
     "No change") in ``ref_col``. ``band_map`` maps band indices to
-    ``calc_indices`` band names (default: ``S2_BAND_MAP``).
+    ``calc_indices`` band names (default: ``S2_BAND_MAP``) and ``in_gain``
+    is the reflectance scale factor of the images (10000 for Sentinel-2).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-statements,import-outside-toplevel
@@ -79,7 +81,7 @@ def run_workflow(
             idx_imgs[date],
             band_names=dict(band_map),
             indices=["NDVI", "NBR"],  # band 1 NDVI, band 2 NBR
-            in_gain=10000.0,  # reflectance x 10000 -> 0-1
+            in_gain=in_gain,  # e.g. reflectance x 10000 -> 0-1
             out_no_data_val=-999.0,
             use_pbar=use_pbar,
         )
@@ -130,7 +132,7 @@ def run_workflow(
     dndvi_thres = thresholds[thres_method]
     fig, ax = plot_histogram_threshold(
         dndvi, threshold=dndvi_thres, title_str="dNDVI", x_label="dNDVI",
-        out_plot_file=os.path.join(out_dir, "dndvi_hist.png"),
+        out_plot_file=os.path.join(out_dir, "dndvi_hist.png"), out_dpi=100,
     )
 
     # 0 = no data, 1 = no change, 2 = vegetation loss.

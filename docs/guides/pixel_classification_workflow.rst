@@ -10,10 +10,12 @@ model is applied to the whole image. The result is post-processed to a
 minimum mapping unit, its accuracy and the class areas are estimated from an
 independent stratified random sample, and it is drawn as a map.
 
-The scenario is the same as in the object-based guide
-(:doc:`segment_ml_workflow`): a 10 m Sentinel-2 surface reflectance image, a
-DEM, and four land cover classes (Water, Forest, Grass and Urban), so the two
-approaches can be compared directly.
+The inputs are the same as in the object-based guide
+(:doc:`segment_ml_workflow`): a Sentinel-2 surface reflectance image, a DEM
+and training polygons for each land cover class, so the two approaches can
+be compared directly. On this page they come from the rsgispy tutorials:
+nine land cover classes around Aberystwyth, west Wales (see `The data on
+this page`_).
 
 Why classify pixels?
 
@@ -30,6 +32,19 @@ differently from their neighbours. Step 9 removes most of it. When the
 objects of interest are much larger than a pixel, or their shape and
 context matter, the segment workflow (:doc:`segment_ml_workflow`) usually
 gives a cleaner map.
+
+.. seealso::
+
+   The rsgispy tutorials cover this in notebooks you can run:
+   :tutorial:`Supervised pixel classification
+   <04_image_classification/03_supervised_pixel_classification.ipynb>`
+   (section 4, with the same Sentinel-2 image and training polygons as this
+   page), and the rule-based and unsupervised classification notebooks
+   before it in :tutorial-dir:`section 4 <04_image_classification>`.
+   :tutorial:`Chaining indices, classification and filtering in a tile graph
+   <09_tile_graph_workflows/01_indices_classification_filtering.ipynb>`
+   (section 9) runs a pixel classification in one pass with a tile graph.
+   See :doc:`../tutorials` for how to get the notebooks and their data.
 
 .. contents:: Contents
    :local:
@@ -94,13 +109,12 @@ Overview
 
 The code in this guide comes from the example script
 ``docs/examples/pixel_classification_workflow.py`` (included below step by
-step), which is run by the rsgispy test suite on a small synthetic scene. The
-inputs are:
+step). The inputs are:
 
 * a Sentinel-2 surface reflectance stack in the band order written by
   :func:`~rsgispy.imagecalibration.sensorlvl2data.create_stacked_sen2_esa_l2a_img`
-  (B2, B3, B4, B5, B6, B7, B8, B8A, B11, B12 at 10 m; reflectance x 10000;
-  no data value 0). Bands 1, 2, 3, 7, 9 and 10 are used and named Blue,
+  (B2, B3, B4, B5, B6, B7, B8, B8A, B11, B12; reflectance x ``refl_gain``,
+  10000 by default; no data value 0). Bands 1, 2, 3, 7, 9 and 10 are used and named Blue,
   Green, Red, NIR, SWIR1 and SWIR2;
 * a DEM in a projected coordinate system with metre units (it does not need
   to have the same resolution or extent as the image);
@@ -113,6 +127,41 @@ Run it on your own data with:
    python docs/examples/pixel_classification_workflow.py --s2 s2_sref_10m.tif \
        --dem dem_30m.tif --train Water=water.gpkg Forest=forest.gpkg \
        Grass=grass.gpkg Urban=urban.gpkg --out-dir outputs
+
+The data on this page
+---------------------
+
+The printed outputs and the map on this page come from the data of the
+rsgispy tutorials, as used in the supervised pixel classification notebook:
+
+* the 20 m Sentinel-2 image of 29 June 2018,
+  :tutorial-data:`sen2_20180629_t30uvd_orb037_osgb_stdsref_20m.tif`
+  (British National Grid, the band order above, reflectance x 1000, no data
+  value 0), subset to a 36 x 30 km area around Aberystwyth (1800 x 1500
+  pixels) inside the DEM: from the sea and the Dyfi estuary in the west to
+  the conifer plantations and the uplands of Pumlumon in the east;
+* the 10 m DEM :tutorial-data:`dem_10m_osgb.tif` (the sea is 0 m, so its
+  slope is 0);
+* the training polygons :tutorial-data:`cls_data/aber_sen2_cls_training.gpkg`,
+  one layer per class. Only the polygons inside the area are used, and the
+  long and short grass classes are merged into one Grass class, because
+  only 3 small Grass_Long polygons are in the area: nine classes, with the
+  class IDs and colours of the notebook.
+
+The script ``docs/examples/pixel_classification_workflow_tutorial.py``
+prepares these inputs and runs the example (about three minutes):
+
+.. literalinclude:: ../examples/pixel_classification_workflow_tutorial.py
+   :language: python
+   :start-after: # [tutorial-data]
+   :end-before: # [end-tutorial-data]
+   :dedent: 4
+
+The tutorial data has no independent reference sample, so the accuracy
+assessment of step 10 is not run on it (the sample of points to label is
+still created). The rsgispy test suite runs the same example end to end on
+a small synthetic scene (``tests/pixel_ml_scene.py``: four classes, a DEM
+and labelled accuracy points), so the code on this page is always tested.
 
 Step 1 — Features
 -----------------
@@ -141,12 +190,15 @@ cover are:
 * **Texture** (optional) —
   :func:`~rsgispy.imagefilter.texture.apply_glcm_filter` computes grey-level
   co-occurrence (GLCM) statistics in a moving window (here homogeneity and
-  entropy of the NIR band in a 5 x 5 window). Texture helps with classes that
+  energy of the NIR band in a 5 x 5 window). Texture helps with classes that
   are spectrally mixed but spatially distinctive (e.g. urban areas). Larger
   windows give smoother texture but blur class boundaries. GLCM works on every
   band of its input, so a one-band VRT
   (:func:`~rsgispy.imageutils.vrt.create_vrt_band_subset`) selects the NIR
-  band without copying it.
+  band without copying it. The texture image takes the input's no data value
+  (``0``), so choose properties that are never ``0`` in valid areas:
+  homogeneity and energy are 1 in a uniform window, but entropy, contrast
+  and dissimilarity are 0, which would mask calm water.
 
 **All feature images must be on exactly the same pixel grid** (CRS, pixel
 size and alignment, extent). The indices and texture are derived from the
@@ -206,13 +258,13 @@ functions accept either the object or the JSON file:
    :end-before: # [end-step-2-config]
    :dedent: 4
 
-which prints the feature names and the output IDs, e.g.:
+which prints the feature names and the output IDs (in the order of the
+class names):
 
 .. code-block:: text
 
-   ['Blue', 'Green', 'Red', 'NIR', 'SWIR1', 'SWIR2', 'NDVI', 'MNDWI', 'NDBI',
-    'slope', 'NIR_homogeneity', 'NIR_entropy']
-   {1: 'Water', 2: 'Forest', 3: 'Grass', 4: 'Urban'}
+   ['Blue', 'Green', 'Red', 'NIR', 'SWIR1', 'SWIR2', 'NDVI', 'MNDWI', 'NDBI', 'slope', 'NIR_homogeneity', 'NIR_energy']
+   {1: 'Artificial_Surfaces', 2: 'Bare_Rock_Sand', 10: 'Bracken', 3: 'Conifer_Forest', 4: 'Deciduous_Forest', 5: 'Grass', 7: 'NonPhoto_Veg', 8: 'Scrub', 9: 'Water'}
 
 Step 3 — Training samples
 -------------------------
@@ -282,8 +334,37 @@ existing table by it (``group_col='train_grp'``).
    :end-before: # [end-step-3-samples]
    :dedent: 4
 
+For the tutorial data this prints:
+
+.. code-block:: text
+
+   class_name
+   Bare_Rock_Sand         1580
+   Scrub                  1466
+   NonPhoto_Veg            662
+   Conifer_Forest          512
+   Water                   333
+   Artificial_Surfaces     273
+   Bracken                 254
+   Grass                   239
+   Deciduous_Forest        137
+   Name: count, dtype: int64
+   train 5456 pixels from {'Artificial_Surfaces': 20, 'Bare_Rock_Sand': 10, 'Bracken': 13, 'Conifer_Forest': 9, 'Deciduous_Forest': 3, 'Grass': 8, 'NonPhoto_Veg': 13, 'Scrub': 16, 'Water': 5} polygons
+   valid 1728 pixels from {'Artificial_Surfaces': 5, 'Bare_Rock_Sand': 6, 'Bracken': 6, 'Conifer_Forest': 2, 'Deciduous_Forest': 1, 'Grass': 2, 'NonPhoto_Veg': 4, 'Scrub': 2, 'Water': 2} polygons
+   test 1611 pixels from {'Artificial_Surfaces': 4, 'Bare_Rock_Sand': 6, 'Bracken': 2, 'Conifer_Forest': 4, 'Deciduous_Forest': 2, 'Grass': 2, 'NonPhoto_Veg': 5, 'Scrub': 3, 'Water': 1} polygons
+
+Every class is in every table, but the classes are unbalanced (1580 training
+pixels of Bare_Rock_Sand, 137 of Deciduous_Forest; ``max_cls_smpls`` does
+not cap them, as no class has 20,000), and some classes have very few
+polygons: the test set has only one Water polygon and two Deciduous_Forest
+polygons, so the test accuracy of those classes rests on one or two places.
+The proportions also differ from 60/20/20 % per class, because whole
+polygons of different sizes are dealt out.
+
 **Check:** every class has enough samples (at least a few hundred pixels from
-several polygons), and every table has polygons of every class.
+several polygons), and every table has polygons of every class. Here
+Deciduous_Forest, Grass and Water are below that; more polygons for them
+would be the first improvement.
 
 Step 4 — Exploring the features
 -------------------------------
@@ -315,6 +396,28 @@ interpretation (step 7) harder, because importance is shared between them.
    :start-after: # [step-4-explore]
    :end-before: # [end-step-4-explore]
    :dedent: 4
+
+For the tutorial data, the visible bands are highly correlated (r = 0.95 to
+0.97 between Blue, Green and Red), and so are the two texture features
+(r = 0.94). Most VIFs are far above 10 (Green 196.5, Red 187.6, MNDWI
+158.7, NDVI 142.7): the indices are calculated from the bands, so each is
+nearly predicted by the others. Only the slope (3.5) is clearly independent:
+
+.. code-block:: text
+
+   Green              196.5
+   Red                187.6
+   MNDWI              158.7
+   NDVI               142.7
+   NDBI               113.0
+   SWIR1               92.2
+   Blue                68.3
+   SWIR2               56.3
+   NIR                 53.8
+   NIR_homogeneity     13.6
+   NIR_energy          11.5
+   slope                3.5
+   Name: VIF, dtype: float64
 
 Step 5 — Feature selection
 --------------------------
@@ -351,7 +454,7 @@ questions, so it is worth comparing them:
   thorough, and the slowest.
 
 Features chosen by several methods are a safe choice. Here the RFE result is
-used. To **apply the selection**, a new configuration is written that keeps
+used (with the tutorial data it keeps all twelve features). To **apply the selection**, a new configuration is written that keeps
 only the selected bands of each image (images with no selected bands are
 dropped). Every later step reads this configuration, so the model, the
 interpretation and the classified image use the same features in the same
@@ -363,14 +466,24 @@ order, and only the selected bands are read when the model is applied.
    :end-before: # [end-step-5-select]
    :dedent: 4
 
-The selections look like:
+For the tutorial data the selections are:
 
 .. code-block:: text
 
-   corr: ['NIR_entropy', 'MNDWI', 'slope', 'SWIR2', 'Red', 'NDBI', 'Blue']
-   vif: ['Blue', 'Red', 'NIR', 'NDBI', 'slope', 'NIR_homogeneity', 'NIR_entropy']
-   rfe: ['Red', 'NIR', 'NDVI']
-   model: ['Blue', 'Green', 'Red', 'SWIR1', 'SWIR2', 'NDVI']
+   corr: ['SWIR1', 'slope', 'MNDWI', 'Blue', 'NIR_energy']
+   vif: ['Blue', 'NIR', 'NDVI', 'NDBI', 'slope', 'NIR_homogeneity', 'NIR_energy']
+   rfe: ['Blue', 'Green', 'Red', 'NIR', 'SWIR1', 'SWIR2', 'NDVI', 'MNDWI', 'NDBI', 'slope', 'NIR_homogeneity', 'NIR_energy']
+   model: ['Green', 'Red', 'NIR', 'SWIR1', 'NDVI', 'MNDWI']
+   boruta: ['Blue', 'Green', 'Red', 'NIR', 'SWIR1', 'SWIR2', 'NDVI', 'MNDWI', 'NDBI', 'slope', 'NIR_homogeneity', 'NIR_energy']
+
+The two methods that ignore the labels (``corr`` and ``vif``) remove the
+correlated bands and indices, keeping one of each group. The two methods
+that measure how much each feature helps the Random Forest (RFE with
+cross-validation and BorutaShap) keep all twelve: with nine classes, each
+feature helps to separate some pair of classes. ``model`` keeps the six
+features above the median importance. Agreement is low, as is usual with
+many correlated features; with a Random Forest, keeping all the features is
+reasonable here.
 
 Step 6 — Training and optimisation
 ----------------------------------
@@ -411,7 +524,17 @@ reports the training, validation and test metrics and saves the model (a
 The metrics dictionary has ``train_accuracy``, ``train_bal_accuracy``,
 ``test_accuracy``, ``test_bal_accuracy`` and the same for ``valid_``. A
 training accuracy close to 1 with a much lower test accuracy means the model
-is over-fitted.
+is over-fitted. For the tutorial data it prints:
+
+.. code-block:: text
+
+   {'train_accuracy': 0.998, 'train_bal_accuracy': 0.999, 'test_accuracy': 0.909, 'test_bal_accuracy': 0.862, 'valid_accuracy': 0.959, 'valid_bal_accuracy': 0.958}
+
+The training accuracy says little (a Random Forest nearly memorises its
+training pixels). The test accuracy is lower than the validation accuracy,
+and the balanced test accuracy lower still, because some classes are
+represented in the test table by one or two polygons (step 3): if one of
+those polygons is hard, the class's recall falls a long way.
 
 **Gradient boosted trees.** XGBoost, LightGBM and CatBoost
 (:mod:`~rsgispy.classification.classxgboost`,
@@ -432,6 +555,12 @@ then evaluates the optimised model on the test set and saves it.
    :start-after: # [step-6b-train-gbdt]
    :end-before: # [end-step-6b-train-gbdt]
    :dedent: 4
+
+For the tutorial data XGBoost does a little better on the same test table:
+
+.. code-block:: text
+
+   {'train_accuracy': 0.998, 'train_bal_accuracy': 0.996, 'test_accuracy': 0.935, 'test_bal_accuracy': 0.908}
 
 **Which model?** A Random Forest is a robust default: it has few important
 parameters, is hard to over-fit badly and works well with a few thousand
@@ -459,6 +588,20 @@ between folds shows that accuracy varies across the area.
    :start-after: # [step-6c-nested-cv]
    :end-before: # [end-step-6c-nested-cv]
    :dedent: 4
+
+For the tutorial data this prints:
+
+.. code-block:: text
+
+   Spatial CV accuracy: 0.905 +/- 0.070
+   {'accuracy': 0.9092666287663446, 'macro_f1': 0.788052816327451}
+
+The standard deviation of the accuracy between the folds is 7 percentage
+points, so some parts of the area are mapped much better than others, and the macro
+F1 score (0.79), which weights every class equally, is much lower than the
+accuracy: the large classes are mapped well and some small ones poorly.
+That is the same message as the balanced test accuracy above, from an
+estimate that does not depend on one test split.
 
 Step 7 — Interpreting the model
 -------------------------------
@@ -516,6 +659,37 @@ the relationships make physical sense.
    :end-before: # [end-step-7-interpret]
    :dedent: 4
 
+For the tutorial data the importance table is:
+
+.. code-block:: text
+
+               feature  model_importance  importance_mean  importance_std  rank
+   0             MNDWI          0.129242         0.052762        0.004896     1
+   1             Green          0.116710         0.025202        0.002737     2
+   2              NDVI          0.124393         0.021353        0.001760     3
+   3               NIR          0.101657         0.003911        0.000559     4
+   4               Red          0.097960         0.001055        0.002777     5
+   5             slope          0.036960        -0.000248        0.001337     6
+   6              NDBI          0.068953        -0.000931        0.001249     7
+   7        NIR_energy          0.020638        -0.002173        0.001648     8
+   8             SWIR2          0.097266        -0.003538        0.002791     9
+   9   NIR_homogeneity          0.017476        -0.004780        0.002545    10
+   10            SWIR1          0.101742        -0.005525        0.002363    11
+   11             Blue          0.087005        -0.020857        0.003018    12
+
+The impurity importance (``model_importance``) is spread over all the
+spectral features, as the trees use whichever of the correlated features
+comes first. The permutation importance on the test table is clearer: only
+MNDWI, Green and NDVI lower the test accuracy much when shuffled. Shuffling
+most other features changes it by less than 1 %, because a correlated
+feature carries the same information, and shuffling Blue even *raises* it by
+2 %: the model has learnt something about Blue in the training polygons that
+does not hold in the test polygons, a sign of over-fitting to particular
+places. The texture and the slope add little here. The Sobol total indices
+of the Water probability are dominated by NIR (0.50), in which open water
+is much darker than land, and Green (0.42), the two bands of the NDWI water
+index; every other feature is below 0.03.
+
 Step 8 — Applying the classifier
 --------------------------------
 
@@ -548,6 +722,17 @@ The outputs are:
    :end-before: # [end-step-8-apply]
    :dedent: 4
 
+**Look at the maps, not only the scores.** With the tutorial data the
+XGBoost model had the higher test accuracy (step 6), but its map
+(``xgb_classes.tif``) agrees with the Random Forest map at only 54 % of the
+pixels: it maps 94 % of the Random Forest's Water, almost all of it open
+sea, as Bare_Rock_Sand, and 58 % of its Scrub as Grass. All the Water
+training polygons in the area are on inland reservoirs, none in the sea, so
+the sea is outside the training data and the two models extrapolate to it
+differently. No test table drawn from
+the training polygons can show this; looking at the map, and an independent
+accuracy assessment (step 10), can.
+
 For more control, :mod:`rsgispy.ml.predict`
 (:func:`~rsgispy.ml.predict.predict_raster`,
 :func:`~rsgispy.ml.predict.predict_proba_raster`, which can also write a
@@ -573,8 +758,8 @@ cleans them up in one pass:
 * a **sieve** (``sieve_size_threshold``) merges connected regions smaller than
   the **minimum mapping unit** (MMU) into the neighbouring class they share
   most boundary with. The MMU is
-  set by the map's purpose; for example 0.1 ha is 10 Sentinel-2 pixels
-  (100 m² each). ``sieve_connectivity=8`` counts diagonal neighbours as
+  set by the map's purpose; for example 0.1 ha is 10 Sentinel-2 pixels of
+  10 m (100 m² each). The tutorial run uses 5 pixels of 20 m (0.2 ha). ``sieve_connectivity=8`` counts diagonal neighbours as
   connected.
 
 :func:`~rsgispy.classification.classpostprocess.apply_majority_filter` and
@@ -588,7 +773,11 @@ filter on its own. The colour table is copied to the output.
    :dedent: 4
 
 **Check:** compare the class areas before and after; a large change in a
-class means the MMU or the filter is too aggressive for it.
+class means the MMU or the filter is too aggressive for it. With the tutorial
+data, the post-processing changes 11 % of the pixels. The small and narrow
+classes lose most: Artificial_Surfaces (-6.2 %), Bare_Rock_Sand (-7.1 %)
+and NonPhoto_Veg (-6.2 %), while Conifer_Forest (+4.2 %) and Scrub
+(+1.9 %), which form large patches, gain.
 
 Step 10 — Accuracy assessment
 -----------------------------
@@ -646,6 +835,11 @@ is given (``--acc-pts``).
    :end-before: # [end-step-10-accuracy]
    :dedent: 4
 
+For the tutorial map, 636 points are drawn: 50 for each of the six smallest
+classes (``min_cls_smpls``) and the rest in proportion to area (158 for
+Scrub, 99 for Grass, 79 for Bracken). The tutorial data has no labels for
+them, so the assessment itself is not run on this page.
+
 How many points? Fifty to one hundred per class is a common rule of thumb;
 more are needed for classes whose user's accuracy is expected to be low or
 whose area must be estimated precisely. Points outside the classified area
@@ -667,6 +861,20 @@ from the configuration (``classes_info`` also accepts a JSON file or a
    :start-after: # [step-11-map]
    :end-before: # [end-step-11-map]
    :dedent: 4
+
+.. figure:: images/pixel_classification_map.png
+   :alt: Land cover map of a 36 x 30 km area around Aberystwyth with nine
+         classes and a legend: water in the sea, reservoirs and the Dyfi
+         estuary, bare sand in the estuary, grass and bracken in the
+         lowlands, scrub and conifer forest in the uplands.
+   :width: 85%
+
+   The post-processed Random Forest map (``land_cover_map.png``) of the
+   tutorial data: the sea and the reservoirs are water, the sands of the
+   Dyfi estuary bare, Aberystwyth on the coast artificial surfaces; grass
+   and bracken dominate the lowlands, scrub (here moorland vegetation) and
+   conifer plantations the uplands. Contains modified Copernicus Sentinel
+   data (2018).
 
 Step 12 — Unsupervised alternative
 ----------------------------------
@@ -734,7 +942,8 @@ Common problems
   for the Sentinel-2 stack, ``-9999`` for the indices); a missing no data
   value lets fill values into the training data. GLCM texture uses the input
   no data value for its output, so a valid texture value equal to it would
-  be masked.
+  be masked: with GLCM entropy (0 in a uniform window) and no data value 0,
+  the calm sea of the tutorial image was left unclassified (step 1).
 * **"fewer than the 3 sets requested"** — a class has fewer training
   polygons than tables, so the grouped split cannot give every table a
   polygon of it. Add training polygons (several small polygons spread over

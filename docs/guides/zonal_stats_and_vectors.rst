@@ -42,6 +42,14 @@ All the recipes use the same files and the same conventions: a Sentinel-2
 surface reflectance image, field polygons, survey points and a region of
 interest, all in one projected CRS (metres).
 
+.. seealso::
+
+   The rsgispy tutorials cover zonal statistics in a notebook you can run:
+   :tutorial:`Zonal statistics <03_vector_data_and_zonal_stats/01_zonal_statistics.ipynb>`
+   (section 3), with point values, buffered points and a time series of
+   Sentinel-1 backscatter for rice fields in the Mekong Delta. See
+   :doc:`../tutorials` for how to get them and their data.
+
 .. contents:: Contents
    :local:
    :depth: 1

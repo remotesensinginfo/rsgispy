@@ -9,6 +9,8 @@ Ecosystem (OData), NASA CMR, OpenStreetMap, Planet Data/Orders API, and USGS M2M
 
    Guide: :doc:`guides/analysis_ready_data`
 
+   Tutorials: :tutorial-dir:`section 12, downloading data <12_downloading_data>` (:doc:`tutorials`)
+
 Satellite & Earth Observation Catalogues
 ----------------------------------------
 

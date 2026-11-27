@@ -33,6 +33,18 @@ when the two images are not perfectly radiometrically consistent. Class-based
 methods answer the question "which of the pixels mapped as forest are no
 longer forest?" directly and give the change *from* class for free.
 
+.. seealso::
+
+   The rsgispy tutorials cover change detection in notebooks you can run
+   (section 6), on the same Landsat images of the Rufiji delta used on this
+   page:
+   :tutorial:`a baseline classification <06_change_detection/01_create_baseline_class.ipynb>`,
+   :tutorial:`map-to-map change <06_change_detection/02_map_to_map_change.ipynb>`,
+   :tutorial:`image-to-image change <06_change_detection/03_image_to_image_change.ipynb>`,
+   :tutorial:`map-to-image change <06_change_detection/04_map_to_image_change.ipynb>`
+   and :tutorial:`multivariate change detection (CVA, IR-SFA, IR-MAD) <06_change_detection/05_multivariate_change_detection.ipynb>`.
+   See :doc:`../tutorials` for how to get them and their data.
+
 .. contents:: Contents
    :local:
    :depth: 1
@@ -87,6 +99,62 @@ run by the rsgispy test suite on synthetic data. The inputs are:
 * a land cover map of the first date on the same grid, for example the output
   of the :doc:`pixel_classification_workflow` guide, in which forest has the
   value ``forest_id`` (here 2).
+
+The example on real data
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The figures and printed outputs on this page come from running the example on
+the change detection data of the rsgispy tutorials: a Landsat 5 TM image of
+16 July 1997
+(:tutorial-data:`chg_data/LS5TM_19970716_vmsk_mclds_topshad_rad_srefdem_stdsref_subset.tif`)
+and a Landsat 8 OLI image of 8 June 2018
+(:tutorial-data:`chg_data/LS8_20180608_vmsk_mclds_topshad_rad_srefdem_stdsref_subset.tif`)
+of the mangroves of the Rufiji delta, Tanzania (surface reflectance × 1,000,
+30 m pixels on the same grid, UTM zone 37S, cloud already set to no data in
+2018). Here the "forest" is mangrove forest, so the question is where
+mangroves (and other vegetation) were lost between 1997 and 2018. The script
+``docs/examples/change_detection_tutorial.py`` prepares the inputs the
+tutorial data lacks and then calls the example:
+
+* the analysis is restricted to the mangrove habitat
+  (:tutorial-data:`chg_data/mangrove_habitat.geojson`): across the whole
+  scene (sea, farmland, inland forest) IR-MAD and SFA lock on to one land
+  cover, as the multivariate notebook of the tutorials shows;
+* the land cover map of 1997 (mangroves ``1``, other terrestrial ``2``,
+  water ``3``) is an XGBoost classification of the 1997 image, trained on the
+  polygons in :tutorial-dir:`chg_data/training <data/chg_data/training>` as in the first notebook of
+  the tutorial section;
+* both images are reduced to the same six bands (Landsat 8 has an extra
+  coastal band 1, and the change functions pair band 1 with band 1, band 2
+  with band 2 and so on) and set to no data outside the habitat and where
+  the 1997 map is water. Vegetation can only be lost where there was some,
+  and the NDVI of the river channels changes with the sediment load and the
+  tide: left in, the channels came out as "vegetation loss";
+* ``in_gain=1000`` because these images are reflectance × 1,000.
+
+.. literalinclude:: ../examples/change_detection_tutorial.py
+   :language: python
+   :start-after: # [tutorial-data]
+   :end-before: # [end-tutorial-data]
+   :dedent: 4
+
+It runs in about 40 seconds. The test suite runs the same example on a small
+synthetic scene (two Sentinel-2-like images with two cleared forest
+patches), so the code shown is always tested.
+
+.. figure:: images/change_maps.png
+   :width: 100%
+   :alt: Six maps of the central Rufiji delta: the 1997 and 2018 Landsat
+         images, the 1997 land cover map, the dNDVI change map, the CVA change
+         map with the direction from dNDVI, and the class-based mangrove loss
+         map
+
+   The central part of the delta (river channels and 1997 water left out).
+   Top: the 1997 and 2018 images (NIR, SWIR1, red; mangroves are dark red)
+   and the 1997 land cover map. Bottom: dNDVI above the Li threshold (step 3),
+   CVA change split by the sign of dNDVI (step 4) and the 1997 mangroves whose
+   2018 NDVI is below the Otsu threshold (step 6). Landsat data courtesy of
+   the U.S. Geological Survey.
 
 If the images are not on the same grid, resample one to the other with
 :func:`rsgispy.imageutils.warp.resample_img_to_match`; if they are
@@ -199,27 +267,42 @@ the valid area that changed.
    :end-before: # [end-step-3-threshold]
    :dedent: 4
 
+For the Rufiji delta this prints:
+
 .. code-block:: text
 
-   {'otsu': 0.126, 'yen': 0.072, 'li': 0.316}
-   Vegetation loss in 4.4 % of the valid area
+   {'otsu': 0.133, 'yen': 0.709, 'li': 0.123}
+   Vegetation loss in 11.0 % of the valid area
 
 .. figure:: images/change_dndvi_hist.png
    :width: 70%
-   :alt: Histogram of dNDVI with the Li threshold drawn as a vertical line
+   :alt: Histogram of dNDVI for the Rufiji delta: one peak just below 0 with
+         a long tail to positive values, and the Li threshold at 0.123
 
-   Histogram of dNDVI for the synthetic scene with the Li threshold. The large
-   peak at 0 is unchanged land; the small group around 0.7 is cleared forest.
-   (Regenerate it by running the example script; it is written to
-   ``dndvi_hist.png`` in the output directory.)
+   Histogram of dNDVI (1997 − 2018) of the mangrove habitat with the Li
+   threshold (0.123). There is no separate change peak, only a long tail of
+   NDVI decreases to the right of the no-change peak. (The example script
+   writes it to ``dndvi_hist.png`` in the output directory.) Landsat data
+   courtesy of the U.S. Geological Survey.
 
-In the synthetic data the change is very distinct, so all three thresholds
-separate it; note how Otsu and Yen are pulled down towards the no-change peak,
-which in real data, with a continuum of small changes, would add many false
-detections. To check the step: the changed proportion should be plausible
-(deforestation rarely affects more than a few per cent of a scene per year),
-and the change map should not follow image edges, cloud edges or
-illumination patterns.
+Real data rarely give the two clear peaks the methods are designed for. Here
+the histogram has one peak just below 0 and a long tail of decreases. Otsu
+(0.133) and Li (0.123) both put the threshold on the shoulder of the
+no-change peak and flag 11 % of the area (about 8,000 ha) as vegetation loss,
+while Yen (0.709) puts it far out in the tail and keeps only the most extreme
+losses. Neither is obviously right: over 21 years, between two sensors (with
+slightly different red and NIR bands) and two months, NDVI can change by
+0.1 or so without any change of land cover (half of the pixels are within
+−0.05 to +0.04), so the lower thresholds include a lot
+of noise, and a threshold of 0.2–0.35 (0.35 is used in the image-to-image
+notebook of the tutorials) is a reasonable alternative to test against
+reference data. The change map also shows that most of the flagged area
+(about 5,200 ha) was "other terrestrial" in 1997, mainly the farmland and
+bare ground on the south-western edge of the delta, where the NDVI depends
+on the crop calendar as much as on land cover change. To check the step: the
+changed proportion should be plausible (deforestation rarely affects more
+than a few per cent of a scene per year), and the change map should not
+follow image edges, cloud edges or illumination patterns.
 
 Step 4 — Change vector analysis
 -------------------------------
@@ -257,7 +340,15 @@ combines the CVA mask with the sign of dNDVI to separate vegetation loss
 
 .. code-block:: text
 
-   CVA otsu threshold 910.1: change in 4.4 %
+   CVA otsu threshold 113.8: change in 15.2 %
+
+The magnitude is in the units of the images (reflectance × 1,000), so the
+threshold of 113.8 is a change of about 0.11 in reflectance. CVA flags more
+than dNDVI (15.2 % of the area), because it also sees changes that do not
+change the NDVI, for example in brightness or soil moisture: about 6,900 ha
+are change with an NDVI decrease (vegetation loss) and 4,200 ha change with
+an NDVI increase (other change), the latter largely along the river banks,
+where the channels have moved, and in the farmland.
 
 Step 5 — Slow feature analysis and IR-MAD
 -----------------------------------------
@@ -306,13 +397,19 @@ difference to label the type of change.
 
 .. code-block:: text
 
-   IR-MAD: 50 iterations, converged False, change in 4.4 %
+   IR-MAD: 50 iterations, converged False, change in 13.4 %
 
-On the synthetic scene neither method meets ``epsilon`` within 50 iterations
-(both warn), but the change in the transform at the last iteration is small
-and the change masks agree with the reference; with real data, look at the
-``last_change`` value and the change mask before trusting a run that did not
-converge.
+On the Rufiji delta neither method meets ``epsilon`` within 50 iterations
+and both warn, but the change in the transform at the last iteration is
+small (about 4e-5 for SFA and 6e-5 for IR-MAD, against an ``epsilon`` of
+1e-6), so the weights had settled and more iterations would barely change
+the result. Restricting the analysis to the mangrove habitat matters here:
+run over the whole scene, IR-MAD stops far from convergence and labels about
+half of the scene as change (see the multivariate notebook of the
+tutorials). Look at the ``last_change`` value and the change mask before
+trusting a run that did not converge. SFA flags 13.8 % of the area and IR-MAD
+13.4 %, similar to CVA; each method weighs the bands differently, so the
+three maps overlap only in part.
 
 Step 6 — Class-based change with an earlier land cover map
 ----------------------------------------------------------
@@ -355,7 +452,18 @@ outliers (here forest loss), with a colour table (green and red):
 
 .. code-block:: text
 
-   Forest NDVI thresholds: Otsu 0.229, Li 0.463
+   Forest NDVI thresholds: Otsu 0.510, Li 0.455
+
+Within the 37,600 ha mapped as mangroves in 1997, the Otsu threshold flags
+1,530 ha (4.1 %) whose 2018 NDVI is below 0.51 as mangrove loss, and the
+lower Li threshold 1,210 ha (3.2 %); the isolation forest flags 10 % by
+construction (``contamination=0.1``). The losses are concentrated on the
+edges of the delta and along the channels, where mangroves were cleared
+or eroded (bottom right map above). For comparison, the map-to-map notebook
+of the tutorials, which classifies both dates independently, finds about
+4,800 ha of the 1997 mangroves mapped as other land or water in 2018: part
+of the difference is degraded mangrove whose NDVI is still above the
+threshold, part is the error of the two classifications.
 
 The result is only as good as the land cover map: forest omitted from the
 date 1 map can never be detected as lost, and non-forest wrongly mapped as
@@ -402,7 +510,11 @@ accuracy in two ways:
 In the example, points that were already labelled (``acc_pts_vec``, with the
 reference class name in ``ref_col``) get the map class with
 :func:`rsgispy.classification.classrefpts.pop_class_info_accuracy_pts`; points
-on no data are dropped.
+on no data are dropped. The tutorial data has no labelled change points, so
+for the Rufiji delta the example only writes the sample to label
+(``acc_pts_to_label.gpkg``: 390 points in the no-change stratum and 111 in the
+vegetation loss stratum); the test suite runs the assessment on the labelled
+points of its synthetic scene.
 
 .. literalinclude:: ../examples/change_detection.py
    :language: python
