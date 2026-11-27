@@ -52,8 +52,12 @@ MODULES: Sequence[Tuple[str, Sequence[str], str]] = (
     ("rsgislib.vectorgeoms", ("rsgispy.vector.geoms",), ""),
     ("rsgislib.zonalstats", ("rsgispy.zonalstats",),
      "``polygon``, ``point`` and the new ``labels`` submodule."),
-    ("rsgislib.rastergis", ("rsgispy.zonalstats.labels",),
-     "Not ported; label raster statistics written to tables instead."),
+    ("rsgislib.rastergis", ("rsgispy.zonalstats.labels",
+                            "rsgispy.imageutils.colourtable"),
+     "Not ported; label raster statistics written to tables instead, and "
+     "class names and colours stored in the image."),
+    ("rsgislib.imageutils.imagecomp", ("rsgispy.imageutils.composite",),
+     "Also geomedian, medoid, percentile and quality mosaic composites."),
     ("rsgislib.segmentation", ("rsgispy.segmentation",),
      "One submodule per algorithm."),
     ("rsgislib.classification", ("rsgispy.classification", "rsgispy.ml"),
@@ -171,6 +175,50 @@ CHANGED: Sequence[Tuple[str, str, str]] = (
     ("rsgislib.classification.classsklearn.apply_sklearn_classifier",
      "rsgispy.classification.classsklearn.apply_sklearn_classifier",
      "As above."),
+    ("rsgislib.imageutils.imagecomp.create_max_ndvi_composite",
+     "rsgispy.imageutils.composite.create_max_ndvi_composite",
+     "Same name; ``(input_imgs, output_img, red_band, nir_band)`` with an "
+     "optional ``out_ref_img`` (a thematic GeoTIFF of the 1-based image index "
+     "with a colour table, not a KEA RAT) and no ``tmp_dir``. A preset of "
+     ":func:`rsgispy.imageutils.composite.create_quality_mosaic`."),
+    ("rsgislib.imageutils.imagecomp.create_max_ndvi_ndwi_composite",
+     "rsgispy.imageutils.composite.create_max_ndvi_ndwi_composite",
+     "Same name; no ``ref_sp_img``: the images must already be on one grid "
+     "(:func:`rsgispy.imageutils.warp.resample_img_to_match`). "
+     "``r_band``, ``n_band``, ``s_band`` become ``red_band``, ``nir_band``, "
+     "``swir_band`` (the RSGISLib NDWI and land / water rule); the outputs "
+     "``out_ref_img`` and ``out_lw_msk_img`` are optional keywords. A preset "
+     "of :func:`rsgispy.imageutils.composite.create_land_water_composite`."),
+    ("rsgislib.imagecalc.get_img_idx_for_stat and "
+     "rsgislib.imageutils.create_ref_img_composite_img",
+     "rsgispy.imageutils.composite.create_quality_mosaic",
+     "One call: the observation with the ``mode='max'``, ``'min'`` or "
+     "``'percentile'`` value of a quality (a band, an expression or a "
+     "callable) of each image; the index image is ``out_ref_img``."),
+    ("rsgislib.imagecalc.get_2d_img_histogram",
+     "rsgispy.imagecalc.stats.get_img_2d_histogram",
+     "Returns ``(hist, x_edges, y_edges)`` arrays instead of writing an image "
+     "and returning the bin widths; ``bins``, ``x_range``, ``y_range`` and "
+     "``density`` as :func:`numpy.histogram2d`; no scale or offset."),
+    ("rsgislib.rastergis.set_class_names_colours",
+     "rsgispy.imageutils.colourtable.set_thematic_classes",
+     "No RAT or column name: ``classes`` maps each pixel value to "
+     "``(name, colour)``; the colours go in the colour table and the names in "
+     "a band tag, read with "
+     ":func:`rsgispy.imageutils.colourtable.get_thematic_classes`."),
+    ("rsgislib.segmentation.label_pixels_from_cluster_centres",
+     "rsgispy.classification.clustersklearn.apply_img_pixel_clusterer",
+     "Takes a fitted scikit-learn clusterer (e.g. ``KMeans``, which labels "
+     "each pixel with its nearest centre) or its ``.joblib`` file instead of a "
+     "cluster centres file; clusters are numbered from ``out_id_offset``."),
+    ("rsgislib.regression.regresssklearn.perform_kfold_fit",
+     "rsgispy.regression.regsklearn.perform_kfold_fit",
+     "Same name; ``n_repeats`` (default 20, seeded with ``rnd_seed``) "
+     "replaces ``repeats`` / ``shuffle``, a scikit-learn ``Pipeline`` replaces "
+     "``data_scaler``, and ``groups`` keeps groups together. Returns "
+     "``(metrics, residuals)`` dictionaries of DataFrames per target; "
+     "summarise with "
+     ":func:`rsgispy.regression.regsklearn.summarise_kfold_metrics`."),
 )
 
 TABLE_HEADER = """.. list-table::

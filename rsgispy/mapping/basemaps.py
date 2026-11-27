@@ -23,6 +23,7 @@ from rsgispy.mapping.elements import (
 )
 import rsgispy.tools.files
 import rsgispy.tools.plotting
+from rsgispy.tools.plotting import use_plot_style
 
 __all__ = [
     "add_contextily_basemap",
@@ -30,6 +31,7 @@ __all__ = [
 ]
 
 
+@use_plot_style(plot_type="map")
 def add_contextily_basemap(
     ax: matplotlib.axes.Axes,
     epsg_crs: int,
@@ -37,7 +39,7 @@ def add_contextily_basemap(
     cx_zoom_lvl: Any = "auto",
     cx_attribution: Optional[Any] = None,
     cx_att_size: int = 8,
-) -> None:
+) -> Any:
     """
     Add a contextily tile basemap beneath existing layers on ``ax``.
 
@@ -48,6 +50,7 @@ def add_contextily_basemap(
     :param cx_attribution: Attribution string, ``False`` to suppress, or ``None``
                            for default attribution.
     :param cx_att_size: Attribution font size (Default = 8).
+    :return: The basemap image artist (``matplotlib.image.AxesImage``).
 
     .. code:: python
 
@@ -60,7 +63,7 @@ def add_contextily_basemap(
         rsgispy.mapping.layout.define_axis_extent(
             ax, bbox=(250000.0, 270000.0, 280000.0, 290000.0)
         )
-        rsgispy.mapping.basemaps.add_contextily_basemap(
+        basemap_img = rsgispy.mapping.basemaps.add_contextily_basemap(
             ax=ax, epsg_crs=27700, cx_src=contextily.providers.OpenStreetMap.Mapnik
         )
     """
@@ -79,6 +82,7 @@ def add_contextily_basemap(
     if cx_zoom_lvl is None:
         cx_zoom_lvl = "auto"
 
+    n_imgs = len(ax.images)
     contextily.add_basemap(
         ax,
         zoom=cx_zoom_lvl,
@@ -87,6 +91,7 @@ def add_contextily_basemap(
         attribution=cx_attribution,
         attribution_size=cx_att_size,
     )
+    return ax.images[n_imgs] if len(ax.images) > n_imgs else None
 
 
 def _update_wmts_xml(
@@ -130,6 +135,7 @@ def _update_wmts_xml(
     tree.write(out_xml_path)
 
 
+@use_plot_style(plot_type="map")
 def create_wmts_img_map(
     ax: matplotlib.axes.Axes,
     wmts_url: str,
@@ -149,7 +155,7 @@ def create_wmts_img_map(
     show_north_arrow: bool = False,
     north_arrow_style: str = NORTH_ARROW_STYLE_TRIANGLE,
     north_arrow_loc: str = "upper left",
-) -> None:
+) -> Any:
     """
     Download an image subset from a WMTS service via ``rasterio`` and display
     it on ``ax``.
@@ -175,6 +181,7 @@ def create_wmts_img_map(
     :param north_arrow_style: North arrow style constant (Default =
                               :data:`~rsgispy.mapping.elements.NORTH_ARROW_STYLE_TRIANGLE`).
     :param north_arrow_loc: North arrow placement string (Default = ``'upper left'``).
+    :return: The image artist (``matplotlib.image.AxesImage``).
 
     .. code:: python
 
@@ -182,7 +189,7 @@ def create_wmts_img_map(
         import rsgispy.mapping.basemaps
 
         fig, ax = plt.subplots()
-        rsgispy.mapping.basemaps.create_wmts_img_map(
+        img = rsgispy.mapping.basemaps.create_wmts_img_map(
             ax=ax,
             wmts_url="https://example.com/wmts/1.0.0/WMTSCapabilities.xml",
             wmts_lyr="ortho_layer",
@@ -267,7 +274,7 @@ def create_wmts_img_map(
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
-    ax.imshow(img_data, extent=img_coords, cmap=imshow_cmap)
+    img_artist = ax.imshow(img_data, extent=img_coords, cmap=imshow_cmap)
     ax.set_xlim([bbox[0], bbox[1]])
     ax.set_ylim([bbox[2], bbox[3]])
     _finalise_map_axis(
@@ -285,3 +292,5 @@ def create_wmts_img_map(
         north_arrow_style=north_arrow_style,
         north_arrow_loc=north_arrow_loc,
     )
+
+    return img_artist

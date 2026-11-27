@@ -1166,3 +1166,127 @@ def summarise_bootstrap_interval(values: Sequence[float]) -> Dict[str, Any]:
         "95th": [float(inters[1]), float(inters[5])],
         "99th": [float(inters[0]), float(inters[6])],
     }
+
+
+def _default_source_name(sample: Any, idx: int) -> str:
+    """Name of the ``idx``-th sample input: the file name stem, else ``input_<n>``."""
+    if isinstance(sample, (str, os.PathLike)):
+        stem = os.path.splitext(os.path.basename(os.fspath(sample)))[0]
+        if stem:
+            return stem
+    return f"input_{idx + 1}"
+
+
+def _default_feature_cols(df: pd.DataFrame, excluded: Sequence[str]) -> List[str]:
+    """Numeric columns of ``df`` that are not in ``excluded`` (or ``x``/``y``)."""
+    excl = set(excluded) | {"x", "y"}
+    return [
+        str(col)
+        for col in df.columns
+        if col not in excl and pd.api.types.is_numeric_dtype(df[col])
+    ]
+
+
+def combine_ml_samples(
+    samples: Sequence[SamplesInput],
+    key_cols: Sequence[str],
+    *,
+    feat_cols: Optional[Sequence[str]] = None,
+    source_names: Optional[Sequence[str]] = None,
+    source_col: Optional[str] = None,
+    keep_xy: bool = False,
+    group_col: Optional[str] = None,
+    label: str = "samples",
+) -> pd.DataFrame:
+    """
+    Concatenate sample tables (DataFrames or sample files) with the same key
+    columns (class IDs/names or targets) and feature columns, in the order
+    ``key_cols + [group_col] + [source_col] + [x, y] + feat_cols``.
+
+    Without ``feat_cols`` the features are the numeric columns other than the
+    key, group, source and ``x``/``y`` columns, and they must be the same in
+    every input. With ``source_col`` a column of ``source_names`` records the
+    input of each row.
+    """
+    # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
+    if isinstance(samples, (str, os.PathLike, pd.DataFrame)) or not isinstance(
+        samples, Sequence
+    ):
+        raise rsgispy.RSGISPyException(
+            f"{label} must be a sequence of DataFrames or sample files."
+        )
+    if len(samples) == 0:
+        raise rsgispy.RSGISPyException(f"{label} must not be empty.")
+    if source_names is not None:
+        if source_col is None:
+            raise rsgispy.RSGISPyException(
+                "source_names needs source_col (the column to write them to)."
+            )
+        names = [str(name) for name in source_names]
+        if len(names) != len(samples):
+            raise rsgispy.RSGISPyException(
+                f"source_names has {len(names)} names for {len(samples)} inputs."
+            )
+    else:
+        names = [_default_source_name(smpl, idx) for idx, smpl in enumerate(samples)]
+
+    dfs = [load_samples_df(smpl, label=f"{label}[{idx}]") for idx, smpl in enumerate(samples)]
+    meta_cols = list(key_cols) + ([group_col] if group_col is not None else [])
+    req_cols = meta_cols + (["x", "y"] if keep_xy else [])
+    for idx, df in enumerate(dfs):
+        missing = [col for col in req_cols if col not in df.columns]
+        if missing:
+            raise rsgispy.RSGISPyException(
+                f"Input {idx} ({names[idx]}) has no column(s) {missing}."
+            )
+        if source_col is not None and source_col in df.columns:
+            raise rsgispy.RSGISPyException(
+                f"Input {idx} ({names[idx]}) already has a '{source_col}' column; "
+                "choose another source_col."
+            )
+    if source_col is not None and source_col in req_cols:
+        raise rsgispy.RSGISPyException(
+            f"source_col '{source_col}' must differ from the key, group and x/y columns."
+        )
+
+    excluded = meta_cols + ([source_col] if source_col is not None else [])
+    if feat_cols is None:
+        feats = _default_feature_cols(dfs[0], excluded)
+        for idx, df in enumerate(dfs[1:], start=1):
+            other = _default_feature_cols(df, excluded)
+            if set(other) != set(feats):
+                only_first = [col for col in feats if col not in other]
+                only_other = [col for col in other if col not in feats]
+                raise rsgispy.RSGISPyException(
+                    f"The feature columns of input {idx} ({names[idx]}) differ "
+                    f"from input 0 ({names[0]}): {only_first} only in input 0, "
+                    f"{only_other} only in input {idx}. Pass feat_cols to select "
+                    "the common feature columns."
+                )
+    else:
+        feats = [str(col) for col in feat_cols]
+        if not feats:
+            raise rsgispy.RSGISPyException("feat_cols must not be empty.")
+        bad = [col for col in feats if col in excluded or col in ("x", "y")]
+        if bad:
+            raise rsgispy.RSGISPyException(
+                f"feat_cols {bad} are key, group, source or coordinate columns."
+            )
+        for idx, df in enumerate(dfs):
+            missing = [col for col in feats if col not in df.columns]
+            if missing:
+                raise rsgispy.RSGISPyException(
+                    f"Input {idx} ({names[idx]}) has no feature column(s) {missing}."
+                )
+    if not feats:
+        raise rsgispy.RSGISPyException("No feature columns found in the inputs.")
+
+    cols = req_cols + feats
+    parts = []
+    for name, df in zip(names, dfs):
+        part = df[cols]
+        if source_col is not None:
+            part = part.copy()
+            part.insert(len(meta_cols), source_col, name)
+        parts.append(part)
+    return pd.concat(parts, ignore_index=True)

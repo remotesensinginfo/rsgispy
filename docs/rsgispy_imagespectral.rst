@@ -51,6 +51,7 @@ Submodules
 * :doc:`imagespectral/endmembers` — Endmember ``pandas.DataFrame`` I/O, legacy ``.mtxt`` conversion, polygon extraction, plotting, equality checks, and Pixel Purity Index (PPI).
 * :doc:`imagespectral/indices` — Spectral curve and index summary utilities, including area under the curve.
 * :doc:`imagespectral/preprocessing` — Savitzky-Golay spectral smoothing, outlier masking, and polynomial NaN gap-filling.
+* :doc:`imagespectral/spectra` — Continuum removal (convex hull quotient) and absorption feature parameters of a spectrum or an image, and plots of spectra and of a continuum removal.
 * :doc:`imagespectral/transforms` — ZCA noise whitening, windowed/incremental PCA, Minimum Noise Fraction (MNF), Tasseled Cap transformations, and streaming histogram matching.
 * :doc:`imagespectral/unmixing` — Unconstrained, non-negative, fully constrained, and exhaustive linear spectral unmixing, reflectance prediction, RMSE/RMSPE evaluation, and multi-endmember model summarisation.
 
@@ -61,5 +62,6 @@ Submodules
    imagespectral/endmembers
    imagespectral/indices
    imagespectral/preprocessing
+   imagespectral/spectra
    imagespectral/transforms
    imagespectral/unmixing

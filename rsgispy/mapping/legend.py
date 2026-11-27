@@ -10,7 +10,8 @@ from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union
 import matplotlib.axes
 import matplotlib.legend
 
-from rsgispy.mapping._common import resolve_mpl_location
+from rsgispy.mapping._common import MAP_BOX_ALPHA, resolve_mpl_location
+from rsgispy.tools.plotting import use_plot_style
 from rsgispy.mapping._legend import (
     _measure_axis_inches,
     _style_legend,
@@ -113,6 +114,7 @@ def create_categorical_legend_patches(
     )
 
 
+@use_plot_style(plot_type="map")
 def add_categorical_legend(
     ax: matplotlib.axes.Axes,
     classes_info: Optional[Any] = None,
@@ -126,7 +128,7 @@ def add_categorical_legend(
     loc: str = "upper right",
     bbox_to_anchor: Optional[Tuple[float, ...]] = None,
     overlay: bool = True,
-    fontsize: float = 9.5,
+    fontsize: float = 9.0,
     title_fontsize: Optional[float] = None,
     ignore_zero: bool = True,
     include_vals: Optional[Sequence[int]] = None,
@@ -143,8 +145,8 @@ def add_categorical_legend(
     frameon: bool = True,
     facecolor: str = "white",
     edgecolor: str = "#CCCCCC",
-    framealpha: float = 0.92,
-    fancybox: bool = True,
+    framealpha: float = MAP_BOX_ALPHA,
+    fancybox: bool = False,
     columnspacing: float = 1.2,
     handletextpad: float = 0.6,
     labelspacing: float = 0.45,
@@ -188,7 +190,7 @@ def add_categorical_legend(
     :param bbox_to_anchor: Optional Matplotlib ``bbox_to_anchor`` coordinates.
     :param overlay: If ``True``, overlay onto ``ax``; if ``False``, turn off
                     ``ax`` frame/ticks and draw as a standalone panel legend.
-    :param fontsize: Class label font size in points (Default = ``9.5``).
+    :param fontsize: Class label font size in points (Default = ``9.0``).
     :param title_fontsize: Optional title font size (Default = ``fontsize + 1``).
     :param ignore_zero: Exclude background pixel value ``0`` (Default = ``True``).
     :param include_vals: Optional allowlist of pixel values to keep.
@@ -207,8 +209,8 @@ def add_categorical_legend(
                       Default = ``'white'``).
     :param edgecolor: Legend border colour (Matplotlib ``ax.legend`` passthrough;
                       Default = ``'#CCCCCC'``).
-    :param framealpha: Legend background opacity (Matplotlib passthrough; Default = ``0.92``).
-    :param fancybox: Rounded legend corners (Matplotlib passthrough; Default = ``True``).
+    :param framealpha: Legend background opacity (Matplotlib passthrough; Default = ``0.9``).
+    :param fancybox: Rounded legend corners (Matplotlib passthrough; Default = ``False``).
     :param columnspacing: Horizontal gap between columns (Matplotlib passthrough;
                           Default = ``1.2``).
     :param handletextpad: Gap between swatch and text (Matplotlib passthrough; Default = ``0.6``).
@@ -293,6 +295,7 @@ def add_categorical_legend(
     )
 
 
+@use_plot_style(plot_type="map")
 def add_categorical_legend_axis(
     ax: matplotlib.axes.Axes,
     classes_info: Optional[Any] = None,
@@ -305,7 +308,7 @@ def add_categorical_legend_axis(
     title: Optional[str] = None,
     loc: str = "center",
     bbox_to_anchor: Optional[Tuple[float, ...]] = None,
-    fontsize: float = 9.5,
+    fontsize: float = 9.0,
     title_fontsize: Optional[float] = None,
     ignore_zero: bool = True,
     include_vals: Optional[Sequence[int]] = None,
@@ -322,8 +325,8 @@ def add_categorical_legend_axis(
     frameon: bool = True,
     facecolor: str = "white",
     edgecolor: str = "#CCCCCC",
-    framealpha: float = 0.95,
-    fancybox: bool = True,
+    framealpha: float = MAP_BOX_ALPHA,
+    fancybox: bool = False,
     columnspacing: float = 1.2,
     handletextpad: float = 0.6,
     labelspacing: float = 0.45,
@@ -361,7 +364,7 @@ def add_categorical_legend_axis(
     :param title: Optional bold legend title.
     :param loc: Legend alignment inside ``ax`` (Default = ``'center'``).
     :param bbox_to_anchor: Optional Matplotlib ``bbox_to_anchor`` coordinates.
-    :param fontsize: Class label font size in points (Default = ``9.5``).
+    :param fontsize: Class label font size in points (Default = ``9.0``).
     :param title_fontsize: Optional title font size (Default = ``fontsize + 1``).
     :param ignore_zero: Exclude background pixel value ``0`` (Default = ``True``).
     :param include_vals: Optional allowlist of pixel values to keep.
@@ -380,8 +383,8 @@ def add_categorical_legend_axis(
                       Default = ``'white'``).
     :param edgecolor: Legend border colour (Matplotlib ``ax.legend`` passthrough;
                       Default = ``'#CCCCCC'``).
-    :param framealpha: Legend background opacity (Matplotlib passthrough; Default = ``0.95``).
-    :param fancybox: Rounded legend corners (Matplotlib passthrough; Default = ``True``).
+    :param framealpha: Legend background opacity (Matplotlib passthrough; Default = ``0.9``).
+    :param fancybox: Rounded legend corners (Matplotlib passthrough; Default = ``False``).
     :param columnspacing: Horizontal gap between columns (Matplotlib passthrough;
                           Default = ``1.2``).
     :param handletextpad: Gap between swatch and text (Matplotlib passthrough; Default = ``0.6``).
@@ -463,6 +466,7 @@ def add_categorical_legend_axis(
     )
 
 
+@use_plot_style(plot_type="map")
 def save_categorical_legend_img(
     output_img: Union[str, os.PathLike],
     classes_info: Optional[Any] = None,
@@ -492,7 +496,7 @@ def save_categorical_legend_img(
     facecolor: str = "white",
     edgecolor: str = "#CCCCCC",
     framealpha: float = 1.0,
-    fancybox: bool = True,
+    fancybox: bool = False,
     columnspacing: float = 1.2,
     handletextpad: float = 0.6,
     labelspacing: float = 0.45,
@@ -545,7 +549,7 @@ def save_categorical_legend_img(
     :param edgecolor: Legend border colour (Matplotlib ``ax.legend`` passthrough;
                       Default = ``'#CCCCCC'``).
     :param framealpha: Legend background opacity (Matplotlib passthrough; Default = ``1.0``).
-    :param fancybox: Rounded legend corners (Matplotlib passthrough; Default = ``True``).
+    :param fancybox: Rounded legend corners (Matplotlib passthrough; Default = ``False``).
     :param columnspacing: Horizontal gap between columns (Matplotlib passthrough;
                           Default = ``1.2``).
     :param handletextpad: Gap between swatch and text (Matplotlib passthrough; Default = ``0.6``).

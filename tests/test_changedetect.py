@@ -6,6 +6,8 @@ Tests for :mod:`rsgispy.changedetect.imgchngmthds`,
 
 import inspect
 
+import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 import rasterio
@@ -16,6 +18,9 @@ import rsgispy.changedetect
 import rsgispy.changedetect.imgchngmthds as icm
 import rsgispy.changedetect.pxloutlierchng as poc
 import rsgispy.tools.plotting as rplot
+from rsgispy.imageutils.colourtable import is_img_thematic
+
+matplotlib.use("Agg")
 
 
 def _write_raster(
@@ -87,13 +92,19 @@ def test_plot_histogram_threshold(tmp_path):
     out_png = tmp_path / "hist.png"
     rng = np.random.default_rng(0)
     vals = np.concatenate([rng.normal(2.0, 0.3, 100), rng.normal(6.0, 0.3, 100)])
-    rplot.plot_histogram_threshold(
-        vals, str(out_png), threshold=4.0, title_str="Test Histogram"
+    fig, ax = rplot.plot_histogram_threshold(
+        vals, 4.0, title_str="Test Histogram", out_plot_file=str(out_png)
     )
     assert out_png.exists() and out_png.stat().st_size > 0
+    assert ax.get_title() == "Test Histogram"
+    assert plt.fignum_exists(fig.number)
+    plt.close(fig)
 
     const_png = tmp_path / "const.png"
-    rplot.plot_histogram_threshold(np.ones(20), str(const_png), threshold=1.0)
+    fig, _ = rplot.plot_histogram_threshold(
+        np.ones(20), threshold=1.0, out_plot_file=str(const_png)
+    )
+    plt.close(fig)
     assert const_png.exists() and const_png.stat().st_size > 0
 
 
@@ -184,6 +195,7 @@ def test_change_vector_analysis(tmp_path):
         assert np.all(b_km[6:, 6:] == 0)
 
 
+@pytest.mark.filterwarnings("ignore:.*did not converge:UserWarning")
 @pytest.mark.skipif(not icm.HAVE_SCIPY, reason="scipy not installed")
 def test_sfa_and_mad_change_detection(tmp_path):
     """Verify ISFA and IR-MAD run end-to-end and detect synthetic change."""
@@ -288,6 +300,7 @@ def test_cva_no_mask_requires_both_dates(tmp_path):
     assert np.all(bin_arr[~hole] != 255)
 
 
+@pytest.mark.filterwarnings("ignore:.*did not converge:UserWarning")
 @pytest.mark.skipif(not icm.HAVE_SCIPY, reason="scipy not installed")
 def test_sfa_mad_no_mask_requires_both_dates(tmp_path):
     """SFA and IR-MAD without a valid mask leave one-date pixels as no data."""
@@ -318,6 +331,7 @@ def test_sfa_mad_no_mask_requires_both_dates(tmp_path):
         assert np.all(src.read()[:, hole] == -9999.0)
 
 
+@pytest.mark.filterwarnings("ignore:.*did not converge:UserWarning")
 def test_array_outputs_pass_use_pbar_and_skip_double_stats(tmp_path, monkeypatch):
     """CVA/SFA/MAD write their outputs without stats or progress bars there."""
     base_path, chng_path, _ = _make_one_date_hole_pair(tmp_path)
@@ -474,3 +488,377 @@ def test_optional_scipy_missing_changedetect(monkeypatch):
         poc_fresh.find_class_kurt_skew_outliers(
             "img.tif", "msk.tif", "out.tif", 0.0, 1.0, 0.5, True
         )
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics, convergence and regularisation (CVA / ISFA / IR-MAD)
+# ---------------------------------------------------------------------------
+
+
+def _make_diag_pair(tmp_path, n_bands=4, size=30, seed=21, same_band=None):
+    """Two correlated dates with a changed block (rows/cols 0:8)."""
+    rng = np.random.default_rng(seed)
+    base_arr = rng.uniform(0.1, 0.4, size=(n_bands, size, size))
+    mix = np.eye(n_bands) + 0.1 * rng.normal(size=(n_bands, n_bands))
+    chng_arr = np.einsum("ij,jhw->ihw", mix, base_arr) + 0.05
+    chng_arr += rng.normal(0.0, 0.01, size=chng_arr.shape)
+    chng_arr[:, 0:8, 0:8] += rng.uniform(0.3, 0.6, size=(n_bands, 1, 1))
+    if same_band is not None:
+        chng_arr[same_band] = base_arr[same_band]
+    base_path = tmp_path / "diag_base.tif"
+    chng_path = tmp_path / "diag_chng.tif"
+    _write_raster(base_path, base_arr.astype(np.float32))
+    _write_raster(chng_path, chng_arr.astype(np.float32))
+    return (
+        str(base_path),
+        str(chng_path),
+        base_arr.reshape(n_bands, -1).astype(np.float32).astype(np.float64),
+        chng_arr.reshape(n_bands, -1).astype(np.float32).astype(np.float64),
+    )
+
+
+def _read_band(path):
+    with rasterio.open(path) as src:
+        return src.read(1)
+
+
+def test_cva_returns_diagnostics(tmp_path):
+    """CVA returns the threshold, its method and the pixel counts."""
+    base_path, chng_path, x, y = _make_diag_pair(tmp_path)
+    out_bin = str(tmp_path / "b.tif")
+    out = icm.change_vector_analysis(
+        base_path, chng_path, out_bin, str(tmp_path / "d.tif"), use_pbar=False
+    )
+    assert isinstance(out, dict)
+    assert set(out) >= {"threshold", "threshold_method", "n_valid", "n_change"}
+    mag = np.sqrt(np.sum(np.square(x - y), axis=0))
+    exp_thres = icm.calc_otsu_threshold(mag)
+    assert out["threshold_method"] == "otsu"
+    assert out["threshold"] == pytest.approx(exp_thres, rel=1e-6)
+    assert out["n_valid"] == x.shape[1]
+    assert out["n_change"] == int(np.sum(mag > exp_thres))
+    assert out["n_change"] == int(np.sum(_read_band(out_bin) == 1))
+
+    if icm.HAVE_SKLEARN:
+        out_km = icm.change_vector_analysis(
+            base_path, chng_path, out_bin, str(tmp_path / "d.tif"),
+            use_kmeans=True, use_pbar=False,
+        )
+        assert out_km["threshold_method"] == "kmeans"
+        assert out_km["n_change"] == int(np.sum(_read_band(out_bin) == 1))
+        assert out_km["n_change"] == int(np.sum(mag > out_km["threshold"]))
+
+
+@pytest.mark.skipif(not icm.HAVE_SCIPY, reason="scipy not installed")
+def test_sfa_returns_diagnostics(tmp_path):
+    """ISFA (one iteration) eigenvalues match a direct NumPy calculation."""
+    base_path, chng_path, x, y = _make_diag_pair(tmp_path)
+    out_bin = str(tmp_path / "b.tif")
+    out = icm.slow_feature_analysis(
+        base_path, chng_path, out_bin, str(tmp_path / "d.tif"),
+        sfa_max_iter=1, use_pbar=False,
+    )
+    assert set(out) >= {
+        "threshold", "threshold_method", "n_valid", "n_change",
+        "eigenvalues", "n_iter", "converged", "last_change",
+    }
+    norm_x = (x - x.mean(axis=1, keepdims=True)) / x.std(axis=1, ddof=1, keepdims=True)
+    norm_y = (y - y.mean(axis=1, keepdims=True)) / y.std(axis=1, ddof=1, keepdims=True)
+    mat_a = np.cov(norm_x - norm_y)
+    mat_b = 0.5 * (np.cov(norm_x) + np.cov(norm_y))
+    exp_eig = np.sort(np.linalg.eigvals(np.linalg.solve(mat_b, mat_a)).real)
+    np.testing.assert_allclose(out["eigenvalues"], exp_eig, rtol=1e-5, atol=1e-9)
+    assert out["n_iter"] == 1
+    assert out["n_valid"] == x.shape[1]
+    assert out["threshold_method"] == "otsu"
+    assert out["n_change"] == int(np.sum(_read_band(out_bin) == 1))
+
+    out_conv = icm.slow_feature_analysis(
+        base_path, chng_path, out_bin, str(tmp_path / "d.tif"),
+        sfa_max_iter=200, sfa_epsilon=1e-4, use_pbar=False,
+    )
+    assert out_conv["converged"] is True
+    assert out_conv["n_iter"] < 200
+    assert out_conv["last_change"] < 1e-4
+
+
+@pytest.mark.skipif(not icm.HAVE_SCIPY, reason="scipy not installed")
+def test_mad_returns_diagnostics(tmp_path):
+    """IR-MAD (one iteration) canonical correlations match a direct CCA."""
+    base_path, chng_path, x, y = _make_diag_pair(tmp_path)
+    out_bin = str(tmp_path / "b.tif")
+    out = icm.multivariate_alteration_detection(
+        base_path, chng_path, out_bin, str(tmp_path / "d.tif"),
+        str(tmp_path / "v.tif"), mad_max_iter=1, use_kmeans=False, use_pbar=False,
+    )
+    assert set(out) >= {
+        "threshold", "threshold_method", "n_valid", "n_change",
+        "canonical_correlations", "n_iter", "converged", "last_change",
+    }
+    n_bands = x.shape[0]
+    cov = np.cov(np.concatenate((x, y), axis=0))
+    s11, s22 = cov[:n_bands, :n_bands], cov[n_bands:, n_bands:]
+    s12 = cov[:n_bands, n_bands:]
+
+    def _inv_sqrt(mat):
+        vals, vecs = np.linalg.eigh(mat)
+        return vecs @ np.diag(1.0 / np.sqrt(vals)) @ vecs.T
+
+    exp_rho = np.sort(np.linalg.svd(_inv_sqrt(s11) @ s12 @ _inv_sqrt(s22))[1])
+    np.testing.assert_allclose(out["canonical_correlations"], exp_rho, atol=1e-5)
+    assert out["n_iter"] == 1
+    assert out["n_valid"] == x.shape[1]
+    assert out["threshold_method"] == "otsu"
+    assert out["n_change"] == int(np.sum(_read_band(out_bin) == 1))
+
+    out_conv = icm.multivariate_alteration_detection(
+        base_path, chng_path, out_bin, str(tmp_path / "d.tif"),
+        str(tmp_path / "v.tif"), mad_max_iter=200, mad_epsilon=1e-4,
+        use_kmeans=False, use_pbar=False,
+    )
+    assert out_conv["converged"] is True
+    assert out_conv["n_iter"] < 200
+    assert out_conv["last_change"] < 1e-4
+
+
+@pytest.mark.skipif(not icm.HAVE_SCIPY, reason="scipy not installed")
+def test_sfa_mad_warn_without_convergence(tmp_path):
+    """Reaching max_iter without meeting epsilon warns and names the change."""
+    base_path, chng_path, _, _ = _make_diag_pair(tmp_path)
+    with pytest.warns(UserWarning, match="did not converge(.|\n)*mask"):
+        out = icm.slow_feature_analysis(
+            base_path, chng_path, str(tmp_path / "b.tif"), str(tmp_path / "d.tif"),
+            sfa_max_iter=2, sfa_epsilon=1e-12, use_pbar=False,
+        )
+    assert out["converged"] is False
+    assert out["n_iter"] == 2
+    with pytest.warns(UserWarning, match="did not converge(.|\n)*mask"):
+        out = icm.multivariate_alteration_detection(
+            base_path, chng_path, str(tmp_path / "b.tif"), str(tmp_path / "d.tif"),
+            str(tmp_path / "v.tif"), mad_max_iter=2, mad_epsilon=1e-12,
+            use_kmeans=False, use_pbar=False,
+        )
+    assert out["converged"] is False
+    assert out["n_iter"] == 2
+    assert np.isfinite(out["last_change"]) and out["last_change"] > 1e-12
+
+
+@pytest.mark.skipif(not icm.HAVE_SCIPY, reason="scipy not installed")
+def test_mad_regularisation_keeps_correlations_below_one(tmp_path):
+    """With an identical band the MAD correlation is 1; regularisation shrinks it."""
+    base_path, chng_path, _, _ = _make_diag_pair(tmp_path, same_band=0)
+    kwargs = {"mad_max_iter": 1, "use_kmeans": False, "use_pbar": False}
+    out = icm.multivariate_alteration_detection(
+        base_path, chng_path, str(tmp_path / "b.tif"), str(tmp_path / "d.tif"),
+        str(tmp_path / "v.tif"), **kwargs,
+    )
+    assert max(out["canonical_correlations"]) == pytest.approx(1.0, abs=1e-6)
+    out_reg = icm.multivariate_alteration_detection(
+        base_path, chng_path, str(tmp_path / "b.tif"), str(tmp_path / "d.tif"),
+        str(tmp_path / "v.tif"), mad_regularisation=0.1, **kwargs,
+    )
+    rho = np.asarray(out_reg["canonical_correlations"])
+    assert np.all(rho > 0.0) and np.all(rho < 1.0)
+    assert max(rho) < 0.95
+    with pytest.raises(rsgispy.RSGISPyException):
+        icm.multivariate_alteration_detection(
+            base_path, chng_path, str(tmp_path / "b.tif"), str(tmp_path / "d.tif"),
+            str(tmp_path / "v.tif"), mad_regularisation=-1.0, **kwargs,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Change distance outputs: centring and no data
+# ---------------------------------------------------------------------------
+
+
+def _run_change_method(method, base_path, chng_path, tmp_path, **kwargs):
+    """Run one of CVA / ISFA / IR-MAD and return (out, bin_path, dist_path)."""
+    out_bin = str(tmp_path / f"{method}_bin.tif")
+    out_dist = str(tmp_path / f"{method}_dist.tif")
+    if method == "cva":
+        out = icm.change_vector_analysis(
+            base_path, chng_path, out_bin, out_dist, use_pbar=False, **kwargs
+        )
+    elif method == "sfa":
+        out = icm.slow_feature_analysis(
+            base_path, chng_path, out_bin, out_dist, sfa_max_iter=5,
+            use_pbar=False, **kwargs,
+        )
+    else:
+        out = icm.multivariate_alteration_detection(
+            base_path, chng_path, out_bin, out_dist,
+            str(tmp_path / f"{method}_vars.tif"), mad_max_iter=5,
+            use_pbar=False, **kwargs,
+        )
+    return out, out_bin, out_dist
+
+
+_METHODS = ["cva"] + (["sfa", "mad"] if icm.HAVE_SCIPY else [])
+_KMEANS = [False] + ([True] if icm.HAVE_SKLEARN else [])
+
+
+def test_centre_on_threshold_defaults():
+    """CVA and ISFA centre on the threshold by default; IR-MAD does not."""
+    for fn, centred in (
+        (icm.change_vector_analysis, True),
+        (icm.slow_feature_analysis, True),
+        (icm.multivariate_alteration_detection, False),
+    ):
+        params = inspect.signature(fn).parameters
+        assert params["centre_on_threshold"].default is centred
+        assert params["no_data_val"].default == -9999.0
+
+
+@pytest.mark.filterwarnings("ignore:.*did not converge:UserWarning")
+@pytest.mark.parametrize("method", _METHODS)
+@pytest.mark.parametrize("use_kmeans", _KMEANS)
+def test_centred_distance_matches_binary(tmp_path, method, use_kmeans):
+    """``distance > 0`` equals the binary map for every method and threshold."""
+    base_path, chng_path, _, _ = _make_diag_pair(tmp_path)
+    out, out_bin, out_dist = _run_change_method(
+        method, base_path, chng_path, tmp_path,
+        use_kmeans=use_kmeans, centre_on_threshold=True,
+    )
+    assert out["threshold_method"] == ("kmeans" if use_kmeans else "otsu")
+    bin_arr = _read_band(out_bin)
+    dist_arr = _read_band(out_dist)
+    np.testing.assert_array_equal(dist_arr > 0, bin_arr == 1)
+    assert 0 < out["n_change"] < out["n_valid"]
+
+    # Uncentred: the raw distance, thresholded at the returned threshold.
+    out, out_bin, out_dist = _run_change_method(
+        method, base_path, chng_path, tmp_path,
+        use_kmeans=use_kmeans, centre_on_threshold=False,
+    )
+    raw = _read_band(out_dist).astype(np.float64)
+    np.testing.assert_allclose(raw, dist_arr + out["threshold"], atol=1e-4)
+    assert np.all(raw >= 0.0)
+
+
+@pytest.mark.filterwarnings("ignore:.*did not converge:UserWarning")
+@pytest.mark.parametrize("method", _METHODS)
+def test_default_no_data_is_set(tmp_path, method):
+    """Invalid pixels are written as -9999 and the no-data value is set."""
+    base_path, chng_path, hole = _make_one_date_hole_pair(tmp_path)
+    kwargs = {} if method == "cva" else {"use_kmeans": False}
+    _, out_bin, out_dist = _run_change_method(
+        method, base_path, chng_path, tmp_path, **kwargs
+    )
+    with rasterio.open(out_dist) as src:
+        assert src.nodata == -9999.0
+        dist_arr = src.read(1)
+    assert np.all(dist_arr[hole] == -9999.0)
+    assert np.all(dist_arr[~hole] != -9999.0)
+    assert np.all(_read_band(out_bin)[hole] == 255)
+    if method == "mad":
+        with rasterio.open(tmp_path / "mad_vars.tif") as src:
+            assert src.nodata == -9999.0
+            assert np.all(src.read()[:, hole] == -9999.0)
+
+
+# ---------------------------------------------------------------------------
+# Reproducible K-means thresholds
+# ---------------------------------------------------------------------------
+
+
+def test_kmeans_functions_take_rnd_seed():
+    """Every function that can use K-means takes rnd_seed (Default = 42)."""
+    for fn in (
+        icm.change_vector_analysis,
+        icm.slow_feature_analysis,
+        icm.multivariate_alteration_detection,
+    ):
+        assert inspect.signature(fn).parameters["rnd_seed"].default == 42
+
+
+@pytest.mark.skipif(not icm.HAVE_SKLEARN, reason="scikit-learn not installed")
+@pytest.mark.filterwarnings("ignore:.*did not converge:UserWarning")
+@pytest.mark.parametrize("method", _METHODS)
+def test_kmeans_threshold_reproducible(tmp_path, monkeypatch, method):
+    """K-means gets random_state=rnd_seed and two runs give identical outputs."""
+    base_path, chng_path, _, _ = _make_diag_pair(tmp_path)
+    seen = []
+    orig_kmeans = icm.KMeans
+
+    def _spy_kmeans(*args, **kwargs):
+        seen.append(kwargs.get("random_state"))
+        return orig_kmeans(*args, **kwargs)
+
+    monkeypatch.setattr(icm, "KMeans", _spy_kmeans)
+    runs = []
+    for i in range(2):
+        run_dir = tmp_path / f"run{i}"
+        run_dir.mkdir()
+        out, out_bin, out_dist = _run_change_method(
+            method, base_path, chng_path, run_dir, use_kmeans=True, rnd_seed=7
+        )
+        runs.append((out, _read_band(out_bin), _read_band(out_dist)))
+    assert seen == [7, 7]
+    assert runs[0][0]["threshold"] == runs[1][0]["threshold"]
+    np.testing.assert_array_equal(runs[0][1], runs[1][1])
+    np.testing.assert_array_equal(runs[0][2], runs[1][2])
+
+
+# ---------------------------------------------------------------------------
+# Thematic binary change outputs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.filterwarnings("ignore:.*did not converge:UserWarning")
+@pytest.mark.parametrize("method", _METHODS)
+@pytest.mark.parametrize("calc_stats", [True, False])
+def test_binary_change_output_is_thematic(tmp_path, method, calc_stats):
+    """The binary change map is thematic with a 0 / 1 colour table."""
+    base_path, chng_path, hole = _make_one_date_hole_pair(tmp_path)
+    kwargs = {"calc_stats": calc_stats}
+    if method != "cva":
+        kwargs["use_kmeans"] = False
+    _, out_bin, out_dist = _run_change_method(
+        method, base_path, chng_path, tmp_path, **kwargs
+    )
+    assert is_img_thematic(out_bin)
+    assert not is_img_thematic(out_dist)
+    with rasterio.open(out_bin) as src:
+        assert src.nodata == 255
+        cmap = src.colormap(1)
+        bin_arr = src.read(1)
+        tags = src.tags(1)
+    assert cmap[0] == icm.CHANGE_CLR_LUT[0]
+    assert cmap[1] == icm.CHANGE_CLR_LUT[1]
+    assert cmap[1] != cmap[0]
+    assert cmap[255][3] == 0  # no data is transparent
+    assert np.all(bin_arr[hole] == 255)
+    assert set(np.unique(bin_arr[~hole]).tolist()) == {0, 1}
+    if calc_stats:
+        assert tags["STATISTICS_HISTOBINFUNCTION"] == "direct"
+        # No data (255) is left out of the statistics.
+        assert tags["STATISTICS_MINIMUM"] == "0"
+        assert tags["STATISTICS_MAXIMUM"] == "1"
+        n_chng = int(np.sum(bin_arr == 1))
+        n_none = int(np.sum(bin_arr == 0))
+        assert tags["STATISTICS_HISTOBINVALUES"] == f"{n_none}|{n_chng}|"
+        assert float(tags["STATISTICS_MEAN"]) == pytest.approx(
+            n_chng / (n_chng + n_none)
+        )
+
+
+def test_binary_change_output_class_names(tmp_path):
+    """The binary change maps carry 'No change' / 'Change' class names."""
+    import rsgispy.changedetect.imgchngmthds as icm
+    from rsgispy.imageutils.colourtable import get_thematic_classes
+
+    rng = np.random.default_rng(3)
+    base = rng.integers(100, 1000, size=(3, 40, 40)).astype(np.uint16)
+    chng = base.copy()
+    chng[:, 10:20, 10:20] += 800
+    prof = dict(driver="GTiff", width=40, height=40, count=3, dtype="uint16",
+                crs="EPSG:32630", transform=rasterio.transform.from_origin(0, 400, 10, 10), nodata=0)
+    base_img, chng_img = str(tmp_path / "b.tif"), str(tmp_path / "c.tif")
+    for path, arr in ((base_img, base), (chng_img, chng)):
+        with rasterio.open(path, "w", **prof) as dst:
+            dst.write(arr)
+    out_bin = str(tmp_path / "bin.tif")
+    icm.change_vector_analysis(base_img, chng_img, out_bin, str(tmp_path / "dist.tif"), use_pbar=False)
+    names = {k: v[0] for k, v in get_thematic_classes(out_bin).items()}
+    assert names[0] == "No change" and names[1] == "Change"

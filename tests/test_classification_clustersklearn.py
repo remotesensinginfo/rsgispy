@@ -17,6 +17,8 @@ import rsgispy.classification.classdata as rcd
 import rsgispy.classification.classsklearn as rcsk
 import rsgispy.classification.clustersklearn as rclsk
 import rsgispy.imageutils.colourtable as rct
+from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+from rsgispy.ml.predict import predict_raster_node
 
 
 def _write_raster(
@@ -122,7 +124,7 @@ def _assert_zones_separated(arr: np.ndarray, nodata_val: int) -> None:
 
 def test_clustersklearn_module_layout():
     """Verify clustersklearn exports and non-re-export from package init."""
-    expected = {"img_pixel_cluster", "img_pixel_sample_cluster"}
+    expected = {"img_pixel_cluster", "img_pixel_sample_cluster", "apply_img_pixel_clusterer"}
     assert expected.issubset(set(rclsk.__all__))
     for name in expected:
         assert hasattr(rclsk, name)
@@ -447,4 +449,200 @@ def test_clustersklearn_validation_errors(tmp_path):
             out_tif,
             clusterer=sk_cluster.KMeans(n_clusters=2),
             use_pbar=False,
+        )
+
+
+def _read_band(path):
+    """Return band 1 and the no-data value of ``path``."""
+    with rasterio.open(path) as src:
+        return src.read(1), src.nodata, src.dtypes[0]
+
+
+def test_img_pixel_sample_cluster_accepts_image_path(tmp_path):
+    """A plain image path uses all its bands, as the ImageBandInfo list does."""
+    sk_cluster = pytest.importorskip("sklearn.cluster")
+    scene = _create_cluster_scene(tmp_path)
+    out_path = str(tmp_path / "from_path.tif")
+    out_info = str(tmp_path / "from_info.tif")
+    for img_in, out_tif in (
+        (scene["img_3b"], out_path),
+        ([rcd.ImageBandInfo(scene["img_3b"], name="s")], out_info),
+    ):
+        rclsk.img_pixel_sample_cluster(
+            img_in,
+            out_tif,
+            clusterer=sk_cluster.KMeans(n_clusters=3, n_init=5, random_state=0),
+            n_img_smpl=3,
+            rnd_seed=0,
+            calc_stats=False,
+            use_pbar=False,
+        )
+    arr_path, nd_path, _ = _read_band(out_path)
+    arr_info, nd_info, _ = _read_band(out_info)
+    np.testing.assert_array_equal(arr_path, arr_info)
+    assert nd_path == nd_info == 0
+    _assert_zones_separated(arr_path, 0)
+    # The whole-image clusterer accepts an image path too.
+    out_full = str(tmp_path / "full_from_path.tif")
+    rclsk.img_pixel_cluster(
+        Path(scene["img_3b"]),
+        out_full,
+        clusterer=sk_cluster.KMeans(n_clusters=3, n_init=5, random_state=0),
+        calc_stats=False,
+        use_pbar=False,
+    )
+    _assert_zones_separated(_read_band(out_full)[0], 0)
+
+
+def test_apply_img_pixel_clusterer_identical_to_sample_cluster(tmp_path):
+    """Applied to the image it was fitted on, the output is identical."""
+    # pylint: disable=too-many-locals
+    sk_cluster = pytest.importorskip("sklearn.cluster")
+    scene = _create_cluster_scene(tmp_path)
+    bands = [rcd.ImageBandInfo(scene["img_3b"], name="s", bands=[1, 2, 3])]
+    for clusterer, kwargs in (
+        (sk_cluster.KMeans(n_clusters=3, n_init=5, random_state=0), {}),
+        (
+            sk_cluster.MiniBatchKMeans(n_clusters=3, random_state=0),
+            {"in_msk_img": scene["msk_img"], "out_id_offset": 5, "block_size": 7},
+        ),
+    ):
+        ref_tif = str(tmp_path / "ref.tif")
+        app_tif = str(tmp_path / "applied.tif")
+        model = rclsk.img_pixel_sample_cluster(
+            bands,
+            ref_tif,
+            clusterer=clusterer,
+            n_img_smpl=3,
+            rnd_seed=0,
+            return_model=True,
+            use_pbar=False,
+            **kwargs,
+        )
+        rclsk.apply_img_pixel_clusterer(
+            bands, model, app_tif, use_pbar=False, **kwargs
+        )
+        ref_arr, ref_nd, ref_dt = _read_band(ref_tif)
+        app_arr, app_nd, app_dt = _read_band(app_tif)
+        np.testing.assert_array_equal(app_arr, ref_arr)
+        assert app_nd == ref_nd
+        assert app_dt == ref_dt
+        app_clrs = rct.get_colour_tab_info(app_tif)
+        assert app_clrs
+        assert set(app_clrs) == set(rct.get_colour_tab_info(ref_tif))
+
+
+def test_apply_img_pixel_clusterer_other_image_and_model_file(tmp_path):
+    """Fit on one image, apply to a second, also through out_model_file."""
+    sk_cluster = pytest.importorskip("sklearn.cluster")
+    scene = _create_cluster_scene(tmp_path)
+    with rasterio.open(scene["img_3b"]) as src:
+        arr = src.read()
+    # A second image: the zones in another order and a small shift in value.
+    arr2 = np.concatenate([arr[:, 16:24], arr[:, 0:16]], axis=1) + np.float32(0.5)
+    arr2[arr2 < -900] = -999.0
+    img2 = _write_raster(tmp_path / "scene_2.tif", arr2, nodata=-999.0)
+
+    model_file = str(tmp_path / "kmeans.joblib")
+    ref_tif = str(tmp_path / "ref.tif")
+    model = rclsk.img_pixel_sample_cluster(
+        scene["img_3b"],
+        ref_tif,
+        clusterer=sk_cluster.KMeans(n_clusters=3, n_init=5, random_state=0),
+        n_img_smpl=3,
+        rnd_seed=0,
+        out_model_file=model_file,
+        return_model=True,
+        use_pbar=False,
+    )
+    out_obj = str(tmp_path / "img2_obj.tif")
+    out_file = str(tmp_path / "img2_file.tif")
+    rclsk.apply_img_pixel_clusterer(img2, model, out_obj, use_pbar=False)
+    rclsk.apply_img_pixel_clusterer(img2, model_file, out_file, use_pbar=False)
+    ref_arr = _read_band(ref_tif)[0]
+    obj_arr, obj_nd, _ = _read_band(out_obj)
+    np.testing.assert_array_equal(_read_band(out_file)[0], obj_arr)
+    assert obj_nd == 0
+    # The same zones get the same cluster IDs as in the fitting image.
+    np.testing.assert_array_equal(obj_arr[0:8, 4:20], ref_arr[16:24, 4:20])
+    np.testing.assert_array_equal(obj_arr[8:16, 4:20], ref_arr[0:8, 4:20])
+    np.testing.assert_array_equal(obj_arr[16:24, 4:20], ref_arr[8:16, 4:20])
+    # The no-data pixel (2, 2) of the fitting image is now at (10, 2).
+    assert obj_arr[10, 2] == 0
+    assert set(np.unique(obj_arr).tolist()) == {0, 1, 2, 3}
+
+
+def test_apply_img_pixel_clusterer_tile_graph_matches(tmp_path):
+    """predict_raster_node with an offset lut gives the same cluster IDs."""
+    sk_cluster = pytest.importorskip("sklearn.cluster")
+
+    scene = _create_cluster_scene(tmp_path)
+    model = rclsk.img_pixel_sample_cluster(
+        scene["img_3b"],
+        str(tmp_path / "ref.tif"),
+        clusterer=sk_cluster.KMeans(n_clusters=3, n_init=5, random_state=0),
+        n_img_smpl=3,
+        rnd_seed=0,
+        return_model=True,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    app_tif = str(tmp_path / "applied.tif")
+    rclsk.apply_img_pixel_clusterer(
+        scene["img_3b"], model, app_tif, calc_stats=False, use_pbar=False
+    )
+    node = predict_raster_node(
+        RasterSource(scene["img_3b"]),
+        model,
+        thematic=True,
+        lut={k: k + 1 for k in range(3)},
+    )
+    tg_tif = str(tmp_path / "tile_graph.tif")
+    TileGraph(DiskSink(node, tg_tif, datatype=rsgispy.TYPE_8UINT, nodata=0)).run()
+    np.testing.assert_array_equal(_read_band(tg_tif)[0], _read_band(app_tif)[0])
+
+
+def test_apply_img_pixel_clusterer_errors(tmp_path):
+    """No predict(), unfitted, wrong band count and a bad offset raise."""
+    sk_cluster = pytest.importorskip("sklearn.cluster")
+    scene = _create_cluster_scene(tmp_path)
+    out_tif = str(tmp_path / "out.tif")
+    dbscan = sk_cluster.DBSCAN(eps=5.0).fit(np.random.default_rng(0).random((20, 3)))
+    with pytest.raises(rsgispy.RSGISPyException, match="no predict"):
+        rclsk.apply_img_pixel_clusterer(scene["img_3b"], dbscan, out_tif, use_pbar=False)
+    with pytest.raises(rsgispy.RSGISPyException, match="KMeans"):
+        rclsk.apply_img_pixel_clusterer(
+            scene["img_3b"], sk_cluster.AgglomerativeClustering(), out_tif,
+            use_pbar=False,
+        )
+    with pytest.raises(rsgispy.RSGISPyException, match="fitted"):
+        rclsk.apply_img_pixel_clusterer(
+            scene["img_3b"], sk_cluster.KMeans(n_clusters=3), out_tif, use_pbar=False
+        )
+    km_2b = sk_cluster.KMeans(n_clusters=2, n_init=2, random_state=0).fit(
+        np.random.default_rng(0).random((20, 2))
+    )
+    with pytest.raises(rsgispy.RSGISPyException, match="fitted on 2 bands"):
+        rclsk.apply_img_pixel_clusterer(scene["img_3b"], km_2b, out_tif, use_pbar=False)
+    # Two bands of the image work with the 2-band clusterer.
+    rclsk.apply_img_pixel_clusterer(
+        [rcd.ImageBandInfo(scene["img_3b"], name="s", bands=[1, 2])],
+        km_2b,
+        out_tif,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    assert set(np.unique(_read_band(out_tif)[0]).tolist()) <= {0, 1, 2}
+    with pytest.raises(rsgispy.RSGISPyException, match="out_id_offset"):
+        rclsk.apply_img_pixel_clusterer(
+            [rcd.ImageBandInfo(scene["img_3b"], name="s", bands=[1, 2])], km_2b, out_tif,
+            out_id_offset=-1, use_pbar=False,
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rclsk.apply_img_pixel_clusterer(
+            scene["img_3b"], str(tmp_path / "missing.joblib"), out_tif, use_pbar=False
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        rclsk.apply_img_pixel_clusterer(
+            str(tmp_path / "missing.tif"), km_2b, out_tif, use_pbar=False
         )

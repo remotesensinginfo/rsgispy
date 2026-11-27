@@ -9,6 +9,7 @@ The scene is a small landscape in UTM zone 30N (EPSG:32630, 10 m pixels):
   ``uint16`` reflectance x 10000, no data 0, with a no data corner);
 * a land cover raster (Water, Forest, Grass, Urban) with a colour table, as
   produced by the pixel classification guide;
+* a DEM (elevation in metres, no data -9999) with a valley along the river;
 * a continuous 0-1 score raster (e.g. a multi-criteria suitability score or
   a vegetation fraction; no data -9999);
 * administrative regions (polygons), a river (line) and survey sites (points);
@@ -79,7 +80,7 @@ def make_maps_scene(out_dir: str, height: int = 120, width: int = 160,
                     seed: int = 0) -> Dict[str, str]:
     """
     Write the synthetic scene to ``out_dir`` and return the file paths:
-    ``s2``, ``cls``, ``score``, ``regions``, ``rivers``, ``sites`` and
+    ``s2``, ``cls``, ``score``, ``dem``, ``regions``, ``rivers``, ``sites`` and
     ``overview``.
     """
     # pylint: disable=too-many-locals
@@ -115,6 +116,17 @@ def make_maps_scene(out_dir: str, height: int = 120, width: int = 160,
     score = np.clip(0.2 + 0.7 * veg - 0.4 * (cls == 4), 0, 1).astype(np.float32)
     score[(cls == 1) | nodata_corner] = -9999.0
 
+    # Elevation (m): hills with a valley along the river, which is the
+    # lowest ground (generated from its own random stream so the other
+    # layers do not change).
+    dem_rng = np.random.default_rng(seed + 100)
+    hills = (0.6 * _smooth_field(dem_rng, height, width, scale=height / 12.0)
+             + 0.3 * _smooth_field(dem_rng, height, width, scale=height / 30.0)
+             + 0.1 * _smooth_field(dem_rng, height, width, scale=height / 60.0))
+    valley = np.abs(rows - river_row) / height
+    dem = (40.0 + 260.0 * hills * np.clip(valley * 4.0, 0.1, 1.0)
+           + 300.0 * valley).astype(np.float32)
+
     paths = {
         "s2": _write(os.path.join(out_dir, "s2_sref.tif"), s2, nodata=0,
                      band_names=["Blue", "Green", "Red", "NIR"]),
@@ -122,6 +134,8 @@ def make_maps_scene(out_dir: str, height: int = 120, width: int = 160,
                       ctab={0: (0, 0, 0, 0), **CLASS_COLOURS}),
         "score": _write(os.path.join(out_dir, "score.tif"), score,
                         nodata=-9999.0, band_names=["score"]),
+        "dem": _write(os.path.join(out_dir, "dem.tif"), dem, nodata=-9999.0,
+                      band_names=["elevation"]),
     }
 
     x1 = X0 + width * RES

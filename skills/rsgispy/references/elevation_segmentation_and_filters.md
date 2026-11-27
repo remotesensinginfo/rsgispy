@@ -60,7 +60,7 @@ Follows dual path / `GeoDataFrame` pattern (`out_vec_file=None` returns `GeoData
 - **Sink & DEM conditioning**:
   - `identify_sinks(input_img, output_img, output_depth_img=None, allow_pure_python=False, *, ...)`
   - `fill_depressions(input_img, output_img, resolve_flats=True, allow_pure_python=False, *, ...)`
-  - `breach_depressions(input_img, output_img, max_depth=None, max_length=None, fill_remaining=True, allow_pure_python=False, *, ...)`
+  - `breach_depressions(input_img, output_img, max_depth=None, max_length=None, fill_remaining=True, allow_pure_python=False, *, ...)` (least total cut from each pit to lower ground or to the DEM edge / no data; without `max_depth` / `max_length` every pit is breached however deep, so set them for real DEMs or use `condition_dem`)
   - `burn_streams(dem_img, streams_vec, output_img, burn_depth=5.0, buffer_dist=None, smooth_drop=2.0, *, ...)`
   - `resolve_flats(input_img, output_img, allow_pure_python=False, *, ...)`
   - `condition_dem(input_img, output_img, method='breach_and_fill', max_breach_depth=None, max_breach_length=None, streams_vec=None, burn_depth=5.0, buffer_dist=None, allow_pure_python=False, *, ...)`

@@ -252,7 +252,7 @@ def run_workflow(
         for ax, (img, title) in zip(
             axs, [(lin_img, "VV (raw)"), (filt_img, "VV (refined Lee)")]
         ):
-            cmap, norm = create_raster_cmap_img_map(
+            img = create_raster_cmap_img_map(
                 ax, img, 1, title_str=title, cmap_name="gray",
                 norm_img_vals=True,
                 use_log_norm=True,  # a log scale shows the data as dB
@@ -260,7 +260,7 @@ def run_workflow(
                 norm_vmax=1.0,  # 0 dB
                 show_map_axis=False,
             )
-        fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=axs,
+        fig.colorbar(img, ax=axs,  # one colour bar for both panels
                      label="sigma0 (linear, log scale)", shrink=0.8)
         fig.savefig(fig_file, dpi=100, bbox_inches="tight")
         plt.close(fig)

@@ -371,8 +371,8 @@ prediction with the test labels:
 
 :func:`~rsgispy.modelling.species_distribution.calc_binary_roc_auc` returns
 the ensemble's ROC curve and AUC, and
-:func:`~rsgispy.modelling.species_distribution.plot_roc_curve` writes the
-curve to ``plots/roc_curve.png``. It shows the trade-off between the true
+:func:`~rsgispy.modelling.species_distribution.plot_roc_curve` plots the
+curve, returns ``(fig, ax)`` and saves it to ``plots/roc_curve.png``. It shows the trade-off between the true
 positive rate (sensitivity) and the false positive rate (1 − specificity) over
 all thresholds; a curve close to the top-left corner is good.
 

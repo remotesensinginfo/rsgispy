@@ -11,6 +11,12 @@ from matplotlib.offsetbox import AnchoredOffsetbox
 
 import rsgispy
 
+#: Shared style of the boxes behind map elements (scale bar, north arrow,
+#: legends, panel labels).
+MAP_BOX_ALPHA = 0.9
+MAP_BOX_EDGE_COLOUR = "#cccccc"
+MAP_BOX_EDGE_WIDTH = 0.6
+
 _POLY_GEOM_TYPES = ("Polygon", "MultiPolygon")
 _LINE_GEOM_TYPES = ("LineString", "MultiLineString", "LinearRing")
 _POINT_GEOM_TYPES = ("Point", "MultiPoint")
@@ -57,6 +63,37 @@ def resolve_mpl_location(loc: Union[str, int]) -> str:
             f"Invalid placement location '{loc}'. Valid options are: {valid}."
         )
     return norm_loc
+
+
+def add_map_colour_bar(
+    ax: matplotlib.axes.Axes,
+    mappable: Any,
+    cbar_label: Optional[str] = None,
+) -> Any:
+    """
+    Add a colour bar for ``mappable`` beside the map axis ``ax`` and return
+    it. On a map (equal aspect) the bar is an inset axis exactly as tall as
+    the map; otherwise it takes its space from ``ax``. The colour bar is also available as
+    ``mappable.colorbar``.
+    """
+    fig = ax.get_figure()
+    x_lim = ax.get_xlim()
+    y_lim = ax.get_ylim()
+    x_span = abs(x_lim[1] - x_lim[0])
+    y_span = abs(y_lim[1] - y_lim[0])
+    if ax.get_aspect() == 1.0 and x_span > 0 and y_span > 0:
+        # A map (equal aspect): draw the colour bar in an inset axis the
+        # height of the map, so it is never taller or shorter than the map
+        # whatever the figure's shape. The width is a fixed share of the
+        # map's height (capped for tall, narrow maps).
+        bar_w = min(0.045 * (y_span / x_span), 0.12)
+        cax = ax.inset_axes([1.03, 0.0, bar_w, 1.0])
+        cbar = fig.colorbar(mappable, cax=cax)
+    else:
+        cbar = fig.colorbar(mappable, ax=ax, shrink=0.85, pad=0.07)
+    if cbar_label is not None:
+        cbar.set_label(cbar_label)
+    return cbar
 
 
 def plot_vec_lyr_by_geom_type(

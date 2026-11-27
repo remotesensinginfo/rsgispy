@@ -10,7 +10,7 @@ Run it on your own data with, e.g.::
 
     python making_maps.py --s2 s2_sref_10m.tif --cls land_cover.tif \\
         --score restoration_score.tif --regions admin_units.gpkg \\
-        --rivers rivers.gpkg --overview countries.gpkg \\
+        --rivers rivers.gpkg --overview countries.gpkg --dem dem.tif \\
         --classes cls_config.json --out-dir maps --basemap
 """
 
@@ -35,6 +35,7 @@ def run_workflow(
     basemap: bool = False,
     wmts_url: Optional[str] = None,
     wmts_lyr: Optional[str] = None,
+    dem_img: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Run the worked example. ``s2_img`` is a surface reflectance stack,
@@ -43,7 +44,8 @@ def run_workflow(
     polygons, ``rivers_vec`` a line layer and ``overview_vec`` a small-scale
     layer (e.g. country outlines) for the inset map. ``classes_info`` gives the
     class names (``{pixel value: name}``, a ``ClassificationConfig`` or its
-    JSON file). Figures are written to ``out_dir``.
+    JSON file). ``dem_img`` is an optional DEM for the hillshaded maps.
+    Figures are written to ``out_dir``.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-statements,import-outside-toplevel
@@ -118,22 +120,48 @@ def run_workflow(
     # [end-step-2-rgb]
 
     # [step-3-continuous]
-    import matplotlib.cm
-
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-    cmap, norm = map_raster.create_raster_cmap_img_map(
+    map_raster.create_raster_cmap_img_map(
         ax, score_img, img_band=1,
         cmap_name="viridis",  # perceptually uniform, colour-blind safe
         norm_img_vals=True, norm_vmin=0.0, norm_vmax=1.0,  # fixed range
         title_str="Score", scale_bar_loc="lower right",
+        show_colour_bar=True, cbar_label="Score (0-1)",
     )
-    fig.colorbar(matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax,
-                 label="Score (0-1)", shrink=0.8)
+    # The image artist is returned, so you can also add the colour bar
+    # yourself (e.g. one bar for several panels): fig.colorbar(img).
     map_layout.define_map_tick_spacing(ax, tick_spacing)
     out["score_map"] = os.path.join(out_dir, "maps_score.png")
     fig.savefig(out["score_map"], dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     # [end-step-3-continuous]
+
+    if dem_img is not None:
+        # [step-3-relief]
+        fig, axs = plt.subplots(1, 2, figsize=(fig_width, fig_height / 1.6),
+                                layout="constrained")
+        # a) The elevation, coloured and shaded by its own hillshade, which
+        #    is made in memory from the DEM.
+        img = map_raster.create_shaded_cmap_img_map(
+            axs[0], dem_img, dem_img=dem_img,
+            cmap_name="viridis", hshade_alpha=0.4,
+            show_colour_bar=False, scale_bar_loc="lower right",
+            show_north_arrow=False,
+        )
+        # The colour bar below the map, so both panels are the same size.
+        fig.colorbar(img, ax=axs[0], orientation="horizontal", shrink=0.8,
+                     label="Elevation (m)")
+        # b) A hillshade over the land cover (drawn above it, zorder=2).
+        map_raster.create_thematic_raster_map(
+            axs[1], cls_img, show_scale_bar=False, show_map_axis=False,
+        )
+        map_raster.add_hillshade(axs[1], dem_img=dem_img, alpha=0.35)
+        for ax, label in zip(axs, ["a)", "b)"]):
+            map_elements.add_axis_label(ax, label, lbl_font_size=8)
+        out["relief_map"] = os.path.join(out_dir, "maps_relief.png")
+        fig.savefig(out["relief_map"], dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
+        # [end-step-3-relief]
 
     # [step-4-thematic]
     import rsgispy.mapping.legend as map_legend
@@ -207,9 +235,8 @@ def run_workflow(
         vec_fill_cmap="Greens", vec_var_norm=pct_norm, vec_line_clr="black",
         vec_line_width=0.5, title_str="Forest cover by region",
         scale_bar_loc="lower right",
+        show_colour_bar=True, cbar_label="Forest (%)",
     )
-    fig.colorbar(matplotlib.cm.ScalarMappable(norm=pct_norm, cmap="Greens"),
-                 ax=ax, label="Forest (%)", shrink=0.8)
     map_layout.define_map_tick_spacing(ax, tick_spacing)
     out["choropleth_map"] = os.path.join(out_dir, "maps_choropleth.png")
     fig.savefig(out["choropleth_map"], dpi=dpi, bbox_inches="tight")
@@ -283,6 +310,26 @@ def run_workflow(
     plt.close(fig_zoom)
     # [end-step-8-export]
 
+    # [step-panels]
+    # Maps side by side with one extent, one legend and one scale bar.
+    fig, axs = map_layout.create_map_panels(
+        [
+            {"panel_type": "rgb", "input_img": s2_img, "bands": list(rgb_bands),
+             "title": "Sentinel-2"},
+            {"panel_type": "thematic", "input_img": cls_img, "title": "Land cover"},
+            {"panel_type": "cmap", "input_img": score_img, "vmin": 0.0, "vmax": 1.0,
+             "show_colour_bar": True, "cbar_label": "Score", "title": "Score"},
+        ],
+        bbox=zoom_bbox,
+        classes_info=classes_info,
+        legend_title="Land cover",
+        legend_position="bottom",
+    )
+    out["panels_map"] = os.path.join(out_dir, "maps_panels.png")
+    fig.savefig(out["panels_map"], dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    # [end-step-panels]
+
     # [step-9-basemap]
     import rsgispy.mapping.basemaps as map_basemaps
 
@@ -340,12 +387,13 @@ def main() -> None:
                         help="Also draw an OpenStreetMap basemap (internet)")
     parser.add_argument("--wmts-url", default=None, help="WMTS service URL")
     parser.add_argument("--wmts-lyr", default=None, help="WMTS layer name")
+    parser.add_argument("--dem", default=None, help="DEM for the hillshaded maps")
     parser.add_argument("--out-dir", required=True, help="Output directory")
     args = parser.parse_args()
     run_workflow(args.s2, args.cls, args.score, args.regions, args.rivers,
                  args.overview, args.out_dir, args.classes,
                  rgb_bands=args.rgb_bands, dpi=args.dpi, basemap=args.basemap,
-                 wmts_url=args.wmts_url, wmts_lyr=args.wmts_lyr)
+                 wmts_url=args.wmts_url, wmts_lyr=args.wmts_lyr, dem_img=args.dem)
 
 
 if __name__ == "__main__":

@@ -959,7 +959,9 @@ def feature_stack_nodes(
 
         stack = ImageFeatureStack([BandSpec("s2.tif", name="s2"), BandSpec("dem.tif")])
         feats = feature_stack_nodes(stack)
-        print(TileGraph(DiskSink(StackBands(feats), "features.tif")).describe())
+        # One no-data value for the stacked features (see StackBands).
+        stacked = StackBands(feats, no_data_val="auto")
+        print(TileGraph(DiskSink(stacked, "features.tif")).describe())
         pred = predict_raster_node(feats, rf_model, scaler=stack.scaler)
     """
     stack_obj = _coerce_feature_stack(feature_stack)
@@ -1239,7 +1241,10 @@ def predict_raster_node(
                       ``predict_proba[:, -1] >= threshold`` (binary).
     :param thematic: The output is a class map: the default ``no_data_val``
                      is ``0`` (Default = ``False``).
-    :param band_names: Optional output band names.
+    :param band_names: Optional output band names (Default = ``None``:
+                       ``'class'`` for a thematic or thresholded output, or
+                       ``'class_1'``, ``'class_2'``, ... for several outputs;
+                       unnamed otherwise).
     :param mask: Optional mask :class:`~rsgispy.imageprocess.TileNode`
                  (band 1 used).
     :param img_msk_val: Mask value of the pixels to predict (Default = ``1``).
@@ -1301,6 +1306,9 @@ def predict_raster_node(
             return preds.T.astype(np.float64, copy=False)
         return preds.ravel().astype(np.float64, copy=False)[np.newaxis, :]
 
+    if band_names is None and is_thematic:
+        # Class maps are named, so a DiskSink writes the band name.
+        band_names = ["class"] if n_out == 1 else [f"class_{i + 1}" for i in range(n_out)]
     # Thematic / thresholded output is uint8 (as predict_raster writes by
     # default) when every possible value fits exactly; otherwise float64.
     out_dtype = (

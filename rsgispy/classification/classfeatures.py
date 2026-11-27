@@ -31,6 +31,7 @@ from rsgispy.classification._helpers import (
 )
 from rsgispy.classification.classdata import ClassInfoObj
 from rsgispy.tools._ml_explain import (
+    finalise_plot,
     plot_class_feature_distributions,
     plot_jackknife_bars,
     run_boruta_shap_selection,
@@ -308,7 +309,7 @@ def comparison_box_plots(
     class_name_col: Optional[str] = None,
     box_plots: bool = False,
     use_pbar: bool = True,
-) -> None:
+) -> List[str]:
     """
     Create per-feature distribution comparison plots (violin or box plots)
     grouped by land-cover class across extracted classification samples.
@@ -330,12 +331,14 @@ def comparison_box_plots(
     :param box_plots: If ``True``, draw box plots; if ``False`` (default),
                       draw violin plots.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :return: List of the plot files written (one per feature; each figure is
+             closed after it is saved).
 
     .. code:: python
 
         import rsgispy.classification.classfeatures as cf
 
-        cf.comparison_box_plots(
+        plot_files = cf.comparison_box_plots(
             "train.parquet", cls_cfg="cls_config.json", out_dir="plots", box_plots=True
         )
     """
@@ -392,7 +395,7 @@ def comparison_box_plots(
                 "Could not find a class label or class ID column in samples_data."
             )
 
-    plot_class_feature_distributions(
+    return plot_class_feature_distributions(
         data_df=plot_df,
         feature_cols=feat_cols,
         cls_col=group_col,
@@ -1422,26 +1425,26 @@ def calc_jackknife_feature_importance(
         jack_df.to_csv(ensure_parent_dir(out_var_importance_file), index=True)
 
     if out_importance_acc_plot is not None:
-        plot_jackknife_bars(
+        fig, _ = plot_jackknife_bars(
             feat_cols,
             out_data["test_acc_leave_var_out"],
             out_data["test_acc_only_var"],
             all_metrics["test_accuracy"],
             "Jackknife Accuracy Gain",
             "Testing Accuracy",
-            out_importance_acc_plot,
         )
+        finalise_plot(fig, out_file=out_importance_acc_plot)
 
     if out_importance_f1_plot is not None:
-        plot_jackknife_bars(
+        fig, _ = plot_jackknife_bars(
             feat_cols,
             out_data["test_f1_macro_leave_var_out"],
             out_data["test_f1_macro_only_var"],
             all_metrics["test_f1_macro"],
             "Jackknife Macro F1 Gain",
             "Testing Macro F1",
-            out_importance_f1_plot,
         )
+        finalise_plot(fig, out_file=out_importance_f1_plot)
 
     return jack_df
 

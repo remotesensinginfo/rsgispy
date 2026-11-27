@@ -42,6 +42,7 @@ from rsgispy.imageprocess import (
     NodeMeta,
     PointwiseOp,
     RasterSource,
+    SetNoData,
     StackBands,
     TileContext,
     TileNode,
@@ -505,8 +506,16 @@ def calc_img_rescale(
         grid = compute_spatial_intersection(datasets)
 
     sources = [GridRasterSource(path, grid, grid.offsets[path]) for path in img_paths]
+    if len(sources) > 1:
+        # The rescale applies c_no_data_val to every band itself, so the
+        # stack shares it and does not mask across the images.
+        stack_in: TileNode = StackBands(
+            [SetNoData(src, c_no_data_val) for src in sources]
+        )
+    else:
+        stack_in = sources[0]
     node = calc_img_rescale_node(
-        StackBands(sources) if len(sources) > 1 else sources[0],
+        stack_in,
         c_no_data_val=c_no_data_val,
         c_offset=c_offset,
         c_gain=c_gain,

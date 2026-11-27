@@ -172,10 +172,16 @@ remaining clouds, shadows and noise that the cloud mask missed, without the
 blur of a mean. Choose the date range carefully: a composite over a whole
 year mixes flooded and dry conditions.
 
-:func:`~rsgispy.imagecalc.percentiles.calc_img_band_pxl_percentiles`
-computes the per-pixel, per-band median, ignoring the no data value, so a
-pixel cloudy on some dates still gets a value from the others. Pixels with no
-valid observation keep the no data value.
+:func:`~rsgispy.imageutils.composite.create_percentile_composite`
+computes the per-pixel, per-band median of the valid observations, so a
+pixel cloudy on some dates still gets a value from the others. An
+observation is valid where all six bands are valid (``valid_rule='per_band'``
+uses each band's own valid values instead), the median is interpolated and,
+with an integer ``datatype``, rounded. Pixels with no valid observation are
+no data. The other composites in :mod:`rsgispy.imageutils.composite` (the
+geomedian, medoid and maximum-NDVI or quality mosaics) take the same list of
+images; a median of each band separately can mix the bands of different
+dates, while a geomedian or medoid keeps the spectra consistent.
 
 The function ``prep_refl`` then sets the no data value and band names, and
 clips valid values to a minimum of 1. This matters for water: dark water
@@ -271,7 +277,13 @@ How to check the endmembers:
   pixels should be in open lakes and rivers, vegetation pixels in dense
   forest or crops, sand pixels on dunes, bare fields or rock. Sand pixels
   scattered along field edges or settlements mean the sand window is
-  catching mixtures.
+  catching mixtures. The NDVI / MNDWI feature space shows how the windows
+  sit in the data: water, vegetation and sand are the corners of a
+  triangle of mixtures.
+  :func:`~rsgispy.imagecalc.stats.get_img_2d_histogram` counts it block by
+  block, e.g. ``hist, x_edges, y_edges = get_img_2d_histogram(idx_img, 1, 2,
+  bins=200, x_range=(-1, 1), y_range=(-1, 1))`` (indexed ``[x, y]``, so plot
+  ``hist.T`` with ``origin='lower'``).
 * **Do the spectra look right?** Water dark and decreasing into the SWIR;
   vegetation with a low red and a high NIR; sand bright and fairly flat.
 * **Mixed pixels in the selection.** NDVI saturates, so a pixel with 85 %
@@ -325,8 +337,8 @@ residual):
 .. code-block:: text
 
          neg_pct  sum_min  sum_max  rmse_median  rmse_p99
-   fcls     0.00     1.00     1.00         9.20    267.68
-   ucls    58.01     0.32     1.05         7.21     73.17
+   fcls     0.00     1.00     1.00         9.19    267.68
+   ucls    58.01     0.32     1.05         7.20     73.17
 
 How to read this:
 
@@ -426,11 +438,11 @@ The rules of Table 3 are written as one nested
 fractions, tested in order (Open Water first); a pixel that matches no rule
 is Mixed / Other. Wetland classes (OW, EFV, WBS) on slopes steeper than
 ``max_slope`` become Mixed / Other. The output is an 8-bit image with 0 as
-no data, a colour table
-(:func:`~rsgispy.imageutils.colourtable.define_colour_table`) and thematic
-metadata (:func:`~rsgispy.imageutils.colourtable.set_img_thematic`), so GIS
-software shows the classes in their colours. The class names and colours
-are defined once at the top of the script:
+no data; :func:`~rsgispy.imageutils.colourtable.set_thematic_classes` marks it
+thematic, writes the colour table and the class names, and calculates the
+thematic statistics and pyramids, so GIS software shows the classes in their
+colours. The class names and colours are defined once at the top of the
+script:
 
 .. literalinclude:: ../examples/spectral_unmixing.py
    :language: python
@@ -462,8 +474,9 @@ In the synthetic scene every block gets its expected class: the burned
 patch is Dry Bare Sand (it would be Wet Bare Sand without Step 5), and the
 wet-looking hillside (45 % water, 55 % vegetation) is Mixed / Other instead
 of Emergent Flooded Vegetation because of the slope mask. GeoTIFF has no
-attribute table for class names, so keep ``TROPWET_CLASSES`` (or the CSV)
-with the image.
+attribute table for class names, so the names are stored as a band tag
+inside the file; read them back (with the colours) with
+:func:`~rsgispy.imageutils.colourtable.get_thematic_classes`.
 
 Step 8 — Water frequency
 ------------------------

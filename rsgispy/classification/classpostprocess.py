@@ -26,7 +26,7 @@ from typing import Any, Mapping, Optional, Sequence, Union
 
 import numpy as np
 
-from rsgispy._io import Cast, TileNode, resolve_input_nodata
+from rsgispy._io import Cast, SetBandNames, TileNode, infer_node_meta, resolve_input_nodata
 from rsgispy.classification._postprocess_helpers import (
     majority_window_node,
     run_majority_filter,
@@ -62,7 +62,8 @@ def majority_filter_node(
     ``filter_size // 2``.
 
     The node outputs blocks of type ``dtype`` (``float64`` when it is
-    ``None``) with the bands (and band names) of ``source``, so a
+    ``None``) with the bands and band names of ``source`` (``'class'``, or
+    ``'class_1'``, ``'class_2'``, ... when ``source`` has none), so a
     :class:`~rsgispy.imageprocess.DiskSink` without ``datatype`` writes that
     type. ``no_data_val`` is the input no-data value (by default that of
     ``source``'s metadata; see :ref:`tilegraph-nodata`); output pixels without a
@@ -123,6 +124,15 @@ def majority_filter_node(
         # The values are already those of an output of type ``dtype`` (classes,
         # and a no-data value that fits it), so the cast is exact.
         node = Cast(node, np_dtype, name=f"{name or 'majority_filter'}_cast")
+    src_meta = infer_node_meta(source)
+    if src_meta.band_names is None and src_meta.n_bands is not None:
+        # Name the class map's bands, so a DiskSink writes a band name.
+        n_bands = int(src_meta.n_bands)
+        node = SetBandNames(
+            node,
+            ["class"] if n_bands == 1 else [f"class_{i + 1}" for i in range(n_bands)],
+            name=f"{name or 'majority_filter'}_names",
+        )
     return node
 
 

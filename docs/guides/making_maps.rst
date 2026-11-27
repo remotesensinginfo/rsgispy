@@ -54,6 +54,7 @@ Overview
             │
             ├─► 2. RGB image (s2_sref.tif) ──────────► stretch comparison, RGB map
             ├─► 3. continuous raster (score.tif) ────► map + colour bar
+            │      + DEM (dem.tif) ──────────────────► hillshaded maps
             ├─► 4. thematic raster (land_cover.tif) ─► map + categorical legend
             ├─► 5. vectors (regions, rivers) ────────► overlay map, choropleth
             │
@@ -79,6 +80,7 @@ rsgispy test suite runs on synthetic data. The inputs are:
 * ``land_cover.tif`` — a classification with a colour table, as written by
   :func:`~rsgispy.classification.classsklearn.apply_sklearn_classifier`;
 * ``score.tif`` — any continuous single-band raster, for example a 0–1 score;
+* ``dem.tif`` — an optional DEM (elevation in metres) for the hillshaded maps;
 * ``regions.gpkg`` and ``rivers.gpkg`` — polygon and line layers in the same
   CRS as the rasters;
 * ``overview.gpkg`` — a small-scale layer (e.g. country outlines, in any CRS)
@@ -186,8 +188,16 @@ Step 3 — Continuous single-band maps
 
 :func:`~rsgispy.mapping.raster.create_raster_cmap_img_map` draws one band
 with a Matplotlib colour map. Pixels equal to the band's no data value are
-transparent. It returns the colour map and the normalisation, which you need
-for the colour bar.
+transparent. ``show_colour_bar=True`` (with ``cbar_label``) adds a colour bar
+beside the map. The function returns the image artist
+(``matplotlib.image.AxesImage``), so you can also draw the colour bar
+yourself, e.g. one bar for several panels with ``fig.colorbar(img, ax=axs)``.
+Every map function returns the artist it drew (see
+:ref:`plotting_conventions`).
+
+The map functions draw in the rsgispy house style (one box style for the
+scale bar, north arrow and legends, and readable tick labels) without
+changing your Matplotlib settings; see the :doc:`plot_gallery`.
 
 Choosing a colour map:
 
@@ -202,10 +212,10 @@ Choosing a colour map:
 Set ``norm_img_vals=True`` with fixed ``norm_vmin``/``norm_vmax`` (here 0 and
 1) so the colours have the same meaning in every map and the colour bar shows
 the full range. Without ``norm_vmin``/``norm_vmax`` the range is the data
-minimum and maximum. The normalisation (and so ``use_log_norm`` and the
-returned ``norm``) is only used when ``norm_img_vals=True``; with the default
-``False`` the function returns ``None`` for the normalisation, so set it to
-``True`` whenever you add a colour bar. ``use_log_norm=True`` suits strongly
+minimum and maximum. The normalisation (and so ``use_log_norm``) is only used
+when ``norm_img_vals=True``; with the default ``False`` the colours span the
+image's own range, so set it to ``True`` whenever you add a colour bar.
+``use_log_norm=True`` suits strongly
 skewed data (e.g. flow accumulation), and ``vals_under_white=True`` draws
 values below ``norm_vmin`` in white.
 
@@ -221,6 +231,43 @@ values below ``norm_vmin`` in white.
 
    A continuous 0–1 score with a fixed colour bar range. Water (no data) is
    transparent.
+
+Relief: hillshaded maps
+~~~~~~~~~~~~~~~~~~~~~~~
+
+A semi-transparent hillshade over a map shows the terrain under it, which
+helps to read hydrology, geomorphology or land cover maps.
+:func:`~rsgispy.mapping.raster.add_hillshade` draws a hillshade over what is
+already on an axis, from a hillshade image (e.g. made by
+:func:`rsgispy.elevation.illumination.hillshade`) or straight from a DEM
+(``dem_img``): the hillshade of the map's bounding box is then made in memory,
+with the sun at ``azimuth`` and ``zenith`` (default 315° and 45°), and no file
+is written. :func:`~rsgispy.mapping.raster.create_shaded_cmap_img_map` draws a
+colour-mapped raster (e.g. elevation, flow accumulation or a wetness index)
+with the hillshade over it, a colour bar, a scale bar and a north arrow, and
+returns the colour-mapped image artist. ``hshade_alpha`` (``alpha`` of
+``add_hillshade``) sets how strongly the relief shows: 0.3–0.5 keeps the
+colours readable.
+
+When a large raster is drawn on a small map, Matplotlib resamples it, and
+features one pixel wide (stream channels, roads) can disappear if the colours
+are resampled. The raster map functions resample the data values instead
+(``interp_stage="data"``, the default), which keeps them visible; set
+``interpolation="nearest"`` to show the pixels as they are, and ``img_alpha``
+to make any raster layer semi-transparent.
+
+.. literalinclude:: ../examples/making_maps.py
+   :language: python
+   :start-after: # [step-3-relief]
+   :end-before: # [end-step-3-relief]
+   :dedent: 8
+
+.. figure:: images/maps_relief.png
+   :width: 100%
+   :alt: Elevation shaded by its hillshade, and land cover with a hillshade over it.
+
+   a) The elevation shaded by its own hillshade; b) a hillshade over the land
+   cover. Both hillshades were made in memory from the DEM.
 
 Step 4 — Thematic maps and categorical legends
 ----------------------------------------------
@@ -418,6 +465,34 @@ stretch is then computed for the zoomed area.
    The composed map from Steps 6–8: thematic raster, river, alternating scale
    bar, compass north arrow, zoom box and inset overview map.
 
+Several maps side by side
+-------------------------
+
+To compare maps of the same area (an image and its classification, two
+classifications, a change distance and the change over the image), use
+:func:`~rsgispy.mapping.layout.create_map_panels`. It takes a list of panels,
+each a ``dict`` (or a :class:`~rsgispy.mapping.layout.MapPanel`) naming the
+panel type (``'rgb'``, ``'cmap'``, ``'thematic'`` or ``'vector'``), its data and
+a title, and draws them with the functions of Steps 2–5 over one ``bbox``.
+A panel can have a ``base_img`` drawn below it (e.g. a change mask over the
+image); ``map_kw`` passes other arguments to the drawing function. The
+thematic panels share one legend (``legend_position`` ``'right'`` or
+``'bottom'``), ``'cmap'`` panels can have a colour bar, and one scale bar and
+north arrow are drawn on the first panel. ``ncols`` sets the panels per row.
+It returns ``(fig, axs)``, with one axis per panel.
+
+.. literalinclude:: ../examples/making_maps.py
+   :language: python
+   :start-after: # [step-panels]
+   :end-before: # [end-step-panels]
+   :dedent: 4
+
+.. figure:: images/maps_panels.png
+   :width: 100%
+   :alt: Three map panels: the image, the land cover and the score.
+
+   The zoom area as three panels, with one legend and one scale bar.
+
 Step 9 — Basemaps (optional, online)
 ------------------------------------
 
@@ -466,9 +541,9 @@ keep them small. From the repository root:
    sc = make_maps_scene("/tmp/maps_data")
    making_maps.run_workflow(sc["s2"], sc["cls"], sc["score"], sc["regions"],
                             sc["rivers"], sc["overview"], "/tmp/maps",
-                            CLASS_NAMES, dpi=100)
-   for name in ["maps_rgb_stretches", "maps_score", "maps_land_cover",
-                "maps_choropleth", "maps_final"]:
+                            CLASS_NAMES, dpi=100, dem_img=sc["dem"])
+   for name in ["maps_rgb_stretches", "maps_score", "maps_relief", "maps_land_cover",
+                "maps_choropleth", "maps_final", "maps_panels"]:
        img = Image.open(f"/tmp/maps/{name}.png").convert("RGB")
        img.quantize(colors=128).save(f"docs/guides/images/{name}.png",
                                      optimize=True)

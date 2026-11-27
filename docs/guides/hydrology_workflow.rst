@@ -204,9 +204,11 @@ There are two ways to remove a sink:
   into flats where the flow path is arbitrary.
 * **Breaching** (:func:`rsgispy.elevation.hydrology.breach_depressions`, the
   Lindsay (2016) least-cost method) cuts a channel through the barrier from
-  the bottom of the sink to lower ground. Few pixels change, and the change
-  is usually where the real river crosses the embankment, but unconstrained
-  breaching can cut deep, long trenches through real barriers.
+  the bottom of the sink to lower ground, or to the DEM edge or no data
+  (where the flow leaves the DEM), choosing the path with the smallest total
+  cut. Few pixels change, and the change is usually where the real river
+  crosses the embankment, but unconstrained breaching can cut deep, long
+  trenches through real barriers.
 
 :func:`rsgispy.elevation.hydrology.condition_dem` with
 ``method='breach_and_fill'`` (the default) combines them: it breaches only

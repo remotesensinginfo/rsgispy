@@ -115,7 +115,7 @@ def run_workflow(
     # [step-3-threshold]
     from rsgispy.imagecalc.maths import calc_prop_true_exp
     from rsgispy.imageutils.sampling import extract_img_pxl_vals_in_msk
-    from rsgispy.imageutils.stats import pop_thmt_img_stats
+    from rsgispy.imageutils.colourtable import set_thematic_classes
     import rsgispy.tools.thresholding as thres
     from rsgispy.tools.plotting import plot_histogram_threshold
 
@@ -128,8 +128,10 @@ def run_workflow(
     }
     print({name: round(val, 3) for name, val in thresholds.items()})
     dndvi_thres = thresholds[thres_method]
-    plot_histogram_threshold(dndvi, os.path.join(out_dir, "dndvi_hist.png"),
-                             threshold=dndvi_thres, title_str="dNDVI")
+    fig, ax = plot_histogram_threshold(
+        dndvi, threshold=dndvi_thres, title_str="dNDVI", x_label="dNDVI",
+        out_plot_file=os.path.join(out_dir, "dndvi_hist.png"),
+    )
 
     # 0 = no data, 1 = no change, 2 = vegetation loss.
     chng_img = os.path.join(out_dir, "dndvi_change.tif")
@@ -140,8 +142,9 @@ def run_workflow(
         datatype=rsgispy.TYPE_8UINT,
         use_pbar=use_pbar,
     )
-    pop_thmt_img_stats(chng_img, add_clr_tab=True, ignore_zero=True,
-                       use_pbar=use_pbar)
+    # Class names and colours, thematic statistics and pyramids in one call.
+    set_thematic_classes(chng_img, {1: ("No change", "#bdbdbd"),
+                                    2: ("Vegetation loss", "#e31a1c")})
     chng_prop = calc_prop_true_exp(f"dndvi > {dndvi_thres} ? 1 : 0",
                                    [BandDefn("dndvi", diff_img, 1)],
                                    in_vld_img=vld_img, use_pbar=use_pbar)
@@ -154,13 +157,16 @@ def run_workflow(
     # [step-4-cva]
     cva_img = os.path.join(out_dir, "cva_change.tif")
     cva_dist_img = os.path.join(out_dir, "cva_magnitude.tif")
-    icm.change_vector_analysis(
+    cva_info = icm.change_vector_analysis(
         s2_img_t1, s2_img_t2, cva_img, cva_dist_img,
         vld_msk_img=vld_img,
         img_base_bands=list(cva_bands),  # e.g. Red, NIR, SWIR1, SWIR2
         img_chng_bands=list(cva_bands),
         use_pbar=use_pbar,
     )
+    print(f"CVA {cva_info['threshold_method']} threshold "
+          f"{cva_info['threshold']:.1f}: change in "
+          f"{cva_info['n_change'] / cva_info['n_valid'] * 100:.1f} %")
     # CVA gives the size of the change; the dNDVI sign gives its direction.
     # 0 = no data, 1 = no change, 2 = change with vegetation loss,
     # 3 = other change.
@@ -172,8 +178,12 @@ def run_workflow(
         datatype=rsgispy.TYPE_8UINT,
         use_pbar=use_pbar,
     )
+    set_thematic_classes(cva_dir_img, {1: ("No change", "#bdbdbd"),
+                                       2: ("Vegetation loss", "#e31a1c"),
+                                       3: ("Other change", "#1f78b4")})
     # [end-step-4-cva]
     out["cva_img"] = cva_img
+    out["cva_info"] = cva_info
     out["cva_dir_img"] = cva_dir_img
 
     # [step-5-sfa-mad]
@@ -188,7 +198,7 @@ def run_workflow(
             use_pbar=use_pbar,
         )
         mad_img = os.path.join(out_dir, "irmad_change.tif")
-        icm.multivariate_alteration_detection(
+        mad_info = icm.multivariate_alteration_detection(
             s2_img_t1, s2_img_t2, mad_img,
             os.path.join(out_dir, "irmad_chi2.tif"),
             os.path.join(out_dir, "irmad_variates.tif"),
@@ -198,8 +208,13 @@ def run_workflow(
             use_kmeans=False,  # Otsu threshold on the chi-square distance
             use_pbar=use_pbar,
         )
+        # Diagnostics (a UserWarning is also given if it did not converge).
+        print(f"IR-MAD: {mad_info['n_iter']} iterations, converged "
+              f"{mad_info['converged']}, change in "
+              f"{mad_info['n_change'] / mad_info['n_valid'] * 100:.1f} %")
         out["sfa_img"] = sfa_img
         out["mad_img"] = mad_img
+        out["mad_info"] = mad_info
     # [end-step-5-sfa-mad]
 
     # [step-6-class-outliers]

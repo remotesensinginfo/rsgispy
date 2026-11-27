@@ -177,13 +177,19 @@ the histogram of the valid pixels (extracted here with
   better with a small change class in a long tail.
 
 There is no universally best method: compute several, plot them on the
-histogram (:func:`rsgispy.tools.plotting.plot_histogram_threshold`), look at
+histogram (:func:`rsgispy.tools.plotting.plot_histogram_threshold`, which
+returns ``(fig, ax)``, so you can add more threshold lines with
+``ax.axvline``), look at
 the change map over areas you know, and check it against reference data
 (step 7). A threshold from the literature or a pilot area (for example
 dNDVI > 0.2 for clearing), or the no-change mean plus *k* standard deviations,
 are reasonable alternatives. The chosen threshold is then applied with
 :func:`~rsgispy.imagecalc.maths.band_maths` to give a ``uint8`` thematic map
-(``0`` no data, ``1`` no change, ``2`` vegetation loss), and
+(``0`` no data, ``1`` no change, ``2`` vegetation loss).
+:func:`~rsgispy.imageutils.colourtable.set_thematic_classes` then gives the
+classes their names and colours, marks the image thematic and calculates its
+thematic statistics and pyramids in one call (the names can be read back
+with :func:`~rsgispy.imageutils.colourtable.get_thematic_classes`), and
 :func:`~rsgispy.imagecalc.maths.calc_prop_true_exp` gives the proportion of
 the valid area that changed.
 
@@ -223,16 +229,23 @@ selected bands of each date as a vector and computes the length of the
 difference vector (the change magnitude) for every pixel, so a change in any
 band counts. It writes two outputs:
 
-* ``out_chng_dist_img`` — the magnitude minus the automatic threshold, so
-  values above 0 are change; useful for ranking or for choosing your own
-  threshold;
+* ``out_chng_dist_img`` — the magnitude minus the threshold used for the
+  change mask (Otsu or K-means), so values above 0 are exactly the changed
+  pixels; useful for ranking or for choosing your own threshold
+  (``centre_on_threshold=False`` writes the magnitude itself). Invalid pixels
+  are ``-9999`` (``no_data_val``), which is set as the file's no data value;
 * ``out_chng_img`` — a ``uint8`` change mask (``1`` change, ``0`` no change,
   ``255`` no data), thresholded with Otsu's method, or with 2-class K-means
-  (``use_kmeans=True``).
+  (``use_kmeans=True``, seeded with ``rnd_seed`` so it is reproducible). It is
+  written as a thematic image with a colour table (no change grey, change
+  red, no data transparent), so it displays as classes in a GIS.
 
 Choose bands that respond to the change of interest (for vegetation loss red,
 NIR and both SWIR bands) and leave out noisy or redundant ones; every band adds
-noise to the magnitude. The magnitude has no direction, so the example
+noise to the magnitude. The function returns a dictionary of diagnostics:
+the ``threshold`` on the magnitude, the ``threshold_method`` (``"otsu"`` or
+``"kmeans"``) and the numbers of valid (``n_valid``) and changed
+(``n_change``) pixels. The magnitude has no direction, so the example
 combines the CVA mask with the sign of dNDVI to separate vegetation loss
 (``2``) from other change (``3``).
 
@@ -241,6 +254,10 @@ combines the CVA mask with the sign of dNDVI to separate vegetation loss
    :start-after: # [step-4-cva]
    :end-before: # [end-step-4-cva]
    :dedent: 4
+
+.. code-block:: text
+
+   CVA otsu threshold 910.1: change in 4.4 %
 
 Step 5 — Slow feature analysis and IR-MAD
 -----------------------------------------
@@ -257,17 +274,27 @@ surface reflectance, or from different sensors.
 
 * :func:`~rsgispy.changedetect.imgchngmthds.slow_feature_analysis` (ISFA,
   Wu et al. 2014) needs at least 3 bands. Its outputs are a binary change mask
-  (Otsu or K-means) and a threshold-centred distance image.
+  (Otsu or K-means) and a distance image centred on the threshold used for
+  the mask, as for CVA.
 * :func:`~rsgispy.changedetect.imgchngmthds.multivariate_alteration_detection`
   (IR-MAD, Nielsen 2007) also writes the MAD variates (one band per input
   band, ordered by increasing canonical correlation, so the first variates
   usually contain most of the change) and the square root of the chi-square
-  distance. ``use_kmeans`` defaults to ``True``; the example uses
-  Otsu instead.
+  distance, not centred unless ``centre_on_threshold=True``. ``use_kmeans``
+  defaults to ``True``; the example uses Otsu instead.
 
 ``sfa_max_iter`` / ``mad_max_iter`` (default 50) limit the iterations, and the
 iteration stops earlier once the transform changes by less than
 ``sfa_epsilon`` / ``mad_epsilon``. Both methods need at least 50 valid pixels.
+Both return a dictionary of diagnostics: the threshold and how it was found,
+the numbers of valid and changed pixels, the final eigenvalues (ISFA) or
+canonical correlations (IR-MAD), the number of iterations, whether they
+converged and the last change. When the iterations stop at the maximum without
+converging a ``UserWarning`` is given: over a varied scene the reweighting can
+lock on to one land cover, so that most of the rest is labelled change.
+Restricting ``vld_msk_img`` to areas of comparable land cover is the usual
+remedy; ``mad_regularisation`` (regularised IR-MAD, Nielsen 2007) stabilises
+the canonical correlations when bands are nearly collinear.
 They detect *any* change, so, as for CVA, combine them with an index
 difference to label the type of change.
 
@@ -276,6 +303,16 @@ difference to label the type of change.
    :start-after: # [step-5-sfa-mad]
    :end-before: # [end-step-5-sfa-mad]
    :dedent: 4
+
+.. code-block:: text
+
+   IR-MAD: 50 iterations, converged False, change in 4.4 %
+
+On the synthetic scene neither method meets ``epsilon`` within 50 iterations
+(both warn), but the change in the transform at the last iteration is small
+and the change masks agree with the reference; with real data, look at the
+``last_change`` value and the change mask before trusting a run that did not
+converge.
 
 Step 6 — Class-based change with an earlier land cover map
 ----------------------------------------------------------

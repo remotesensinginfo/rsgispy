@@ -32,6 +32,7 @@ def run_workflow(
     cv_block_size: float = 2000.0,
     n_trees: int = 500,
     use_gbdt: bool = True,
+    n_kfold_repeats: int = 10,
     use_pbar: bool = True,
 ) -> Dict[str, Any]:
     """
@@ -198,6 +199,21 @@ def run_workflow(
     # [end-step-6-spatial-cv]
     out["nested_cv"] = ncv
 
+    # [step-6-repeated-kfold]
+    kf_metrics, _ = rsk.perform_kfold_fit(
+        RandomForestRegressor(n_estimators=n_trees, n_jobs=-1, random_state=42),
+        all_df[feats],
+        all_df[target_col],
+        n_splits=5,
+        n_repeats=n_kfold_repeats,  # each repeat a different random split
+        groups=all_df["train_grp"],  # the pixels of a plot stay together
+        use_pbar=use_pbar,
+    )
+    kf_summary = rsk.summarise_kfold_metrics(kf_metrics)
+    print(kf_summary.loc[target_col].loc[["r2", "rmse", "nrmse"]].round(3))
+    # [end-step-6-repeated-kfold]
+    out["kfold_summary"] = kf_summary
+
     # [step-7-interpret]
     rf_fitted = rsk.load_sklearn_regressor(rf_file)
     interp_dir = os.path.join(out_dir, "interpret")
@@ -263,10 +279,18 @@ def run_workflow(
         out_json_file=os.path.join(out_dir, "valid_metrics.json"),
     )
     print(val_metrics)
-    rmet.plot_pred_vs_obs(val_pts, ref_col=target_col, pred_col="pred",
-                          out_plot_file=os.path.join(out_dir, "pred_vs_obs.png"))
-    rmet.plot_residuals(val_pts, ref_col=target_col, pred_col="pred",
-                        out_plot_file=os.path.join(out_dir, "residuals.png"))
+    fig, axs = rmet.plot_pred_vs_obs(
+        val_pts, ref_col=target_col, pred_col="pred",
+        out_plot_file=os.path.join(out_dir, "pred_vs_obs.png"),
+    )
+    fig, axs = rmet.plot_residuals(
+        val_pts, ref_col=target_col, pred_col="pred",
+        out_plot_file=os.path.join(out_dir, "residuals.png"),
+    )
+    fig, axs = rmet.plot_qq_residuals(
+        val_pts, ref_col=target_col, pred_col="pred",
+        out_plot_file=os.path.join(out_dir, "residuals_qq.png"),
+    )
     in_interval = val_pts[target_col].between(val_pts["lower"], val_pts["upper"])
     print(f"90 % interval coverage: {in_interval.mean():.2f}")
     val_pts["residual"] = val_pts["pred"] - val_pts[target_col]
@@ -291,9 +315,12 @@ def run_workflow(
 
     fig, axs = plt.subplots(1, 2, figsize=(10, 4))
     create_raster_cmap_img_map(axs[0], pred_img, 1, title_str="Canopy cover (%)",
-                               cmap_name="YlGn", norm_vmin=0, norm_vmax=100)
+                               cmap_name="YlGn", norm_img_vals=True,
+                               norm_vmin=0, norm_vmax=100,
+                               show_colour_bar=True, cbar_label="Canopy cover (%)")
     create_raster_cmap_img_map(axs[1], width_img, 1,
-                               title_str="q05-q95 width (%)", cmap_name="magma")
+                               title_str="q05-q95 width (%)", cmap_name="magma",
+                               show_colour_bar=True, cbar_label="Interval width (%)")
     map_file = os.path.join(out_dir, "canopy_cover_map.png")
     fig.savefig(map_file, dpi=150, bbox_inches="tight")
     plt.close(fig)

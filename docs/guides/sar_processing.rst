@@ -421,7 +421,9 @@ Step 9 — Figure
 
 A side-by-side map of the raw and filtered backscatter is the quickest visual
 check of a filter. :func:`~rsgispy.mapping.raster.create_raster_cmap_img_map`
-with a logarithmic colour scale shows linear power as it would look in dB:
+with a logarithmic colour scale shows linear power as it would look in dB.
+It returns the image artist, so one colour bar can be drawn for both panels
+with ``fig.colorbar(img, ax=axs)``:
 
 .. literalinclude:: ../examples/sar_processing.py
    :language: python

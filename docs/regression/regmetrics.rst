@@ -41,20 +41,28 @@ predicted-vs-observed and residual diagnostic plots.
         rnd_seed=42,
     )
 
-    # 3. Plot predicted vs observed scatter and residual diagnostics
-    rm.plot_pred_vs_obs(
+    # 3. Plot predicted vs observed scatter and residual diagnostics;
+    #    each returns (fig, axs) and saves when out_plot_file is given.
+    fig, axs = rm.plot_pred_vs_obs(
         "canopy_val_pts_eval.gpkg",
         vec_lyr="val_pts",
         ref_col="canopy_cover",
         pred_col="pred_canopy_cover",
         out_plot_file="canopy_pred_vs_obs.png",
     )
-    rm.plot_residuals(
+    fig, axs = rm.plot_residuals(
         "canopy_val_pts_eval.gpkg",
         vec_lyr="val_pts",
         ref_col="canopy_cover",
         pred_col="pred_canopy_cover",
         out_plot_file="canopy_residuals.png",
+    )
+    fig, axs = rm.plot_qq_residuals(
+        "canopy_val_pts_eval.gpkg",
+        vec_lyr="val_pts",
+        ref_col="canopy_cover",
+        pred_col="pred_canopy_cover",
+        out_plot_file="canopy_residuals_qq.png",
     )
 
 API Reference

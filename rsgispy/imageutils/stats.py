@@ -671,11 +671,14 @@ def pop_thmt_img_stats(
                     else min(max(h_max, 0) + 1, 65536)
                 )
                 clr_tab: Dict[int, Tuple[int, int, int, int]] = {}
+                # A fixed seed, so a value gets the same colour every run (and
+                # two images with the same classes get the same colours).
+                clr_rng = np.random.default_rng(42)
                 for val_i in range(n_clr_entries):
+                    rnd_rgb = clr_rng.integers(1, 255, 3, dtype=np.uint8)
                     if val_i == 0 and ignore_zero:
                         clr_tab[0] = (0, 0, 0, 0)
                     else:
-                        rnd_rgb = np.random.randint(1, 255, 3, dtype=np.uint8)
                         clr_tab[val_i] = (
                             int(rnd_rgb[0]),
                             int(rnd_rgb[1]),

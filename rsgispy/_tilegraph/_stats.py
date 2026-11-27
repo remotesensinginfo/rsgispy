@@ -281,21 +281,44 @@ def _resolve_bin_edges(
 
 
 class _ZonalStack(StackBands):
-    """:class:`StackBands` of ``[labels, values]`` keeping the inputs' metadata."""
+    """
+    :class:`StackBands` of ``[labels, values]`` keeping the inputs' metadata,
+    created internally by :class:`ZonalStatsSink` and
+    :class:`~rsgispy.imageprocess.SampleSink` (which apply each input's own
+    no-data value, so the stack does not mask across its inputs).
+    """
 
-    def __init__(self, labels: TileNode, values: TileNode, name: Optional[str]) -> None:
+    def __init__(
+        self,
+        labels: TileNode,
+        values: TileNode,
+        name: Optional[str],
+        owner: str = "ZonalStatsSink",
+    ) -> None:
         super().__init__([labels, values], name=name)
+        self.owner = owner
         self.input_metas: Tuple[NodeMeta, ...] = (NodeMeta(), NodeMeta())
+
+    @property
+    def label(self) -> str:
+        return f"{self.owner} input stack '{self.name}' (internal)"
+
+    def describe_params(self) -> str:
+        return "band 1: labels, bands 2+: values; each input's no data used"
 
     def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
         label_meta = inputs[0]
         if label_meta.n_bands is not None and label_meta.n_bands != 1:
             raise rsgispy.RSGISPyException(
-                f"ZonalStatsSink: the label node must have 1 band, got "
+                f"{self.owner}: the label node must have 1 band, got "
                 f"{label_meta.n_bands} (select one with SelectBands)."
             )
         self.input_metas = (inputs[0], inputs[1])
-        return super().infer_meta(inputs).replace(dtype=np.dtype(np.float64))
+        meta = self._stacked_meta(inputs)
+        names = None
+        if meta.n_bands is not None and inputs[1].n_bands is not None:
+            names = ("label", *_band_labels(inputs[1], int(inputs[1].n_bands)))
+        return meta.replace(dtype=np.dtype(np.float64), band_names=names)
 
     def evaluate(
         self,

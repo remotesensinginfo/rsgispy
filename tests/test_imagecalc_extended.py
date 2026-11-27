@@ -709,6 +709,11 @@ def test_comparison_functions(tmp_path):
 
     eq, prop = ic_cmp.are_imgs_equal(str(a_p), str(a_p), use_pbar=False)
     assert eq is True and prop == pytest.approx(1.0)
+    # flt_dif=0 tests for identical values.
+    eq_0, prop_0 = ic_cmp.are_imgs_equal(str(a_p), str(a_p), flt_dif=0.0, use_pbar=False)
+    assert eq_0 is True and prop_0 == pytest.approx(1.0)
+    eq_ab, _ = ic_cmp.are_imgs_equal(str(a_p), str(b_p), flt_dif=0.0, use_pbar=False)
+    assert eq_ab is False
 
     eq_b, prop_b = ic_cmp.are_img_bands_equal(
         str(a_p), 1, str(b_p), 1, prop_eql=0.5, flt_dif=100.0, use_pbar=False

@@ -266,6 +266,29 @@ sample locations to see where the model performs badly.
    :end-before: # [end-step-6-spatial-cv]
    :dedent: 4
 
+One cross-validation gives one estimate; how much it would change with
+another split is not known.
+:func:`~rsgispy.regression.regsklearn.perform_kfold_fit` repeats a k-fold
+(``n_repeats`` times, each with a different random split) and returns the
+:func:`~rsgispy.regression.regmetrics.calc_reg_metrics` metrics of every
+fold and the out-of-fold predictions; with ``groups`` (e.g. the
+``train_grp`` column) the pixels of a plot are never split between the
+training and test folds. :func:`~rsgispy.regression.regsklearn.summarise_kfold_metrics`
+gives the mean, median, standard deviation and 5th and 95th percentiles of
+each metric. For a small number of field plots,
+:func:`~rsgispy.regression.regsklearn.perform_jackknife_fit` leaves out one
+plot at a time and also reports the influence of each plot.
+
+.. literalinclude:: ../examples/pixel_regression_workflow.py
+   :language: python
+   :start-after: # [step-6-repeated-kfold]
+   :end-before: # [end-step-6-repeated-kfold]
+   :dedent: 4
+
+The folds here are groups of plots, not spatial blocks, so the estimate is
+for new plots among the training plots rather than for new areas; the
+spread over the repeats shows how much a single split can be trusted.
+
 Step 7 — Interpreting the model
 -------------------------------
 
@@ -357,18 +380,28 @@ training or tuning, ideally a probability sample of the area.
   several, e.g. the interval bands). Plots in no data areas get ``NaN`` and
   are removed.
 * :func:`~rsgispy.regression.regmetrics.calc_reg_metrics` returns ``r2``,
-  ``rmse``, ``mae``, ``bias``, ``explained_variance``, ``pearson_r`` and
-  ``n_samples`` (and can write them to JSON or CSV);
+  ``rmse``, ``mae``, ``bias``, ``explained_variance``, ``pearson_r``,
+  ``mse``, the normalised ``nrmse``, ``nrmse_range`` and ``nbias`` (as % of
+  the mean or range of the observed values) and ``n_samples`` (and can write
+  them to JSON or CSV);
   :func:`~rsgispy.regression.regmetrics.calc_reg_stats_ptonly_bootstrap_conf`
   adds bootstrap confidence intervals.
 * :func:`~rsgispy.regression.regmetrics.plot_pred_vs_obs` plots predicted
-  against observed values with the 1:1 line. Points below the line at high
+  against observed values with the 1:1 line (it returns ``(fig, axs)``;
+  the metrics come from ``calc_reg_metrics``; the text box gives R², RMSE,
+  bias and ``n``, and the legend the fitted line). Points below the line at high
   values and above it at low values (a slope below 1) are typical of tree
   models, which shrink predictions towards the mean.
 * :func:`~rsgispy.regression.regmetrics.plot_residuals` plots the residuals
-  against the predictions. They should be centred on zero with no trend and
-  a similar spread everywhere; a funnel shape means the error grows with
-  the value.
+  (predicted − observed) against the predictions, with their histogram (and
+  a normal curve) beside the y-axis. They should be centred on zero with no
+  trend and a similar spread everywhere; a funnel shape means the error grows
+  with the value.
+* :func:`~rsgispy.regression.regmetrics.plot_qq_residuals` is a normal Q-Q
+  plot of the residuals with the Shapiro–Wilk test: points off the line in
+  the tails, or ``p < 0.05``, mean the residuals are not normal, so intervals
+  that assume normal errors are unreliable. (The prediction interval here
+  comes from the quantiles of the trees, so it does not assume normality.)
 * The **coverage** of the prediction interval (the fraction of plots inside
   it) should be close to the nominal level (0.9 here).
 * Writing the residuals to a vector file gives a **residual map**: clusters
@@ -388,7 +421,8 @@ Step 11 — Maps
 :func:`~rsgispy.mapping.raster.create_raster_cmap_img_map` draws one band of
 a continuous raster with a colour map; ``norm_vmin`` / ``norm_vmax`` fix the
 colour range so that maps of different areas or dates are comparable. Here
-the prediction is shown next to the width of the tree-spread interval,
+the prediction is shown next to the width of the tree-spread interval, each
+with its colour bar (``show_colour_bar=True``),
 calculated with :func:`~rsgispy.imagecalc.maths.band_maths` (no data is set
 to 0 so it is not counted as a very large width).
 

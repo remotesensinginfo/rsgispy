@@ -351,11 +351,36 @@ def _safe_pearson_r(y_t: np.ndarray, y_p: np.ndarray) -> float:
     return 0.0 if math.isnan(r_val) else r_val
 
 
+REG_BASE_METRIC_KEYS = (
+    "r2",
+    "rmse",
+    "mae",
+    "bias",
+    "explained_variance",
+    "pearson_r",
+)
+REG_EXTRA_METRIC_KEYS = ("mse", "nrmse", "nrmse_range", "nbias")
+
+
+def _pct_of(value: float, denom: float) -> float:
+    """Return ``100 * value / denom``, or ``nan`` when ``denom`` is zero."""
+    if denom == 0.0 or not math.isfinite(denom):
+        return float("nan")
+    return float(100.0 * value / denom)
+
+
 def _single_target_metrics(
     y_t: np.ndarray,
     y_p: np.ndarray,
+    extra_metrics: bool = False,
 ) -> Dict[str, float]:
-    """Compute scalar continuous regression metrics for one 1D target."""
+    """
+    Compute scalar continuous regression metrics for one 1D target. With
+    ``extra_metrics`` also return ``mse``, ``nrmse`` (RMSE as % of the mean
+    observed value), ``nrmse_range`` (RMSE as % of the observed range) and
+    ``nbias`` (bias as % of the mean observed value), each ``nan`` when its
+    denominator is zero.
+    """
     diff = y_p - y_t
     mse = float(sklearn.metrics.mean_squared_error(y_t, y_p))
     rmse = float(math.sqrt(mse))
@@ -377,7 +402,7 @@ def _single_target_metrics(
         r2 = 0.0
     if math.isnan(ev):
         ev = 0.0
-    return {
+    out = {
         "r2": r2,
         "rmse": rmse,
         "mae": mae,
@@ -385,6 +410,14 @@ def _single_target_metrics(
         "explained_variance": ev,
         "pearson_r": _safe_pearson_r(y_t, y_p),
     }
+    if extra_metrics:
+        mean_obs = float(np.mean(y_t))
+        range_obs = float(np.max(y_t) - np.min(y_t))
+        out["mse"] = mse
+        out["nrmse"] = _pct_of(rmse, mean_obs)
+        out["nrmse_range"] = _pct_of(rmse, range_obs)
+        out["nbias"] = _pct_of(bias, mean_obs)
+    return out
 
 
 def compute_regression_metrics_dict(
@@ -392,11 +425,15 @@ def compute_regression_metrics_dict(
     y_pred: np.ndarray,
     target_cols: Sequence[str],
     prefix: Optional[str] = None,
+    extra_metrics: bool = False,
 ) -> Dict[str, Any]:
     """
     Compute univariate or multivariate continuous regression accuracy metrics
     (``r2``, ``rmse``, ``mae``, ``bias``, ``explained_variance``, and
-    ``pearson_r``, plus per-target entries when multivariate).
+    ``pearson_r``, plus per-target entries when multivariate). With
+    ``extra_metrics`` the ``mse``, ``nrmse``, ``nrmse_range`` and ``nbias``
+    keys are added in the same way (the headline values are the mean over
+    the targets).
     """
     # pylint: disable=too-many-locals
     y_t = np.asarray(y_true, dtype=np.float64)
@@ -424,17 +461,14 @@ def compute_regression_metrics_dict(
         )
 
     per_target = [
-        _single_target_metrics(y_t_2d[:, idx], y_p_2d[:, idx])
+        _single_target_metrics(
+            y_t_2d[:, idx], y_p_2d[:, idx], extra_metrics=extra_metrics
+        )
         for idx in range(len(t_list))
     ]
-    metric_keys = (
-        "r2",
-        "rmse",
-        "mae",
-        "bias",
-        "explained_variance",
-        "pearson_r",
-    )
+    metric_keys = REG_BASE_METRIC_KEYS
+    if extra_metrics:
+        metric_keys = REG_BASE_METRIC_KEYS + REG_EXTRA_METRIC_KEYS
 
     out: Dict[str, Any] = {}
     key_prefix = f"{prefix}_" if prefix else ""

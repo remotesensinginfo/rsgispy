@@ -98,7 +98,9 @@ The building blocks are:
   in the metadata) and :class:`~rsgispy.imageprocess.SetBandNames` (rename
   the bands of any node, in the metadata), and the node builders of the
   chainable operations below;
-* **sinks**: :class:`~rsgispy.imageprocess.DiskSink` (write a raster),
+* **sinks**: :class:`~rsgispy.imageprocess.DiskSink` (write a raster; with
+  ``thematic=True``, ``colour_table=`` or ``classes=`` a class map with its
+  colour table, class names and thematic statistics),
   :class:`~rsgispy.imageprocess.MemorySink` (return an array),
   :class:`~rsgispy.imageprocess.StatsSink` (per-band statistics and
   histograms), :class:`~rsgispy.imageprocess.ZonalStatsSink` (statistics
@@ -267,6 +269,22 @@ same builder.
      - :func:`~rsgispy.imagecalc.percentiles.calc_imgs_pxl_percentiles_node`,
        :func:`~rsgispy.imagecalc.percentiles.calc_img_band_pxl_percentiles_node`
        (N inputs)
+   * - :func:`~rsgispy.imageutils.composite.create_geomedian_composite`,
+       :func:`~rsgispy.imageutils.composite.create_quality_mosaic`
+       (:func:`~rsgispy.imageutils.composite.create_max_ndvi_composite`),
+       :func:`~rsgispy.imageutils.composite.create_land_water_composite`
+       (:func:`~rsgispy.imageutils.composite.create_max_ndvi_ndwi_composite`),
+       :func:`~rsgispy.imageutils.composite.create_medoid_composite`,
+       :func:`~rsgispy.imageutils.composite.create_percentile_composite`
+     - :func:`~rsgispy.imageutils.composite.geomedian_node`,
+       :func:`~rsgispy.imageutils.composite.quality_mosaic_node`,
+       :func:`~rsgispy.imageutils.composite.land_water_composite_node`,
+       :func:`~rsgispy.imageutils.composite.medoid_node`,
+       :func:`~rsgispy.imageutils.composite.percentile_composite_node`
+       (one input per observation; they return a
+       :class:`~rsgispy.imageutils.composite.CompositeNode` whose ``ref``,
+       ``quality``, ``count``, ``mad`` and ``lw_msk`` outputs are nodes; the
+       smoothing options use a halo)
    * - :func:`~rsgispy.imagespectral.transforms.calc_tasseled_cap`;
        applying a fitted :func:`~rsgispy.imagespectral.transforms.calc_pca`
        or :func:`~rsgispy.imagespectral.transforms.calc_mnf`
@@ -384,6 +402,32 @@ check only finiteness with ``None``; the prediction nodes' ``no_data_val`` is
 the output value). :func:`~rsgispy.imageprocess.resolve_input_nodata` and
 :func:`~rsgispy.imageprocess.infer_node_meta` apply the rule in custom
 builders.
+
+**Stacking inputs with different no-data values.** A node has one no-data
+value for all its bands, and the sinks treat a pixel that is invalid in any
+band as invalid. :class:`~rsgispy.imageprocess.StackBands` keeps that rule
+working when its inputs disagree (e.g. Sentinel-2 bands with no data ``0``
+and an index with ``-999``):
+
+* ``no_data_val=None`` (the default): the bands are stacked unchanged; the
+  stack has the inputs' no-data value when they share one, else none
+  (``None``), with a :class:`UserWarning`, because a
+  :class:`~rsgispy.imageprocess.SampleSink` or
+  :func:`~rsgispy.ml.predict.predict_raster_node` on it would then not skip
+  the inputs' no-data pixels;
+* ``no_data_val=<value>``: every band of a pixel where any input is invalid
+  (its own no-data value, or not finite) is set to ``value``, the stack's
+  no-data value;
+* ``no_data_val='auto'``: the same with the first input's no-data value, or
+  NaN for a floating-point stack whose first input has none (an integer
+  stack then needs a value).
+
+``describe()`` shows the stack's no-data value and whether it masks across
+its inputs. The internal ``[labels, values]`` stacks that
+:class:`~rsgispy.imageprocess.SampleSink` and
+:class:`~rsgispy.imageprocess.ZonalStatsSink` add are shown as
+``SampleSink input stack '...' (internal)``; they apply each input's own
+no-data value and do not mask.
 
 Before rsgispy 0.4 the filter, morphology and majority-filter builders (and
 :func:`~rsgispy.imagefilter.chained.build_filter_chain_node`) ignored the

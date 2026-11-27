@@ -12,7 +12,8 @@ import matplotlib.collections
 import matplotlib.colors
 
 import rsgispy
-from rsgispy.mapping._common import plot_vec_lyr_by_geom_type
+from rsgispy.mapping._common import add_map_colour_bar, plot_vec_lyr_by_geom_type
+from rsgispy.tools.plotting import use_plot_style
 from rsgispy.mapping.elements import (
     NORTH_ARROW_STYLE_TRIANGLE,
     SCALEBAR_STYLE_SOLID,
@@ -57,6 +58,7 @@ def _resolve_layer_param(
     return param
 
 
+@use_plot_style(plot_type="map")
 def create_vec_lyr_map(
     ax: matplotlib.axes.Axes,
     gp_vecs: Union[
@@ -82,7 +84,7 @@ def create_vec_lyr_map(
     show_north_arrow: bool = False,
     north_arrow_style: str = NORTH_ARROW_STYLE_TRIANGLE,
     north_arrow_loc: str = "upper left",
-) -> None:
+) -> List[matplotlib.collections.Collection]:
     """
     Add one or more GeoPandas vector layers to ``ax``.
 
@@ -116,6 +118,8 @@ def create_vec_lyr_map(
     :param north_arrow_style: North arrow style constant (Default =
                               :data:`~rsgispy.mapping.elements.NORTH_ARROW_STYLE_TRIANGLE`).
     :param north_arrow_loc: North arrow placement string (Default = ``'upper left'``).
+    :return: List of the Matplotlib collections drawn (a layer can give
+             more than one, as each geometry type is drawn separately).
 
     .. code:: python
 
@@ -125,7 +129,7 @@ def create_vec_lyr_map(
 
         fig, ax = plt.subplots()
         gdf = gpd.read_file("polys.gpkg")
-        map_vec.create_vec_lyr_map(
+        colls = map_vec.create_vec_lyr_map(
             ax=ax,
             gp_vecs=gdf,
             bbox=(250000.0, 270000.0, 280000.0, 290000.0),
@@ -136,6 +140,7 @@ def create_vec_lyr_map(
     vec_list = gp_vecs if isinstance(gp_vecs, list) else [gp_vecs]
     n_vec_lyrs = len(vec_list)
 
+    n_colls_start = len(ax.collections)
     for idx, gp_vec in enumerate(vec_list):
         gp_vec_sub = _subset_vec_bbox(gp_vec, bbox) if sub_in_vec else gp_vec
         vec_fill_clr = _resolve_layer_param(
@@ -202,7 +207,10 @@ def create_vec_lyr_map(
         north_arrow_loc=north_arrow_loc,
     )
 
+    return list(ax.collections[n_colls_start:])
 
+
+@use_plot_style(plot_type="map")
 def create_choropleth_vec_lyr_map(
     ax: matplotlib.axes.Axes,
     gp_vec: gpd.GeoDataFrame,
@@ -226,7 +234,9 @@ def create_choropleth_vec_lyr_map(
     show_north_arrow: bool = False,
     north_arrow_style: str = NORTH_ARROW_STYLE_TRIANGLE,
     north_arrow_loc: str = "upper left",
-) -> None:
+    show_colour_bar: bool = False,
+    cbar_label: Optional[str] = None,
+) -> Optional[matplotlib.collections.Collection]:
     """
     Display a choropleth vector map coloured by ``vec_col`` on ``ax``.
 
@@ -259,6 +269,13 @@ def create_choropleth_vec_lyr_map(
     :param north_arrow_style: North arrow style constant (Default =
                               :data:`~rsgispy.mapping.elements.NORTH_ARROW_STYLE_TRIANGLE`).
     :param north_arrow_loc: North arrow placement string (Default = ``'upper left'``).
+    :param show_colour_bar: Draw a colour bar beside the map (Default = False).
+    :param cbar_label: Optional colour bar label, e.g. the variable and its
+                       units (Default = None).
+    :return: The first Matplotlib collection drawn (all the collections share
+             the colour map and normalisation), e.g. for ``fig.colorbar(coll)``,
+             or ``None`` when no features were drawn. With
+             ``show_colour_bar=True`` the colour bar is ``coll.colorbar``.
 
     .. code:: python
 
@@ -268,11 +285,13 @@ def create_choropleth_vec_lyr_map(
 
         fig, ax = plt.subplots()
         gdf = gpd.read_file("regions.gpkg")
-        map_vec.create_choropleth_vec_lyr_map(
+        coll = map_vec.create_choropleth_vec_lyr_map(
             ax=ax,
             gp_vec=gdf,
             vec_col="area_ha",
             bbox=(250000.0, 270000.0, 280000.0, 290000.0),
+            show_colour_bar=True,
+            cbar_label="Area (ha)",
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -281,6 +300,7 @@ def create_choropleth_vec_lyr_map(
 
     gp_vec_sub = _subset_vec_bbox(gp_vec, bbox) if sub_in_vec else gp_vec
 
+    coll: Optional[matplotlib.collections.Collection] = None
     if not gp_vec_sub.empty:
         n_colls = len(ax.collections)
         # One plot call, so all geometry types share one colour mapping; no
@@ -296,9 +316,10 @@ def create_choropleth_vec_lyr_map(
             zorder=plot_zorder,
         )
         # Outline the polygons and point markers; lines keep their value colour.
-        for coll in ax.collections[n_colls:]:
-            if not isinstance(coll, matplotlib.collections.LineCollection):
-                coll.set_edgecolor(vec_line_clr)
+        for new_coll in ax.collections[n_colls:]:
+            if not isinstance(new_coll, matplotlib.collections.LineCollection):
+                new_coll.set_edgecolor(vec_line_clr)
+        coll = ax.collections[n_colls] if len(ax.collections) > n_colls else None
 
     ax.set_aspect("equal")
     ax.set_xlim([bbox[0], bbox[1]])
@@ -321,7 +342,13 @@ def create_choropleth_vec_lyr_map(
         north_arrow_loc=north_arrow_loc,
     )
 
+    if show_colour_bar and coll is not None:
+        add_map_colour_bar(ax, coll, cbar_label=cbar_label)
 
+    return coll
+
+
+@use_plot_style(plot_type="map")
 def create_vec_pt_density_map(
     ax: matplotlib.axes.Axes,
     gp_vec: gpd.GeoDataFrame,
@@ -343,7 +370,9 @@ def create_vec_pt_density_map(
     show_north_arrow: bool = False,
     north_arrow_style: str = NORTH_ARROW_STYLE_TRIANGLE,
     north_arrow_loc: str = "upper left",
-) -> Tuple[matplotlib.colors.Colormap, matplotlib.colors.Normalize]:
+    show_colour_bar: bool = False,
+    cbar_label: Optional[str] = None,
+) -> Any:
     """
     Add a point-density plot from a GeoPandas points layer onto ``ax``.
 
@@ -372,7 +401,12 @@ def create_vec_pt_density_map(
     :param north_arrow_style: North arrow style constant (Default =
                               :data:`~rsgispy.mapping.elements.NORTH_ARROW_STYLE_TRIANGLE`).
     :param north_arrow_loc: North arrow placement string (Default = ``'upper left'``).
-    :return: Tuple ``(c_cmap, c_norm)`` for creating a Matplotlib colourbar.
+    :param show_colour_bar: Draw a colour bar beside the map (Default = False).
+    :param cbar_label: Optional colour bar label (Default = None).
+    :return: The point density artist (a
+             ``mpl_scatter_density.ScatterDensityArtist``), e.g. for
+             ``fig.colorbar(artist)``; with ``show_colour_bar=True`` the colour
+             bar is ``artist.colorbar``.
 
     .. code:: python
 
@@ -384,7 +418,7 @@ def create_vec_pt_density_map(
         fig = plt.figure()
         ax = fig.add_subplot(1, 1, 1, projection="scatter_density")
         pts_gdf = gpd.read_file("points.gpkg")
-        cmap, norm = map_vec.create_vec_pt_density_map(
+        density_artist = map_vec.create_vec_pt_density_map(
             ax=ax,
             gp_vec=pts_gdf,
             bbox=(250000.0, 270000.0, 280000.0, 290000.0),
@@ -423,7 +457,7 @@ def create_vec_pt_density_map(
             vmin=density_norm_vmin, vmax=density_norm_vmax
         )
 
-    ax.scatter_density(
+    density_artist = ax.scatter_density(
         gp_vec_sub.geometry.x,
         gp_vec_sub.geometry.y,
         dpi=density_dpi,
@@ -453,4 +487,7 @@ def create_vec_pt_density_map(
         north_arrow_loc=north_arrow_loc,
     )
 
-    return c_cmap, c_norm
+    if show_colour_bar:
+        add_map_colour_bar(ax, density_artist, cbar_label=cbar_label)
+
+    return density_artist

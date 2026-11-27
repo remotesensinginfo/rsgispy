@@ -45,6 +45,7 @@ __all__ = [
     "get_img_sum_stats_in_pxl",
     "calc_mask_img_pxl_val_prob",
     "get_img_histogram",
+    "get_img_2d_histogram",
 ]
 
 
@@ -1413,3 +1414,253 @@ def get_img_histogram(
     if int_vals is not None:
         result["bin_values"] = int_vals
     return result
+
+
+def _check_same_pixel_grid(
+    ref_src: Any, src: Any, ref_path: str, img_path: str
+) -> None:
+    """Raise if ``src`` is not on exactly the same pixel grid as ``ref_src``."""
+    same_size = (ref_src.width == src.width) and (ref_src.height == src.height)
+    same_trans = bool(
+        np.allclose(
+            np.asarray(ref_src.transform)[:6],
+            np.asarray(src.transform)[:6],
+            rtol=0.0,
+            atol=1e-6 * max(abs(ref_src.transform.a), 1e-12),
+        )
+    )
+    same_crs = (ref_src.crs is None and src.crs is None) or (
+        ref_src.crs is not None and src.crs is not None and ref_src.crs == src.crs
+    )
+    if not (same_size and same_trans and same_crs):
+        raise rsgispy.RSGISPyException(
+            f"Image '{img_path}' is not on the same pixel grid (size, transform, "
+            f"CRS) as '{ref_path}'. Resample it onto that grid first, e.g. with "
+            "rsgispy.imageutils.warp.resample_img_to_match."
+        )
+
+
+def _validate_2d_hist_range(
+    val_range: Optional[Tuple[float, float]], label: str
+) -> Optional[Tuple[float, float]]:
+    """Validate an optional ``(min, max)`` histogram range."""
+    if val_range is None:
+        return None
+    if len(val_range) != 2:
+        raise rsgispy.RSGISPyException(f"{label} must be a (min_val, max_val) 2-tuple.")
+    r_min = float(val_range[0])
+    r_max = float(val_range[1])
+    if not (math.isfinite(r_min) and math.isfinite(r_max)) or r_min > r_max:
+        raise rsgispy.RSGISPyException(
+            f"{label} must contain finite bounds with min_val <= max_val."
+        )
+    return (r_min, r_max)
+
+
+def _read_2d_hist_block(
+    srcs: Tuple[Any, Any, Optional[Any]],
+    bands: Tuple[int, int],
+    nodata: Tuple[Optional[float], Optional[float]],
+    img_msk_val: int,
+    ranges: Tuple[Optional[Tuple[float, float]], Optional[Tuple[float, float]]],
+    win: Window,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Return the 1D ``float64`` x and y values of the valid pixels in ``win``."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    x_src, y_src, msk_src = srcs
+    x_blk = x_src.read(bands[0], window=win, out_dtype=np.float64).ravel()
+    y_blk = y_src.read(bands[1], window=win, out_dtype=np.float64).ravel()
+    msk_arr = msk_src.read(1, window=win).ravel() if msk_src is not None else None
+    valid = build_valid_mask(
+        x_blk, no_data_val=nodata[0], msk_arr=msk_arr, valid_msk_val=img_msk_val
+    )
+    valid &= build_valid_mask(y_blk, no_data_val=nodata[1])
+    for vals, v_range in zip((x_blk, y_blk), ranges):
+        if v_range is not None:
+            valid &= (vals >= v_range[0]) & (vals <= v_range[1])
+    return x_blk[valid], y_blk[valid]
+
+
+def _scan_2d_hist_ranges(
+    srcs: Tuple[Any, Any, Optional[Any]],
+    bands: Tuple[int, int],
+    nodata: Tuple[Optional[float], Optional[float]],
+    img_msk_val: int,
+    ranges: Tuple[Optional[Tuple[float, float]], Optional[Tuple[float, float]]],
+    block_size: Optional[int],
+    use_pbar: bool,
+) -> Tuple[Tuple[float, float], Tuple[float, float]]:
+    """Fill the ``None`` ranges with the min/max of the valid pixels."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    mins = [math.inf, math.inf]
+    maxs = [-math.inf, -math.inf]
+    for win in iter_dataset_windows(
+        srcs[0].height, srcs[0].width, block_size=block_size, use_pbar=use_pbar
+    ):
+        x_vals, y_vals = _read_2d_hist_block(
+            srcs, bands, nodata, img_msk_val, ranges, win
+        )
+        if x_vals.size == 0:
+            continue
+        for idx, vals in enumerate((x_vals, y_vals)):
+            mins[idx] = min(mins[idx], float(np.min(vals)))
+            maxs[idx] = max(maxs[idx], float(np.max(vals)))
+    if not math.isfinite(mins[0]):
+        raise rsgispy.RSGISPyException(
+            "No valid pixels found to compute the 2D histogram range."
+        )
+    x_rng = ranges[0] if ranges[0] is not None else (mins[0], maxs[0])
+    y_rng = ranges[1] if ranges[1] is not None else (mins[1], maxs[1])
+    return x_rng, y_rng
+
+
+def get_img_2d_histogram(
+    input_img: Union[str, os.PathLike],
+    x_band: int,
+    y_band: int,
+    *,
+    y_img: Optional[Union[str, os.PathLike]] = None,
+    bins: Union[int, Sequence[int]] = 256,
+    x_range: Optional[Tuple[float, float]] = None,
+    y_range: Optional[Tuple[float, float]] = None,
+    no_data_val: Optional[float] = None,
+    in_msk_img: Optional[Union[str, os.PathLike]] = None,
+    img_msk_val: int = 1,
+    density: bool = False,
+    block_size: Optional[int] = None,
+    use_pbar: bool = True,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Calculate the 2D histogram (feature space) of two image bands, block by
+    block, so memory does not grow with the image size.
+
+    The x values are band ``x_band`` of ``input_img`` and the y values are band
+    ``y_band`` of ``y_img`` (an image on the same pixel grid) or, when
+    ``y_img`` is ``None``, of ``input_img``. A pixel is counted when both
+    values are valid (finite and not the no-data value), inside ``x_range``
+    and ``y_range``, and the mask (if given) equals ``img_msk_val``. When a
+    range is ``None``, a first pass finds the minimum and maximum of the
+    valid pixels. The counts are accumulated tile by tile with fixed edges,
+    so the result is identical to :func:`numpy.histogram2d` on the whole
+    arrays of valid pixel values (with ``range=[x_range, y_range]``), and
+    identical for any ``block_size``.
+
+    This replaces ``rsgislib.imagecalc.get_2d_img_histogram``, which wrote the
+    histogram to an image file. To plot it with ``matplotlib``, transpose it
+    (it is indexed ``[x, y]``): ``ax.imshow(hist.T, origin='lower',
+    extent=[x_edges[0], x_edges[-1], y_edges[0], y_edges[-1]])``.
+
+    :param input_img: Path to the input image (x band and, by default, y band).
+    :param x_band: 1-based band index of the x values in ``input_img``.
+    :param y_band: 1-based band index of the y values in ``y_img`` (or in
+                   ``input_img`` when ``y_img`` is ``None``).
+    :param y_img: Optional second image, on the same pixel grid as
+                  ``input_img``, providing ``y_band`` (Default = ``None``).
+    :param bins: Number of bins for both axes, or ``[n_x_bins, n_y_bins]``
+                 (Default = ``256``), as for :func:`numpy.histogram2d`.
+    :param x_range: Optional ``(min_val, max_val)`` of the x axis. Pixels
+                    outside it are not counted. When ``None``, the range of the
+                    valid pixels.
+    :param y_range: Optional ``(min_val, max_val)`` of the y axis, as
+                    ``x_range``.
+    :param no_data_val: Optional no-data value of both bands. When ``None``,
+                        each band's no-data value from the image header (if
+                        any) is used.
+    :param in_msk_img: Optional mask image (band 1), on the same pixel grid as
+                       ``input_img``; only pixels equal to ``img_msk_val`` are
+                       counted.
+    :param img_msk_val: Mask value of the pixels to count (Default = ``1``).
+    :param density: If ``True``, return the probability density
+                    (``counts / (total * bin_area)``, as
+                    :func:`numpy.histogram2d` with ``density=True``) instead
+                    of the counts (Default = ``False``).
+    :param block_size: Optional processing block size in pixels (Default =
+                       ``None``, the rsgispy default block size). The result
+                       does not depend on it.
+    :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
+    :return: ``(hist, x_edges, y_edges)``: ``hist`` is a ``float64`` array of
+             shape ``(n_x_bins, n_y_bins)`` indexed ``[x, y]`` (counts, or
+             densities with ``density=True``), and ``x_edges`` / ``y_edges``
+             are the bin edges (lengths ``n_x_bins + 1`` and ``n_y_bins + 1``).
+
+    .. code:: python
+
+        import rsgispy.imagecalc.stats as imgstats
+
+        # Feature space of the red (band 3) and NIR (band 8) bands
+        hist, x_edges, y_edges = imgstats.get_img_2d_histogram(
+            "sen2.tif", 3, 8, bins=200, x_range=(0, 5000), y_range=(0, 5000),
+            no_data_val=0,
+        )
+        # Proportion of the valid pixels in each bin
+        hist_norm = hist / hist.sum()
+    """
+    # pylint: disable=too-many-arguments,too-many-locals
+    x_rng = _validate_2d_hist_range(x_range, "x_range")
+    y_rng = _validate_2d_hist_range(y_range, "y_range")
+    in_path = os.fspath(input_img)
+    ensure_file_exists(in_path)
+    y_path = os.fspath(y_img) if y_img is not None else in_path
+    ensure_file_exists(y_path)
+    msk_path = os.fspath(in_msk_img) if in_msk_img is not None else None
+    if msk_path is not None:
+        ensure_file_exists(msk_path)
+
+    with ExitStack() as stack:
+        x_src = stack.enter_context(rasterio.open(in_path, "r"))
+        y_src = (
+            x_src if y_img is None else stack.enter_context(rasterio.open(y_path, "r"))
+        )
+        msk_src = (
+            stack.enter_context(rasterio.open(msk_path, "r"))
+            if msk_path is not None
+            else None
+        )
+        validate_band_index(x_band, x_src.count, in_path)
+        validate_band_index(y_band, y_src.count, y_path)
+        if y_img is not None:
+            _check_same_pixel_grid(x_src, y_src, in_path, y_path)
+        if msk_src is not None and msk_path is not None:
+            _check_same_pixel_grid(x_src, msk_src, in_path, msk_path)
+
+        if no_data_val is not None:
+            nodata = (float(no_data_val), float(no_data_val))
+        else:
+            x_nd = x_src.nodatavals[x_band - 1]
+            y_nd = y_src.nodatavals[y_band - 1]
+            nodata = (
+                float(x_nd) if x_nd is not None else None,
+                float(y_nd) if y_nd is not None else None,
+            )
+        srcs = (x_src, y_src, msk_src)
+        band_pair = (int(x_band), int(y_band))
+
+        if x_rng is None or y_rng is None:
+            x_rng, y_rng = _scan_2d_hist_ranges(
+                srcs, band_pair, nodata, img_msk_val, (x_rng, y_rng),
+                block_size, use_pbar,
+            )
+
+        hist_range = [list(x_rng), list(y_rng)]
+        hist, x_edges, y_edges = np.histogram2d(
+            np.empty(0), np.empty(0), bins=bins, range=hist_range
+        )
+        for win in iter_dataset_windows(
+            x_src.height, x_src.width, block_size=block_size, use_pbar=use_pbar
+        ):
+            x_vals, y_vals = _read_2d_hist_block(
+                srcs, band_pair, nodata, img_msk_val, (x_rng, y_rng), win
+            )
+            if x_vals.size == 0:
+                continue
+            blk_hist, _, _ = np.histogram2d(
+                x_vals, y_vals, bins=bins, range=hist_range
+            )
+            hist += blk_hist
+
+    if density:
+        total = float(np.sum(hist))
+        bin_area = np.diff(x_edges)[:, np.newaxis] * np.diff(y_edges)[np.newaxis, :]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            hist = hist / total / bin_area
+    return hist, x_edges, y_edges

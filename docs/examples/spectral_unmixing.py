@@ -61,7 +61,7 @@ def run_workflow(
     import rasterio
     import rsgispy
     import rsgispy.imagecalc.maths as img_maths
-    import rsgispy.imagecalc.percentiles as img_pcts
+    from rsgispy.imageutils.composite import create_percentile_composite
 
     band_names = ["Blue", "Green", "Red", "NIR", "SWIR1", "SWIR2"]
     nd = no_data_val
@@ -78,10 +78,13 @@ def run_workflow(
         return out_img
 
     if len(sref_imgs) > 1:
-        # Per-pixel, per-band median of the valid observations.
+        # Per-pixel, per-band median of the valid observations (an
+        # observation is valid where all six bands are valid).
         median_img = os.path.join(out_dir, "sref_median.tif")
-        img_pcts.calc_img_band_pxl_percentiles(
-            sref_imgs, median_img, [50], no_data_val=nd, use_pbar=use_pbar)
+        create_percentile_composite(
+            sref_imgs, median_img, [50], no_data_val=nd,
+            datatype=rsgispy.TYPE_16UINT,  # rounded to integers
+            use_pbar=use_pbar)
     else:
         median_img = sref_imgs[0]  # already a composite
     comp_img = prep_refl(median_img, os.path.join(out_dir, "sref_composite.tif"))
@@ -143,9 +146,10 @@ def run_workflow(
     print(em_df.round(0))  # rows = bands, columns = endmembers
     spec_em.write_endmembers_df(em_df, os.path.join(out_dir, "endmembers.csv"))
     out["em_plot"] = os.path.join(out_dir, "unmix_endmembers.png")
-    spec_em.plot_endmembers(em_df, out["em_plot"], gain=refl_scale,
-                            plot_title="TropWet endmembers",
-                            wavelengths=wavelengths)
+    fig, ax = spec_em.plot_endmembers(
+        em_df, gain=refl_scale, plot_title="TropWet endmembers",
+        wavelengths=wavelengths, out_plot_file=out["em_plot"],
+    )
     # [end-step-3-endmembers]
     out["em_counts"] = em_counts
     out["em_msk_img"] = em_msk_img
@@ -258,7 +262,7 @@ def run_workflow(
     out["slope_img"] = slope_img
 
     # [step-7-classify]
-    from rsgispy.imageutils.colourtable import define_colour_table, set_img_thematic
+    from rsgispy.imageutils.colourtable import set_thematic_classes
 
     # TropWet Table 3 (fractions in %), tested in this order.
     rules = [
@@ -284,9 +288,8 @@ def run_workflow(
         datatype=rsgispy.TYPE_8UINT, band_names=["tropwet_class"],
         no_data_val=0, use_pbar=use_pbar,
     )
-    define_colour_table(cls_img, {code: clr for code, (_, clr)
-                                  in TROPWET_CLASSES.items()})
-    set_img_thematic(cls_img)
+    # Thematic, with the class names and colours, statistics and pyramids.
+    set_thematic_classes(cls_img, TROPWET_CLASSES)
 
     # Area per class.
     with rasterio.open(cls_img) as src:
@@ -333,7 +336,6 @@ def run_workflow(
     out["freq_img"] = freq_img
 
     # [step-9-map]
-    import matplotlib.cm
     import matplotlib.pyplot as plt
     import rsgispy.mapping.elements as map_elements
     import rsgispy.mapping.legend as map_legend
@@ -349,14 +351,13 @@ def run_workflow(
         title_str="Sand / Vegetation / Water (R/G/B)",
     )
     # (b) Water frequency across the dates.
-    cmap, norm = map_raster.create_raster_cmap_img_map(
+    map_raster.create_raster_cmap_img_map(
         axs[0, 1], freq_img, img_band=3, cmap_name="Blues",
         norm_img_vals=True, norm_vmin=0.0, norm_vmax=100.0,
         show_map_axis=False, scale_bar_loc="lower left",
         title_str="Water frequency",
+        show_colour_bar=True, cbar_label="% of observations",
     )
-    fig.colorbar(matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap),
-                 ax=axs[0, 1], label="% of observations", shrink=0.8)
     # (c) TropWet classes, using the colour table stored in the image.
     map_raster.create_thematic_raster_map(
         axs[1, 0], cls_img, show_map_axis=False, scale_bar_loc="lower left",

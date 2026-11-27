@@ -282,7 +282,7 @@ def _calc_imgs_equal(
             ref_v = ref_arr[valid]
             cmp_v = cmp_arr[valid]
             if ref_v.size > 0:
-                n_eq_pxls += int(np.count_nonzero(np.abs(ref_v - cmp_v) < flt_dif))
+                n_eq_pxls += int(np.count_nonzero(np.abs(ref_v - cmp_v) <= flt_dif))
                 n_pxls += int(ref_v.size)
 
     if n_pxls == 0:
@@ -306,8 +306,9 @@ def are_imgs_equal(
     :param in_cmp_img: Path to the comparison image.
     :param prop_eql: Minimum proportion of matching pixels required to return
                      ``True`` (range ``0`` to ``1``, Default = ``1.0``).
-    :param flt_dif: Absolute difference tolerance below which two pixels are
-                    considered equal (Default = ``0.0001``).
+    :param flt_dif: Two pixels are equal when their absolute difference is at
+                    most ``flt_dif``; ``0`` tests for identical values
+                    (Default = ``0.0001``).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :return: Tuple ``(is_equal, prop_pixels_equal)``.
 
@@ -350,8 +351,9 @@ def are_img_bands_equal(
     :param img_cmp_band: 1-based band index in ``in_cmp_img``.
     :param prop_eql: Minimum proportion of matching pixels required to return
                      ``True`` (range ``0`` to ``1``, Default = ``1.0``).
-    :param flt_dif: Absolute difference tolerance below which two pixels are
-                    considered equal (Default = ``0.0001``).
+    :param flt_dif: Two pixels are equal when their absolute difference is at
+                    most ``flt_dif``; ``0`` tests for identical values
+                    (Default = ``0.0001``).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :return: Tuple ``(is_equal, prop_pixels_equal)``.
 

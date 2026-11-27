@@ -12,6 +12,8 @@ import numpy as np
 import pytest
 import rasterio
 
+from rsgispy.imageutils.colourtable import get_thematic_classes
+
 from change_scene import make_change_scene
 
 pytest.importorskip("sklearn")
@@ -67,13 +69,22 @@ def test_worked_example_runs(tmp_path):
     assert 0.02 < out["chng_prop"] < 0.08
     assert set(out["thresholds"]) == {"otsu", "yen", "li"}
 
+    classes = get_thematic_classes(out["chng_img"])
+    assert classes[2][0] == "Vegetation loss"
+
     cva_dir = _read(out["cva_dir_img"])
     assert np.mean(cva_dir[truth] == 2) > 0.95
+    assert get_thematic_classes(out["cva_dir_img"])[3][0] == "Other change"
+    cva_info = out["cva_info"]
+    assert cva_info["threshold_method"] == "otsu"
+    assert 0 < cva_info["n_change"] < cva_info["n_valid"]
 
     if "mad_img" in out:
         mad = _read(out["mad_img"])
         assert np.mean(mad[truth] == 1) > 0.9
         assert np.all(mad[ref == 0] == 255)
+        assert out["mad_info"]["n_iter"] >= 1
+        assert isinstance(out["mad_info"]["converged"], bool)
 
     loss = _read(out["forest_loss_img"])
     assert np.mean(loss[truth] == 2) > 0.95

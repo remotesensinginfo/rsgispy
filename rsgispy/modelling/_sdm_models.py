@@ -23,6 +23,7 @@ from rsgispy.modelling._helpers import (
     sklearn,
 )
 from rsgispy.tools._ml_explain import (
+    finalise_plot,
     plot_jackknife_bars,
     run_salib_sobol_sensitivity,
     run_shap_explainer,
@@ -167,7 +168,8 @@ def fit_sklearn_mdl(
     fpr, tpr, roc_auc = calc_binary_roc_auc(test_y, test_probs)
 
     if roc_curve_plot is not None:
-        plot_roc_curve(fpr, tpr, roc_auc, out_file=roc_curve_plot)
+        fig, _ = plot_roc_curve(fpr, tpr, roc_auc)
+        finalise_plot(fig, out_file=roc_curve_plot)
 
     if return_model:
         return fitted_mdl, train_acc_val, test_acc_val, roc_auc
@@ -239,7 +241,8 @@ def fit_sklearn_sgl_cls_mdl(
     fpr, tpr, roc_auc = calc_binary_roc_auc(test_y, test_scores)
 
     if roc_curve_plot is not None:
-        plot_roc_curve(fpr, tpr, roc_auc, out_file=roc_curve_plot)
+        fig, _ = plot_roc_curve(fpr, tpr, roc_auc)
+        finalise_plot(fig, out_file=roc_curve_plot)
 
     if return_model:
         return fitted_mdl, test_acc_val, roc_auc
@@ -831,25 +834,25 @@ def sklearn_jackknife_var_importance(
         var_import_vals_df.to_csv(imp_path, index=True)
 
     if out_importance_auc_plot is not None:
-        plot_jackknife_bars(
+        fig, _ = plot_jackknife_bars(
             var_list,
             out_data["roc_test_acc_leave_var_out"],
             out_data["roc_test_acc_only_var"],
             all_roc_auc,
             "Jackknife AUC Gain",
             "Testing AUC",
-            out_importance_auc_plot,
         )
+        finalise_plot(fig, out_file=out_importance_auc_plot)
 
     if out_importance_test_plot is not None:
-        plot_jackknife_bars(
+        fig, _ = plot_jackknife_bars(
             var_list,
             out_data["test_acc_leave_var_out"],
             out_data["test_acc_only_var"],
             all_test_acc_val,
             "Jackknife Test Gain",
             "Testing Accuracy",
-            out_importance_test_plot,
         )
+        finalise_plot(fig, out_file=out_importance_test_plot)
 
     return var_import_vals_df

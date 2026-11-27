@@ -9,7 +9,7 @@ and ``pyproj``, organised into thematic submodules:
 
    Guide: :doc:`guides/making_maps`
 
-* :doc:`mapping/layout` — Figure sizing, axis extent, tick spacing, and inset overview maps.
+* :doc:`mapping/layout` — Figure sizing, axis extent, tick spacing, inset overview maps, and maps side by side (``create_map_panels``).
 * :doc:`mapping/elements` — Scale bars, north arrows, bounding boxes, and axis labels.
 * :doc:`mapping/raster` — Continuous, colour-mapped, and thematic raster map layers.
 * :doc:`mapping/vector` — Vector, choropleth, and point-density map layers.
@@ -39,6 +39,10 @@ custom scale bar:
        show_legend=True,
        classes_info={1: "Forest", 2: "Grassland", 3: "Water"},
    )
+
+Every map function draws on the axis it is given and returns the artist
+the caller needs next (e.g. the image, for a colour bar); see
+:ref:`plotting_conventions`.
 
 Submodules
 ----------

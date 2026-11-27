@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 import os
+import warnings
 from contextlib import ExitStack
 from typing import (
     Any,
@@ -848,12 +849,42 @@ class StackBands(TileNode):
     Stack the bands of several nodes into one multi-band output (in the
     order given), carrying the band names through.
 
+    **No data.** The stack has one no-data value for all its bands:
+
+    * with ``no_data_val=None`` (the default), the bands are stacked
+      unchanged. When every input has the same no-data value (or none has
+      one) the stack has that value. When they differ the stack has none
+      (``None``) and a :class:`UserWarning` says so: the sinks would then not
+      exclude the inputs' no-data pixels;
+    * with ``no_data_val`` given, every band of a pixel where any input is
+      invalid (equal to that input's own no-data value, or not finite) is set
+      to ``no_data_val``, which becomes the stack's no-data value. This keeps
+      the sinks' rule (a pixel invalid in any band is invalid) working for
+      every input, e.g. Sentinel-2 bands with no data ``0`` stacked with an
+      index with no data ``-999``;
+    * with ``no_data_val='auto'``, the same, with the first input's no-data
+      value when it has one, else NaN for a floating-point stack; for any
+      other stack :class:`rsgispy.RSGISPyException` asks for a value.
+
+    ``TileGraph.describe()`` shows the stack's no-data value and whether
+    invalid pixels are masked across the inputs. A valid value equal to the
+    stack's no-data value becomes no data downstream, so choose
+    ``no_data_val`` outside the data range of every input. Masking makes,
+    e.g., a valid slope of ``0`` no data where an aspect band stacked with it
+    has its no-data value (flat pixels), so leave ``no_data_val=None`` when
+    the bands' values are needed as they are.
+
     :param sources: Sequence of upstream :class:`TileNode` objects.
     :param name: Optional node identifier.
     :param band_names: Optional names of the stacked bands, one per band
                        (Default = ``None``: the inputs' names). Use it when
                        inputs have the same band names, e.g. two filters of
                        the same bands.
+    :param no_data_val: No-data value of the stack, written into every band
+                        of a pixel where any input is invalid, or ``'auto'``
+                        (Default = ``None``: the inputs' shared no-data value,
+                        nothing masked; see above). It must fit the stack's
+                        data type (the NumPy result type of the inputs).
 
     .. code:: python
 
@@ -866,6 +897,13 @@ class StackBands(TileNode):
             band_names=["value", "mean5", "stddev5"],
         )
         TileGraph(DiskSink(stack, "features.tif")).run()
+
+        # Sentinel-2 (no data 0) with an index (no data -999): the stack
+        # writes -999 into every band where either input is no data, so a
+        # SampleSink or predict_raster_node on it skips those pixels.
+        s2 = RasterSource("s2.tif", bands=[4, 8])
+        ndvi = RasterSource("ndvi.tif")
+        feats = StackBands([s2, ndvi], no_data_val=-999)
     """
 
     def __init__(
@@ -874,14 +912,30 @@ class StackBands(TileNode):
         name: Optional[str] = None,
         *,
         band_names: Optional[Sequence[str]] = None,
+        no_data_val: Optional[Union[float, str]] = None,
     ) -> None:
         src_list = tuple(sources)
         if not src_list:
             raise rsgispy.RSGISPyException("StackBands requires at least one input.")
         super().__init__(inputs=src_list, name=name)
         self.band_names = _band_names_arg(band_names)
+        if isinstance(no_data_val, str):
+            if no_data_val != "auto":
+                raise rsgispy.RSGISPyException(
+                    f"StackBands no_data_val must be a number, 'auto' or None, "
+                    f"got {no_data_val!r}."
+                )
+            self.no_data_val: Optional[Union[float, str]] = no_data_val
+        else:
+            self.no_data_val = None if no_data_val is None else float(no_data_val)
+        # (stack no-data value, each input's no-data value) when invalid
+        # pixels are masked across the inputs; set by infer_meta.
+        self._nodata_plan: Optional[Tuple[float, Tuple[Optional[float], ...]]] = None
+        self._nodata_differ = False
+        self._input_nodatas: Tuple[Optional[float], ...] = ()
 
-    def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+    def _stacked_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+        """Bands, names and dtype of the stack; the shared no-data value or ``None``."""
         counts = [m.n_bands for m in inputs]
         n_bands = (
             sum(c for c in counts if c is not None)
@@ -912,6 +966,53 @@ class StackBands(TileNode):
                 n_bands = len(names)
         return NodeMeta(n_bands=n_bands, band_names=names, dtype=dtype, nodata=nodata)
 
+    def _resolve_nodata(self, inputs: Sequence[NodeMeta], dtype: Any) -> Optional[float]:
+        """The stack's no-data value; sets the masking plan (see the class docs)."""
+        nodatas = tuple(m.nodata for m in inputs)
+        self._nodata_plan = None
+        self._nodata_differ = not all(_same_nodata(nodatas[0], n) for n in nodatas)
+        self._input_nodatas = nodatas
+        if self.no_data_val is None:
+            if self._nodata_differ:
+                warnings.warn(
+                    f"{self.label}: the inputs have different no-data values "
+                    f"{list(nodatas)}, so the stack has no no-data value and sinks "
+                    "will not exclude the inputs' no-data pixels. Give "
+                    "StackBands(..., no_data_val=<value>) or no_data_val='auto' to "
+                    "write one no-data value into every band of a pixel where any "
+                    "input is invalid.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                return None
+            return nodatas[0]
+        if self.no_data_val != "auto":
+            target = float(self.no_data_val)
+        elif nodatas[0] is not None:
+            target = float(nodatas[0])
+        elif dtype is not None and np.issubdtype(np.dtype(dtype), np.floating):
+            target = float("nan")
+        else:
+            raise rsgispy.RSGISPyException(
+                f"{self.label}: no_data_val='auto' but the first input has no "
+                f"no-data value and the stack is not floating point (dtype="
+                f"{None if dtype is None else np.dtype(dtype)}); give "
+                "StackBands(..., no_data_val=<value>)."
+            )
+        if dtype is not None and not _nodata_fits(target, np.dtype(dtype)):
+            raise rsgispy.RSGISPyException(
+                f"{self.label}: the no-data value {target!r} does not fit the "
+                f"stack's data type {np.dtype(dtype)}; give a no_data_val that "
+                "fits it (or Cast an input)."
+            )
+        if any(n is not None for n in nodatas) or not math.isnan(target):
+            self._nodata_plan = (target, nodatas)
+        return target
+
+    def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
+        meta = self._stacked_meta(inputs)
+        return meta.replace(nodata=self._resolve_nodata(inputs, meta.dtype))
+
     def evaluate(
         self,
         inputs: Sequence[TileTensor],
@@ -921,12 +1022,37 @@ class StackBands(TileNode):
         state: Any = None,
     ) -> TileTensor:
         aligned = [t.crop(halo_y, halo_x) for t in inputs]
-        return aligned[0].with_data(np.concatenate([t.data for t in aligned], axis=0))
+        data = np.concatenate([t.data for t in aligned], axis=0)
+        plan = self._nodata_plan
+        if plan is not None:
+            # pylint: disable-next=import-outside-toplevel
+            from rsgispy.imageprocess import build_valid_mask
+
+            target, nodatas = plan
+            invalid = np.zeros(data.shape[1:], dtype=bool)
+            for tensor, nodata in zip(aligned, nodatas):
+                invalid |= ~np.all(build_valid_mask(tensor.data, nodata), axis=0)
+            if np.any(invalid):
+                data[:, invalid] = target
+        return aligned[0].with_data(data)
 
     def describe_params(self) -> str:
+        parts = []
         if self.band_names is not None:
-            return f"band_names={list(self.band_names)}"
-        return ""
+            parts.append(f"band_names={list(self.band_names)}")
+        if self.no_data_val is not None:
+            parts.append(f"no_data_val={self.no_data_val!r}")
+        if self._nodata_plan is not None:
+            parts.append(
+                f"nodata={self._nodata_plan[0]!r} where invalid in any input "
+                f"(inputs' nodata={list(self._nodata_plan[1])})"
+            )
+        elif self._nodata_differ and self.no_data_val is None:
+            parts.append(
+                f"inputs' nodata={list(self._input_nodatas)} differ: stack nodata=None, "
+                "not masked (give no_data_val)"
+            )
+        return " ".join(parts)
 
 
 class Cast(TileNode):
@@ -1135,6 +1261,35 @@ def _nodata_fits(nodata: float, np_dtype: np.dtype) -> bool:
     return abs(val) <= float(np.finfo(np_dtype).max)  # pylint: disable=no-member
 
 
+def _parse_sink_classes(
+    colour_table: Optional[Mapping[int, Any]],
+    classes: Optional[Mapping[int, Any]],
+) -> Tuple[Dict[int, str], Dict[int, Tuple[int, int, int, int]]]:
+    """Validated class names and RGBA colours of a thematic :class:`DiskSink`."""
+    # Lazy import: rsgispy.imageutils.colourtable imports rsgispy.imageprocess.
+    # pylint: disable=import-outside-toplevel,protected-access
+    from rsgispy.imageutils import colourtable as _ct
+
+    if colour_table is not None and classes is not None:
+        raise rsgispy.RSGISPyException(
+            "DiskSink: give colour_table or classes, not both."
+        )
+    if classes is not None:
+        return _ct._parse_thematic_classes(classes)
+    if colour_table is None:
+        return {}, {}
+    if not colour_table:
+        raise rsgispy.RSGISPyException(
+            "DiskSink: colour_table must be a non-empty mapping."
+        )
+    colours = {int(k): _ct._parse_colour_entry(v) for k, v in colour_table.items()}
+    if min(colours) < 0:
+        raise rsgispy.RSGISPyException(
+            "DiskSink: colour table pixel values must be non-negative."
+        )
+    return {}, colours
+
+
 class DiskSink(TileSink):
     """
     Terminal sink writing a node's tiled output to an on-disk raster dataset.
@@ -1153,6 +1308,21 @@ class DiskSink(TileSink):
     ``rsgispy.TYPE_64FLOAT`` for a ``float64`` file. Before rsgispy 0.4 the
     default was always ``TYPE_32FLOAT``.
 
+    **Class maps.** With ``thematic=True`` (implied by ``colour_table`` or
+    ``classes``) the output is a thematic image: when the writer closes
+    (for a COG, before it is converted) every band is marked thematic
+    (``LAYER_TYPE=thematic``), the colour table and class names are written
+    to band 1 as by
+    :func:`~rsgispy.imageutils.colourtable.set_thematic_classes`, and, unless
+    ``calc_stats=False``, thematic statistics (pixel value ``0`` excluded
+    when it is the no-data value) and pyramids are built (``NEAREST`` COG
+    overviews), without replacing the colour table. Without a colour table,
+    the statistics add a random one, as
+    :func:`~rsgispy.imageutils.stats.pop_thmt_img_stats` does. The output
+    must be an integer type, and ``uint8`` or ``uint16`` for a colour table.
+    Read the classes back with
+    :func:`~rsgispy.imageutils.colourtable.get_thematic_classes`.
+
     :param source: Upstream :class:`TileNode` producing the output tiles.
     :param output_img: Output raster file path.
     :param gdalformat: GDAL/rasterio driver format (Default = ``'GTIFF'``).
@@ -1164,11 +1334,38 @@ class DiskSink(TileSink):
     :param creation_opts: Optional GDAL/rasterio creation options mapping.
     :param band_names: Optional sequence of output band description strings.
     :param calc_stats: If ``True``, populate raster statistics and pyramids
-                       after writing (Default = ``False``).
+                       after writing (thematic statistics for a thematic
+                       output). Default = ``None``: ``True`` for a thematic
+                       output, else ``False``.
     :param name: Optional sink identifier.
     :param inherit_meta: Use the input's no-data value and band names when
                          ``nodata`` / ``band_names`` are ``None``
                          (Default = ``True``).
+    :param thematic: Write a thematic (class) image (Default = ``False``;
+                     ``True`` when ``colour_table`` or ``classes`` is given).
+    :param colour_table: Optional colour table of band 1: a mapping of pixel
+                         value to a hex string or ``(r, g, b[, a])``
+                         sequence, as for
+                         :func:`~rsgispy.imageutils.colourtable.define_colour_table`.
+    :param classes: Optional class names and colours of band 1, a mapping of
+                    pixel value to ``(name, colour)`` as for
+                    :func:`~rsgispy.imageutils.colourtable.set_thematic_classes`
+                    (not with ``colour_table``).
+
+    .. code:: python
+
+        import numpy as np
+        from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+        from rsgispy.classification.classpostprocess import majority_filter_node
+
+        cls = majority_filter_node(RasterSource("cls.tif"), 3, dtype=np.uint8)
+        TileGraph(
+            DiskSink(
+                cls,
+                "cls_smooth.tif",
+                classes={1: ("Water", "#1f78b4"), 2: ("Forest", "#33a02c")},
+            )
+        ).run()
     """
 
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -1186,12 +1383,21 @@ class DiskSink(TileSink):
         clamp_int: bool = True,
         creation_opts: Optional[Mapping[str, Any]] = None,
         band_names: Optional[Sequence[str]] = None,
-        calc_stats: bool = False,
+        calc_stats: Optional[bool] = None,
         name: Optional[str] = None,
         *,
         inherit_meta: bool = True,
+        thematic: bool = False,
+        colour_table: Optional[Mapping[int, Any]] = None,
+        classes: Optional[Mapping[int, Any]] = None,
     ) -> None:
         super().__init__(source, name=name)
+        self._cls_names, self._cls_colours = _parse_sink_classes(colour_table, classes)
+        self.colour_table = dict(colour_table) if colour_table is not None else None
+        self.classes = dict(classes) if classes is not None else None
+        # Kept apart from ``thematic``, which subclasses may redefine.
+        self._thematic_out = bool(thematic or self._cls_colours)
+        self.thematic: bool = self._thematic_out
         self.output_img: str = os.fspath(output_img)
         self.gdalformat: str = str(gdalformat)
         #: The ``datatype`` argument (``None``: from the input's metadata).
@@ -1203,7 +1409,9 @@ class DiskSink(TileSink):
         self.band_names: Optional[List[str]] = (
             list(band_names) if band_names is not None else None
         )
-        self.calc_stats: bool = bool(calc_stats)
+        self.calc_stats: bool = bool(
+            self._thematic_out if calc_stats is None else calc_stats
+        )
         self.inherit_meta: bool = bool(inherit_meta)
         self._run: Optional[Dict[str, Any]] = None
 
@@ -1221,7 +1429,63 @@ class DiskSink(TileSink):
         self._resolved_datatype = (
             self.datatype if self.datatype is not None else datatype_from_meta(meta)
         )
+        if self._thematic_out:
+            self._check_thematic_dtype()
         return meta
+
+    def _check_thematic_dtype(self) -> None:
+        """Raise unless the output data type can hold a class map (and its colours)."""
+        out_dt = np.dtype(rsgispy.get_numpy_datatype(self.out_datatype))
+        if not np.issubdtype(out_dt, np.integer):
+            raise rsgispy.RSGISPyException(
+                f"DiskSink '{self.output_img}': a thematic output needs an integer "
+                f"data type, got {out_dt} (pass datatype=rsgispy.TYPE_8UINT or "
+                "Cast the input)."
+            )
+        if self._cls_colours:
+            if out_dt not in (np.dtype(np.uint8), np.dtype(np.uint16)):
+                raise rsgispy.RSGISPyException(
+                    f"DiskSink '{self.output_img}': a colour table needs a uint8 or "
+                    f"uint16 output, got {out_dt}."
+                )
+            if max(self._cls_colours) > np.iinfo(out_dt).max:
+                raise rsgispy.RSGISPyException(
+                    f"DiskSink '{self.output_img}': class {max(self._cls_colours)} "
+                    f"does not fit a {out_dt} output."
+                )
+
+    def _thematic_on_close(
+        self, path: str, nodata: Optional[float], is_cog: bool, use_pbar: bool
+    ) -> None:
+        """Mark ``path`` thematic, write its classes and build its statistics."""
+        # pylint: disable=import-outside-toplevel
+        from rsgispy.imageutils import colourtable as _ct
+        from rsgispy.imageutils.stats import pop_thmt_img_stats
+
+        ignore_zero = nodata is not None and float(nodata) == 0.0
+        if self._cls_colours:
+            # pylint: disable-next=protected-access
+            _ct._apply_thematic_classes(
+                path,
+                self._cls_names,
+                self._cls_colours,
+                img_band=1,
+                ignore_zero=ignore_zero,
+                calc_stats=self.calc_stats,
+                calc_pyramids=self.calc_stats and not is_cog,
+                ignore_cog=False,
+                use_pbar=use_pbar,
+            )
+        elif self.calc_stats:
+            pop_thmt_img_stats(
+                path,
+                add_clr_tab=True,
+                calc_pyramids=not is_cog,
+                ignore_zero=ignore_zero,
+                use_pbar=use_pbar,
+            )
+        else:
+            _ct.set_img_thematic(path)
 
     @property
     def out_datatype(self) -> int:
@@ -1276,9 +1540,11 @@ class DiskSink(TileSink):
         }
 
     def _open_dataset(self, count: int) -> rasterio.io.DatasetWriter:
-        # pylint: disable=import-outside-toplevel
+        # pylint: disable=import-outside-toplevel,too-many-locals
         from rsgispy.imageprocess import (
+            get_output_stage,
             normalise_creation_options,
+            on_output_close,
             open_output_dataset,
             pop_stats_on_close,
         )
@@ -1309,12 +1575,24 @@ class DiskSink(TileSink):
                 dst.set_band_description(b_idx, str(b_name))
         # Statistics run once the writer has closed (for COG, before the
         # temporary GeoTIFF is converted).
-        pop_stats_on_close(
-            dst,
-            self.calc_stats,
-            no_data_val=run["nodata"],
-            use_pbar=run["use_pbar"],
-        )
+        if self._thematic_out:
+            # NEAREST COG overviews; the statistics are built on close below.
+            pop_stats_on_close(dst, False, thematic=True)
+            stage = get_output_stage(dst)
+            is_cog = stage is not None and stage.is_cog
+            nodata = run["nodata"]
+            use_pbar = run["use_pbar"]
+            on_output_close(
+                dst,
+                lambda path: self._thematic_on_close(path, nodata, is_cog, use_pbar),
+            )
+        else:
+            pop_stats_on_close(
+                dst,
+                self.calc_stats,
+                no_data_val=run["nodata"],
+                use_pbar=run["use_pbar"],
+            )
         run["dst"] = dst
         return dst
 
@@ -1341,11 +1619,18 @@ class DiskSink(TileSink):
         self._run = None
 
     def describe_params(self) -> str:
-        return (
+        text = (
             f"output='{self.output_img}' format={self.gdalformat} "
             f"datatype={rsgispy.get_rasterio_datatype(self.out_datatype)}"
             + (" (from input)" if self.datatype is None else "")
         )
+        if self._thematic_out:
+            text += " thematic"
+            if self._cls_names:
+                text += f" classes={len(self._cls_names)}"
+            elif self._cls_colours:
+                text += f" colour_table={len(self._cls_colours)}"
+        return text
 
 
 class MemorySink(TileSink):

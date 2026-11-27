@@ -27,7 +27,15 @@ rasterised training polygons) must be on the image's pixel grid.
 
 import argparse
 import os
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Tuple
+
+# Class ID of the training image -> (name, colour) of the class map.
+CLASSES = {
+    1: ("Water", "#1f78b4"),
+    2: ("Forest", "#33a02c"),
+    3: ("Grass", "#b2df8a"),
+    4: ("Bare", "#d9b38c"),
+}
 
 
 def run_workflow(
@@ -36,6 +44,7 @@ def run_workflow(
     train_img: str,
     out_dir: str,
     band_names: Optional[Mapping[int, str]] = None,
+    classes: Optional[Mapping[int, Tuple[str, str]]] = None,
     block_size: Optional[int] = None,
     n_jobs: int = 1,
     use_pbar: bool = True,
@@ -44,7 +53,8 @@ def run_workflow(
     Run the worked example. ``band_names`` maps the band numbers of
     ``s2_img`` to the names used by the indices (``Blue``, ``Green``,
     ``Red``, ``NIR``; Default = bands 1-4 in that order). ``train_img`` holds
-    the class ID of the training pixels and 0 elsewhere.
+    the class ID of the training pixels and 0 elsewhere; ``classes`` maps
+    each class ID to its name and colour (Default = ``CLASSES``).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-statements,import-outside-toplevel
@@ -52,6 +62,8 @@ def run_workflow(
     out: Dict[str, Any] = {}
     if band_names is None:
         band_names = {1: "Blue", 2: "Green", 3: "Red", 4: "NIR"}
+    if classes is None:
+        classes = CLASSES
 
     # [step-1-sources]
     from rsgispy.imageprocess import RasterSource, infer_node_meta
@@ -111,7 +123,8 @@ def run_workflow(
     hshade_img = os.path.join(out_dir, "hillshade.tif")
     graph = TileGraph(
         [
-            DiskSink(cls_smooth, cls_img, calc_stats=True),  # uint8
+            # uint8 class map: thematic, with the class names and colours
+            DiskSink(cls_smooth, cls_img, classes=classes),
             DiskSink(features, feats_img),  # float32, with the band names
             DiskSink(slope, slope_img),  # float32
             DiskSink(hshade, hshade_img),  # uint8

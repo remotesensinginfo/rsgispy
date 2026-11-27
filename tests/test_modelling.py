@@ -562,6 +562,52 @@ def test_variable_response_and_jackknife(tmp_path):
     assert plt.get_fignums() == []
 
 
+def test_shap_plots_do_not_draw_on_open_figure(tmp_path):
+    """
+    SHAP plots get their own figure: an open figure (e.g. one returned by
+    plot_roc_curve, which uses constrained layout) is left unchanged and
+    SHAP's tight_layout call does not fail on it.
+    """
+    pytest.importorskip("shap")
+    fx = _create_sdm_fixture(tmp_path)
+    env_vars = fx["env_vars"]
+    pres_ext = sdm.extract_env_var_data(env_vars, fx["pres_gdf"], use_pbar=False)
+    abs_ext = sdm.extract_env_var_data(env_vars, fx["abs_gdf"], use_pbar=False)
+    comb_gdf, analysis_vars = sdm.combine_presence_absence_data(
+        pres_ext, None, abs_ext, None, env_vars, equalise_smpls=True, rnd_seed=3
+    )
+    train_gdf, test_gdf = sdm.create_train_test_sets(
+        comb_gdf, None, split_prop=0.8, rnd_seed=3
+    )
+    clf, _, _, _ = sdm.fit_sklearn_mdl(
+        RandomForestClassifier(n_estimators=10, random_state=3),
+        train_gdf,
+        None,
+        test_gdf,
+        None,
+        analysis_vars,
+        return_model=True,
+    )
+    roc_fig, roc_ax = sdm.plot_roc_curve(
+        np.array([0.0, 0.5, 1.0]), np.array([0.0, 0.8, 1.0]), 0.8
+    )
+    assert roc_fig.get_layout_engine() is not None
+    sdm.shap_sklearn_mdl_explainer(
+        clf,
+        train_gdf,
+        None,
+        analysis_vars,
+        shap_summary_plot=str(tmp_path / "shap_summary.png"),
+        shap_heatmap_plot=str(tmp_path / "shap_heat.png"),
+        subsample_n_smpls=15,
+        use_tree_explainer=True,
+    )
+    assert (tmp_path / "shap_summary.png").is_file()
+    assert (tmp_path / "shap_heat.png").is_file()
+    assert plt.get_fignums() == [roc_fig.number]
+    assert roc_fig.axes == [roc_ax]
+
+
 def test_optional_shap_and_salib(tmp_path):
     """Verify optional SHAP and SALib sensitivity functions when installed."""
     fx = _create_sdm_fixture(tmp_path)

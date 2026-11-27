@@ -202,6 +202,7 @@ Each guide's code is taken from a runnable example script in
 * :doc:`guides/multi_criteria_analysis` — A multi-criteria analysis with ``band_maths``: mangrove restoration potential.
 * :doc:`guides/zonal_stats_and_vectors` — Summarising rasters by polygons, points, label rasters and hexagon grids.
 * :doc:`guides/making_maps` — Publication-quality maps with legends, scale bars and inset maps.
+* :doc:`guides/plot_gallery` — The output of every plotting function, in the rsgispy house style.
 * :doc:`guides/large_rasters` — Block processing, tile graphs, VRTs, tiling and parallel processing for large data.
 * :doc:`guides/tile_graph` — Chaining operations in memory with a tile graph: node builders, custom operations, statistics and parallel tiles.
 
@@ -251,6 +252,7 @@ Package Overview
    guides/multi_criteria_analysis
    guides/zonal_stats_and_vectors
    guides/making_maps
+   guides/plot_gallery
    guides/large_rasters
    guides/tile_graph
 

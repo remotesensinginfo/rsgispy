@@ -852,13 +852,14 @@ class TestMappingFixes:
 
         fig, ax = plt.subplots()
         try:
-            cmap, norm = map_raster.create_raster_cmap_img_map(
+            img = map_raster.create_raster_cmap_img_map(
                 ax=ax,
                 input_img=tif,
                 img_band=1,
                 norm_img_vals=True,
                 show_scale_bar=False,
             )
+            cmap, norm = img.cmap, img.norm
             assert norm is not None
             assert norm.vmin == pytest.approx(10.0)
             assert norm.vmax == pytest.approx(30.0)
@@ -868,7 +869,7 @@ class TestMappingFixes:
 
         fig2, ax2 = plt.subplots()
         try:
-            cmap2, norm2 = map_raster.create_raster_cmap_img_map(
+            img2 = map_raster.create_raster_cmap_img_map(
                 ax=ax2,
                 input_img=tif,
                 img_band=1,
@@ -876,7 +877,9 @@ class TestMappingFixes:
                 vals_under_white=True,
                 show_scale_bar=False,
             )
-            assert norm2 is None
+            cmap2, norm2 = img2.cmap, img2.norm
+            # Without norm_img_vals the image uses Matplotlib's linear autoscaling.
+            assert type(norm2) is matplotlib.colors.Normalize
             assert tuple(cmap2.get_under()) == pytest.approx((1.0, 1.0, 1.0, 1.0))
         finally:
             plt.close(fig2)

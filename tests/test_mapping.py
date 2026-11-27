@@ -522,7 +522,7 @@ def test_create_raster_cmap_img_map(tmp_path):
     _write_continuous_raster(str(tif), arr, nodata=None)
 
     fig, ax = plt.subplots()
-    cmap, norm = map_raster.create_raster_cmap_img_map(
+    img = map_raster.create_raster_cmap_img_map(
         ax,
         str(tif),
         img_band=1,
@@ -530,9 +530,14 @@ def test_create_raster_cmap_img_map(tmp_path):
         use_log_norm=True,
         vals_under_white=True,
         title_str="CMap",
+        show_colour_bar=True,
+        cbar_label="Value",
     )
-    assert isinstance(cmap, matplotlib.colors.Colormap)
-    assert isinstance(norm, matplotlib.colors.LogNorm)
+    assert isinstance(img, matplotlib.image.AxesImage)
+    assert isinstance(img.cmap, matplotlib.colors.Colormap)
+    assert isinstance(img.norm, matplotlib.colors.LogNorm)
+    assert img.colorbar is not None
+    assert img.colorbar.ax.get_ylabel() == "Value"
     assert ax.get_title() == "CMap"
     plt.close(fig)
 
@@ -605,9 +610,9 @@ def test_optional_contextily_density_and_wmts(tmp_path):
         crs="EPSG:32630",
     )
     fig, ax = plt.subplots()
-    ax.scatter_density = MagicMock()
+    ax.scatter_density = MagicMock(return_value="density_artist")
     with patch.dict(sys.modules, {"mpl_scatter_density": mock_msd}):
-        cmap, norm = map_vector.create_vec_pt_density_map(
+        density_artist = map_vector.create_vec_pt_density_map(
             ax,
             gdf_pts,
             bbox=(500000.0, 500100.0, 5199900.0, 5200000.0),
@@ -615,9 +620,11 @@ def test_optional_contextily_density_and_wmts(tmp_path):
             sub_in_vec=True,
             title_str="Density",
         )
-    assert isinstance(cmap, matplotlib.colors.Colormap)
-    assert isinstance(norm, matplotlib.colors.LogNorm)
+    assert density_artist == "density_artist"
     ax.scatter_density.assert_called_once()
+    sd_kwargs = ax.scatter_density.call_args.kwargs
+    assert isinstance(sd_kwargs["cmap"], matplotlib.colors.Colormap)
+    assert isinstance(sd_kwargs["norm"], matplotlib.colors.LogNorm)
     plt.close(fig)
 
     # Mock WMTS XML + GTiff creation via rasterio.shutil.copy

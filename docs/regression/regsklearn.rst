@@ -122,6 +122,92 @@ descriptions:
         output_img="landsat_forest_structure.tif",
     )
 
+Repeated k-fold and Jackknife Assessment
+----------------------------------------
+
+With a small sample table (for example a forest inventory of a hundred or
+so plots), a single train / test split gives noisy accuracy figures.
+:func:`~rsgispy.regression.regsklearn.perform_kfold_fit` fits the regressor
+to every fold of a repeated k-fold and returns the
+:func:`~rsgispy.regression.regmetrics.calc_reg_metrics` metrics of each fold
+(including ``mse``, ``nrmse``, ``nrmse_range`` and ``nbias``) and the
+out-of-fold predictions; :func:`~rsgispy.regression.regsklearn.summarise_kfold_metrics`
+summarises them. :func:`~rsgispy.regression.regsklearn.perform_jackknife_fit`
+leaves out one sample (or group) at a time, giving the pooled leave-one-out
+metrics, the influence of each sample and, for linear models, jackknife
+standard errors of the coefficients. Both take any unfitted estimator with
+``fit`` / ``predict``, including pipelines and the XGBoost, LightGBM and
+CatBoost scikit-learn wrappers.
+
+.. code-block:: python
+
+    import pandas
+    from sklearn.ensemble import ExtraTreesRegressor
+    from sklearn.linear_model import LinearRegression
+    import rsgispy.regression.regsklearn as rsk
+
+    df = pandas.read_csv("forest_plots.csv", index_col=0)
+    x = df[["p95", "cover", "skew"]]
+    y = df[["Vol / ha", "BA / ha"]]
+
+    # 5 folds repeated 20 times (100 fits); writes kfold_et_metrics_vol_ha.csv etc.
+    metrics, residuals = rsk.perform_kfold_fit(
+        ExtraTreesRegressor(random_state=0),
+        x,
+        y,
+        n_splits=5,
+        n_repeats=20,
+        out_dir="kfold_outputs",
+        out_prefix="kfold_et",
+    )
+    summary = rsk.summarise_kfold_metrics(metrics)
+    print(summary.loc["Vol / ha"].loc[["r2", "rmse", "nrmse", "nbias"]])
+
+    # Pixels of one plot (or plots of one site) are never split across folds.
+    metrics, residuals = rsk.perform_kfold_fit(
+        ExtraTreesRegressor(random_state=0), x, y, groups=df["site"]
+    )
+
+    # Leave-one-out: one fit per plot.
+    jk = rsk.perform_jackknife_fit(LinearRegression(), x, y["Vol / ha"])
+    print(jk["metrics"]["Vol / ha"]["rmse"])
+    print(jk["coef_stats"]["Vol / ha"])  # bias, std_err, 95% interval
+    print(jk["influence"]["Vol / ha"].nlargest(5, "pred_shift_rmse"))
+
+Linear Model Equations
+----------------------
+
+For a fitted linear model (``LinearRegression``, ``Ridge``, ``Lasso``,
+``LassoLars`` …, or a pipeline that is linear overall, such as a
+``StandardScaler`` followed by a linear model),
+:func:`~rsgispy.regression.regsklearn.get_linear_model_coefs` returns the
+intercept and coefficients in the units of the input features,
+:func:`~rsgispy.regression.regsklearn.get_linear_model_equation` writes the
+model as an equation for a report, and
+:func:`~rsgispy.regression.regsklearn.get_linear_model_band_maths_exp` writes
+it as a :func:`~rsgispy.imagecalc.maths.band_maths` expression, to apply it
+to an image of the features (an alternative to
+:func:`~rsgispy.regression.regsklearn.apply_sklearn_regressor` that needs no
+saved model):
+
+.. code-block:: python
+
+    from sklearn.linear_model import LinearRegression
+    import rsgispy
+    from rsgispy.imagecalc.maths import BandDefn, band_maths
+    import rsgispy.regression.regsklearn as rsk
+
+    vol_mdl = LinearRegression().fit(df[ind_vars], df["Vol / ha"])
+    print(rsk.get_linear_model_equation(vol_mdl, target_name="vol", precision=4))
+    # vol = -12.3456 + 0.8123 * h_p95 + 1.2004 * cover ...
+
+    band_defns = [BandDefn("vld_msk", "valid_mask.tif", 1)] + [
+        BandDefn(var, "als_metrics.tif", band) for band, var in enumerate(ind_vars, 1)
+    ]
+    exp = rsk.get_linear_model_band_maths_exp(vol_mdl, valid_msk_name="vld_msk")
+    band_maths("volume.tif", exp, band_defns, datatype=rsgispy.TYPE_32FLOAT,
+               no_data_val=0)
+
 Standard Parameter Search Spaces
 --------------------------------
 
