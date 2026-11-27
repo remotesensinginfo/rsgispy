@@ -1,6 +1,6 @@
 # Vector Operations & Zonal Statistics
 
-Covers `rsgispy.vectorprocess`, `rsgispy.vector.{io,create,geoms,attrs,stats,selection}`, and `rsgispy.zonalstats.{polygon,point,labels}` in `rsgispy` v0.3.1.
+Covers `rsgispy.vectorprocess`, `rsgispy.vector.{io,create,geoms,attrs,stats,selection}`, and `rsgispy.zonalstats.{polygon,point,labels}` in `rsgispy` v0.4.0.
 
 > **Dual Path / `GeoDataFrame` API**: Almost every vector and zonalstats function accepts `str | os.PathLike | geopandas.GeoDataFrame`. Pass `out_vec_file=None` to return an in-memory `GeoDataFrame` instead of writing to disk. GeoParquet (`.parquet` / `.geoparquet`) is supported directly via `out_compress` (`'snappy'`, `'gzip'`, `'zstd'`, etc.).
 

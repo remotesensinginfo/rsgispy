@@ -1,6 +1,6 @@
 # DEM Elevation, Hydrology, Segmentation, Spatial Filters & Morphology
 
-Covers `rsgispy.elevation.*`, `rsgispy.segmentation.*`, `rsgispy.imagefilter.*`, and `rsgispy.imagemorphology` in `rsgispy` v0.3.1.
+Covers `rsgispy.elevation.*`, `rsgispy.segmentation.*`, `rsgispy.imagefilter.*`, and `rsgispy.imagemorphology` in `rsgispy` v0.4.0.
 
 ---
 
