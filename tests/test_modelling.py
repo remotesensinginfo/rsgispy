@@ -147,7 +147,9 @@ def test_package_layout_and_constants():
         "_sdm_data.py",
         "_sdm_eval.py",
         "_sdm_models.py",
+        "_sdm_novelty.py",
         "_sdm_predict.py",
+        "_sdm_projection.py",
         "species_distribution.py",
     ]
 

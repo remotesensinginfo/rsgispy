@@ -44,6 +44,7 @@ from rsgispy.modelling._sdm_models import (
     sklearn_jackknife_var_importance,
     sklearn_mdl_variable_response_curves,
 )
+from rsgispy.modelling._sdm_novelty import calc_exdet, calc_mess
 from rsgispy.modelling._sdm_predict import (
     pred_ensemble_sklearn_mdls_cls,
     pred_ensemble_sklearn_mdls_prob,
@@ -53,6 +54,10 @@ from rsgispy.modelling._sdm_predict import (
     pred_sklearn_mdl_prob,
     pred_sklearn_sgl_cls_mdl_cls,
     pred_sklearn_sgl_cls_mdl_prob,
+)
+from rsgispy.modelling._sdm_projection import (
+    calc_range_change,
+    copy_env_vars_for_scenario,
 )
 
 __all__ = [
@@ -96,4 +101,8 @@ __all__ = [
     "pred_ensemble_sklearn_sgl_cls_mdls_prob",
     "pred_ensemble_sklearn_sgl_cls_mdls_cls",
     "predict_raster_from_env_vars",
+    "copy_env_vars_for_scenario",
+    "calc_mess",
+    "calc_exdet",
+    "calc_range_change",
 ]

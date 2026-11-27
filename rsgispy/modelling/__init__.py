@@ -11,5 +11,7 @@ Submodules:
   thinning, normalisation, collinearity diagnostics, isolated scikit-learn
   model fitting and k-fold or spatial cross-validation ensembles, ROC/AUC, TSS
   and continuous Boyce index evaluation and threshold selection, variable
-  response/importance analysis, and block-wise spatial raster prediction).
+  response/importance analysis, block-wise spatial raster prediction with
+  ensemble uncertainty bands, projection to other scenarios with MESS / ExDet
+  extrapolation maps, and range-change maps).
 """
