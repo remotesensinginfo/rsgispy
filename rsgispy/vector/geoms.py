@@ -1,7 +1,7 @@
 """
-Geometric operations, line and polygon manipulation, vector overlays, vertex
-extraction, concave hulls, R-tree indexing, and spatial predicates for
-:mod:`rsgispy.vector.geoms`.
+Geometric operations, line and polygon manipulation, vector overlays, point
+thinning (spatial rarefaction), vertex extraction, concave hulls, R-tree
+indexing, and spatial predicates for :mod:`rsgispy.vector.geoms`.
 """
 
 from rsgispy.vector._lines import (
@@ -55,6 +55,7 @@ from rsgispy.vector._spatial import (
     vec_touches_vec,
     vec_within_vec,
 )
+from rsgispy.vector._thinning import thin_pts_by_raster_grid, thin_pts_min_dist
 
 __all__ = [
     # Line geometry operations
@@ -90,6 +91,9 @@ __all__ = [
     "vec_lyr_dissolve",
     "thin_vector_geoms",
     "shiftxy_vec_lyr",
+    # Point thinning (rarefaction)
+    "thin_pts_min_dist",
+    "thin_pts_by_raster_grid",
     # Spatial indexing & predicates
     "get_geom_pts",
     "get_vec_lyr_as_pts",

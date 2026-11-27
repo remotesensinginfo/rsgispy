@@ -138,7 +138,8 @@ print(rsk.summarise_kfold_metrics(metrics).loc["agb"][["mean", "p05", "p95"]])
 ## 4. `rsgispy.modelling.species_distribution`
 
 - `EnvVarInfo(name=None, file=None, band=1, data_type=0, min_vld_val=None, max_vld_val=None, norm_mean=None, norm_std=None)` (`.to_band_spec()`, `.set_norm_mean_std()`)
-- **Sampling & prep**: `create_finite_mask`, `gen_pseudo_absences_smpls`, `extract_env_var_data`, `combine_presence_absence_data(..., equalise_smpls=False, cls_col='clsid')`, `create_train_test_sets`, `pop_normalise_coeffs`, `apply_normalise_coeffs`.
+- **Sampling & prep**: `create_finite_mask`, `gen_pseudo_absences_smpls`, `extract_env_var_data`, `thin_pts_env_space(smpls_vec_file, smpls_vec_lyr, analysis_vars, out_vec_file=None, out_vec_lyr=None, *, n_bins=10, keep='random', rnd_seed=None, no_data_val=-9999.0)` (one sample per occupied environmental bin), `combine_presence_absence_data(..., equalise_smpls=False, cls_col='clsid')`, `create_train_test_sets`, `pop_normalise_coeffs`, `apply_normalise_coeffs`.
+- **Thinning presences** (in `rsgispy.vector.geoms`, apply before extraction): `thin_pts_by_raster_grid(vec_file, vec_lyr, ref_img, out_vec_file=None, out_vec_lyr=None, *, cell_mult=1, keep='random', rnd_seed=None, prefer_col=None, prefer_max=True)` (one point per pixel), `thin_pts_min_dist(vec_file, vec_lyr, min_dist, out_vec_file=None, out_vec_lyr=None, *, n_reps=10, method='random'|'greedy', rnd_seed=None, allow_geographic=False, return_reps=False)` (spThin; projected CRS required; `return_reps=True` -> `(result, reps)`).
 - **Exploratory / collinearity**: `comparison_box_plots`, `correlation_matrix`, `calc_vif_multicollinearity`.
 - **Model fitting & XAI**:
   - `search_mdl_params`, `fit_sklearn_mdl`, `fit_kfold_sklearn_mdls`

@@ -7,7 +7,7 @@ Submodules:
 
 * :mod:`rsgispy.modelling.species_distribution` — Species distribution
   modelling (pseudo-absence generation, environmental covariate extraction,
-  normalisation, collinearity diagnostics, isolated scikit-learn model fitting
-  and k-fold ensembles, ROC/AUC evaluation and threshold selection, variable
+  environmental-space thinning, normalisation, collinearity diagnostics,
+  isolated scikit-learn model fitting and k-fold ensembles, ROC/AUC evaluation and threshold selection, variable
   response/importance analysis, and block-wise spatial raster prediction).
 """

@@ -24,6 +24,7 @@ from rsgispy.modelling._sdm_data import (
     extract_env_var_data,
     gen_pseudo_absences_smpls,
     pop_normalise_coeffs,
+    thin_pts_env_space,
 )
 from rsgispy.modelling._sdm_models import _ensure_all_classes_in_fold  # noqa: F401
 from rsgispy.modelling._sdm_models import (
@@ -53,6 +54,7 @@ __all__ = [
     "create_finite_mask",
     "gen_pseudo_absences_smpls",
     "extract_env_var_data",
+    "thin_pts_env_space",
     "combine_presence_absence_data",
     "create_train_test_sets",
     "pop_normalise_coeffs",
