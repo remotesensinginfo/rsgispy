@@ -278,6 +278,8 @@ def perform_sklearn_classifier_param_search(
     :param timeout: Optional time limit in seconds for Optuna optimisation.
     :param direction: Optuna optimisation direction (``'maximize'`` or
                       ``'minimize'``, Default = ``'maximize'``).
+                      Named scikit-learn scorers are greater-is-better, so
+                      ``'minimize'`` is only valid with a callable ``scoring``.
     :param n_jobs: Number of parallel workers for scikit-learn CV evaluations.
     :param rnd_seed: Optional random seed for reproducible search and splits.
     :param feature_cols: Optional ordered feature column names (inferred from

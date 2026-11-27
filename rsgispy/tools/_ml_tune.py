@@ -465,6 +465,26 @@ def resolve_sklearn_param_space(
     return eff_space, ("extended" if use_ext else "default")
 
 
+def check_sklearn_scorer_direction(
+    scoring: Union[str, Callable[..., float]],
+    direction: str,
+) -> None:
+    """
+    Raise when ``direction='minimize'`` is used with a named scikit-learn
+    scorer. Named scorers are greater-is-better (error metrics are exposed as
+    ``'neg_*'``), so minimising one makes Optuna select the worst model. A
+    callable ``scoring`` may be optimised in either direction.
+    """
+    if isinstance(scoring, str) and str(direction).strip().lower() == "minimize":
+        raise rsgispy.RSGISPyException(
+            f"scoring={scoring!r} is a scikit-learn scorer, which is "
+            "greater-is-better, so it must be used with direction='maximize'. "
+            "For error metrics use the 'neg_*' scorer names (e.g. "
+            "'neg_root_mean_squared_error') with direction='maximize', or "
+            "pass a callable scorer to minimise."
+        )
+
+
 def run_optuna_study(
     objective: Callable[[Any], float],
     n_trials: int,
@@ -661,6 +681,7 @@ def run_optuna_search(
         raise rsgispy.RSGISPyException(
             "param_space must be provided when search_method='optuna'."
         )
+    check_sklearn_scorer_direction(scoring, direction)
 
     scorer = (
         sklearn.metrics.get_scorer(scoring)

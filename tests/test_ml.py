@@ -609,3 +609,95 @@ def test_tune_estimator_and_nested_spatial_cv():
     assert len(ncv_reg.fold_scores) == 3
     assert "r2" in ncv_reg.overall_metrics
     assert ncv_reg.overall_metrics["r2"] > 0.8
+
+
+def _class_sorted_samples(n_per_cls=60, n_cls=3, seed=5):
+    """Well-separated classes stored class by class, as per-class extraction returns them."""
+    rng = np.random.default_rng(seed)
+    X = np.vstack(
+        [rng.normal(loc=4.0 * c, scale=0.5, size=(n_per_cls, 2)) for c in range(n_cls)]
+    )
+    y = np.repeat(np.arange(1, n_cls + 1), n_per_cls)
+    return X, y
+
+
+def test_nested_cv_int_folds_are_shuffled_and_stratified():
+    """An integer outer_cv must not give folds that leave out whole classes."""
+    X, y = _class_sorted_samples()
+    res = nested_spatial_cv(
+        estimator_factory=lambda p: RandomForestClassifier(
+            n_estimators=20, random_state=0
+        ),
+        X=X,
+        y=y,
+        task="classification",
+        outer_cv=3,
+        use_pbar=False,
+    )
+    assert min(res.fold_scores) > 0.9
+
+
+def test_int_cv_splits_respect_rnd_seed_and_cover_all_samples():
+    """Integer CV splits are seeded, stratified for classification and a partition."""
+    from rsgispy.ml.cv import _iter_cv_splits
+
+    X, y = _class_sorted_samples()
+    s1 = _iter_cv_splits(3, X, y, None, None, task="classification", rnd_seed=1)
+    s2 = _iter_cv_splits(3, X, y, None, None, task="classification", rnd_seed=1)
+    s3 = _iter_cv_splits(3, X, y, None, None, task="classification", rnd_seed=2)
+    assert all(np.array_equal(a[1], b[1]) for a, b in zip(s1, s2))
+    assert not all(np.array_equal(a[1], b[1]) for a, b in zip(s1, s3))
+    val_all = np.concatenate([v for _, v in s1])
+    assert sorted(val_all.tolist()) == list(range(len(y)))
+    for tr_idx, val_idx in s1:
+        assert len(np.intersect1d(tr_idx, val_idx)) == 0
+        # Each class is (near) equally represented in every validation fold.
+        _, counts = np.unique(y[val_idx], return_counts=True)
+        assert counts.size == 3 and counts.min() >= 19
+
+    y_reg = np.linspace(0.0, 1.0, 90)
+    r_splits = _iter_cv_splits(3, X[:90], y_reg, None, None, task="regression", rnd_seed=1)
+    # Shuffled: the first fold is not the first contiguous block of rows.
+    assert not np.array_equal(np.sort(r_splits[0][1]), np.arange(30))
+
+
+@pytest.mark.parametrize("scoring", ["rmse", "mae"])
+def test_tune_estimator_minimises_error_metrics(scoring):
+    """rmse / mae default to direction='minimize' so the best (lowest) error is picked."""
+    pytest.importorskip("optuna")
+    rng = np.random.default_rng(3)
+    X = rng.normal(size=(80, 2))
+    y = 3.0 * X[:, 0] + rng.normal(0.0, 0.1, size=80)
+    res = tune_estimator(
+        estimator_factory=lambda p: Ridge(**p),
+        X=X,
+        y=y,
+        param_space={"alpha": [0.01, 1000.0]},
+        task="regression",
+        cv=3,
+        scoring=scoring,
+        n_trials=6,
+        refit=False,
+        use_pbar=False,
+    )
+    assert res.best_params["alpha"] == 0.01
+    assert res.study.direction.name == "MINIMIZE"
+
+
+def test_tune_estimator_rejects_direction_conflicting_with_metric():
+    """An explicit direction that contradicts a known metric raises."""
+    pytest.importorskip("optuna")
+    X, y = _class_sorted_samples()
+    with pytest.raises(rsgispy.RSGISPyException, match="direction"):
+        tune_estimator(
+            estimator_factory=lambda p: Ridge(**p),
+            X=X,
+            y=y.astype(float),
+            param_space={"alpha": [0.1, 1.0]},
+            task="regression",
+            cv=3,
+            scoring="rmse",
+            direction="maximize",
+            n_trials=2,
+            use_pbar=False,
+        )

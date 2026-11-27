@@ -929,3 +929,32 @@ def test_param_search_with_spatial_and_group_splitters():
         rcsk.perform_sklearn_classifier_param_search(
             cv=3, coords=("x", "y", "z"), **common
         )
+
+
+def test_optuna_search_rejects_minimize_with_sklearn_scorer(tmp_path):
+    """sklearn scorers are greater-is-better, so direction='minimize' would pick the worst model."""
+    pytest.importorskip("optuna")
+    fix = _create_cls_fixture(tmp_path)
+    with pytest.raises(rsgispy.RSGISPyException, match="greater-is-better"):
+        rcsk.perform_sklearn_classifier_param_search(
+            cls_cfg=fix["cfg"],
+            sk_classifier=RandomForestClassifier(),
+            train_data=fix["train_df"],
+            param_space={"n_estimators": (5, 10)},
+            search_method="optuna",
+            scoring="accuracy",
+            direction="minimize",
+            n_trials=2,
+            cv=3,
+            rnd_seed=1,
+        )
+
+
+def test_check_sklearn_scorer_direction():
+    """String scorers must be maximised; callables may use either direction."""
+    from rsgispy.tools._ml_tune import check_sklearn_scorer_direction
+
+    check_sklearn_scorer_direction("neg_root_mean_squared_error", "maximize")
+    check_sklearn_scorer_direction(lambda est, x, y: 0.0, "minimize")
+    with pytest.raises(rsgispy.RSGISPyException, match="neg_"):
+        check_sklearn_scorer_direction("neg_mean_absolute_error", "minimize")
