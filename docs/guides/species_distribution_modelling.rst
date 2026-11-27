@@ -565,6 +565,36 @@ curve, returns ``(fig, ax)`` and saves it to ``plots/roc_curve.png``. It shows t
 positive rate (sensitivity) and the false positive rate (1 − specificity) over
 all thresholds; a curve close to the top-left corner is good.
 
+:func:`~rsgispy.modelling.species_distribution.calc_sdm_eval_metrics` returns
+the usual SDM measures in one dictionary: AUC, and at a threshold (chosen by
+maximising TSS unless given) the TSS, sensitivity, specificity, omission and
+commission rates, Cohen's kappa and accuracy. With ``bg_scores`` it also
+returns the **continuous Boyce index**
+(:func:`~rsgispy.modelling.species_distribution.calc_boyce_index`, Hirzel et
+al. 2006), the standard measure for presence-only data. It compares, in moving
+windows along the predicted value, the share of presences with the share of
+background points (the predicted/expected ratio). For a good model the ratio
+rises with the prediction, and the index (a rank correlation) is close to 1;
+0 is random and negative values are worse than random. Because it needs no
+true absences, it is not distorted by pseudo-absences that fall in suitable
+habitat, unlike AUC.
+
+.. code-block:: python
+
+   import numpy as np
+   import rsgispy.modelling.species_distribution as sdm
+
+   ens_probs = np.median(
+       [sdm.get_positive_class_probs(mdl, test_x) for mdl in mdls], axis=0
+   )
+   metrics = sdm.calc_sdm_eval_metrics(test_y, ens_probs, bg_scores="absences")
+   print(metrics["auc"], metrics["tss"], metrics["boyce"])
+
+   # Boyce index of the final map: every valid pixel is the background.
+   res = sdm.calc_boyce_index_from_raster(
+       "sdm_prob.tif", "presences.gpkg", "presences", plot_file="plots/boyce.png"
+   )
+
 Step 8 — Spatial cross-validation
 ---------------------------------
 
@@ -626,6 +656,35 @@ splitters in :mod:`rsgispy.ml.cv` are k-means clusters of the sample locations
 (:class:`~rsgispy.ml.cv.SpatialBufferCV`), and
 :func:`~rsgispy.ml.cv.nested_spatial_cv`, which tunes hyperparameters in an
 inner spatial loop so the outer score is not biased by the tuning.
+
+**Spatial folds for the ensemble.** The ensemble of step 6 draws each member's
+training rows at random, so nearby samples end up on both sides and its test
+scores share the optimism of random cross-validation. Pass a splitter as
+``cv`` to
+:func:`~rsgispy.modelling.species_distribution.fit_kfold_sklearn_mdls` (or
+:func:`~rsgispy.modelling.species_distribution.fit_kfold_sklearn_sgl_cls_mdls`)
+and each spatial fold fits one member on its training rows and scores it on
+its held-out blocks. ``return_scores=True`` returns one row per member with
+the training, out-of-fold (``val_*``: AUC, TSS and Boyce index) and test
+scores; report the out-of-fold scores as the accuracy of the ensemble:
+
+.. code-block:: python
+
+   from rsgispy.ml.cv import SpatialBlockKFold
+
+   cv = SpatialBlockKFold(n_splits=5, block_size=1000.0, stratify=True)
+   mdls, scores_df = sdm.fit_kfold_sklearn_mdls(
+       clf, train_gdf, None, test_gdf, None, analysis_vars,
+       rnd_seed=42, cv=cv, return_scores=True,
+   )
+   print(scores_df[["val_auc", "val_tss", "val_boyce"]].mean())
+
+Coordinates come from the sample geometries; for
+:class:`~rsgispy.ml.cv.PolygonGroupKFold` or scikit-learn group splitters pass
+the group column with ``groups_col``. ``n_kfolds``, ``fold_prop`` and
+``sel_replacement`` are ignored with ``cv``. A fold with no presences in its
+held-out rows raises an error, for the reasons given above for
+``block_size``.
 
 Step 9 — Interpreting the model
 -------------------------------

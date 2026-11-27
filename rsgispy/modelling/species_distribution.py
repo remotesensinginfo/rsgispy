@@ -27,6 +27,11 @@ from rsgispy.modelling._sdm_data import (
     pop_normalise_coeffs,
     thin_pts_env_space,
 )
+from rsgispy.modelling._sdm_eval import (
+    calc_boyce_index,
+    calc_boyce_index_from_raster,
+    calc_sdm_eval_metrics,
+)
 from rsgispy.modelling._sdm_models import _ensure_all_classes_in_fold  # noqa: F401
 from rsgispy.modelling._sdm_models import (
     fit_kfold_sklearn_mdls,
@@ -75,6 +80,9 @@ __all__ = [
     "calc_binary_roc_auc",
     "calc_binary_threshold",
     "plot_roc_curve",
+    "calc_sdm_eval_metrics",
+    "calc_boyce_index",
+    "calc_boyce_index_from_raster",
     "shap_sklearn_mdl_explainer",
     "salib_sklearn_mdl_sensitivity",
     "sklearn_mdl_variable_response_curves",

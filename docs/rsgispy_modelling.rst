@@ -12,7 +12,11 @@ rsgispy.modelling
    :func:`rsgispy.vector.geoms.thin_pts_min_dist`,
    :func:`rsgispy.vector.geoms.thin_vector_geoms` and
    :func:`rsgispy.modelling.species_distribution.thin_pts_env_space`.
-   Spatial cross-validation: :mod:`rsgispy.ml.cv`.
+   Spatial cross-validation: :mod:`rsgispy.ml.cv` (``cv`` in
+   :func:`rsgispy.modelling.species_distribution.fit_kfold_sklearn_mdls`).
+   Evaluation: :func:`rsgispy.modelling.species_distribution.calc_sdm_eval_metrics`
+   and the continuous Boyce index
+   (:func:`rsgispy.modelling.species_distribution.calc_boyce_index`).
 
    Sampling bias: :func:`rsgispy.modelling.species_distribution.create_bias_grid`,
    ``bias_img`` in :func:`rsgispy.modelling.species_distribution.gen_pseudo_absences_smpls`,
