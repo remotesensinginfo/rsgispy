@@ -3,6 +3,8 @@ Data preparation, sampling, normalisation, and collinearity diagnostics for
 :mod:`rsgispy.modelling.species_distribution`.
 """
 
+# pylint: disable=too-many-lines
+
 import os
 import warnings
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
@@ -137,8 +139,108 @@ def create_finite_mask(
     )
 
 
+# pylint: disable=too-many-arguments,too-many-positional-arguments
+def _check_pseudo_abs_strategies(
+    presence_smpls_vec_file: Optional[VectorInput],
+    presence_smpls_dist_thres: float,
+    presence_smpls_max_dist: Optional[float],
+    env_profile: Optional[str],
+    env_profile_quantiles: Tuple[float, float],
+    env_vars: Optional[Mapping[str, EnvVarInfo]],
+    analysis_vars: Optional[Sequence[str]],
+) -> None:
+    """Validate the optional pseudo-absence strategies of
+    :func:`gen_pseudo_absences_smpls` before any sampling."""
+    if presence_smpls_max_dist is not None:
+        if presence_smpls_vec_file is None:
+            raise rsgispy.RSGISPyException(
+                "presence_smpls_max_dist needs presence_smpls_vec_file."
+            )
+        if float(presence_smpls_max_dist) <= float(presence_smpls_dist_thres):
+            raise rsgispy.RSGISPyException(
+                "presence_smpls_max_dist must be greater than "
+                "presence_smpls_dist_thres."
+            )
+    if env_profile is None:
+        return
+    if str(env_profile).strip().lower() != "sre":
+        raise rsgispy.RSGISPyException(
+            f"Unsupported env_profile '{env_profile}'; use 'sre'."
+        )
+    if presence_smpls_vec_file is None:
+        raise rsgispy.RSGISPyException("env_profile needs presence_smpls_vec_file.")
+    if not env_vars or not analysis_vars:
+        raise rsgispy.RSGISPyException("env_profile needs env_vars and analysis_vars.")
+    q_lo, q_hi = (float(q) for q in env_profile_quantiles)
+    if not 0.0 <= q_lo < q_hi <= 1.0:
+        raise rsgispy.RSGISPyException(
+            "env_profile_quantiles must be (low, high) with 0 <= low < high <= 1."
+        )
+
+
+def _env_values(
+    gdf: gpd.GeoDataFrame,
+    env_vars: Mapping[str, EnvVarInfo],
+    var_names: Sequence[str],
+    use_pbar: bool,
+) -> np.ndarray:
+    """Covariate values at ``gdf``'s points (``NaN`` for no data)."""
+    sub_vars = {name: lookup_env_var(env_vars, name) for name in var_names}
+    nd_val = -9999.0
+    ext_gdf = extract_env_var_data(
+        sub_vars,
+        gdf[[gdf.geometry.name]].reset_index(drop=True),
+        out_no_data_val=nd_val,
+        reproj_vec=True,
+        use_pbar=use_pbar,
+    )
+    vals = np.array(
+        ext_gdf[[sub_vars[name].name for name in var_names]].to_numpy(
+            dtype=np.float64
+        ),
+        copy=True,
+    )
+    vals[vals == nd_val] = np.nan
+    return vals
+
+
+# pylint: disable=too-many-arguments,too-many-positional-arguments
+def _filter_env_profile(
+    pts_gdf: gpd.GeoDataFrame,
+    pres_gdf: gpd.GeoDataFrame,
+    env_vars: Mapping[str, EnvVarInfo],
+    analysis_vars: Sequence[str],
+    quantiles: Tuple[float, float],
+    use_pbar: bool,
+) -> gpd.GeoDataFrame:
+    """Surface range envelope (SRE) filter: drop candidates inside the
+    presences' per-variable quantile envelope on every variable."""
+    var_names = resolve_analysis_vars(env_vars, analysis_vars)
+    pres_vals = _env_values(pres_gdf, env_vars, var_names, use_pbar)
+    pres_vals = pres_vals[np.all(np.isfinite(pres_vals), axis=1)]
+    if pres_vals.shape[0] < 2:
+        raise rsgispy.RSGISPyException(
+            "Fewer than two presences have valid values for every variable; "
+            "the environmental envelope cannot be defined."
+        )
+    lows = np.quantile(pres_vals, float(quantiles[0]), axis=0)
+    highs = np.quantile(pres_vals, float(quantiles[1]), axis=0)
+    pts_gdf = pts_gdf.reset_index(drop=True)
+    cand_vals = _env_values(pts_gdf, env_vars, var_names, use_pbar)
+    valid = np.all(np.isfinite(cand_vals), axis=1)
+    inside = np.all((cand_vals >= lows) & (cand_vals <= highs), axis=1)
+    out_gdf = pts_gdf[valid & ~inside].copy()
+    if out_gdf.empty:
+        raise rsgispy.RSGISPyException(
+            "All candidate pseudo-absences lie inside the presences' environmental "
+            "envelope (or on no data); widen env_profile_quantiles or increase "
+            "xtra_n_smpls."
+        )
+    return out_gdf
+
+
 # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-# pylint: disable=too-many-branches
+# pylint: disable=too-many-branches,too-many-statements
 def gen_pseudo_absences_smpls(
     in_msk_img: str,
     img_msk_val: int,
@@ -156,6 +258,11 @@ def gen_pseudo_absences_smpls(
     *,
     bias_img: Optional[str] = None,
     bias_img_band: int = 1,
+    presence_smpls_max_dist: Optional[float] = None,
+    env_profile: Optional[str] = None,
+    env_profile_quantiles: Tuple[float, float] = (0.025, 0.975),
+    env_vars: Optional[Mapping[str, EnvVarInfo]] = None,
+    analysis_vars: Optional[Sequence[str]] = None,
 ) -> Optional[gpd.GeoDataFrame]:
     """
     Generate pseudo-absence point samples within ``in_msk_img == img_msk_val``,
@@ -169,6 +276,24 @@ def gen_pseudo_absences_smpls(
     background). ``bias_img`` must be on the same grid as ``in_msk_img``;
     zero, negative and no-data bias pixels are never sampled. A pixel can be
     drawn more than once, but each point is placed randomly within its pixel.
+
+    Two further strategies filter the candidates (both need the presences):
+
+    * ``presence_smpls_max_dist`` — keep only candidates no further than this
+      from a presence; with ``presence_smpls_dist_thres`` this gives a "disk"
+      or band of pseudo-absences between a minimum and a maximum distance,
+      e.g. to represent the area the species could have reached.
+    * ``env_profile="sre"`` — surface range envelope: drop candidates whose
+      environment lies inside the presences' envelope on every variable in
+      ``analysis_vars`` (between the ``env_profile_quantiles`` of the presence
+      values), so pseudo-absences are placed only where the environment is
+      unlike the presences'. This makes the classes easier to separate and
+      inflates AUC; use it for models that need clearly unsuitable absences.
+      Candidates with no-data variable values are dropped.
+
+    Bias sampling (``bias_img``) decides where candidates are drawn; the
+    strategies then filter them, before the final random subset of
+    ``n_smpls``.
 
     :param in_msk_img: Path to the valid ROI mask raster.
     :param img_msk_val: Pixel value inside ``in_msk_img`` defining the ROI.
@@ -188,6 +313,17 @@ def gen_pseudo_absences_smpls(
     :param bias_img: Optional sampling-bias raster on the grid of ``in_msk_img``
                      (Default = ``None``: uniform sampling).
     :param bias_img_band: Band of ``bias_img`` to use (Default = ``1``).
+    :param presence_smpls_max_dist: Optional maximum distance from the nearest
+                                    presence (CRS units).
+    :param env_profile: Optional environmental profile filter: ``"sre"``.
+    :param env_profile_quantiles: Lower and upper quantiles of the presence
+                                  values defining the envelope
+                                  (Default = ``(0.025, 0.975)``; ``(0, 1)`` is
+                                  the full range).
+    :param env_vars: Environmental variable descriptors (needed for
+                     ``env_profile``).
+    :param analysis_vars: Variables of the envelope (needed for
+                          ``env_profile``).
     :return: Pseudo-absence :class:`geopandas.GeoDataFrame` when ``out_vec_file``
              is ``None``, otherwise ``None``.
 
@@ -203,6 +339,15 @@ def gen_pseudo_absences_smpls(
         raise rsgispy.RSGISPyException("n_smpls must be a positive integer.")
     if xtra_n_smpls < 0:
         raise rsgispy.RSGISPyException("xtra_n_smpls must be >= 0.")
+    _check_pseudo_abs_strategies(
+        presence_smpls_vec_file,
+        presence_smpls_dist_thres,
+        presence_smpls_max_dist,
+        env_profile,
+        env_profile_quantiles,
+        env_vars,
+        analysis_vars,
+    )
 
     if bias_img is not None:
         pts_gdf = sample_bias_weighted_pts(
@@ -283,15 +428,30 @@ def gen_pseudo_absences_smpls(
                     "Failed to compute nearest distances to presence samples."
                 )
             dist_gdf = dist_gdf[~dist_gdf.index.duplicated(keep="first")]
-            dist_gdf = dist_gdf[
-                dist_gdf["__presence_dist__"] > float(presence_smpls_dist_thres)
-            ]
+            keep = dist_gdf["__presence_dist__"] > float(presence_smpls_dist_thres)
+            if presence_smpls_max_dist is not None:
+                keep &= dist_gdf["__presence_dist__"] <= float(presence_smpls_max_dist)
+            dist_gdf = dist_gdf[keep]
             pts_gdf = dist_gdf[orig_cols].copy()
             if pts_gdf.empty:
                 raise rsgispy.RSGISPyException(
                     "All candidate pseudo-absence samples were within "
-                    "presence_smpls_dist_thres of presence points."
+                    "presence_smpls_dist_thres of presence points"
+                    + (
+                        " or beyond presence_smpls_max_dist."
+                        if presence_smpls_max_dist is not None
+                        else "."
+                    )
                 )
+        if env_profile is not None and env_vars is not None and analysis_vars:
+            pts_gdf = _filter_env_profile(
+                pts_gdf,
+                pres_gdf,
+                env_vars,
+                analysis_vars,
+                env_profile_quantiles,
+                use_pbar,
+            )
 
     if len(pts_gdf) > n_smpls:
         pts_gdf = vec_lyr_random_subset(

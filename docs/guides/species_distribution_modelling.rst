@@ -198,6 +198,18 @@ Choosing the pseudo-absence strategy:
   remove suitable habitat from the background, which makes the problem easier
   and inflates evaluation scores; use them only if you have a reason (e.g.
   dispersal limitation).
+* **Distance band** (``presence_smpls_max_dist``). Pseudo-absences no further
+  than this from a presence, with ``presence_smpls_dist_thres`` as the inner
+  limit, keep the background within the area the species could plausibly
+  have reached.
+* **Environmental profile** (``env_profile="sre"``, with ``env_vars`` and
+  ``analysis_vars``). Pseudo-absences only where at least one variable lies
+  outside the presences' range (between ``env_profile_quantiles`` of the
+  presence values), as in the "surface range envelope" strategy of BIOMOD.
+  This gives clearly unsuitable absences, which suits classifiers that
+  struggle with pseudo-absences in suitable habitat, but makes the classes
+  easy to separate, so AUC is inflated and the model can describe the
+  envelope edge poorly.
 * **Sampling bias.** Records cluster along roads, near towns and in well-known
   sites. Random pseudo-absences then teach the model the survey effort as well
   as the habitat. Mitigations are thinning the presences (step 3, e.g. with
@@ -370,6 +382,25 @@ home-range or dispersal scale. But every point removed is information lost:
 with few records (tens), thin to one per pixel and use spatial
 cross-validation (step 7) rather than a large distance. Point layers must be
 in a projected CRS for distance thinning (distances are in CRS units).
+
+A Moran's I correlogram of the records' covariate values
+(:func:`rsgispy.vector.stats.calc_correlogram`) also shows the distance over
+which samples are similar: the distance at which Moran's I falls to its
+expectation. After fitting,
+:func:`~rsgispy.modelling.species_distribution.calc_residual_autocorrelation`
+calculates the correlogram of the model residuals (class minus predicted
+probability); significantly positive Moran's I at short distances means
+nearby samples still share unexplained variation (a missing variable, or
+clusters that thinning did not remove), so the samples are not independent
+and only spatially cross-validated scores should be reported.
+
+.. code-block:: python
+
+   corr_df = sdm.calc_residual_autocorrelation(
+       mdls[0], train_gdf, None, analysis_vars, max_dist=5000.0,
+       plot_file="plots/residual_correlogram.png",
+   )
+   print(corr_df[["dist_mid", "morans_i", "p_value"]])
 
 Step 4 — Exploring the data and checking collinearity
 -----------------------------------------------------
@@ -594,6 +625,25 @@ habitat, unlike AUC.
    res = sdm.calc_boyce_index_from_raster(
        "sdm_prob.tif", "presences.gpkg", "presences", plot_file="plots/boyce.png"
    )
+
+**Is the AUC better than chance?** With few presences, even a model with no
+real signal can reach a high AUC, particularly a training AUC.
+:func:`~rsgispy.modelling.species_distribution.calc_null_model_auc` tests this
+with null models (Raes & ter Steege 2007): it repeatedly fits the model to
+the same number of *random* background points labelled as presences, and
+compares the observed AUC with the distribution of these null AUCs. Calculate
+the null AUCs the same way as the observed one: on the test set
+(``test_vec_file``), by (spatial) cross-validation (``cv``), or on the
+training data (neither).
+
+.. code-block:: python
+
+   res = sdm.calc_null_model_auc(
+       clf, abs_gdf, None, test_gdf, None, analysis_vars,
+       n_pres=int(train_gdf["clsid"].sum()), observed_auc=metrics["auc"],
+       n_reps=99, rnd_seed=42, plot_file="plots/null_auc.png",
+   )
+   print(res["null_p95"], res["p_value"])
 
 Step 8 — Spatial cross-validation
 ---------------------------------

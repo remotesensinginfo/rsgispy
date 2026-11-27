@@ -30,6 +30,8 @@ from rsgispy.modelling._sdm_data import (
 from rsgispy.modelling._sdm_eval import (
     calc_boyce_index,
     calc_boyce_index_from_raster,
+    calc_null_model_auc,
+    calc_residual_autocorrelation,
     calc_sdm_eval_metrics,
 )
 from rsgispy.modelling._sdm_models import _ensure_all_classes_in_fold  # noqa: F401
@@ -88,6 +90,8 @@ __all__ = [
     "calc_sdm_eval_metrics",
     "calc_boyce_index",
     "calc_boyce_index_from_raster",
+    "calc_null_model_auc",
+    "calc_residual_autocorrelation",
     "shap_sklearn_mdl_explainer",
     "salib_sklearn_mdl_sensitivity",
     "sklearn_mdl_variable_response_curves",

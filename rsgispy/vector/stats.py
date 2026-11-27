@@ -1,6 +1,7 @@
 """
 Spatial statistics, geometric measurements, polygon shape metrics, feature
-counts, nearest-neighbour metrics, and empirical semi-variogram calculation for
+counts, nearest-neighbour metrics, empirical semi-variogram calculation, and
+spatial autocorrelation (Moran's I and correlograms) for
 :mod:`rsgispy.vector.stats`.
 """
 
@@ -20,6 +21,7 @@ from rsgispy.vector._shape_metrics import (
     calc_poly_shape_metrics,
     calc_shape_metrics_geoseries,
 )
+from rsgispy.vector._stats_autocorr import calc_correlogram, calc_morans_i
 from rsgispy.vector._stats_variogram import calc_empirical_semivariogram
 
 __all__ = [
@@ -36,4 +38,6 @@ __all__ = [
     "calc_npts_in_radius",
     "count_feats_per_att_val",
     "calc_empirical_semivariogram",
+    "calc_morans_i",
+    "calc_correlogram",
 ]
