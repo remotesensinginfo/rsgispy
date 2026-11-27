@@ -17,10 +17,12 @@ from rsgispy.modelling._helpers import (
     extract_features_and_target,
     fit_clean_estimator,
     get_positive_class_probs,
+    get_sample_weights,
     lookup_env_var,
     plot_roc_curve,
     read_model_vector,
     sklearn,
+    validate_fixed_var_vals,
 )
 from rsgispy.tools._ml_explain import (
     finalise_plot,
@@ -45,12 +47,15 @@ __all__ = [
 ]
 
 
+# pylint: disable=too-many-arguments
 def search_mdl_params(
     search_obj: Any,
     train_vec_file: VectorInput,
     train_vec_lyr: Optional[str],
     analysis_vars: Sequence[str],
     cls_col: str = "clsid",
+    *,
+    sample_weight_col: Optional[str] = None,
 ) -> Tuple[Any, Dict[str, Any]]:
     """
     Execute a cloned ``scikit-learn`` hyperparameter search object (e.g.,
@@ -61,6 +66,10 @@ def search_mdl_params(
     :param train_vec_lyr: Training vector layer name.
     :param analysis_vars: Ordered predictor column names.
     :param cls_col: Binary class column name (Default = ``'clsid'``).
+    :param sample_weight_col: Optional column of non-negative training sample
+                              weights passed to the estimator's ``fit``
+                              (e.g. from :func:`calc_bias_weights`;
+                              Default = ``None``).
     :return: Tuple ``(best_estimator, best_params)``.
 
     .. code:: python
@@ -81,7 +90,11 @@ def search_mdl_params(
     )
 
     clean_search = fit_clean_estimator(
-        search_obj, train_x, train_y, sync_input=False
+        search_obj,
+        train_x,
+        train_y,
+        sync_input=False,
+        sample_weight=get_sample_weights(train_gdf, sample_weight_col),
     )
     if not getattr(clean_search, "refit", False):
         raise rsgispy.RSGISPyException(
@@ -106,6 +119,8 @@ def fit_sklearn_mdl(
     cls_col: str = "clsid",
     roc_curve_plot: Optional[str] = None,
     return_model: bool = False,
+    *,
+    sample_weight_col: Optional[str] = None,
 ) -> Union[Tuple[float, float, float], Tuple[Any, float, float, float]]:
     """
     Fit a ``scikit-learn`` binary classifier on a clean cloned instance so no
@@ -126,6 +141,10 @@ def fit_sklearn_mdl(
                          ``est_cls_obj`` is updated cleanly with the fitted
                          clone's state and ``(train_acc, test_acc, roc_auc)``
                          is returned.
+    :param sample_weight_col: Optional column of non-negative training sample
+                              weights passed to the estimator's ``fit``
+                              (e.g. from :func:`calc_bias_weights`;
+                              Default = ``None``).
     :return: ``(train_acc, test_acc, roc_auc)`` or
              ``(fitted_model, train_acc, test_acc, roc_auc)``.
 
@@ -155,7 +174,11 @@ def fit_sklearn_mdl(
         )
 
     fitted_mdl = fit_clean_estimator(
-        est_cls_obj, train_x, train_y, sync_input=not return_model
+        est_cls_obj,
+        train_x,
+        train_y,
+        sync_input=not return_model,
+        sample_weight=get_sample_weights(train_gdf, sample_weight_col),
     )
 
     train_acc_val = float(fitted_mdl.score(train_x, train_y))
@@ -187,6 +210,8 @@ def fit_sklearn_sgl_cls_mdl(
     cls_col: str = "clsid",
     roc_curve_plot: Optional[str] = None,
     return_model: bool = False,
+    *,
+    sample_weight_col: Optional[str] = None,
 ) -> Union[Tuple[float, float], Tuple[Any, float, float]]:
     """
     Fit a single-class / outlier ``scikit-learn`` estimator on a clean clone,
@@ -202,6 +227,10 @@ def fit_sklearn_sgl_cls_mdl(
     :param roc_curve_plot: Optional output path for ROC curve PNG.
     :param return_model: When ``True``, return ``(fitted_model, test_acc, roc_auc)``
                          without mutating ``est_cls_obj``.
+    :param sample_weight_col: Optional column of non-negative training sample
+                              weights passed to the estimator's ``fit``
+                              (e.g. from :func:`calc_bias_weights`;
+                              Default = ``None``).
     :return: ``(test_acc, roc_auc)`` or ``(fitted_model, test_acc, roc_auc)``.
 
     .. code:: python
@@ -230,7 +259,11 @@ def fit_sklearn_sgl_cls_mdl(
         )
 
     fitted_mdl = fit_clean_estimator(
-        est_cls_obj, train_x, train_y=None, sync_input=not return_model
+        est_cls_obj,
+        train_x,
+        train_y=None,
+        sync_input=not return_model,
+        sample_weight=get_sample_weights(train_gdf, sample_weight_col),
     )
 
     test_pred = calc_single_class_predictions(fitted_mdl, test_x)
@@ -298,6 +331,8 @@ def fit_kfold_sklearn_mdls(
     rnd_seed: Optional[int] = None,
     sel_replacement: bool = True,
     use_pbar: bool = True,
+    *,
+    sample_weight_col: Optional[str] = None,
 ) -> List[Any]:
     """
     Fit an ensemble of cleanly cloned ``scikit-learn`` binary classifiers across
@@ -316,6 +351,10 @@ def fit_kfold_sklearn_mdls(
     :param rnd_seed: Optional local random seed for reproducibility.
     :param sel_replacement: Sample training subsets with replacement (Default = ``True``).
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param sample_weight_col: Optional column of non-negative training sample
+                              weights passed to the estimator's ``fit``
+                              (e.g. from :func:`calc_bias_weights`;
+                              Default = ``None``).
     :return: List of cleanly cloned and fitted ``scikit-learn`` estimators.
 
     .. code:: python
@@ -339,6 +378,7 @@ def fit_kfold_sklearn_mdls(
 
     rng = np.random.default_rng(rnd_seed)
     train_gdf = read_model_vector(train_vec_file, vec_lyr=train_vec_lyr)
+    train_wgts = get_sample_weights(train_gdf, sample_weight_col)
     test_gdf = read_model_vector(test_vec_file, vec_lyr=test_vec_lyr)
 
     train_x, train_y = extract_features_and_target(
@@ -387,6 +427,7 @@ def fit_kfold_sklearn_mdls(
             train_y_set,
             sync_input=False,
             rnd_seed=fold_seed,
+            sample_weight=None if train_wgts is None else train_wgts[train_idx],
         )
         est_cls_objs.append(est_cls_fold)
 
@@ -426,6 +467,8 @@ def fit_kfold_sklearn_sgl_cls_mdls(
     rnd_seed: Optional[int] = None,
     sel_replacement: bool = True,
     use_pbar: bool = True,
+    *,
+    sample_weight_col: Optional[str] = None,
 ) -> List[Any]:
     """
     Fit an ensemble of cleanly cloned single-class / outlier ``scikit-learn``
@@ -443,6 +486,10 @@ def fit_kfold_sklearn_sgl_cls_mdls(
     :param rnd_seed: Optional local random seed for reproducibility.
     :param sel_replacement: Sample training subsets with replacement (Default = ``True``).
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param sample_weight_col: Optional column of non-negative training sample
+                              weights passed to the estimator's ``fit``
+                              (e.g. from :func:`calc_bias_weights`;
+                              Default = ``None``).
     :return: List of cleanly cloned and fitted ``scikit-learn`` estimators.
 
     .. code:: python
@@ -465,6 +512,7 @@ def fit_kfold_sklearn_sgl_cls_mdls(
 
     rng = np.random.default_rng(rnd_seed)
     train_gdf = read_model_vector(train_vec_file, vec_lyr=train_vec_lyr)
+    train_wgts = get_sample_weights(train_gdf, sample_weight_col)
     test_gdf = read_model_vector(test_vec_file, vec_lyr=test_vec_lyr)
 
     train_x, _ = extract_features_and_target(
@@ -497,6 +545,7 @@ def fit_kfold_sklearn_sgl_cls_mdls(
             train_y=None,
             sync_input=False,
             rnd_seed=fold_seed,
+            sample_weight=None if train_wgts is None else train_wgts[train_idx],
         )
         est_cls_objs.append(est_cls_fold)
 
@@ -653,6 +702,8 @@ def sklearn_mdl_variable_response_curves(
     cls_col: str = "clsid",
     normalised_data: bool = False,
     env_vars: Optional[Mapping[str, EnvVarInfo]] = None,
+    *,
+    fixed_var_vals: Optional[Mapping[str, float]] = None,
 ) -> pd.DataFrame:
     """
     Generate marginal response curves for each environmental variable while
@@ -670,6 +721,12 @@ def sklearn_mdl_variable_response_curves(
                             ``env_vars`` when ``True``.
     :param env_vars: Mapping of :class:`EnvVarInfo` required if
                      ``normalised_data=True``.
+    :param fixed_var_vals: Optional mapping of variable name to a constant, e.g.
+                           a sampling-bias covariate. These variables are held
+                           at the constant in every curve and get no curve of
+                           their own. Give the constant in the units of the
+                           training data (normalised units when the model was
+                           trained on normalised data).
     :return: :class:`pandas.DataFrame` containing ``<var>_vals`` and ``<var>_resp`` columns.
 
     .. code:: python
@@ -692,7 +749,18 @@ def sklearn_mdl_variable_response_curves(
     if train_pres_gdf.empty:
         train_pres_gdf = train_gdf
 
-    for var in var_list:
+    fixed = validate_fixed_var_vals(fixed_var_vals, var_list) or {}
+    curve_vars = [v for v in var_list if v not in fixed]
+    if not curve_vars:
+        raise rsgispy.RSGISPyException(
+            "Every variable is in fixed_var_vals; there is nothing to plot."
+        )
+
+    def _predict_resp(curve_df: pd.DataFrame) -> np.ndarray:
+        full_df = curve_df.assign(**fixed)[var_list] if fixed else curve_df
+        return get_positive_class_probs(est_cls_obj, full_df, pos_label=1)
+
+    for var in curve_vars:
         min_val = float(train_gdf[var].min())
         max_val = float(train_gdf[var].max())
         mean_val = float(train_pres_gdf[var].mean())
@@ -702,7 +770,7 @@ def sklearn_mdl_variable_response_curves(
     x_transform_map: Optional[Dict[str, Any]] = None
     if normalised_data and env_vars is not None:
         x_transform_map = {}
-        for var in var_list:
+        for var in curve_vars:
             try:
                 info = lookup_env_var(env_vars, var)
             except rsgispy.RSGISPyException:
@@ -715,17 +783,15 @@ def sklearn_mdl_variable_response_curves(
                 )
 
     return run_variable_response_curves(
-        x_df=train_gdf[var_list],
-        feature_cols=var_list,
-        predict_fn=lambda df: get_positive_class_probs(
-            est_cls_obj, df, pos_label=1
-        ),
+        x_df=train_gdf[curve_vars],
+        feature_cols=curve_vars,
+        predict_fn=_predict_resp,
         output_labels=["resp"],
         out_indices=[0],
         col_name_fn=lambda feat, _lbl, _i: f"{feat}_resp",
         n_samples=int(n_samples),
         summary_stat="mean",
-        baseline_df=train_pres_gdf[var_list],
+        baseline_df=train_pres_gdf[curve_vars],
         method="marginal",
         x_transform_map=x_transform_map,
         out_file=output_file,
@@ -750,6 +816,8 @@ def sklearn_jackknife_var_importance(
     out_importance_test_plot: Optional[str] = None,
     cls_col: str = "clsid",
     use_pbar: bool = True,
+    *,
+    exclude_vars: Optional[Sequence[str]] = None,
 ) -> pd.DataFrame:
     """
     Evaluate variable importance via jackknife leave-one-out and single-variable
@@ -766,7 +834,11 @@ def sklearn_jackknife_var_importance(
     :param out_importance_test_plot: Optional horizontal bar plot path for test accuracy.
     :param cls_col: Binary class column name (Default = ``'clsid'``).
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
-    :return: :class:`pandas.DataFrame` indexed by ``analysis_vars``.
+    :param exclude_vars: Optional variables (e.g. a sampling-bias covariate)
+                         kept in every fitted model but not assessed, so they
+                         get no row of their own (Default = ``None``).
+    :return: :class:`pandas.DataFrame` indexed by the assessed variables
+             (``analysis_vars`` without ``exclude_vars``).
 
     .. code:: python
 
@@ -777,20 +849,28 @@ def sklearn_jackknife_var_importance(
         )
     """
     check_sklearn_available("sklearn_jackknife_var_importance")
-    var_list = list(analysis_vars)
+    all_vars = list(analysis_vars)
+    excl = list(exclude_vars) if exclude_vars is not None else []
+    unknown = [v for v in excl if v not in all_vars]
+    if unknown:
+        raise rsgispy.RSGISPyException(
+            f"exclude_vars {unknown} are not in analysis_vars."
+        )
+    var_list = [v for v in all_vars if v not in excl]
     if len(var_list) < 2:
         raise rsgispy.RSGISPyException(
-            "Jackknife variable importance requires at least 2 variables."
+            "Jackknife variable importance requires at least 2 assessed "
+            "variables (analysis_vars without exclude_vars)."
         )
 
     train_gdf = read_model_vector(train_vec_file, vec_lyr=train_vec_lyr)
     test_gdf = read_model_vector(test_vec_file, vec_lyr=test_vec_lyr)
 
     train_x_all, train_y = extract_features_and_target(
-        train_gdf, var_list, cls_col=cls_col
+        train_gdf, all_vars, cls_col=cls_col
     )
     test_x_all, test_y = extract_features_and_target(
-        test_gdf, var_list, cls_col=cls_col
+        test_gdf, all_vars, cls_col=cls_col
     )
     if train_y is None or test_y is None:
         raise rsgispy.RSGISPyException(
@@ -798,6 +878,7 @@ def sklearn_jackknife_var_importance(
         )
 
     def _eval_subset(sub_vars: List[str]) -> Tuple[float, float, float]:
+        sub_vars = [v for v in all_vars if v in sub_vars or v in excl]
         tr_sub = train_x_all[sub_vars]
         te_sub = test_x_all[sub_vars]
         est_sub = fit_clean_estimator(

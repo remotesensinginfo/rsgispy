@@ -46,7 +46,7 @@ def _validate_uint8_nodata(out_no_data_val: int) -> float:
     return float(int(out_no_data_val))
 
 
-# pylint: disable=too-many-arguments,too-many-positional-arguments
+# pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
 def _pred_ensemble_sklearn_mdls(
     est_cls_objs: Sequence[Any],
     in_msk_img: str,
@@ -64,6 +64,7 @@ def _pred_ensemble_sklearn_mdls(
     out_no_data_val: float = -1.0,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
+    fixed_var_vals: Optional[Mapping[str, float]] = None,
 ) -> None:
     """Shared streaming block-prediction engine for ensemble SDM functions."""
     _ = tmp_dir  # Retained for legacy signature compatibility; streaming needs no tmp.
@@ -92,6 +93,7 @@ def _pred_ensemble_sklearn_mdls(
         no_data_val=nd_val,
         block_size=block_size,
         use_pbar=use_pbar,
+        fixed_var_vals=fixed_var_vals,
     )
 
 
@@ -109,6 +111,7 @@ def pred_sklearn_mdl_prob(
     calc_stats: bool = True,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
+    fixed_var_vals: Optional[Mapping[str, float]] = None,
 ) -> None:
     """
     Predict spatial probability of species presence (``float32``, nodata ``-1.0``)
@@ -126,6 +129,10 @@ def pred_sklearn_mdl_prob(
     :param calc_stats: Compute output image statistics and pyramids (Default = ``True``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param fixed_var_vals: Optional mapping of variable name to a constant used
+                           for every pixel instead of reading that variable's
+                           raster, e.g. to hold a sampling-bias covariate
+                           constant (see :func:`predict_raster_from_env_vars`).
 
     .. code:: python
 
@@ -151,6 +158,7 @@ def pred_sklearn_mdl_prob(
         no_data_val=-1.0,
         block_size=block_size,
         use_pbar=use_pbar,
+        fixed_var_vals=fixed_var_vals,
     )
 
 
@@ -169,6 +177,7 @@ def pred_sklearn_mdl_cls(
     block_size: Optional[int] = None,
     use_pbar: bool = True,
     out_no_data_val: int = 0,
+    fixed_var_vals: Optional[Mapping[str, float]] = None,
 ) -> None:
     """
     Predict binary presence/absence thematic classification (``uint8``) from a
@@ -185,6 +194,10 @@ def pred_sklearn_mdl_cls(
     :param calc_stats: Populate thematic statistics and colour table (Default = ``True``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param fixed_var_vals: Optional mapping of variable name to a constant used
+                           for every pixel instead of reading that variable's
+                           raster, e.g. to hold a sampling-bias covariate
+                           constant (see :func:`predict_raster_from_env_vars`).
     :param out_no_data_val: Output ``uint8`` no-data fill value outside the
                             valid mask (Default = ``0`` for backwards
                             compatibility; set to ``255`` to distinguish
@@ -216,6 +229,7 @@ def pred_sklearn_mdl_cls(
         no_data_val=nd_val,
         block_size=block_size,
         use_pbar=use_pbar,
+        fixed_var_vals=fixed_var_vals,
     )
 
 
@@ -234,6 +248,7 @@ def pred_sklearn_sgl_cls_mdl_prob(
     out_no_data_val: float = -9999.0,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
+    fixed_var_vals: Optional[Mapping[str, float]] = None,
 ) -> None:
     """
     Predict continuous habitat suitability/density scores from a fitted
@@ -252,6 +267,10 @@ def pred_sklearn_sgl_cls_mdl_prob(
     :param out_no_data_val: No-data fill value outside mask (Default = ``-9999.0``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param fixed_var_vals: Optional mapping of variable name to a constant used
+                           for every pixel instead of reading that variable's
+                           raster, e.g. to hold a sampling-bias covariate
+                           constant (see :func:`predict_raster_from_env_vars`).
 
     .. code:: python
 
@@ -277,6 +296,7 @@ def pred_sklearn_sgl_cls_mdl_prob(
         no_data_val=float(out_no_data_val),
         block_size=block_size,
         use_pbar=use_pbar,
+        fixed_var_vals=fixed_var_vals,
     )
 
 
@@ -295,6 +315,7 @@ def pred_sklearn_sgl_cls_mdl_cls(
     block_size: Optional[int] = None,
     use_pbar: bool = True,
     out_no_data_val: int = 0,
+    fixed_var_vals: Optional[Mapping[str, float]] = None,
 ) -> None:
     """
     Predict binary presence (``1``) vs absence (``0``) thematic map from a
@@ -311,6 +332,10 @@ def pred_sklearn_sgl_cls_mdl_cls(
     :param calc_stats: Populate thematic statistics and colour table (Default = ``True``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param fixed_var_vals: Optional mapping of variable name to a constant used
+                           for every pixel instead of reading that variable's
+                           raster, e.g. to hold a sampling-bias covariate
+                           constant (see :func:`predict_raster_from_env_vars`).
     :param out_no_data_val: Output ``uint8`` no-data fill value outside the
                             valid mask (Default = ``0`` for backwards
                             compatibility; set to ``255`` to distinguish
@@ -342,6 +367,7 @@ def pred_sklearn_sgl_cls_mdl_cls(
         no_data_val=nd_val,
         block_size=block_size,
         use_pbar=use_pbar,
+        fixed_var_vals=fixed_var_vals,
     )
 
 
@@ -360,6 +386,7 @@ def pred_ensemble_sklearn_mdls_prob(
     calc_stats: bool = True,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
+    fixed_var_vals: Optional[Mapping[str, float]] = None,
 ) -> None:
     """
     Predict ensemble species presence probability across ``est_cls_objs`` by
@@ -378,6 +405,10 @@ def pred_ensemble_sklearn_mdls_prob(
     :param calc_stats: Compute output image statistics and pyramids (Default = ``True``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param fixed_var_vals: Optional mapping of variable name to a constant used
+                           for every pixel instead of reading that variable's
+                           raster, e.g. to hold a sampling-bias covariate
+                           constant (see :func:`predict_raster_from_env_vars`).
 
     .. code:: python
 
@@ -405,6 +436,7 @@ def pred_ensemble_sklearn_mdls_prob(
         out_no_data_val=-1.0,
         block_size=block_size,
         use_pbar=use_pbar,
+        fixed_var_vals=fixed_var_vals,
     )
 
 
@@ -423,6 +455,7 @@ def pred_ensemble_sklearn_mdls_cls(
     calc_stats: bool = True,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
+    fixed_var_vals: Optional[Mapping[str, float]] = None,
 ) -> None:
     """
     Predict the proportion of ensemble classifiers voting presence (in ``[0, 1]``,
@@ -441,6 +474,10 @@ def pred_ensemble_sklearn_mdls_cls(
     :param calc_stats: Compute output image statistics and pyramids (Default = ``True``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param fixed_var_vals: Optional mapping of variable name to a constant used
+                           for every pixel instead of reading that variable's
+                           raster, e.g. to hold a sampling-bias covariate
+                           constant (see :func:`predict_raster_from_env_vars`).
 
     .. code:: python
 
@@ -468,6 +505,7 @@ def pred_ensemble_sklearn_mdls_cls(
         out_no_data_val=-1.0,
         block_size=block_size,
         use_pbar=use_pbar,
+        fixed_var_vals=fixed_var_vals,
     )
 
 
@@ -487,6 +525,7 @@ def pred_ensemble_sklearn_sgl_cls_mdls_prob(
     out_no_data_val: float = -9999.0,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
+    fixed_var_vals: Optional[Mapping[str, float]] = None,
 ) -> None:
     """
     Predict median suitability/density score across an ensemble of fitted
@@ -505,6 +544,10 @@ def pred_ensemble_sklearn_sgl_cls_mdls_prob(
     :param out_no_data_val: No-data fill value outside mask (Default = ``-9999.0``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param fixed_var_vals: Optional mapping of variable name to a constant used
+                           for every pixel instead of reading that variable's
+                           raster, e.g. to hold a sampling-bias covariate
+                           constant (see :func:`predict_raster_from_env_vars`).
 
     .. code:: python
 
@@ -530,6 +573,7 @@ def pred_ensemble_sklearn_sgl_cls_mdls_prob(
         out_no_data_val=out_no_data_val,
         block_size=block_size,
         use_pbar=use_pbar,
+        fixed_var_vals=fixed_var_vals,
     )
 
 
@@ -548,6 +592,7 @@ def pred_ensemble_sklearn_sgl_cls_mdls_cls(
     calc_stats: bool = True,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
+    fixed_var_vals: Optional[Mapping[str, float]] = None,
 ) -> None:
     """
     Predict the proportion of single-class ensemble models voting inlier
@@ -566,6 +611,10 @@ def pred_ensemble_sklearn_sgl_cls_mdls_cls(
     :param calc_stats: Compute output image statistics and pyramids (Default = ``True``).
     :param block_size: Optional block size in pixels for :mod:`rsgispy.imageprocess`.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param fixed_var_vals: Optional mapping of variable name to a constant used
+                           for every pixel instead of reading that variable's
+                           raster, e.g. to hold a sampling-bias covariate
+                           constant (see :func:`predict_raster_from_env_vars`).
 
     .. code:: python
 
@@ -593,4 +642,5 @@ def pred_ensemble_sklearn_sgl_cls_mdls_cls(
         out_no_data_val=-1.0,
         block_size=block_size,
         use_pbar=use_pbar,
+        fixed_var_vals=fixed_var_vals,
     )

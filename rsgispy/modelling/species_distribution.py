@@ -13,6 +13,7 @@ from rsgispy.modelling._helpers import (
     plot_roc_curve,
     predict_raster_from_env_vars,
 )
+from rsgispy.modelling._sdm_bias import calc_bias_weights, create_bias_grid
 from rsgispy.modelling._sdm_data import (
     apply_normalise_coeffs,
     calc_vif_multicollinearity,
@@ -52,9 +53,11 @@ from rsgispy.modelling._sdm_predict import (
 __all__ = [
     "EnvVarInfo",
     "create_finite_mask",
+    "create_bias_grid",
     "gen_pseudo_absences_smpls",
     "extract_env_var_data",
     "thin_pts_env_space",
+    "calc_bias_weights",
     "combine_presence_absence_data",
     "create_train_test_sets",
     "pop_normalise_coeffs",

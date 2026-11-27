@@ -14,11 +14,14 @@ The user-facing helpers (:class:`EnvVarInfo`, :func:`get_positive_class_probs`,
 :mod:`rsgispy.modelling.species_distribution`; import them from there.
 """
 
+# pylint: disable=too-many-lines
+
 from contextlib import ExitStack
 import os
 from typing import (
     Any,
     Callable,
+    Collection,
     Dict,
     List,
     Mapping,
@@ -81,6 +84,7 @@ __all__ = [
     "finalise_plot",
     "fit_clean_estimator",
     "get_positive_class_probs",
+    "get_sample_weights",
     "lookup_env_var",
     "normalise_array_with_info",
     "plot_roc_curve",
@@ -89,6 +93,7 @@ __all__ = [
     "resolve_analysis_vars",
     "run_env_block_pipeline",
     "sync_estimator_state",
+    "validate_fixed_var_vals",
     "write_model_vector",
 ]
 
@@ -289,6 +294,32 @@ def extract_features_and_target(
     x_df = gdf[var_list].copy()
     y_arr = gdf[cls_col].to_numpy() if cls_col is not None else None
     return x_df, y_arr
+
+
+def get_sample_weights(
+    gdf: gpd.GeoDataFrame,
+    sample_weight_col: Optional[str],
+) -> Optional[np.ndarray]:
+    """
+    Return the ``sample_weight_col`` values of ``gdf`` as a ``float64`` array
+    (``None`` when ``sample_weight_col`` is ``None``), checking they are finite,
+    non-negative and not all zero.
+    """
+    if sample_weight_col is None:
+        return None
+    validate_columns_exist(gdf, [sample_weight_col])
+    wgts = pd.to_numeric(gdf[sample_weight_col], errors="coerce").to_numpy(
+        dtype=np.float64
+    )
+    if not np.all(np.isfinite(wgts)) or np.any(wgts < 0.0):
+        raise rsgispy.RSGISPyException(
+            f"sample_weight_col '{sample_weight_col}' must contain finite values >= 0."
+        )
+    if not np.any(wgts > 0.0):
+        raise rsgispy.RSGISPyException(
+            f"sample_weight_col '{sample_weight_col}' is zero for every sample."
+        )
+    return wgts
 
 
 def normalise_array_with_info(
@@ -615,12 +646,16 @@ def env_vars_to_band_defs(
     analysis_vars: Sequence[str],
     mask_img: Optional[str] = None,
     mask_band: int = 1,
+    fixed_vars: Optional[Collection[str]] = None,
 ) -> Tuple[List[BandDefn], Dict[str, str]]:
     """
     Build validated :class:`rsgispy.imageprocess.BandDefn` objects for
     ``analysis_vars`` and optional ``mask_img``, returning ``(band_defs, var_keys)``
     where ``var_keys`` maps each variable name to its internal block key.
+    Variables in ``fixed_vars`` are held at a constant and are not read, so they
+    get no band definition or key.
     """
+    skip = set(fixed_vars) if fixed_vars is not None else set()
     band_defs: List[BandDefn] = []
     if mask_img is not None:
         band_defs.append(
@@ -633,6 +668,8 @@ def env_vars_to_band_defs(
 
     var_keys: Dict[str, str] = {}
     for idx, var_name in enumerate(analysis_vars):
+        if var_name in skip:
+            continue
         info = lookup_env_var(env_vars, var_name)
         if info.file is None:
             raise rsgispy.RSGISPyException(
@@ -659,25 +696,35 @@ def build_env_block_matrix(
     datasets: Mapping[str, Any],
     img_msk_val: int,
     normalise_data: bool = False,
+    fixed_var_vals: Optional[Mapping[str, float]] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Assemble valid, finite environmental covariate rows for pixels matching
     ``img_msk_val`` inside a raster processing block, enforcing optional
     :attr:`EnvVarInfo.min_vld_val` and :attr:`EnvVarInfo.max_vld_val` bounds.
+    Variables in ``fixed_var_vals`` are not read: their column is filled with
+    the given constant and they do not affect which pixels are valid.
 
     Returns ``(valid_df_matrix, flat_valid_indices)`` where
     ``valid_df_matrix`` has shape ``(n_valid_pxls, n_vars)``.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-branches
+    fixed = dict(fixed_var_vals) if fixed_var_vals is not None else {}
     msk_flat = block_vars[_MASK_BAND_KEY].ravel()
     roi_idx = np.flatnonzero(msk_flat == img_msk_val)
     if roi_idx.size == 0:
         return np.empty((0, len(analysis_vars)), dtype=np.float64), roi_idx
 
     band_arrays: List[Tuple[np.ndarray, Optional[float]]] = []
-    infos: List[EnvVarInfo] = []
-    for var_name in analysis_vars:
+    read_infos: List[EnvVarInfo] = []
+    read_cols: List[int] = []
+    all_infos: List[EnvVarInfo] = []
+    for col_idx, var_name in enumerate(analysis_vars):
         info = lookup_env_var(env_vars, var_name)
+        all_infos.append(info)
+        if var_name in fixed:
+            continue
         if info.file is None:
             raise rsgispy.RSGISPyException(
                 f"Environmental variable '{var_name}' has file=None."
@@ -685,28 +732,74 @@ def build_env_block_matrix(
         ds = datasets[os.fspath(info.file)]
         nd_val = ds.nodatavals[info.band - 1]
         band_arrays.append((block_vars[var_keys[var_name]], nd_val))
-        infos.append(info)
+        read_infos.append(info)
+        read_cols.append(col_idx)
 
-    env_mat, valid_idx = extract_roi_feature_matrix(band_arrays, roi_idx)
-    if env_mat.shape[0] > 0:
-        in_range = np.ones(env_mat.shape[0], dtype=bool)
-        for col_idx, info in enumerate(infos):
-            col_vals = env_mat[:, col_idx]
+    read_mat, valid_idx = extract_roi_feature_matrix(band_arrays, roi_idx)
+    if read_mat.shape[0] > 0:
+        in_range = np.ones(read_mat.shape[0], dtype=bool)
+        for col_idx, info in enumerate(read_infos):
+            col_vals = read_mat[:, col_idx]
             if info.min_vld_val is not None:
                 in_range &= col_vals >= float(info.min_vld_val)
             if info.max_vld_val is not None:
                 in_range &= col_vals <= float(info.max_vld_val)
         if not np.all(in_range):
-            env_mat = env_mat[in_range]
+            read_mat = read_mat[in_range]
             valid_idx = valid_idx[in_range]
 
+    if fixed:
+        env_mat = np.empty((valid_idx.size, len(analysis_vars)), dtype=np.float64)
+        if read_cols:
+            env_mat[:, read_cols] = read_mat
+        for col_idx, var_name in enumerate(analysis_vars):
+            if var_name in fixed:
+                env_mat[:, col_idx] = float(fixed[var_name])
+    else:
+        env_mat = read_mat
+
     if normalise_data and env_mat.shape[0] > 0:
-        for col_idx, info in enumerate(infos):
+        for col_idx, info in enumerate(all_infos):
             env_mat[:, col_idx] = np.asarray(
                 normalise_array_with_info(env_mat[:, col_idx], info),
                 dtype=np.float64,
             )
     return env_mat, valid_idx
+
+
+def validate_fixed_var_vals(
+    fixed_var_vals: Optional[Mapping[str, float]],
+    analysis_vars: Sequence[str],
+) -> Optional[Dict[str, float]]:
+    """
+    Check that every key of ``fixed_var_vals`` is in ``analysis_vars`` and every
+    value is finite, returning a plain ``dict`` (or ``None``).
+    """
+    if fixed_var_vals is None:
+        return None
+    if not isinstance(fixed_var_vals, Mapping):
+        raise rsgispy.RSGISPyException(
+            "fixed_var_vals must be a mapping of variable name to constant value."
+        )
+    unknown = [v for v in fixed_var_vals if v not in analysis_vars]
+    if unknown:
+        raise rsgispy.RSGISPyException(
+            f"fixed_var_vals variable(s) {unknown} are not in analysis_vars."
+        )
+    out: Dict[str, float] = {}
+    for var_name, val in fixed_var_vals.items():
+        try:
+            f_val = float(val)
+        except (TypeError, ValueError) as exc:
+            raise rsgispy.RSGISPyException(
+                f"fixed_var_vals['{var_name}'] must be a number, got {val!r}."
+            ) from exc
+        if not np.isfinite(f_val):
+            raise rsgispy.RSGISPyException(
+                f"fixed_var_vals['{var_name}'] must be finite, got {val!r}."
+            )
+        out[var_name] = f_val
+    return out
 
 
 def run_env_block_pipeline(
@@ -732,11 +825,14 @@ def run_env_block_pipeline(
     no_data_val: Optional[float] = -1.0,
     block_size: Optional[int] = None,
     use_pbar: bool = True,
+    fixed_vars: Optional[Collection[str]] = None,
 ) -> None:
     """
     Execute a shared streaming :mod:`rsgispy.imageprocess` block pipeline
     across a mask raster and environmental covariate layers, writing output
     blocks and optionally populating image statistics and overviews.
+    Variables in ``fixed_vars`` are not opened or read (their values are
+    supplied as constants by ``block_eval_fn``).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     resolved_vars = resolve_analysis_vars(env_vars, analysis_vars)
@@ -745,6 +841,7 @@ def run_env_block_pipeline(
         analysis_vars=resolved_vars,
         mask_img=in_msk_img,
         mask_band=1,
+        fixed_vars=fixed_vars,
     )
     out_np_dtype = np.dtype(out_rio_dtype)
     out_path = ensure_parent_dir(output_img)
@@ -853,6 +950,7 @@ def predict_raster_from_env_vars(
     block_size: Optional[int] = None,
     use_pbar: bool = True,
     out_rio_dtype: Optional[str] = None,
+    fixed_var_vals: Optional[Mapping[str, float]] = None,
 ) -> None:
     """
     Apply any prediction function to the environmental variables of every
@@ -910,6 +1008,17 @@ def predict_raster_from_env_vars(
     :param out_rio_dtype: Output data type as a rasterio/NumPy name (e.g.
                           ``'float32'``), an alternative to ``datatype`` kept
                           for compatibility. Pass only one of the two.
+    :param fixed_var_vals: Optional mapping of variable name to a constant value
+                           used for every pixel instead of reading the
+                           variable's raster (Default = ``None``). The raster is
+                           not opened and does not affect which pixels are
+                           valid; the constant is normalised like the raster
+                           values when ``normalise_data=True``. Use it to hold a
+                           sampling-bias covariate constant (see
+                           :func:`create_bias_grid`), so the prediction shows
+                           habitat suitability "as if everywhere were surveyed
+                           equally", e.g. at the maximum (or a high quantile)
+                           of the bias covariate.
 
     .. code:: python
 
@@ -929,6 +1038,9 @@ def predict_raster_from_env_vars(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     rio_dtype = _resolve_pred_rio_dtype(datatype, out_rio_dtype, thematic)
+    fixed = validate_fixed_var_vals(
+        fixed_var_vals, resolve_analysis_vars(env_vars, analysis_vars)
+    )
     if fill_val is None:
         fill_val = no_data_val if no_data_val is not None else 0
     if no_data_val is not None:
@@ -953,6 +1065,7 @@ def predict_raster_from_env_vars(
             datasets=datasets,
             img_msk_val=img_msk_val,
             normalise_data=normalise_data,
+            fixed_var_vals=fixed,
         )
         if valid_idx.size > 0:
             env_pxl_df = pd.DataFrame(data=env_mat, columns=resolved_vars)
@@ -978,4 +1091,5 @@ def predict_raster_from_env_vars(
         no_data_val=no_data_val,
         block_size=block_size,
         use_pbar=use_pbar,
+        fixed_vars=list(fixed) if fixed else None,
     )

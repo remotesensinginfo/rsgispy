@@ -27,6 +27,7 @@ from rsgispy.modelling._helpers import (
     run_env_block_pipeline,
     write_model_vector,
 )
+from rsgispy.modelling._sdm_bias import sample_bias_weighted_pts
 from rsgispy.tools._ml_explain import plot_class_feature_distributions
 from rsgispy.tools._ml_features import run_correlation_matrix
 from rsgispy.tools.featureselection import calc_pandas_vif
@@ -137,6 +138,7 @@ def create_finite_mask(
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+# pylint: disable=too-many-branches
 def gen_pseudo_absences_smpls(
     in_msk_img: str,
     img_msk_val: int,
@@ -151,11 +153,22 @@ def gen_pseudo_absences_smpls(
     rnd_seed: Optional[int] = None,
     out_compress: Optional[Union[str, bool]] = None,
     use_pbar: bool = True,
+    *,
+    bias_img: Optional[str] = None,
+    bias_img_band: int = 1,
 ) -> Optional[gpd.GeoDataFrame]:
     """
     Generate pseudo-absence point samples within ``in_msk_img == img_msk_val``,
     optionally excluding points within ``presence_smpls_dist_thres`` of
     known presence points.
+
+    By default the candidate points are uniformly random. With ``bias_img``
+    (e.g. from :func:`create_bias_grid`) they are drawn with probability
+    proportional to the bias raster instead, so the background has the same
+    sampling bias as the presences ("bias-weighted" or "target-group"
+    background). ``bias_img`` must be on the same grid as ``in_msk_img``;
+    zero, negative and no-data bias pixels are never sampled. A pixel can be
+    drawn more than once, but each point is placed randomly within its pixel.
 
     :param in_msk_img: Path to the valid ROI mask raster.
     :param img_msk_val: Pixel value inside ``in_msk_img`` defining the ROI.
@@ -172,6 +185,9 @@ def gen_pseudo_absences_smpls(
     :param rnd_seed: Optional random seed for reproducibility.
     :param out_compress: Optional GeoParquet compression setting.
     :param use_pbar: Display a tqdm progress bar during sampling (Default = ``True``).
+    :param bias_img: Optional sampling-bias raster on the grid of ``in_msk_img``
+                     (Default = ``None``: uniform sampling).
+    :param bias_img_band: Band of ``bias_img`` to use (Default = ``1``).
     :return: Pseudo-absence :class:`geopandas.GeoDataFrame` when ``out_vec_file``
              is ``None``, otherwise ``None``.
 
@@ -188,48 +204,61 @@ def gen_pseudo_absences_smpls(
     if xtra_n_smpls < 0:
         raise rsgispy.RSGISPyException("xtra_n_smpls must be >= 0.")
 
-    img_bbox = get_img_bbox(in_msk_img)
-    epsg_code = get_epsg_proj_from_img(in_msk_img)
-    crs_spec: Union[int, str]
-    if epsg_code is not None:
-        crs_spec = epsg_code
+    if bias_img is not None:
+        pts_gdf = sample_bias_weighted_pts(
+            in_msk_img,
+            img_msk_val,
+            bias_img,
+            int(n_smpls) + int(xtra_n_smpls),
+            bias_img_band=bias_img_band,
+            rnd_seed=rnd_seed,
+            use_pbar=use_pbar,
+        )
     else:
-        wkt = get_wkt_proj_from_img(in_msk_img)
-        if not wkt:
+        img_bbox = get_img_bbox(in_msk_img)
+        epsg_code = get_epsg_proj_from_img(in_msk_img)
+        crs_spec: Union[int, str]
+        if epsg_code is not None:
+            crs_spec = epsg_code
+        else:
+            wkt = get_wkt_proj_from_img(in_msk_img)
+            if not wkt:
+                raise rsgispy.RSGISPyException(
+                    f"Could not determine projection from mask image '{in_msk_img}'."
+                )
+            crs_spec = wkt
+
+        pts_gdf = create_random_pts_in_bbox(
+            bbox=img_bbox,
+            n_pts=int(n_smpls) + int(xtra_n_smpls),
+            epsg_code=crs_spec,
+            out_vec_file=None,
+            rnd_seed=rnd_seed,
+        )
+        if pts_gdf is None:
             raise rsgispy.RSGISPyException(
-                f"Could not determine projection from mask image '{in_msk_img}'."
+                "Failed to generate random candidate points within the mask extent."
             )
-        crs_spec = wkt
 
-    pts_gdf = create_random_pts_in_bbox(
-        bbox=img_bbox,
-        n_pts=int(n_smpls) + int(xtra_n_smpls),
-        epsg_code=crs_spec,
-        out_vec_file=None,
-        rnd_seed=rnd_seed,
-    )
-    if pts_gdf is None:
-        raise rsgispy.RSGISPyException(
-            "Failed to generate random candidate points within the mask extent."
+        tmp_col = "__rsgispy_tmp_msk__"
+        pts_gdf = ext_point_band_values(
+            vec_gdf=pts_gdf,
+            input_img=in_msk_img,
+            img_band=1,
+            min_thres=-np.inf,
+            max_thres=np.inf,
+            out_no_data_val=-9999.0,
+            out_field=tmp_col,
+            reproj_vec=False,
+            use_pbar=use_pbar,
         )
-
-    tmp_col = "__rsgispy_tmp_msk__"
-    pts_gdf = ext_point_band_values(
-        vec_gdf=pts_gdf,
-        input_img=in_msk_img,
-        img_band=1,
-        min_thres=-np.inf,
-        max_thres=np.inf,
-        out_no_data_val=-9999.0,
-        out_field=tmp_col,
-        reproj_vec=False,
-        use_pbar=use_pbar,
-    )
-    pts_gdf = pts_gdf[pts_gdf[tmp_col] == img_msk_val].drop(columns=[tmp_col]).copy()
-    if pts_gdf.empty:
-        raise rsgispy.RSGISPyException(
-            "No pseudo-absence samples fell within the specified mask region."
+        pts_gdf = (
+            pts_gdf[pts_gdf[tmp_col] == img_msk_val].drop(columns=[tmp_col]).copy()
         )
+        if pts_gdf.empty:
+            raise rsgispy.RSGISPyException(
+                "No pseudo-absence samples fell within the specified mask region."
+            )
 
     if presence_smpls_vec_file is not None:
         pres_gdf = read_model_vector(

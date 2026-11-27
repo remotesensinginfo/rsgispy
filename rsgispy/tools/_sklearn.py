@@ -4,6 +4,7 @@ helpers reused across :mod:`rsgispy.classification` and
 :mod:`rsgispy.modelling`.
 """
 
+import inspect
 from typing import Any, Optional
 
 import numpy as np
@@ -75,6 +76,19 @@ def sync_sklearn_estimator_state(target_est: Any, fitted_est: Any) -> None:
         target_est.__dict__.update(fitted_est.__dict__)
 
 
+def _fit_accepts_sample_weight(estimator: Any) -> bool:
+    """Return ``True`` if ``estimator.fit`` has a ``sample_weight`` parameter
+    or accepts ``**kwargs`` (e.g. search objects routing fit parameters)."""
+    try:
+        params = inspect.signature(estimator.fit).parameters
+    except (TypeError, ValueError):
+        return True
+    return "sample_weight" in params or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+
+
+# pylint: disable=too-many-arguments,too-many-positional-arguments
 def fit_clean_sklearn_estimator(
     est_obj: Any,
     train_x: Any,
@@ -82,18 +96,31 @@ def fit_clean_sklearn_estimator(
     sync_input: bool = True,
     rnd_seed: Optional[int] = None,
     extra: str = "stats",
+    sample_weight: Optional[np.ndarray] = None,
 ) -> Any:
     """
     Clone ``est_obj`` into a fresh unfitted estimator, fit on ``train_x``
     (and ``train_y`` when provided), and optionally update ``est_obj`` in place.
+    When ``sample_weight`` is given it is passed to ``fit``; an estimator whose
+    ``fit`` does not accept ``sample_weight`` raises
+    :class:`rsgispy.RSGISPyException`.
     """
     clean_est = clone_sklearn_estimator(
         est_obj, rnd_seed=rnd_seed, extra=extra
     )
+    fit_kwargs = {}
+    if sample_weight is not None:
+        if not _fit_accepts_sample_weight(clean_est):
+            raise rsgispy.RSGISPyException(
+                f"{type(clean_est).__name__}.fit() does not accept sample_weight; "
+                "use an estimator that supports sample weights or remove "
+                "sample_weight_col."
+            )
+        fit_kwargs["sample_weight"] = np.asarray(sample_weight, dtype=np.float64)
     if train_y is None:
-        clean_est.fit(train_x)
+        clean_est.fit(train_x, **fit_kwargs)
     else:
-        clean_est.fit(train_x, train_y)
+        clean_est.fit(train_x, train_y, **fit_kwargs)
     if sync_input:
         sync_sklearn_estimator_state(est_obj, clean_est)
     return clean_est
