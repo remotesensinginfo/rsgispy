@@ -84,6 +84,18 @@ __all__ = [
 ]
 
 
+def _new_third_party_fig() -> Any:
+    """
+    Create a new, current figure for a third-party plotting function (SHAP)
+    that draws on ``plt.gcf()``. Without it the plot draws on whichever
+    figure is open, such as one an rsgispy plot function returned, and SHAP's
+    own ``tight_layout`` call fails on a constrained-layout figure with a
+    colour bar. The figure has no layout engine, as SHAP expects.
+    """
+    with plt.rc_context({"figure.constrained_layout.use": False}):
+        return plt.figure()
+
+
 def finalise_plot(
     fig: Any,
     out_file: Optional[Union[str, os.PathLike]] = None,
@@ -537,6 +549,7 @@ def run_shap_explainer(
         shap_2d = raw_shap_values
 
     if shap_summary_plot is not None:
+        _new_third_party_fig()
         if (
             shap_vals_arr is not None
             and shap_vals_arr.ndim == 3
@@ -556,6 +569,7 @@ def run_shap_explainer(
         finalise_plot(plt.gcf(), out_file=shap_summary_plot)
 
     if shap_heatmap_plot is not None:
+        _new_third_party_fig()
         shap.plots.heatmap(shap_2d, show=False)
         finalise_plot(plt.gcf(), out_file=shap_heatmap_plot)
 
