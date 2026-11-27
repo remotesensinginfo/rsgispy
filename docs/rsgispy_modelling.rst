@@ -27,6 +27,10 @@ rsgispy.modelling
    :func:`rsgispy.modelling.species_distribution.calc_exdet`) and
    :func:`rsgispy.modelling.species_distribution.calc_range_change`.
 
+   MaxEnt without extra dependencies:
+   :class:`rsgispy.modelling.species_distribution.MaxentClassifier` and
+   :func:`rsgispy.modelling.species_distribution.tune_maxent_beta`.
+
    Sampling bias: :func:`rsgispy.modelling.species_distribution.create_bias_grid`,
    ``bias_img`` in :func:`rsgispy.modelling.species_distribution.gen_pseudo_absences_smpls`,
    ``fixed_var_vals`` in the ``pred_*`` functions and

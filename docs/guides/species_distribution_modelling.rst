@@ -551,6 +551,64 @@ use :func:`~rsgispy.modelling.species_distribution.search_mdl_params`, e.g.
   and applied with the ``*_sgl_cls_*`` prediction functions. They need no
   pseudo-absences, but usually discriminate less well.
 
+MaxEnt
+~~~~~~
+
+:class:`~rsgispy.modelling.species_distribution.MaxentClassifier` is MaxEnt,
+the most widely used SDM method, implemented on scikit-learn with no extra
+package. It follows the open-source ``maxnet`` formulation (Phillips et al.
+2017): MaxEnt is an L1-regularised point-process model, fitted as a logistic
+regression of the presences against heavily weighted background points
+(Fithian & Hastie 2013; Renner & Warton 2013). It is a scikit-learn
+classifier, so every function of this module accepts it: the fitting and
+k-fold functions (with ``cv`` and ``sample_weight_col``), the ``pred_*``
+functions, SHAP, response curves and jackknife importance.
+
+* **Background, not absences.** Fit it with the presences and many background
+  points (around 10,000), ideally bias-weighted (``bias_img`` in step 2). Do
+  not use ``equalise_smpls=True`` or ``class_weight``: the background
+  describes the available environment.
+* **Features.** Each variable is expanded into feature classes: ``"l"``
+  linear, ``"q"`` quadratic, ``"p"`` products of pairs of variables, ``"h"``
+  hinges (piecewise-linear) and ``"t"`` thresholds; categorical variables
+  (``categorical_vars``) become one indicator per class. The default
+  ``feature_types="auto"`` uses ``maxnet``'s rule: linear below 10 presences,
+  plus quadratic from 10, hinge from 15 and product from 80.
+* **Regularisation.** Every feature's coefficient is penalised (L1, so most
+  are exactly 0) in proportion to its spread over the presences and a
+  ``maxnet`` table depending on the number of presences, multiplied by
+  ``beta_multiplier``: larger values give smoother models with fewer
+  features. ``selected_features_`` lists the features kept and their
+  coefficients.
+* **Output.** ``predict_proba`` gives the cloglog output (Default), an
+  estimate of the probability of presence in a pixel-sized area that is
+  comparable across models; ``output="logistic"`` gives Maxent's older
+  logistic output and ``predict_raw`` the raw relative intensity (summing to
+  1 over the background). Variables are clamped to the training range when
+  predicting (``clamp=True``).
+
+:func:`~rsgispy.modelling.species_distribution.tune_maxent_beta` chooses
+``beta_multiplier`` and the feature classes by (spatial) cross-validated AUC,
+or by AICc (``metric="aicc"``):
+
+.. code-block:: python
+
+   from rsgispy.ml.cv import SpatialBlockKFold
+
+   res_df, best = sdm.tune_maxent_beta(
+       train_gdf, None, analysis_vars, beta_multipliers=(0.5, 1, 2, 4),
+       feature_types=("lq", "lqh"),
+       cv=SpatialBlockKFold(n_splits=5, block_size=1000.0, stratify=True),
+   )
+   mdl, train_acc, test_acc, auc = sdm.fit_sklearn_mdl(
+       sdm.MaxentClassifier(**best), train_gdf, None, test_gdf, None,
+       analysis_vars, return_model=True,
+   )
+   print(mdl.selected_features_)
+   sdm.pred_sklearn_mdl_prob(
+       mdl, "valid_mask.tif", 1, env_vars, analysis_vars, "maxent_cloglog.tif"
+   )
+
 Step 7 — Evaluating the ensemble
 --------------------------------
 

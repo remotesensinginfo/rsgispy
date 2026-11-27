@@ -13,6 +13,13 @@ from rsgispy.modelling._helpers import (
     plot_roc_curve,
     predict_raster_from_env_vars,
 )
+from rsgispy.modelling._maxent import (
+    MaxentClassifier,
+    MaxentFeatureTransformer,
+    maxent_default_feature_types,
+    maxent_feature_penalties,
+    tune_maxent_beta,
+)
 from rsgispy.modelling._sdm_bias import calc_bias_weights, create_bias_grid
 from rsgispy.modelling._sdm_data import (
     apply_normalise_coeffs,
@@ -105,6 +112,11 @@ __all__ = [
     "pred_ensemble_sklearn_sgl_cls_mdls_prob",
     "pred_ensemble_sklearn_sgl_cls_mdls_cls",
     "predict_raster_from_env_vars",
+    "MaxentClassifier",
+    "MaxentFeatureTransformer",
+    "maxent_default_feature_types",
+    "maxent_feature_penalties",
+    "tune_maxent_beta",
     "copy_env_vars_for_scenario",
     "calc_mess",
     "calc_exdet",
