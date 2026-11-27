@@ -16,7 +16,11 @@ rsgispy.modelling
    :func:`rsgispy.modelling.species_distribution.fit_kfold_sklearn_mdls`).
    Evaluation: :func:`rsgispy.modelling.species_distribution.calc_sdm_eval_metrics`
    and the continuous Boyce index
-   (:func:`rsgispy.modelling.species_distribution.calc_boyce_index`).
+   (:func:`rsgispy.modelling.species_distribution.calc_boyce_index`); null-model
+   significance (:func:`rsgispy.modelling.species_distribution.calc_null_model_auc`)
+   and residual autocorrelation
+   (:func:`rsgispy.modelling.species_distribution.calc_residual_autocorrelation`,
+   :func:`rsgispy.vector.stats.calc_correlogram`).
 
    Projection to other scenarios: :func:`rsgispy.modelling.species_distribution.copy_env_vars_for_scenario`,
    extrapolation maps (:func:`rsgispy.modelling.species_distribution.calc_mess`,

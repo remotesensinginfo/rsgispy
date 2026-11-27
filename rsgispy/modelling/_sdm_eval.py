@@ -13,13 +13,19 @@ import pandas as pd
 import rasterio
 
 import rsgispy
+from rsgispy.ml.cv import _iter_cv_splits
 from rsgispy.modelling._helpers import (
     calc_binary_roc_auc,
     calc_binary_threshold,
+    check_sklearn_available,
+    extract_features_and_target,
     finalise_plot,
+    fit_clean_estimator,
+    get_positive_class_probs,
     read_model_vector,
 )
 from rsgispy.tools.accuracy import accuracy_scores_binary
+from rsgispy.vector._stats_autocorr import calc_correlogram_arrays
 from rsgispy.vectorprocess import VectorInput
 from rsgispy.zonalstats.point import ext_point_band_values
 
@@ -27,6 +33,8 @@ __all__ = [
     "calc_boyce_index",
     "calc_boyce_index_from_raster",
     "calc_sdm_eval_metrics",
+    "calc_null_model_auc",
+    "calc_residual_autocorrelation",
 ]
 
 _BOYCE_METHODS = ("spearman", "pearson")
@@ -406,3 +414,274 @@ def calc_sdm_eval_metrics(
             bkg = np.asarray(bg_scores, dtype=np.float64)
         out["boyce"] = float(calc_boyce_index(s_arr[y_bin == 1], bkg)["boyce"])
     return out
+
+
+def _sample_coords(gdf: Any) -> np.ndarray:
+    geoms = gdf.geometry
+    pts = geoms.where(geoms.geom_type == "Point", geoms.centroid)
+    return np.column_stack([pts.x.to_numpy(), pts.y.to_numpy()]).astype(np.float64)
+
+
+def _valid_rows(x_df: pd.DataFrame, no_data_val: Optional[float]) -> np.ndarray:
+    vals = x_df.to_numpy(dtype=np.float64)
+    good = np.all(np.isfinite(vals), axis=1)
+    if no_data_val is not None:
+        good &= ~np.any(vals == float(no_data_val), axis=1)
+    return good
+
+
+# pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+# pylint: disable=too-many-statements,too-many-branches
+def calc_null_model_auc(
+    est_cls_obj: Any,
+    bg_vec_file: VectorInput,
+    bg_vec_lyr: Optional[str],
+    test_vec_file: Optional[VectorInput],
+    test_vec_lyr: Optional[str],
+    analysis_vars: Sequence[str],
+    n_pres: int,
+    *,
+    n_reps: int = 99,
+    observed_auc: Optional[float] = None,
+    cls_col: str = "clsid",
+    cv: Optional[Any] = None,
+    no_data_val: Optional[float] = -9999.0,
+    rnd_seed: Optional[int] = None,
+    plot_file: Optional[str] = None,
+    use_pbar: bool = True,
+) -> Dict[str, Any]:
+    """
+    Test whether a model's AUC is better than expected by chance with a null
+    model (Raes & ter Steege 2007): ``n_reps`` times, draw ``n_pres`` random
+    "presences" from the background points, fit a clone of ``est_cls_obj`` to
+    them against the rest of the background, and calculate its AUC. The null
+    AUCs show how high an AUC the model reaches with no real signal, given the
+    number of presences and the study area; with few presences or a flexible
+    model they can be far above 0.5.
+
+    How each null AUC is calculated should match how ``observed_auc`` was:
+
+    * ``test_vec_file`` given — on the test layer: as many of its absences as
+      it has presences (``cls_col == 1``) are drawn at random as "presences",
+      and the AUC is calculated against its other absences;
+    * ``cv`` given (a splitter as in :func:`fit_kfold_sklearn_mdls`, e.g.
+      :class:`rsgispy.ml.cv.SpatialBlockKFold`; coordinates from the
+      background geometries) — the mean out-of-fold AUC;
+    * neither — the training AUC, as in Raes & ter Steege (2007).
+
+    :param est_cls_obj: ``scikit-learn`` classifier template (not modified).
+    :param bg_vec_file: Background points with one column per variable (e.g.
+                        pseudo-absences after :func:`extract_env_var_data`).
+                        Rows with ``cls_col == 1``, if the column exists, and
+                        rows with missing or ``no_data_val`` values are left out.
+    :param bg_vec_lyr: Background layer name (or ``None``).
+    :param test_vec_file: Optional test layer with ``cls_col`` (or ``None``).
+    :param test_vec_lyr: Test layer name (or ``None``).
+    :param analysis_vars: Predictor columns.
+    :param n_pres: Number of random presences per replicate (use the number of
+                   real training presences).
+    :param n_reps: Number of null replicates (Default = ``99``).
+    :param observed_auc: Optional AUC of the real model to test.
+    :param cls_col: Class column (Default = ``'clsid'``).
+    :param cv: Optional cross-validation splitter or integer.
+    :param no_data_val: Value treated as missing (Default = ``-9999.0``).
+    :param rnd_seed: Optional random seed.
+    :param plot_file: Optional histogram of the null AUCs (observed AUC marked).
+    :param use_pbar: Show a progress bar (Default = ``True``).
+    :return: Dictionary with ``null_aucs`` (array), ``null_mean``,
+             ``null_sd``, ``null_p95`` (95th percentile: the AUC a model must
+             beat for significance at 5 %), ``mode`` (``"test"``, ``"cv"`` or
+             ``"train"``) and, when ``observed_auc`` is given, ``observed_auc``
+             and the one-sided ``p_value``
+             ``(1 + #(null >= observed)) / (n_reps + 1)``.
+
+    .. code:: python
+
+        import rsgispy.modelling.species_distribution as sdm
+
+        res = sdm.calc_null_model_auc(
+            clf, abs_gdf, None, test_gdf, None, analysis_vars, n_pres=34,
+            observed_auc=0.93, n_reps=99, rnd_seed=42,
+        )
+        print(res["null_p95"], res["p_value"])
+    """
+    check_sklearn_available("calc_null_model_auc")
+    if int(n_reps) < 1:
+        raise rsgispy.RSGISPyException("n_reps must be >= 1.")
+    if test_vec_file is not None and cv is not None:
+        raise rsgispy.RSGISPyException("Give either test_vec_file or cv, not both.")
+
+    var_list = list(analysis_vars)
+    bg_gdf = read_model_vector(bg_vec_file, vec_lyr=bg_vec_lyr)
+    if cls_col in bg_gdf.columns:
+        bg_gdf = bg_gdf[bg_gdf[cls_col].to_numpy() != 1]
+    bg_x, _ = extract_features_and_target(bg_gdf, var_list, cls_col=None)
+    good = _valid_rows(bg_x, no_data_val)
+    bg_gdf = bg_gdf[good]
+    bg_x = bg_x[good].reset_index(drop=True)
+    n_bg = len(bg_x)
+    if not 2 <= int(n_pres) < n_bg - 1:
+        raise rsgispy.RSGISPyException(
+            f"n_pres must be >= 2 and smaller than the number of valid background "
+            f"points ({n_bg}) minus 1, got {n_pres}."
+        )
+
+    test_x = None
+    n_test_pres = 0
+    coords: Optional[np.ndarray] = None
+    if test_vec_file is not None:
+        test_gdf = read_model_vector(test_vec_file, vec_lyr=test_vec_lyr)
+        t_x, t_y = extract_features_and_target(test_gdf, var_list, cls_col=cls_col)
+        n_test_pres = int(np.sum(t_y == 1))
+        test_x = t_x[(t_y != 1) & _valid_rows(t_x, no_data_val)].reset_index(drop=True)
+        if n_test_pres < 1 or n_test_pres >= len(test_x):
+            raise rsgispy.RSGISPyException(
+                "The test layer needs at least one presence and more absences "
+                "than presences."
+            )
+        mode = "test"
+    elif cv is not None:
+        mode = "cv"
+        coords = _sample_coords(bg_gdf)
+    else:
+        mode = "train"
+
+    rng = np.random.default_rng(rnd_seed)
+    null_aucs = np.full(int(n_reps), np.nan)
+    pbar = rsgispy.get_tqdm()
+    for rep_i in pbar(range(int(n_reps)), disable=not use_pbar, desc="Null models"):
+        y_arr = np.zeros(n_bg, dtype=np.uint8)
+        y_arr[rng.choice(n_bg, int(n_pres), replace=False)] = 1
+        rep_seed = int(rng.integers(0, 2**31 - 1))
+        if mode == "cv":
+            fold_aucs = []
+            for tr_idx, val_idx in _iter_cv_splits(cv, bg_x, y_arr, coords, None):
+                if np.unique(y_arr[tr_idx]).size < 2 or np.unique(y_arr[val_idx]).size < 2:
+                    continue
+                mdl = fit_clean_estimator(
+                    est_cls_obj, bg_x.iloc[tr_idx], y_arr[tr_idx],
+                    sync_input=False, rnd_seed=rep_seed,
+                )
+                probs = get_positive_class_probs(mdl, bg_x.iloc[val_idx], pos_label=1)
+                fold_aucs.append(calc_binary_roc_auc(y_arr[val_idx], probs)[2])
+            if fold_aucs:
+                null_aucs[rep_i] = float(np.mean(fold_aucs))
+            continue
+        mdl = fit_clean_estimator(
+            est_cls_obj, bg_x, y_arr, sync_input=False, rnd_seed=rep_seed
+        )
+        if mode == "test" and test_x is not None:
+            y_test = np.zeros(len(test_x), dtype=np.uint8)
+            y_test[rng.choice(len(test_x), n_test_pres, replace=False)] = 1
+            probs = get_positive_class_probs(mdl, test_x, pos_label=1)
+            null_aucs[rep_i] = calc_binary_roc_auc(y_test, probs)[2]
+        else:
+            probs = get_positive_class_probs(mdl, bg_x, pos_label=1)
+            null_aucs[rep_i] = calc_binary_roc_auc(y_arr, probs)[2]
+
+    fin = null_aucs[np.isfinite(null_aucs)]
+    if fin.size == 0:
+        raise rsgispy.RSGISPyException(
+            "No null AUC could be calculated (every cv fold lacked a class)."
+        )
+    out: Dict[str, Any] = {
+        "null_aucs": null_aucs,
+        "null_mean": float(np.mean(fin)),
+        "null_sd": float(np.std(fin)),
+        "null_p95": float(np.percentile(fin, 95)),
+        "mode": mode,
+    }
+    if observed_auc is not None:
+        out["observed_auc"] = float(observed_auc)
+        out["p_value"] = float((1 + np.sum(fin >= float(observed_auc))) / (fin.size + 1))
+
+    if plot_file is not None:
+        import matplotlib.pyplot as plt  # pylint: disable=import-outside-toplevel
+
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.hist(fin, bins=20, color="#9ecae1", edgecolor="#3182bd")
+        ax.axvline(out["null_p95"], color="0.4", linestyle="--", label="Null 95th percentile")
+        if observed_auc is not None:
+            ax.axvline(float(observed_auc), color="#d7301f", label="Observed AUC")
+        ax.set_xlabel(f"Null model AUC ({mode})")
+        ax.set_ylabel("Count")
+        ax.legend(loc="upper left")
+        finalise_plot(fig, out_file=plot_file)
+    return out
+
+
+# pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+def calc_residual_autocorrelation(
+    est_cls_obj: Any,
+    smpls_vec_file: VectorInput,
+    smpls_vec_lyr: Optional[str],
+    analysis_vars: Sequence[str],
+    *,
+    cls_col: str = "clsid",
+    dist_classes: Optional[Sequence[float]] = None,
+    n_classes: int = 10,
+    max_dist: Optional[float] = None,
+    n_perms: int = 99,
+    rnd_seed: Optional[int] = None,
+    plot_file: Optional[str] = None,
+    allow_geographic: bool = False,
+) -> pd.DataFrame:
+    """
+    Check a fitted model's residuals for spatial autocorrelation: the Moran's I
+    correlogram (:func:`rsgispy.vector.stats.calc_correlogram`) of the
+    residuals ``y - p``, where ``y`` is the class (``1`` presence, ``0``
+    absence) and ``p`` the predicted presence probability. Significantly
+    positive Moran's I at short distances means nearby samples share
+    unexplained variation, e.g. a missing variable, clustered records or
+    sampling bias: thin the samples further, add variables, or rely on spatial
+    cross-validation for the accuracy.
+
+    :param est_cls_obj: Fitted ``scikit-learn`` classifier.
+    :param smpls_vec_file: Samples with ``analysis_vars`` and ``cls_col``
+                           (e.g. the training or test layer).
+    :param smpls_vec_lyr: Layer name (or ``None``).
+    :param analysis_vars: Predictor columns, in training order.
+    :param cls_col: Class column (Default = ``'clsid'``).
+    :param dist_classes: Optional distance class edges.
+    :param n_classes: Number of equal-width classes (Default = ``10``).
+    :param max_dist: Largest distance (Default: half the layer's diagonal).
+    :param n_perms: Permutations per class (Default = ``99``).
+    :param rnd_seed: Optional random seed.
+    :param plot_file: Optional correlogram plot path.
+    :param allow_geographic: Allow a geographic CRS (Default = ``False``).
+    :return: Correlogram :class:`pandas.DataFrame` (see
+             :func:`rsgispy.vector.stats.calc_correlogram`).
+
+    .. code:: python
+
+        import rsgispy.modelling.species_distribution as sdm
+
+        corr_df = sdm.calc_residual_autocorrelation(
+            mdl, train_gdf, None, analysis_vars, max_dist=5000.0,
+            plot_file="plots/residual_correlogram.png",
+        )
+    """
+    smpls_gdf = read_model_vector(smpls_vec_file, vec_lyr=smpls_vec_lyr)
+    if (
+        smpls_gdf.crs is not None
+        and smpls_gdf.crs.is_geographic
+        and not allow_geographic
+    ):
+        raise rsgispy.RSGISPyException(
+            "The samples have a geographic CRS (degrees); reproject them or pass "
+            "allow_geographic=True."
+        )
+    x_df, y_arr = extract_features_and_target(smpls_gdf, analysis_vars, cls_col=cls_col)
+    resid = (np.asarray(y_arr) == 1).astype(np.float64) - np.asarray(
+        get_positive_class_probs(est_cls_obj, x_df, pos_label=1), dtype=np.float64
+    )
+    return calc_correlogram_arrays(
+        _sample_coords(smpls_gdf),
+        resid,
+        dist_classes=dist_classes,
+        n_classes=n_classes,
+        max_dist=max_dist,
+        n_perms=n_perms,
+        rnd_seed=rnd_seed,
+        plot_file=plot_file,
+    )
