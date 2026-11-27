@@ -32,12 +32,13 @@ Covers `rsgispy.ml.*`, `rsgispy.classification.*`, `rsgispy.regression.*`, and `
 
 ### Tiled Raster Inference (`rsgispy.ml.predict`)
 - `predict_raster(estimator, feature_stack, output_img, in_msk_img=None, img_msk_val=1, scaler=None, lut=None, threshold=None, thematic=False, band_names=None, block_size=None, *, gdalformat='GTIFF', datatype=None, no_data_val=None, calc_stats=True, use_pbar=True, creation_opts=None)`
-- `predict_proba_raster(estimator, feature_stack, output_img, ..., class_names=None, out_class_img=None, out_entropy_img=None, lut=None, scale_to_pct=False, ...)`
+- `predict_proba_raster(estimator, feature_stack, output_img, ..., class_names=None, out_class_img=None, out_entropy_img=None, lut=None, scale_to_pct=False, *, ..., out_conf_img=None, conf_method='margin')` — `out_conf_img`: float32 confidence 0 (low)–1 (confident), -9999 outside the mask, same pass.
+- `calc_proba_confidence(probs, conf_method='margin') -> ndarray` and `CONF_METHODS = ('margin', 'max_prob', 'entropy')`: `'margin'` = p1 − p2 (binary |2p − 1|); `'max_prob'` = (p1 − 1/K)/(1 − 1/K); `'entropy'` = 1 − entropy/log(K). RF/GBDT probabilities are **not calibrated**, so confidence ranks pixels but is not expected accuracy: calibrate (`sklearn.calibration.CalibratedClassifierCV(clf, method='isotonic'|'sigmoid', cv=5)`, then apply the calibrated model) and check with `classaccuracymetrics.calc_confidence_reliability`.
 - `predict_quantiles_raster(estimators_or_model, feature_stack, output_img, quantiles=(0.05, 0.5, 0.95), ..., conformal_residuals=None, alpha=0.1, ...)`
 - **Tile-graph nodes** (chain features -> model -> majority filter in one `TileGraph` pass, no intermediate files; same pixels as the file functions):
   - `feature_stack_nodes(stack) -> List[TileNode]` (or `stack.to_tile_nodes()`): one node per `BandSpec`, with the stack's feature names, no-data and `min/max_vld_val` (out of range -> NaN). All rasters (and the mask) must be on the same pixel grid (the file functions also handle intersections/reprojection). The stack's scaler is not applied: pass `scaler=stack.scaler`.
   - `predict_raster_node(features, estimator, scaler=None, lut=None, threshold=None, thematic=False, band_names=None, *, mask=None, img_msk_val=1, n_outputs=None, no_data_val=None)` (no data default 0 if thematic/threshold else -9999).
-  - `predict_proba_raster_node(features, estimator, scaler=None, class_names=None, lut=None, scale_to_pct=False, *, with_class=False, with_entropy=False, mask=None, ...)` (extra bands appended; split with `SelectBands`).
+  - `predict_proba_raster_node(features, estimator, scaler=None, class_names=None, lut=None, scale_to_pct=False, *, with_class=False, with_entropy=False, with_conf=False, conf_method='margin', mask=None, ...)` (extra bands appended in that order: class, entropy, confidence; split with `SelectBands`).
   - `predict_quantiles_raster_node(features, estimators_or_model, quantiles=(0.05, 0.5, 0.95), scaler=None, conformal_residuals=None, alpha=0.1, *, mask=None, ...)`.
   - `features` = any node(s): filters, indices, `BandMathOp`, `StackBands`; a pixel is predicted if inside `mask == img_msk_val` and all features are finite and != their node's no-data.
 
@@ -86,6 +87,7 @@ TileGraph(DiskSink(smooth, "landcover.tif", datatype=rsgispy.TYPE_8UINT)).run()
   - `optimise_*_binary_classifier` & `optimise_*_multiclass_classifier` (note British spelling: `optimise_*`)
   - `train_*_binary_classifier` & `train_*_multiclass_classifier`
   - `apply_*_binary_classifier` & `apply_*_multiclass_classifier`
+- **Confidence maps**: every raster `apply_*_classifier` (sklearn, XGBoost, LightGBM, CatBoost; binary and multi-class) takes keyword-only `out_conf_img=None, conf_method='margin'|'max_prob'|'entropy'`: a float32 0–1 confidence (-9999 outside the mask, band `confidence_<method>`) from the same `predict_proba` call as `out_score_img` (needs `predict_proba`; `out_conf_img` alone is a valid output). E.g. `csk.apply_sklearn_classifier(cfg, clf, 'mask.tif', 1, output_img='cls.tif', out_conf_img='conf.tif')`.
 
 ### Object-based / Segment Classification (`classsegments`)
 - `create_cls_segment_features(cls_cfg, label_img, out_vec_file, out_cfg_file=None, **create_segment_features_kwargs) -> ClassificationConfig`
@@ -103,7 +105,7 @@ TileGraph(DiskSink(smooth, "landcover.tif", datatype=rsgispy.TYPE_8UINT)).run()
 ### Feature Analysis, Accuracy, Reference Points & Post-Processing
 - **`classfeatures`**: `comparison_box_plots`, `correlation_matrix`, `calc_vif_multicollinearity`, `select_features_cqv`, `select_features_corr`, `select_features_vif`, `select_features_univariate`, `select_features_rfe`, `select_features_from_model`, `select_features_boruta_shap`, `calc_feature_importance`, `calc_jackknife_feature_importance`, `calc_feature_response_curves`, `calc_shap_feature_contributions`, `calc_salib_feature_sensitivity`.
 - **`classrefpts`**: `create_random_ref_smpls_darts`, `create_stratified_random_ref_smpls_darts`, `create_stratified_random_ref_smpls_lut`, `pop_class_info_accuracy_pts`.
-- **`classaccuracymetrics`**: `calc_acc_stats_img`, `calc_acc_stats_ptonly`, `calc_acc_stats_img_bootstrap_conf`, `calc_acc_stats_ptonly_bootstrap_conf`.
+- **`classaccuracymetrics`**: `calc_acc_stats_img`, `calc_acc_stats_ptonly`, `calc_acc_stats_img_bootstrap_conf`, `calc_acc_stats_ptonly_bootstrap_conf`, `calc_confidence_reliability(vec_file, vec_lyr, ref_col, conf_img, cls_img, n_bins=10, out_csv_file=None, *, conf_img_band=1, cls_img_band=1) -> DataFrame` (reliability table per equal-width confidence bin: `bin_lower`, `bin_upper`, `n_pts`, `n_correct`, `mean_conf`, `accuracy`; `df.attrs` `n_pts`, `overall_accuracy`, `mean_abs_gap`; `ref_col` holds the map's class values; accuracy should rise with confidence).
 - **`classpostprocess`** (also top-level `rsgispy.classification.{apply_majority_filter,apply_sieve_filter,majority_filter_node}`): `apply_majority_filter(..., filter_size=3, img_band=1, keep_centre_on_tie=True, copy_colour_table=True, *)`, `apply_sieve_filter(..., size_threshold, connectivity=4, img_band=1, ...)`, `apply_postprocess_pipeline(..., majority_sizes=(), sieve_size_threshold=None, ...)`; tile-graph node `majority_filter_node(source, filter_size=3, keep_centre_on_tie=True, *, dtype=None, no_data_val=None)` (filters every band of `source`; `no_data_val=None` = the source node's no-data value; pass the output dtype). The sieve is whole-image (connected components) and has no node.
 
 ---

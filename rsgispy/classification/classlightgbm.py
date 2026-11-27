@@ -695,6 +695,8 @@ def apply_lightgbm_binary_classifier(
     use_pbar: bool = True,
     use_gpu: bool = False,
     gpu_device_id: Optional[int] = None,
+    out_conf_img: Optional[Union[str, os.PathLike]] = None,
+    conf_method: str = "margin",
 ) -> None:
     """
     Apply a trained binary ``lightgbm.LGBMClassifier`` block-by-block to pixels
@@ -732,6 +734,20 @@ def apply_lightgbm_binary_classifier(
                     and falling back to CPU when unavailable; note that
                     LightGBM inference executes on CPU) (Default = ``False``).
     :param gpu_device_id: Optional non-negative GPU device index.
+    :param out_conf_img: Optional output ``float32`` per-pixel confidence
+                         raster in ``[0, 1]`` (``0`` = low confidence, ``1``
+                         = confident, ``-9999`` outside the mask), computed
+                         from the same ``predict_proba`` call (requires
+                         classifier ``predict_proba``; Default = ``None``).
+    :param conf_method: Confidence method for ``out_conf_img``: ``'margin'``
+                        (best minus second-best class probability; binary
+                        ``|2p - 1|``), ``'max_prob'`` (maximum probability
+                        rescaled so ``1/K`` gives ``0``) or ``'entropy'``
+                        (``1 -`` normalised Shannon entropy)
+                        (Default = ``'margin'``). Tree-ensemble
+                        probabilities are not calibrated, so confidence is
+                        not the expected accuracy; see
+                        :func:`~rsgispy.ml.predict.calc_proba_confidence`.
 
     .. code:: python
 
@@ -776,6 +792,8 @@ def apply_lightgbm_binary_classifier(
         score_all_classes=score_all_classes,
         use_gpu=use_gpu,
         gpu_device_id=gpu_device_id,
+        out_conf_img=out_conf_img,
+        conf_method=conf_method,
     )
 
 
@@ -802,6 +820,8 @@ def apply_lightgbm_multiclass_classifier(
     use_pbar: bool = True,
     use_gpu: bool = False,
     gpu_device_id: Optional[int] = None,
+    out_conf_img: Optional[Union[str, os.PathLike]] = None,
+    conf_method: str = "margin",
 ) -> None:
     """
     Apply a trained multi-class ``lightgbm.LGBMClassifier`` block-by-block to
@@ -833,6 +853,20 @@ def apply_lightgbm_multiclass_classifier(
                     and falling back to CPU when unavailable; note that
                     LightGBM inference executes on CPU) (Default = ``False``).
     :param gpu_device_id: Optional non-negative GPU device index.
+    :param out_conf_img: Optional output ``float32`` per-pixel confidence
+                         raster in ``[0, 1]`` (``0`` = low confidence, ``1``
+                         = confident, ``-9999`` outside the mask), computed
+                         from the same ``predict_proba`` call (requires
+                         classifier ``predict_proba``; Default = ``None``).
+    :param conf_method: Confidence method for ``out_conf_img``: ``'margin'``
+                        (best minus second-best class probability; binary
+                        ``|2p - 1|``), ``'max_prob'`` (maximum probability
+                        rescaled so ``1/K`` gives ``0``) or ``'entropy'``
+                        (``1 -`` normalised Shannon entropy)
+                        (Default = ``'margin'``). Tree-ensemble
+                        probabilities are not calibrated, so confidence is
+                        not the expected accuracy; see
+                        :func:`~rsgispy.ml.predict.calc_proba_confidence`.
 
     .. code:: python
 
@@ -874,4 +908,6 @@ def apply_lightgbm_multiclass_classifier(
         use_pbar=use_pbar,
         use_gpu=use_gpu,
         gpu_device_id=gpu_device_id,
+        out_conf_img=out_conf_img,
+        conf_method=conf_method,
     )

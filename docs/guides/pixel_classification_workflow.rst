@@ -742,6 +742,94 @@ optionally scaling the features on the fly with a
 :class:`~rsgispy.ml.scaling.FeatureScaler` (needed for models such as SVMs
 or neural networks that are sensitive to feature scale).
 
+Confidence maps
+~~~~~~~~~~~~~~~
+
+``out_conf_img`` writes a per-pixel **confidence** image alongside the class
+image: ``float32``, from 0 (low confidence) to 1 (confident), ``-9999``
+outside the mask. It is calculated from the same ``predict_proba`` call as
+the class probabilities, so the image is read only once. It is available in
+:func:`~rsgispy.classification.classsklearn.apply_sklearn_classifier`, the
+XGBoost, LightGBM and CatBoost ``apply_*_classifier`` functions (binary and
+multi-class) and :func:`~rsgispy.ml.predict.predict_proba_raster`
+(``with_conf=True`` in
+:func:`~rsgispy.ml.predict.predict_proba_raster_node`). ``conf_method``
+chooses how it is calculated from the class probabilities (``K`` classes,
+``p1`` and ``p2`` the largest and second-largest probabilities):
+
+* ``'margin'`` (default): ``p1 - p2``, how far ahead the chosen class is of
+  the runner-up (for a binary model ``|2p - 1|``). Low values mark pixels
+  where two classes compete, usually mixed pixels or confused classes;
+* ``'max_prob'``: ``(p1 - 1/K) / (1 - 1/K)``, the maximum probability
+  rescaled so that a uniform prediction (``1/K`` for every class) is 0;
+* ``'entropy'``: ``1 -`` the Shannon entropy normalised by ``log(K)``,
+  which uses all the probabilities, not only the top two.
+
+.. code:: python
+
+    import rsgispy.classification.classsklearn as csk
+
+    csk.apply_sklearn_classifier(
+        cls_cfg=cls_cfg,
+        sk_classifier=rf_clf,
+        in_msk_img="valid_mask.tif",
+        img_msk_val=1,
+        output_img="rf_classes.tif",
+        out_conf_img="rf_confidence.tif",
+        conf_method="margin",
+    )
+
+**Confidence is not accuracy.** The confidence is only as good as the
+probabilities, and the probabilities of Random Forests and gradient-boosted
+trees are not calibrated: a Random Forest is rarely near 0 or 1 even when it
+is always right, and boosted trees are often over-confident. A confidence of
+0.8 therefore does not mean that 80 % of such pixels are correct; it ranks
+pixels from least to most certain. Two steps make it more trustworthy:
+
+1. **Calibrate** the classifier on samples that were not used to fit it, for
+   example with scikit-learn's
+   :class:`~sklearn.calibration.CalibratedClassifierCV`, and apply the
+   calibrated model (it has ``predict_proba`` and ``classes_``, so it can be
+   passed to ``apply_sklearn_classifier`` directly):
+
+   .. code:: python
+
+       from sklearn.calibration import CalibratedClassifierCV
+
+       cal_clf = CalibratedClassifierCV(rf_clf, method="isotonic", cv=5)
+       cal_clf.fit(x_train, y_train)  # internal IDs, as rf_clf was trained
+
+   ``method="sigmoid"`` (Platt scaling) needs fewer samples than
+   ``"isotonic"``. A calibrated model can change the class of a few pixels
+   whose probabilities are close.
+2. **Check the confidence against the reference points** of step 10 with
+   :func:`~rsgispy.classification.classaccuracymetrics.calc_confidence_reliability`,
+   which groups the points into confidence bins and returns the proportion
+   classified correctly in each (a reliability table). Accuracy should rise
+   with confidence; with calibrated probabilities and ``'max_prob'``, it
+   should also be close to the confidence of the bin (``mean_abs_gap`` in
+   ``df.attrs`` summarises the difference). ``ref_col`` must hold the
+   class values of the map (``out_id``):
+
+   .. code:: python
+
+       import rsgispy.classification.classaccuracymetrics as cam
+
+       rel_df = cam.calc_confidence_reliability(
+           vec_file="acc_pts_labelled.gpkg",
+           vec_lyr=None,
+           ref_col="ref_out_id",
+           conf_img="rf_confidence.tif",
+           cls_img="rf_classes.tif",
+           n_bins=5,
+       )
+
+Use the confidence map to target training data (add samples where it is
+low), to flag areas for checking, or to mask the least certain pixels; do
+not report it as the map's accuracy, which needs the assessment of step 10.
+Post-processing (step 9) changes the classes of some pixels but not their
+confidence.
+
 Step 9 — Post-processing
 ------------------------
 

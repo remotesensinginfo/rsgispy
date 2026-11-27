@@ -6,6 +6,10 @@ for reference point samples.
 import os
 from typing import Any, Dict, List, Optional, Union
 
+import numpy as np
+import pandas as pd
+import rasterio
+
 import rsgispy
 from rsgispy.classification._helpers import (
     aggregate_bootstrap_runs,
@@ -20,13 +24,15 @@ from rsgispy.classification._helpers import (
     write_acc_stats_ptonly_csv,
 )
 import rsgispy.tools.jsonio
-from rsgispy.vectorprocess import VectorInput
+from rsgispy.tools.files import ensure_parent_dir
+from rsgispy.vectorprocess import VectorInput, read_vec_gdf
 
 __all__ = [
     "calc_acc_stats_img",
     "calc_acc_stats_ptonly",
     "calc_acc_stats_img_bootstrap_conf",
     "calc_acc_stats_ptonly_bootstrap_conf",
+    "calc_confidence_reliability",
 ]
 
 
@@ -344,3 +350,160 @@ def calc_acc_stats_ptonly_bootstrap_conf(
             out_interv_stats, os.fspath(out_json_file)
         )
     return out_interv_stats
+
+
+def _sample_img_at_pts(
+    img_path: str, x_coords: np.ndarray, y_coords: np.ndarray, img_band: int
+) -> np.ndarray:
+    """Pixel values of band ``img_band`` at the points (NaN outside or nodata)."""
+    vals = np.full(x_coords.size, np.nan, dtype=np.float64)
+    with rasterio.open(img_path) as src:
+        rows, cols = rasterio.transform.rowcol(src.transform, x_coords, y_coords)
+        rows = np.asarray(rows, dtype=np.int64)
+        cols = np.asarray(cols, dtype=np.int64)
+        inside = (rows >= 0) & (rows < src.height) & (cols >= 0) & (cols < src.width)
+        if np.any(inside):
+            arr = src.read(img_band)
+            vals[inside] = arr[rows[inside], cols[inside]].astype(np.float64)
+        if src.nodata is not None and not np.isnan(src.nodata):
+            vals[vals == float(src.nodata)] = np.nan
+    return vals
+
+
+def calc_confidence_reliability(
+    vec_file: VectorInput,
+    vec_lyr: Optional[str],
+    ref_col: str,
+    conf_img: Union[str, os.PathLike],
+    cls_img: Union[str, os.PathLike],
+    n_bins: int = 10,
+    out_csv_file: Optional[Union[str, os.PathLike]] = None,
+    *,
+    conf_img_band: int = 1,
+    cls_img_band: int = 1,
+) -> pd.DataFrame:
+    """
+    Reliability table of a per-pixel classification confidence raster (the
+    ``out_conf_img`` output of the ``apply_*_classifier`` functions or of
+    :func:`~rsgispy.ml.predict.predict_proba_raster`): the reference points
+    are grouped into ``n_bins`` equal-width confidence bins over ``[0, 1]``
+    and the proportion classified correctly is reported for each bin.
+
+    A useful confidence map has accuracy rising with confidence. When the
+    probabilities are calibrated and the confidence is ``'max_prob'``-like,
+    the accuracy of a bin should be close to its confidence; tree-ensemble
+    probabilities are usually not calibrated, so compare the ranking rather
+    than the values unless the model was calibrated (e.g., with
+    :class:`sklearn.calibration.CalibratedClassifierCV`). Use reference points
+    that were not used for training.
+
+    Points outside the images, or on no-data pixels of either image, are
+    ignored. ``ref_col`` must hold the class values of ``cls_img`` (e.g.,
+    the ``out_id`` values).
+
+    :param vec_file: Reference points vector file path or
+                     :class:`geopandas.GeoDataFrame` (reprojected to the CRS
+                     of ``conf_img`` if needed).
+    :param vec_lyr: Vector layer name (or ``None``).
+    :param ref_col: Column with the reference class values.
+    :param conf_img: Confidence raster path (values in ``[0, 1]``).
+    :param cls_img: Classified raster path (class values comparable to
+                    ``ref_col``), on the same grid as ``conf_img``.
+    :param n_bins: Number of equal-width confidence bins (Default = ``10``).
+    :param out_csv_file: Optional output CSV file path (Default = ``None``).
+    :param conf_img_band: Band of ``conf_img`` (Default = ``1``).
+    :param cls_img_band: Band of ``cls_img`` (Default = ``1``).
+    :return: :class:`pandas.DataFrame` with one row per bin: ``bin_lower``,
+             ``bin_upper``, ``n_pts``, ``n_correct``, ``mean_conf`` and
+             ``accuracy`` (NaN for empty bins). ``df.attrs`` holds
+             ``n_pts`` (points used), ``overall_accuracy`` and
+             ``mean_abs_gap`` (point-weighted mean of
+             ``|accuracy - mean_conf|`` over non-empty bins).
+
+    .. code:: python
+
+        import rsgispy.classification.classaccuracymetrics as cam
+
+        rel_df = cam.calc_confidence_reliability(
+            vec_file="ref_pts.gpkg",
+            vec_lyr="ref_pts",
+            ref_col="ref_cls_id",
+            conf_img="class_conf.tif",
+            cls_img="classified.tif",
+            n_bins=10,
+            out_csv_file="conf_reliability.csv",
+        )
+        print(rel_df[["bin_lower", "bin_upper", "n_pts", "accuracy"]])
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    n_bins = int(n_bins)
+    if n_bins < 1:
+        raise rsgispy.RSGISPyException(f"n_bins must be >= 1, got {n_bins}.")
+    conf_path = os.fspath(conf_img)
+    cls_path = os.fspath(cls_img)
+    for img_path in (conf_path, cls_path):
+        if not os.path.exists(img_path):
+            raise rsgispy.RSGISPyException(f"Image does not exist: {img_path}")
+    pts_gdf = read_vec_gdf(vec_file, vec_lyr)
+    if ref_col not in pts_gdf.columns:
+        raise rsgispy.RSGISPyException(
+            f"Column '{ref_col}' is not in the reference points."
+        )
+    with rasterio.open(conf_path) as src:
+        img_crs = src.crs
+    if img_crs is not None and pts_gdf.crs is not None and pts_gdf.crs != img_crs:
+        pts_gdf = pts_gdf.to_crs(img_crs)
+    pts_gdf = pts_gdf[pts_gdf.geometry.notna() & ~pts_gdf.geometry.is_empty]
+    if not bool((pts_gdf.geometry.geom_type == "Point").all()):
+        raise rsgispy.RSGISPyException("The reference vector must contain points.")
+
+    x_coords = pts_gdf.geometry.x.to_numpy(dtype=np.float64)
+    y_coords = pts_gdf.geometry.y.to_numpy(dtype=np.float64)
+    ref_vals = pd.to_numeric(pts_gdf[ref_col], errors="coerce").to_numpy(
+        dtype=np.float64
+    )
+    conf_vals = _sample_img_at_pts(conf_path, x_coords, y_coords, conf_img_band)
+    cls_vals = _sample_img_at_pts(cls_path, x_coords, y_coords, cls_img_band)
+    use = np.isfinite(conf_vals) & np.isfinite(cls_vals) & np.isfinite(ref_vals)
+    conf_vals = np.clip(conf_vals[use], 0.0, 1.0)
+    correct = cls_vals[use] == ref_vals[use]
+
+    edges = np.linspace(0.0, 1.0, n_bins + 1)
+    bin_idx = np.clip(np.digitize(conf_vals, edges[1:-1], right=False), 0, n_bins - 1)
+    rows: List[Dict[str, Any]] = []
+    for b_i in range(n_bins):
+        in_bin = bin_idx == b_i
+        n_pts = int(np.count_nonzero(in_bin))
+        n_corr = int(np.count_nonzero(correct[in_bin]))
+        rows.append(
+            {
+                "bin_lower": float(edges[b_i]),
+                "bin_upper": float(edges[b_i + 1]),
+                "n_pts": n_pts,
+                "n_correct": n_corr,
+                "mean_conf": float(np.mean(conf_vals[in_bin])) if n_pts else np.nan,
+                "accuracy": n_corr / n_pts if n_pts else np.nan,
+            }
+        )
+    rel_df = pd.DataFrame(rows)
+    n_used = int(conf_vals.size)
+    filled = rel_df["n_pts"] > 0
+    rel_df.attrs["n_pts"] = n_used
+    rel_df.attrs["overall_accuracy"] = (
+        float(np.mean(correct)) if n_used else float("nan")
+    )
+    rel_df.attrs["mean_abs_gap"] = (
+        float(
+            np.sum(
+                rel_df.loc[filled, "n_pts"]
+                * np.abs(rel_df.loc[filled, "accuracy"] - rel_df.loc[filled, "mean_conf"])
+            )
+            / n_used
+        )
+        if n_used
+        else float("nan")
+    )
+    if out_csv_file is not None:
+        out_csv = ensure_parent_dir(out_csv_file)
+        rel_df.to_csv(out_csv, index=False)
+    return rel_df

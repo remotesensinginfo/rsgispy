@@ -50,6 +50,7 @@ from rsgispy.imageprocess import (
 from rsgispy.imageprocess import normalise_creation_options
 from rsgispy.imageutils.colourtable import set_img_not_thematic
 from rsgispy.imageutils.stats import pop_img_stats
+from rsgispy.ml.predict import calc_proba_confidence, check_conf_method
 from rsgispy.tools._ml_data import (
     open_apply_datasets as _open_apply_datasets,
     read_valid_roi_block as _read_valid_roi_block,
@@ -57,6 +58,10 @@ from rsgispy.tools._ml_data import (
 )
 from rsgispy.tools._sklearn import check_sklearn_estimator_fitted, sklearn
 from rsgispy.tools.files import ensure_parent_dir
+
+
+_CONF_NODATA = -9999.0
+"""No-data value of the ``out_conf_img`` confidence rasters."""
 
 
 def resolve_ordered_classes(
@@ -314,17 +319,26 @@ def apply_classifier_raster(
     pred_threshold: Optional[float] = None,
     score_all_classes: bool = False,
     predict_kwargs: Optional[Mapping[str, Any]] = None,
+    out_conf_img: Optional[Union[str, os.PathLike]] = None,
+    conf_method: str = "margin",
 ) -> None:
     """
     Shared block-wise image classification engine for binary and multi-class
     classifiers supporting ``predict()`` and ``predict_proba()``.
+
+    ``out_conf_img`` optionally writes a ``float32`` per-pixel confidence in
+    ``[0, 1]`` (``-9999`` outside the mask) computed from the same
+    ``predict_proba`` call as ``out_score_img`` with
+    :func:`~rsgispy.ml.predict.calc_proba_confidence` (``conf_method``).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
-    if output_img is None and out_score_img is None:
+    if output_img is None and out_score_img is None and out_conf_img is None:
         raise rsgispy.RSGISPyException(
-            "At least one of output_img or out_score_img must be specified."
+            "At least one of output_img, out_score_img or out_conf_img must "
+            "be specified."
         )
+    check_conf_method(conf_method)
     p_kwargs = dict(predict_kwargs) if predict_kwargs else {}
     check_sklearn_estimator_fitted(estimator, label="classifier")
 
@@ -344,6 +358,11 @@ def apply_classifier_raster(
         raise rsgispy.RSGISPyException(
             "Classifier does not support predict_proba(), which is required "
             "to output out_score_img."
+        )
+    if out_conf_img is not None and not hasattr(estimator, "predict_proba"):
+        raise rsgispy.RSGISPyException(
+            "Classifier does not support predict_proba(), which is required "
+            "to output out_conf_img."
         )
 
     cfg, class_info, _, _, _ = coerce_cls_config(cls_cfg)
@@ -397,6 +416,9 @@ def apply_classifier_raster(
     out_scr_path = (
         ensure_parent_dir(out_score_img) if out_score_img is not None else None
     )
+    out_conf_path = (
+        ensure_parent_dir(out_conf_img) if out_conf_img is not None else None
+    )
 
     with ExitStack() as stack:
         msk_ds, datasets, grid, all_compatible = _open_apply_datasets(
@@ -442,6 +464,20 @@ def apply_classifier_raster(
             else:
                 for b_i, cls_name in enumerate(ordered_names, start=1):
                     scr_dst.set_band_description(b_i, cls_name)
+
+        conf_dst = None
+        if out_conf_path is not None:
+            conf_dst = open_output_dataset(
+                stack=stack,
+                output_img=out_conf_path,
+                gdalformat=gdalformat,
+                out_rio_dtype="float32",
+                grid=grid,
+                count=1,
+                creation_opts=c_opts,
+            )
+            conf_dst.nodata = _CONF_NODATA
+            conf_dst.set_band_description(1, f"confidence_{conf_method}")
 
         base_msk_col, base_msk_row = grid.offsets[msk_path]
         est_classes = getattr(estimator, "classes_", None)
@@ -503,6 +539,7 @@ def apply_classifier_raster(
             aligned_probs: Optional[np.ndarray] = None
             need_probs = (
                 scr_dst is not None
+                or conf_dst is not None
                 or (cls_dst is not None and binary and pred_threshold is not None)
             )
             if valid_idx.size > 0 and x_valid is not None and need_probs:
@@ -565,6 +602,14 @@ def apply_classifier_raster(
                     window=out_win,
                 )
 
+            if conf_dst is not None:
+                conf_flat = np.full(win_h * win_w, _CONF_NODATA, dtype=np.float32)
+                if valid_idx.size > 0 and aligned_probs is not None:
+                    conf_flat[valid_idx] = calc_proba_confidence(
+                        aligned_probs, conf_method
+                    )
+                conf_dst.write(conf_flat.reshape((win_h, win_w)), 1, window=out_win)
+
         if total_valid_pxls == 0:
             warnings.warn(
                 f"No valid pixels were classified (in_msk_img='{msk_path}', "
@@ -610,6 +655,16 @@ def apply_classifier_raster(
             pop_img_stats(
                 out_scr_path,
                 no_data_val=float(score_no_data_val),
+                calc_pyramids=True,
+                use_pbar=use_pbar,
+            )
+
+    if out_conf_path is not None:
+        set_img_not_thematic(out_conf_path)
+        if calc_stats:
+            pop_img_stats(
+                out_conf_path,
+                no_data_val=_CONF_NODATA,
                 calc_pyramids=True,
                 use_pbar=use_pbar,
             )
