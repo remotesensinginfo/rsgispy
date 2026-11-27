@@ -659,13 +659,14 @@ def test_shap_feature_contributions(tmp_path):
     assert (tmp_path / "bin_shap.png").exists()
     assert "mean_abs_shap" in bin_shap.columns
 
-    # KernelExplainer fallback with small subsample.
+    # KernelExplainer (use_tree_explainer=False) with small subsample.
     kern_shap = rcf.calc_shap_feature_contributions(
         bin_classes,
         lr_clf,
         bin_df.iloc[:12],
         feature_cols=["f1", "f2", "f3", "f_noise"],
         subsample_n_smpls=12,
+        use_tree_explainer=False,
         rnd_seed=42,
     )
     assert "mean_abs_shap" in kern_shap.columns
@@ -967,3 +968,33 @@ def test_classfeatures_validation_errors(tmp_path):
             feature_cols=["f1"],
             use_pbar=False,
         )
+
+
+def test_calc_shap_feature_contributions_default_auto_detects_tree_explainer(
+    tmp_path, monkeypatch
+):
+    """The default explainer is auto-detected (TreeExplainer for a forest), as in regfeatures."""
+    pytest.importorskip("shap")
+    import rsgispy.tools._ml_explain as mlx
+
+    fix = _make_synthetic_dataset(tmp_path, include_collinear=False)
+    rf_clf, _ = rcsk.train_sklearn_classifier(
+        fix["cfg"],
+        RandomForestClassifier(n_estimators=10),
+        fix["train_df"],
+        rnd_seed=42,
+        return_model=True,
+    )
+    built = []
+    orig = mlx._build_shap_explainer
+
+    def _spy(*args, **kwargs):
+        exp = orig(*args, **kwargs)
+        built.append(type(exp).__name__)
+        return exp
+
+    monkeypatch.setattr(mlx, "_build_shap_explainer", _spy)
+    rcf.calc_shap_feature_contributions(
+        fix["cfg"], rf_clf, fix["train_df"], subsample_n_smpls=10, rnd_seed=1
+    )
+    assert built and "Tree" in built[0]

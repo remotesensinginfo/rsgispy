@@ -1597,7 +1597,7 @@ def calc_shap_feature_contributions(
     shap_depend_plots_dir: Optional[Union[str, os.PathLike]] = None,
     out_shap_file: Optional[Union[str, os.PathLike]] = None,
     subsample_n_smpls: Optional[int] = None,
-    use_tree_explainer: bool = False,
+    use_tree_explainer: Optional[bool] = None,
     use_linear_explainer: bool = False,
     rnd_seed: Optional[int] = None,
     *,
@@ -1626,7 +1626,12 @@ def calc_shap_feature_contributions(
     :param shap_depend_plots_dir: Optional directory for per-feature partial dependence plots.
     :param out_shap_file: Optional output CSV path saving mean ``|SHAP|`` values.
     :param subsample_n_smpls: Optional subsample count for SHAP evaluation.
-    :param use_tree_explainer: Use ``shap.TreeExplainer`` when ``True``.
+    :param use_tree_explainer: Explicitly force ``shap.TreeExplainer``
+                               (``True``), use ``shap.KernelExplainer``
+                               (``False``), or auto-detect the explainer from
+                               the model (``None``, default: Tree for tree
+                               ensembles, Linear for models linear in the
+                               inputs, otherwise Kernel).
     :param use_linear_explainer: Use ``shap.LinearExplainer`` when ``True``.
     :param linear_perturbation: How ``shap.LinearExplainer`` handles
                                 correlated variables (keyword only):
