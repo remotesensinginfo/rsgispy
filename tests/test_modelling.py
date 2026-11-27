@@ -143,6 +143,7 @@ def test_package_layout_and_constants():
     assert py_files == [
         "__init__.py",
         "_helpers.py",
+        "_sdm_bias.py",
         "_sdm_data.py",
         "_sdm_models.py",
         "_sdm_predict.py",

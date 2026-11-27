@@ -14,6 +14,12 @@ rsgispy.modelling
    :func:`rsgispy.modelling.species_distribution.thin_pts_env_space`.
    Spatial cross-validation: :mod:`rsgispy.ml.cv`.
 
+   Sampling bias: :func:`rsgispy.modelling.species_distribution.create_bias_grid`,
+   ``bias_img`` in :func:`rsgispy.modelling.species_distribution.gen_pseudo_absences_smpls`,
+   ``fixed_var_vals`` in the ``pred_*`` functions and
+   :func:`rsgispy.modelling.species_distribution.calc_bias_weights` with
+   ``sample_weight_col``.
+
 .. automodule:: rsgispy.modelling
    :no-index:
 

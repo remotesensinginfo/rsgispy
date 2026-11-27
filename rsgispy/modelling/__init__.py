@@ -6,8 +6,10 @@ modelling workflows built on ``scikit-learn``, ``geopandas``, ``numpy``,
 Submodules:
 
 * :mod:`rsgispy.modelling.species_distribution` — Species distribution
-  modelling (pseudo-absence generation, environmental covariate extraction,
-  environmental-space thinning, normalisation, collinearity diagnostics,
-  isolated scikit-learn model fitting and k-fold ensembles, ROC/AUC evaluation and threshold selection, variable
-  response/importance analysis, and block-wise spatial raster prediction).
+  modelling (pseudo-absence generation, sampling-bias grids and bias-weighted
+  background, environmental covariate extraction, environmental-space
+  thinning, normalisation, collinearity diagnostics, isolated scikit-learn
+  model fitting and k-fold ensembles, ROC/AUC evaluation and threshold
+  selection, variable response/importance analysis, and block-wise spatial
+  raster prediction).
 """

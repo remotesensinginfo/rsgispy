@@ -201,10 +201,99 @@ Choosing the pseudo-absence strategy:
 * **Sampling bias.** Records cluster along roads, near towns and in well-known
   sites. Random pseudo-absences then teach the model the survey effort as well
   as the habitat. Mitigations are thinning the presences (step 3, e.g. with
-  :func:`~rsgispy.vector.geoms.thin_pts_min_dist`) and, when
-  records of related species collected with the same methods are available,
-  using those locations as "target-group" background (load them as the
-  absence layer in step 3 instead of the random points).
+  :func:`~rsgispy.vector.geoms.thin_pts_min_dist`) and a bias grid (below).
+
+Correcting for sampling bias with a bias grid
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A bias grid is a raster of relative sampling effort: how likely each place
+was to be surveyed. :func:`~rsgispy.modelling.species_distribution.create_bias_grid`
+makes one on the grid of the valid mask, scaled to ``[min_weight, 1]`` inside
+the mask so no pixel has zero effort. Three ways to estimate effort:
+
+* ``method="kde"`` — a kernel density of **target-group** records: records of
+  related species collected in the same way (e.g. all beetle records from the
+  same recording scheme), which show where people have looked. This is the
+  usual choice when such records exist. ``bandwidth`` sets the smoothing
+  (default: Scott's rule from the record coordinates).
+* ``method="count"`` — the number of records per pixel, unsmoothed.
+* ``method="distance"`` — effort falling with distance from roads, paths or
+  settlements, ``exp(-d / dist_decay)``, when there are no target-group
+  records. It needs ``scipy`` (the ``stats`` extra).
+
+.. code-block:: python
+
+   import rsgispy.modelling.species_distribution as sdm
+
+   sdm.create_bias_grid(
+       "target_group_records.gpkg", "records", "valid_mask.tif", 1,
+       "bias_grid.tif", method="kde", bandwidth=2000.0,
+   )
+
+There are three ways to use it; the first is the most common.
+
+1. **Bias-weighted background.** Draw the pseudo-absences in proportion to the
+   bias grid, so they share the presences' bias and the model can no longer
+   separate presences from background by survey effort alone:
+
+   .. code-block:: python
+
+      abs_gdf = sdm.gen_pseudo_absences_smpls(
+          "valid_mask.tif", 1, n_smpls=10000, xtra_n_smpls=2000,
+          presence_smpls_vec_file=pres_gdf, presence_smpls_dist_thres=100.0,
+          bias_img="bias_grid.tif", rnd_seed=42,
+      )
+
+   The bias grid must be on the same grid as the mask (it is, when made with
+   :func:`~rsgispy.modelling.species_distribution.create_bias_grid` from that
+   mask). A pixel can be drawn more than once, but each point lies at a random
+   position inside it.
+
+2. **Bias as a covariate, held constant when predicting.** Add the bias grid
+   to ``env_vars`` as an ordinary variable and fit with it, so the model
+   attributes the effort pattern to it rather than to the habitat variables.
+   When predicting, hold it at a constant with ``fixed_var_vals``, so the map
+   shows suitability "as if everywhere were surveyed equally"; the maximum
+   (``1`` for a grid from ``create_bias_grid``) or a high quantile is the
+   usual choice. The fixed variable's raster is not read. Leave it out of
+   the response curves and jackknife importance, since it is not an
+   ecological driver:
+
+   .. code-block:: python
+
+      env_vars["bias"] = sdm.EnvVarInfo(name="bias", file="bias_grid.tif")
+      # ... extract, fit with analysis_vars including "bias" ...
+      sdm.pred_ensemble_sklearn_mdls_prob(
+          mdls, "valid_mask.tif", 1, env_vars, analysis_vars, "sdm_prob.tif",
+          fixed_var_vals={"bias": 1.0},
+      )
+      sdm.sklearn_mdl_variable_response_curves(
+          mdls[0], train_gdf, None, analysis_vars, "resp.csv", "resp_plots",
+          fixed_var_vals={"bias": 1.0},
+      )
+      sdm.sklearn_jackknife_var_importance(
+          clf, train_gdf, None, test_gdf, None, analysis_vars, "jackknife.csv",
+          exclude_vars=["bias"],
+      )
+
+   With ``normalise_data=True`` give ``fixed_var_vals`` in raw units for the
+   prediction functions (they normalise it), but in normalised units for the
+   response curves, which work on the normalised training table.
+
+3. **Inverse-bias sample weights.**
+   :func:`~rsgispy.modelling.species_distribution.calc_bias_weights` adds a
+   weight column ``1 / bias`` (scaled to a mean of 1) for the presences, so
+   records from heavily surveyed places count less. Pass the column to the
+   fitting functions with ``sample_weight_col`` (the estimator's ``fit`` must
+   accept ``sample_weight``):
+
+   .. code-block:: python
+
+      train_gdf = sdm.calc_bias_weights(train_gdf, None, "bias_grid.tif")
+      mdls = sdm.fit_kfold_sklearn_mdls(
+          clf, train_gdf, None, test_gdf, None, analysis_vars,
+          sample_weight_col="weight",
+      )
 
 Step 3 — Extracting and combining the samples
 ---------------------------------------------
