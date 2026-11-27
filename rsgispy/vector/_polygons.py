@@ -769,10 +769,17 @@ def thin_vector_geoms(
     *,
     out_format: str = "GPKG",
     out_compress: Optional[Union[str, bool]] = None,
+    keep: str = "first",
+    rnd_seed: Optional[int] = None,
 ) -> Optional[gpd.GeoDataFrame]:
     """
     Thin vector geometries (typically points) using a polygon grid so that at
     most one feature intersecting each grid cell is retained.
+
+    See also :func:`rsgispy.vector.geoms.thin_pts_by_raster_grid` (one point
+    per raster pixel, no grid layer needed) and
+    :func:`rsgispy.vector.geoms.thin_pts_min_dist` (minimum distance between
+    retained points).
 
     :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`
                      to thin.
@@ -789,6 +796,9 @@ def thin_vector_geoms(
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
                          or codec name ``'snappy'``, ``'gzip'``, ``'zstd'``,
                          ``'brotli'``, ``'lz4'``).
+    :param keep: Which feature to keep in each grid cell: ``"first"``
+                 (Default, first in input order) or ``"random"``.
+    :param rnd_seed: Optional random seed used when ``keep="random"``.
     :return: Thinned :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
              ``None``, otherwise ``None``.
 
@@ -800,7 +810,12 @@ def thin_vector_geoms(
             "pts.gpkg", "pts", "grid.gpkg", "grid", "pts_thin.gpkg", "pts"
         )
     """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    keep_mode = str(keep).strip().lower()
+    if keep_mode not in ("first", "random"):
+        raise rsgispy.RSGISPyException(
+            f"Unsupported keep '{keep}'; use 'first' or 'random'."
+        )
     pts_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     grid_gdf = read_vec_gdf(grid_vec_file, grid_vec_lyr, copy=False)
     grid_gdf = ensure_matching_crs(pts_gdf, grid_gdf)
@@ -816,8 +831,13 @@ def thin_vector_geoms(
         crs=grid_gdf.crs,
     )
     joined = gpd.sjoin(pts_only, grid_only, how="inner", predicate="intersects")
+    if keep_mode == "random":
+        rng = np.random.default_rng(rnd_seed)
+        joined = joined.iloc[rng.permutation(len(joined))]
     joined = joined.drop_duplicates(subset="index_right", keep="first")
     kept_pos = joined.index.drop_duplicates(keep="first")
+    if keep_mode == "random":
+        kept_pos = np.sort(kept_pos.to_numpy())
     pts_thin_gdf = pts_gdf.iloc[kept_pos].copy()
 
     if out_vec_file is None:

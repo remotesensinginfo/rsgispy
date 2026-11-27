@@ -4,6 +4,7 @@ Data preparation, sampling, normalisation, and collinearity diagnostics for
 """
 
 import os
+import warnings
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
@@ -40,6 +41,7 @@ __all__ = [
     "create_finite_mask",
     "gen_pseudo_absences_smpls",
     "extract_env_var_data",
+    "thin_pts_env_space",
     "combine_presence_absence_data",
     "create_train_test_sets",
     "pop_normalise_coeffs",
@@ -378,6 +380,142 @@ def extract_env_var_data(
 
     return write_model_vector(
         vec_gdf,
+        out_vec_file=out_vec_file,
+        out_vec_lyr=out_vec_lyr,
+        out_format=out_format,
+        overwrite=True,
+        out_compress=out_compress,
+    )
+
+
+# pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
+def thin_pts_env_space(
+    smpls_vec_file: VectorInput,
+    smpls_vec_lyr: Optional[str],
+    analysis_vars: Sequence[str],
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
+    *,
+    n_bins: Union[int, Mapping[str, int]] = 10,
+    keep: str = "random",
+    rnd_seed: Optional[int] = None,
+    no_data_val: Optional[float] = -9999.0,
+    out_format: str = "GPKG",
+    out_compress: Optional[Union[str, bool]] = None,
+) -> Optional[gpd.GeoDataFrame]:
+    """
+    Thin samples in **environmental** space: divide the range of each variable
+    in ``analysis_vars`` into ``n_bins`` equal-width bins and keep at most one
+    sample per occupied combination of bins. This reduces the over-representation
+    of commonly sampled environmental conditions, complementing geographic
+    thinning (:func:`rsgispy.vector.geoms.thin_pts_by_raster_grid`,
+    :func:`rsgispy.vector.geoms.thin_pts_min_dist`).
+
+    The samples must already have one column per variable (e.g. from
+    :func:`extract_env_var_data`). Rows with a non-finite value or a value equal
+    to ``no_data_val`` in any variable are dropped with a warning. All
+    attributes are kept, and the retained rows stay in their input order. With
+    many variables the bins become sparse and little is removed: use few
+    variables (e.g. the main 2–4) or few bins.
+
+    :param smpls_vec_file: Sample vector file path or :class:`geopandas.GeoDataFrame`.
+    :param smpls_vec_lyr: Sample vector layer name (or ``None``).
+    :param analysis_vars: Variable columns defining the environmental space.
+    :param out_vec_file: Output vector file path, or ``None`` to return an
+                         in-memory :class:`geopandas.GeoDataFrame`.
+    :param out_vec_lyr: Output vector layer name.
+    :param n_bins: Number of bins per variable, or a mapping of variable name to
+                   number of bins (Default = ``10``).
+    :param keep: Sample kept per occupied bin: ``"random"`` (Default) or
+                 ``"first"`` (first in input order).
+    :param rnd_seed: Optional random seed used when ``keep="random"``.
+    :param no_data_val: Value treated as missing (Default = ``-9999.0``, the
+                        :func:`extract_env_var_data` default); ``None`` to disable.
+    :param out_format: Output vector format driver (Default = ``'GPKG'``).
+    :param out_compress: Optional GeoParquet compression setting.
+    :return: Thinned :class:`geopandas.GeoDataFrame` when ``out_vec_file`` is
+             ``None``, otherwise ``None``.
+
+    .. code:: python
+
+        import rsgispy.modelling.species_distribution as sdm
+
+        thin_gdf = sdm.thin_pts_env_space(
+            pres_gdf, None, ["winter_temp", "elevation"], n_bins=8, rnd_seed=42
+        )
+    """
+    keep_mode = str(keep).strip().lower()
+    if keep_mode not in ("random", "first"):
+        raise rsgispy.RSGISPyException(
+            f"Unsupported keep '{keep}'; use 'random' or 'first'."
+        )
+    var_names = list(analysis_vars)
+    if not var_names:
+        raise rsgispy.RSGISPyException("analysis_vars must not be empty.")
+
+    if isinstance(n_bins, Mapping):
+        missing_bins = [v for v in var_names if v not in n_bins]
+        if missing_bins:
+            raise rsgispy.RSGISPyException(
+                f"n_bins has no entry for variable(s): {missing_bins}."
+            )
+        bins_per_var = {v: int(n_bins[v]) for v in var_names}
+    else:
+        bins_per_var = {v: int(n_bins) for v in var_names}
+    bad_bins = {v: b for v, b in bins_per_var.items() if b < 1}
+    if bad_bins:
+        raise rsgispy.RSGISPyException(f"n_bins must be >= 1, got {bad_bins}.")
+
+    smpls_gdf = read_model_vector(smpls_vec_file, vec_lyr=smpls_vec_lyr)
+    validate_columns_exist(smpls_gdf, var_names)
+
+    vals = (
+        smpls_gdf[var_names]
+        .apply(pd.to_numeric, errors="coerce")
+        .to_numpy(dtype=np.float64)
+    )
+    valid = np.all(np.isfinite(vals), axis=1)
+    if no_data_val is not None:
+        valid &= ~np.any(vals == float(no_data_val), axis=1)
+    n_invalid = int(np.sum(~valid))
+    if n_invalid > 0:
+        warnings.warn(
+            f"{n_invalid} sample(s) have missing or no-data variable values and "
+            "were dropped.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    n_smpls = vals.shape[0]
+    bin_idx = np.zeros((n_smpls, len(var_names)), dtype=np.int64)
+    for var_i, var_name in enumerate(var_names):
+        col_vals = vals[valid, var_i]
+        if col_vals.size == 0:
+            break
+        v_min = float(np.min(col_vals))
+        v_max = float(np.max(col_vals))
+        n_var_bins = bins_per_var[var_name]
+        if v_max > v_min:
+            idx = np.floor((col_vals - v_min) / (v_max - v_min) * n_var_bins)
+            bin_idx[valid, var_i] = np.clip(idx, 0, n_var_bins - 1).astype(np.int64)
+
+    if keep_mode == "random":
+        order = np.random.default_rng(rnd_seed).permutation(n_smpls)
+    else:
+        order = np.arange(n_smpls)
+    order = order[valid[order]]
+    cand_df = pd.DataFrame(
+        bin_idx[order], columns=[f"b{i}" for i in range(len(var_names))]
+    )
+    cand_df["pos"] = order
+    kept_pos = np.sort(
+        cand_df.drop_duplicates(
+            subset=[c for c in cand_df.columns if c != "pos"], keep="first"
+        )["pos"].to_numpy()
+    )
+    thin_gdf = smpls_gdf.iloc[kept_pos].copy()
+    return write_model_vector(
+        thin_gdf,
         out_vec_file=out_vec_file,
         out_vec_lyr=out_vec_lyr,
         out_format=out_format,

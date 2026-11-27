@@ -200,7 +200,8 @@ Choosing the pseudo-absence strategy:
   dispersal limitation).
 * **Sampling bias.** Records cluster along roads, near towns and in well-known
   sites. Random pseudo-absences then teach the model the survey effort as well
-  as the habitat. Mitigations are thinning the presences (step 3) and, when
+  as the habitat. Mitigations are thinning the presences (step 3, e.g. with
+  :func:`~rsgispy.vector.geoms.thin_pts_min_dist`) and, when
   records of related species collected with the same methods are available,
   using those locations as "target-group" background (load them as the
   absence layer in step 3 instead of the random points).
@@ -243,6 +244,43 @@ effective first step; for the Snowdon beetle it reduces 100 usable records to
 34 presences (see the tutorial script above). With 34 presences and 1000
 pseudo-absences, the classes are very unbalanced, which the random forest
 handles with ``class_weight='balanced'`` (step 6).
+
+Three thinning functions cover the usual approaches; apply them to the
+presence points before extracting the variables:
+
+* :func:`~rsgispy.vector.geoms.thin_pts_by_raster_grid` keeps at most one
+  point per pixel of a reference raster (one of the environmental rasters),
+  or per ``cell_mult`` × ``cell_mult`` pixels. With ``prefer_col`` it keeps,
+  for example, the most recent or most precise record in each pixel.
+* :func:`~rsgispy.vector.geoms.thin_pts_min_dist` keeps points so that none
+  are closer than ``min_dist`` (the ``spThin`` algorithm: random replicates,
+  keeping the largest; ``method="greedy"`` is deterministic).
+  ``return_reps=True`` returns every replicate, e.g. to fit one ensemble
+  member per thinned presence set.
+* :func:`~rsgispy.modelling.species_distribution.thin_pts_env_space` keeps one
+  sample per occupied cell of a grid in environmental space (it needs the
+  extracted variable columns), reducing the weight of commonly sampled
+  conditions.
+
+.. code-block:: python
+
+   import rsgispy.vector.geoms
+
+   pres_gdf = rsgispy.vector.geoms.thin_pts_by_raster_grid(
+       "presences.gpkg", "presences", "elevation.tif", rnd_seed=42
+   )
+   pres_gdf = rsgispy.vector.geoms.thin_pts_min_dist(
+       pres_gdf, None, 1000.0, n_reps=20, rnd_seed=42
+   )
+
+Choosing the thinning distance is a trade-off. It should be at least the
+scale at which records are spatially dependent, e.g. the range of an
+empirical semivariogram of the records or a covariate
+(:func:`rsgispy.vector.stats.calc_empirical_semivariogram`), or the species'
+home-range or dispersal scale. But every point removed is information lost:
+with few records (tens), thin to one per pixel and use spatial
+cross-validation (step 7) rather than a large distance. Point layers must be
+in a projected CRS for distance thinning (distances are in CRS units).
 
 Step 4 — Exploring the data and checking collinearity
 -----------------------------------------------------
