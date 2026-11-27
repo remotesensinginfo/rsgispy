@@ -95,7 +95,9 @@ def stat_mean(
 ) -> np.ndarray:
     """Compute local window mean over valid pixels."""
     del centre
-    flat = wins.reshape(wins.shape[0], wins.shape[1], -1)
+    # Sum in float64 whatever the input type, so a float32 tile (e.g. a
+    # tile-graph node) gives the same result as the float64 file-based path.
+    flat = wins.reshape(wins.shape[0], wins.shape[1], -1).astype(np.float64, copy=False)
     vflat = valid.reshape(valid.shape[0], valid.shape[1], -1)
     n_valid = np.sum(vflat, axis=-1)
     sums = np.sum(np.where(vflat, flat, 0.0), axis=-1)
@@ -113,7 +115,9 @@ def stat_total(
 ) -> np.ndarray:
     """Compute local window sum over valid pixels."""
     del centre
-    flat = wins.reshape(wins.shape[0], wins.shape[1], -1)
+    # Sum in float64 whatever the input type, so a float32 tile (e.g. a
+    # tile-graph node) gives the same result as the float64 file-based path.
+    flat = wins.reshape(wins.shape[0], wins.shape[1], -1).astype(np.float64, copy=False)
     vflat = valid.reshape(valid.shape[0], valid.shape[1], -1)
     n_valid = np.sum(vflat, axis=-1)
     sums = np.sum(np.where(vflat, flat, 0.0), axis=-1)
@@ -320,7 +324,9 @@ def _window_mean_var(
     wins: np.ndarray, valid: np.ndarray
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Compute exact vectorised window ``(mean, var, n_valid)``."""
-    flat = wins.reshape(wins.shape[0], wins.shape[1], -1)
+    # Sum in float64 whatever the input type, so a float32 tile (e.g. a
+    # tile-graph node) gives the same result as the float64 file-based path.
+    flat = wins.reshape(wins.shape[0], wins.shape[1], -1).astype(np.float64, copy=False)
     vflat = valid.reshape(valid.shape[0], valid.shape[1], -1)
     n_valid = np.sum(vflat, axis=-1)
     zeros_masked = np.where(vflat, flat, 0.0)
@@ -436,7 +442,9 @@ def stat_mean_diff(
     centre_valid: np.ndarray,
 ) -> np.ndarray:
     """Compute mean signed difference ``mean(window - centre)``."""
-    flat = wins.reshape(wins.shape[0], wins.shape[1], -1)
+    # Sum in float64 whatever the input type, so a float32 tile (e.g. a
+    # tile-graph node) gives the same result as the float64 file-based path.
+    flat = wins.reshape(wins.shape[0], wins.shape[1], -1).astype(np.float64, copy=False)
     vflat = valid.reshape(valid.shape[0], valid.shape[1], -1)
     n_valid = np.sum(vflat, axis=-1)
     diff = np.where(vflat, flat - centre[..., None], 0.0)
@@ -453,7 +461,9 @@ def stat_mean_diff_abs(
     centre_valid: np.ndarray,
 ) -> np.ndarray:
     """Compute mean absolute difference ``mean(|window - centre|)``."""
-    flat = wins.reshape(wins.shape[0], wins.shape[1], -1)
+    # Sum in float64 whatever the input type, so a float32 tile (e.g. a
+    # tile-graph node) gives the same result as the float64 file-based path.
+    flat = wins.reshape(wins.shape[0], wins.shape[1], -1).astype(np.float64, copy=False)
     vflat = valid.reshape(valid.shape[0], valid.shape[1], -1)
     n_valid = np.sum(vflat, axis=-1)
     diff = np.where(vflat, np.abs(flat - centre[..., None]), 0.0)
@@ -470,7 +480,9 @@ def stat_total_diff(
     centre_valid: np.ndarray,
 ) -> np.ndarray:
     """Compute sum of signed differences ``sum(window - centre)``."""
-    flat = wins.reshape(wins.shape[0], wins.shape[1], -1)
+    # Sum in float64 whatever the input type, so a float32 tile (e.g. a
+    # tile-graph node) gives the same result as the float64 file-based path.
+    flat = wins.reshape(wins.shape[0], wins.shape[1], -1).astype(np.float64, copy=False)
     vflat = valid.reshape(valid.shape[0], valid.shape[1], -1)
     n_valid = np.sum(vflat, axis=-1)
     diff = np.where(vflat, flat - centre[..., None], 0.0)
@@ -487,7 +499,9 @@ def stat_total_diff_abs(
     centre_valid: np.ndarray,
 ) -> np.ndarray:
     """Compute sum of absolute differences ``sum(|window - centre|)``."""
-    flat = wins.reshape(wins.shape[0], wins.shape[1], -1)
+    # Sum in float64 whatever the input type, so a float32 tile (e.g. a
+    # tile-graph node) gives the same result as the float64 file-based path.
+    flat = wins.reshape(wins.shape[0], wins.shape[1], -1).astype(np.float64, copy=False)
     vflat = valid.reshape(valid.shape[0], valid.shape[1], -1)
     n_valid = np.sum(vflat, axis=-1)
     diff = np.where(vflat, np.abs(flat - centre[..., None]), 0.0)
