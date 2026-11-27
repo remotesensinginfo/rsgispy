@@ -98,6 +98,17 @@ Spectra and spatial statistics
 .. image:: images/gallery/plot_endmembers.png
    :width: 70%
 
+:func:`rsgispy.imagespectral.spectra.plot_spectra` (any spectra; here
+coloured by chlorophyll content with ``cmap_name``) and
+:func:`rsgispy.imagespectral.spectra.plot_continuum_removal` (the result of
+:func:`~rsgispy.imagespectral.spectra.calc_continuum_removal`):
+
+.. image:: images/gallery/plot_spectra.png
+   :width: 70%
+
+.. image:: images/gallery/plot_continuum_removal.png
+   :width: 100%
+
 .. image:: images/gallery/plot_semivariogram.png
    :width: 75%
 
