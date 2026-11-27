@@ -1,7 +1,7 @@
 """
 Run the object-based (segment) worked example (``segment_ml_workflow.py``) on
 the data of the rsgispy tutorials
-(https://github.com/petebunting/rsgispy-tutorials): the 20 m Sentinel-2 image
+(https://github.com/remotesensinginfo/rsgispy-tutorials): the 20 m Sentinel-2 image
 of 29 June 2018 (``data/sen2_20180629_t30uvd_orb037_osgb_stdsref_20m.tif``),
 the training polygons of
 ``04_image_classification/04_object_based_classification.ipynb``

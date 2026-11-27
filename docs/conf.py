@@ -29,7 +29,7 @@ extensions = [
 #   :tutorial:`Hydrological analysis <08_hydrology/01_hydrological_analysis.ipynb>`
 #   :tutorial-dir:`section 5 <05_regression>` (a folder)
 #   :tutorial-data:`dem_10m_osgb.tif`
-TUTORIALS_URL = "https://github.com/petebunting/rsgispy-tutorials"
+TUTORIALS_URL = "https://github.com/remotesensinginfo/rsgispy-tutorials"
 extlinks = {
     "tutorial": (f"{TUTORIALS_URL}/blob/main/%s", "%s"),
     "tutorial-dir": (f"{TUTORIALS_URL}/tree/main/%s", "%s"),

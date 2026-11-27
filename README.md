@@ -11,7 +11,7 @@ Instead of wrapping compiled C++ extensions and GDAL SWIG (`osgeo`) bindings, `r
 
 **Online Documentation:** [https://rsgispy.readthedocs.io](https://rsgispy.readthedocs.io)
 
-**Tutorials:** Jupyter notebooks that teach rsgispy on real data (Sentinel-2, Landsat, a DEM, hyperspectral, lidar, ICESat-2 and species sightings) are at [https://github.com/petebunting/rsgispy-tutorials](https://github.com/petebunting/rsgispy-tutorials).
+**Tutorials:** Jupyter notebooks that teach rsgispy on real data (Sentinel-2, Landsat, a DEM, hyperspectral, lidar, ICESat-2 and species sightings) are at [https://github.com/remotesensinginfo/rsgispy-tutorials](https://github.com/remotesensinginfo/rsgispy-tutorials).
 
 ## What is it for?
 

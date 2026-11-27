@@ -1,6 +1,6 @@
 """
 Draw the plot gallery (``plot_gallery.py``) with real data from the rsgispy
-tutorials (https://github.com/petebunting/rsgispy-tutorials) wherever a plot
+tutorials (https://github.com/remotesensinginfo/rsgispy-tutorials) wherever a plot
 is about data:
 
 * the maps: the Aberystwyth maps of ``making_maps_tutorial.py`` (Sentinel-2,

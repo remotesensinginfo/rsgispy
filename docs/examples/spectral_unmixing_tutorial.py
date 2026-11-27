@@ -1,7 +1,7 @@
 """
 Run the spectral unmixing worked example (``spectral_unmixing.py``) on the
 Landsat images of the Rufiji delta, Tanzania, from the rsgispy tutorials
-(https://github.com/petebunting/rsgispy-tutorials, ``data/chg_data/``): a
+(https://github.com/remotesensinginfo/rsgispy-tutorials, ``data/chg_data/``): a
 Landsat 5 TM image from 16 July 1997 and a Landsat 8 OLI image from
 8 June 2018, both surface reflectance x 1000 with no data 0. The figures and
 printed outputs in ``docs/guides/spectral_unmixing.rst`` were made with this

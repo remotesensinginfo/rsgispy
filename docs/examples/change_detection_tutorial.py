@@ -1,7 +1,7 @@
 """
 Run the change detection worked example (``change_detection.py``) on the
 Landsat images of the Rufiji delta (Tanzania) from the rsgispy tutorials
-(https://github.com/petebunting/rsgispy-tutorials, ``data/chg_data``): a
+(https://github.com/remotesensinginfo/rsgispy-tutorials, ``data/chg_data``): a
 Landsat 5 TM image of 16 July 1997 and a Landsat 8 OLI image of 8 June 2018
 (surface reflectance x 1000, 30 m, UTM zone 37S), the mangrove habitat layer
 and the training polygons used by the section 6 notebooks. Mangrove loss

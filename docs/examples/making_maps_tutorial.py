@@ -1,7 +1,7 @@
 """
 Run the map-making worked example (``making_maps.py``) on the Aberystwyth
 data of the rsgispy tutorials
-(https://github.com/petebunting/rsgispy-tutorials): the 20 m Sentinel-2 image
+(https://github.com/remotesensinginfo/rsgispy-tutorials): the 20 m Sentinel-2 image
 of 29 June 2018 (``data/sen2_20180629_t30uvd_orb037_osgb_stdsref_20m.tif``),
 the land cover training polygons (``data/cls_data/aber_sen2_cls_training.gpkg``),
 the 10 m DEM (``data/dem_10m_osgb.tif``) and the country outlines

@@ -6,7 +6,7 @@ outputs shown in the guides.
 The tutorial data (about 1 GB, stored with Git LFS) is not part of this
 repository, so these tests are skipped unless the ``RSGISPY_TUTORIAL_DATA``
 environment variable gives the ``data`` folder of a clone of
-https://github.com/petebunting/rsgispy-tutorials:
+https://github.com/remotesensinginfo/rsgispy-tutorials:
 
 .. code-block:: bash
 

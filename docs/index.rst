@@ -183,7 +183,7 @@ individual functions is merged on top. To change the options from Python, use
 Tutorials
 ---------
 
-The `rsgispy tutorials <https://github.com/petebunting/rsgispy-tutorials>`_
+The `rsgispy tutorials <https://github.com/remotesensinginfo/rsgispy-tutorials>`_
 are Jupyter notebooks that teach rsgispy step by step on real data
 (Sentinel-2, Landsat, a DEM, hyperspectral, lidar, ICESat-2 and species
 sightings), from a first NDVI to classification, regression, change
