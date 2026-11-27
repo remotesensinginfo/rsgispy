@@ -1,7 +1,7 @@
 """
 Run the hydrology worked example (``hydrology_workflow.py``) on the 10 m DEM
 of the Aberystwyth area from the rsgispy tutorials
-(https://github.com/petebunting/rsgispy-tutorials, ``data/dem_10m_osgb.tif``).
+(https://github.com/remotesensinginfo/rsgispy-tutorials, ``data/dem_10m_osgb.tif``).
 The figures and printed outputs in ``docs/guides/hydrology_workflow.rst``
 were made with this script::
 

@@ -1,7 +1,7 @@
 Tutorials
 =========
 
-The `rsgispy tutorials <https://github.com/petebunting/rsgispy-tutorials>`_
+The `rsgispy tutorials <https://github.com/remotesensinginfo/rsgispy-tutorials>`_
 are Jupyter notebooks that teach remote sensing and GIS analysis with
 rsgispy on real data: Sentinel-2, Landsat and Sentinel-1 images, a 10 m DEM,
 HyMap hyperspectral data, airborne lidar metrics, ICESat-2 depths and species
@@ -27,7 +27,7 @@ conda environment installs rsgispy and everything the notebooks use:
 .. code-block:: bash
 
    git lfs install
-   git clone https://github.com/petebunting/rsgispy-tutorials.git
+   git clone https://github.com/remotesensinginfo/rsgispy-tutorials.git
    cd rsgispy-tutorials
    conda env create -f environment.yml
    conda activate rsgispy-tutorials

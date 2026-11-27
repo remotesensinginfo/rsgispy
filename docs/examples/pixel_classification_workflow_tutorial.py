@@ -1,7 +1,7 @@
 """
 Run the pixel-based classification worked example
 (``pixel_classification_workflow.py``) on the data of the rsgispy tutorials
-(https://github.com/petebunting/rsgispy-tutorials): the 20 m Sentinel-2 image
+(https://github.com/remotesensinginfo/rsgispy-tutorials): the 20 m Sentinel-2 image
 of 29 June 2018 (``data/sen2_20180629_t30uvd_orb037_osgb_stdsref_20m.tif``),
 the training polygons of
 ``04_image_classification/03_supervised_pixel_classification.ipynb``

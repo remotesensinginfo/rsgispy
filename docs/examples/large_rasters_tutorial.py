@@ -1,7 +1,7 @@
 """
 Run the large raster worked example (``large_rasters.py``) on the 20 m
 Sentinel-2 scene of mid-Wales from the rsgispy tutorials
-(https://github.com/petebunting/rsgispy-tutorials,
+(https://github.com/remotesensinginfo/rsgispy-tutorials,
 ``data/sen2_20180629_t30uvd_orb037_osgb_stdsref_20m.tif``: 10 bands, surface
 reflectance x 10000, no data 0, British National Grid). The printed outputs
 in ``docs/guides/large_rasters.rst`` were made with this script::

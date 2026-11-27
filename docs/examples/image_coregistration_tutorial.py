@@ -1,7 +1,7 @@
 """
 Run the image co-registration worked example (``image_coregistration.py``)
 on two Sentinel-2 images of Aberystwyth from the rsgispy tutorials
-(https://github.com/petebunting/rsgispy-tutorials, ``data/``): the 20 m image
+(https://github.com/remotesensinginfo/rsgispy-tutorials, ``data/``): the 20 m image
 of 29 June 2018 (``sen2_20180629_t30uvd_orb037_osgb_stdsref_20m.tif``) is the
 reference, and the 10 m image of 27 May 2021 (``sen2_20210527_aber.tif``),
 resampled to 20 m with a known shift and rotation added, is the floating

@@ -1,6 +1,6 @@
 """
 Run the tile-graph worked example (``tile_graph.py``) on the data of the
-rsgispy tutorials (https://github.com/petebunting/rsgispy-tutorials): the
+rsgispy tutorials (https://github.com/remotesensinginfo/rsgispy-tutorials): the
 20 m Sentinel-2 image of 29 June 2018
 (``data/sen2_20180629_t30uvd_orb037_osgb_stdsref_20m.tif``), the training
 polygons of ``09_tile_graph_workflows/01_indices_classification_filtering.ipynb``

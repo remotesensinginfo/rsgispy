@@ -2,7 +2,7 @@
 Run the species distribution modelling worked example
 (``species_distribution_modelling.py``) on the Snowdon beetle
 (*Chrysolina cerealis*) data from the rsgispy tutorials
-(https://github.com/petebunting/rsgispy-tutorials, ``data/sdm``): the
+(https://github.com/remotesensinginfo/rsgispy-tutorials, ``data/sdm``): the
 sightings CSV, the 20 m elevation and mean winter temperature rasters, the
 Phase 1 habitat map and the study area in Snowdonia. The figures and printed
 outputs in ``docs/guides/species_distribution_modelling.rst`` were made with
