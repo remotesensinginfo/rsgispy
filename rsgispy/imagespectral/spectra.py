@@ -44,11 +44,18 @@ _trapezoid = getattr(np, "trapezoid", None) or getattr(np, "trapz")
 
 
 def _check_wavelengths(wvls: np.ndarray) -> None:
-    """Raise if ``wvls`` is not 1D and strictly increasing."""
+    """
+    Raise if ``wvls`` (the wavelengths within the analysis range) is not 1D
+    and strictly increasing. Only the wavelengths in the range are checked,
+    so sensors whose detectors overlap elsewhere in the spectrum (e.g. HyMap,
+    where the VNIR and SWIR detectors overlap near 880 nm) can be used.
+    """
     if wvls.ndim != 1 or wvls.size < 2:
         raise rsgispy.RSGISPyException("At least two wavelengths are needed.")
     if np.any(np.diff(wvls) <= 0):
-        raise rsgispy.RSGISPyException("The wavelengths must be strictly increasing.")
+        raise rsgispy.RSGISPyException(
+            "The wavelengths within the start / stop range must be strictly increasing."
+        )
 
 
 def _wvl_range_mask(
@@ -165,7 +172,8 @@ def calc_continuum_removal(
     ``baseline``.
 
     :param spectrum: The spectrum values (e.g. reflectance).
-    :param wavelengths: The wavelength of each value (strictly increasing).
+    :param wavelengths: The wavelength of each value (strictly increasing within
+                        the start / stop range).
     :param start_wvl: Optional first wavelength of the analysis (the
                       wavelengths ``>= start_wvl`` are used).
     :param stop_wvl: Optional last wavelength of the analysis (the
@@ -206,12 +214,12 @@ def calc_continuum_removal(
             f"spectrum ({spec.size} values) and wavelengths ({wvls.size} values) "
             "must be the same length."
         )
-    _check_wavelengths(wvls)
     if not np.all(np.isfinite(spec)):
         raise rsgispy.RSGISPyException("The spectrum must not contain NaN or inf.")
     keep = _wvl_range_mask(wvls, start_wvl, stop_wvl)
     spec = spec[keep]
     wvls = wvls[keep]
+    _check_wavelengths(wvls)
 
     crs = np.empty(spec.size, dtype=np.float64)
     hull_idxs = np.empty(spec.size, dtype=np.int64)
@@ -316,10 +324,10 @@ def calc_continuum_removal_img(
     # pylint: disable=too-many-arguments,too-many-locals
     ensure_file_exists(input_img)
     wvls = np.asarray(wavelengths, dtype=np.float64).ravel()
-    _check_wavelengths(wvls)
     keep = _wvl_range_mask(wvls, start_wvl, stop_wvl)
     band_idxs = [int(i) + 1 for i in np.flatnonzero(keep)]
     sub_wvls = np.ascontiguousarray(wvls[keep])
+    _check_wavelengths(sub_wvls)
     out_rio_dtype = rsgispy.get_rasterio_datatype(datatype)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
 

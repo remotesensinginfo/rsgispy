@@ -206,3 +206,17 @@ def test_plot_spectra_inputs():
     with pytest.raises(rsgispy.RSGISPyException):
         spectra.plot_spectra(arr, WVLS, labels=["a"])
     plt.close("all")
+
+
+def test_continuum_removal_overlapping_detectors():
+    """Only the wavelengths within the range must increase (e.g. HyMap's
+    VNIR / SWIR detector overlap near 880 nm is outside 530-750 nm)."""
+    import rsgispy
+    from rsgispy.imagespectral import spectra as spec_mod
+
+    wvls = np.array([500.0, 530.0, 600.0, 680.0, 750.0, 882.5, 874.6, 900.0])
+    vals = np.array([0.1, 0.12, 0.2, 0.05, 0.4, 0.45, 0.44, 0.46])
+    cr_info = spec_mod.calc_continuum_removal(vals, wvls, 530, 750)
+    assert cr_info["wvl"][0] == 530.0
+    with pytest.raises(rsgispy.RSGISPyException):
+        spec_mod.calc_continuum_removal(vals, wvls, 530, 900)
