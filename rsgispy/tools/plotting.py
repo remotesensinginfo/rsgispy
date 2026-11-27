@@ -55,6 +55,7 @@ __all__ = [
     "get_fig_axs",
     "save_plot",
     "add_stats_text_box",
+    "plot_feature_importance_bars",
     "get_raster_mpl_imshow",
     "get_thematic_raster_mpl_imshow",
     "limit_range_np_arr",
@@ -1777,6 +1778,72 @@ def plot_qq(
     ax.set_ylabel(y_label if y_label is not None else "Ordered values")
     if title is not None:
         ax.set_title(title)
+    if out_plot_file is not None:
+        save_plot(fig, out_plot_file, out_dpi=out_dpi)
+    return fig, ax
+
+
+@use_plot_style
+def plot_feature_importance_bars(
+    features: Sequence[str],
+    importances: Sequence[float],
+    errors: Optional[Sequence[float]] = None,
+    title: str = "Feature Importance",
+    xlabel: str = "Importance",
+    *,
+    ax: Optional[Any] = None,
+    out_plot_file: Optional[Union[str, os.PathLike]] = None,
+    out_dpi: int = PLOT_DPI,
+) -> Tuple[Any, Any]:
+    """
+    Plot a horizontal bar chart of feature importances, sorted so the most
+    important feature is at the top, with optional error bars (e.g. the
+    standard deviation of permutation importances).
+
+    :param features: Feature names.
+    :param importances: Importance of each feature.
+    :param errors: Optional error of each importance, drawn as error bars.
+    :param title: Plot title (Default = ``'Feature Importance'``).
+    :param xlabel: x-axis label (Default = ``'Importance'``).
+    :param ax: Optional Matplotlib axis to draw on.
+    :param out_plot_file: Optional output image file.
+    :param out_dpi: Resolution of the saved image (Default = 300).
+    :return: Tuple ``(fig, ax)``.
+
+    .. code:: python
+
+        import rsgispy.tools.plotting
+
+        fig, ax = rsgispy.tools.plotting.plot_feature_importance_bars(
+            ["NDVI", "NIR", "Red"], [0.5, 0.3, 0.2], title="Random forest"
+        )
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    feat_list = list(features)
+    val_arr = np.asarray(importances, dtype=float)
+    err_arr = np.asarray(errors, dtype=float) if errors is not None else None
+    order = np.argsort(val_arr)
+    sorted_feats = [feat_list[i] for i in order]
+    sorted_vals = val_arr[order]
+    sorted_errs = err_arr[order] if err_arr is not None else None
+
+    plt_height = max(3.0, (0.45 * len(sorted_feats)) + 1.5)
+    fig, ax = get_fig_ax(ax, figsize=(8, plt_height))
+    y_pos = np.arange(len(sorted_feats))
+    ax.barh(
+        y_pos,
+        sorted_vals,
+        xerr=sorted_errs,
+        color=CATEGORICAL_COLOURS[0],
+        ecolor="#262626",
+        capsize=3,
+        height=0.7,
+    )
+    ax.grid(axis="y", visible=False)
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(sorted_feats)
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
     if out_plot_file is not None:
         save_plot(fig, out_plot_file, out_dpi=out_dpi)
     return fig, ax

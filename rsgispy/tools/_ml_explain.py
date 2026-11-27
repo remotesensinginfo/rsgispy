@@ -27,6 +27,7 @@ from rsgispy.tools.plotting import (
     OKABE_ITO_COLOURS,
     PLOT_DPI,
     get_fig_ax,
+    plot_feature_importance_bars,
     rsgispy_plot_style,
     save_plot,
     use_plot_style,
@@ -261,55 +262,6 @@ def plot_jackknife_bars(
         ncol=3,
         frameon=False,
     )
-    if out_plot_file is not None:
-        save_plot(fig, out_plot_file, out_dpi=out_dpi)
-    return fig, ax
-
-
-@use_plot_style
-def plot_feature_importance_bars(
-    features: Sequence[str],
-    importances: Sequence[float],
-    errors: Optional[Sequence[float]] = None,
-    title: str = "Feature Importance",
-    xlabel: str = "Importance",
-    *,
-    ax: Optional[Any] = None,
-    out_plot_file: Optional[Union[str, os.PathLike]] = None,
-    out_dpi: int = PLOT_DPI,
-) -> Tuple[Any, Any]:
-    """
-    Plot a horizontal bar chart of sorted feature importances with optional
-    error bars.
-
-    :return: Tuple ``(fig, ax)``.
-    """
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    feat_list = list(features)
-    val_arr = np.asarray(importances, dtype=float)
-    err_arr = np.asarray(errors, dtype=float) if errors is not None else None
-    order = np.argsort(val_arr)
-    sorted_feats = [feat_list[i] for i in order]
-    sorted_vals = val_arr[order]
-    sorted_errs = err_arr[order] if err_arr is not None else None
-
-    plt_height = max(3.0, (0.45 * len(sorted_feats)) + 1.5)
-    fig, ax = get_fig_ax(ax, figsize=(8, plt_height))
-    y_pos = np.arange(len(sorted_feats))
-    ax.barh(
-        y_pos,
-        sorted_vals,
-        xerr=sorted_errs,
-        color=CATEGORICAL_COLOURS[0],
-        ecolor="#262626",
-        capsize=3,
-        height=0.7,
-    )
-    ax.grid(axis="y", visible=False)
-    ax.set_yticks(y_pos)
-    ax.set_yticklabels(sorted_feats)
-    ax.set_title(title)
-    ax.set_xlabel(xlabel)
     if out_plot_file is not None:
         save_plot(fig, out_plot_file, out_dpi=out_dpi)
     return fig, ax
