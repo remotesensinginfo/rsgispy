@@ -180,3 +180,25 @@ def test_plot_pred_vs_obs_stats_line_and_ranges(eval_df):
     assert not [ln for ln in axs[0, 1].get_lines() if ln.get_label().startswith("Fit")]
     assert not axs[0, 1].artists
     plt.close(fig)
+
+
+def test_pred_vs_obs_and_qq_use_callers_axes_layout():
+    """Four targets can be drawn on a caller's 2 x 2 grid."""
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    import rsgispy.regression.regmetrics as rm
+
+    rng = np.random.default_rng(5)
+    data = {}
+    for idx in range(4):
+        obs = rng.normal(10, 2, 50)
+        data[f"obs{idx}"] = obs
+        data[f"pred{idx}"] = obs + rng.normal(0, 0.5, 50)
+    df = pd.DataFrame(data)
+    cols = dict(ref_cols=[f"obs{i}" for i in range(4)], pred_cols=[f"pred{i}" for i in range(4)])
+    for func in (rm.plot_pred_vs_obs, rm.plot_qq_residuals):
+        fig, grid = plt.subplots(2, 2)
+        out_fig, axes = func(df, axs=grid, **cols)
+        assert out_fig is fig and axes.shape == (2, 2)
+        assert all(ax.has_data() for ax in grid.ravel())
+        plt.close(fig)

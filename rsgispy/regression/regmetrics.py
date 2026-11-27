@@ -616,6 +616,32 @@ def _fmt_num(val: float) -> str:
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
+
+def _target_axes(
+    axs: Optional[Any],
+    n_targets: int,
+    n_rows: int,
+    n_cols: int,
+    figsize: Optional[Tuple[float, float]],
+) -> Tuple[Any, np.ndarray, List[Any]]:
+    """
+    The figure, the 2D axes array to return and one axis per target. Axes
+    passed in keep the caller's layout (e.g. a 2 x 2 grid for 4 targets);
+    they need at least one axis per target, used in order.
+    """
+    if axs is None:
+        fig, axes = get_fig_axs(None, nrows=n_rows, ncols=n_cols, figsize=figsize)
+        return fig, axes, [axes[divmod(i, n_cols)] for i in range(n_targets)]
+    ax_arr = np.asarray(axs, dtype=object)
+    flat = list(ax_arr.ravel())
+    if len(flat) < n_targets:
+        raise rsgispy.RSGISPyException(
+            f"{n_targets} axes are needed (one per target) but {len(flat)} were given."
+        )
+    axes = ax_arr if ax_arr.ndim == 2 else ax_arr.reshape(1, -1)
+    return flat[0].get_figure(), axes, flat[:n_targets]
+
+
 @use_plot_style
 def plot_pred_vs_obs(
     in_data: Union[VectorInput, pd.DataFrame, str, os.PathLike],
@@ -698,10 +724,9 @@ def plot_pred_vs_obs(
     n_rows = int(math.ceil(n_targets / float(n_cols)))
     if figsize is None:
         figsize = (5.0 * n_cols, 5.0 * n_rows)
-    fig, axes = get_fig_axs(axs, nrows=n_rows, ncols=n_cols, figsize=figsize)
+    fig, axes, panel_axes = _target_axes(axs, n_targets, n_rows, n_cols, figsize)
     for idx, t_name in enumerate(eff_names):
-        r_i, c_i = divmod(idx, n_cols)
-        ax = axes[r_i, c_i]
+        ax = panel_axes[idx]
         yt = y_t_2d[:, idx]
         yp = y_p_2d[:, idx]
         ax.scatter(yt, yp, s=16, alpha=0.6, color=CATEGORICAL_COLOURS[0], zorder=3)
@@ -742,9 +767,9 @@ def plot_pred_vs_obs(
                 loc="upper left",
             )
 
-    for idx in range(n_targets, n_rows * n_cols):
-        r_i, c_i = divmod(idx, n_cols)
-        axes[r_i, c_i].set_visible(False)
+    if axs is None:
+        for idx in range(n_targets, n_rows * n_cols):
+            axes[divmod(idx, n_cols)].set_visible(False)
 
     if title:
         fig.suptitle(title)
@@ -998,10 +1023,9 @@ def plot_qq_residuals(
     n_rows = int(math.ceil(n_targets / float(n_cols)))
     if figsize is None:
         figsize = (5.0 * n_cols, 5.0 * n_rows)
-    fig, axes = get_fig_axs(axs, nrows=n_rows, ncols=n_cols, figsize=figsize)
+    fig, axes, panel_axes = _target_axes(axs, n_targets, n_rows, n_cols, figsize)
     for idx, t_name in enumerate(eff_names):
-        r_i, c_i = divmod(idx, n_cols)
-        ax = axes[r_i, c_i]
+        ax = panel_axes[idx]
         resid = y_p_2d[:, idx] - y_t_2d[:, idx]
         if resid.size < 2:
             raise rsgispy.RSGISPyException("At least two samples are needed for a Q-Q plot.")
@@ -1009,9 +1033,9 @@ def plot_qq_residuals(
         ax.set_xlabel("Theoretical quantiles (normal)")
         ax.set_ylabel("Residual (predicted − observed)")
         ax.set_title(t_name if n_targets > 1 else f"Q-Q plot of {t_name} residuals")
-    for idx in range(n_targets, n_rows * n_cols):
-        r_i, c_i = divmod(idx, n_cols)
-        axes[r_i, c_i].set_visible(False)
+    if axs is None:
+        for idx in range(n_targets, n_rows * n_cols):
+            axes[divmod(idx, n_cols)].set_visible(False)
     if title:
         fig.suptitle(title)
     if out_plot_file is not None:
