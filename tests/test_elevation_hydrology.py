@@ -207,12 +207,10 @@ def test_dem_conditioning_valley_and_dam(tmp_path):
         assert np.all(cs_arr[cs_arr != -1] == 0)
 
 
-@requires_numba
-def test_flow_routing_accumulation_and_stream_topology(tmp_path):
-    """
-    Test D8, D-Inf, MFD drainage area conservation, flow_length, flow_distance,
-    trace_flow_path, extract_streams, stream_link, stream_order, and vectorise_streams.
-    """
+@pytest.fixture
+def y_dem_routing(tmp_path):
+    """Conditioned convergent Y-shaped DEM with D8 flow directions, cell
+    accumulation and streams (threshold 25 cells)."""
     dem = _make_convergent_y_dem(rows=31, cols=31)
     dem_path = tmp_path / "y_dem.tif"
     _write_raster(dem_path, dem, res=10.0, nodata=-9999.0)
@@ -221,19 +219,39 @@ def test_flow_routing_accumulation_and_stream_topology(tmp_path):
     cond_path = tmp_path / "y_cond.tif"
     hydrology.fill_depressions(str(dem_path), str(cond_path), use_pbar=False)
 
-    # D8, D-Inf, MFD flow directions + accumulations
     fdir_d8 = tmp_path / "fdir_d8.tif"
+    hydrology.flow_direction(str(cond_path), str(fdir_d8), method="d8", use_pbar=False)
+    acc_d8 = tmp_path / "acc_d8.tif"
+    hydrology.flow_accumulation(str(fdir_d8), str(acc_d8), out_units="cells", use_pbar=False)
+
+    streams_path = tmp_path / "streams.tif"
+    hydrology.extract_streams(
+        str(acc_d8), str(streams_path), threshold=25.0, threshold_units="cells", use_pbar=False
+    )
+    return {
+        "cond": cond_path,
+        "fdir_d8": fdir_d8,
+        "acc_d8": acc_d8,
+        "streams": streams_path,
+    }
+
+
+@requires_numba
+def test_flow_accumulation_d8_dinf_mfd_conserve_drainage_area(tmp_path, y_dem_routing):
+    """D8, D-Inf and MFD accumulation conserve the drainage area at the outlet."""
+    cond_path = y_dem_routing["cond"]
+    fdir_d8 = y_dem_routing["fdir_d8"]
+    acc_d8 = y_dem_routing["acc_d8"]
+
+    # D-Inf, MFD flow directions + accumulations
     fdir_dinf = tmp_path / "fdir_dinf.tif"
     fdir_mfd = tmp_path / "fdir_mfd.tif"
-    hydrology.flow_direction(str(cond_path), str(fdir_d8), method="d8", use_pbar=False)
     hydrology.flow_direction(str(cond_path), str(fdir_dinf), method="dinf", use_pbar=False)
     hydrology.flow_direction(str(cond_path), str(fdir_mfd), method="mfd", use_pbar=False)
 
-    acc_d8 = tmp_path / "acc_d8.tif"
     acc_area = tmp_path / "acc_area.tif"
     acc_dinf = tmp_path / "acc_dinf.tif"
     acc_mfd = tmp_path / "acc_mfd.tif"
-    hydrology.flow_accumulation(str(fdir_d8), str(acc_d8), out_units="cells", use_pbar=False)
     hydrology.flow_accumulation(str(fdir_d8), str(acc_area), out_units="area", use_pbar=False)
     hydrology.flow_accumulation(str(fdir_dinf), str(acc_dinf), out_units="cells", use_pbar=False)
     hydrology.flow_accumulation(str(fdir_mfd), str(acc_mfd), out_units="cells", use_pbar=False)
@@ -255,11 +273,15 @@ def test_flow_routing_accumulation_and_stream_topology(tmp_path):
         assert ai[30, 15] == pytest.approx(float(n_total), rel=1e-4)
         assert am[30, 15] == pytest.approx(float(n_total), rel=1e-4)
 
-    # Stream extraction + link + Strahler/Shreve orders + vectorisation
-    streams_path = tmp_path / "streams.tif"
-    hydrology.extract_streams(
-        str(acc_d8), str(streams_path), threshold=25.0, threshold_units="cells", use_pbar=False
-    )
+
+@requires_numba
+def test_stream_link_order_and_vectorise_streams(tmp_path, y_dem_routing):
+    """stream_link, Strahler/Shreve stream_order and vectorise_streams give
+    connected links with the documented attributes."""
+    cond_path = y_dem_routing["cond"]
+    fdir_d8 = y_dem_routing["fdir_d8"]
+    acc_d8 = y_dem_routing["acc_d8"]
+    streams_path = y_dem_routing["streams"]
 
     links_path = tmp_path / "links.tif"
     strahler_path = tmp_path / "strahler.tif"
@@ -324,7 +346,14 @@ def test_flow_routing_accumulation_and_stream_topology(tmp_path):
             start_pt = by_id.loc[dlid].geometry.coords[0]
             assert end_pt == pytest.approx(start_pt, abs=1e-6)
 
-    # Flow length & flow distance & trace_flow_path
+
+@requires_numba
+def test_flow_length_and_flow_distance_zero_at_outlet(tmp_path, y_dem_routing):
+    """flow_length (down/upstream) and flow_distance (horizontal/vertical)."""
+    cond_path = y_dem_routing["cond"]
+    fdir_d8 = y_dem_routing["fdir_d8"]
+    streams_path = y_dem_routing["streams"]
+
     flen_down = tmp_path / "flen_down.tif"
     flen_up = tmp_path / "flen_up.tif"
     fdist_h = tmp_path / "fdist_h.tif"
@@ -353,6 +382,13 @@ def test_flow_routing_accumulation_and_stream_topology(tmp_path):
         assert flu.read(1)[30, 15] > 0.0
         assert fdh.read(1)[30, 15] == pytest.approx(0.0)
         assert fdv.read(1)[30, 15] == pytest.approx(0.0)
+
+
+@requires_numba
+def test_trace_flow_path_downstream_and_upstream(tmp_path, y_dem_routing):
+    """trace_flow_path follows the flow down to the outlet and back upstream."""
+    fdir_d8 = y_dem_routing["fdir_d8"]
+    acc_d8 = y_dem_routing["acc_d8"]
 
     seed_vec = tmp_path / "seed_pt.gpkg"
     with rasterio.open(fdir_d8) as src:

@@ -114,10 +114,10 @@ def test_vectorutils_metadata(tmp_path):
     assert not os.path.exists(str(tmp_path / "test_del.dbf"))
 
 
-def test_vectorutils_io_copy_reproj_merge_split(tmp_path):
-    """Test copy, translate, reprojection, UTM/WGS84 unwrapping, merging, splitting."""
-    in_gpkg = str(tmp_path / "in.gpkg")
-    pts_wgs = gpd.GeoDataFrame(
+@pytest.fixture
+def wgs84_pts():
+    """Three WGS84 points in two groups ('x' and 'y')."""
+    return gpd.GeoDataFrame(
         {"grp": ["x", "y", "x"], "id": [1, 2, 3]},
         geometry=[
             Point(-4.08, 52.41),
@@ -126,8 +126,19 @@ def test_vectorutils_io_copy_reproj_merge_split(tmp_path):
         ],
         crs="EPSG:4326",
     )
-    pts_wgs.to_file(in_gpkg, layer="pts", driver="GPKG")
 
+
+@pytest.fixture
+def wgs84_pts_gpkg(tmp_path, wgs84_pts):
+    """The WGS84 points written to a GeoPackage (layer 'pts')."""
+    in_gpkg = str(tmp_path / "in.gpkg")
+    wgs84_pts.to_file(in_gpkg, layer="pts", driver="GPKG")
+    return in_gpkg
+
+
+def test_vectorutils_io_copy_translate_and_reproj(tmp_path, wgs84_pts_gpkg):
+    """Test copy, vector_translate (append and reprojection) and reprojection helpers."""
+    in_gpkg = wgs84_pts_gpkg
     copy_gpkg = str(tmp_path / "copy.gpkg")
     vu_io.create_copy_vec_lyr(in_gpkg, "pts", copy_gpkg, "pts_cp", replace=True)
     assert vu_meta.get_vec_feat_count(copy_gpkg, "pts_cp") == 3
@@ -166,7 +177,10 @@ def test_vectorutils_io_copy_reproj_merge_split(tmp_path):
     vu_io.redefine_vec_lyr_proj(in_gpkg, "pts", 4258, redef_gpkg, "pts_etrs")
     assert vu_meta.get_epsg_proj_from_vec(redef_gpkg, "pts_etrs") == 4258
 
-    # Merging
+
+def test_vectorutils_io_merge_files_and_layers(tmp_path, wgs84_pts):
+    """Test merging vector files and layers, into one layer and into multiple layers."""
+    pts_wgs = wgs84_pts
     f1 = str(tmp_path / "m1.gpkg")
     f2 = str(tmp_path / "m2.gpkg")
     pts_wgs.iloc[:2].to_file(f1, layer="l1", driver="GPKG")
@@ -207,7 +221,9 @@ def test_vectorutils_io_copy_reproj_merge_split(tmp_path):
     )
     assert vu_meta.get_vec_feat_count(merged_single, "combined") == 4
 
-    # Antimeridian unwrapping + UTM-to-WGS84 merge
+
+def test_vectorutils_io_antimeridian_and_utm_to_wgs84_merge(tmp_path):
+    """Test antimeridian unwrapping and merging UTM zone layers into WGS84."""
     wrap_gdf = gpd.GeoDataFrame(
         {"id": [1, 2]},
         geometry=[
@@ -250,7 +266,10 @@ def test_vectorutils_io_copy_reproj_merge_split(tmp_path):
     assert vu_meta.get_epsg_proj_from_vec(wgs_merged, "wgs") == 4326
     assert vu_meta.get_vec_feat_count(wgs_merged, "wgs") == 1
 
-    # Splitting
+
+def test_vectorutils_io_split(tmp_path, wgs84_pts_gpkg):
+    """Test splitting a layer into chunks, per-feature layers and attribute layers."""
+    in_gpkg = wgs84_pts_gpkg
     split_dir = str(tmp_path / "splits")
     chunks = vu_io.split_vec_lyr(
         in_gpkg, "pts", 2, "GPKG", split_dir, "chunk_", "gpkg", use_pbar=False
@@ -269,35 +288,21 @@ def test_vectorutils_io_copy_reproj_merge_split(tmp_path):
     assert set(vu_meta.get_vec_lyrs_lst(attr_split)) == {"x", "y"}
 
 
-def test_vectorutils_selection(tmp_path):
-    """Test spatial, attribute, matching, and random split selection utilities."""
-    # does_vmsk_img_intersect
-    vmsk_tif = str(tmp_path / "vmsk.tif")
-    arr = np.zeros((20, 20), dtype=np.uint8)
-    arr[5:10, 5:10] = 1
-    _write_test_raster(
-        vmsk_tif, arr, epsg=32630, tl_x=500000.0, tl_y=5600200.0, res=10.0
-    )
-
+@pytest.fixture
+def roi_hit_gpkg(tmp_path):
+    """A 30 x 30 m ROI over the mask pixels and three of the selection features."""
     roi_hit = str(tmp_path / "roi_hit.gpkg")
     gpd.GeoDataFrame(
         {"id": [1]},
         geometry=[box(500060.0, 5600110.0, 500090.0, 5600140.0)],
         crs="EPSG:32630",
     ).to_file(roi_hit, layer="roi", driver="GPKG")
-    assert vu_sel.does_vmsk_img_intersect(vmsk_tif, roi_hit, "roi", use_pbar=False)
+    return roi_hit
 
-    roi_miss = str(tmp_path / "roi_miss.gpkg")
-    gpd.GeoDataFrame(
-        {"id": [1]},
-        geometry=[box(500160.0, 5600010.0, 500190.0, 5600040.0)],
-        crs="EPSG:32630",
-    ).to_file(roi_miss, layer="roi", driver="GPKG")
-    assert not vu_sel.does_vmsk_img_intersect(
-        vmsk_tif, roi_miss, "roi", use_pbar=False
-    )
 
-    # Spatial selections & attribute extraction
+@pytest.fixture
+def selection_feats_gpkg(tmp_path):
+    """Twenty points in a row, alternating 'River Thames' / 'Lake', flag 1 for the last five."""
     feats_gpkg = str(tmp_path / "feats.gpkg")
     n_feats = 20
     feats_gdf = gpd.GeoDataFrame(
@@ -312,6 +317,37 @@ def test_vectorutils_selection(tmp_path):
         crs="EPSG:32630",
     )
     feats_gdf.to_file(feats_gpkg, layer="feats", driver="GPKG")
+    return feats_gpkg
+
+
+def test_vectorutils_selection_vmsk_img_intersect(tmp_path, roi_hit_gpkg):
+    """Test does_vmsk_img_intersect for an ROI over and away from the mask."""
+    vmsk_tif = str(tmp_path / "vmsk.tif")
+    arr = np.zeros((20, 20), dtype=np.uint8)
+    arr[5:10, 5:10] = 1
+    _write_test_raster(
+        vmsk_tif, arr, epsg=32630, tl_x=500000.0, tl_y=5600200.0, res=10.0
+    )
+
+    assert vu_sel.does_vmsk_img_intersect(vmsk_tif, roi_hit_gpkg, "roi", use_pbar=False)
+
+    roi_miss = str(tmp_path / "roi_miss.gpkg")
+    gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[box(500160.0, 5600010.0, 500190.0, 5600040.0)],
+        crs="EPSG:32630",
+    ).to_file(roi_miss, layer="roi", driver="GPKG")
+    assert not vu_sel.does_vmsk_img_intersect(
+        vmsk_tif, roi_miss, "roi", use_pbar=False
+    )
+
+
+def test_vectorutils_selection_spatial_and_attribute_extraction(
+    tmp_path, roi_hit_gpkg, selection_feats_gpkg
+):
+    """Test spatial selections (by ROI, bbox and feature bboxes) and attribute extraction."""
+    roi_hit = roi_hit_gpkg
+    feats_gpkg = selection_feats_gpkg
 
     sel_out = str(tmp_path / "sel_out.gpkg")
     vu_sel.spatial_select(feats_gpkg, "feats", roi_hit, "roi", sel_out, "sel")
@@ -352,7 +388,11 @@ def test_vectorutils_selection(tmp_path):
     )
     assert [d["id"] for d in att_bbox] == [0, 1, 2]
 
-    # Attribute subsetting & drops
+
+def test_vectorutils_selection_attribute_subsets_and_drops(tmp_path, selection_feats_gpkg):
+    """Test attribute subsetting, string search, row drops and duplicate removal."""
+    feats_gpkg = selection_feats_gpkg
+
     sub_attr = str(tmp_path / "sub_attr.gpkg")
     vu_sel.subset_by_attribute(
         feats_gpkg, "feats", "cls", ["River"], sub_attr, "rivers",
@@ -382,7 +422,10 @@ def test_vectorutils_selection(tmp_path):
     )
     assert vu_meta.get_vec_feat_count(dedup, "dedup") == 2
 
-    # Nearest point matching
+
+def test_vectorutils_selection_match_closest_pts(tmp_path, selection_feats_gpkg):
+    """Test nearest point matching with attribute copying."""
+    feats_gpkg = selection_feats_gpkg
     ref_pts = str(tmp_path / "ref_pts.gpkg")
     gpd.GeoDataFrame(
         {"name": ["P0", "P1"]},
@@ -405,7 +448,11 @@ def test_vectorutils_selection(tmp_path):
     m_gdf = gpd.read_file(matched_gpkg, layer="matched")
     assert m_gdf["match_name"].tolist() == ["P0", "P1"]
 
-    # Random splits
+
+def test_vectorutils_selection_random_splits(tmp_path, selection_feats_gpkg):
+    """Test random subsets, train/test(/valid) splits and bootstrap subsets."""
+    feats_gpkg = selection_feats_gpkg
+
     rem_gpkg = str(tmp_path / "rem.gpkg")
     smp_gpkg = str(tmp_path / "smp.gpkg")
     vu_sel.split_vec_lyr_random_subset(
@@ -462,25 +509,6 @@ def test_vectorutils_selection(tmp_path):
     )
     assert len(boot_files) == 3
     assert all(vu_meta.get_vec_feat_count(bf) == 5 for bf in boot_files)
-
-    for moved_name in (
-        "count_feats_per_att_val",
-        "rasterise_vec_lyr",
-        "polygonise_raster_to_vec_lyr",
-        "define_grid",
-    ):
-        assert not hasattr(vu_io, moved_name)
-        assert not hasattr(vu_meta, moved_name)
-        assert not hasattr(vu_sel, moved_name)
-
-    assert rsgispy.vector.__all__ == ["io", "create", "geoms", "attrs", "stats", "selection"]
-    for reexport_name in (
-        "get_vec_lyr_bbox",
-        "merge_vec_files",
-        "spatial_select",
-        "VecLayersInfoObj",
-    ):
-        assert not hasattr(rsgispy.vector, reexport_name)
 
 
 def test_vectorutils_gdf_in_memory():
@@ -614,9 +642,7 @@ def test_vectorutils_gdf_in_memory():
     assert list(pts_gdf.columns) == orig_cols
 
 
-def test_convert_gpx_to_vec(tmp_path):
-    """Test convert_gpx_to_vec for in-memory GeoDataFrames, vector outputs, and edge cases."""
-    gpx_content = """<?xml version="1.0" encoding="UTF-8"?>
+GPX_TWO_SEGMENT_TRACK = """<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="rsgispy-test"
      xmlns="http://www.topografix.com/GPX/1/1"
      xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">
@@ -662,11 +688,19 @@ def test_convert_gpx_to_vec(tmp_path):
   </trk>
 </gpx>
 """
+
+
+@pytest.fixture
+def gpx_file(tmp_path):
+    """A two-segment GPX track (with Garmin heart-rate / cadence extensions)."""
     gpx_file = str(tmp_path / "route.gpx")
     with open(gpx_file, "w", encoding="utf-8") as fobj:
-        fobj.write(gpx_content)
+        fobj.write(GPX_TWO_SEGMENT_TRACK)
+    return gpx_file
 
-    # 1. Both outputs returned in memory
+
+def test_convert_gpx_to_vec_in_memory(gpx_file):
+    """convert_gpx_to_vec returns the points and the track line in memory."""
     pts_gdf, lines_gdf = vu_io.convert_gpx_to_vec(gpx_file)
     assert isinstance(pts_gdf, gpd.GeoDataFrame)
     assert isinstance(lines_gdf, gpd.GeoDataFrame)
@@ -695,7 +729,9 @@ def test_convert_gpx_to_vec(tmp_path):
     assert lines_gdf["start_time"].iloc[0] == "2025-06-01T08:00:00Z"
     assert lines_gdf["end_time"].iloc[0] == "2025-06-01T08:06:00Z"
 
-    # 2. split_segments=True and include_z=True
+
+def test_convert_gpx_to_vec_split_segments_z_and_reprojection(gpx_file):
+    """split_segments=True and include_z=True, and reprojection to UTM."""
     pts_z, seg_lines_z = vu_io.convert_gpx_to_vec(
         gpx_file, split_segments=True, include_z=True
     )
@@ -707,12 +743,16 @@ def test_convert_gpx_to_vec(tmp_path):
     assert seg_lines_z["track_seg_id"].tolist() == [0, 1]
     assert seg_lines_z["n_pts"].tolist() == [2, 2]
 
-    # 3. Reprojection to UTM (EPSG:32630)
+    # Reprojection to UTM (EPSG:32630)
     pts_utm, lines_utm = vu_io.convert_gpx_to_vec(gpx_file, out_epsg=32630)
     assert pts_utm.crs.to_epsg() == 32630
     assert lines_utm.crs.to_epsg() == 32630
 
-    # 4. Mixed output: points saved, lines returned
+
+def test_convert_gpx_to_vec_file_outputs(tmp_path, gpx_file):
+    """Points or lines saved with the other returned, and both saved as layers of one
+    GPKG (rewritten with del_exist_vec=True)."""
+    # Mixed output: points saved, lines returned
     pts_only_gpkg = str(tmp_path / "pts_only.gpkg")
     ret_lines = vu_io.convert_gpx_to_vec(
         gpx_file, pts_vec_file=pts_only_gpkg, pts_vec_lyr="pts"
@@ -721,7 +761,7 @@ def test_convert_gpx_to_vec(tmp_path):
     assert len(ret_lines) == 1
     assert vu_meta.get_vec_feat_count(pts_only_gpkg, "pts") == 4
 
-    # 5. Mixed output: lines saved, points returned
+    # Mixed output: lines saved, points returned
     lines_only_gpkg = str(tmp_path / "lines_only.gpkg")
     ret_pts = vu_io.convert_gpx_to_vec(
         gpx_file, line_vec_file=lines_only_gpkg, line_vec_lyr="lines"
@@ -730,7 +770,7 @@ def test_convert_gpx_to_vec(tmp_path):
     assert len(ret_pts) == 4
     assert vu_meta.get_vec_feat_count(lines_only_gpkg, "lines") == 1
 
-    # 6. Multi-layer single GPKG output with overwrite (del_exist_vec=True)
+    # Multi-layer single GPKG output with overwrite (del_exist_vec=True)
     multi_gpkg = str(tmp_path / "track_bundle.gpkg")
     ret_none = vu_io.convert_gpx_to_vec(
         gpx_file,
@@ -754,7 +794,9 @@ def test_convert_gpx_to_vec(tmp_path):
     )
     assert set(vu_meta.get_vec_lyrs_lst(multi_gpkg)) == {"track_points", "tracks"}
 
-    # 7. Separate GeoParquet outputs (when pyarrow is installed)
+
+def test_convert_gpx_to_vec_geoparquet_outputs(tmp_path, gpx_file):
+    """Separate GeoParquet outputs (when pyarrow is installed)."""
     import importlib.util
 
     if importlib.util.find_spec("pyarrow") is not None:
@@ -772,7 +814,9 @@ def test_convert_gpx_to_vec(tmp_path):
         assert vu_meta.get_vec_feat_count(pts_pq) == 4
         assert vu_meta.get_vec_feat_count(lines_pq) == 1
 
-    # 8. Empty GPX (valid GPX with zero track points)
+
+def test_convert_gpx_to_vec_empty_gpx(tmp_path):
+    """A valid GPX with zero track points gives empty WGS84 layers with the columns."""
     empty_gpx = str(tmp_path / "empty.gpx")
     with open(empty_gpx, "w", encoding="utf-8") as fobj:
         fobj.write('<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1"></gpx>')
@@ -785,7 +829,13 @@ def test_convert_gpx_to_vec(tmp_path):
         empty_pts.columns
     )
 
-    # 9. Error handling
+
+def test_convert_gpx_to_vec_errors(tmp_path, gpx_file):
+    """Missing files, non-GPX XML and the same output file/layer for both raise."""
+    # The two-layer GPKG the same-layer check is run against.
+    multi_gpkg = str(tmp_path / "track_bundle.gpkg")
+    vu_io.convert_gpx_to_vec(gpx_file, pts_vec_file=multi_gpkg, line_vec_file=multi_gpkg)
+
     with pytest.raises(rsgispy.RSGISPyException):
         vu_io.convert_gpx_to_vec(str(tmp_path / "missing.gpx"))
 

@@ -177,8 +177,9 @@ def test_registry_helpers():
         ic_idx.get_index_equation("UNKNOWN_IDX")
 
 
-def test_all_indices_stack_and_band_names(tmp_path):
-    """Calculate all supported indices in one stack and verify formulas and band names."""
+@pytest.fixture
+def all_indices_stack(tmp_path):
+    """Calculate all supported indices in one stack from the sample reflectance cube."""
     data, band_names = _sample_reflectance_cube()
     # Pixel (0, 2) has all zeros -> divide-by-zero invalid for ratio indices
     in_path = tmp_path / "refl.tif"
@@ -199,8 +200,16 @@ def test_all_indices_stack_and_band_names(tmp_path):
         use_pbar=False,
     )
 
-    assert get_band_names(str(out_path)) == requested
+    return data, requested, out_path
 
+
+def _read_stack(out_path):
+    with rasterio.open(out_path) as src:
+        return src.read()
+
+
+def _expected_indices_at_pixel_00(data):
+    """The expected value of every index at pixel (0, 0), from the band values."""
     b = float(data[0, 0, 0])
     g = float(data[2, 0, 0])
     r = float(data[3, 0, 0])
@@ -220,12 +229,6 @@ def test_all_indices_stack_and_band_names(tmp_path):
         np.clip((mean_vis_arr[0, 0] - (b_mean - 2.0 * b_std)) / (4.0 * b_std), 0.0, 1.0)
     )
 
-    with rasterio.open(out_path) as src:
-        assert src.count == len(requested)
-        assert src.nodata == -999.0
-        stack = src.read()
-        assert "STATISTICS_MEAN" in src.tags(1)
-
     ndvi_00 = (n - r) / (n + r)
     ndwi_mcf_00 = (g - n) / (g + n)
     mndwi_00 = (g - s1) / (g + s1)
@@ -244,7 +247,7 @@ def test_all_indices_stack_and_band_names(tmp_path):
         for val, wl in ((re1, 705.0), (re2, 740.0), (re3, 783.0), (nn, 865.0))
     )
 
-    expected_p00 = {
+    return {
         "NDVI": ndvi_00,
         "EVI": evi_00,
         "EVI2": 2.5 * (n - r) / (n + 2.4 * r + 1.0),
@@ -346,6 +349,25 @@ def test_all_indices_stack_and_band_names(tmp_path):
         "FMR": s1 / n,
         "IOR": r / b,
     }
+
+
+def test_all_indices_stack_band_names_nodata_and_stats(all_indices_stack):
+    """The all-indices stack has one band per index, named after it, with the
+    nodata value and statistics set."""
+    _, requested, out_path = all_indices_stack
+    assert get_band_names(str(out_path)) == requested
+
+    with rasterio.open(out_path) as src:
+        assert src.count == len(requested)
+        assert src.nodata == -999.0
+        assert "STATISTICS_MEAN" in src.tags(1)
+
+
+def test_all_indices_stack_formulas_at_pixel(all_indices_stack):
+    """Every index in the stack matches its formula at pixel (0, 0)."""
+    data, requested, out_path = all_indices_stack
+    stack = _read_stack(out_path)
+    expected_p00 = _expected_indices_at_pixel_00(data)
     assert set(expected_p00.keys()) == set(requested)
 
     for band_pos, idx_name in enumerate(requested):
@@ -353,6 +375,11 @@ def test_all_indices_stack_and_band_names(tmp_path):
             expected_p00[idx_name], rel=1e-5
         ), f"Mismatch for {idx_name}"
 
+
+def test_all_indices_stack_mvi_and_ndbsi_sign_branches(all_indices_stack):
+    """MVI keeps the sign MVI_Abs drops, and NDBSI takes its negative-k branch."""
+    data, requested, out_path = all_indices_stack
+    stack = _read_stack(out_path)
     # Verify MVI vs MVI_Abs sign difference at (1, 0) where swir1 < green
     g10 = float(data[2, 1, 0])
     n10 = float(data[5, 1, 0])
@@ -373,6 +400,11 @@ def test_all_indices_stack_and_band_names(tmp_path):
         -abs(s1_10 - b10) / (s1_10 + b10), rel=1e-5
     )
 
+
+def test_all_indices_stack_divide_by_zero_is_nodata(all_indices_stack):
+    """The all-zero pixel (0, 2) gets the output nodata for the ratio indices."""
+    _, requested, out_path = all_indices_stack
+    stack = _read_stack(out_path)
     # Verify divide-by-zero pixel (0, 2) gets -999 for ratio indices
     for zero_idx in (
         "NDVI",

@@ -484,8 +484,10 @@ def test_region_growing_fill_errors(tmp_path):
         ic_fill.region_growing_fill(empty_reg_p, mask_p, out_p)
 
 
-def test_region_growing_fill_tiled_matches_global(tmp_path):
-    """Test tile-list region_growing_fill_tiled matches global output for 1 and 2 cores."""
+@pytest.fixture
+def irreg_tiled_scene(tmp_path):
+    """A 15 x 15 seed / mask scene, its global 8-connected fill and its split into
+    irregular tiles (in raster order and shuffled)."""
     reg_p = tmp_path / "rgt_reg.tif"
     mask_p = tmp_path / "rgt_mask.tif"
     global_p = tmp_path / "rgt_global.tif"
@@ -535,10 +537,31 @@ def test_region_growing_fill_tiled_matches_global(tmp_path):
     msk_shuf = [msk_tiles[i] for i in perm]
     out1_shuf = [out1_tiles[i] for i in perm]
     slices_shuf = [slices[i] for i in perm]
+    return {
+        "reg_p": reg_p,
+        "mask_p": mask_p,
+        "origin": origin,
+        "g_arr": g_arr,
+        "reg_tiles": reg_tiles,
+        "msk_tiles": msk_tiles,
+        "slices": slices,
+        "reg_shuf": reg_shuf,
+        "msk_shuf": msk_shuf,
+        "out1_shuf": out1_shuf,
+        "slices_shuf": slices_shuf,
+    }
 
+
+def test_region_growing_fill_tiled_matches_global_one_core(irreg_tiled_scene):
+    """Tile-list region_growing_fill_tiled (shuffled tiles, 1 core) matches the
+    global output, leaves the unreachable island empty and writes statistics."""
+    scn = irreg_tiled_scene
+    g_arr = scn["g_arr"]
+    out1_shuf = scn["out1_shuf"]
+    slices_shuf = scn["slices_shuf"]
     ic_fill.region_growing_fill_tiled(
-        reg_shuf,
-        msk_shuf,
+        scn["reg_shuf"],
+        scn["msk_shuf"],
         out1_shuf,
         connectivity=8,
         n_cores=1,
@@ -555,11 +578,18 @@ def test_region_growing_fill_tiled_matches_global(tmp_path):
         tags = s_tile.tags(1)
         assert float(tags["STATISTICS_MINIMUM"]) == 4.0
 
+
+def test_region_growing_fill_tiled_matches_global_two_cores(tmp_path, irreg_tiled_scene):
+    """Tile-list region_growing_fill_tiled (shuffled tiles, 2 cores) matches the global output."""
+    scn = irreg_tiled_scene
+    g_arr = scn["g_arr"]
+    reg_shuf = scn["reg_shuf"]
+    slices_shuf = scn["slices_shuf"]
     # Parallel execution with n_cores=2
     out2_shuf = [tmp_path / f"irreg_out2_{i}.tif" for i in range(len(reg_shuf))]
     ic_fill.region_growing_fill_tiled(
         reg_shuf,
-        msk_shuf,
+        scn["msk_shuf"],
         out2_shuf,
         connectivity=8,
         n_cores=2,
@@ -569,11 +599,20 @@ def test_region_growing_fill_tiled_matches_global(tmp_path):
     t2_arr = _mosaic_tile_outputs(out2_shuf, slices_shuf, (15, 15), np.uint8)
     np.testing.assert_array_equal(t2_arr, g_arr)
 
+
+def test_region_growing_fill_tiled_4_connectivity_max_iters_matches_global(
+    tmp_path, irreg_tiled_scene
+):
+    """4-connectivity with max_iters=3 on 2 cores matches the global output identically."""
+    scn = irreg_tiled_scene
+    reg_tiles = scn["reg_tiles"]
+    msk_tiles = scn["msk_tiles"]
+    slices = scn["slices"]
     # Test 4-connectivity + max_iters=3 + n_cores=2 matches global identically
     glob4_p = tmp_path / "rgt_glob4.tif"
     ic_fill.region_growing_fill(
-        reg_p,
-        mask_p,
+        scn["reg_p"],
+        scn["mask_p"],
         glob4_p,
         connectivity=4,
         max_iters=3,
@@ -595,6 +634,10 @@ def test_region_growing_fill_tiled_matches_global(tmp_path):
     with rasterio.open(glob4_p) as s_g4:
         np.testing.assert_array_equal(t4_arr, s_g4.read(1))
 
+
+def test_region_growing_fill_tiled_one_pixel_tiles_int32_nodata(tmp_path):
+    """1 x 1 pixel tiles of an int32 grid with nodata -99 match the global output."""
+    origin = (0.0, 250.0)
     # Extreme 1x1 tile files on a 5x5 int32 grid with non-zero nodata (-99)
     small_reg_p = tmp_path / "rgt_small_reg.tif"
     small_msk_p = tmp_path / "rgt_small_msk.tif"
@@ -641,8 +684,9 @@ def test_region_growing_fill_tiled_matches_global(tmp_path):
         np.testing.assert_array_equal(small_mosaic, sg.read(1))
 
 
-def test_region_growing_fill_tiled_unseeded_eez_outside_seeds_and_errors(tmp_path):
-    """Test unseeded EEZ tiles, outside seeds, sparse omitted tiles, tmp_dir cleanup, and errors."""
+@pytest.fixture
+def eez_tiles(tmp_path):
+    """A 2 x 2 layout of 6 x 6 seed / mask tiles, two of them without seeds."""
     # Build a 2x2 layout of 6x6 tiles:
     # Tile 0 (TL): seed 4 at (1, 1) outside fill_mask
     # Tile 1 (TR) & Tile 2 (BL): EEZ tiles with NO seeds
@@ -669,7 +713,13 @@ def test_region_growing_fill_tiled_unseeded_eez_outside_seeds_and_errors(tmp_pat
         )
         reg_tiles.append(rp)
         msk_tiles.append(mp)
+    return reg_tiles, msk_tiles
 
+
+def test_region_growing_fill_tiled_unseeded_eez_and_outside_seeds(tmp_path, eez_tiles):
+    """Unseeded EEZ tiles are filled, seeds outside the fill mask are cleared, the
+    result matches the global fill and the tmp_dir workspace is cleaned up."""
+    reg_tiles, msk_tiles = eez_tiles
     # Reference global 12x12 arrays
     full_reg = np.zeros((1, 12, 12), dtype=np.uint8)
     full_reg[0, 1, 1] = 4
@@ -723,6 +773,10 @@ def test_region_growing_fill_tiled_unseeded_eez_outside_seeds_and_errors(tmp_pat
     assert work_parent.exists()
     assert list(work_parent.iterdir()) == []
 
+
+def test_region_growing_fill_tiled_sparse_tile_subset(tmp_path, eez_tiles):
+    """A sparse L-shaped subset of the tiles (one omitted) fills with n_cores=-1."""
+    reg_tiles, msk_tiles = eez_tiles
     # Sparse L-shaped subset (3 of 4 tiles, omitting tile 2) with n_cores=-1
     sparse_out = [tmp_path / f"sparse_out_{i}.tif" for i in (0, 1, 3)]
     ic_fill.region_growing_fill_tiled(
@@ -737,6 +791,10 @@ def test_region_growing_fill_tiled_unseeded_eez_outside_seeds_and_errors(tmp_pat
         tr_arr = s_tr.read(1)
         assert np.all(np.isin(tr_arr, [4, 34]))
 
+
+def test_region_growing_fill_tiled_argument_errors(tmp_path, eez_tiles):
+    """Empty or mismatched tile lists and invalid parameters raise."""
+    reg_tiles, msk_tiles = eez_tiles
     # Validation errors
     err_outs = [tmp_path / f"rgt_err_{i}.tif" for i in range(4)]
     with pytest.raises(rsgispy.RSGISPyException, match="empty"):
@@ -756,6 +814,11 @@ def test_region_growing_fill_tiled_unseeded_eez_outside_seeds_and_errors(tmp_pat
             reg_tiles, msk_tiles, err_outs, max_iters=-2
         )
 
+
+def test_region_growing_fill_tiled_tile_grid_errors(tmp_path, eez_tiles):
+    """Overlapping, unaligned, mixed-CRS and seedless tile sets raise."""
+    reg_tiles, msk_tiles = eez_tiles
+    err_outs = [tmp_path / f"rgt_err_{i}.tif" for i in range(4)]
     # Overlapping tile check
     ov_reg = tmp_path / "ov_reg.tif"
     ov_msk = tmp_path / "ov_msk.tif"

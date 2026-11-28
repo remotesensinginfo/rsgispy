@@ -492,9 +492,13 @@ def test_ext_point_band_values_multiband(tmp_path):
         )
 
 
-def test_export_poly_pxls_to_df(tmp_path):
-    """Test export_poly_pxls_to_df for DataFrame return, Parquet compression, and CSV."""
-    # 4x4 grid, 3 bands
+@pytest.fixture
+def poly_pxls_scene(tmp_path):
+    """A 4 x 4, 3-band raster (nodata -9999, one b1 value 999) and two polygons.
+
+    Poly 0: top-left 2x2 (4 pixels, 1 is nodata -> 3 valid pixels)
+    Poly 1: bottom-right 2x2 (4 pixels, row3 col3 has b1=999 > max_thres=500 -> 3 valid)
+    """
     b1 = np.array(
         [
             [1.0, 2.0, 3.0, 4.0],
@@ -511,8 +515,6 @@ def test_export_poly_pxls_to_df(tmp_path):
     tif_path = str(tmp_path / "poly_mb.tif")
     _write_multiband_test_raster(tif_path, np.stack([b1, b2, b3]), nodata=-9999.0)
 
-    # Poly 0: top-left 2x2 (4 pixels, 1 is nodata -> 3 valid pixels)
-    # Poly 1: bottom-right 2x2 (4 pixels, row3 col3 has b1=999 > max_thres=500 -> 3 valid)
     polys_gdf = gpd.GeoDataFrame(
         {"cls": ["forest", "urban"]},
         geometry=[
@@ -521,8 +523,16 @@ def test_export_poly_pxls_to_df(tmp_path):
         ],
         crs="EPSG:32630",
     )
+    return tif_path, polys_gdf
 
-    # 1. Return DataFrame in memory with selected bands, attr_cols, coords, and nodata masking
+
+def test_export_poly_pxls_to_df_in_memory(poly_pxls_scene):
+    """export_poly_pxls_to_df returns a DataFrame: selected bands, attr_cols,
+    coords, nodata masking, all bands, a single band with a reprojected vector,
+    and an empty selection."""
+    tif_path, polys_gdf = poly_pxls_scene
+
+    # Return DataFrame in memory with selected bands, attr_cols, coords, and nodata masking
     df = zs_poly.export_poly_pxls_to_df(
         polys_gdf,
         tif_path,
@@ -545,14 +555,14 @@ def test_export_poly_pxls_to_df(tmp_path):
     assert df["x"].iloc[0] == pytest.approx(500005.0)
     assert df["y"].iloc[0] == pytest.approx(5199995.0)
 
-    # 2. All bands (img_bands=None) and mask_nodata=False
+    # All bands (img_bands=None) and mask_nodata=False
     df_all = zs_poly.export_poly_pxls_to_df(
         polys_gdf, tif_path, img_bands=None, mask_nodata=False, use_pbar=False
     )
     assert list(df_all.columns) == ["poly_fid", "band_1", "band_2", "band_3"]
     assert len(df_all) == 8
 
-    # 3. Single band as int & reprojected input vector
+    # Single band as int & reprojected input vector
     df_reproj = zs_poly.export_poly_pxls_to_df(
         polys_gdf.to_crs("EPSG:4326"),
         tif_path,
@@ -563,7 +573,7 @@ def test_export_poly_pxls_to_df(tmp_path):
     assert list(df_reproj.columns) == ["poly_fid", "band_2"]
     assert len(df_reproj) == 7
 
-    # 4. Empty pixel selection (polygon covering only nodata pixel)
+    # Empty pixel selection (polygon covering only nodata pixel)
     nodata_poly = gpd.GeoDataFrame(
         {"cls": ["nodata"]},
         geometry=[box(500010.0, 5199980.0, 500020.0, 5199990.0)],
@@ -576,7 +586,13 @@ def test_export_poly_pxls_to_df(tmp_path):
     assert len(df_empty) == 0
     assert list(df_empty.columns) == ["poly_fid", "band_1", "band_2"]
 
-    # 5. Export to CSV from GPKG path input
+
+def test_export_poly_pxls_to_csv_and_parquet(tmp_path, poly_pxls_scene):
+    """export_poly_pxls_to_df writes CSV from a GPKG path input and Parquet with
+    compression options (when pyarrow is installed)."""
+    tif_path, polys_gdf = poly_pxls_scene
+
+    # Export to CSV from GPKG path input
     poly_gpkg = str(tmp_path / "polys.gpkg")
     polys_gdf.to_file(poly_gpkg, layer="zones")
     csv_out = str(tmp_path / "pixels.csv")
@@ -595,7 +611,7 @@ def test_export_poly_pxls_to_df(tmp_path):
     assert len(df_csv) == 7
     assert list(df_csv.columns) == ["poly_fid", "cls", "b1", "b3"]
 
-    # 6. Export to Parquet with compression options (when pyarrow installed)
+    # Export to Parquet with compression options (when pyarrow installed)
     if importlib.util.find_spec("pyarrow") is not None:
         import pyarrow.parquet as pq
 
@@ -639,7 +655,11 @@ def test_export_poly_pxls_to_df(tmp_path):
         meta_uncomp = pq.ParquetFile(pq_uncomp).metadata
         assert meta_uncomp.row_group(0).column(0).compression == "UNCOMPRESSED"
 
-    # 7. Validation errors
+
+def test_export_poly_pxls_to_df_validation_errors(tmp_path, poly_pxls_scene):
+    """Mismatched band names, missing attribute columns, an invalid codec or
+    output format, and point geometries raise."""
+    tif_path, polys_gdf = poly_pxls_scene
     with pytest.raises(rsgispy.RSGISPyException):
         zs_poly.export_poly_pxls_to_df(
             polys_gdf, tif_path, img_bands=[1, 2], band_names=["only_one"]

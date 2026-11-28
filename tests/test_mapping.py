@@ -822,14 +822,10 @@ def test_north_arrow_styles_and_map_integration(tmp_path):
     plt.close(fig)
 
 
-def test_categorical_map_legends(tmp_path):
-    """Test categorical/classification legends: inputs, layouts, and placements."""
-    from rsgispy.classification.classdata import (
-        ClassificationConfig,
-        ClassInfoObj,
-        ImageBandInfo,
-    )
-
+@pytest.fixture
+def thematic_legend_img(tmp_path):
+    """A 4 x 4 thematic raster (classes 0-3) whose colour table also has an
+    absent class 4."""
     thm_img = tmp_path / "thematic_lgd.tif"
     data = np.array(
         [
@@ -848,8 +844,11 @@ def test_categorical_map_legends(tmp_path):
         4: (200, 50, 50, 255),  # Absent from image pixel array
     }
     _write_thematic_raster(str(thm_img), data, clr_tab=clr_tab)
+    return thm_img
 
-    # 1. Auto layout adapts column count to class label lengths
+
+def test_categorical_legend_layout_adapts_to_label_lengths():
+    """Auto layout adapts column count to class label lengths."""
     r_short, c_short = map_legend.calc_categorical_legend_layout(
         labels=["Water", "Forest", "Grass", "Urban", "Sand", "Rock"],
         avail_width_in=6.5,
@@ -869,7 +868,11 @@ def test_categorical_map_legends(tmp_path):
     with pytest.raises(rsgispy.RSGISPyException):
         map_legend.calc_categorical_legend_layout(["A", "B", "C"], ncols=1, nrows=2)
 
-    # 2. {pixel_val: class_name} dict + embedded raster colour table + overlay
+
+def test_thematic_map_companion_legend_from_class_dict(tmp_path, thematic_legend_img):
+    """{pixel_val: class_name} dict + embedded raster colour table + companion
+    legend axis listing only the classes present."""
+    thm_img = thematic_legend_img
     fig, ax = plt.subplots(figsize=(6, 5))
     map_raster.create_thematic_raster_map(
         ax=ax,
@@ -894,8 +897,12 @@ def test_categorical_map_legends(tmp_path):
     assert out_comp.exists() and out_comp.stat().st_size > 0
     plt.close(fig)
 
-    # 3. Dedicated legend axes positioned by user in multi-axis figures
-    #    (no companion axis created; layout adapts to axis geometry)
+
+def test_categorical_legend_in_dedicated_axes(thematic_legend_img):
+    """Dedicated legend axes positioned by user in multi-axis figures (no
+    companion axis created; layout adapts to axis geometry), and
+    create_thematic_raster_map writing its legend into an explicit legend_ax."""
+    thm_img = thematic_legend_img
     fig = plt.figure(figsize=(8, 6))
     gs = fig.add_gridspec(2, 2, width_ratios=[3, 1], height_ratios=[3, 1])
     ax_m1 = fig.add_subplot(gs[0, 0])
@@ -948,7 +955,10 @@ def test_categorical_map_legends(tmp_path):
     assert ax_l2.get_legend() is not None
     plt.close(fig)
 
-    # 4. Existing axis overlay=True and dedicated axis overlay=False
+
+def test_categorical_legend_overlay_and_panel(thematic_legend_img):
+    """Existing axis overlay=True and dedicated axis overlay=False."""
+    thm_img = thematic_legend_img
     fig, (ax_map, ax_leg) = plt.subplots(1, 2, figsize=(8, 4))
     map_raster.create_thematic_raster_map(ax=ax_map, input_img=str(thm_img))
     lgd_ov = map_legend.add_categorical_legend(
@@ -972,7 +982,16 @@ def test_categorical_map_legends(tmp_path):
     assert [t.get_text() for t in lgd_panel.get_texts()] == ["Crop", "Forest", "Water"]
     plt.close(fig)
 
-    # 5. ClassificationConfig + JSON config path + standalone saved legend image
+
+def test_categorical_legend_from_classification_config(tmp_path, thematic_legend_img):
+    """ClassificationConfig + JSON config path + standalone saved legend image."""
+    from rsgispy.classification.classdata import (
+        ClassificationConfig,
+        ClassInfoObj,
+        ImageBandInfo,
+    )
+
+    thm_img = thematic_legend_img
     cfg = ClassificationConfig(
         img_band_info=[ImageBandInfo(str(thm_img), name="lc", bands=[1])],
         class_info={

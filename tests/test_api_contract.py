@@ -437,6 +437,7 @@ def test_name_in_module_all(module, name):
         ("rsgispy.mapping", ["layout", "elements", "raster", "vector", "basemaps", "legend"], False),
         # The package exports only its submodules, not individual filter functions.
         ("rsgispy.imagefilter", IMAGEFILTER_SUBMODULES, True),
+        ("rsgispy.vector", ["io", "create", "geoms", "attrs", "stats", "selection"], True),
     ],
 )
 def test_module_all_is_exactly(module, expected, ordered):
@@ -511,6 +512,23 @@ NOT_HAS_ATTR_CASES = (
         (obj, name)
         for name in ("METRIC_CORELATION", "METRIC_MANHATTEN")
         for obj in ("rsgispy", _IMREG)
+    ]
+    # Functions moved out of rsgispy.vector.io / rsgispy.vector.selection (the
+    # io module is checked twice, once for each alias it had in the tests).
+    + [
+        (mod, name)
+        for name in (
+            "count_feats_per_att_val",
+            "rasterise_vec_lyr",
+            "polygonise_raster_to_vec_lyr",
+            "define_grid",
+        )
+        for mod in ("rsgispy.vector.io", "rsgispy.vector.io", "rsgispy.vector.selection")
+    ]
+    # rsgispy.vector exports only its submodules.
+    + [
+        ("rsgispy.vector", name)
+        for name in ("get_vec_lyr_bbox", "merge_vec_files", "spatial_select", "VecLayersInfoObj")
     ]
     + [
         ("rsgispy.segmentation", "union_of_clumps"),

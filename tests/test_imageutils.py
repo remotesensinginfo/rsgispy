@@ -1526,17 +1526,11 @@ def test_colour_interp_thematic_and_colour_table(tmp_path):
     assert info_def[2] == [0, 255, 0, 255]
 
 
-def test_masking_functions(tmp_path):
-    """Test mask_img, gen_finite_mask, gen_valid_mask, edge/zero masks, and create_valid_mask."""
+@pytest.fixture
+def masking_inputs(tmp_path):
+    """A 2-band float image (nodata 0, with NaN and inf) and a uint8 mask image."""
     in_img = tmp_path / "in_vals.tif"
     msk_img = tmp_path / "in_msk.tif"
-    masked_out = tmp_path / "masked.tif"
-    finite_out = tmp_path / "finite_msk.tif"
-    valid_out = tmp_path / "valid_msk.tif"
-    edge_out = tmp_path / "edge_msk.tif"
-    zero_out = tmp_path / "zero_vals.tif"
-    cvalid_out = tmp_path / "create_valid.tif"
-
     data = np.array(
         [
             [
@@ -1566,8 +1560,13 @@ def test_masking_functions(tmp_path):
         dtype=np.uint8,
     )
     _write_geo_raster(msk_img, msk_arr, dtype="uint8")
+    return in_img, msk_img
 
-    # 1. mask_img with list of mask values
+
+def test_mask_img_with_list_of_mask_values(tmp_path, masking_inputs):
+    """mask_img replaces the pixels whose mask value is in the list."""
+    in_img, msk_img = masking_inputs
+    masked_out = tmp_path / "masked.tif"
     rsgispy.imageutils.masking.mask_img(
         str(in_img),
         str(msk_img),
@@ -1584,7 +1583,15 @@ def test_masking_functions(tmp_path):
         assert res[1, 0, 2] == -999.0
         assert res[0, 1, 3] == 15.0  # mask == 3, kept
 
-    # 2. gen_finite_mask
+
+def test_gen_finite_valid_and_edge_masks(tmp_path, masking_inputs):
+    """gen_finite_mask, gen_valid_mask and gen_img_edge_mask."""
+    in_img, msk_img = masking_inputs
+    finite_out = tmp_path / "finite_msk.tif"
+    valid_out = tmp_path / "valid_msk.tif"
+    edge_out = tmp_path / "edge_msk.tif"
+
+    # gen_finite_mask
     rsgispy.imageutils.masking.gen_finite_mask(
         str(in_img), str(finite_out), gdalformat="GTIFF"
     )
@@ -1595,7 +1602,7 @@ def test_masking_functions(tmp_path):
         assert fm[1, 1] == 0  # nan
         assert fm[3, 3] == 0  # inf
 
-    # 3. gen_valid_mask (pass single path string)
+    # gen_valid_mask (pass single path string)
     rsgispy.imageutils.masking.gen_valid_mask(
         str(msk_img), str(valid_out), gdalformat="GTIFF", no_data_val=0.0
     )
@@ -1605,7 +1612,7 @@ def test_masking_functions(tmp_path):
         assert vm[0, 0] == 0
         assert vm[0, 1] == 1
 
-    # 4. gen_img_edge_mask
+    # gen_img_edge_mask
     rsgispy.imageutils.masking.gen_img_edge_mask(
         str(msk_img), str(edge_out), gdalformat="GTIFF", n_edge_pxls=1
     )
@@ -1622,8 +1629,11 @@ def test_masking_functions(tmp_path):
         )
         np.testing.assert_array_equal(em, expected_edge)
 
-    # 5. mask_all_band_zero_vals
+
+def test_mask_all_band_zero_vals(tmp_path):
+    """mask_all_band_zero_vals replaces zeros only where some band is non-zero."""
     finite_only = tmp_path / "finite_only.tif"
+    zero_out = tmp_path / "zero_vals.tif"
     f_data = np.array(
         [
             [[10.0, 0.0, 0.0], [5.0, 0.0, 2.0], [0.0, 0.0, 0.0]],
@@ -1644,7 +1654,13 @@ def test_masking_functions(tmp_path):
         assert zo[0, 0, 1] == 0.0
         assert zo[1, 0, 1] == 0.0
 
-    # 6. create_valid_mask using ImageBandInfo
+
+def test_create_valid_mask_from_band_info(tmp_path):
+    """create_valid_mask with masking.ImageBandInfo (nodata and default 0
+    nodata) and rsgispy.imageutils.create_valid_mask with float NaN/Inf."""
+    cvalid_out = tmp_path / "create_valid.tif"
+
+    # create_valid_mask using ImageBandInfo
     img_b1 = tmp_path / "cvalid_b1.tif"
     img_b2 = tmp_path / "cvalid_b2.tif"
     _write_geo_raster(
@@ -1678,7 +1694,7 @@ def test_masking_functions(tmp_path):
         expected_cv = np.array([[1, 0, 0], [1, 1, 1]], dtype=np.uint8)
         np.testing.assert_array_equal(cv, expected_cv)
 
-    # 7. rsgispy.imageutils.create_valid_mask with float NaN/Inf + nodata
+    # rsgispy.imageutils.create_valid_mask with float NaN/Inf + nodata
     img_f = tmp_path / "cvalid_flt.tif"
     cvalid_out2 = tmp_path / "create_valid_flt.tif"
     _write_geo_raster(
