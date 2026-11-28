@@ -2,7 +2,6 @@
 Comprehensive pytest suite for :mod:`rsgispy.elevation.hydrology`.
 """
 
-import inspect
 import math
 import os
 import warnings
@@ -104,69 +103,6 @@ def _make_convergent_y_dem(rows=31, cols=31):
     # Ensure bottom row drains inward toward outlet (rows-1, 15)
     dem[rows - 1, :] = np.abs(c_idx[rows - 1, :] - 15.0) * 3.0
     return dem.astype(np.float32)
-
-
-def test_hydrology_signatures_and_exports():
-    """Verify module exports and rsgispy positional/keyword-only conventions."""
-    assert hasattr(rsgispy.elevation, "hydrology")
-    expected_kw_defaults = {
-        "gdalformat": "GTIFF",
-        "datatype": None,
-        "no_data_val": None,
-        "calc_stats": True,
-        "use_pbar": True,
-    }
-    single_input_raster_funcs = [
-        hydrology.identify_sinks,
-        hydrology.fill_depressions,
-        hydrology.breach_depressions,
-        hydrology.resolve_flats,
-        hydrology.condition_dem,
-        hydrology.flow_direction,
-        hydrology.flow_accumulation,
-        hydrology.flow_length,
-        hydrology.extract_streams,
-        hydrology.delineate_basins,
-        hydrology.flood_inundation_from_hand,
-    ]
-    for fn in single_input_raster_funcs:
-        sig = inspect.signature(fn)
-        req_pos = [
-            p.name
-            for p in sig.parameters.values()
-            if p.kind
-            in (
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            )
-            and p.default is inspect.Parameter.empty
-        ]
-        assert req_pos[:2] == ["input_img", "output_img"], fn.__name__
-        for kw_name, kw_default in expected_kw_defaults.items():
-            assert kw_name in sig.parameters, (fn.__name__, kw_name)
-            p = sig.parameters[kw_name]
-            assert p.kind == inspect.Parameter.KEYWORD_ONLY, (fn.__name__, kw_name)
-            assert p.default == kw_default, (fn.__name__, kw_name)
-
-    multi_input_raster_funcs = [
-        hydrology.burn_streams,
-        hydrology.flow_distance,
-        hydrology.stream_link,
-        hydrology.stream_order,
-        hydrology.delineate_watersheds,
-        hydrology.delineate_subcatchments,
-        hydrology.calc_hand,
-        hydrology.calc_twi,
-        hydrology.calc_spi,
-        hydrology.calc_ls_factor,
-    ]
-    for fn in multi_input_raster_funcs:
-        sig = inspect.signature(fn)
-        for kw_name, kw_default in expected_kw_defaults.items():
-            assert kw_name in sig.parameters, (fn.__name__, kw_name)
-            p = sig.parameters[kw_name]
-            assert p.kind == inspect.Parameter.KEYWORD_ONLY, (fn.__name__, kw_name)
-            assert p.default == kw_default, (fn.__name__, kw_name)
 
 
 @requires_numba

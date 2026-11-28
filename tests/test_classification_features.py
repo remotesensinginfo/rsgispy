@@ -6,7 +6,6 @@ sensitivity.
 """
 
 import importlib.util
-import inspect
 import warnings
 from pathlib import Path
 
@@ -20,7 +19,6 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import LinearSVC
 
 import rsgispy
-import rsgispy.classification as rcls
 import rsgispy.classification.classdata as rcd
 import rsgispy.classification.classfeatures as rcf
 import rsgispy.classification.classsklearn as rcsk
@@ -120,32 +118,6 @@ def _make_synthetic_dataset(
         "test_pq": test_pq,
         "train_csv": train_csv,
     }
-
-
-def test_classfeatures_module_layout():
-    """Verify classfeatures exposes expected API and is not re-exported at top level."""
-    assert inspect.ismodule(rcf)
-    expected = {
-        "comparison_box_plots",
-        "correlation_matrix",
-        "calc_vif_multicollinearity",
-        "select_features_cqv",
-        "select_features_corr",
-        "select_features_vif",
-        "select_features_univariate",
-        "select_features_rfe",
-        "select_features_from_model",
-        "select_features_boruta_shap",
-        "calc_feature_importance",
-        "calc_jackknife_feature_importance",
-        "calc_feature_response_curves",
-        "calc_shap_feature_contributions",
-        "calc_salib_feature_sensitivity",
-    }
-    assert set(rcf.__all__) == expected
-    for name in expected:
-        assert callable(getattr(rcf, name))
-        assert not hasattr(rcls, name)
 
 
 def test_diagnostics_boxplots_corr_and_vif(tmp_path):

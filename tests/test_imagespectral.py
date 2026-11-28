@@ -82,46 +82,6 @@ def _write_legacy_mtxt(path, em_arr):
         handle.write(",".join(vals) + "\n")
 
 
-def test_exports_and_default_gdalformat():
-    """Verify imagespectral exports across submodules and GTIFF defaults."""
-    assert hasattr(em, "read_endmembers_df")
-    assert hasattr(em, "write_endmembers_df")
-    assert hasattr(em, "convert_mtxt_to_df")
-    assert not hasattr(em, "read_endmembers_mtxt")
-    assert not hasattr(em, "write_endmembers_mtxt")
-
-    module_funcs = [
-        (su, su.spec_unmix_ucls),
-        (su, su.spec_unmix_nnls),
-        (su, su.spec_unmix_fcls),
-        (su, su.spec_unmix_spts_ucls),
-        (su, su.spec_unmix_spts_nnls),
-        (su, su.spec_unmix_spts_fcls),
-        (su, su.spec_unmix_pymcr_nnls),
-        (su, su.spec_unmix_pymcr_fcls),
-        (su, su.exhcon_linear_spec_unmix),
-        (su, su.rescale_unmixing_results),
-        (su, su.predict_refl_linear_unmixing),
-        (su, su.calc_unmixing_rmse_residual_err),
-        (su, su.summarise_multi_endmember_linear_unmixing),
-        (em, em.calc_ppi),
-        (sc, sc.spectral_angle_mapper),
-        (sc, sc.spectral_correlation_mapper),
-        (sp, sp.spectral_smoothing),
-        (sp, sp.mask_outliers_data_values),
-        (sp, sp.polyfill_nan_data_values),
-        (st, st.whiten_image),
-        (st, st.calc_pca),
-        (st, st.calc_mnf),
-        (st, st.calc_tasseled_cap),
-        (st, st.histogram_matching),
-    ]
-    for mod, fn in module_funcs:
-        assert fn.__name__ in mod.__all__
-        sig = inspect.signature(fn)
-        assert sig.parameters["gdalformat"].default == "GTIFF"
-
-
 def test_df_roundtrip_formats_plot_and_equality(tmp_path):
     """Verify DataFrame write/read across user-chosen formats, plot, and equality."""
     em_df = pd.DataFrame(

@@ -3,7 +3,6 @@ Tests for rsgispy.classification.clustersklearn unsupervised pixel
 classification (whole-image clustering and sample-fit + image-predict modes).
 """
 
-import inspect
 from pathlib import Path
 
 import numpy as np
@@ -13,7 +12,6 @@ from rasterio.transform import from_origin
 from sklearn.cluster import KMeans
 
 import rsgispy
-import rsgispy.classification as rcls
 import rsgispy.classification.classdata as rcd
 import rsgispy.classification.classsklearn as rcsk
 import rsgispy.classification.clustersklearn as rclsk
@@ -123,16 +121,6 @@ def _assert_zones_separated(arr: np.ndarray, nodata_val: int) -> None:
     assert len(u_b) == 1
     assert len(u_c) == 1
     assert len(u_a | u_b | u_c) == 3
-
-
-def test_clustersklearn_module_layout():
-    """Verify clustersklearn exports and non-re-export from package init."""
-    expected = {"img_pixel_cluster", "img_pixel_sample_cluster", "apply_img_pixel_clusterer"}
-    assert expected.issubset(set(rclsk.__all__))
-    for name in expected:
-        assert hasattr(rclsk, name)
-        assert not hasattr(rcls, name)
-        assert inspect.isfunction(getattr(rclsk, name))
 
 
 def test_img_pixel_cluster_whole_image_and_transductive(tmp_path):

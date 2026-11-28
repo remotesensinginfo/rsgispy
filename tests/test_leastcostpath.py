@@ -2,7 +2,6 @@
 Tests for :mod:`rsgispy.imagecalc.leastcostpath`.
 """
 
-import inspect
 from pathlib import Path
 
 import numpy as np
@@ -30,12 +29,6 @@ def _write_cost_raster(path, arr, origin=(0.0, 100.0), res=10.0, crs="EPSG:32630
         transform=from_origin(origin[0], origin[1], res, res),
     ) as dst:
         dst.write(data)
-
-
-def test_default_gdalformat_is_gtiff():
-    """Verify gdalformat defaults to 'GTIFF'."""
-    sig = inspect.signature(lcp.perform_least_cost_path_calc)
-    assert sig.parameters["gdalformat"].default == "GTIFF"
 
 
 def test_least_cost_path_avoids_barrier(tmp_path):

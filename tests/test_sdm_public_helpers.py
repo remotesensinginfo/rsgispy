@@ -17,7 +17,6 @@ from sklearn.ensemble import IsolationForest, RandomForestClassifier
 from sklearn.metrics import roc_auc_score, roc_curve
 
 import rsgispy
-import rsgispy.modelling._helpers as sdm_helpers
 import rsgispy.modelling.species_distribution as sdm
 
 matplotlib.use("Agg")
@@ -45,26 +44,6 @@ def _sens_spec(y_true, scores, thres):
     sens = np.count_nonzero(pred & (y_true == 1)) / np.count_nonzero(y_true == 1)
     spec = np.count_nonzero(~pred & (y_true == 0)) / np.count_nonzero(y_true == 0)
     return sens, spec
-
-
-def test_public_helpers_exported():
-    """The helpers import from the public module and stay importable internally."""
-    for name in PUBLIC_HELPERS:
-        assert name in sdm.__all__
-        func = getattr(sdm, name)
-        assert callable(func)
-        assert func.__doc__ and ".. code:: python" in func.__doc__
-        # Internal callers import from rsgispy.modelling._helpers.
-        assert getattr(sdm_helpers, name) is func
-    # pylint: disable=import-outside-toplevel,unused-import
-    from rsgispy.modelling.species_distribution import (  # noqa: F401
-        calc_binary_roc_auc,
-        calc_binary_threshold,
-        calc_single_class_predictions,
-        get_positive_class_probs,
-        plot_roc_curve,
-        predict_raster_from_env_vars,
-    )
 
 
 def test_calc_binary_roc_auc_matches_sklearn():

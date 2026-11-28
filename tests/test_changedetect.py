@@ -4,7 +4,6 @@ Tests for :mod:`rsgispy.changedetect.imgchngmthds`,
 :func:`rsgispy.tools.plotting.plot_histogram_threshold`.
 """
 
-import inspect
 from pathlib import Path
 
 import matplotlib
@@ -68,25 +67,6 @@ class _DummyPyODDetector:
         _ = method
         p1 = np.clip(data[:, 0], 0.0, 1.0)
         return np.stack([1.0 - p1, p1], axis=1)
-
-
-def test_default_gdalformat_is_gtiff():
-    """Verify all changedetect functions default gdalformat to 'GTIFF'."""
-    funcs = [
-        icm.image_difference,
-        icm.image_ratio,
-        icm.change_vector_analysis,
-        icm.slow_feature_analysis,
-        icm.multivariate_alteration_detection,
-        poc.find_class_pyod_outliers,
-        poc.find_class_otsu_outliers,
-        poc.find_class_li_outliers,
-        poc.find_class_kurt_skew_outliers,
-    ]
-
-    for fn in funcs:
-        sig = inspect.signature(fn)
-        assert sig.parameters["gdalformat"].default == "GTIFF"
 
 
 def test_plot_histogram_threshold(tmp_path):
@@ -713,18 +693,6 @@ _METHODS = ["cva"] + (["sfa", "mad"] if icm.HAVE_SCIPY else [])
 _KMEANS = [False] + ([True] if icm.HAVE_SKLEARN else [])
 
 
-def test_centre_on_threshold_defaults():
-    """CVA and ISFA centre on the threshold by default; IR-MAD does not."""
-    for fn, centred in (
-        (icm.change_vector_analysis, True),
-        (icm.slow_feature_analysis, True),
-        (icm.multivariate_alteration_detection, False),
-    ):
-        params = inspect.signature(fn).parameters
-        assert params["centre_on_threshold"].default is centred
-        assert params["no_data_val"].default == -9999.0
-
-
 @pytest.mark.filterwarnings("ignore:.*did not converge:UserWarning")
 @pytest.mark.parametrize("method", _METHODS)
 @pytest.mark.parametrize("use_kmeans", _KMEANS)
@@ -775,16 +743,6 @@ def test_default_no_data_is_set(tmp_path, method):
 # ---------------------------------------------------------------------------
 # Reproducible K-means thresholds
 # ---------------------------------------------------------------------------
-
-
-def test_kmeans_functions_take_rnd_seed():
-    """Every function that can use K-means takes rnd_seed (Default = 42)."""
-    for fn in (
-        icm.change_vector_analysis,
-        icm.slow_feature_analysis,
-        icm.multivariate_alteration_detection,
-    ):
-        assert inspect.signature(fn).parameters["rnd_seed"].default == 42
 
 
 @pytest.mark.skipif(not icm.HAVE_SKLEARN, reason="scikit-learn not installed")

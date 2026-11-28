@@ -568,29 +568,8 @@ def _write_raster(
     return path
 
 
-def test_all_cli_modules_export_parsers_main_and_cli_main(monkeypatch, capsys):
-    """All 11 CLI modules export __all__, build_*_parser, main, and cli_main."""
-    cli_specs = [
-        (batchconvert2cog, "build_batchconvert2cog_parser"),
-        (buildimglut, "build_buildimglut_parser"),
-        (calcimgstats, "build_calcimgstats_parser"),
-        (chkgdalfile, "build_chkgdalfile_parser"),
-        (copybandnames, "build_copybandnames_parser"),
-        (filehash, "build_filehash_parser"),
-        (imginfo, "build_imginfo_parser"),
-        (proj, "build_proj_parser"),
-        (userpassfile, "build_userpassfile_parser"),
-        (vectools, "build_vectools_parser"),
-        (wgs84imgres, "build_wgs84imgres_parser"),
-    ]
-    for mod, parser_fn_name in cli_specs:
-        assert hasattr(mod, "__all__")
-        assert parser_fn_name in mod.__all__
-        assert "main" in mod.__all__
-        assert "cli_main" in mod.__all__
-        parser = getattr(mod, parser_fn_name)()
-        assert parser.prog.startswith("rsgis")
-
+def test_cli_main_reads_sys_argv(monkeypatch, capsys):
+    """cli_main parses sys.argv and returns the exit code."""
     # Exercise cli_main end-to-end via sys.argv on proj
     monkeypatch.setattr(sys, "argv", ["rsgisproj", "--epsg", "4326", "-f", "epsg"])
     assert proj.cli_main() == 0

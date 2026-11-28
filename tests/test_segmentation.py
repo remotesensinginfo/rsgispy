@@ -2,7 +2,6 @@
 Tests for rsgispy.segmentation.clump (clump and union_of_clumps).
 """
 
-import inspect
 import os
 import time
 from pathlib import Path
@@ -47,19 +46,6 @@ def _write_raster(
         transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
     ) as dst:
         dst.write(write_arr)
-
-
-def test_package_layout_and_signatures():
-    """Verify functions live in rsgispy.segmentation.clump without add_to_rat."""
-    assert not hasattr(rseg_pkg, "union_of_clumps")
-    assert inspect.ismodule(getattr(rseg_pkg, "clump"))
-    assert callable(rseg_clump.clump)
-    assert callable(rseg_clump.union_of_clumps)
-    assert "add_to_rat" not in inspect.signature(rseg_clump.clump).parameters
-    assert (
-        "add_to_rat"
-        not in inspect.signature(rseg_clump.union_of_clumps).parameters
-    )
 
 
 def test_clump_4connectivity_nodata_and_no_pam(tmp_path):

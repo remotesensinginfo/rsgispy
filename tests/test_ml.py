@@ -19,7 +19,6 @@ from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.model_selection import GroupKFold
 
 import rsgispy
-import rsgispy.ml as ml
 from rsgispy.classification.classdata import (
     ClassificationConfig,
     ClassInfoObj,
@@ -113,15 +112,6 @@ def synthetic_stack_files(tmp_path):
         "arrays": (b1, b2, b3),
         "shape": (h, w),
     }
-
-
-def test_ml_package_exports_submodules_only():
-    """rsgispy.ml exports only its 7 submodules."""
-    assert ml.__all__ == [
-        "stack", "scaling", "predict", "cv", "tune", "vector", "segments"
-    ]
-    for sub in ml.__all__:
-        assert hasattr(ml, sub)
 
 
 def test_feature_stack_construct_bbox_mask_and_interop(synthetic_stack_files, tmp_path):

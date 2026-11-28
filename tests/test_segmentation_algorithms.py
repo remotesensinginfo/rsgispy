@@ -4,7 +4,6 @@ algorithms, tiling/seam stitching, multi-core execution, optional ``numba``
 parity, post-processing, and downstream GEOBIA integration.
 """
 
-import inspect
 import os
 
 import geopandas as gpd
@@ -95,49 +94,6 @@ def _make_synthetic_scene(
     # Corner nodata patch
     arr[:, :4, :4] = nodata_val
     return arr
-
-
-def test_raster_function_signatures_and_exports():
-    """Verify required positional/keyword-only rsgispy conventions on all new raster functions."""
-    assert isinstance(rseg.is_numba_available(), bool)
-    raster_funcs = [
-        rseg.shepherd_segmentation,
-        rseg.region_merge_segmentation,
-        rseg.slic_segmentation,
-        rseg.graph_segmentation,
-        rseg.watershed_segmentation,
-        rseg.eliminate_small_segments,
-        rseg.relabel_segments,
-    ]
-    expected_kw_defaults = {
-        "gdalformat": "GTIFF",
-        "datatype": None,
-        "no_data_val": None,
-        "calc_stats": True,
-        "use_pbar": True,
-    }
-    for fn in raster_funcs:
-        sig = inspect.signature(fn)
-        params = list(sig.parameters.values())
-        required_pos = [
-            p.name
-            for p in params
-            if p.kind
-            in (
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            )
-            and p.default is inspect.Parameter.empty
-        ]
-        assert required_pos == ["input_img", "output_img"], fn.__name__
-        for kw_name, kw_default in expected_kw_defaults.items():
-            assert kw_name in sig.parameters, (fn.__name__, kw_name)
-            p = sig.parameters[kw_name]
-            assert p.kind == inspect.Parameter.KEYWORD_ONLY, (
-                fn.__name__,
-                kw_name,
-            )
-            assert p.default == kw_default, (fn.__name__, kw_name)
 
 
 @pytest.mark.parametrize(

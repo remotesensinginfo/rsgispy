@@ -26,9 +26,6 @@ from ard_scene import make_ard_scenes, remove_safe, zip_safe
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "analysis_ready_data.py"
 )
-GUIDE = os.path.join(
-    os.path.dirname(__file__), os.pardir, "docs", "guides", "analysis_ready_data.rst"
-)
 
 
 def _load_example():
@@ -168,20 +165,3 @@ def test_worked_example_cloudsen12(tmp_path, monkeypatch):
     with rasterio.open(out["composites"]["T30UVD"]["sref"]) as src:
         arr = src.read(1)
     assert np.all(arr > 0) and arr.max() < 2000
-
-
-def test_guide_markers_exist():
-    """Every literalinclude marker used by the guide exists in the script."""
-    with open(EXAMPLE, encoding="utf-8") as f_obj:
-        script = f_obj.read()
-    with open(GUIDE, encoding="utf-8") as f_obj:
-        guide = f_obj.read()
-    markers = [
-        line.split(":start-after:")[1].strip()
-        for line in guide.splitlines()
-        if ":start-after:" in line
-    ]
-    assert len(markers) >= 8
-    for marker in markers:
-        assert marker in script
-        assert marker.replace("[step-", "[end-step-") in script

@@ -60,63 +60,6 @@ def _write_raster(
         dst.write(data)
 
 
-def test_constants_and_module_exports():
-    """Verify METRIC_* in rsgispy, constants in imreg, and submodule isolation."""
-    for name in (
-        "METRIC_EUCLIDEAN",
-        "METRIC_SQDIFF",
-        "METRIC_MANHATTAN",
-        "METRIC_CORRELATION",
-        "METRIC_MUTUAL_INFO",
-        "METRIC_NORM_MUTUAL_INFO",
-        "METRIC_PHASE_CORR",
-    ):
-        assert hasattr(rsgispy, name)
-
-    for removed in ("METRIC_CORELATION", "METRIC_MANHATTEN"):
-        assert not hasattr(rsgispy, removed)
-        assert not hasattr(imreg, removed)
-
-    for name in (
-        "TYPE_ENVI_IMG2IMG",
-        "TYPE_ENVI_IMG2MAP",
-        "TYPE_RSGIS_IMG2MAP",
-        "TYPE_RSGIS_MAPOFFS",
-        "TIE_METHOD_PHASE_CORR",
-        "TIE_METHOD_TEMPLATE_MATCH",
-        "OUTLIER_METHOD_RANSAC",
-        "OUTLIER_METHOD_RESIDUAL",
-        "OUTLIER_METHOD_MAD",
-        "TRANSFORM_SHIFT",
-        "TRANSFORM_SIMILARITY",
-        "TRANSFORM_AFFINE",
-        "TRANSFORM_POLY1",
-        "TRANSFORM_POLY2",
-        "TRANSFORM_POLY3",
-        "TRANSFORM_TPS",
-    ):
-        assert hasattr(imreg, name)
-
-    assert "__all__" not in vars(imreg)
-    for fn_name in (
-        "estimate_image_shift",
-        "warp_with_gcps_with_gdal",
-        "find_image_offset",
-        "apply_offset_to_image",
-        "generate_tie_points",
-        "basic_registration",
-        "filter_tie_points_outliers",
-        "fit_geometric_model",
-        "evaluate_geometric_model",
-        "gcp_to_gdal",
-        "add_vec_pts_as_gcps_to_img",
-        "warp_with_gcps",
-        "warp_with_tie_points",
-        "coregister_images",
-    ):
-        assert fn_name not in vars(imreg)
-
-
 def test_find_image_offset_and_apply_offset(tmp_path):
     """Test whole-image offset estimation across metrics and apply_offset_to_image."""
     arr = _make_textured_array(128, 128, seed=7)

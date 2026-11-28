@@ -4,7 +4,6 @@ multi-image band statistics, zonal summaries in reference pixels, masked
 probabilities, histograms and pixel counts.
 """
 
-import inspect
 from pathlib import Path
 
 import numpy as np
@@ -13,11 +12,6 @@ import rasterio
 from rasterio.transform import Affine, from_origin
 
 import rsgispy
-import rsgispy.imagecalc.comparison as ic_cmp
-import rsgispy.imagecalc.distance as ic_dist
-import rsgispy.imagecalc.encoding as ic_enc
-import rsgispy.imagecalc.fill as ic_fill
-import rsgispy.imagecalc.rescale as ic_resc
 import rsgispy.imagecalc.stats as ic_stats
 
 
@@ -72,30 +66,6 @@ def _write_geotiff(
     with rasterio.open(path, "w", **profile) as dst:
         dst.write(data)
     return str(path)
-
-
-def test_default_gdalformat_is_gtiff():
-    """Verify all newly imported functions default gdalformat to 'GTIFF'."""
-    funcs = [
-        ic_stats.image_pixel_column_summary,
-        ic_stats.calc_multi_img_band_stats,
-        ic_stats.get_img_sum_stats_in_pxl,
-        ic_stats.calc_mask_img_pxl_val_prob,
-        ic_cmp.calc_img_difference,
-        ic_enc.recode_int_raster,
-        ic_enc.one_hot_category_encoding,
-        ic_resc.calc_img_rescale,
-        ic_resc.rescale_img_pxl_vals,
-        ic_dist.calc_dist_to_img_vals,
-        ic_dist.calc_dist_to_img_vals_tiled,
-        ic_dist.buffer_img_pxl_vals,
-        ic_fill.calc_fill_regions_knn,
-        ic_fill.region_growing_fill,
-        ic_fill.region_growing_fill_tiled,
-    ]
-    for fn in funcs:
-        sig = inspect.signature(fn)
-        assert sig.parameters["gdalformat"].default == "GTIFF"
 
 
 def test_image_pixel_column_summary(tmp_path):

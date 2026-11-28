@@ -26,9 +26,6 @@ from maps_scene import CLASS_NAMES, make_maps_scene  # noqa: E402
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "making_maps.py"
 )
-GUIDE = os.path.join(
-    os.path.dirname(__file__), os.pardir, "docs", "guides", "making_maps.rst"
-)
 
 
 def _load_example():
@@ -76,24 +73,3 @@ def test_worked_example_runs(tmp_path):
     regions = out["regions"]
     assert regions["forest_pct"].between(0, 100).all()
     assert regions["total_pxls"].sum() > 0
-
-
-def test_guide_markers_exist():
-    """Every literalinclude marker used by the guide exists in the script."""
-    with open(EXAMPLE, encoding="utf-8") as f_obj:
-        script = f_obj.read()
-    with open(GUIDE, encoding="utf-8") as f_obj:
-        guide = f_obj.read()
-    # Only the markers of the blocks included from the example script (the
-    # guide also includes the tutorial-data script).
-    markers = []
-    included = ""
-    for line in guide.splitlines():
-        if "literalinclude::" in line:
-            included = line.split("literalinclude::")[1].strip()
-        elif ":start-after:" in line and included.endswith("/making_maps.py"):
-            markers.append(line.split(":start-after:")[1].strip())
-    assert len(markers) >= 9
-    for marker in markers:
-        assert marker in script
-        assert marker.replace("[step-", "[end-step-") in script

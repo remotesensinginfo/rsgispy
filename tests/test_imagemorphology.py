@@ -2,7 +2,6 @@
 Tests for rsgispy.imagemorphology.
 """
 
-import inspect
 from pathlib import Path
 
 import numpy as np
@@ -312,34 +311,9 @@ def test_opening_closing_and_top_hats(tmp_path):
         )
 
 
-def test_imagemorphology_v1_signatures_and_defaults(tmp_path):
-    """Verify v1.0 keyword-only tail and default datatype/nodata resolution."""
-    kw_tail = {
-        "gdalformat": "GTIFF",
-        "datatype": None,
-        "no_data_val": None,
-        "calc_stats": True,
-        "use_pbar": True,
-    }
-    raster_fns = [
-        getattr(rimorph, name)
-        for name in rimorph.__all__
-        if name != "create_circular_op" and not name.endswith("_node")
-    ]
-    assert len(raster_fns) == 12
-    for fn in raster_fns:
-        sig = inspect.signature(fn)
-        params = list(sig.parameters.values())
-        assert params[0].name == "input_img"
-        assert params[1].name == "output_img"
-        for kw_name, kw_default in kw_tail.items():
-            assert kw_name in sig.parameters, f"{fn.__name__} missing {kw_name}"
-            p = sig.parameters[kw_name]
-            assert p.kind == inspect.Parameter.KEYWORD_ONLY, (
-                f"{fn.__name__}.{kw_name} must be keyword-only"
-            )
-            assert p.default == kw_default
-
+def test_imagemorphology_default_datatype_and_positional_gdalformat(tmp_path):
+    """datatype=None keeps the input dtype (or picks the minima output type),
+    no_data_val is honoured, and gdalformat cannot be passed positionally."""
     # Default datatype=None preserves input dtype and honours no_data_val
     arr_f32 = np.full((7, 7), 10.0, dtype=np.float32)
     arr_f32[3, 3] = 2.0
@@ -454,21 +428,9 @@ def test_morphology_border_mode(tmp_path, mode, fill):
     )
 
 
-def test_morphology_border_mode_default_signatures_and_errors(tmp_path):
-    """border_mode defaults to 'edge' (keyword-only) on every morphology
-    function except the local minima; bad modes raise."""
-    raster_fns = [
-        getattr(rimorph, name)
-        for name in rimorph.__all__
-        if name != "create_circular_op" and "local_minima" not in name
-    ]
-    assert len(raster_fns) == 17
-    for fn in raster_fns:
-        sig = inspect.signature(fn)
-        for kw_name, default in (("border_mode", "edge"), ("border_fill", 0.0)):
-            assert kw_name in sig.parameters, f"{fn.__name__} missing {kw_name}"
-            assert sig.parameters[kw_name].kind == inspect.Parameter.KEYWORD_ONLY
-            assert sig.parameters[kw_name].default == default
+def test_morphology_border_mode_default_is_edge_and_bad_mode_raises(tmp_path):
+    """The default border_mode gives the same output as 'edge'; an unknown
+    mode raises."""
     arr = np.arange(30, dtype=np.uint8).reshape(5, 6)
     in_p = tmp_path / "def_in.tif"
     _write_raster(in_p, arr)

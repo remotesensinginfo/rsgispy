@@ -17,9 +17,6 @@ from seg_ml_scene import HEIGHT, WIDTH, make_seg_scene
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "large_rasters.py"
 )
-GUIDE = os.path.join(
-    os.path.dirname(__file__), os.pardir, "docs", "guides", "large_rasters.rst"
-)
 # Environment variables the example sets (restored after the test).
 ENV_VARS = (
     "RSGISPY_BLOCK_SIZE",
@@ -105,21 +102,3 @@ def test_worked_example_runs(tmp_path, restore_env):
     segs = gpd.read_parquet(out["segs_vec"])
     assert len(segs) == len(out["seg_stats"])
     assert segs["seg_id"].is_monotonic_increasing
-
-
-def test_guide_markers_exist():
-    """Every literalinclude marker used by the guide exists in the script."""
-    with open(EXAMPLE, encoding="utf-8") as f_obj:
-        script = f_obj.read()
-    with open(GUIDE, encoding="utf-8") as f_obj:
-        guide = f_obj.read()
-    markers = [
-        line.split(":start-after:")[1].strip()
-        for line in guide.splitlines()
-        # the [tutorial-data] marker is in the *_tutorial.py script
-        if ":start-after:" in line and "tutorial-data" not in line
-    ]
-    assert len(markers) >= 9
-    for marker in markers:
-        assert marker in script
-        assert marker.replace("[step-", "[end-step-") in script

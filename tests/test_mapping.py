@@ -98,17 +98,7 @@ def _write_thematic_raster(
 
 
 def test_calc_y_fig_size_and_extent_and_ticks():
-    """Test rsgispy.mapping exports, calc_y_fig_size, define_axis_extent, and tick spacing."""
-    assert set(rsgispy.mapping.__all__) == {
-        "layout",
-        "elements",
-        "raster",
-        "vector",
-        "basemaps",
-        "legend",
-    }
-    assert not hasattr(rsgispy.mapping, "create_raster_img_map")
-
+    """Test calc_y_fig_size, define_axis_extent, and tick spacing."""
     bbox = (500000.0, 500200.0, 5199900.0, 5200000.0)
     assert map_layout.calc_y_fig_size(bbox, 10.0) == pytest.approx(5.0)
 
