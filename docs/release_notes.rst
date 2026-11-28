@@ -76,14 +76,15 @@ API changes
 
 * ``calc_band_percentile`` takes percentiles in ``[0, 100]`` (it took 0-1).
 * ``polygonise_raster_to_vec_lyr`` uses the argument order of
-  ``polygonise_raster_tiled`` and takes ``no_data_val`` (the old order still
-  works, with a ``DeprecationWarning``).
+  ``polygonise_raster_tiled`` (``input_img`` first, ``out_format``
+  keyword-only) and takes ``no_data_val``. The old RSGISLib order is no
+  longer accepted.
 * ``kernel`` filters are true convolutions; ``apply_kernel_correlation_filter``
   gives the old correlation. Window filters, GLCM and morphology take
   ``border_mode``.
 * ``DpRVI_VV``, ``DpRVI_HH`` and ``RVI4S1`` compute the published DpRVI
   (Mandal et al. 2020) instead of the simple dual-pol RVI.
-* The ``rsgispy.zonalstats.METHOD_*`` constants are deprecated.
+* The ``rsgispy.zonalstats.METHOD_*`` constants were removed.
 * New: ``extract_segment_stats(seg_no_data_val=...)``, a COG guard in
   ``set_img_pxl_values``, ``rsgispy.tools.files.safe_join``.
 

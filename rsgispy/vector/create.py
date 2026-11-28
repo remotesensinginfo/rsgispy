@@ -118,12 +118,8 @@ def polygonise_raster_to_vec_lyr(
        ``(input_img, out_vec_file, out_vec_lyr, img_band, mask_img,
        mask_band, no_data_val, ...)`` with ``out_format`` keyword-only
        (default: from the file extension). The old RSGISLib order
-       ``(out_vec_file, out_vec_lyr, out_format, input_img, img_band,
-       mask_img, mask_band)`` is still accepted when passed positionally (or
-       with ``mask_img`` / ``mask_band`` keywords), with a
-       :class:`DeprecationWarning`; a legacy call that also passes
-       ``img_band=`` by keyword raises a :class:`TypeError` and must be
-       updated. ``no_data_val`` is new.
+       ``(out_vec_file, out_vec_lyr, out_format, input_img, ...)`` is no
+       longer accepted. ``no_data_val`` is new.
 
     The whole band, every polygon and the output GeoDataFrame are held in
     memory and a single core is used. For rasters producing many polygons
@@ -170,35 +166,6 @@ def polygonise_raster_to_vec_lyr(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     # pylint: disable=too-many-branches,too-many-statements
-    if isinstance(img_band, (str, os.PathLike)):
-        # Old RSGISLib order: (out_vec_file, out_vec_lyr, out_format,
-        # input_img, img_band, mask_img, mask_band); img_band must be an int.
-        warnings.warn(
-            "polygonise_raster_to_vec_lyr(out_vec_file, out_vec_lyr, out_format, "
-            "input_img, ...) is deprecated; use polygonise_raster_to_vec_lyr("
-            "input_img, out_vec_file, out_vec_lyr, img_band, ..., "
-            "out_format=...), as polygonise_raster_tiled.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        # Positional legacy values land one slot later; keyword ones
-        # (mask_img=..., mask_band=...) keep their names: tell them apart
-        # by type (band numbers are ints, images are paths).
-        legacy_band, legacy_msk, legacy_msk_band = 1, None, 1
-        for val in (mask_img, mask_band):
-            if isinstance(val, (str, os.PathLike)):
-                legacy_msk = val
-        if isinstance(mask_img, (int, np.integer)):
-            legacy_band = int(mask_img)
-        if isinstance(mask_band, (int, np.integer)):
-            legacy_msk_band = int(mask_band)
-        if no_data_val is not None:
-            legacy_msk_band = int(no_data_val)
-        (input_img, out_vec_file, out_vec_lyr, out_format, img_band, mask_img,
-         mask_band, no_data_val) = (
-            img_band, input_img, out_vec_file, out_vec_lyr, legacy_band,
-            legacy_msk, legacy_msk_band, None,
-        )
     img_band = int(img_band)
     mask_band = int(mask_band)
     ensure_file_exists(input_img)

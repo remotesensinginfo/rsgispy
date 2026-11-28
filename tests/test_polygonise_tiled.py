@@ -110,7 +110,7 @@ def fixture_hard_img(tmp_path):
 @pytest.mark.parametrize("tile_size", [10, 7, (1, 40), (40, 3), 13, 64])
 def test_matches_existing_function(hard_img, backend, use_8_conn, tile_size):
     ref = vec_create.polygonise_raster_to_vec_lyr(
-        None, None, "GPKG", hard_img, use_8_conn=use_8_conn
+        hard_img, use_8_conn=use_8_conn
     )
     new = vec_create.polygonise_raster_tiled(
         hard_img,
@@ -131,7 +131,7 @@ def test_matches_existing_function_random(tmp_path, backend, use_8_conn):
         arr = _blob_array(rng, 23 + 7 * trial, 31 - 3 * trial, 2 + trial)
         img = write_raster(tmp_path / f"blob_{trial}.tif", arr)
         ref = vec_create.polygonise_raster_to_vec_lyr(
-            None, None, "GPKG", img, use_8_conn=use_8_conn
+            img, use_8_conn=use_8_conn
         )
         for tile_size in (1, 5, (3, 11)):
             if tile_size == 1 and trial > 0:
@@ -174,7 +174,7 @@ def test_orientation_and_south_up_transform(tmp_path, backend):
         assert shapely.is_ccw(shapely.get_exterior_ring(polys)).all()
         holes = [h for p in polys for h in p.interiors]
         assert holes and not any(shapely.is_ccw(h) for h in holes)
-        ref = vec_create.polygonise_raster_to_vec_lyr(None, None, "GPKG", img)
+        ref = vec_create.polygonise_raster_to_vec_lyr(img)
         _assert_equivalent(ref, gdf, check_vertices=True)
 
 
@@ -185,7 +185,7 @@ def test_awkward_geotransform_within_rounding(tmp_path):
         arr,
         transform=Affine(0.000269494585236, 0, -3.123456789, 0, -0.000269494585236, 52.98765),
     )
-    ref = vec_create.polygonise_raster_to_vec_lyr(None, None, "GPKG", img)
+    ref = vec_create.polygonise_raster_to_vec_lyr(img)
     new = vec_create.polygonise_raster_tiled(img, None, tile_size=8, use_pbar=False)
     ref_v, ref_g = _canon(ref)
     new_v, new_g = _canon(new)
@@ -348,7 +348,7 @@ def test_mask_and_no_data(tmp_path, backend):
     img = write_raster(tmp_path / "hard.tif", arr)
     msk_arr = ((np.arange(1600).reshape(40, 40) % 7) != 0).astype(np.uint8)
     msk = write_raster(tmp_path / "msk.tif", msk_arr)
-    ref = vec_create.polygonise_raster_to_vec_lyr(None, None, "GPKG", img, mask_img=msk)
+    ref = vec_create.polygonise_raster_to_vec_lyr(img, mask_img=msk)
     new = vec_create.polygonise_raster_tiled(
         img, None, mask_img=msk, tile_size=9, backend=backend, use_pbar=False
     )
@@ -373,7 +373,7 @@ def test_float_raster(tmp_path, backend):
     arr[20, 20] = -0.0
     arr[21, 20] = 0.0
     img = write_raster(tmp_path / "f.tif", arr)
-    ref = vec_create.polygonise_raster_to_vec_lyr(None, None, "GPKG", img)
+    ref = vec_create.polygonise_raster_to_vec_lyr(img)
     ref = ref[~np.isnan(ref["PXLVAL"])]
     new = vec_create.polygonise_raster_tiled(
         img, None, tile_size=8, backend=backend, use_pbar=False
@@ -432,7 +432,7 @@ def test_empty_and_all_masked(tmp_path):
 def test_dissolve_sort_and_pxl_count(hard_img, backend, use_8_conn):
     arr = _hard_case_array()
     ref = vec_create.polygonise_raster_to_vec_lyr(
-        None, None, "GPKG", hard_img, use_8_conn=use_8_conn
+        hard_img, use_8_conn=use_8_conn
     )
     # GDAL's 8-connected rings can be invalid; repair them before dissolving.
     ref["geometry"] = shapely.make_valid(ref.geometry.values)
@@ -583,7 +583,7 @@ def test_polygonise_raster_to_vec_lyr_new_order_and_no_data(tmp_path):
     out_gpkg = str(tmp_path / "out.gpkg")
     vec_create.polygonise_raster_to_vec_lyr(img, out_gpkg, "polys", no_data_val=0)
     assert len(gpd.read_file(out_gpkg, layer="polys")) == 2
-    # The old RSGISLib order still works, with a DeprecationWarning.
-    with pytest.warns(DeprecationWarning, match="deprecated"):
-        legacy = vec_create.polygonise_raster_to_vec_lyr(None, None, "GPKG", img)
-    assert len(legacy) == len(every)
+    # The old RSGISLib order (out_vec_file, out_vec_lyr, out_format,
+    # input_img) is no longer accepted.
+    with pytest.raises((rsgispy.RSGISPyException, TypeError, ValueError)):
+        vec_create.polygonise_raster_to_vec_lyr(None, None, "GPKG", img)

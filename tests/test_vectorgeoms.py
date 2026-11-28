@@ -527,7 +527,7 @@ def test_vectorgeoms_create_from_raster(tmp_path, cls_tif):
     """Test polygonisation, point vectorisation, footprints, image vectors and transects."""
     poly_gpkg = str(tmp_path / "poly_from_ras.gpkg")
     vg_create.polygonise_raster_to_vec_lyr(
-        poly_gpkg, "cls", "GPKG", cls_tif, mask_img=cls_tif
+        cls_tif, poly_gpkg, "cls", out_format="GPKG", mask_img=cls_tif
     )
     p_gdf = gpd.read_file(poly_gpkg, layer="cls")
     assert set(p_gdf["PXLVAL"]) == {1, 2}
@@ -914,7 +914,7 @@ def test_vectorgeoms_raster_to_gdf_in_memory(tmp_path):
     write_raster(cls_tif, arr, origin=(500000.0, 5600100.0), nodata=0)
 
     poly_gdf = vg_create.polygonise_raster_to_vec_lyr(
-        None, None, "GPKG", cls_tif, mask_img=cls_tif
+        cls_tif, mask_img=cls_tif
     )
     assert isinstance(poly_gdf, gpd.GeoDataFrame)
     assert set(poly_gdf["PXLVAL"]) == {1, 2}
@@ -1126,11 +1126,11 @@ def test_create_polygonise_replace_grid_validation_and_bbox_layers(tmp_path):
     )
     gpkg = str(tmp_path / "poly.gpkg")
     vg_create.polygonise_raster_to_vec_lyr(
-        gpkg, "cls", "GPKG", tif, replace_file=True, replace_lyr=True
+        tif, gpkg, "cls", out_format="GPKG", replace_file=True, replace_lyr=True
     )
     with pytest.raises(RSGISPyException):
         vg_create.polygonise_raster_to_vec_lyr(
-            gpkg, "cls", "GPKG", tif, replace_file=False, replace_lyr=False
+            tif, gpkg, "cls", out_format="GPKG", replace_file=False, replace_lyr=False
         )
 
     # define_grid multi-UTM rejects non-multi-layer format

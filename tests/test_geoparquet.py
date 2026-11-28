@@ -446,17 +446,18 @@ def test_vector_create_polygonise_and_grid_geoparquet(tmp_path):
 
     poly_pq = str(tmp_path / "poly_ras.parquet")
     vg_create.polygonise_raster_to_vec_lyr(
-        poly_pq, "cls", "PARQUET", cls_tif, mask_img=cls_tif, out_compress="zstd"
+        cls_tif, poly_pq, "cls", mask_img=cls_tif, out_format="PARQUET",
+        out_compress="zstd",
     )
     assert _parquet_codec(poly_pq) == "ZSTD"
     assert len(gpd.read_parquet(poly_pq)) == 1
 
     with pytest.raises(rsgispy.RSGISPyException):
         vg_create.polygonise_raster_to_vec_lyr(
+            cls_tif,
             poly_pq,
             "cls2",
-            "PARQUET",
-            cls_tif,
+            out_format="PARQUET",
             replace_file=False,
             replace_lyr=False,
         )
