@@ -87,7 +87,9 @@ def resample_img_to_match(
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
                      (defaults to the data type of ``in_process_img``).
-    :param no_data_val: Optional no-data value (defaults to ``in_process_img`` nodata).
+    :param no_data_val: Optional output no-data value (defaults to the
+                        ``in_process_img`` nodata). Source pixels are masked
+                        with the ``in_process_img`` header nodata only.
     :param calc_stats: Populate image statistics and pyramids (Default = ``True``).
     :param use_pbar: Reserved progress-bar flag for uniform API (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
@@ -111,8 +113,11 @@ def resample_img_to_match(
 
     with rasterio.open(in_process_img, "r") as src_proc:
         num_bands = src_proc.count
+        # The source no-data value always comes from the input header (as in
+        # reproject_image); no_data_val only sets the output no-data value.
+        src_nd = src_proc.nodata
         if no_data_val is None:
-            no_data_val = src_proc.nodata
+            no_data_val = src_nd
         if datatype is None:
             datatype = rsgispy.get_rsgis_datatype(src_proc.dtypes[0])
 
@@ -145,7 +150,7 @@ def resample_img_to_match(
                 source=rasterio.band(src_proc, band_indices),
                 destination=rasterio.band(dst, band_indices),
                 resampling=resampling_alg,
-                src_nodata=no_data_val,
+                src_nodata=src_nd,
                 dst_nodata=no_data_val,
                 num_threads=num_threads,
             )
@@ -229,6 +234,8 @@ def reproject_image(
                      (defaults to input image data type).
     :param no_data_val: Optional no-data value for the reprojected image
                         (defaults to ``input_img`` nodata when set, else ``0.0``).
+                        Source pixels are masked only with the ``input_img``
+                        header nodata; without one, no pixels are masked.
     :param calc_stats: Populate image statistics and pyramids (Default = ``True``).
     :param use_pbar: Reserved progress-bar flag for uniform API (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
@@ -270,9 +277,9 @@ def reproject_image(
                 float(src_nodata_hdr) if src_nodata_hdr is not None else 0.0
             )
         )
-        src_nd = (
-            float(src_nodata_hdr) if src_nodata_hdr is not None else eff_nd
-        )
+        # Without a header no-data value no source pixels are masked (real
+        # zeros stay data); eff_nd is only the output no-data/fill value.
+        src_nd = float(src_nodata_hdr) if src_nodata_hdr is not None else None
 
         x_pxl_res = abs(src.transform.a)
         y_pxl_res = abs(src.transform.e)

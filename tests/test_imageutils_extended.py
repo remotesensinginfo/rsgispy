@@ -1467,3 +1467,36 @@ def test_imageutils_gdf_in_memory(tmp_path):
     )
     with rasterio.open(dist_zones) as src:
         assert set(np.unique(src.read(1))) == {0, 1, 2}
+
+
+def test_resample_img_to_match_uses_header_source_nodata(tmp_path):
+    """H8: the source nodata comes from the input header, not no_data_val."""
+    ref = str(tmp_path / "ref.tif")
+    src = str(tmp_path / "src.tif")
+    _write_test_tif(ref, np.zeros((4, 4), dtype=np.float32))
+    arr = np.array([[5, 1, 2, 3], [4, 5, 6, 7], [8, 9, 5, 1], [2, 3, 4, 5]],
+                   dtype=np.float32)
+    _write_test_tif(src, arr, nodata=5)
+    out = str(tmp_path / "out.tif")
+    iu_warp.resample_img_to_match(ref, src, out, no_data_val=-1.0,
+                                  calc_stats=False, use_pbar=False)
+    with rasterio.open(out) as ds:
+        assert ds.nodata == -1.0
+        np.testing.assert_array_equal(ds.read(1), np.where(arr == 5, -1.0, arr))
+
+
+def test_reproject_image_without_nodata_keeps_zeros(tmp_path, monkeypatch):
+    """Without a header nodata or no_data_val, no source pixels are masked."""
+    src = str(tmp_path / "src.tif")
+    _write_test_tif(src, np.zeros((4, 4), dtype=np.float32))
+    seen = {}
+    real = iu_warp.rio_reproject
+
+    def _spy(*args, **kwargs):
+        seen["src_nodata"] = kwargs.get("src_nodata")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(iu_warp, "rio_reproject", _spy)
+    iu_warp.reproject_image(src, str(tmp_path / "out.tif"), 32630,
+                            calc_stats=False, use_pbar=False)
+    assert seen["src_nodata"] is None
