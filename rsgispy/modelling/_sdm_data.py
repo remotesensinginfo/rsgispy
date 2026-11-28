@@ -1090,10 +1090,12 @@ def correlation_matrix(
     out_plt_file: Optional[str] = "correlation_matrix.png",
     fig_width: int = 15,
     fig_height: int = 14,
+    method: str = "pearson",
 ) -> pd.DataFrame:
     """
-    Calculate pairwise Pearson correlations among environmental covariates,
-    saving the matrix CSV and an optional lower-triangular heatmap plot.
+    Calculate pairwise correlations (Pearson by default) among environmental
+    covariates, saving the matrix CSV and an optional lower-triangular heatmap
+    plot.
 
     :param env_vars: Mapping of environmental variable descriptors.
     :param vec_file: Input vector path or :class:`geopandas.GeoDataFrame`.
@@ -1102,6 +1104,10 @@ def correlation_matrix(
     :param out_plt_file: Output heatmap PNG path (or ``None`` to skip plotting).
     :param fig_width: Figure width in inches (Default = ``15``).
     :param fig_height: Figure height in inches (Default = ``14``).
+    :param method: Correlation method: ``'pearson'``, ``'spearman'``, or
+                   ``'kendall'`` (Default = ``'pearson'``). The rank-based
+                   methods are less sensitive to outliers and to monotonic
+                   but non-linear relationships between covariates.
     :return: Correlation matrix :class:`pandas.DataFrame`.
 
     .. code:: python
@@ -1109,6 +1115,9 @@ def correlation_matrix(
         import rsgispy.modelling.species_distribution as sdm
 
         corr_df = sdm.correlation_matrix(env_vars, "combined.gpkg", "combined")
+        rank_df = sdm.correlation_matrix(
+            env_vars, "combined.gpkg", "combined", method="spearman"
+        )
     """
     data_gdf = read_model_vector(vec_file, vec_lyr=vec_lyr)
     analysis_vars = resolve_analysis_vars(env_vars)
@@ -1116,7 +1125,7 @@ def correlation_matrix(
     return run_correlation_matrix(
         df=data_gdf,
         cols=analysis_vars,
-        method="pearson",
+        method=method,
         out_corr_file=out_corr_file,
         out_plt_file=out_plt_file,
         fig_width=fig_width,

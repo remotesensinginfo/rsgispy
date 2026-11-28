@@ -1479,11 +1479,25 @@ def calc_feature_response_curves(
     internal_id_col: Optional[str] = None,
     summary_stat: str = "mean",
     use_pbar: bool = True,
+    method: str = "marginal",
+    pdp_background_samples: int = 200,
+    rnd_seed: Optional[int] = None,
+    out_grid_plot: Optional[Union[str, os.PathLike]] = None,
+    ylim: Optional[Tuple[float, float]] = (0.0, 1.0),
+    multi_panel: bool = False,
+    plot_samples: bool = False,
 ) -> pd.DataFrame:
     """
-    Generate marginal response curves showing how predicted class probabilities
-    vary across each feature's range while holding other predictors constant
-    at their sample mean or median.
+    Generate marginal or partial dependence (PDP) response curves showing how
+    predicted class probabilities vary across each feature's range.
+
+    With ``method='marginal'`` (default) the other features are held constant
+    at their sample mean or median; with ``method='pdp'`` the probability at
+    each grid value is averaged over a background sample of training rows
+    (the other features keep their observed values), as in
+    :func:`rsgispy.regression.regfeatures.calc_feature_response_curves`. The
+    response is the predicted probability of every class, or of the single
+    ``target_class`` when given.
 
     :param cls_cfg: Optional classification configuration or class mapping.
     :param sk_classifier: Fitted ``scikit-learn`` classifier.
@@ -1501,9 +1515,29 @@ def calc_feature_response_curves(
     :param use_internal_id: Map class IDs via ``internal_cls_id`` when ``True``.
     :param out_id_col: Optional override for output class ID column name.
     :param internal_id_col: Optional override for internal class ID column name.
-    :param summary_stat: Baseline value used for held-constant features:
-                         ``'mean'`` (default) or ``'median'``.
+    :param summary_stat: Baseline value used for held-constant features when
+                         ``method='marginal'``: ``'mean'`` (default) or
+                         ``'median'``.
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
+    :param method: Response computation method: ``'marginal'`` (hold other
+                   features at sample mean/median, default) or ``'pdp'``
+                   (Partial Dependence: class probabilities averaged over
+                   background samples).
+    :param pdp_background_samples: Maximum number of background rows sampled
+                                   when ``method='pdp'`` (Default = ``200``).
+    :param rnd_seed: Optional random seed for background subsampling when
+                     ``method='pdp'``.
+    :param out_grid_plot: Optional output PNG path saving a multi-feature grid
+                          summary plot.
+    :param ylim: ``(ymin, ymax)`` y-axis limits for single-panel plots
+                 (Default = ``(0.0, 1.0)``; ``None`` for automatic limits).
+    :param multi_panel: If ``True`` and multiple classes are plotted, draw
+                        stacked per-class subplots rather than overlaid lines
+                        (Default = ``False``).
+    :param plot_samples: If ``True``, overlay the observed samples behind the
+                         curves as 0/1 class-membership indicators (requires
+                         the class ID column in ``train_data``; Default =
+                         ``False``).
     :return: :class:`pandas.DataFrame` containing ``<feat>_vals`` and
              ``<feat>_<class>_prob`` columns.
 
@@ -1514,6 +1548,7 @@ def calc_feature_response_curves(
         resp_df = cf.calc_feature_response_curves(
             "cls_config.json", clf, "train.parquet",
             out_file="resp.csv", response_plots_dir="resp_plots",
+            method="pdp", out_grid_plot="resp_grid.png",
         )
     """
     # pylint: disable=too-many-locals
@@ -1528,15 +1563,17 @@ def calc_feature_response_curves(
             f"Unsupported summary_stat '{summary_stat}'. Expected 'mean' or 'median'."
         )
 
-    _, feat_cols, x_df, _, class_info, _, _, _ = _prepare_classification_data(
-        samples_data=train_data,
-        cls_cfg=cls_cfg,
-        feature_cols=feature_cols,
-        use_internal_id=use_internal_id,
-        out_id_col=out_id_col,
-        internal_id_col=internal_id_col,
-        label="train_data",
-        require_target=False,
+    df, feat_cols, x_df, _, class_info, eff_out_col, eff_int_col, _ = (
+        _prepare_classification_data(
+            samples_data=train_data,
+            cls_cfg=cls_cfg,
+            feature_cols=feature_cols,
+            use_internal_id=use_internal_id,
+            out_id_col=out_id_col,
+            internal_id_col=internal_id_col,
+            label="train_data",
+            require_target=False,
+        )
     )
     if x_df is None:
         raise rsgispy.RSGISPyException(
@@ -1564,21 +1601,44 @@ def calc_feature_response_curves(
         for idx in range(n_outputs)
     ]
 
+    obs_y_df: Optional[pd.DataFrame] = None
+    if plot_samples:
+        obs_col = (
+            eff_int_col
+            if use_internal_id and eff_int_col in df.columns
+            else (eff_out_col if eff_out_col in df.columns else None)
+        )
+        if obs_col is not None and est_classes:
+            obs_vals = df[obs_col].to_numpy()
+            obs_y_df = pd.DataFrame(
+                {
+                    resolved_labels[c_idx]: (obs_vals == cid).astype(np.float64)
+                    for c_idx, cid in enumerate(est_classes)
+                    if c_idx < len(resolved_labels)
+                },
+                index=x_df.index,
+            )
+
     return run_variable_response_curves(
         x_df=x_df,
         feature_cols=feat_cols,
-        predict_fn=lambda df: _predict_class_probs(sk_classifier, df, est_classes),
+        predict_fn=lambda in_df: _predict_class_probs(sk_classifier, in_df, est_classes),
         output_labels=resolved_labels,
         out_indices=plot_indices,
         col_name_fn=lambda feat, lbl, _i: f"{feat}_{lbl}_prob",
         n_samples=n_samples,
         summary_stat=summary_stat,
-        method="marginal",
+        method=method,
+        pdp_background_samples=pdp_background_samples,
+        rnd_seed=rnd_seed,
         out_file=out_file,
         response_plots_dir=response_plots_dir,
+        out_grid_plot=out_grid_plot,
         ylabel="Class Probability",
-        ylim=(0.0, 1.0),
-        multi_panel=False,
+        ylim=ylim,
+        multi_panel=multi_panel,
+        observed_y_df=obs_y_df,
+        plot_samples=plot_samples,
         use_pbar=use_pbar,
     )
 

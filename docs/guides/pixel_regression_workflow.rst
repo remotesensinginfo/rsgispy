@@ -341,7 +341,11 @@ pixel where the mask equals ``img_msk_val``, block by block, and writes a
 ``-9999``. As for classification, the valid-data mask comes from the
 configuration's feature stack.
 :func:`~rsgispy.regression.regxgboost.apply_xgboost_regressor` applies an
-XGBoost model.
+XGBoost model. For a Random Forest or Extra Trees model, ``out_uncert_img``
+also writes the per-pixel spread of the tree predictions
+(``uncert_method='std'``, ``'iqr'`` or ``'cv'``), the regression counterpart
+of the classification ``out_conf_img`` (but larger values are *less*
+certain).
 
 .. literalinclude:: ../examples/pixel_regression_workflow.py
    :language: python

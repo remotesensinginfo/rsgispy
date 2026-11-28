@@ -355,7 +355,12 @@ def apply_sklearn_regressor_segments(
                           predictions of a univariate tree ensemble (e.g.
                           ``RandomForestRegressor``), written as
                           ``pred_<target>_q<quantile>`` columns.
-    :param kwargs: Further options: ``seg_info``, ``in_vec_file``,
+    :param kwargs: Further options: ``out_uncert_method`` (``'std'``,
+                   ``'iqr'`` or ``'cv'``: add ``pred_<target>_<method>``
+                   uncertainty columns from the spread of the ensemble
+                   members, as ``out_uncert_img`` of
+                   :func:`~rsgispy.regression.regsklearn.apply_sklearn_regressor`;
+                   Default = ``None``), ``seg_info``, ``in_vec_file``,
                    ``copy_cols`` (Default = all input columns; ``[]`` = ID
                    only), ``out_prefix`` (Default = ``'pred_'``),
                    ``out_no_data_val``, ``missing``, ``fill_value``,

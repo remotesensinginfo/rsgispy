@@ -574,6 +574,77 @@ def test_feature_response_curves(tmp_path):
     assert plt.get_fignums() == []
 
 
+def test_feature_response_curves_pdp_options(tmp_path):
+    """Test PDP method, grid plot, multi-panel, sample overlay, and ylim options."""
+    fix = _make_synthetic_dataset(tmp_path, include_collinear=False)
+    rf_clf, _ = rcsk.train_sklearn_classifier(
+        fix["cfg"],
+        RandomForestClassifier(n_estimators=25),
+        fix["train_df"],
+        rnd_seed=42,
+        return_model=True,
+    )
+
+    marg_df = rcf.calc_feature_response_curves(
+        fix["cfg"], rf_clf, fix["train_df"], n_samples=12, use_pbar=False
+    )
+    grid_png = tmp_path / "resp_grid.png"
+    resp_dir = tmp_path / "resp_pdp"
+    pdp_df = rcf.calc_feature_response_curves(
+        fix["cfg"],
+        rf_clf,
+        fix["train_df"],
+        n_samples=12,
+        method="pdp",
+        pdp_background_samples=30,
+        rnd_seed=1,
+        out_grid_plot=grid_png,
+        response_plots_dir=resp_dir,
+        multi_panel=True,
+        plot_samples=True,
+        use_pbar=False,
+    )
+    assert list(pdp_df.columns) == list(marg_df.columns)
+    assert len(pdp_df) == 12
+    assert grid_png.exists()
+    assert (resp_dir / "f1_response_curve.png").exists()
+    prob_cols = [c for c in pdp_df.columns if c.endswith("_prob")]
+    probs = pdp_df[prob_cols].to_numpy()
+    assert np.all((probs >= 0.0) & (probs <= 1.0))
+    # PDP averages over background rows so the class probabilities still sum to 1
+    # and differ from the marginal (held-at-mean) curves.
+    for feat in fix["feat_cols"]:
+        tot = pdp_df[[f"{feat}_{c}_prob" for c in ("Forest", "Water", "Urban")]].sum(axis=1)
+        np.testing.assert_allclose(tot.to_numpy(), 1.0, atol=1e-9)
+    assert not np.allclose(
+        pdp_df[prob_cols].to_numpy(), marg_df[prob_cols].to_numpy()
+    )
+
+    # PDP for a single class with a grid plot and sample overlay.
+    pdp_one = rcf.calc_feature_response_curves(
+        fix["cfg"],
+        rf_clf,
+        fix["train_df"],
+        n_samples=8,
+        method="pdp",
+        target_class="Water",
+        out_grid_plot=tmp_path / "resp_grid_one.png",
+        plot_samples=True,
+        ylim=(0.0, 0.5),
+        use_pbar=False,
+    )
+    assert [c for c in pdp_one.columns if c.endswith("_prob")] == [
+        f"{f}_Water_prob" for f in fix["feat_cols"]
+    ]
+    assert (tmp_path / "resp_grid_one.png").exists()
+
+    with pytest.raises(rsgispy.RSGISPyException, match="method"):
+        rcf.calc_feature_response_curves(
+            fix["cfg"], rf_clf, fix["train_df"], method="ice", use_pbar=False
+        )
+    assert plt.get_fignums() == []
+
+
 def test_shap_feature_contributions(tmp_path):
     """Test multiclass and binary SHAP contributions when shap is installed."""
     pytest.importorskip("shap")

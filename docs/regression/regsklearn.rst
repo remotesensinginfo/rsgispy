@@ -122,6 +122,36 @@ descriptions:
         output_img="landsat_forest_structure.tif",
     )
 
+Per-pixel Uncertainty
+---------------------
+
+For an ensemble of independently fitted members (Random Forest, Extra Trees,
+Bagging or Voting regressors, also inside a ``Pipeline`` or
+``MultiOutputRegressor``), ``out_uncert_img`` writes a ``float32`` image with
+one band per target (``<target>_<uncert_method>``, no data ``-9999``) giving
+how much the members disagree at each pixel: ``uncert_method='std'`` (the
+standard deviation of the member predictions, in the target's units;
+default), ``'iqr'`` (inter-quartile range) or ``'cv'`` (``std / |mean|``). See
+:func:`~rsgispy.ml.predict.calc_ensemble_uncertainty`. Larger values are less
+certain; the values rank pixels but are not a calibrated interval (use
+:func:`~rsgispy.ml.predict.predict_quantiles_raster` with conformal residuals
+for that). Models without independent members (linear models, SVR, boosted
+trees) raise an exception before any output is written.
+:func:`~rsgispy.regression.regsegments.apply_sklearn_regressor_segments`
+takes ``out_uncert_method`` to add the same values as
+``pred_<target>_<method>`` columns.
+
+.. code-block:: python
+
+    rsk.apply_sklearn_regressor(
+        reg_cfg=mv_cfg,
+        sk_regressor=mv_model,
+        in_msk_img="landsat_valid_mask.tif",
+        img_msk_val=1,
+        output_img="landsat_forest_structure.tif",
+        out_uncert_img="landsat_forest_structure_std.tif",  # 2 bands
+    )
+
 Repeated k-fold and Jackknife Assessment
 ----------------------------------------
 

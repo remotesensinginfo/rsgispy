@@ -907,6 +907,18 @@ def calc_split_metrics(
     preds = np.asarray(
         fitted_est.predict(x_df, **p_kwargs) if p_kwargs else fitted_est.predict(x_df)
     ).ravel()
+    return {
+        f"{prefix}_{key}": val
+        for key, val in calc_label_metrics(y_true, preds).items()
+    }
+
+
+def calc_label_metrics(y_true: np.ndarray, preds: np.ndarray) -> Dict[str, float]:
+    """
+    Accuracy, balanced accuracy, macro F1, and Cohen's kappa of predicted
+    class labels (keys ``accuracy``, ``bal_accuracy``, ``f1_macro`` and
+    ``cohen_kappa``).
+    """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         acc = float(sklearn.metrics.accuracy_score(y_true, preds))
@@ -920,10 +932,10 @@ def calc_split_metrics(
     if np.isnan(kappa):
         kappa = 1.0 if np.array_equal(y_true, preds) else 0.0
     return {
-        f"{prefix}_accuracy": acc,
-        f"{prefix}_bal_accuracy": bal_acc,
-        f"{prefix}_f1_macro": f1_mac,
-        f"{prefix}_cohen_kappa": kappa,
+        "accuracy": acc,
+        "bal_accuracy": bal_acc,
+        "f1_macro": f1_mac,
+        "cohen_kappa": kappa,
     }
 
 

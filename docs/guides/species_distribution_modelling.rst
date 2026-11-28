@@ -414,7 +414,8 @@ check for strongly correlated variables:
   distributions overlap completely are unlikely to help.
 * :func:`~rsgispy.modelling.species_distribution.correlation_matrix` returns
   (and saves as CSV and a heatmap) the Pearson correlations between the
-  variables.
+  variables; ``method='spearman'`` or ``'kendall'`` gives rank correlations,
+  which also catch monotonic but non-linear relationships.
 * :func:`~rsgispy.modelling.species_distribution.calc_vif_multicollinearity`
   returns the variance inflation factor (VIF) of each variable: how well it
   is predicted by all the others together. VIF catches collinearity between
