@@ -26,6 +26,7 @@ from rsgispy.imageprocess import (
     open_output_dataset,
 )
 from rsgispy.imageutils.stats import pop_img_stats
+from rsgispy.segmentation._helpers import label_4connected
 from rsgispy.segmentation.utils import (
     call_kernel,
     check_label_overflow,
@@ -240,6 +241,26 @@ def extract_halo_tile(data: np.ndarray, tile: TileWindow) -> np.ndarray:
 def crop_halo_labels(halo_labels: np.ndarray, tile: TileWindow) -> np.ndarray:
     """Crop halo-padded 2D labels back to ``tile``'s non-overlapping core."""
     return halo_labels[tile.core_row_slice, tile.core_col_slice]
+
+
+def split_core_components(core_labels: np.ndarray) -> np.ndarray:
+    """
+    Relabel the cropped core labels of a tile so that every label is one
+    4-connected component, numbered contiguously ``1..N`` (``0`` stays no
+    data).
+
+    A segment found on the halo-padded tile can be connected only through the
+    halo, so cropping it to the core can leave it in several separate parts.
+    Each part becomes its own label here; parts below ``min_pixels`` are then
+    merged into an adjacent segment (or dropped) by the pipeline's global
+    small-segment elimination after the seams are stitched.
+    """
+    core = np.asarray(core_labels)
+    valid = core > 0
+    horiz_eq = (core[:, 1:] == core[:, :-1]) & valid[:, 1:] & valid[:, :-1]
+    vert_eq = (core[1:, :] == core[:-1, :]) & valid[1:, :] & valid[:-1, :]
+    comps, _, _ = label_4connected(valid, horiz_eq, vert_eq)
+    return relabel_segments_array(comps, no_data_val=0, contiguous=True)
 
 
 def offset_tile_labels(

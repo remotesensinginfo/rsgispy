@@ -19,6 +19,7 @@ import rsgispy
 from rsgispy.segmentation.tiling import (
     TileWindow,
     crop_halo_labels,
+    split_core_components,
     run_tiled_array_pipeline,
     run_tiled_raster_pipeline,
 )
@@ -29,7 +30,6 @@ from rsgispy.segmentation.utils import (
     make_njit,
     normalise_array_input,
     normalise_band_selection,
-    relabel_segments_array,
     scale_bands_to_range,
 )
 
@@ -187,9 +187,7 @@ def _graph_tile_worker(
 
     halo_labels = np.zeros((height, width), dtype=np.int64)
     halo_labels[valid_rows, valid_cols] = parent + 1
-    core_labels = relabel_segments_array(
-        crop_halo_labels(halo_labels, tile), no_data_val=0, contiguous=True
-    )
+    core_labels = split_core_components(crop_halo_labels(halo_labels, tile))
     return core_labels, None
 
 
