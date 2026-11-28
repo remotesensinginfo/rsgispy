@@ -17,6 +17,8 @@ from shapely.geometry import Point, box
 import rsgispy
 import rsgispy.regression as rreg
 import rsgispy.regression.regdata as rrd
+from rsgispy.regression.regdata import split_reg_samples
+import pandas as pd
 
 _HAS_PARQUET = (
     importlib.util.find_spec("pyarrow") is not None
@@ -333,3 +335,33 @@ def test_reg_poly_id_col_points(tmp_path: Path):
     )
     assert df["train_grp"].is_unique
     assert df["train_grp"].iloc[0] == "pt0"
+
+
+def test_split_reg_samples_duplicate_index_no_leakage():
+    """split_reg_samples keeps the splits disjoint when the index has duplicate labels."""
+    n_rows = 40
+    # Deliberately create non-unique index labels (e.g., from pd.concat without ignore_index)
+    dup_index = [i % 5 for i in range(n_rows)]
+    reg_df = pd.DataFrame(
+        {
+            "row_uid": np.arange(n_rows),
+            "b1": np.linspace(0.0, 10.0, n_rows),
+            "target": np.linspace(1.0, 100.0, n_rows),
+        },
+        index=dup_index,
+    )
+    tr_reg, te_reg, va_reg = split_reg_samples(
+        reg_df,
+        train_prop=0.6,
+        test_prop=0.2,
+        valid_prop=0.2,
+        stratify_col="target",
+        n_bins=4,
+        rnd_seed=42,
+    )
+    assert len(tr_reg) + len(te_reg) + len(va_reg) == n_rows
+    reg_sets = [set(tr_reg["row_uid"]), set(te_reg["row_uid"]), set(va_reg["row_uid"])]
+    assert reg_sets[0].isdisjoint(reg_sets[1])
+    assert reg_sets[0].isdisjoint(reg_sets[2])
+    assert reg_sets[1].isdisjoint(reg_sets[2])
+    assert reg_sets[0] | reg_sets[1] | reg_sets[2] == set(range(n_rows))

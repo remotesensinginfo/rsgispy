@@ -17,6 +17,8 @@ import rsgispy
 import rsgispy.imagecalc.percentiles as img_pct
 import rsgispy.imageprocess
 import rsgispy.tools.stats as rstats
+from rasterio.transform import Affine
+from pathlib import Path
 
 PCTS = [0.0, 100.0, 50.0, 10.0, 90.0, 2.5, 33.3, 66.7, 99.9, 12.345]
 
@@ -285,3 +287,48 @@ def test_pxl_percentiles_are_block_wise(tmp_path, small_blocks, monkeypatch):
     )
     assert len(shapes) == 18  # 9 blocks x 2 bands
     assert all(shp == (3,) + shp[1:] and shp[1] <= 16 and shp[2] <= 16 for shp in shapes)
+
+
+def _write_raster(
+    path: Path,
+    arr: np.ndarray,
+    *,
+    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
+    crs: object = "EPSG:32630",
+    nodata=None,
+) -> str:
+    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
+    profile = {
+        "driver": "GTiff",
+        "height": int(data.shape[1]),
+        "width": int(data.shape[2]),
+        "count": int(data.shape[0]),
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": transform,
+    }
+    if nodata is not None:
+        profile["nodata"] = nodata
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return str(path)
+
+
+def test_calc_band_percentile_msk_filters_non_finite(tmp_path):
+    arr = np.array(
+        [[10.0, 20.0, np.nan, np.inf], [30.0, 40.0, -np.inf, 50.0]],
+        dtype=np.float32,
+    )
+    msk = np.ones((2, 4), dtype=np.uint8)
+    in_img = _write_raster(tmp_path / "pct_in.tif", arr)
+    msk_img = _write_raster(tmp_path / "pct_msk.tif", msk)
+
+    pcts = img_pct.calc_band_percentile_msk(
+        input_img=in_img,
+        in_msk_img=msk_img,
+        msk_val=1,
+        percentiles=[0.0, 50.0, 100.0],
+        no_data_val=float("nan"),
+        use_pbar=False,
+    )
+    np.testing.assert_allclose(pcts[:, 0], [10.0, 30.0, 50.0])

@@ -29,6 +29,12 @@ import rsgispy.vector.geoms as vg_polys
 import rsgispy.vector.geoms as vg_spatial
 import rsgispy.vector.io as vu_meta
 import rsgispy.vector.stats as vs_metrics
+from rsgispy.vector import geoms as vec_geoms
+from rsgispy.vector import io as vec_io
+from rsgispy.vector import selection as vec_sel
+from rsgispy import RSGISPyException
+from shapely.geometry import MultiLineString
+from rsgispy.vector import create as vec_create
 
 
 def _can_import(mod_name: str) -> bool:
@@ -977,3 +983,231 @@ def test_empty_results_write_empty_layer_with_warning(tmp_path):
         assert len(out_gdf) == 0, name
         assert out_gdf.crs == polys.crs, name
     assert "cls" in gpd.read_file(str(tmp_path / "rm_area.gpkg"), layer="lyr").columns
+
+
+def _write_raster(
+    path: str,
+    arr: np.ndarray,
+    *,
+    origin=(500000.0, 5200000.0),
+    res=(10.0, 10.0),
+    crs: str = "EPSG:32630",
+    nodata=None,
+    tiled: bool = False,
+    blocksize: int | None = None,
+) -> str:
+    """Write a 2D or 3D NumPy array to a GeoTIFF."""
+    if arr.ndim == 2:
+        data = arr[np.newaxis, :, :]
+    else:
+        data = arr
+    count, height, width = data.shape
+    profile = {
+        "driver": "GTiff",
+        "width": width,
+        "height": height,
+        "count": count,
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": from_origin(origin[0], origin[1], res[0], res[1]),
+        "nodata": nodata,
+    }
+    if tiled:
+        profile["tiled"] = True
+        if blocksize is not None:
+            profile["blockxsize"] = blocksize
+            profile["blockysize"] = blocksize
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return path
+
+
+def test_custom_geometry_column_name_across_vector_ops():
+    """Functions respect gdf.geometry.name when geometry column is not 'geometry'."""
+    poly_gdf = gpd.GeoDataFrame(
+        {"grp": ["a", "b"], "val": [1, 2]},
+        geometry=[box(0, 0, 10, 10), box(20, 0, 30, 10)],
+        crs="EPSG:32630",
+    ).rename_geometry("geom")
+
+    buf = vec_geoms.buffer_vec_layer_gp(poly_gdf, None, 2.0, out_vec_file=None)
+    assert buf.geometry.name == "geom"
+    assert all(buf.geometry.area > 100.0)
+
+    parts = vec_io.split_by_attribute(poly_gdf, None, "grp")
+    assert set(parts.keys()) == {"a", "b"}
+    assert parts["a"].geometry.name == "geom"
+
+    roi_gdf = gpd.GeoDataFrame(
+        {"rid": [1]}, geometry=[box(0, 0, 15, 15)], crs="EPSG:32630"
+    ).rename_geometry("geom")
+    subs = vec_sel.subset_vec_lyr_to_feat_bboxs(
+        roi_gdf, None, poly_gdf, None, use_pbar=False
+    )
+    assert len(subs) == 1
+    assert len(subs[0]) == 1
+    assert subs[0].geometry.name == "geom"
+
+
+def test_thin_vector_geoms_existing_unq_id_and_border_dedup():
+    """thin_vector_geoms handles existing unq_id, cleans grid cols, dedups borders."""
+    # Point right on shared grid boundary (10.0, 5.0) plus clustered points
+    pts = [
+        Point(10.0, 5.0),
+        Point(5.0, 5.0),
+        Point(6.0, 5.0),
+        Point(15.0, 5.0),
+    ]
+    gdf = gpd.GeoDataFrame(
+        {"unq_id": [100, 101, 102, 103], "name": ["b", "c1", "c2", "d"]},
+        geometry=pts,
+        crs="EPSG:32630",
+    ).rename_geometry("geom")
+    grid_gdf = gpd.GeoDataFrame(
+        {"grid_extra": [1, 2]},
+        geometry=[box(0.0, 0.0, 10.0, 10.0), box(10.0, 0.0, 20.0, 10.0)],
+        crs="EPSG:32630",
+    )
+
+    thinned = vec_geoms.thin_vector_geoms(
+        gdf, None, grid_gdf, None, out_vec_file=None
+    )
+    assert "index_right" not in thinned.columns
+    assert "grid_extra" not in thinned.columns
+    assert set(thinned.columns) == {"unq_id", "name", "geom"}
+    # Border point (unq_id=100) must appear at most once
+    assert list(thinned["unq_id"]).count(100) <= 1
+    assert thinned["unq_id"].is_unique
+
+
+def test_lines_pt_step_validation_dist_and_future_coastline():
+    """Validate pt_step > 0, accurate dist values, and robust estimate_future_coastline."""
+    line_gdf = gpd.GeoDataFrame(
+        {"lid": [1]},
+        geometry=[LineString([(0.0, 0.0), (10.0, 0.0)])],
+        crs="EPSG:32630",
+    ).rename_geometry("geom")
+
+    with pytest.raises(RSGISPyException):
+        vec_geoms.create_orthg_lines(line_gdf, None, None, pt_step=0.0)
+    with pytest.raises(RSGISPyException):
+        vec_geoms.split_lines_to_reg_pts(line_gdf, None, None, pt_step=-5.0)
+
+    pts_gdf = vec_geoms.split_lines_to_reg_pts(
+        line_gdf, None, out_vec_file=None, pt_step=2.5
+    )
+    assert list(pts_gdf["dist"]) == pytest.approx([2.5, 5.0, 7.5])
+    assert list(pts_gdf["pt_x"]) == pytest.approx(list(pts_gdf["dist"]))
+
+    # estimate_future_coastline with MultiLineString, empty and null geometries
+    coast_gdf = gpd.GeoDataFrame(
+        {"cid": [1, 2, 3]},
+        geometry=[
+            MultiLineString(
+                [[(0.0, 0.0), (10.0, 0.0)], [(10.0, 0.0), (20.0, 0.0)]]
+            ),
+            LineString(),
+            None,
+        ],
+        crs="EPSG:32630",
+    )
+    trans_gdf = gpd.GeoDataFrame(
+        {"LRR": [1.0, 2.0]},
+        geometry=[
+            LineString([(5.0, -5.0), (5.0, 5.0)]),
+            LineString([(15.0, -5.0), (15.0, 5.0)]),
+        ],
+        crs="EPSG:32630",
+    )
+    fut = vec_geoms.estimate_future_coastline(
+        coast_gdf,
+        None,
+        curr_vec_date=datetime.date(2020, 1, 1),
+        trans_vec_file=trans_gdf,
+        trans_vec_lyr=None,
+        out_vec_file=None,
+        out_vec_lyr=None,
+        out_pred_date=datetime.date(2025, 1, 1),
+        trans_rate_col="LRR",
+        use_pbar=False,
+    )
+    assert fut is not None
+    assert len(fut) == 1
+    assert not fut.geometry.iloc[0].is_empty
+
+
+def test_create_polygonise_replace_grid_validation_and_bbox_layers(tmp_path):
+    """Test polygonise replace_lyr, define_grid validation, create_bbox_vec_lyr,
+    create_poly_vec_bboxs, and create_hex_grid_poly.
+    """
+    tif = _write_raster(
+        str(tmp_path / "cls.tif"),
+        np.array([[1, 1, 2, 2], [1, 1, 2, 2]], dtype=np.uint8),
+    )
+    gpkg = str(tmp_path / "poly.gpkg")
+    vec_create.polygonise_raster_to_vec_lyr(
+        gpkg, "cls", "GPKG", tif, replace_file=True, replace_lyr=True
+    )
+    with pytest.raises(RSGISPyException):
+        vec_create.polygonise_raster_to_vec_lyr(
+            gpkg, "cls", "GPKG", tif, replace_file=False, replace_lyr=False
+        )
+
+    # define_grid multi-UTM rejects non-multi-layer format
+    with pytest.raises(RSGISPyException):
+        vec_create.define_grid(
+            bbox=(-8.0, 2.0, 50.0, 52.0),
+            x_size=100000.0,
+            y_size=100000.0,
+            in_epsg_code=4326,
+            out_vec_file=str(tmp_path / "grid.geojson"),
+            out_vec_lyr="grid",
+            out_format="GeoJSON",
+            utm_grid=True,
+        )
+
+    # create_bbox_vec_lyr raises cleanly on empty layer and succeeds on valid layer
+    empty_gdf = gpd.GeoDataFrame(
+        {"id": []}, geometry=gpd.GeoSeries([], crs="EPSG:4326"), crs="EPSG:4326"
+    )
+    with pytest.raises(RSGISPyException):
+        vec_create.create_bbox_vec_lyr(empty_gdf, None, out_vec_file=None)
+
+    pts_gdf = gpd.GeoDataFrame(
+        {"id": [1, 2]},
+        geometry=[Point(0, 0), Point(4, 2)],
+        crs="EPSG:4326",
+    )
+    bbox_gdf = vec_create.create_bbox_vec_lyr(pts_gdf, None, out_vec_file=None)
+    assert len(bbox_gdf) == 1
+    assert bbox_gdf.total_bounds == pytest.approx([0.0, 0.0, 4.0, 2.0])
+
+    # Direct test: create_poly_vec_bboxs
+    bboxes_gdf = vec_create.create_poly_vec_bboxs(
+        vec_file=None,
+        vec_lyr=None,
+        out_format="GPKG",
+        epsg_code=32630,
+        bboxs=[(0.0, 10.0, 0.0, 5.0), (10.0, 20.0, 0.0, 5.0)],
+        atts={"tile": ["t1", "t2"]},
+        att_types={"names": ["tile"], "types": [str]},
+    )
+    assert len(bboxes_gdf) == 2
+    assert list(bboxes_gdf["tile"]) == ["t1", "t2"]
+    assert bboxes_gdf.geometry.area.sum() == pytest.approx(100.0)
+
+    # Direct test: create_hex_grid_poly (if h3 available, else check error)
+    roi_poly = box(-4.1, 52.35, -4.0, 52.45)
+    try:
+        import h3  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
+
+        has_h3 = True
+    except ImportError:
+        has_h3 = False
+    if has_h3:
+        hex_gdf = vec_create.create_hex_grid_poly(roi_poly, hex_scale=6)
+        assert hex_gdf is not None and len(hex_gdf) > 0
+        assert "hex_id" in hex_gdf.columns
+    else:
+        with pytest.raises(RSGISPyException):
+            vec_create.create_hex_grid_poly(roi_poly, hex_scale=6)

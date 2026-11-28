@@ -26,6 +26,10 @@ import rsgispy.imageutils.sampling as iu_samp
 import rsgispy.imageutils.spatial as iu_spat
 import rsgispy.imageutils.subsetting as iu_sub
 import rsgispy.imageutils.warp as iu_warp
+import rsgispy.imageutils.bands as img_bands
+from rasterio.transform import Affine
+from pathlib import Path
+import rsgispy.imageutils.spatial as img_spatial
 
 
 def _write_test_tif(
@@ -1610,3 +1614,115 @@ def test_point_sampling_reads_blocks_only(tmp_path, monkeypatch):
     vals = iu_arr.get_img_coords_pxl_values(path, 1, x_coords, y_coords)
     np.testing.assert_array_equal(vals, arr[rows, cols])
     assert all(w == (16, 16) for w in win_sizes)
+
+
+def _write_raster(
+    path: Path,
+    arr: np.ndarray,
+    *,
+    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
+    crs: object = "EPSG:32630",
+    nodata=None,
+) -> str:
+    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
+    profile = {
+        "driver": "GTiff",
+        "height": int(data.shape[1]),
+        "width": int(data.shape[2]),
+        "count": int(data.shape[0]),
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": transform,
+    }
+    if nodata is not None:
+        profile["nodata"] = nodata
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return str(path)
+
+
+def test_sharpen_low_res_bands_sets_nodata_and_multi_high(tmp_path):
+    rng = np.random.default_rng(123)
+    h1 = rng.uniform(10.0, 100.0, size=(20, 20)).astype(np.float32)
+    h2 = rng.uniform(5.0, 50.0, size=(20, 20)).astype(np.float32)
+    low = (1.5 * h1 + 0.5 * h2 + 3.0).astype(np.float32)
+    low[0, 0] = -999.0
+    h1[0, 0] = -999.0
+    h2[0, 0] = -999.0
+
+    in_img = _write_raster(
+        tmp_path / "sharp_in.tif",
+        np.stack([h1, h2, low], axis=0),
+        nodata=-999.0,
+    )
+    out_img = str(tmp_path / "sharp_out.tif")
+    band_info = [
+        img_bands.SharpBandInfo(
+            band=1, status=rsgispy.SHARP_RES_HIGH, name="H1"
+        ),
+        img_bands.SharpBandInfo(
+            band=2, status=rsgispy.SHARP_RES_HIGH, name="H2"
+        ),
+        img_bands.SharpBandInfo(
+            band=3, status=rsgispy.SHARP_RES_LOW, name="L1"
+        ),
+    ]
+    img_bands.sharpen_low_res_bands(
+        input_img=in_img,
+        output_img=out_img,
+        band_info=band_info,
+        win_size=5,
+        no_data_val=-999.0,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out_img) as dst:
+        assert dst.nodata == -999.0
+        out_low = dst.read(3)
+        assert out_low[0, 0] == -999.0
+        # Exact linear relation should be recovered closely on interior pixels
+        assert np.allclose(out_low[5:15, 5:15], low[5:15, 5:15], atol=1e-2)
+
+
+def test_grid_scattered_pts_vectorised_algorithms(tmp_path):
+    ref_img = _write_raster(
+        tmp_path / "grid_ref.tif",
+        np.zeros((10, 10), dtype=np.float32),
+        transform=from_origin(0.0, 100.0, 10.0, 10.0),
+    )
+    pts = [
+        Point(15.0, 85.0),
+        Point(85.0, 85.0),
+        Point(15.0, 15.0),
+        Point(85.0, 15.0),
+        Point(50.0, 50.0),
+    ]
+    gdf = gpd.GeoDataFrame(
+        {"z": [10.0, 20.0, 30.0, 40.0, 25.0]}, geometry=pts, crs="EPSG:32630"
+    )
+    for alg in (
+        "nearest",
+        "invdist:power=2.0",
+        "invdistnn:power=2.0:radius=60.0:max_points=4",
+        "average:radius1=60.0:radius2=60.0",
+        "count:radius1=60.0:radius2=60.0",
+    ):
+        out_img = str(tmp_path / f"grid_{alg.split(':')[0]}.tif")
+        img_spatial.grid_scattered_pts(
+            vec_file=gdf,
+            vec_lyr=None,
+            vec_col="z",
+            input_img=ref_img,
+            output_img=out_img,
+            gdal_grid_alg=alg,
+            no_data_val=-999.0,
+            use_pbar=False,
+        )
+        with rasterio.open(out_img) as dst:
+            arr = dst.read(1)
+            assert arr.shape == (10, 10)
+            if alg == "nearest":
+                assert arr[1, 1] == pytest.approx(10.0)
+                assert arr[8, 8] == pytest.approx(40.0)
+            elif alg.startswith("count"):
+                assert arr[5, 5] >= 1.0

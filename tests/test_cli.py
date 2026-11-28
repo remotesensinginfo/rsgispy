@@ -34,6 +34,13 @@ from rsgispy.cli._common import (
 )
 from rsgispy.imageutils.metadata import get_band_names, set_band_names
 from rsgispy.tools.credentials import get_username_password
+import sys
+import datetime
+from shapely.geometry import Point
+import pandas as pd
+import pyproj
+from types import SimpleNamespace
+import warnings
 
 
 def _make_geotiff(
@@ -523,3 +530,193 @@ class TestCopyBandNamesCLI:
         mismatch = _make_geotiff(tmp_path / "oneband.tif", count=1)
         with pytest.raises(RSGISPyException):
             copybandnames.main(["-r", ref, "-i", mismatch])
+
+
+def _write_raster(
+    path: str,
+    arr: np.ndarray,
+    *,
+    origin=(500000.0, 5200000.0),
+    res=(10.0, 10.0),
+    crs: str = "EPSG:32630",
+    nodata=None,
+    tiled: bool = False,
+    blocksize: int | None = None,
+) -> str:
+    """Write a 2D or 3D NumPy array to a GeoTIFF."""
+    if arr.ndim == 2:
+        data = arr[np.newaxis, :, :]
+    else:
+        data = arr
+    count, height, width = data.shape
+    profile = {
+        "driver": "GTiff",
+        "width": width,
+        "height": height,
+        "count": count,
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": from_origin(origin[0], origin[1], res[0], res[1]),
+        "nodata": nodata,
+    }
+    if tiled:
+        profile["tiled"] = True
+        if blocksize is not None:
+            profile["blockxsize"] = blocksize
+            profile["blockysize"] = blocksize
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return path
+
+
+def test_all_cli_modules_export_parsers_main_and_cli_main(monkeypatch, capsys):
+    """All 11 CLI modules export __all__, build_*_parser, main, and cli_main."""
+    cli_specs = [
+        (batchconvert2cog, "build_batchconvert2cog_parser"),
+        (buildimglut, "build_buildimglut_parser"),
+        (calcimgstats, "build_calcimgstats_parser"),
+        (chkgdalfile, "build_chkgdalfile_parser"),
+        (copybandnames, "build_copybandnames_parser"),
+        (filehash, "build_filehash_parser"),
+        (imginfo, "build_imginfo_parser"),
+        (proj, "build_proj_parser"),
+        (userpassfile, "build_userpassfile_parser"),
+        (vectools, "build_vectools_parser"),
+        (wgs84imgres, "build_wgs84imgres_parser"),
+    ]
+    for mod, parser_fn_name in cli_specs:
+        assert hasattr(mod, "__all__")
+        assert parser_fn_name in mod.__all__
+        assert "main" in mod.__all__
+        assert "cli_main" in mod.__all__
+        parser = getattr(mod, parser_fn_name)()
+        assert parser.prog.startswith("rsgis")
+
+    # Exercise cli_main end-to-end via sys.argv on proj
+    monkeypatch.setattr(sys, "argv", ["rsgisproj", "--epsg", "4326", "-f", "epsg"])
+    assert proj.cli_main() == 0
+    assert capsys.readouterr().out.strip() == "EPSG:4326"
+
+
+def test_batchconvert2cog_rejects_inplace_and_duplicate_names(tmp_path):
+    """batchconvert2cog rejects in-place overwrite and duplicate output basenames."""
+    dir1 = tmp_path / "d1"
+    dir2 = tmp_path / "d2"
+    out_dir = tmp_path / "out"
+    dir1.mkdir()
+    dir2.mkdir()
+    img1 = _write_raster(
+        str(dir1 / "same.tif"), np.ones((8, 8), dtype=np.uint8)
+    )
+    img2 = _write_raster(
+        str(dir2 / "same.tif"), np.ones((8, 8), dtype=np.uint8)
+    )
+
+    # In-place overwrite rejected
+    with pytest.raises(RSGISPyException, match="in-place"):
+        batchconvert2cog.main(["-i", img1, "-o", str(dir1), "--no-pbar"])
+
+    # Duplicate output filename across dirs rejected
+    with pytest.raises(RSGISPyException, match="Duplicate output filename"):
+        batchconvert2cog.main(
+            ["-i", img1, img2, "-o", str(out_dir), "--no-pbar"]
+        )
+
+
+def test_vectools_empty_bbox_and_json_default_str(tmp_path, capsys):
+    """vectools handles empty layers cleanly and serialises dates in --json."""
+    empty_gpkg = str(tmp_path / "empty.gpkg")
+    empty_gdf = gpd.GeoDataFrame(
+        {"id": pd.Series(dtype="int64")},
+        geometry=gpd.GeoSeries([], crs="EPSG:4326"),
+        crs="EPSG:4326",
+    )
+    empty_gdf.to_file(empty_gpkg, layer="empty", driver="GPKG")
+
+    assert vectools.main(["-i", empty_gpkg]) == 0
+    txt = capsys.readouterr().out
+    assert "Extent    : -" in txt
+
+    assert vectools.main(["-i", empty_gpkg, "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["bbox"] is None
+    assert payload["n_features"] == 0
+
+    # Non-JSON-native date column serialises cleanly via default=str
+    date_gpkg = str(tmp_path / "dates.gpkg")
+    date_gdf = gpd.GeoDataFrame(
+        {"obs_date": [datetime.date(2025, 1, 15)]},
+        geometry=[Point(0.0, 0.0)],
+        crs="EPSG:4326",
+    )
+    date_gdf.to_file(date_gpkg, layer="dates", driver="GPKG")
+    assert (
+        vectools.main(
+            ["-i", date_gpkg, "-c", "obs_date", "--unique-vals", "--json"]
+        )
+        == 0
+    )
+    d_payload = json.loads(capsys.readouterr().out)
+    assert "2025-01-15" in str(d_payload["unique_values"][0])
+
+
+def test_proj_format_crs_error_handling():
+    """_format_crs wraps CRSError and raises RSGISPyException if to_proj4() returns None."""
+    fake_none = SimpleNamespace(name="NoProj4", to_proj4=lambda: None)
+    with pytest.raises(RSGISPyException, match="PROJ4"):
+        proj._format_crs(fake_none, "proj4")
+
+    def _raise_crs_err(**_kwargs):
+        raise pyproj.exceptions.CRSError("unsupported wkt1")
+
+    fake_err = SimpleNamespace(name="BadWKT", to_wkt=_raise_crs_err)
+    with pytest.raises(RSGISPyException, match="Could not format CRS"):
+        proj._format_crs(fake_err, "wkt")
+
+
+def test_imginfo_densified_bounds_streaming_stats_and_tiled_detection(
+    tmp_path
+):
+    """Verify densified WGS84 bounds, streaming Welford stats, and tiled detection."""
+    rng = np.random.default_rng(123)
+    arr = rng.normal(loc=50.0, scale=12.5, size=(64, 64)).astype(np.float32)
+    arr[0:5, 0:5] = -9999.0
+    tiled_tif = _write_raster(
+        str(tmp_path / "tiled_stats.tif"),
+        arr,
+        crs="EPSG:32630",
+        nodata=-9999.0,
+        tiled=True,
+        blocksize=16,
+    )
+    valid = arr[arr != -9999.0].astype(np.float64)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        info = imginfo.collect_img_info(tiled_tif, calc_stats=True)
+    assert not any("is_tiled" in str(w.message) for w in caught)
+    assert info["is_tiled"] is True
+    assert info["wgs84_bbox"] is not None
+    st = info["bands"][0]["stats"]
+    assert st["min"] == pytest.approx(float(np.min(valid)), rel=1e-6)
+    assert st["max"] == pytest.approx(float(np.max(valid)), rel=1e-6)
+    assert st["mean"] == pytest.approx(float(np.mean(valid)), rel=1e-6)
+    assert st["std"] == pytest.approx(float(np.std(valid)), rel=1e-6)
+    assert st["valid_percent"] == pytest.approx(
+        100.0 * valid.size / arr.size, rel=1e-6
+    )
+
+    # 256x256 tiled GTiff (blk_w == width) detected as tiled; stripped 256x256 as False
+    t256 = _write_raster(
+        str(tmp_path / "t256.tif"),
+        np.ones((256, 256), dtype=np.uint8),
+        tiled=True,
+        blocksize=256,
+    )
+    s256 = _write_raster(
+        str(tmp_path / "s256.tif"),
+        np.ones((256, 256), dtype=np.uint8),
+        tiled=False,
+    )
+    assert imginfo.collect_img_info(t256)["is_tiled"] is True
+    assert imginfo.collect_img_info(s256)["is_tiled"] is False

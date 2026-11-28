@@ -12,6 +12,10 @@ import rsgispy.imagecalc.maths
 import rsgispy.imagecalc.percentiles
 import rsgispy.imagecalc.stats
 import rsgispy.imageprocess
+import rsgispy.imagecalc._norm_helpers as norm_helpers
+import rsgispy.imageprocess as imgproc
+from rasterio.transform import Affine
+from pathlib import Path
 
 
 def _create_test_raster(
@@ -972,3 +976,50 @@ def test_calc_band_percentile_block_by_block(tmp_path, monkeypatch):
     b0 = arr[0][arr[0] != -1.0].astype(np.float64)
     assert pcts == pytest.approx([np.percentile(b0, 90.0),
                                   np.percentile(arr[1].astype(np.float64), 90.0)])
+
+
+def _write_raster(
+    path: Path,
+    arr: np.ndarray,
+    *,
+    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
+    crs: object = "EPSG:32630",
+    nodata=None,
+) -> str:
+    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
+    profile = {
+        "driver": "GTiff",
+        "height": int(data.shape[1]),
+        "width": int(data.shape[2]),
+        "count": int(data.shape[0]),
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": transform,
+    }
+    if nodata is not None:
+        profile["nodata"] = nodata
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return str(path)
+
+
+def test_subsample_band_values_tiled_reservoir(tmp_path, monkeypatch):
+    monkeypatch.setenv(imgproc.ENV_VAR_BLOCK_SIZE, "8")
+    arr = np.arange(1, 20 * 20 + 1, dtype=np.float32).reshape(20, 20)
+    arr[0, 0] = -999.0
+    arr[1, 1] = np.nan
+    in_img = _write_raster(tmp_path / "res.tif", arr, nodata=-999.0)
+
+    with rasterio.open(in_img) as src:
+        s1 = norm_helpers.subsample_band_values(
+            src, band_idx=1, eff_nd=-999.0, max_samples=50, rnd_seed=42
+        )
+        s2 = norm_helpers.subsample_band_values(
+            src, band_idx=1, eff_nd=-999.0, max_samples=50, rnd_seed=42
+        )
+        assert s1.shape == (50,)
+        np.testing.assert_array_equal(s1, s2)
+        assert np.all(np.isfinite(s1))
+        assert not np.any(s1 == -999.0)
+        # Samples should span across multiple tiles (not just first 50 pixels)
+        assert float(np.max(s1)) > 100.0

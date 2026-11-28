@@ -28,6 +28,12 @@ import rsgispy.imagespectral.indices as si
 import rsgispy.imagespectral.preprocessing as sp
 import rsgispy.imagespectral.transforms as st
 import rsgispy.imagespectral.unmixing as su
+import rsgispy.imagespectral.endmembers as endm
+import rsgispy.imageprocess as imgproc
+from rasterio.transform import Affine
+from pathlib import Path
+import rsgispy.imagespectral.transforms as spec_tr
+import rsgispy.imagespectral.unmixing as unmix
 
 matplotlib.use("Agg")
 
@@ -1481,3 +1487,130 @@ def test_calc_area_under_curve_trapezoid_and_nodata(tmp_path):
     with pytest.raises(rsgispy.RSGISPyException):
         si.calc_area_under_curve(str(in_p), str(out_c), [1.0, 1.0, 1.0],
                                  method="simpson", use_pbar=False)
+
+
+def _write_geotiff(
+    path: Path,
+    arr: np.ndarray,
+    *,
+    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
+    crs: object = "EPSG:32630",
+    nodata=None,
+) -> str:
+    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
+    profile = {
+        "driver": "GTiff",
+        "height": int(data.shape[1]),
+        "width": int(data.shape[2]),
+        "count": int(data.shape[0]),
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": transform,
+    }
+    if nodata is not None:
+        profile["nodata"] = nodata
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return str(path)
+
+
+def test_calc_ppi_tiled_streaming_deterministic(tmp_path, monkeypatch):
+    monkeypatch.setenv(imgproc.ENV_VAR_BLOCK_SIZE, "8")
+    rng = np.random.default_rng(7)
+    cube = rng.uniform(0.2, 0.8, size=(3, 16, 16)).astype(np.float32)
+    # Plant extreme pure endmembers at opposite corners
+    cube[:, 0, 0] = [1.0, 0.0, 0.0]
+    cube[:, 15, 15] = [0.0, 1.0, 0.0]
+    in_img = _write_geotiff(tmp_path / "ppi_in.tif", cube)
+
+    out1 = str(tmp_path / "ppi1.tif")
+    out2 = str(tmp_path / "ppi2.tif")
+    endm.calc_ppi(
+        in_img, out1, niters=200, rnd_seed=99, calc_stats=False, use_pbar=False
+    )
+    endm.calc_ppi(
+        in_img, out2, niters=200, rnd_seed=99, calc_stats=False, use_pbar=False
+    )
+    with rasterio.open(out1) as d1, rasterio.open(out2) as d2:
+        a1 = d1.read(1)
+        a2 = d2.read(1)
+        assert a1.dtype == np.uint16
+        np.testing.assert_array_equal(a1, a2)
+        assert a1[0, 0] > 0
+        assert a1[15, 15] > 0
+
+
+def test_whiten_image_filters_nan_and_nodata(tmp_path, monkeypatch):
+    monkeypatch.setenv(imgproc.ENV_VAR_BLOCK_SIZE, "8")
+    rng = np.random.default_rng(11)
+    n = 16 * 16
+    base = rng.normal(size=(n, 3))
+    mix = np.array([[2.0, 0.8, 0.3], [0.8, 1.5, -0.4], [0.3, -0.4, 1.2]])
+    cube = (base @ mix + np.array([10.0, 20.0, 30.0])).T.reshape(3, 16, 16)
+    cube = cube.astype(np.float32)
+    cube[:, 0, 0] = np.nan
+    cube[:, 0, 1] = -9999.0
+
+    msk = np.ones((16, 16), dtype=np.uint8)
+    msk[15, 15] = 0
+
+    in_img = _write_geotiff(tmp_path / "w_in.tif", cube, nodata=-9999.0)
+    msk_img = _write_geotiff(tmp_path / "w_msk.tif", msk)
+    out_img = str(tmp_path / "w_out.tif")
+
+    spec_tr.whiten_image(in_img, out_img, msk_img, 1, use_pbar=False)
+    with rasterio.open(out_img) as dst:
+        out = dst.read()
+        assert np.all(out[:, 0, 0] == 0.0)
+        assert np.all(out[:, 0, 1] == 0.0)
+        assert np.all(out[:, 15, 15] == 0.0)
+        valid = np.ones((16, 16), dtype=bool)
+        valid[0, 0] = False
+        valid[0, 1] = False
+        valid[15, 15] = False
+        vecs = out[:, valid]
+        cov = np.cov(vecs)
+        np.testing.assert_allclose(cov, np.eye(3), atol=5e-2)
+
+
+def test_summarise_multi_endmember_unmixing_nodata_alignment(tmp_path):
+    em_mat = np.array([[0.8, 0.2, 0.1], [0.1, 0.7, 0.9]], dtype=np.float32)
+    em_df = pd.DataFrame(em_mat.T, columns=["EM_A", "EM_B"])
+
+    # Pixel (0,0) is all-zero (invalid); remaining pixels are valid combinations
+    orig = np.zeros((3, 4, 4), dtype=np.float32)
+    for b in range(3):
+        orig[b, :, :] = 0.6 * em_mat[0, b] + 0.4 * em_mat[1, b]
+    orig[:, 0, 0] = 0.0
+
+    abund = np.zeros((2, 4, 4), dtype=np.float32)
+    abund[0, :, :] = 0.6
+    abund[1, :, :] = 0.4
+
+    orig_img = _write_geotiff(tmp_path / "orig.tif", orig)
+    abund_img = _write_geotiff(tmp_path / "abund1.tif", abund)
+    out_unmix = str(tmp_path / "sum_unmix.tif")
+    out_ref = str(tmp_path / "sum_ref.tif")
+
+    ds_info = endm.ImageEndmemberInfo(
+        in_unmix_img=abund_img,
+        endmembers=em_df,
+        endmember_names=["EM_A", "EM_B"],
+    )
+    unmix.summarise_multi_endmember_linear_unmixing(
+        input_img=orig_img,
+        out_unmix_img=out_unmix,
+        out_ref_img=out_ref,
+        in_unmixed_datasets=[ds_info],
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out_unmix) as dst_u, rasterio.open(out_ref) as dst_r:
+        assert dst_u.nodata == 999.0
+        assert dst_r.nodata == 0.0
+        u_arr = dst_u.read()
+        r_arr = dst_r.read(1)
+        assert np.all(u_arr[:, 0, 0] == 999.0)
+        assert r_arr[0, 0] == 0
+        assert np.allclose(u_arr[:, 1, 1], [0.6, 0.4], atol=1e-4)
+        assert r_arr[1, 1] == 1

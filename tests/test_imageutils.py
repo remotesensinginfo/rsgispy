@@ -26,6 +26,15 @@ import rsgispy.imageutils.subsetting
 import rsgispy.imageutils.tiling
 import rsgispy.imageutils.vrt
 import rsgispy.imageutils.warp
+import rsgispy.imageutils.warp as img_warp
+from rasterio.transform import Affine
+from pathlib import Path
+import pandas as pd
+from shapely.geometry import Polygon
+import rsgispy.imageutils.rasterise as img_ras
+import rsgispy.imageutils.mosaic as img_mosaic
+import rsgispy.imageutils.blank as img_blank
+from rasterio.crs import CRS
 
 
 def _create_simple_raster(path, data, dtype="float32"):
@@ -1824,3 +1833,166 @@ def test_interp_constants_match_rsgislib():
     }
     for name, val in rsgislib_numbering.items():
         assert getattr(rsgispy, name) == val, name
+
+
+def _write_raster(
+    path: Path,
+    arr: np.ndarray,
+    *,
+    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
+    crs: object = "EPSG:32630",
+    nodata=None,
+) -> str:
+    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
+    profile = {
+        "driver": "GTiff",
+        "height": int(data.shape[1]),
+        "width": int(data.shape[2]),
+        "count": int(data.shape[0]),
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": transform,
+    }
+    if nodata is not None:
+        profile["nodata"] = nodata
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return str(path)
+
+
+def test_reproject_image_preserves_src_nodata_and_bounds(tmp_path):
+    arr = np.full((24, 24), 42.0, dtype=np.float32)
+    arr[0:4, 0:4] = -9999.0
+    in_img = _write_raster(
+        tmp_path / "utm.tif",
+        arr,
+        transform=from_origin(500000.0, 5800000.0, 100.0, 100.0),
+        crs="EPSG:32630",
+        nodata=-9999.0,
+    )
+    out_img = str(tmp_path / "reproj.tif")
+    img_warp.reproject_image(
+        input_img=in_img,
+        output_img=out_img,
+        out_epsg=3857,
+        out_pxl_res="auto",
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out_img) as dst:
+        assert dst.nodata == -9999.0
+        assert dst.crs.to_epsg() == 3857
+        out_arr = dst.read(1)
+        assert np.any(out_arr == 42.0)
+        assert np.any(out_arr == -9999.0)
+
+
+def test_rasterise_int64_na_and_deterministic_overlap(tmp_path):
+    ref_img = _write_raster(
+        tmp_path / "ref.tif",
+        np.zeros((20, 20), dtype=np.int64),
+        transform=from_origin(0.0, 200.0, 10.0, 10.0),
+        crs="EPSG:32630",
+        nodata=0,
+    )
+    poly_a = Polygon([(0, 0), (150, 0), (150, 150), (0, 150)])
+    poly_b = Polygon([(50, 50), (200, 50), (200, 200), (50, 200)])
+    poly_na = Polygon([(160, 0), (200, 0), (200, 40), (160, 40)])
+    gdf = gpd.GeoDataFrame(
+        {"val": pd.Series([100, 200, pd.NA], dtype="Int64")},
+        geometry=[poly_a, poly_b, poly_na],
+        crs="EPSG:32630",
+    )
+    out_img = str(tmp_path / "ras_i64.tif")
+    img_ras.rasterise_vec_lyr(
+        vec_file=gdf,
+        vec_lyr=None,
+        input_img=ref_img,
+        output_img=out_img,
+        att_column="val",
+        datatype=rsgispy.TYPE_64INT,
+        no_data_val=0,
+        calc_stats=True,
+        use_pbar=False,
+    )
+    with rasterio.open(out_img) as dst:
+        data = dst.read(1)
+        assert data.dtype == np.int64
+        # Overlap pixel (x=100, y=100 -> row=10, col=10): later feature (200) wins
+        assert data[10, 10] == 200
+        # Non-overlapping part of poly_a (x=25, y=25 -> row=17, col=2)
+        assert data[17, 2] == 100
+        # pd.NA polygon skipped -> remains 0
+        assert data[18, 18] == 0
+
+
+def test_mosaic_handles_nan_and_partial_overlap(tmp_path):
+    t1 = np.full((10, 10), 5.0, dtype=np.float32)
+    t1[2, 2] = np.nan
+    t1[3, 3] = 0.0
+    img1 = _write_raster(
+        tmp_path / "t1.tif",
+        t1,
+        transform=from_origin(0.0, 100.0, 10.0, 10.0),
+        nodata=0.0,
+    )
+    t2 = np.full((10, 10), 9.0, dtype=np.float32)
+    t2[2, 2] = 7.0
+    img2 = _write_raster(
+        tmp_path / "t2.tif",
+        t2,
+        transform=from_origin(0.0, 100.0, 10.0, 10.0),
+        nodata=0.0,
+    )
+    out_mos = str(tmp_path / "mos.tif")
+    img_mosaic.create_img_mosaic(
+        input_imgs=[img2, img1],
+        output_img=out_mos,
+        background_val=0.0,
+        skip_val=0.0,
+        overlap_behaviour=0,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out_mos) as dst:
+        arr = dst.read(1)
+        # NaN in img1 must NOT overwrite valid pixel 7.0 from img2
+        assert arr[2, 2] == 7.0
+        # skip_val (0.0) in img1 must NOT overwrite valid pixel 9.0 from img2
+        assert arr[3, 3] == 9.0
+        # Valid pixel in img1 overwrites img2
+        assert arr[0, 0] == 5.0
+
+
+def test_blank_copy_and_buf_preserve_non_epsg_wkt_and_rotated_transform(tmp_path):
+    custom_crs = CRS.from_proj4(
+        "+proj=aea +lat_0=52 +lon_0=-2 +lat_1=50 +lat_2=55 "
+        "+x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+    )
+    rot_tf = Affine(8.0, 6.0, 1000.0, 6.0, -8.0, 2000.0)
+    ref_img = _write_raster(
+        tmp_path / "rot_ref.tif",
+        np.ones((10, 12), dtype=np.float32),
+        transform=rot_tf,
+        crs=custom_crs,
+        nodata=-99.0,
+    )
+
+    copy_img = str(tmp_path / "rot_copy.tif")
+    img_blank.create_copy_img(
+        ref_img, copy_img, n_bands=1, pxl_val=3.0, use_pbar=False
+    )
+    with rasterio.open(copy_img) as dst:
+        assert dst.transform == rot_tf
+        assert dst.crs == custom_crs
+        assert dst.width == 12 and dst.height == 10
+
+    buf_img = str(tmp_path / "rot_buf.tif")
+    img_blank.create_blank_buf_img_from_ref_img(
+        ref_img, buf_img, buf_pxl_ext=2, use_pbar=False
+    )
+    with rasterio.open(buf_img) as dst:
+        assert dst.width == 16 and dst.height == 14
+        assert dst.crs == custom_crs
+        # Origin shifted by (-2, -2) in pixel space of rotated transform
+        assert dst.transform == rot_tf @ Affine.translation(-2, -2)

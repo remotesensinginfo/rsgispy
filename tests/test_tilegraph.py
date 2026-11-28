@@ -34,6 +34,9 @@ import rsgispy.imagefilter.smooth as if_smooth
 import rsgispy.imagefilter.stats as if_stats
 import rsgispy.imagemorphology as morph
 import rsgispy.imageutils.rasterise as iu_rast
+from rasterio.transform import Affine
+from pathlib import Path
+from rsgispy._io import RasterSource
 
 
 def _write_raster(path, arr, nodata=None, crs="EPSG:32630", res=10.0):
@@ -438,3 +441,51 @@ def test_tilegraph_validation_errors():
     with pytest.raises(rsgispy.RSGISPyException):
         DiskSink(src, "/tmp/should_not_exist.tif")
         if_chained.apply_filter_chain("missing.tif", "out.tif", steps=[])
+
+
+def _write_geotiff(
+    path: Path,
+    arr: np.ndarray,
+    *,
+    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
+    crs: object = "EPSG:32630",
+    nodata=None,
+) -> str:
+    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
+    profile = {
+        "driver": "GTiff",
+        "height": int(data.shape[1]),
+        "width": int(data.shape[2]),
+        "count": int(data.shape[0]),
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": transform,
+    }
+    if nodata is not None:
+        profile["nodata"] = nodata
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return str(path)
+
+
+def test_band_math_op_reuses_parser_across_non_square_tiles(tmp_path):
+    arr = np.arange(25 * 30, dtype=np.float32).reshape(25, 30)
+    in_img = _write_geotiff(tmp_path / "bm_in.tif", arr)
+    out_img = str(tmp_path / "bm_out.tif")
+
+    src_node = RasterSource(in_img)
+    math_node = BandMathOp(
+        inputs={"b1": src_node},
+        expr="b1 * 2.0 + 1.0",
+    )
+    sink = DiskSink(
+        source=math_node,
+        output_img=out_img,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+        nodata=None,
+    )
+    TileGraph(sinks=sink, block_size=16).run(use_pbar=False)
+
+    with rasterio.open(out_img) as dst:
+        np.testing.assert_allclose(dst.read(1), arr * 2.0 + 1.0, rtol=1e-6)

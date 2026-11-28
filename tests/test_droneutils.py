@@ -12,6 +12,8 @@ import pytest
 
 import rsgispy
 import rsgispy.droneutils
+import rsgispy.droneutils as droneutils
+import numpy as np
 
 
 def _create_test_jpeg(path, dt_str=None):
@@ -338,3 +340,133 @@ def test_optional_exiftool_missing_droneutils():
     finally:
         sys.modules["rsgispy.droneutils"] = orig_droneutils
         rsgispy.droneutils = orig_droneutils
+
+
+def test_droneutils_pil_guard_exif_subifd_and_flightline_edge_cases(
+    tmp_path, monkeypatch
+):
+    """Test PIL guard, IFD.Exif + null-byte stripping, GPS refs, and missing EXIF fields."""
+    monkeypatch.setattr(droneutils, "HAVE_PIL", False)
+    with pytest.raises(rsgispy.RSGISPyException, match="pillow"):
+        droneutils.split_photos_by_time([], str(tmp_path / "out"))
+    monkeypatch.setattr(droneutils, "HAVE_PIL", True)
+
+    src_dir = tmp_path / "photos"
+    out_dir = tmp_path / "grouped"
+    src_dir.mkdir()
+
+    def _save_with_exif_subifd(path, dt_str):
+        img = Image.new("RGB", (8, 8), color=(0, 100, 200))
+        exif = img.getexif()
+        exif_subifd = exif.get_ifd(0x8769)
+        exif_subifd[0x9003] = dt_str
+        img.save(path, format="JPEG", exif=exif.tobytes())
+
+    p1 = src_dir / "p1.jpg"
+    p2 = src_dir / "p2.jpg"
+    _save_with_exif_subifd(p1, "2024:07:10 12:00:00\x00")
+    _save_with_exif_subifd(p2, "2024:07:10 12:00:20\x00")
+
+    droneutils.split_photos_by_time(
+        [str(p1), str(p2)],
+        str(out_dir),
+        time_split_secs=60,
+        date_time_tag="DateTimeOriginal",
+        use_pbar=False,
+    )
+    assert sorted(p.name for p in (out_dir / "20240710_120000").iterdir()) == [
+        "p1.jpg",
+        "p2.jpg",
+    ]
+
+    img_sw = str(src_dir / "sw.jpg")
+    img_neg = str(src_dir / "neg.jpg")
+    img_nogps = str(src_dir / "nogps.jpg")
+    for fp in (img_sw, img_neg, img_nogps):
+        Image.new("RGB", (8, 8)).save(fp, format="JPEG")
+
+    meta = {
+        img_sw: {
+            "EXIF:DateTimeOriginal": "2024:07:10 12:00:00",
+            "EXIF:GPSLatitude": 33.8688,
+            "EXIF:GPSLatitudeRef": "S",
+            "EXIF:GPSLongitude": 151.2093,
+            "EXIF:GPSLongitudeRef": "W",
+        },
+        img_neg: {
+            "Composite:GPSLatitude": -34.0,
+            "Composite:GPSLatitudeRef": "South",
+            "Composite:GPSLongitude": -151.5,
+            "Composite:GPSLongitudeRef": "West",
+        },
+        img_nogps: {
+            "EXIF:DateTimeOriginal": "2024:07:10 12:00:01",
+        },
+    }
+
+    class _FakeExifToolHelper:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get_metadata(self, path):
+            return [meta[path]]
+
+    monkeypatch.setattr(droneutils, "HAVE_EXIFTOOL", True)
+    monkeypatch.setattr(
+        droneutils,
+        "exiftool",
+        types.SimpleNamespace(ExifToolHelper=_FakeExifToolHelper),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        rsgispy.tools.files, "sort_file_by_datetime", lambda imgs: list(imgs)
+    )
+
+    pts_gdf, lines_gdf = droneutils.create_flightline_vec(
+        [img_neg, img_nogps, img_sw]
+    )
+    assert len(pts_gdf) == 2
+    assert len(lines_gdf) == 1
+    assert list(pts_gdf["image_filename"]) == ["sw.jpg", "neg.jpg"]
+    np.testing.assert_allclose(pts_gdf["lat"].to_numpy(), [-33.8688, -34.0])
+    np.testing.assert_allclose(pts_gdf["lon"].to_numpy(), [-151.2093, -151.5])
+    assert pts_gdf["sensor_index"].iloc[0] is None
+    assert pts_gdf["sensor_index"].iloc[1] is None
+
+    ext_df = pd.DataFrame(
+        [
+            {
+                "image": "sw.jpg",
+                "lat": 33.8688,
+                "lon": 151.2093,
+                "GPSLatitudeRef": "S",
+                "GPSLongitudeRef": "W",
+                "alt": 80.0,
+                "roll": 0.0,
+                "pitch": 0.0,
+                "yaw": 90.0,
+            },
+            {
+                "image": "neg.jpg",
+                "lat": -34.0,
+                "lon": -151.5,
+                "GPSLatitudeRef": "S",
+                "GPSLongitudeRef": "W",
+                "alt": np.nan,
+                "roll": 0.0,
+                "pitch": 0.0,
+                "yaw": 95.0,
+            },
+        ]
+    )
+    ext_pts, ext_lines = droneutils.create_flightline_extern_gps_vec(
+        ext_df, str(src_dir)
+    )
+    assert len(ext_pts) == 2
+    assert len(ext_lines) == 1
+    np.testing.assert_allclose(ext_pts["lat"].to_numpy(), [-33.8688, -34.0])
+    np.testing.assert_allclose(ext_pts["lon"].to_numpy(), [-151.2093, -151.5])
+    assert ext_pts["sensor_index"].iloc[0] is None

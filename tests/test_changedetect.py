@@ -19,6 +19,9 @@ import rsgispy.changedetect.imgchngmthds as icm
 import rsgispy.changedetect.pxloutlierchng as poc
 import rsgispy.tools.plotting as rplot
 from rsgispy.imageutils.colourtable import is_img_thematic
+import rsgispy.imageprocess as imgproc
+from rasterio.transform import Affine
+from pathlib import Path
 
 matplotlib.use("Agg")
 
@@ -888,3 +891,127 @@ def test_image_ratio_zero_denominator_is_no_data(tmp_path):
                     base_img_no_data=-1, chng_img_no_data=-1, use_pbar=False)
     with rasterio.open(out) as src:
         np.testing.assert_allclose(src.read(1), [[-9999.0, 2.0]])
+
+
+def _write_geotiff(
+    path: Path,
+    arr: np.ndarray,
+    *,
+    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
+    crs: object = "EPSG:32630",
+    nodata=None,
+) -> str:
+    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
+    profile = {
+        "driver": "GTiff",
+        "height": int(data.shape[1]),
+        "width": int(data.shape[2]),
+        "count": int(data.shape[0]),
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": transform,
+    }
+    if nodata is not None:
+        profile["nodata"] = nodata
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return str(path)
+
+
+def test_changedetect_streaming_and_binary_nodata_255(tmp_path, monkeypatch):
+    monkeypatch.setenv(imgproc.ENV_VAR_BLOCK_SIZE, "8")
+    rng = np.random.default_rng(19)
+    base = rng.uniform(10.0, 30.0, size=(3, 16, 16)).astype(np.float32)
+    chng = base + rng.normal(0.0, 0.5, size=(3, 16, 16)).astype(np.float32)
+    chng[:, 8:14, 8:14] += 15.0  # clear change patch
+    msk = np.ones((16, 16), dtype=np.uint8)
+    msk[0:2, 0:2] = 0  # masked-out corner
+
+    base_img = _write_geotiff(tmp_path / "cd_base.tif", base)
+    chng_img = _write_geotiff(tmp_path / "cd_chng.tif", chng)
+    msk_img = _write_geotiff(tmp_path / "cd_msk.tif", msk)
+
+    out_diff = str(tmp_path / "diff.tif")
+    icm.image_difference(
+        base_img,
+        chng_img,
+        out_diff,
+        vld_msk_img=msk_img,
+        vld_msk_val=1,
+        apply_std=True,
+        no_data_val=-999.0,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out_diff) as dst:
+        assert dst.nodata == -999.0
+        d_arr = dst.read()
+        assert np.all(d_arr[:, 0:2, 0:2] == -999.0)
+        assert np.all(np.isfinite(d_arr))
+
+    out_ratio = str(tmp_path / "ratio.tif")
+    icm.image_ratio(
+        base_img,
+        chng_img,
+        out_ratio,
+        vld_msk_img=msk_img,
+        vld_msk_val=1,
+        apply_std=False,
+        no_data_val=-999.0,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out_ratio) as dst:
+        r_arr = dst.read()
+        assert np.all(r_arr[:, 0:2, 0:2] == -999.0)
+        np.testing.assert_allclose(
+            r_arr[:, 5, 5], base[:, 5, 5] / chng[:, 5, 5], rtol=1e-5
+        )
+
+    cva_bin = str(tmp_path / "cva_bin.tif")
+    cva_dist = str(tmp_path / "cva_dist.tif")
+    icm.change_vector_analysis(
+        base_img,
+        chng_img,
+        cva_bin,
+        cva_dist,
+        vld_msk_img=msk_img,
+        vld_msk_val=1,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    sfa_bin = str(tmp_path / "sfa_bin.tif")
+    sfa_dist = str(tmp_path / "sfa_dist.tif")
+    icm.slow_feature_analysis(
+        base_img,
+        chng_img,
+        sfa_bin,
+        sfa_dist,
+        vld_msk_img=msk_img,
+        vld_msk_val=1,
+        sfa_max_iter=5,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    mad_bin = str(tmp_path / "mad_bin.tif")
+    mad_dist = str(tmp_path / "mad_dist.tif")
+    mad_vars = str(tmp_path / "mad_vars.tif")
+    icm.multivariate_alteration_detection(
+        base_img,
+        chng_img,
+        mad_bin,
+        mad_dist,
+        mad_vars,
+        vld_msk_img=msk_img,
+        vld_msk_val=1,
+        mad_max_iter=5,
+        use_kmeans=False,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    for b_path in (cva_bin, sfa_bin, mad_bin):
+        with rasterio.open(b_path) as dst:
+            b_arr = dst.read(1)
+            assert dst.nodata == 255.0
+            assert np.all(b_arr[0:2, 0:2] == 255)
+            assert set(np.unique(b_arr[msk == 1]).tolist()).issubset({0, 1})

@@ -9,6 +9,7 @@ import pytest
 
 import rsgispy
 import rsgispy.tools.tables as tools_tables
+import rsgispy.tools.tables as tables
 
 
 def test_resolve_table_output_spec():
@@ -80,3 +81,16 @@ def test_write_dataframe_table(tmp_path):
         tools_tables.write_dataframe_table(df, pq_path, out_compress="zstd")
         assert pq.ParquetFile(pq_path).metadata.row_group(0).column(0).compression == "ZSTD"
         assert tools_tables.read_dataframe_table(pq_path).equals(df)
+
+
+def test_read_dataframe_table_allow_pickle_guard(tmp_path):
+    """read_dataframe_table rejects pickle inputs when allow_pickle=False."""
+    df = pd.DataFrame({"a": [1, 2], "b": [3.5, 4.5]})
+    pkl_path = tmp_path / "sample.pkl"
+    df.to_pickle(pkl_path)
+
+    with pytest.raises(rsgispy.RSGISPyException, match="allow_pickle=False"):
+        tables.read_dataframe_table(pkl_path, allow_pickle=False)
+
+    loaded = tables.read_dataframe_table(pkl_path, allow_pickle=True)
+    pd.testing.assert_frame_equal(loaded, df)

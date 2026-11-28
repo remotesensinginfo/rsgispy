@@ -13,6 +13,8 @@ from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.imageutils.stats as iu_stats
+import rsgispy.imageutils.stats as img_stats
+from pathlib import Path
 
 
 def _write_geotiff(
@@ -509,3 +511,71 @@ def test_pop_stats_multi_core_pyramids(tmp_path):
     assert not (tmp_path / "no_pyr.tif.ovr").exists()
     with rasterio.open(str(no_pyr), "r") as dst:
         assert dst.overviews(1) == []
+
+
+def _write_raster(
+    path: Path,
+    arr: np.ndarray,
+    *,
+    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
+    crs: object = "EPSG:32630",
+    nodata=None,
+) -> str:
+    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
+    profile = {
+        "driver": "GTiff",
+        "height": int(data.shape[1]),
+        "width": int(data.shape[2]),
+        "count": int(data.shape[0]),
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": transform,
+    }
+    if nodata is not None:
+        profile["nodata"] = nodata
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return str(path)
+
+
+def test_build_img_pyramids_direct_multi_core_and_int64_thematic(tmp_path):
+    # Direct test for build_img_pyramids (min_size // 4 > 33 => >= 136x136)
+    arr = (np.arange(160 * 160, dtype=np.uint16).reshape(160, 160) % 250) + 1
+    pyr_img = _write_raster(tmp_path / "pyr.tif", arr, nodata=0)
+    img_stats.build_img_pyramids(pyr_img, resampling_method=Resampling.average)
+    with rasterio.open(pyr_img) as src:
+        assert 4 in src.overviews(1)
+
+    # Small image (< 136px) should be a clean no-op
+    small_img = _write_raster(
+        tmp_path / "small.tif", np.ones((32, 32), dtype=np.uint8)
+    )
+    img_stats.build_img_pyramids(small_img)
+    with rasterio.open(small_img) as src:
+        assert src.overviews(1) == []
+
+    # Multi-core pyramids across multiple levels reusing a single pool
+    mc_img = _write_raster(tmp_path / "mc_pyr.tif", arr, nodata=0)
+    img_stats.build_img_pyramids_multi_core(
+        mc_img,
+        resampling_method=Resampling.average,
+        levels=[2, 4, 8],
+        tile_size=64,
+        n_cores=2,
+        external=True,
+        use_pbar=False,
+    )
+    assert os.path.exists(f"{mc_img}.ovr")
+    with rasterio.open(mc_img) as src:
+        assert src.overviews(1) == [2, 4, 8]
+
+    # int64 thematic stats (histogram + stats tags on 64-bit integer)
+    cls_arr = np.array([[0, 1, 1], [2, 2, 2], [0, 3, 3]], dtype=np.int64)
+    i64_img = _write_raster(tmp_path / "cls_i64.tif", cls_arr, nodata=0)
+    img_stats.pop_thmt_img_stats(
+        i64_img, add_clr_tab=True, calc_pyramids=False, use_pbar=False
+    )
+    with rasterio.open(i64_img) as src:
+        tags = src.tags(1)
+        assert float(tags["STATISTICS_MINIMUM"]) == 1.0
+        assert float(tags["STATISTICS_MAXIMUM"]) == 3.0

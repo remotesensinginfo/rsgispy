@@ -29,6 +29,11 @@ import rsgispy.mapping.legend as map_legend  # noqa: E402
 import rsgispy.mapping.raster as map_raster  # noqa: E402
 import rsgispy.mapping.vector as map_vector  # noqa: E402
 import rsgispy.tools.plotting as plotting  # noqa: E402
+import pyproj
+from rsgispy import RSGISPyException
+from rsgispy.mapping import _legend as map_legend_internal
+import builtins
+import shutil
 
 
 def _write_continuous_raster(
@@ -1051,3 +1056,266 @@ def test_mapping_british_english_params(tmp_path):
     )
     assert len(ax2.images) == 1
     plt.close(fig2)
+
+
+def _write_raster(
+    path: str,
+    arr: np.ndarray,
+    *,
+    origin=(500000.0, 5200000.0),
+    res=(10.0, 10.0),
+    crs: str = "EPSG:32630",
+    nodata=None,
+    tiled: bool = False,
+    blocksize: int | None = None,
+) -> str:
+    """Write a 2D or 3D NumPy array to a GeoTIFF."""
+    if arr.ndim == 2:
+        data = arr[np.newaxis, :, :]
+    else:
+        data = arr
+    count, height, width = data.shape
+    profile = {
+        "driver": "GTiff",
+        "width": width,
+        "height": height,
+        "count": count,
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": from_origin(origin[0], origin[1], res[0], res[1]),
+        "nodata": nodata,
+    }
+    if tiled:
+        profile["tiled"] = True
+        if blocksize is not None:
+            profile["blockxsize"] = blocksize
+            profile["blockysize"] = blocksize
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return path
+
+
+def test_elements_geodesic_scale_and_axis_label_trans_axes():
+    """_compute_metres_per_map_unit uses geodesic distance; add_axis_label uses transAxes."""
+    # EPSG:3857 at ~60 deg N: cos(60) = 0.5 -> ~0.5 m per Web Mercator metre
+    t = pyproj.Transformer.from_crs(4326, 3857, always_xy=True)
+    x0, y0 = t.transform(0.0, 60.0)
+    m_3857 = map_elements._compute_metres_per_map_unit(
+        3857, (x0 - 1000.0, x0 + 1000.0, y0 - 1000.0, y0 + 1000.0)
+    )
+    assert m_3857 is not None
+    assert 0.49 < m_3857 < 0.51
+
+    # EPSG:4326 at equator: ~111319 m/deg
+    m_4326_eq = map_elements._compute_metres_per_map_unit(
+        4326, (-0.5, 0.5, -0.5, 0.5)
+    )
+    assert m_4326_eq is not None
+    assert 111000.0 < m_4326_eq < 111600.0
+
+    # EPSG:32630 (UTM): ~1.0 m/unit
+    m_utm = map_elements._compute_metres_per_map_unit(
+        32630, (500000.0, 501000.0, 5700000.0, 5701000.0)
+    )
+    assert m_utm is not None
+    assert 0.99 < m_utm < 1.01
+
+    # Invalid EPSG falls back cleanly to 1.0
+    assert map_elements._compute_metres_per_map_unit(
+        99999999, (0, 1, 0, 1)
+    ) == pytest.approx(1.0)
+
+    # add_axis_label uses ax.transAxes at (0.0, 1.0)
+    fig, ax = plt.subplots()
+    try:
+        ax.set_xlim(100, 200)
+        ax.set_ylim(300, 400)
+        map_elements.add_axis_label(ax, "(a)")
+        txt = ax.texts[-1]
+        assert txt.get_position() == (0.0, 1.0)
+        assert txt.get_transform() == ax.transAxes
+    finally:
+        plt.close(fig)
+
+
+def test_legend_normalise_rgba_scan_present_and_resolve_loc(tmp_path):
+    """scale_255 flag, tiled _scan_present_values, and resolve_mpl_location."""
+    assert map_legend_internal._normalise_rgba(
+        (1, 0, 0, 1), scale_255=False
+    ) == pytest.approx((1.0, 0.0, 0.0, 1.0))
+    assert map_legend_internal._normalise_rgba(
+        (1, 0, 0, 1), scale_255=True
+    ) == pytest.approx((1.0 / 255.0, 0.0, 0.0, 1.0 / 255.0))
+
+    arr = np.zeros((32, 32), dtype=np.uint8)
+    arr[0:16, 0:16] = 1
+    arr[16:32, 16:32] = 2
+    tif = _write_raster(
+        str(tmp_path / "thm.tif"), arr, tiled=True, blocksize=16
+    )
+    # Top-left bbox sees only 1
+    present_tl = map_legend_internal._scan_present_values(
+        tif, band=1, bbox=(500000.0, 500160.0, 5199840.0, 5200000.0)
+    )
+    assert present_tl == {1}
+    # Disjoint bbox returns empty set cleanly
+    present_none = map_legend_internal._scan_present_values(
+        tif, band=1, bbox=(600000.0, 600160.0, 5199840.0, 5200000.0)
+    )
+    assert present_none == set()
+
+    # resolve_mpl_location in add_categorical_legend
+    fig, ax = plt.subplots()
+    try:
+        leg = map_legend.add_categorical_legend(
+            ax,
+            classes_info={1: "Forest", 2: "Water"},
+            colour_lut={1: "green", 2: "blue"},
+            overlay=True,
+            loc="top left",
+        )
+        assert leg is not None
+        with pytest.raises(RSGISPyException):
+            map_legend.add_categorical_legend(
+                ax,
+                classes_info={1: "Forest"},
+                colour_lut={1: "green"},
+                overlay=True,
+                loc="nowhere",
+            )
+    finally:
+        plt.close(fig)
+
+
+def test_raster_cmap_nodata_mask_and_vals_under_white(tmp_path):
+    """create_raster_cmap_img_map masks nodata before auto-norm and honours vals_under_white."""
+    arr = np.array(
+        [[-9999.0, 10.0], [20.0, 30.0]], dtype=np.float32
+    )
+    tif = _write_raster(str(tmp_path / "cmap.tif"), arr, nodata=-9999.0)
+
+    fig, ax = plt.subplots()
+    try:
+        img = map_raster.create_raster_cmap_img_map(
+            ax=ax,
+            input_img=tif,
+            img_band=1,
+            norm_img_vals=True,
+            show_scale_bar=False,
+        )
+        cmap, norm = img.cmap, img.norm
+        assert norm is not None
+        assert norm.vmin == pytest.approx(10.0)
+        assert norm.vmax == pytest.approx(30.0)
+        assert cmap is not None
+    finally:
+        plt.close(fig)
+
+    fig2, ax2 = plt.subplots()
+    try:
+        img2 = map_raster.create_raster_cmap_img_map(
+            ax=ax2,
+            input_img=tif,
+            img_band=1,
+            norm_img_vals=False,
+            vals_under_white=True,
+            show_scale_bar=False,
+        )
+        cmap2, norm2 = img2.cmap, img2.norm
+        # Without norm_img_vals the image uses Matplotlib's linear autoscaling.
+        assert type(norm2) is matplotlib.colors.Normalize
+        assert tuple(cmap2.get_under()) == pytest.approx((1.0, 1.0, 1.0, 1.0))
+    finally:
+        plt.close(fig2)
+
+
+def test_vector_subset_exact_and_optional_dep_guards(monkeypatch, tmp_path):
+    """_subset_vec_bbox has no +/-4 buffer; optional deps guarded; WMTS XML & 1-band."""
+    pts = gpd.GeoDataFrame(
+        {"id": [1, 2]},
+        geometry=[Point(0.5, 0.5), Point(3.0, 0.5)],
+        crs="EPSG:4326",
+    )
+    sub = map_vector._subset_vec_bbox(pts, (0.0, 1.0, 0.0, 1.0))
+    assert list(sub["id"]) == [1]
+
+    # Guard missing mpl_scatter_density and contextily
+    real_import = builtins.__import__
+
+    def _block_opt(name, *args, **kwargs):
+        if name in ("mpl_scatter_density", "contextily"):
+            raise ImportError(f"No module named '{name}'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _block_opt)
+    fig, ax = plt.subplots()
+    try:
+        with pytest.raises(RSGISPyException, match="mpl-scatter-density"):
+            map_vector.create_vec_pt_density_map(
+                ax, pts, bbox=(0.0, 1.0, 0.0, 1.0)
+            )
+        with pytest.raises(RSGISPyException, match="contextily"):
+            map_basemaps.add_contextily_basemap(
+                ax, epsg_crs=3857, cx_src="dummy"
+            )
+    finally:
+        plt.close(fig)
+    monkeypatch.setattr(builtins, "__import__", real_import)
+
+    # _update_wmts_xml replaces existing <ZoomLevel> instead of duplicating
+    in_xml = tmp_path / "wmts_in.xml"
+    out_xml = tmp_path / "wmts_out.xml"
+    in_xml.write_text(
+        "<GDAL_WMTS>"
+        "<DataWindow>"
+        "<UpperLeftX>0</UpperLeftX><UpperLeftY>10</UpperLeftY>"
+        "<LowerRightX>10</LowerRightX><LowerRightY>0</LowerRightY>"
+        "</DataWindow>"
+        "<ZoomLevel>5</ZoomLevel>"
+        "</GDAL_WMTS>",
+        encoding="utf-8",
+    )
+    map_basemaps._update_wmts_xml(
+        str(in_xml), str(out_xml), (1.0, 2.0, 3.0, 4.0), wmts_zoom_level=12
+    )
+    xml_out = out_xml.read_text(encoding="utf-8")
+    assert xml_out.count("<ZoomLevel>") == 1
+    assert "<ZoomLevel>12</ZoomLevel>" in xml_out
+
+    # create_wmts_img_map handles a 1-band raster cleanly
+    tif1 = _write_raster(
+        str(tmp_path / "oneband.tif"),
+        np.arange(16, dtype=np.uint8).reshape((4, 4)),
+        crs="EPSG:3857",
+    )
+
+    def _fake_rio_copy(src, dst, **kwargs):
+        if kwargs.get("driver") == "WMTS":
+            with open(dst, "w", encoding="utf-8") as xml_f:
+                xml_f.write(
+                    "<GDAL_WMTS>"
+                    "<DataWindow>"
+                    "<UpperLeftX>0</UpperLeftX><UpperLeftY>10</UpperLeftY>"
+                    "<LowerRightX>10</LowerRightX><LowerRightY>0</LowerRightY>"
+                    "</DataWindow>"
+                    "</GDAL_WMTS>"
+                )
+        else:
+            shutil.copyfile(tif1, dst)
+
+    monkeypatch.setattr(rasterio.shutil, "copy", _fake_rio_copy)
+    fig3, ax3 = plt.subplots()
+    try:
+        map_basemaps.create_wmts_img_map(
+            ax=ax3,
+            wmts_url="https://example.org/wmts",
+            wmts_lyr="lyr",
+            bbox=(500000.0, 500040.0, 5199960.0, 5200000.0),
+            bbox_epsg=3857,
+            wmts_epsg=3857,
+            show_scale_bar=False,
+        )
+        assert len(ax3.images) == 1
+        assert ax3.images[0].get_cmap().name == "gray"
+    finally:
+        plt.close(fig3)

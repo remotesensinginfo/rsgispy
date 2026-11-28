@@ -20,6 +20,7 @@ import rsgispy.classification as rcls
 import rsgispy.classification.classdata as rcd
 import rsgispy.imageutils.colourtable as rct
 import rsgispy.imageutils.masking as rmask
+from rsgispy.classification.classdata import split_class_samples
 
 
 def _write_raster(
@@ -795,3 +796,28 @@ def test_class_info_hex_colour(tmp_path):
         rcd.ClassInfoObj(out_id=1, colour="#zzzzzz")
     with pytest.raises(rsgispy.RSGISPyException):
         rcd.ClassInfoObj(out_id=1, colour="#123")
+
+
+def test_split_class_samples_duplicate_index_no_leakage():
+    """split_class_samples keeps the splits disjoint when the index has duplicate labels."""
+    n_rows = 40
+    # Deliberately create non-unique index labels (e.g., from pd.concat without ignore_index)
+    dup_index = [i % 5 for i in range(n_rows)]
+    cls_df = pd.DataFrame(
+        {
+            "row_uid": np.arange(n_rows),
+            "b1": np.linspace(0.0, 1.0, n_rows),
+            "internal_cls_id": [0] * 20 + [1] * 20,
+            "class_name": ["A"] * 20 + ["B"] * 20,
+        },
+        index=dup_index,
+    )
+    tr_cls, te_cls, va_cls = split_class_samples(
+        cls_df, train_prop=0.6, test_prop=0.2, valid_prop=0.2, rnd_seed=42
+    )
+    assert len(tr_cls) + len(te_cls) + len(va_cls) == n_rows
+    cls_sets = [set(tr_cls["row_uid"]), set(te_cls["row_uid"]), set(va_cls["row_uid"])]
+    assert cls_sets[0].isdisjoint(cls_sets[1])
+    assert cls_sets[0].isdisjoint(cls_sets[2])
+    assert cls_sets[1].isdisjoint(cls_sets[2])
+    assert cls_sets[0] | cls_sets[1] | cls_sets[2] == set(range(n_rows))

@@ -20,6 +20,9 @@ import rsgispy.tools.maths as rmaths
 import rsgispy.tools.strings as rstrings
 import rsgispy.tools.system as rsystem
 import rsgispy.tools.textio as rtextio
+import rsgispy.tools.credentials as credentials
+import os
+import stat
 
 
 class _CustomJsonObj:
@@ -247,3 +250,12 @@ def test_combinatorics_dates_dict_struct_and_encoding(tmp_path):
     raw_xml.write_text("<root><child>1</child></root>", encoding="utf-8")
     rtextio.prettify_xml_file(str(raw_xml), str(pretty_xml))
     assert "\n  <child>1</child>\n" in pretty_xml.read_text(encoding="utf-8")
+
+
+def test_credentials_file_permissions_and_roundtrip(tmp_path):
+    """Credential files are created with 0o600 permissions and roundtrip cleanly."""
+    cred_file = str(tmp_path / "creds.txt")
+    credentials.create_username_password_file("alice", "s3cr3t!", cred_file)
+    if os.name != "nt":
+        assert stat.S_IMODE(os.stat(cred_file).st_mode) == 0o600
+    assert credentials.get_username_password(cred_file) == ("alice", "s3cr3t!")

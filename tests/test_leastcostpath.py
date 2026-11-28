@@ -11,6 +11,8 @@ from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imagecalc.leastcostpath as lcp
+from rasterio.transform import Affine
+from pathlib import Path
 
 
 def _write_cost_raster(path, arr, origin=(0.0, 100.0), res=10.0, crs="EPSG:32630"):
@@ -135,4 +137,65 @@ def test_least_cost_path_band_selection_and_validation(tmp_path):
             str(out_img),
             start_coord=(5.0, 95.0),
             stop_coord=(35.0, 65.0),
+        )
+
+
+def _write_raster(
+    path: Path,
+    arr: np.ndarray,
+    *,
+    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
+    crs: object = "EPSG:32630",
+    nodata=None,
+) -> str:
+    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
+    profile = {
+        "driver": "GTiff",
+        "height": int(data.shape[1]),
+        "width": int(data.shape[2]),
+        "count": int(data.shape[0]),
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": transform,
+    }
+    if nodata is not None:
+        profile["nodata"] = nodata
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return str(path)
+
+
+def test_least_cost_path_avoids_nan_and_nodata_barriers(tmp_path):
+    cost = np.ones((7, 7), dtype=np.float32)
+    # Build vertical wall at col=3 except row=6, mixing NaN and nodata (-999)
+    cost[0:3, 3] = np.nan
+    cost[3:6, 3] = -999.0
+    tf = from_origin(0.0, 70.0, 10.0, 10.0)
+    cost_img = _write_raster(
+        tmp_path / "cost.tif", cost, transform=tf, nodata=-999.0
+    )
+    out_img = str(tmp_path / "lcp.tif")
+
+    # Start (row=1, col=1) -> (15, 55), Stop (row=1, col=5) -> (55, 55)
+    lcp.perform_least_cost_path_calc(
+        cost_surface_img=cost_img,
+        output_img=out_img,
+        start_coord=(15.0, 55.0),
+        stop_coord=(55.0, 55.0),
+    )
+    with rasterio.open(out_img) as dst:
+        path_arr = dst.read(1)
+        assert path_arr[1, 1] == 1
+        assert path_arr[1, 5] == 1
+        # Must not cross any barrier cell, and must pass through gap at (6, 3)
+        assert not np.any(path_arr[0:6, 3] == 1)
+        assert path_arr[6, 3] == 1
+
+    # Start inside nodata cell must raise RSGISPyException
+    with pytest.raises(rsgispy.RSGISPyException):
+        lcp.perform_least_cost_path_calc(
+            cost_surface_img=cost_img,
+            output_img=str(tmp_path / "lcp_bad.tif"),
+            start_coord=(35.0, 35.0),  # (row=3, col=3) is -999
+            stop_coord=(55.0, 55.0),
         )

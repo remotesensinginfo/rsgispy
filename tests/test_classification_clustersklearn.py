@@ -19,6 +19,9 @@ import rsgispy.classification.clustersklearn as rclsk
 import rsgispy.imageutils.colourtable as rct
 from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
 from rsgispy.ml.predict import predict_raster_node
+from rsgispy.classification.clustersklearn import img_pixel_cluster
+from sklearn.cluster import KMeans
+from rsgispy.imageutils.masking import ImageBandInfo
 
 
 def _write_raster(
@@ -646,3 +649,99 @@ def test_apply_img_pixel_clusterer_errors(tmp_path):
         rclsk.apply_img_pixel_clusterer(
             str(tmp_path / "missing.tif"), km_2b, out_tif, use_pbar=False
         )
+
+
+def _write_gtiff(
+    path: str,
+    arr: np.ndarray,
+    *,
+    origin_x: float = 500000.0,
+    origin_y: float = 5200000.0,
+    res: float = 10.0,
+    crs: str = "EPSG:32630",
+    nodata: float = -9999.0,
+) -> None:
+    """Write a 2D or 3D NumPy array to a GeoTIFF."""
+    data = arr[None, :, :] if arr.ndim == 2 else arr
+    count, height, width = data.shape
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=height,
+        width=width,
+        count=count,
+        dtype=str(data.dtype),
+        crs=crs,
+        transform=from_origin(origin_x, origin_y, res, res),
+        nodata=nodata,
+    ) as dst:
+        dst.write(data)
+
+
+def test_multitile_clustering_preserves_pixel_positions(tmp_path):
+    """Verify img_pixel_cluster maps labels back to exact pixel positions across tiles."""
+    height, width = 20, 20
+    # Four quadrants with cleanly separated spectral values across multiple 8x8 tiles
+    b1 = np.zeros((height, width), dtype=np.float32)
+    b2 = np.zeros((height, width), dtype=np.float32)
+    b1[:10, :10], b2[:10, :10] = 0.0, 0.0
+    b1[:10, 10:], b2[:10, 10:] = 100.0, 0.0
+    b1[10:, :10], b2[10:, :10] = 0.0, 100.0
+    b1[10:, 10:], b2[10:, 10:] = 100.0, 100.0
+
+    # Inject a nodata hole to ensure sparse pixel indexing stays aligned
+    b1[3, 4] = -9999.0
+    b2[15, 16] = -9999.0
+
+    img_path = str(tmp_path / "quadrants.tif")
+    out_single = str(tmp_path / "cluster_single.tif")
+    out_multi = str(tmp_path / "cluster_multi.tif")
+    _write_gtiff(img_path, np.stack([b1, b2], axis=0), nodata=-9999.0)
+    band_info = [ImageBandInfo(file_name=img_path, name="quad", bands=[1, 2])]
+
+    img_pixel_cluster(
+        band_info,
+        out_single,
+        clusterer=KMeans(n_clusters=4, random_state=42, n_init=10),
+        out_no_data_val=0,
+        calc_stats=False,
+        block_size=64,
+        use_pbar=False,
+    )
+    img_pixel_cluster(
+        band_info,
+        out_multi,
+        clusterer=KMeans(n_clusters=4, random_state=42, n_init=10),
+        out_no_data_val=0,
+        calc_stats=False,
+        block_size=8,
+        use_pbar=False,
+    )
+
+    with rasterio.open(out_single) as src1, rasterio.open(out_multi) as src2:
+        arr_single = src1.read(1)
+        arr_multi = src2.read(1)
+
+    assert arr_multi[3, 4] == 0
+    assert arr_multi[15, 16] == 0
+
+    # Each quadrant (excluding nodata pixels) must have a single uniform cluster ID
+    quad_slices = [
+        (slice(0, 10), slice(0, 10)),
+        (slice(0, 10), slice(10, 20)),
+        (slice(10, 20), slice(0, 10)),
+        (slice(10, 20), slice(10, 20)),
+    ]
+    quad_labels = []
+    for r_sl, c_sl in quad_slices:
+        vals = arr_multi[r_sl, c_sl]
+        valid_vals = vals[vals != 0]
+        uniq = np.unique(valid_vals)
+        assert uniq.size == 1
+        quad_labels.append(int(uniq[0]))
+    assert len(set(quad_labels)) == 4
+    # Single-tile and multi-tile partitions must agree up to label permutation
+    for r_sl, c_sl in quad_slices:
+        s_vals = arr_single[r_sl, c_sl]
+        assert np.unique(s_vals[s_vals != 0]).size == 1

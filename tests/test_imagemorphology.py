@@ -11,6 +11,9 @@ from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imagemorphology as rimorph
+import rsgispy.imagemorphology as morph
+from rasterio.transform import Affine
+from pathlib import Path
 
 
 def _write_raster(path, arr, dtype="uint8", nodata=None):
@@ -479,3 +482,80 @@ def test_morphology_border_mode_default_signatures_and_errors(tmp_path):
         rimorph.image_erode(
             str(in_p), str(tmp_path / "c.tif"), border_mode="wrap", use_pbar=False
         )
+
+
+def _write_geotiff(
+    path: Path,
+    arr: np.ndarray,
+    *,
+    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
+    crs: object = "EPSG:32630",
+    nodata=None,
+) -> str:
+    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
+    profile = {
+        "driver": "GTiff",
+        "height": int(data.shape[1]),
+        "width": int(data.shape[2]),
+        "count": int(data.shape[0]),
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": transform,
+    }
+    if nodata is not None:
+        profile["nodata"] = nodata
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return str(path)
+
+
+def test_morphology_edge_padding_and_no_nodata_bleed(tmp_path):
+    arr = np.full((12, 12), 50.0, dtype=np.float32)
+    arr[5, 5] = -9999.0  # nodata hole
+    arr[6, 6] = np.nan
+    in_img = _write_geotiff(tmp_path / "morph_in.tif", arr, nodata=-9999.0)
+
+    op_file = str(tmp_path / "op3.gmtxt")
+    morph.create_circular_op(op_file, 3)
+
+    out_erode = str(tmp_path / "erode.tif")
+    morph.image_erode(
+        in_img,
+        out_erode,
+        op_file,
+        use_op_file=True,
+        no_data_val=-9999.0,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    out_dilate = str(tmp_path / "dilate.tif")
+    morph.image_dilate(
+        in_img,
+        out_dilate,
+        op_file,
+        use_op_file=True,
+        no_data_val=-9999.0,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    out_open = str(tmp_path / "open.tif")
+    morph.image_opening(
+        in_img,
+        out_open,
+        op_file,
+        use_op_file=True,
+        no_data_val=-9999.0,
+        calc_stats=False,
+        use_pbar=False,
+    )
+
+    for out_p in (out_erode, out_dilate, out_open):
+        with rasterio.open(out_p) as dst:
+            res = dst.read(1)
+            # Border pixels must stay 50.0 (no 0-padding bleed)
+            assert res[0, 0] == 50.0
+            assert res[-1, -1] == 50.0
+            # Neighbours of nodata/NaN hole must stay 50.0 (no -9999 or NaN bleed)
+            assert res[5, 4] == 50.0
+            assert res[4, 5] == 50.0
+            assert res[6, 7] == 50.0

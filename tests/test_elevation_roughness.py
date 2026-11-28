@@ -15,6 +15,10 @@ from shapely.geometry import Point
 import rsgispy
 import rsgispy.elevation.roughness as rrough
 import rsgispy.imagecalc.calc_pt_win_smpls as rcptwin
+import rsgispy.imagecalc.calc_pt_win_smpls as pt_win
+from rasterio.enums import Resampling
+from rasterio.transform import Affine
+from pathlib import Path
 
 matplotlib.use("Agg")
 
@@ -373,3 +377,58 @@ def test_roughness_and_pt_win_gdf_in_memory(tmp_path):
     assert isinstance(chained_gdf, gpd.GeoDataFrame)
     assert "avg_ra" in chained_gdf.columns
     assert "smith_hs" in chained_gdf.columns
+
+
+def _write_raster(
+    path: Path,
+    arr: np.ndarray,
+    *,
+    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
+    crs: object = "EPSG:32630",
+    nodata=None,
+) -> str:
+    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
+    profile = {
+        "driver": "GTiff",
+        "height": int(data.shape[1]),
+        "width": int(data.shape[2]),
+        "count": int(data.shape[0]),
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": transform,
+    }
+    if nodata is not None:
+        profile["nodata"] = nodata
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return str(path)
+
+
+def test_extract_rotated_window_near_edge_pivots_on_point(tmp_path):
+    arr = np.zeros((20, 20), dtype=np.float32)
+    # Put a bright impulse exactly at pixel (row=2, col=3) -> x=35, y=175
+    arr[2, 3] = 100.0
+    tf = from_origin(0.0, 200.0, 10.0, 10.0)
+    in_img = _write_raster(tmp_path / "rot_pt.tif", arr, transform=tf)
+
+    with rasterio.open(in_img) as src:
+        img_bbox = (
+            float(src.bounds.left),
+            float(src.bounds.right),
+            float(src.bounds.bottom),
+            float(src.bounds.top),
+        )
+        # Near top-left edge where sub_win gets clipped at row=0, col=0
+        roi, roi_tf, _, _ = pt_win._extract_rotated_window(  # pylint: disable=protected-access
+            src_ds=src,
+            img_bbox=img_bbox,
+            pt_xy=(35.0, 175.0),
+            pt_xbox=4.0,
+            pt_ybox=4.0,
+            pt_angle=90.0,
+            rio_interp=Resampling.nearest,
+            no_data_val=0.0,
+        )
+    # The point itself must stay invariant under rotation even when clipped at edge
+    pt_c, pt_r = ~roi_tf @ (35.0, 175.0)
+    assert roi[0, int(pt_r), int(pt_c)] == pytest.approx(100.0)

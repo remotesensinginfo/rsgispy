@@ -28,6 +28,8 @@ import rsgispy
 import rsgispy.imageutils.colourtable as rct
 import rsgispy.regression.regdata as rrd
 import rsgispy.regression.regsklearn as rsk
+from rsgispy.regression.regsklearn import load_sklearn_regressor
+from rsgispy.regression.regsklearn import save_sklearn_regressor
 
 
 def _write_raster(
@@ -493,3 +495,21 @@ def test_regressor_param_search_with_spatial_and_group_splitters():
     assert isinstance(best, RandomForestRegressor)
     with pytest.raises(rsgispy.RSGISPyException, match="coords"):
         rsk.perform_sklearn_regressor_param_search(cv=spatial_cv, **common)
+
+
+def test_regression_model_save_load_roundtrip(tmp_path):
+    """Verify sklearn regression models round-trip cleanly via save/load_sklearn_regressor."""
+    rng = np.random.default_rng(99)
+    x_tr = rng.normal(size=(40, 3))
+    y_tr = 2.0 * x_tr[:, 0] - 0.5 * x_tr[:, 1] + 1.5
+    reg = Ridge(alpha=0.5).fit(x_tr, y_tr)
+
+    model_path = tmp_path / "subdir" / "ridge_reg.joblib"
+    save_sklearn_regressor(reg, model_path)
+    assert model_path.is_file()
+
+    loaded = load_sklearn_regressor(model_path)
+    assert np.allclose(loaded.predict(x_tr), reg.predict(x_tr))
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        load_sklearn_regressor(tmp_path / "does_not_exist.joblib")

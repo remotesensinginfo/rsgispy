@@ -18,6 +18,7 @@ from sklearn.model_selection import GridSearchCV
 import rsgispy
 import rsgispy.modelling as modelling_pkg
 import rsgispy.modelling.species_distribution as sdm
+from rsgispy.modelling._helpers import resolve_analysis_vars
 
 matplotlib.use("Agg")
 
@@ -869,3 +870,221 @@ def test_raster_predictions_single_and_ensemble(tmp_path):
         assert oec.dtype == np.float32
         assert np.all(oec[~vmask] == -1.0)
         assert np.all((oec[vmask] >= 0.0) & (oec[vmask] <= 1.0))
+
+
+def _write_gtiff(
+    path: str,
+    arr: np.ndarray,
+    *,
+    origin_x: float = 500000.0,
+    origin_y: float = 5200000.0,
+    res: float = 10.0,
+    crs: str = "EPSG:32630",
+    nodata: float = -9999.0,
+) -> None:
+    """Write a 2D or 3D NumPy array to a GeoTIFF."""
+    data = arr[None, :, :] if arr.ndim == 2 else arr
+    count, height, width = data.shape
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=height,
+        width=width,
+        count=count,
+        dtype=str(data.dtype),
+        crs=crs,
+        transform=from_origin(origin_x, origin_y, res, res),
+        nodata=nodata,
+    ) as dst:
+        dst.write(data)
+
+
+def test_modelling_valid_range_crs_alignment_resolve_vars_and_distinct_nodata(tmp_path):
+    """
+    Verify modelling valid-range filtering, mismatched dict-key/info.name resolution,
+    CRS alignment in combine_presence_absence_data, k-fold non-duplicate class
+    preservation, and distinct uint8 nodata=255 in class predictions.
+    """
+    height, width = 24, 24
+    yy_raw, xx_raw = np.mgrid[0:height, 0:width]
+    yy = yy_raw.astype(np.float32)
+    xx = xx_raw.astype(np.float32)
+    v1 = (50.0 + xx - yy).astype(np.float32)
+    v2 = (20.0 + 0.5 * xx + 0.5 * yy).astype(np.float32)
+    # Inject out-of-valid-range values inside ROI (finite and != raster nodata)
+    v1[4, 4] = -5.0  # below min_vld_val=0.0
+    v1[5, 5] = 200.0  # above max_vld_val=100.0
+
+    mask = np.zeros((height, width), dtype=np.uint8)
+    mask[2:22, 2:22] = 1
+
+    cov_path = str(tmp_path / "cov.tif")
+    msk_path = str(tmp_path / "msk.tif")
+    _write_gtiff(cov_path, np.stack([v1, v2], axis=0), nodata=-9999.0)
+    _write_gtiff(msk_path, mask, nodata=0)
+
+    # Dict keys deliberately differ from EnvVarInfo.name
+    env_vars = {
+        "key_one": sdm.EnvVarInfo(
+            name="VarOne",
+            file=cov_path,
+            band=1,
+            data_type=rsgispy.VAR_TYPE_CONTINUOUS,
+            min_vld_val=0.0,
+            max_vld_val=100.0,
+        ),
+        "key_two": sdm.EnvVarInfo(
+            name="VarTwo",
+            file=cov_path,
+            band=2,
+            data_type=rsgispy.VAR_TYPE_CONTINUOUS,
+        ),
+    }
+
+    # 1. resolve_analysis_vars works with None, info.name, and dict keys
+    assert resolve_analysis_vars(env_vars) == ["VarOne", "VarTwo"]
+    assert resolve_analysis_vars(env_vars, ["VarOne", "VarTwo"]) == ["VarOne", "VarTwo"]
+    assert resolve_analysis_vars(env_vars, ["key_one", "key_two"]) == ["VarOne", "VarTwo"]
+
+    # 2. create_finite_mask enforces min_vld_val and max_vld_val
+    finite_msk = str(tmp_path / "finite_mask.tif")
+    sdm.create_finite_mask(
+        msk_path,
+        1,
+        env_vars,
+        ["VarOne", "VarTwo"],
+        finite_msk,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(finite_msk) as src:
+        fmask = src.read(1)
+        assert fmask[4, 4] == 0
+        assert fmask[5, 5] == 0
+        assert fmask[10, 10] == 1
+
+    # 3. combine_presence_absence_data reprojects absence_gdf when CRSs differ
+    pres_pts = [Point(500000.0 + c * 10.0, 5200000.0 - r * 10.0) for c, r in zip(
+        np.linspace(3.5, 9.5, 10), np.linspace(3.5, 9.5, 10)
+    )]
+    abs_pts = [Point(500000.0 + c * 10.0, 5200000.0 - r * 10.0) for c, r in zip(
+        np.linspace(14.5, 20.5, 10), np.linspace(14.5, 20.5, 10)
+    )]
+    pres_gdf = gpd.GeoDataFrame(
+        {"VarOne": np.linspace(60.0, 70.0, 10), "VarTwo": np.linspace(22.0, 26.0, 10)},
+        geometry=pres_pts,
+        crs="EPSG:32630",
+    )
+    abs_gdf_utm = gpd.GeoDataFrame(
+        {"VarOne": np.linspace(30.0, 40.0, 10), "VarTwo": np.linspace(34.0, 38.0, 10)},
+        geometry=abs_pts,
+        crs="EPSG:32630",
+    )
+    abs_gdf_wgs84 = abs_gdf_utm.to_crs("EPSG:4326")
+
+    comb_gdf, analysis_vars = sdm.combine_presence_absence_data(
+        pres_gdf, None, abs_gdf_wgs84, None, env_vars
+    )
+    assert analysis_vars == ["VarOne", "VarTwo"]
+    assert comb_gdf.crs == pres_gdf.crs
+    # Reprojected absence coordinates must match original UTM coordinates
+    abs_rows = comb_gdf[comb_gdf["clsid"] == 0].reset_index(drop=True)
+    assert np.allclose(abs_rows.geometry.x.to_numpy(), abs_gdf_utm.geometry.x.to_numpy(), atol=1e-3)
+    assert np.allclose(abs_rows.geometry.y.to_numpy(), abs_gdf_utm.geometry.y.to_numpy(), atol=1e-3)
+
+    # Mismatched defined vs undefined CRS must raise RSGISPyException
+    abs_no_crs = abs_gdf_utm.set_crs(None, allow_override=True)
+    with pytest.raises(rsgispy.RSGISPyException, match="CRS"):
+        sdm.combine_presence_absence_data(pres_gdf, None, abs_no_crs, None, env_vars)
+
+    # 4. fit_kfold_sklearn_mdls validates fold size >= n_classes and avoids duplicates
+    with pytest.raises(rsgispy.RSGISPyException, match="fold size"):
+        sdm.fit_kfold_sklearn_mdls(
+            RandomForestClassifier(n_estimators=5, random_state=1),
+            comb_gdf,
+            None,
+            comb_gdf,
+            None,
+            analysis_vars,
+            n_kfolds=2,
+            fold_prop=0.05,  # 20 * 0.05 = 1 < 2 classes
+            sel_replacement=False,
+            rnd_seed=1,
+            use_pbar=False,
+        )
+
+    # Direct check on class-preservation helper with extreme imbalance & no replacement
+    train_y_imb = np.array([0] * 19 + [1])
+    bad_draw = np.array([0, 1, 2, 3])
+    fixed_idx = sdm._ensure_all_classes_in_fold(  # pylint: disable=protected-access
+        bad_draw, train_y_imb, np.array([0, 1]), np.random.default_rng(0)
+    )
+    assert set(np.unique(train_y_imb[fixed_idx])) == {0, 1}
+    assert len(np.unique(fixed_idx)) == len(fixed_idx) == len(bad_draw)
+
+    # 5. Distinct nodata=255 and valid-range filtering in build_env_block_matrix / pred_*_cls
+    clf, _, _, _ = sdm.fit_sklearn_mdl(
+        RandomForestClassifier(n_estimators=10, random_state=3),
+        comb_gdf,
+        None,
+        comb_gdf,
+        None,
+        analysis_vars,
+        return_model=True,
+    )
+    oc_mdl, _, _ = sdm.fit_sklearn_sgl_cls_mdl(
+        IsolationForest(n_estimators=10, contamination=0.1, random_state=3),
+        comb_gdf[comb_gdf["clsid"] == 1],
+        None,
+        comb_gdf,
+        None,
+        analysis_vars,
+        return_model=True,
+    )
+
+    cls_255 = str(tmp_path / "cls_nd255.tif")
+    oc_cls_255 = str(tmp_path / "oc_cls_nd255.tif")
+    # Pass raw msk_path (which does NOT mask [4,4] or [5,5]) to prove build_env_block_matrix
+    # enforces min_vld_val/max_vld_val during prediction too!
+    sdm.pred_sklearn_mdl_cls(
+        clf,
+        msk_path,
+        1,
+        env_vars,
+        analysis_vars,
+        cls_255,
+        calc_stats=False,
+        use_pbar=False,
+        out_no_data_val=255,
+    )
+    sdm.pred_sklearn_sgl_cls_mdl_cls(
+        oc_mdl,
+        msk_path,
+        1,
+        env_vars,
+        analysis_vars,
+        oc_cls_255,
+        calc_stats=False,
+        use_pbar=False,
+        out_no_data_val=255,
+    )
+
+    with rasterio.open(cls_255) as src:
+        arr = src.read(1)
+        assert arr.dtype == np.uint8
+        assert src.nodata == 255
+        assert arr[0, 0] == 255
+        # Out-of-valid-range pixels inside ROI must also be marked nodata (255)
+        assert arr[4, 4] == 255
+        assert arr[5, 5] == 255
+        assert arr[10, 10] in (0, 1)
+
+    with rasterio.open(oc_cls_255) as src:
+        oc_arr = src.read(1)
+        assert oc_arr.dtype == np.uint8
+        assert src.nodata == 255
+        assert oc_arr[0, 0] == 255
+        assert oc_arr[4, 4] == 255
+        assert oc_arr[5, 5] == 255
+        assert oc_arr[10, 10] in (0, 1)

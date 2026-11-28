@@ -19,6 +19,11 @@ import rsgispy.vector.io as vu_io
 import rsgispy.vector.io as vu_meta
 import rsgispy.vector.selection as vu_sel
 import rsgispy.vector.stats as vs_metrics
+from rsgispy import vectorprocess as vp
+from rsgispy import RSGISPyException
+from rsgispy.vector import io as vec_io
+from rsgispy.vector import selection as vec_sel
+import pandas as pd
 
 
 def _write_test_raster(
@@ -964,3 +969,263 @@ def test_merge_utm_vecs_wgs84_keeps_zero_area_layers(tmp_path):
     )
     assert sorted(merged["id"].tolist()) == [1, 2]
     assert merged.crs.to_epsg() == 4326
+
+
+def _write_raster(
+    path: str,
+    arr: np.ndarray,
+    *,
+    origin=(500000.0, 5200000.0),
+    res=(10.0, 10.0),
+    crs: str = "EPSG:32630",
+    nodata=None,
+    tiled: bool = False,
+    blocksize: int | None = None,
+) -> str:
+    """Write a 2D or 3D NumPy array to a GeoTIFF."""
+    if arr.ndim == 2:
+        data = arr[np.newaxis, :, :]
+    else:
+        data = arr
+    count, height, width = data.shape
+    profile = {
+        "driver": "GTiff",
+        "width": width,
+        "height": height,
+        "count": count,
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": from_origin(origin[0], origin[1], res[0], res[1]),
+        "nodata": nodata,
+    }
+    if tiled:
+        profile["tiled"] = True
+        if blocksize is not None:
+            profile["blockxsize"] = blocksize
+            profile["blockysize"] = blocksize
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return path
+
+
+def test_write_vec_gdf_replace_layer_preserves_siblings(tmp_path):
+    """replace_layer=True replaces only the target GPKG layer."""
+    gpkg = str(tmp_path / "multi.gpkg")
+    gdf_a = gpd.GeoDataFrame(
+        {"id": [1]}, geometry=[Point(0, 0)], crs="EPSG:4326"
+    )
+    gdf_b = gpd.GeoDataFrame(
+        {"id": [10, 20]},
+        geometry=[Point(1, 1), Point(2, 2)],
+        crs="EPSG:4326",
+    )
+    vp.write_vec_gdf(gdf_a, gpkg, "lyr_a", out_format="GPKG", overwrite=True)
+    vp.write_vec_gdf(gdf_b, gpkg, "lyr_b", out_format="GPKG", overwrite=False)
+
+    # Updating lyr_a with replace_layer=True keeps lyr_b intact
+    gdf_a2 = gpd.GeoDataFrame(
+        {"id": [99]}, geometry=[Point(5, 5)], crs="EPSG:4326"
+    )
+    vp.write_vec_gdf(
+        gdf_a2,
+        gpkg,
+        "lyr_a",
+        out_format="GPKG",
+        overwrite=False,
+        replace_layer=True,
+    )
+    assert set(vp.list_vec_layers(gpkg)) == {"lyr_a", "lyr_b"}
+    assert list(vp.read_vec_gdf(gpkg, "lyr_a")["id"]) == [99]
+    assert list(vp.read_vec_gdf(gpkg, "lyr_b")["id"]) == [10, 20]
+
+
+def test_read_vec_info_resolve_layer_and_driver_helpers(tmp_path):
+    """read_vec_info, resolve_vec_layer, is_multi_layer_driver, cast_col_data."""
+    assert vp.is_multi_layer_driver(out_format="GPKG") is True
+    assert vp.is_multi_layer_driver(out_vec_file="a.gpkg") is True
+    assert vp.is_multi_layer_driver(out_format="GeoJSON") is False
+    assert vp.is_multi_layer_driver(out_format="Parquet") is False
+
+    gdf = gpd.GeoDataFrame(
+        {"a": [1, 2], "b": ["x", "y"]},
+        geometry=[Point(0, 0), Point(2, 3)],
+        crs="EPSG:4326",
+    )
+    info = vp.read_vec_info(gdf)
+    assert info["features"] == 2
+    assert info["fields"] == ["a", "b"]
+    assert info["total_bounds"] == (0.0, 0.0, 2.0, 3.0)
+
+    gpkg = str(tmp_path / "sample.gpkg")
+    vp.write_vec_gdf(gdf, gpkg, "pts", out_format="GPKG", overwrite=True)
+    assert vp.resolve_vec_layer(gpkg, None) == "pts"
+    with pytest.raises(RSGISPyException):
+        vp.resolve_vec_layer(gpkg, "missing_layer")
+
+    bbox = vp.bbox_to_rsgis((1.0, 2.0, 3.0, 4.0), epsg=4326)
+    assert (bbox.west, bbox.east, bbox.south, bbox.north, bbox.epsg) == (
+        1.0,
+        3.0,
+        2.0,
+        4.0,
+        4326,
+    )
+    assert vp.cast_col_data(["1", "2"], int) == [1, 2]
+    assert vp.cast_col_data(["true", "0"], bool) == [True, False]
+    with pytest.raises(RSGISPyException):
+        vp.cast_col_data(["not_a_bool"], bool)
+    atts_df = vp.build_atts_dataframe(
+        2,
+        atts={"k": ["10", "20"]},
+        att_types={"names": ["k"], "types": [int]},
+    )
+    assert list(atts_df["k"]) == [10, 20]
+
+
+def test_vector_io_invalid_inputs_raise_rsgispy_exception(tmp_path):
+    """Invalid inputs in _io_ops raise RSGISPyException rather than AssertionError."""
+    gdf = gpd.GeoDataFrame(
+        {"id": [1]}, geometry=[Point(0, 0)], crs="EPSG:4326"
+    )
+    out_json = str(tmp_path / "out.geojson")
+    lyr1 = vec_io.VecLayersInfoObj(gdf, None, "l1")
+    lyr2 = vec_io.VecLayersInfoObj(gdf, None, "l2")
+    with pytest.raises(RSGISPyException):
+        vec_io.merge_to_multi_lyr_vec(
+            [lyr1, lyr2], out_json, out_format="GeoJSON"
+        )
+
+    with pytest.raises(RSGISPyException):
+        vec_io.merge_vec_lyrs([], out_vec_file=None)
+
+
+def test_selection_crs_alignment_ckdtree_iloc_na_regex_and_empty_roi(
+    tmp_path, monkeypatch
+):
+    """Test selection deduplication, CRS alignment, cKDTree, iloc, NA/regex, empty ROI."""
+    # Deduplication when a left feature overlaps multiple right features
+    left_gdf = gpd.GeoDataFrame(
+        {"name": ["poly_a", "poly_b"]},
+        geometry=[box(0, 0, 10, 10), box(100, 100, 110, 110)],
+        crs="EPSG:32630",
+    )
+    right_gdf = gpd.GeoDataFrame(
+        {"rid": [1, 2]},
+        geometry=[box(0, 0, 5, 5), box(5, 5, 10, 10)],
+        crs="EPSG:32630",
+    )
+    assert vec_sel.get_att_lst_select_feats(
+        left_gdf, None, ["name"], right_gdf, None
+    ) == [{"name": "poly_a"}]
+    assert vec_sel.get_att_lst_select_bbox_feats(
+        left_gdf, None, ["name"], (0.0, 10.0, 0.0, 10.0), bbox_epsg=32630
+    ) == [{"name": "poly_a"}]
+
+    # CRS alignment + null/empty filtering in match_closest_vec_pts
+    pts_utm = gpd.GeoDataFrame(
+        {"pid": [1, 2, 3]},
+        geometry=[Point(500000.0, 5200000.0), None, Point()],
+        crs="EPSG:32630",
+    )
+    ref_wgs84 = gpd.GeoDataFrame(
+        {"ref_id": ["near", "far"]},
+        geometry=[Point(500005.0, 5200000.0), Point(505000.0, 5200000.0)],
+        crs="EPSG:32630",
+    ).to_crs("EPSG:4326")
+    matched = vec_sel.match_closest_vec_pts(
+        pts_utm,
+        None,
+        ref_wgs84,
+        None,
+        out_vec_file=None,
+        cp_match_atts=True,
+        use_pbar=False,
+    )
+    assert len(matched) == 1
+    assert matched["match_ref_id"].iloc[0] == "near"
+    assert matched["dist_match"].iloc[0] == pytest.approx(5.0, abs=0.5)
+
+    monkeypatch.setattr(vec_sel, "HAVE_SCIPY", False)
+    matched_np = vec_sel.match_closest_vec_pts(
+        pts_utm,
+        None,
+        ref_wgs84,
+        None,
+        out_vec_file=None,
+        cp_match_atts=True,
+        use_pbar=False,
+    )
+    assert len(matched_np) == 1
+    assert matched_np["match_ref_id"].iloc[0] == "near"
+    assert matched_np["dist_match"].iloc[0] == pytest.approx(
+        matched["dist_match"].iloc[0]
+    )
+    monkeypatch.undo()
+
+    # Positional .iloc splitting with non-contiguous index
+    idx_gdf = gpd.GeoDataFrame(
+        {"cls": ["a", "a", "a", "b", "b", "b"]},
+        geometry=[Point(i, i) for i in range(6)],
+        index=[10, 20, 30, 40, 50, 60],
+        crs="EPSG:32630",
+    )
+    rem_gdf, sub_gdf = vec_sel.split_vec_lyr_random_subset(
+        idx_gdf, None, None, None, None, None, n_smpl=2, rnd_seed=42
+    )
+    assert len(sub_gdf) == 2 and len(rem_gdf) == 4
+    train_gdf, test_gdf = vec_sel.create_train_test_smpls(
+        idx_gdf, None, prop_test=0.34, rnd_seed=42
+    )
+    assert len(test_gdf) == 2 and len(train_gdf) == 4
+
+    # subset_by_attribute with NA values & regex metacharacters
+    attr_gdf = gpd.GeoDataFrame(
+        {"label": ["a[1]x", "a1x", None, "b"]},
+        geometry=[Point(i, 0) for i in range(4)],
+        crs="EPSG:4326",
+    )
+    sub_lit = vec_sel.subset_by_attribute(
+        attr_gdf,
+        None,
+        sub_col="label",
+        sub_vals=["a[1]"],
+        match_type="contains",
+        out_vec_file=None,
+    )
+    assert list(sub_lit["label"]) == ["a[1]x"]
+    with pytest.raises(RSGISPyException):
+        vec_sel.subset_by_attribute(
+            attr_gdf,
+            None,
+            sub_col="label",
+            sub_vals=["None"],
+            match_type="contains",
+            out_vec_file=None,
+        )
+
+    # drop_rows_by_multi_attributes keeps nullable NA rows
+    na_gdf = gpd.GeoDataFrame(
+        {
+            "k": pd.Series(["drop", pd.NA, "keep"], dtype="string"),
+            "v": pd.Series([1, pd.NA, 2], dtype="Int64"),
+        },
+        geometry=[Point(0, 0), Point(1, 1), Point(2, 2)],
+        crs="EPSG:4326",
+    )
+    kept = vec_sel.drop_rows_by_multi_attributes(
+        na_gdf,
+        None,
+        drop_atts={"k": "drop", "v": 99},
+        out_vec_file=None,
+    )
+    assert len(kept) == 2
+
+    # does_vmsk_img_intersect with empty ROI
+    tif = _write_raster(
+        str(tmp_path / "img.tif"),
+        np.ones((4, 4), dtype=np.uint8),
+    )
+    empty_roi = gpd.GeoDataFrame(
+        {"id": []}, geometry=gpd.GeoSeries([], crs="EPSG:32630"), crs="EPSG:32630"
+    )
+    assert vec_sel.does_vmsk_img_intersect(tif, empty_roi, None) is False

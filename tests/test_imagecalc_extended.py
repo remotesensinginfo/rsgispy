@@ -19,6 +19,11 @@ import rsgispy.imagecalc.encoding as ic_enc
 import rsgispy.imagecalc.fill as ic_fill
 import rsgispy.imagecalc.rescale as ic_resc
 import rsgispy.imagecalc.stats as ic_stats
+import rsgispy.imagecalc.fill as img_fill
+from rasterio.transform import Affine
+from pathlib import Path
+import rsgispy.imagecalc.encoding as img_enc
+import rsgispy.imagecalc.stats as calc_stats
 
 
 def _write_raster(
@@ -1949,3 +1954,104 @@ def test_stack_stats_write_nodata_where_no_input_is_valid(tmp_path):
     with rasterio.open(col_p) as src:
         assert src.nodata == nd
         np.testing.assert_allclose(src.read(1), [[nd, 2.0]])
+
+
+def _write_geotiff(
+    path: Path,
+    arr: np.ndarray,
+    *,
+    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
+    crs: object = "EPSG:32630",
+    nodata=None,
+) -> str:
+    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
+    profile = {
+        "driver": "GTiff",
+        "height": int(data.shape[1]),
+        "width": int(data.shape[2]),
+        "count": int(data.shape[0]),
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": transform,
+    }
+    if nodata is not None:
+        profile["nodata"] = nodata
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return str(path)
+
+
+def test_calc_fill_regions_knn_nan_fill_val_and_int_clamp(tmp_path):
+    ref_arr = np.full((8, 8), 300.0, dtype=np.float32)  # exceeds uint8 max 255
+    ref_arr[0, 0] = -1.0
+    mask_arr = np.ones((8, 8), dtype=np.float32)
+    mask_arr[3:5, 3:5] = np.nan
+
+    ref_img = _write_geotiff(tmp_path / "knn_ref.tif", ref_arr, nodata=-1.0)
+    msk_img = _write_geotiff(tmp_path / "knn_msk.tif", mask_arr)
+    out_img = str(tmp_path / "knn_out.tif")
+
+    img_fill.calc_fill_regions_knn(
+        in_ref_img=ref_img,
+        in_fill_regions_img=msk_img,
+        output_img=out_img,
+        ref_no_data=-1.0,
+        fill_region_val=float("nan"),
+        k=3,
+        summary=rsgispy.SUMTYPE_MEAN,
+        datatype=rsgispy.TYPE_8UINT,
+        use_pbar=False,
+    )
+    with rasterio.open(out_img) as dst:
+        out_arr = dst.read(1)
+        assert out_arr.dtype == np.uint8
+        # Filled NaN region clamped safely to 255 rather than wrapping mod 256
+        assert np.all(out_arr[3:5, 3:5] == 255)
+        assert out_arr[0, 0] == 0
+
+
+def test_recode_int_raster_remaps_and_validates_nodata(tmp_path):
+    arr = np.array([[-9999, 1, 2], [3, -9999, 1]], dtype=np.int32)
+    in_img = _write_geotiff(tmp_path / "enc_in.tif", arr, nodata=-9999)
+
+    # Case 1: nodata remapped via recode_dict into valid uint8 range
+    out1 = str(tmp_path / "enc_out1.tif")
+    img_enc.recode_int_raster(
+        input_img=in_img,
+        output_img=out1,
+        recode_dict={-9999: 255, 1: 10, 2: 20},
+        keep_vals_not_in_dict=False,
+        datatype=rsgispy.TYPE_8UINT,
+        use_pbar=False,
+    )
+    with rasterio.open(out1) as dst:
+        assert dst.nodata == 255.0
+        assert dst.read(1)[0, 0] == 255
+
+    # Case 2: nodata not in dict, keep_vals_not_in_dict=True, out of uint8 range
+    out2 = str(tmp_path / "enc_out2.tif")
+    img_enc.recode_int_raster(
+        input_img=in_img,
+        output_img=out2,
+        recode_dict={1: 10, 2: 20},
+        keep_vals_not_in_dict=True,
+        datatype=rsgispy.TYPE_8UINT,
+        use_pbar=False,
+    )
+    with rasterio.open(out2) as dst:
+        assert dst.nodata is None
+
+
+def test_count_pxls_of_val_single_band(tmp_path):
+    b1 = np.array([[1, 1, 2], [2, 3, 3]], dtype=np.uint8)
+    b2 = np.array([[3, 3, 3], [3, 1, 1]], dtype=np.uint8)
+    in_img = _write_geotiff(tmp_path / "cnt.tif", np.stack([b1, b2], axis=0))
+
+    c1 = calc_stats.count_pxls_of_val(in_img, [1, 2, 3], img_band=1, use_pbar=False)
+    c2 = calc_stats.count_pxls_of_val(in_img, [1, 2, 3], img_band=2, use_pbar=False)
+    call = calc_stats.count_pxls_of_val(
+        in_img, [1, 2, 3], img_band=None, use_pbar=False
+    )
+    np.testing.assert_array_equal(c1, [2, 2, 2])
+    np.testing.assert_array_equal(c2, [2, 0, 4])
+    np.testing.assert_array_equal(call, [4, 2, 6])

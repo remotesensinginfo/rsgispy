@@ -15,6 +15,8 @@ from shapely.geometry import Point, box
 import rsgispy
 import rsgispy.zonalstats.point as zs_pt
 import rsgispy.zonalstats.polygon as zs_poly
+from rsgispy import RSGISPyException
+from rsgispy.zonalstats import point as zs_point
 
 
 def _write_test_raster(path: str, data: np.ndarray, epsg: int = 32630, nodata=None) -> None:
@@ -1040,3 +1042,168 @@ def test_polygon_zonal_stats_reproj_vec_and_empty_layers(tmp_path):
     out_c = zs_poly.calc_zonal_band_pxl_counts(empty.copy(), tif_path, 1, {1: "c1"},
                                                "total", use_pbar=False)
     assert len(out_c) == 0 and {"c1", "total"} <= set(out_c.columns)
+
+
+def _write_raster(
+    path: str,
+    arr: np.ndarray,
+    *,
+    origin=(500000.0, 5200000.0),
+    res=(10.0, 10.0),
+    crs: str = "EPSG:32630",
+    nodata=None,
+    tiled: bool = False,
+    blocksize: int | None = None,
+) -> str:
+    """Write a 2D or 3D NumPy array to a GeoTIFF."""
+    if arr.ndim == 2:
+        data = arr[np.newaxis, :, :]
+    else:
+        data = arr
+    count, height, width = data.shape
+    profile = {
+        "driver": "GTiff",
+        "width": width,
+        "height": height,
+        "count": count,
+        "dtype": str(data.dtype),
+        "crs": crs,
+        "transform": from_origin(origin[0], origin[1], res[0], res[1]),
+        "nodata": nodata,
+    }
+    if tiled:
+        profile["tiled"] = True
+        if blocksize is not None:
+            profile["blockxsize"] = blocksize
+            profile["blockysize"] = blocksize
+    with rasterio.open(path, "w", **profile) as dst:
+        dst.write(data)
+    return path
+
+
+def test_polygon_empty_count_float64_custom_geom_and_direct_helpers(
+    tmp_path
+):
+    """Empty polygon count is 0.0, float64 accuracy, custom geom col, direct APIs."""
+    # Large offset float32 array to verify float64 accumulation avoids precision loss
+    arr = np.full((4, 4), 1e7, dtype=np.float32)
+    arr[0, 0] = 1e7 + 1.0
+    arr[0, 1] = 1e7 + 3.0
+    tif = _write_raster(
+        str(tmp_path / "f32.tif"), arr, nodata=-9999.0
+    )
+
+    poly_valid = box(500000.0, 5199980.0, 500020.0, 5200000.0)
+    poly_outside = box(600000.0, 5199980.0, 600020.0, 5200000.0)
+    gdf = gpd.GeoDataFrame(
+        {"name": ["in", "out"]},
+        geometry=[poly_valid, poly_outside],
+        crs="EPSG:32630",
+    )
+    res = zs_poly.calc_zonal_band_stats(
+        gdf.copy(),
+        tif,
+        img_band=1,
+        min_thres=0.0,
+        max_thres=1e8,
+        out_no_data_val=-1.0,
+        mean_field="mean_v",
+        stddev_field="std_v",
+        sum_field="sum_v",
+        count_field="cnt_v",
+        use_pbar=False,
+    )
+    assert res.loc[0, "cnt_v"] == pytest.approx(4.0)
+    assert res.loc[0, "sum_v"] == pytest.approx(4e7 + 4.0)
+    assert res.loc[0, "mean_v"] == pytest.approx(1e7 + 1.0)
+    # Empty/outside polygon reports 0.0 count and out_no_data_val for stats
+    assert res.loc[1, "cnt_v"] == pytest.approx(0.0)
+    assert res.loc[1, "mean_v"] == pytest.approx(-1.0)
+
+    # Direct test: calc_zonal_poly_pts_band_stats
+    pt_res = zs_poly.calc_zonal_poly_pts_band_stats(
+        gdf.copy(),
+        tif,
+        img_band=1,
+        out_field="cent_val",
+        use_pbar=False,
+    )
+    assert pt_res.loc[0, "cent_val"] == pytest.approx(1e7)
+
+    # Direct test: calc_zonal_band_pxl_counts
+    cat_arr = np.array(
+        [[1, 1, 2, 2], [1, 2, 2, 3], [3, 3, 3, 3], [0, 0, 0, 0]],
+        dtype=np.uint8,
+    )
+    cat_tif = _write_raster(str(tmp_path / "cat.tif"), cat_arr, nodata=0)
+    cnt_res = zs_poly.calc_zonal_band_pxl_counts(
+        gdf.copy(),
+        cat_tif,
+        img_band=1,
+        vals_lut={1: "c1", 2: "c2"},
+        total_field="tot",
+        use_pbar=False,
+    )
+    assert cnt_res.loc[0, "c1"] == 3
+    assert cnt_res.loc[0, "c2"] == 1
+    assert cnt_res.loc[0, "tot"] == 4
+    assert cnt_res.loc[1, "tot"] == 0
+
+    # export_poly_pxls_to_df rejects custom geometry column name and extracts attrs
+    custom_gdf = gdf.copy().rename_geometry("geom")
+    with pytest.raises(RSGISPyException):
+        zs_poly.export_poly_pxls_to_df(
+            custom_gdf,
+            tif,
+            img_bands=[1],
+            attr_cols=["geom"],
+            use_pbar=False,
+        )
+    px_df = zs_poly.export_poly_pxls_to_df(
+        custom_gdf,
+        tif,
+        img_bands=[1],
+        attr_cols=["name"],
+        use_pbar=False,
+    )
+    assert len(px_df) == 4
+    assert set(px_df["name"]) == {"in"}
+
+
+def test_point_block_grouped_sampling_semantics(tmp_path):
+    """Block-grouped sampling matches expected values, nodata, thresholds, OOB, null."""
+    arr = np.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+    arr[0, 0] = -9999.0  # nodata
+    arr[20, 20] = 5000.0  # above max_thres
+    tif = _write_raster(
+        str(tmp_path / "tiled.tif"),
+        arr,
+        nodata=-9999.0,
+        tiled=True,
+        blocksize=16,
+    )
+    pts = gpd.GeoDataFrame(
+        {"pid": [0, 1, 2, 3, 4, 5]},
+        geometry=[
+            Point(500005.0, 5199995.0),  # (0, 0) nodata
+            Point(500015.0, 5199995.0),  # (0, 1) -> 1.0
+            Point(500205.0, 5199795.0),  # (20, 20) -> 5000.0 > max_thres
+            Point(500215.0, 5199795.0),  # (20, 21) -> 20*32 + 21 = 661.0
+            Point(600000.0, 5200000.0),  # out of bounds
+            None,  # null geometry
+        ],
+        crs="EPSG:32630",
+    )
+    out = zs_point.ext_point_band_values(
+        pts,
+        tif,
+        img_band=1,
+        min_thres=0.0,
+        max_thres=2000.0,
+        out_no_data_val=-1.0,
+        out_field="val",
+        use_pbar=False,
+    )
+    assert list(out["val"]) == pytest.approx(
+        [-1.0, 1.0, -1.0, 661.0, -1.0, -1.0]
+    )
