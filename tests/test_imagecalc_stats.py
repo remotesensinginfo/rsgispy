@@ -86,12 +86,23 @@ def test_image_pixel_column_summary(tmp_path):
         np.testing.assert_allclose(out[2, 0, 0], 13.0 / 3.0, rtol=1e-5)
         np.testing.assert_allclose(out[3, 0, 0], 2.0)
         np.testing.assert_allclose(out[5, 0, 0], 13.0)
+        # Population standard deviation by default (as numpy and GDAL).
         np.testing.assert_allclose(
-            out[6, 0, 0], np.std([1.0, 2.0, 10.0], ddof=1), rtol=1e-5
+            out[6, 0, 0], np.std([1.0, 2.0, 10.0]), rtol=1e-5
         )
         # Pixel (0, 1): all nodata -> the output nodata, set on the output
         assert src.nodata == -9999.0
         np.testing.assert_allclose(out[:, 0, 1], np.full(7, -9999.0))
+
+    # ddof=1 gives the sample standard deviation.
+    ic_stats.image_pixel_column_summary(
+        str(in_img), str(tmp_path / "sample.tif"), ss, datatype=rsgispy.TYPE_32FLOAT,
+        no_data_val=-9999.0, use_no_data=True, use_pbar=False, ddof=1,
+    )
+    with rasterio.open(tmp_path / "sample.tif") as src:
+        np.testing.assert_allclose(
+            src.read(7)[0, 0], np.std([1.0, 2.0, 10.0], ddof=1), rtol=1e-5
+        )
 
     with pytest.raises(rsgispy.RSGISPyException):
         ic_stats.image_pixel_column_summary(
@@ -99,6 +110,10 @@ def test_image_pixel_column_summary(tmp_path):
             str(tmp_path / "bad.tif"),
             ic_stats.StatsSummary(),
             use_pbar=False,
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        ic_stats.image_pixel_column_summary(
+            str(in_img), str(tmp_path / "bad_ddof.tif"), ss, use_pbar=False, ddof=-1
         )
 
 
@@ -132,7 +147,7 @@ def test_calc_multi_img_band_stats(tmp_path):
         rsgispy.SUMTYPE_SUM: 9.0,
         rsgispy.SUMTYPE_COUNT: 3.0,
         rsgispy.SUMTYPE_RANGE: 4.0,
-        rsgispy.SUMTYPE_STDDEV: 2.0,
+        rsgispy.SUMTYPE_STDDEV: float(np.std([1.0, 3.0, 5.0])),
     }
     for stat_id, exp_val in expected_b1_00.items():
         out_p = tmp_path / f"out_{stat_id}.tif"
@@ -147,6 +162,14 @@ def test_calc_multi_img_band_stats(tmp_path):
         with rasterio.open(out_p) as src:
             assert src.count == 2
             np.testing.assert_allclose(src.read(1)[0, 0], exp_val, rtol=1e-5)
+
+    out_sd1 = tmp_path / "out_sd_ddof1.tif"
+    ic_stats.calc_multi_img_band_stats(
+        [str(p1), str(p2), str(p3)], str(out_sd1), rsgispy.SUMTYPE_STDDEV,
+        no_data_val=-99.0, use_no_data=True, use_pbar=False, ddof=1,
+    )
+    with rasterio.open(out_sd1) as src:
+        np.testing.assert_allclose(src.read(1)[0, 0], 2.0, rtol=1e-5)
 
     # Mode at (0, 1): [-99, 5, 5] -> 5.0, Count -> 2.0
     out_mode = tmp_path / "out_mode.tif"
@@ -218,6 +241,17 @@ def test_get_img_sum_stats_in_pxl(tmp_path):
         np.testing.assert_allclose(out[1, 0, 1], 30.0)
         np.testing.assert_allclose(out[2, 1, 0], 5.0)
         np.testing.assert_allclose(out[3, 0, 1], 3.0)
+
+    for ddof in (0, 1):
+        sd_p = tmp_path / f"inpxl_sd{ddof}.tif"
+        ic_stats.get_img_sum_stats_in_pxl(
+            str(ref_p), str(stats_p), str(sd_p), sum_stats=[rsgispy.SUMTYPE_STDDEV],
+            io_grid_x=1, io_grid_y=1, use_pbar=False, ddof=ddof,
+        )
+        with rasterio.open(sd_p) as src:
+            np.testing.assert_allclose(
+                src.read(1)[0, 0], np.std([1.0, 2.0, 3.0, 4.0], ddof=ddof), rtol=1e-5
+            )
 
     # Equal resolution must raise
     with pytest.raises(rsgispy.RSGISPyException):

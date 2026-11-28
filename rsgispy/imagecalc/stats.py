@@ -67,8 +67,8 @@ def calc_basic_img_band_stats(
     :param use_pbar: Whether to display a tqdm progress bar (Default = True).
     :return: Tuple of ``(min_vals, max_vals, mean_vals, stddev_vals)`` NumPy arrays.
              ``stddev_vals`` is the population standard deviation
-             (``ddof=0``, divided by ``n``), as in RSGISLib's image band
-             statistics and GDAL.
+             (``ddof=0``, divided by ``n``), as numpy and GDAL give and the
+             per-pixel summaries use by default.
 
     .. code:: python
 
@@ -272,14 +272,24 @@ def _calc_mode_columns(sub_2d: np.ndarray) -> np.ndarray:
     return out
 
 
-def _calc_stack_stat(stack_arr: np.ndarray, stat_type: int) -> np.ndarray:
+def _check_ddof(ddof: int) -> int:
+    """Return ``ddof`` as an ``int``, raising if it is negative."""
+    if int(ddof) != ddof or ddof < 0:
+        raise rsgispy.RSGISPyException(
+            f"ddof must be a non-negative integer (got {ddof})."
+        )
+    return int(ddof)
+
+
+def _calc_stack_stat(
+    stack_arr: np.ndarray, stat_type: int, ddof: int = 0
+) -> np.ndarray:
     """
     Compute a summary statistic ``rsgispy.SUMTYPE_*`` along ``axis=0`` of a
     3D float64 array ``(n_samples, height, width)`` where invalid values are
-    ``np.nan`` or non-finite. The standard deviation is the sample one
-    (``ddof=1``), matching RSGISLib's pixel summaries (GSL ``gsl_stats_sd``);
-    :func:`calc_basic_img_band_stats` uses the population one (``ddof=0``),
-    matching RSGISLib's image band statistics.
+    ``np.nan`` or non-finite. The standard deviation divides by
+    ``n - ddof`` (``ddof=0``: population, as numpy and GDAL; ``ddof=1``:
+    sample) and is ``0`` where ``n <= ddof``.
     """
     # pylint: disable=too-many-return-statements
     valid_mask = build_valid_mask(stack_arr)
@@ -310,7 +320,7 @@ def _calc_stack_stat(stack_arr: np.ndarray, stat_type: int) -> np.ndarray:
             axis=0
         )
         return np.where(
-            counts > 1, np.sqrt(sq_diff / np.maximum(counts - 1, 1)), 0.0
+            counts > ddof, np.sqrt(sq_diff / np.maximum(counts - ddof, 1)), 0.0
         )
     if stat_type == rsgispy.SUMTYPE_MEDIAN:
         out = np.zeros(out_shape, dtype=np.float64)
@@ -352,12 +362,13 @@ def _stack_stat_block(
     stat_type: int,
     out_np_dtype: np.dtype,
     out_nd: Optional[float],
+    ddof: int = 0,
 ) -> np.ndarray:
     """
     :func:`_calc_stack_stat` cast to ``out_np_dtype``, with pixels that have
     no valid input written as ``out_nd`` (counts are always written as is).
     """
-    stat_arr = _calc_stack_stat(stack_arr, stat_type)
+    stat_arr = _calc_stack_stat(stack_arr, stat_type, ddof)
     win_h, win_w = int(stack_arr.shape[1]), int(stack_arr.shape[2])
     if out_nd is None or stat_type == rsgispy.SUMTYPE_COUNT:
         return cast_result_block(stat_arr, win_h, win_w, out_np_dtype)
@@ -389,6 +400,7 @@ def image_pixel_column_summary(
     no_data_val: float = 0.0,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
+    ddof: int = 0,
 ) -> None:
     """
     Calculate summary statistics across all bands (pixel column) for each
@@ -396,10 +408,13 @@ def image_pixel_column_summary(
 
     Output bands are written in the canonical order: ``Min``, ``Max``, ``Mean``,
     ``Median``, ``Mode``, ``Sum``, ``StdDev`` for whichever corresponding
-    ``calc_*`` flags are ``True`` on ``sum_stats``. ``StdDev`` is the sample
-    standard deviation (``ddof=1``, divided by ``n - 1``; ``0`` for a single
-    valid value), as in RSGISLib's pixel summaries, unlike
-    :func:`calc_basic_img_band_stats`, which gives the population one.
+    ``calc_*`` flags are ``True`` on ``sum_stats``. ``StdDev`` is the
+    population standard deviation by default (``ddof=0``), as
+    :func:`calc_basic_img_band_stats` gives.
+
+    .. versionchanged:: 0.5.0
+       ``StdDev`` defaults to the population standard deviation (it was the
+       sample one); pass ``ddof=1`` for the sample one.
 
     :param input_img: Path to the input multi-band image file.
     :param output_img: Path to the output summary image file.
@@ -415,6 +430,10 @@ def image_pixel_column_summary(
                         that cannot hold it, the type's max/min is used).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+    :param ddof: Delta degrees of freedom of the standard deviation, which
+                 divides by ``n - ddof`` (Default = ``0``: the population
+                 standard deviation, as numpy and GDAL; ``1`` for the
+                 sample one). ``0`` is written where ``n <= ddof``.
 
     .. code:: python
 
@@ -432,6 +451,7 @@ def image_pixel_column_summary(
             datatype=rsgispy.TYPE_32FLOAT,
         )
     """
+    ddof = _check_ddof(ddof)
     # pylint: disable=too-many-arguments,too-many-locals
     if sum_stats is None:
         raise rsgispy.RSGISPyException("sum_stats must not be None.")
@@ -491,7 +511,7 @@ def image_pixel_column_summary(
             in_block = src.read(window=out_win, out_dtype=np.float64)
             masked_block = _mask_nodata_nan(in_block, no_data_val, use_no_data)
             out_bands = [
-                _stack_stat_block(masked_block, stat_id, out_np_dtype, out_nd)
+                _stack_stat_block(masked_block, stat_id, out_np_dtype, out_nd, ddof)
                 for _, stat_id in selected
             ]
             dst.write(np.stack(out_bands, axis=0), window=out_win)
@@ -508,11 +528,16 @@ def calc_multi_img_band_stats(
     no_data_val: Optional[float] = None,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
+    ddof: int = 0,
 ) -> None:
     """
     Calculate a summary statistic (``rsgispy.SUMTYPE_*``) across multiple
-    input images on a per-band basis. ``SUMTYPE_STDDEV`` is the sample
-    standard deviation (``ddof=1``), as in RSGISLib's pixel summaries.
+    input images on a per-band basis. ``SUMTYPE_STDDEV`` is the population
+    standard deviation by default (``ddof``).
+
+    .. versionchanged:: 0.5.0
+       ``SUMTYPE_STDDEV`` defaults to the population standard deviation (it
+       was the sample one); pass ``ddof=1`` for the sample one.
 
     All input images must have the same number of bands. The output image has
     the same band count over the spatial intersection of ``input_imgs``.
@@ -533,6 +558,10 @@ def calc_multi_img_band_stats(
                         max/min is used); counts are written as they are.
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+    :param ddof: Delta degrees of freedom of the standard deviation, which
+                 divides by ``n - ddof`` (Default = ``0``: the population
+                 standard deviation, as numpy and GDAL; ``1`` for the
+                 sample one). ``0`` is written where ``n <= ddof``.
 
     .. code:: python
 
@@ -547,6 +576,7 @@ def calc_multi_img_band_stats(
             datatype=rsgispy.TYPE_32FLOAT,
         )
     """
+    ddof = _check_ddof(ddof)
     # pylint: disable=too-many-arguments,too-many-locals
     valid_stats = (
         rsgispy.SUMTYPE_MIN,
@@ -621,7 +651,7 @@ def calc_multi_img_band_stats(
                 masked_stack = _mask_nodata_nan(band_stack, eff_nd, use_no_data)
                 out_bands.append(
                     _stack_stat_block(
-                        masked_stack, summary_stat, out_np_dtype, out_nd
+                        masked_stack, summary_stat, out_np_dtype, out_nd, ddof
                     )
                 )
             dst.write(np.stack(out_bands, axis=0), window=out_win)
@@ -641,6 +671,7 @@ def get_img_sum_stats_in_pxl(
     datatype: int = rsgispy.TYPE_32FLOAT,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
+    ddof: int = 0,
 ) -> None:
     """
     Summarise high-resolution pixel values from ``in_stats_img`` within each
@@ -648,8 +679,12 @@ def get_img_sum_stats_in_pxl(
 
     The resolution of ``in_ref_img`` must be strictly coarser than and an integer
     multiple of ``in_stats_img`` along both axes. Each entry in ``sum_stats``
-    produces one output band. ``SUMTYPE_STDDEV`` is the sample standard
-    deviation (``ddof=1``), as in RSGISLib's pixel summaries.
+    produces one output band. ``SUMTYPE_STDDEV`` is the population standard
+    deviation by default (``ddof``).
+
+    .. versionchanged:: 0.5.0
+       ``SUMTYPE_STDDEV`` defaults to the population standard deviation (it
+       was the sample one); pass ``ddof=1`` for the sample one.
 
     :param in_ref_img: Path to the coarser-resolution reference image defining
                        output grid, extent, and resolution.
@@ -670,6 +705,10 @@ def get_img_sum_stats_in_pxl(
                      (Default = ``rsgispy.TYPE_32FLOAT``).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+    :param ddof: Delta degrees of freedom of the standard deviation, which
+                 divides by ``n - ddof`` (Default = ``0``: the population
+                 standard deviation, as numpy and GDAL; ``1`` for the
+                 sample one). ``0`` is written where ``n <= ddof``.
 
     .. code:: python
 
@@ -685,6 +724,7 @@ def get_img_sum_stats_in_pxl(
             datatype=rsgispy.TYPE_32FLOAT,
         )
     """
+    ddof = _check_ddof(ddof)
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not sum_stats:
         raise rsgispy.RSGISPyException(
@@ -785,7 +825,7 @@ def get_img_sum_stats_in_pxl(
                 .reshape(factor_y * factor_x, win_h, win_w)
             )
             out_bands = [
-                _stack_stat_block(sub_stack, stat_id, out_np_dtype, out_nd)
+                _stack_stat_block(sub_stack, stat_id, out_np_dtype, out_nd, ddof)
                 for stat_id in sum_stats
             ]
             dst.write(np.stack(out_bands, axis=0), window=out_win)
