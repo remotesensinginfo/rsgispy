@@ -604,3 +604,43 @@ def test_optional_pysondb_missing_dataaccess():
     finally:
         sys.modules["rsgispy.dataaccess.nasa_cmr"] = orig_cmr
         rdataaccess.nasa_cmr = orig_cmr
+
+
+def test_copernicus_download_scns_network_errors_and_token_refresh(tmp_path, monkeypatch):
+    """no_except also catches network errors; tokens are refreshed when old."""
+    pytest.importorskip("requests")
+    import requests  # pylint: disable=import-outside-toplevel
+
+    tokens_used = []
+
+    def _fake_download(token, scn_info, out_path, use_pbar=True):
+        tokens_used.append(token)
+        if scn_info["Name"] == "bad":
+            raise requests.exceptions.ConnectionError("network down")
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(copernicus_odata, "download_scn", _fake_download)
+    monkeypatch.setattr(copernicus_odata.time, "monotonic", lambda: clock["now"])
+    scns = [{"Name": "a"}, {"Name": "bad"}, {"Name": "b"}]
+
+    # A network error is reported and the batch continues.
+    copernicus_odata.download_scns("tok0", scns, str(tmp_path), use_pbar=False)
+    assert tokens_used == ["tok0", "tok0", "tok0"]
+    with pytest.raises(requests.exceptions.ConnectionError):
+        copernicus_odata.download_scns("tok0", scns, str(tmp_path), no_except=False,
+                                       use_pbar=False)
+
+    # The token is refreshed once it is older than token_max_age.
+    tokens_used.clear()
+    issued = iter(["tok1", "tok2", "tok3"])
+
+    def _advance_download(token, scn_info, out_path, use_pbar=True):
+        tokens_used.append(token)
+        clock["now"] += 300.0
+
+    monkeypatch.setattr(copernicus_odata, "download_scn", _advance_download)
+    copernicus_odata.download_scns(
+        "tok0", [{"Name": n} for n in "abcd"], str(tmp_path), use_pbar=False,
+        refresh_token_fn=lambda: next(issued), token_max_age=480.0,
+    )
+    assert tokens_used == ["tok0", "tok0", "tok1", "tok1"]
