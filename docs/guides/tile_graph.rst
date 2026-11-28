@@ -329,13 +329,13 @@ the DEM: four outputs in one pass over the data.
      [0] RasterSource 's2' (path='sen2_20180629_aber_20m.tif' bands=all)
          halo=(3, 3) radius=(0, 0) bands=10 names=['Blue', 'Green', 'Red', 'RE_B5', 'RE_B6', 'RE_B7', 'NIR_B8', 'NIR_B8A', 'SWIR1', 'SWIR2'] dtype=float64 nodata=0.0
      [1] IndicesNode 'calc_indices' <- [0] (indices=['NDVI', 'NDWI'] dtype=float32)
-         halo=(3, 3) radius=(0, 0) bands=2 names=['NDVI', 'NDWI'] dtype=float32 nodata=-999.0
+         halo=(3, 3) radius=(0, 0) bands=2 names=['NDVI', 'NDWI'] dtype=float32 nodata=-9999.0
      [2] FilterWindowOp 'median_filter' <- [1] (radius=(1, 1) border=edge)
-         halo=(1, 1) radius=(1, 1) bands=2 names=['NDVI', 'NDWI'] dtype=float64 nodata=-999.0
+         halo=(1, 1) radius=(1, 1) bands=2 names=['NDVI', 'NDWI'] dtype=float64 nodata=-9999.0
      [3] FilterWindowOp 'stddev_filter' <- [1] (radius=(2, 2) border=edge)
-         halo=(1, 1) radius=(2, 2) bands=2 names=['NDVI', 'NDWI'] dtype=float64 nodata=-999.0
+         halo=(1, 1) radius=(2, 2) bands=2 names=['NDVI', 'NDWI'] dtype=float64 nodata=-9999.0
      [4] StackBands <- [2], [3] (band_names=['NDVI_med', 'NDWI_med', 'NDVI_sd', 'NDWI_sd'])
-         halo=(1, 1) radius=(0, 0) bands=4 names=['NDVI_med', 'NDWI_med', 'NDVI_sd', 'NDWI_sd'] dtype=float64 nodata=-999.0
+         halo=(1, 1) radius=(0, 0) bands=4 names=['NDVI_med', 'NDWI_med', 'NDVI_sd', 'NDWI_sd'] dtype=float64 nodata=-9999.0
      [5] PredictionOp 'predict_raster' <- [4] (estimator=DecisionTreeClassifier outputs=1 mask=no)
          halo=(1, 1) radius=(0, 0) bands=1 names=['class'] dtype=uint8 nodata=0.0
      [6] WindowOp 'majority_filter' <- [5] (radius=(1, 1) border=constant)
@@ -345,7 +345,7 @@ the DEM: four outputs in one pass over the data.
      [8] DiskSink <- [7] (output='s2_cls.tif' format=GTIFF datatype=uint8 (from input) thematic classes=10)
          halo=(0, 0) radius=(0, 0) bands=1 names=['class'] dtype=uint8 nodata=0.0
      [9] DiskSink <- [4] (output='s2_features.tif' format=GTIFF datatype=float32 (from input))
-         halo=(0, 0) radius=(0, 0) bands=4 names=['NDVI_med', 'NDWI_med', 'NDVI_sd', 'NDWI_sd'] dtype=float64 nodata=-999.0
+         halo=(0, 0) radius=(0, 0) bands=4 names=['NDVI_med', 'NDWI_med', 'NDVI_sd', 'NDWI_sd'] dtype=float64 nodata=-9999.0
      [10] RasterSource 'dem' (path='dem_20m.tif' bands=all)
          halo=(1, 1) radius=(0, 0) bands=1 dtype=float64 nodata=-32768.0
      [11] Horn3x3Node 'slope' <- [10] (slope unit=degrees no_data_val=from input)
@@ -483,9 +483,9 @@ your own builders.
 
 A stack has one no-data value. When the inputs of a
 :class:`~rsgispy.imageprocess.StackBands` have different ones (e.g.
-Sentinel-2 bands with ``0`` and an index with ``-999``), give
-``no_data_val``: ``StackBands([s2, ndvi], no_data_val=-999)`` writes
-``-999`` into every band of a pixel where any input is invalid, so the
+Sentinel-2 bands with ``0`` and an index with ``-9999``), give
+``no_data_val``: ``StackBands([s2, ndvi], no_data_val=-9999)`` writes
+``-9999`` into every band of a pixel where any input is invalid, so the
 training samples and the predictions skip those pixels
 (``no_data_val='auto'`` uses the first input's value, or NaN). Without it
 the bands are stacked unchanged, the stack has no no-data value and a

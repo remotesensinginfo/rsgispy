@@ -229,10 +229,10 @@ def exhcon_linear_spec_unmix(
     :param datatype: ``rsgispy.TYPE_*`` output data type constant
                      (Default = ``rsgispy.TYPE_32FLOAT``).
     :param out_no_data_val: Output no-data value for pixels that are not
-                            unmixed (Default = ``None``: ``-9999``, or for
-                            integer data types that cannot hold it the type's
-                            maximum (unsigned) or minimum (signed) value). It
-                            must be representable by ``datatype``.
+                            unmixed (Default = ``None``: ``-9999`` for float
+                            types, the type's maximum (unsigned) or minimum
+                            (signed) value for integer types). It must be
+                            representable by ``datatype``.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 

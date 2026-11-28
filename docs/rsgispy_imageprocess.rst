@@ -407,7 +407,7 @@ builders.
 value for all its bands, and the sinks treat a pixel that is invalid in any
 band as invalid. :class:`~rsgispy.imageprocess.StackBands` keeps that rule
 working when its inputs disagree (e.g. Sentinel-2 bands with no data ``0``
-and an index with ``-999``):
+and an index with ``-9999``):
 
 * ``no_data_val=None`` (the default): the bands are stacked unchanged; the
   stack has the inputs' no-data value when they share one, else none

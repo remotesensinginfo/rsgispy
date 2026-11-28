@@ -206,7 +206,8 @@ comes from :func:`~rsgispy.elevation.terrain.slope` on the resampled DEM.
 make sure they line up; check that the mangrove masks only contain 0 and 1
 (e.g. with :func:`~rsgispy.imagecalc.stats.get_unique_values`), and that the
 DEM values in the intertidal zone are plausible (a few metres either side of
-0 m). The index image has the no data value ``-999``.
+0 m). The index image has the no data value ``-9999`` (the ``calc_indices``
+default for ``float32``).
 
 Step 2 — Constraints
 --------------------

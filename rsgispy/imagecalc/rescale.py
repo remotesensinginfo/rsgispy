@@ -93,9 +93,9 @@ class ImageBandRescale:
     :param out_max: Output image band maximum value after rescaling.
     :param out_no_data: Value written to the output for masked pixels and
                         recorded as the output band's no-data value. If
-                        ``None`` (the default), ``-9999`` is used, or for
-                        integer outputs that cannot hold it, the data type's
-                        maximum (unsigned) or minimum (signed) value. Choose a
+                        ``None`` (the default), ``-9999`` is used for float
+                        outputs and the data type's maximum (unsigned) or
+                        minimum (signed) value for integer outputs. Choose a
                         value outside ``[out_min, out_max]``.
     """
 

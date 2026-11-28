@@ -576,8 +576,9 @@ Common problems
 * **"There are fewer than 50 valid pixels"** — CVA, SFA and IR-MAD need at
   least 50 valid pixels in the mask.
 * **"There must be at least 3 bands"** — SFA needs three or more bands.
-* **No data in the index images** — ``calc_indices`` writes ``-999`` where the
-  input is no data, and the change functions take the input no data values
+* **No data in the index images** — ``calc_indices`` writes its output no
+  data value (``out_no_data_val``: ``-999`` in this example, ``-9999`` by
+  default for ``float32``) where the input is no data, and the change functions take the input no data values
   through ``base_img_no_data`` / ``chng_img_no_data`` (default ``0``); with a
   valid mask this does not matter.
 * **Optional dependencies** — SFA and IR-MAD raise an exception naming

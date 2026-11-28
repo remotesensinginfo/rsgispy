@@ -470,10 +470,10 @@ def test_input_output_gain_offset_and_integerisation(tmp_path):
     )
     with rasterio.open(uint16_out_path) as u_src:
         assert u_src.dtypes[0] == "uint16"
-        assert u_src.nodata == 0
+        assert u_src.nodata == 65535  # default: the uint16 maximum
         u_arr = u_src.read()
-        assert u_arr[0, 0, 2] == 0
-        assert u_arr[1, 0, 2] == 0
+        assert u_arr[0, 0, 2] == 65535
+        assert u_arr[1, 0, 2] == 65535
         assert u_arr[0, 0, 0] == 1400
         assert u_arr[1, 0, 0] == 2333
 
@@ -511,7 +511,7 @@ def test_per_band_input_scaling_and_multiblock(tmp_path):
         arr = src.read()
         expected_ndvi_11 = (0.8 - 0.2) / (0.8 + 0.2)
         assert arr[0, 1, 1] == pytest.approx(expected_ndvi_11, rel=1e-5)
-        assert arr[1, 1, 1] == -999.0
+        assert arr[1, 1, 1] == -9999.0
 
 
 def test_custom_index_params_and_edge_cases(tmp_path):
@@ -566,11 +566,11 @@ def test_custom_index_params_and_edge_cases(tmp_path):
     )
     with rasterio.open(out_path) as src:
         arr = src.read()
-        assert arr[0, 0, 0] == -999.0
-        assert arr[1, 0, 1] == -999.0
-        assert arr[2, 1, 1] == -999.0
+        assert arr[0, 0, 0] == -9999.0
+        assert arr[1, 0, 1] == -9999.0
+        assert arr[2, 1, 1] == -9999.0
         assert arr[3, 0, 0] == pytest.approx(0.0, abs=1e-6)
-        assert arr[3, 1, 1] == -999.0
+        assert arr[3, 1, 1] == -9999.0
         assert arr[4, 1, 0] == pytest.approx(
             2.0 * (0.5 - 0.2) / (0.5 + 5.0 * 0.2 - 7.0 * 0.2 + 1.0), rel=1e-5
         )

@@ -71,7 +71,7 @@ def test_worked_example_runs(scene, tmp_path, block_size, n_jobs):
     with rasterio.open(out["feats_img"]) as src:
         assert src.count == 4
         assert src.descriptions == ("NDVI_med", "NDWI_med", "NDVI_sd", "NDWI_sd")
-        assert src.nodata == -999.0
+        assert src.nodata == -9999.0
     with rasterio.open(out["hshade_img"]) as src:
         assert src.dtypes[0] == "uint8"
     for key in ("slope_img", "sharp_img", "dog_img", "dem_edges_img",

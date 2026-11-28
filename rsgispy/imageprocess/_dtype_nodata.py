@@ -412,6 +412,37 @@ def resolve_nodata_and_fill(
     return eff_nd, (float(eff_nd) if eff_nd is not None else 0.0)
 
 
+#: Default output no-data value of floating-point outputs.
+DEFAULT_FLOAT_NODATA = -9999.0
+
+
+def default_out_nodata(out_np_dtype: Any, thematic: bool = False) -> float:
+    """
+    The package-wide default output no-data value for ``out_np_dtype``:
+
+    * floating-point types: ``-9999``;
+    * signed integers: the type's minimum (e.g. ``-32768`` for ``int16``);
+    * unsigned integers: the type's maximum (e.g. ``255`` for ``uint8``), or
+      ``0`` for a thematic (class / label) output (``thematic=True``).
+
+    :param out_np_dtype: NumPy dtype of the output raster.
+    :param thematic: The output is a thematic unsigned integer map, where
+                     ``0`` is the conventional no-data / no-class value
+                     (Default = ``False``).
+    :return: Default no-data value as a float.
+    """
+    out_np_dtype = np.dtype(out_np_dtype)
+    if np.issubdtype(out_np_dtype, np.floating):
+        return DEFAULT_FLOAT_NODATA
+    if np.issubdtype(out_np_dtype, np.unsignedinteger):
+        return 0.0 if thematic else float(np.iinfo(out_np_dtype).max)
+    if np.issubdtype(out_np_dtype, np.integer):
+        return float(np.iinfo(out_np_dtype).min)
+    raise rsgispy.RSGISPyException(
+        f"No default no-data value for data type '{out_np_dtype.name}'."
+    )
+
+
 def validate_out_nodata(
     out_no_data_val: Optional[float],
     out_np_dtype: Any,
@@ -422,8 +453,8 @@ def validate_out_nodata(
     """
     Resolve and validate a user-requested output no-data value.
 
-    ``None`` gives ``-9999`` (or, for an integer type that cannot hold it,
-    the type's maximum for unsigned and minimum for signed types) when
+    ``None`` gives :func:`default_out_nodata` (``-9999`` for float types,
+    the type's minimum for signed and maximum for unsigned integers) when
     ``default_to_type`` is ``True``, otherwise ``None``. An explicit value
     must be representable by ``out_np_dtype`` (NaN is allowed for float
     types), else :class:`rsgispy.RSGISPyException` is raised.
@@ -439,11 +470,7 @@ def validate_out_nodata(
     if out_no_data_val is None:
         if not default_to_type:
             return None
-        return float(
-            resolve_out_nodata(
-                out_np_dtype, -9999.0, clamp_int=True, unsigned_clamp="max"
-            )
-        )
+        return default_out_nodata(out_np_dtype)
     nd_val = float(out_no_data_val)
     if math.isinf(nd_val) or not fits_dtype_range(
         nd_val, out_np_dtype, allow_nonfinite_float=True

@@ -861,7 +861,7 @@ class StackBands(TileNode):
       to ``no_data_val``, which becomes the stack's no-data value. This keeps
       the sinks' rule (a pixel invalid in any band is invalid) working for
       every input, e.g. Sentinel-2 bands with no data ``0`` stacked with an
-      index with no data ``-999``;
+      index with no data ``-9999``;
     * with ``no_data_val='auto'``, the same, with the first input's no-data
       value when it has one, else NaN for a floating-point stack; for any
       other stack :class:`rsgispy.RSGISPyException` asks for a value.

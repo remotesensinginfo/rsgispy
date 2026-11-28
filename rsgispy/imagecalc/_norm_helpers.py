@@ -11,6 +11,7 @@ import numpy as np
 import rsgispy
 from rsgispy.imageprocess import (
     build_valid_mask,
+    default_out_nodata,
     resolve_out_nodata as _ip_resolve_out_nodata,
 )
 
@@ -839,8 +840,10 @@ def resolve_out_nodata(
         out_np_dtype,
         out_no_data_val=out_no_data_val,
         fallback_nodata=first_nd,
-        default_float=-9999.0,
-        default_int=0.0,
+        default_float=default_out_nodata(np.float32),
+        default_int=default_out_nodata(out_np_dtype)
+        if np.issubdtype(np.dtype(out_np_dtype), np.integer)
+        else 0.0,
         allow_nonfinite_float=True,
     )
 
