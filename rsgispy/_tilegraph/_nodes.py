@@ -1270,12 +1270,12 @@ class SetBandNames(TileNode):
 
 
 def _same_nodata(val_a: Optional[float], val_b: Optional[float]) -> bool:
-    """Compare two no-data values (``None`` and NaN aware)."""
-    if val_a is None or val_b is None:
-        return val_a is None and val_b is None
-    if math.isnan(float(val_a)) or math.isnan(float(val_b)):
-        return math.isnan(float(val_a)) and math.isnan(float(val_b))
-    return float(val_a) == float(val_b)
+    """Compare two no-data values (``None`` and NaN aware):
+    :func:`rsgispy.imageprocess._dtype_nodata._same_nodata`."""
+    # pylint: disable=import-outside-toplevel
+    from rsgispy.imageprocess._dtype_nodata import _same_nodata as _shared
+
+    return _shared(val_a, val_b)
 
 
 def datatype_from_meta(meta: NodeMeta) -> int:

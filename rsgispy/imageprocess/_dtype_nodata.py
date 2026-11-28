@@ -412,6 +412,49 @@ def resolve_nodata_and_fill(
     return eff_nd, (float(eff_nd) if eff_nd is not None else 0.0)
 
 
+def validate_out_nodata(
+    out_no_data_val: Optional[float],
+    out_np_dtype: Any,
+    *,
+    default_to_type: bool = True,
+    label: str = "out_no_data_val",
+) -> Optional[float]:
+    """
+    Resolve and validate a user-requested output no-data value.
+
+    ``None`` gives ``-9999`` (or, for an integer type that cannot hold it,
+    the type's maximum for unsigned and minimum for signed types) when
+    ``default_to_type`` is ``True``, otherwise ``None``. An explicit value
+    must be representable by ``out_np_dtype`` (NaN is allowed for float
+    types), else :class:`rsgispy.RSGISPyException` is raised.
+
+    :param out_no_data_val: Requested output no-data value (or ``None``).
+    :param out_np_dtype: NumPy dtype of the output raster.
+    :param default_to_type: Return the type default for ``None``
+                            (Default = ``True``); ``False`` returns ``None``.
+    :param label: Name of the value in the error message.
+    :return: The output no-data value as a float, or ``None``.
+    """
+    out_np_dtype = np.dtype(out_np_dtype)
+    if out_no_data_val is None:
+        if not default_to_type:
+            return None
+        return float(
+            resolve_out_nodata(
+                out_np_dtype, -9999.0, clamp_int=True, unsigned_clamp="max"
+            )
+        )
+    nd_val = float(out_no_data_val)
+    if math.isinf(nd_val) or not fits_dtype_range(
+        nd_val, out_np_dtype, allow_nonfinite_float=True
+    ):
+        raise rsgispy.RSGISPyException(
+            f"{label} ({out_no_data_val}) cannot be represented by the output "
+            f"data type '{out_np_dtype.name}'."
+        )
+    return nd_val
+
+
 def _same_nodata(cur_val: Optional[float], new_val: Optional[float]) -> bool:
     """Return ``True`` if two no-data values (``None``/NaN aware) are equal."""
     if cur_val is None or new_val is None:

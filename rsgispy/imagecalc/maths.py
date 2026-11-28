@@ -15,11 +15,11 @@ from rasterio.windows import Window
 import rsgispy
 import rsgispy.tools.maths
 from rsgispy.imageprocess import (
+    validate_out_nodata,
     BandDefn,
     cast_result_block,
     compute_spatial_intersection,
     ensure_file_exists,
-    fits_dtype_range,
     iter_dataset_windows,
     iter_image_blocks,
     normalise_band_defs,
@@ -112,23 +112,13 @@ def _check_out_no_data_val(
     no_data_val: Optional[float], out_np_dtype: np.dtype
 ) -> Optional[float]:
     """
-    Validate an optional output no-data value against the output data type.
-
-    :param no_data_val: Requested output no-data value (or ``None``).
-    :param out_np_dtype: NumPy dtype of the output raster.
-    :return: ``no_data_val`` as a float, or ``None``.
+    Validate an optional output no-data value against the output data type
+    (:func:`rsgispy.imageprocess.validate_out_nodata`; ``None`` stays
+    ``None``).
     """
-    if no_data_val is None:
-        return None
-    nd_val = float(no_data_val)
-    if math.isnan(nd_val) and np.issubdtype(out_np_dtype, np.floating):
-        return nd_val
-    if not fits_dtype_range(nd_val, out_np_dtype):
-        raise rsgispy.RSGISPyException(
-            f"no_data_val ({no_data_val}) cannot be represented by the output "
-            f"data type '{np.dtype(out_np_dtype).name}'."
-        )
-    return nd_val
+    return validate_out_nodata(
+        no_data_val, out_np_dtype, default_to_type=False, label="no_data_val"
+    )
 
 
 def _set_out_no_data_val(dst: Any, no_data_val: Optional[float]) -> None:

@@ -5,7 +5,6 @@ pixel rescaling utilities using ``rasterio``.
 """
 
 from contextlib import ExitStack
-import math
 import os
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
@@ -38,7 +37,9 @@ from rsgispy._tilegraph._wrap import (
     WrapperDiskSink,
     run_wrapper_graph,
 )
+from rsgispy.imageprocess._dtype_nodata import _same_nodata
 from rsgispy.imageprocess import (
+    validate_out_nodata,
     NodeMeta,
     PointwiseOp,
     RasterSource,
@@ -51,12 +52,10 @@ from rsgispy.imageprocess import (
     cast_result_block,
     compute_spatial_intersection,
     ensure_file_exists,
-    fits_dtype_range,
     iter_dataset_windows,
     open_multi_image_datasets,
     validate_band_index,
 )
-from rsgispy.imageprocess import resolve_out_nodata as _ip_resolve_out_nodata
 from rsgispy.imageutils.metadata import get_band_names
 from rsgispy.tools.files import ensure_parent_dir
 from rsgispy.tools.jsonio import read_json_to_dict, write_dict_to_json
@@ -133,33 +132,15 @@ def _resolve_rescale_out_nodata(
     out_no_data: Optional[float], out_np_dtype: np.dtype, band: int
 ) -> float:
     """
-    Resolve the output no-data value of one band for :func:`rescale_img_pxl_vals`.
-
-    ``None`` gives ``-9999`` (or, for integer data types that cannot hold it,
-    the type's maximum for unsigned and minimum for signed types). An explicit
-    value must be representable by ``out_np_dtype``.
+    Resolve the output no-data value of one band for :func:`rescale_img_pxl_vals`
+    (:func:`rsgispy.imageprocess.validate_out_nodata`: ``None`` gives
+    ``-9999`` or the integer type's limit).
     """
-    out_np_dtype = np.dtype(out_np_dtype)
-    if out_no_data is None:
-        # -9999, clamped to the max (unsigned) or min (signed) integer value.
-        dflt_nd = _ip_resolve_out_nodata(
-            out_np_dtype, -9999.0, clamp_int=True, unsigned_clamp="max"
+    return float(
+        validate_out_nodata(
+            out_no_data, out_np_dtype, label=f"out_no_data for band {band}"
         )
-        return float(dflt_nd)
-    nd_val = float(out_no_data)
-    if math.isnan(nd_val) and np.issubdtype(out_np_dtype, np.floating):
-        return nd_val
-    if not fits_dtype_range(nd_val, out_np_dtype):
-        raise rsgispy.RSGISPyException(
-            f"out_no_data ({out_no_data}) for band {band} cannot be represented "
-            f"by the output data type '{out_np_dtype.name}'."
-        )
-    return nd_val
-
-
-def _same_nodata(val_a: float, val_b: float) -> bool:
-    """Return ``True`` if two no-data values are equal (``NaN`` equals ``NaN``)."""
-    return val_a == val_b or (math.isnan(val_a) and math.isnan(val_b))
+    )
 
 
 def _check_rescale_objs(
