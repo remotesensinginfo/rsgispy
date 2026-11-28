@@ -15,7 +15,7 @@ Covers `rsgispy.imagecalibration.*`, `rsgispy.imageregistration.*`, `rsgispy.cha
 - `radiance_to_toa_refl(input_img, output_img, scale_factor, year, month, day, solar_zenith, solar_irradiance, *, gdalformat='GTIFF', datatype=9, no_data_val=None, calc_stats=True, use_pbar=True, creation_opts=None)`
   - `solar_irradiance`: sequence of per-band floats (or objects/dicts with `.irradiance` / `['irradiance']`) matching band order.
 - `landsat_thermal_rad_to_brightness(input_img, output_img, band_defs: Sequence[LandsatThermalCoeffs], scale_factor=1.0, *, gdalformat='GTIFF', datatype=9, no_data_val=None, calc_stats=True, use_pbar=True, creation_opts=None)`
-- `perform_dos_calc(input_img, output_img, non_negative=True, no_data_val=0.0, dark_obj_refl_val=0.0, dark_obj_percentile=0.01, copy_band_names=True, *, gdalformat='GTIFF', datatype=None, calc_stats=True, use_pbar=True, creation_opts=None)`
+- `perform_dos_calc(input_img, output_img, non_negative=True, no_data_val=0.0, dark_obj_refl_val=0.0, dark_obj_percentile=1.0, copy_band_names=True, *, gdalformat='GTIFF', datatype=None, calc_stats=True, use_pbar=True, creation_opts=None)`
 
 ### Solar Angles (`rsgispy.imagecalibration.solarangles`)
 - `get_solar_irr_convention_solar_azimuth_from_usgs(solar_az: float) -> float`

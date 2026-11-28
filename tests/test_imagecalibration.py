@@ -335,7 +335,7 @@ def test_perform_dos_calc(tmp_path):
         non_negative=True,
         no_data_val=0.0,
         dark_obj_refl_val=0.02,
-        dark_obj_percentile=0.05,
+        dark_obj_percentile=5.0,
         copy_band_names=True,
         calc_stats=False,
         use_pbar=False,
@@ -355,13 +355,27 @@ def test_perform_dos_calc(tmp_path):
         non_negative=False,
         no_data_val=0.0,
         dark_obj_refl_val=0.0,
-        dark_obj_percentile=0.10,
+        dark_obj_percentile=10.0,
         calc_stats=False,
         use_pbar=False,
     )
     with rasterio.open(out_neg) as src:
         neg_arr = src.read(1)
     assert neg_arr[0, 1] < 0.0
+
+    # dark_obj_percentile is on the 0-100 scale: a value in (0, 1) warns
+    # (it was a fraction before 0.5.0) and values outside [0, 100] raise.
+    with pytest.warns(UserWarning, match="0-100 scale"):
+        imgcal.perform_dos_calc(
+            in_img, str(tmp_path / "dos_frac.tif"), no_data_val=0.0,
+            dark_obj_percentile=0.5, calc_stats=False, use_pbar=False,
+        )
+    for bad in (-1.0, 150.0):
+        with pytest.raises(rsgispy.RSGISPyException, match="dark_obj_percentile"):
+            imgcal.perform_dos_calc(
+                in_img, str(tmp_path / "dos_bad.tif"), no_data_val=0.0,
+                dark_obj_percentile=bad, calc_stats=False, use_pbar=False,
+            )
 
     # All-nodata band raises
     nd_only = os.path.join(tmp_path, "all_nd.tif")
