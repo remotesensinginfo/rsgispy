@@ -35,6 +35,7 @@ from rsgispy.imageprocess import (
     ensure_file_exists,
     iter_dataset_windows,
     resolve_out_nodata as _ip_resolve_out_nodata,
+    round_clamp_to_dtype,
     validate_band_index,
 )
 
@@ -369,20 +370,14 @@ def _format_output_band(
     out_nd: float,
     out_np_dtype: np.dtype,
 ) -> np.ndarray:
-    """Apply output gain/offset scaling, integerisation, and no-data masking."""
+    """
+    Apply output gain/offset scaling, then integerise and mask no-data with
+    :func:`rsgispy.imageprocess.round_clamp_to_dtype` (round, clamp, and keep
+    valid values off ``out_nd``).
+    """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     scaled = (index_arr * out_g) + out_o
-    good = valid_mask & np.isfinite(scaled)
-
-    if np.issubdtype(out_np_dtype, np.integer):
-        info = np.iinfo(out_np_dtype)
-        rounded = np.rint(np.where(good, scaled, out_nd))
-        clamped = np.clip(rounded, info.min, info.max)
-        result = np.where(good, clamped, out_nd)
-        return result.astype(out_np_dtype)
-
-    result = np.where(good, scaled, out_nd)
-    return result.astype(out_np_dtype)
+    return round_clamp_to_dtype(scaled, out_np_dtype, out_nd, valid_mask)
 
 
 def _setup_optical_indices(

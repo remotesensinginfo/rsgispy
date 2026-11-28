@@ -404,13 +404,13 @@ def process_landsat_c2_archive(
                     scaled = (
                         ((raw_arr.astype(np.float64) * mult) + add) / geom_denom
                     ) * sf_val
-                    band_out = np.where(valid, scaled, float(nd_val))
                     out_blk[b_i] = cast_result_block(
-                        band_out,
+                        scaled,
                         win_h,
                         win_w,
                         out_np_dtype,
-                        clamp_int=True,
+                        nodata=float(nd_val),
+                        valid_mask=valid,
                     )
                 dst.write(out_blk, window=dst_win)
             _ = paths

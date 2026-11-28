@@ -377,9 +377,11 @@ def radiance_to_toa_refl(
         for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             blk = src.read(window=win, out_dtype=np.float64)
             out_blk = np.empty_like(blk, dtype=np.float64)
+            valid_blk = np.empty(blk.shape, dtype=bool)
             for b_i, factor in enumerate(band_factors):
                 band_arr = blk[b_i]
                 valid = build_valid_mask(band_arr, no_data_val=eff_in_nd)
+                valid_blk[b_i] = valid
                 out_blk[b_i] = np.where(valid, band_arr * factor, fill_val)
             dst.write(
                 cast_result_block(
@@ -387,7 +389,8 @@ def radiance_to_toa_refl(
                     int(win.height),
                     int(win.width),
                     out_np_dtype,
-                    clamp_int=True,
+                    nodata=dst_nodata,
+                    valid_mask=None if dst_nodata is None else valid_blk,
                 ),
                 window=win,
             )
@@ -623,9 +626,11 @@ def perform_dos_calc(
         for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             blk = src.read(window=win, out_dtype=np.float64)
             out_blk = np.empty_like(blk, dtype=np.float64)
+            valid_blk = np.empty(blk.shape, dtype=bool)
             for b_i, offset_val in enumerate(percent_vals):
                 arr = blk[b_i]
                 valid = build_valid_mask(arr, no_data_val=eff_in_nd)
+                valid_blk[b_i] = valid
                 corrected = (arr - float(offset_val)) + dark_refl
                 if non_negative:
                     corrected = np.maximum(corrected, min_floor)
@@ -636,7 +641,8 @@ def perform_dos_calc(
                     int(win.height),
                     int(win.width),
                     out_np_dtype,
-                    clamp_int=True,
+                    nodata=dst_nodata,
+                    valid_mask=None if dst_nodata is None else valid_blk,
                 ),
                 window=win,
             )

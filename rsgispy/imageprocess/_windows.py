@@ -31,6 +31,7 @@ from rsgispy.imageprocess._arrays import (
 )
 from rsgispy.imageprocess._dtype_nodata import (
     cast_result_block,
+    warn_if_clamp_int_disabled,
     get_default_block_size,
 )
 from rsgispy.imageprocess._io import create_output_from_dataset
@@ -330,7 +331,11 @@ def process_blocks(
     ):
         res = block_func(block_vars)
         out_arr = cast_result_block(
-            res, int(out_win.height), int(out_win.width), out_np_dtype
+            res,
+            int(out_win.height),
+            int(out_win.width),
+            out_np_dtype,
+            nodata=dst.nodata,
         )
         if out_arr.ndim == 3:
             dst.write(out_arr, window=out_win)
@@ -386,8 +391,9 @@ def run_window_halo_blocks(
     :param fill_value: Fill constant when ``pad_mode='constant'``
                        (Default = ``0.0``).
     :param out_no_data_val: Optional output no-data metadata value.
-    :param clamp_int: Clamp integer outputs to valid dtype bounds
-                      (Default = ``True``).
+    :param clamp_int: Deprecated and ignored: integer outputs are always
+                      rounded and clamped to the dtype range (passing
+                      ``False`` issues a :class:`DeprecationWarning`).
     :param full_width_strips: If ``True``, iterate in full-width horizontal strips
                               (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -409,6 +415,7 @@ def run_window_halo_blocks(
             per_band=True,
         )
     """
+    warn_if_clamp_int_disabled(clamp_int, "run_window_halo_blocks")
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
     target_np_dtype = (
@@ -456,7 +463,6 @@ def run_window_halo_blocks(
                     win_h,
                     win_w,
                     target_np_dtype,
-                    clamp_int=clamp_int,
                 )
                 if out_blk.ndim == 2:
                     dst.write(out_blk, 1, window=out_win)
@@ -480,7 +486,6 @@ def run_window_halo_blocks(
                             win_h,
                             win_w,
                             target_np_dtype,
-                            clamp_int=clamp_int,
                         ),
                         b_idx,
                         window=out_win,
@@ -501,7 +506,6 @@ def run_window_halo_blocks(
                     win_h,
                     win_w,
                     target_np_dtype,
-                    clamp_int=clamp_int,
                 )
                 if out_blk.ndim == 2:
                     dst.write(out_blk, 1, window=out_win)

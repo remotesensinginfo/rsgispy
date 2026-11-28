@@ -239,7 +239,9 @@ def band_maths(
     :param gdalformat: GDAL/rasterio driver format for the output file
                        (Default = ``'GTIFF'``).
     :param datatype: Output data type constant from ``rsgispy.TYPE_*``
-                     (Default = ``rsgispy.TYPE_32FLOAT``).
+                     (Default = ``rsgispy.TYPE_32FLOAT``). Integer outputs
+                     are rounded to the nearest integer and clamped to the
+                     type's range; NaN becomes the output no-data value.
     :param use_pbar: Optional bool specifying whether to display a tqdm progress bar
                      during processing (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options (e.g.,
@@ -426,7 +428,9 @@ def image_math(
     :param output_exists: If True and ``output_img`` exists, update it in place (Default = False).
     :param gdalformat: GDAL/rasterio driver format for the output file (Default = ``'GTIFF'``).
     :param datatype: Output data type constant from ``rsgispy.TYPE_*``
-                     (Default = ``rsgispy.TYPE_32FLOAT``).
+                     (Default = ``rsgispy.TYPE_32FLOAT``). Integer outputs
+                     are rounded to the nearest integer and clamped to the
+                     type's range; NaN becomes the output no-data value.
     :param use_pbar: If True, display a tqdm progress bar during processing (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
     :param no_data_val: Optional no-data value written to every output band
@@ -499,6 +503,7 @@ def image_math(
                     win_h,
                     win_w,
                     out_np_dtype,
+                    nodata=out_no_data_val,
                 )
                 for band_idx in range(n_bands)
             ]
@@ -543,7 +548,9 @@ def image_band_math(
     :param output_exists: If True and ``output_img`` exists, update it in place (Default = False).
     :param gdalformat: GDAL/rasterio driver format for the output file (Default = ``'GTIFF'``).
     :param datatype: Output data type constant from ``rsgispy.TYPE_*``
-                     (Default = ``rsgispy.TYPE_32FLOAT``).
+                     (Default = ``rsgispy.TYPE_32FLOAT``). Integer outputs
+                     are rounded to the nearest integer and clamped to the
+                     type's range; NaN becomes the output no-data value.
     :param use_pbar: If True, display a tqdm progress bar during processing (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
     :param band_names: Optional sequence of output band description names matching

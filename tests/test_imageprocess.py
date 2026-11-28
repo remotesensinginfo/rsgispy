@@ -701,3 +701,102 @@ def test_extract_roi_feature_matrix():
     )
     assert empty_feats.shape == (0, 2)
     assert empty_idx.size == 0
+
+
+# --------------------------------------------------------------------------
+# H2: integer outputs are rounded and clamped, never wrapped or truncated
+# --------------------------------------------------------------------------
+
+_H2_VALS = np.array([[[200.4, 400.0, -2.0, 99.6], [7.5, 255.6, -300.0, 12.49]]])
+
+
+def _h2_cases():
+    # pylint: disable=import-outside-toplevel
+    import rsgispy.changedetect  # noqa: F401
+    from rsgispy.imagecalc import comparison, maths, rescale, stats
+    from rsgispy.imagecalibration import radiometry
+    from rsgispy.imagespectral import indices
+    from rsgispy.imageutils import bands, mosaic
+
+    def _rescale(inp, out, dt):
+        objs = [rescale.ImageBandRescale(1, 0.0, 1.0, -1000.0, 0.0, 1.0, 77.0)]
+        rescale.rescale_img_pxl_vals(inp, out, objs, False, datatype=dt, use_pbar=False)
+
+    return {
+        "band_maths": lambda inp, zero, out, dt: maths.band_maths(
+            out, "b1", [maths.BandDefn("b1", inp, 1)], datatype=dt, use_pbar=False
+        ),
+        "image_math": lambda inp, zero, out, dt: maths.image_math(
+            inp, out, "b1", datatype=dt, use_pbar=False
+        ),
+        "rescale_img_pxl_vals": lambda inp, zero, out, dt: _rescale(inp, out, dt),
+        "calc_img_rescale": lambda inp, zero, out, dt: rescale.calc_img_rescale(
+            inp, out, -1000.0, 0.0, 1.0, 77.0, 0.0, 1.0, datatype=dt, use_pbar=False
+        ),
+        "image_pixel_column_summary": lambda inp, zero, out, dt: (
+            stats.image_pixel_column_summary(
+                inp, out, stats.StatsSummary(calc_mean=True), False,
+                datatype=dt, use_pbar=False,
+            )
+        ),
+        "calc_img_difference": lambda inp, zero, out, dt: (
+            comparison.calc_img_difference(inp, zero, out, datatype=dt, use_pbar=False)
+        ),
+        "calc_area_under_curve": lambda inp, zero, out, dt: (
+            indices.calc_area_under_curve(inp, out, [1.0], datatype=dt, use_pbar=False)
+        ),
+        "stack_img_bands": lambda inp, zero, out, dt: bands.stack_img_bands(
+            [inp], out, datatype=dt, calc_stats=False, use_pbar=False
+        ),
+        "create_img_mosaic": lambda inp, zero, out, dt: mosaic.create_img_mosaic(
+            [inp], out, 0.0, -1000.0, datatype=dt, calc_stats=False, use_pbar=False
+        ),
+        "radiance_to_toa_refl": lambda inp, zero, out, dt: (
+            radiometry.radiance_to_toa_refl(
+                inp, out, 20.0, 2020, 6, 21, 30.0, [100.0],
+                datatype=dt, calc_stats=False, use_pbar=False,
+            )
+        ),
+    }
+
+
+@pytest.mark.parametrize("case", sorted(_h2_cases()))
+def test_integer_outputs_round_and_clamp(tmp_path, case):
+    """Each caller's uint8 output equals clip(rint(float64 output), 0, 255)."""
+    in_path = str(tmp_path / "in.tif")
+    zero_path = str(tmp_path / "zero.tif")
+    _create_test_raster(in_path, _H2_VALS, dtype="float64")
+    _create_test_raster(zero_path, np.zeros_like(_H2_VALS), dtype="float64")
+    func = _h2_cases()[case]
+    ref_path = str(tmp_path / "ref.tif")
+    int_path = str(tmp_path / "int.tif")
+    func(in_path, zero_path, ref_path, rsgispy.TYPE_64FLOAT)
+    func(in_path, zero_path, int_path, rsgispy.TYPE_8UINT)
+    with rasterio.open(ref_path) as ds:
+        ref = ds.read(1)
+    with rasterio.open(int_path) as ds:
+        got = ds.read(1)
+    assert got.dtype == np.uint8
+    expected = np.clip(np.rint(ref), 0, 255)
+    assert (ref > 255).any() and (ref < 0).any(), "case must cover both limits"
+    np.testing.assert_array_equal(got, expected)
+
+
+def test_round_clamp_to_dtype_policy():
+    """Round, clamp, map non-finite to nodata, and keep valid values off nodata."""
+    arr = np.array([200.4, 400.0, -2.0, np.nan, 0.2, 254.7])
+    np.testing.assert_array_equal(
+        rsgispy.imageprocess.round_clamp_to_dtype(arr, np.uint8),
+        [200, 255, 0, 0, 0, 255],
+    )
+    valid = np.array([True, True, True, True, True, False])
+    np.testing.assert_array_equal(
+        rsgispy.imageprocess.round_clamp_to_dtype(arr, np.uint8, 0, valid),
+        [200, 255, 1, 0, 1, 0],
+    )
+    np.testing.assert_array_equal(
+        rsgispy.imageprocess.round_clamp_to_dtype(arr, np.uint8, 255, valid),
+        [200, 254, 0, 255, 0, 255],
+    )
+    with pytest.warns(DeprecationWarning):
+        rsgispy.imageprocess.cast_result_block(arr, 1, 6, np.uint8, clamp_int=False)

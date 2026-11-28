@@ -598,10 +598,12 @@ Other functions include ``abs``, ``sqrt``, ``exp``, ``rint`` (round to the
 nearest integer), ``sum(...)`` and ``avg(...)``, and the constants ``pi`` and
 ``e``.
 
-**Integer outputs.** Values are truncated (not rounded) when written to an
-integer data type, NaN becomes 0, and values outside the type's range are
-not clipped. Round and clamp explicitly, e.g.
-``min(100, max(0, rint(100 * s)))`` for an 8-bit percentage.
+**Integer outputs.** Values written to an integer data type are rounded to
+the nearest integer and clamped to the type's range (``300`` written as
+``uint8`` becomes ``255`` and ``-2`` becomes ``0``; nothing wraps around), and
+NaN becomes the output no-data value (``0`` when there is none). To clamp to a
+narrower range, do it in the expression, e.g.
+``min(100, max(0, 100 * s))`` for an 8-bit percentage.
 
 **Multiple outputs and intermediate variables.** Top-level commas separate
 output bands (commas inside function calls do not). An assignment at the top

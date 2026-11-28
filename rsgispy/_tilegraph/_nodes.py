@@ -1055,16 +1055,31 @@ class StackBands(TileNode):
         return " ".join(parts)
 
 
+def _warn_clamp_int(clamp_int: Any, where: str) -> None:
+    """Deprecation warning for ``clamp_int=False`` (integer casts always clamp)."""
+    # pylint: disable=import-outside-toplevel
+    from rsgispy.imageprocess import warn_if_clamp_int_disabled
+
+    warn_if_clamp_int_disabled(clamp_int, where)
+
+
 class Cast(TileNode):
     """
     Cast a node's blocks to another NumPy dtype. Integer casts replace
-    non-finite values with ``0`` and, with ``clamp_int=True``, clamp values
-    to the dtype's range first (as :class:`DiskSink` does).
+    non-finite values with ``0``, round to the nearest integer and clamp to
+    the dtype's range (as :class:`DiskSink` does).
+
+    When the input has a no-data value, no-data pixels are written as the
+    output no-data value, and valid pixels never take it. If the target
+    dtype cannot hold the input no-data value (e.g. ``-9999`` cast to
+    ``uint8``), the output no-data value becomes the type's maximum for
+    unsigned and its minimum for signed integers, and the node metadata
+    records it.
 
     :param source: Upstream :class:`TileNode`.
     :param dtype: Target NumPy dtype.
-    :param clamp_int: Clamp to the integer range before casting
-                      (Default = ``True``).
+    :param clamp_int: Deprecated and ignored: integer casts always round and
+                      clamp (``False`` issues a :class:`DeprecationWarning`).
     :param name: Optional node identifier.
 
     .. code:: python
@@ -1085,10 +1100,32 @@ class Cast(TileNode):
     ) -> None:
         super().__init__(inputs=(source,), name=name)
         self.dtype = np.dtype(dtype)
-        self.clamp_int = bool(clamp_int)
+        _warn_clamp_int(clamp_int, "Cast")
+        self.clamp_int = True
+        self._in_nodata: Optional[float] = None
+
+    def _resolve_nodata(self, in_nd: Optional[float]) -> Optional[float]:
+        """
+        Output no-data value: ``in_nd`` when ``self.dtype`` can hold it,
+        otherwise the type's maximum (unsigned) or minimum (signed integer).
+        """
+        # pylint: disable=import-outside-toplevel
+        from rsgispy.imageprocess import fits_dtype_range
+
+        if in_nd is None:
+            return None
+        if not np.issubdtype(self.dtype, np.integer):
+            return float(in_nd)
+        if math.isfinite(float(in_nd)) and fits_dtype_range(in_nd, self.dtype):
+            return float(in_nd)
+        info = np.iinfo(self.dtype)
+        return float(info.max if info.min == 0 else info.min)
 
     def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
-        return inputs[0].replace(dtype=self.dtype)
+        self._in_nodata = inputs[0].nodata
+        return inputs[0].replace(
+            dtype=self.dtype, nodata=self._resolve_nodata(inputs[0].nodata)
+        )
 
     def evaluate(
         self,
@@ -1103,9 +1140,22 @@ class Cast(TileNode):
 
         aligned = inputs[0].crop(halo_y, halo_x)
         arr = aligned.data
-        out = cast_result_block(
-            arr, int(arr.shape[1]), int(arr.shape[2]), self.dtype, clamp_int=self.clamp_int
-        )
+        in_nd = self._in_nodata
+        if in_nd is None:
+            out = cast_result_block(
+                arr, int(arr.shape[1]), int(arr.shape[2]), self.dtype
+            )
+        else:
+            arr_f = np.asarray(arr, dtype=np.float64)
+            nd_mask = np.isnan(arr_f) if math.isnan(in_nd) else (arr_f == in_nd)
+            out = cast_result_block(
+                arr_f,
+                int(arr.shape[1]),
+                int(arr.shape[2]),
+                self.dtype,
+                nodata=self._resolve_nodata(in_nd),
+                valid_mask=~nd_mask,
+            )
         return aligned.with_data(out)
 
     def describe_params(self) -> str:
@@ -1329,8 +1379,9 @@ class DiskSink(TileSink):
     :param datatype: ``rsgispy.TYPE_*`` constant (Default = ``None``: from the
                      input node's metadata).
     :param nodata: Optional output nodata value.
-    :param clamp_int: Clamp values to integer type bounds before casting
-                      (Default = ``True``).
+    :param clamp_int: Deprecated and ignored: integer outputs are always
+                      rounded and clamped to the type's range (``False``
+                      issues a :class:`DeprecationWarning`).
     :param creation_opts: Optional GDAL/rasterio creation options mapping.
     :param band_names: Optional sequence of output band description strings.
     :param calc_stats: If ``True``, populate raster statistics and pyramids
@@ -1404,7 +1455,8 @@ class DiskSink(TileSink):
         self.datatype: Optional[int] = None if datatype is None else int(datatype)
         self._resolved_datatype: Optional[int] = self.datatype
         self.nodata: Optional[float] = nodata
-        self.clamp_int: bool = bool(clamp_int)
+        _warn_clamp_int(clamp_int, type(self).__name__)
+        self.clamp_int: bool = True
         self.creation_opts: Optional[Mapping[str, Any]] = creation_opts
         self.band_names: Optional[List[str]] = (
             list(band_names) if band_names is not None else None
@@ -1611,7 +1663,6 @@ class DiskSink(TileSink):
             int(window.height),
             int(window.width),
             run["np_dtype"],
-            clamp_int=self.clamp_int,
         )
         dst.write(cast_blk, window=window)
 
@@ -1641,8 +1692,9 @@ class MemorySink(TileSink):
     :param source: Upstream :class:`TileNode` producing the output tiles.
     :param dtype: Optional output NumPy dtype (inferred from first tile when
                   ``None``).
-    :param clamp_int: Clamp values to integer bounds when casting
-                      (Default = ``True``).
+    :param clamp_int: Deprecated and ignored: integer outputs are always
+                      rounded and clamped to the type's range (``False``
+                      issues a :class:`DeprecationWarning`).
     :param name: Optional sink identifier (used as key in
                  :meth:`TileGraph.run` return dictionary).
     """
@@ -1659,7 +1711,8 @@ class MemorySink(TileSink):
     ) -> None:
         super().__init__(source, name=name)
         self.dtype: Optional[np.dtype] = np.dtype(dtype) if dtype is not None else None
-        self.clamp_int: bool = bool(clamp_int)
+        _warn_clamp_int(clamp_int, type(self).__name__)
+        self.clamp_int: bool = True
         self.result: Optional[np.ndarray] = None
         self._shape: Optional[Tuple[int, int]] = None
         self._array: Optional[np.ndarray] = None
@@ -1693,7 +1746,6 @@ class MemorySink(TileSink):
             int(window.height),
             int(window.width),
             out_np_dt,
-            clamp_int=self.clamp_int,
         )
         r0 = int(window.row_off)
         c0 = int(window.col_off)
