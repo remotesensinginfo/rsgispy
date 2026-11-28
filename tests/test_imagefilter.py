@@ -637,3 +637,21 @@ def test_imagefilter_border_mode_signatures():
                 assert par.default == default
             checked += 1
     assert checked == 76
+
+
+def test_filter_default_nodata_when_input_nodata_does_not_fit(tmp_path):
+    """An input nodata the output type cannot hold gives the type limit."""
+    import rsgispy.imagefilter.stats as fstats  # pylint: disable=import-outside-toplevel
+
+    path = str(tmp_path / "in.tif")
+    arr = np.full((1, 6, 6), 10.0, dtype=np.float32)
+    arr[0, 0, 0] = -9999.0
+    with rasterio.open(path, "w", driver="GTiff", width=6, height=6, count=1,
+                       dtype="float32", nodata=-9999.0, crs="EPSG:32630",
+                       transform=from_origin(0.0, 60.0, 10.0, 10.0)) as dst:
+        dst.write(arr)
+    out = str(tmp_path / "out.tif")
+    fstats.apply_mean_filter(path, out, 3, datatype=rsgispy.TYPE_8UINT,
+                             calc_stats=False, use_pbar=False)
+    with rasterio.open(out) as ds:
+        assert ds.nodata == 255

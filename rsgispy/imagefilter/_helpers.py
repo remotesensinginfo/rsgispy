@@ -26,6 +26,7 @@ from rsgispy._io import (
 from rsgispy.imageprocess import (
     build_valid_mask,
     ensure_file_exists,
+    default_out_nodata,
     resolve_out_nodata as _ip_resolve_out_nodata,
     validate_odd_window_size,
 )
@@ -76,14 +77,19 @@ def _resolve_out_nodata(
     eff_in_nd: Optional[float],
     out_np_dtype: np.dtype,
 ) -> Optional[float]:
-    """Resolve output nodata value preserving input nodata when representable."""
+    """
+    Resolve the output nodata value: the input nodata when the output type
+    can hold it, otherwise :func:`rsgispy.imageprocess.default_out_nodata`
+    (``-9999`` for float, the type's minimum/maximum for integers).
+    """
     if eff_in_nd is None or not math.isfinite(float(eff_in_nd)):
         return None
+    dflt = default_out_nodata(out_np_dtype)
     return _ip_resolve_out_nodata(
         out_np_dtype,
         fallback_nodata=float(eff_in_nd),
-        default_float=-9999.0,
-        default_int=0.0,
+        default_float=dflt,
+        default_int=dflt,
     )
 
 
