@@ -17,6 +17,8 @@ from seg_ml_scene import CLASS_IDS, make_seg_scene
 
 pytest.importorskip("sklearn")
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "segment_ml_workflow.py"
 )

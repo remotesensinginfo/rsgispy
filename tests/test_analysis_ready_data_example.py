@@ -23,6 +23,8 @@ import rsgispy.imagecalibration.cloudmasking as cldmsk
 
 from ard_scene import make_ard_scenes, remove_safe, zip_safe
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "analysis_ready_data.py"
 )

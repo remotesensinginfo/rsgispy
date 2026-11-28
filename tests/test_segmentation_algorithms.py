@@ -195,6 +195,7 @@ def test_2d_single_band_input():
         assert int(lbl.max()) >= 2
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "raster_fn,kwargs",
     [

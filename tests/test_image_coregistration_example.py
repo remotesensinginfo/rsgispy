@@ -13,6 +13,10 @@ import rasterio
 
 from coreg_scene import SHIFT, make_coreg_scene
 
+import pytest  # noqa: E402
+
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "image_coregistration.py"
 )

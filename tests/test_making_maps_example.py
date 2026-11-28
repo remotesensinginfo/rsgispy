@@ -23,6 +23,8 @@ import pytest  # noqa: E402
 import rsgispy.mapping.basemaps  # noqa: E402
 from maps_scene import CLASS_NAMES, make_maps_scene  # noqa: E402
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "making_maps.py"
 )

@@ -17,6 +17,8 @@ pytest.importorskip("sklearn")
 pytest.importorskip("optuna")
 pytest.importorskip("matplotlib")
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples",
     "pixel_classification_workflow.py",

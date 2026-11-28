@@ -1191,6 +1191,8 @@ def test_flow_accumulation_warns_on_cycle(tmp_path, mode):
         )
 
 
+@pytest.mark.slow
+@pytest.mark.tutorial_data
 @requires_numba
 @requires_tutorial_dem
 def test_tutorial_dem_dinf_outlet_total_matches_d8_mfd(tutorial_land_dem):
@@ -1280,6 +1282,8 @@ def test_breach_numba_numpy_agree(tmp_path, monkeypatch):
     np.testing.assert_allclose(out_nb, out_py, rtol=0.0, atol=1e-5)
 
 
+@pytest.mark.slow
+@pytest.mark.tutorial_data
 @requires_numba
 @requires_tutorial_dem
 def test_tutorial_dem_unconstrained_breach_is_shallow(tutorial_land_dem):

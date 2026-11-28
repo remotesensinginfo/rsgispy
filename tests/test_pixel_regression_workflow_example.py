@@ -17,6 +17,8 @@ from pixel_ml_scene import make_pixel_scene
 pytest.importorskip("sklearn")
 pytest.importorskip("matplotlib")
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples",
     "pixel_regression_workflow.py",

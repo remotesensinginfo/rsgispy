@@ -131,6 +131,7 @@ def test_check_hdf5_file(tmp_path):
     assert err != ""
 
 
+@pytest.mark.slow
 def test_multiprocessing_runners_and_rm_err(tmp_path):
     """Test subprocess pool validation runners and error file removal."""
     good_tif = tmp_path / "good.tif"

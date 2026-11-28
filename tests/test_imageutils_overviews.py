@@ -47,6 +47,7 @@ def _write_geotiff(
     )
 
 
+@pytest.mark.slow
 def test_build_img_pyramids_multi_core_external_matches_gdal(tmp_path):
     """External .ovr generated across multiple tiles/cores matches GDAL overviews."""
     rng = np.random.default_rng(42)

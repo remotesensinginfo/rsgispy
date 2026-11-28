@@ -13,6 +13,8 @@ import rasterio
 
 from sar_scene import CLASS_DB, CLASS_IDS, ENL, make_sar_scene
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "sar_processing.py"
 )

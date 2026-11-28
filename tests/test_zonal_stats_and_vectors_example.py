@@ -16,6 +16,8 @@ from zonal_scene import FIELD_PX, make_zonal_scene
 pytest.importorskip("h3")
 pytest.importorskip("pyarrow")
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples",
     "zonal_stats_and_vectors.py",

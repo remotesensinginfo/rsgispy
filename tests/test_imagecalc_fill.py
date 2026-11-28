@@ -520,6 +520,7 @@ def irreg_tiled_scene(tmp_path):
     }
 
 
+@pytest.mark.slow
 def test_region_growing_fill_tiled_matches_global_one_core(irreg_tiled_scene):
     """Tile-list region_growing_fill_tiled (shuffled tiles, 1 core) matches the
     global output, leaves the unreachable island empty and writes statistics."""
@@ -547,6 +548,7 @@ def test_region_growing_fill_tiled_matches_global_one_core(irreg_tiled_scene):
         assert float(tags["STATISTICS_MINIMUM"]) == 4.0
 
 
+@pytest.mark.slow
 def test_region_growing_fill_tiled_matches_global_two_cores(tmp_path, irreg_tiled_scene):
     """Tile-list region_growing_fill_tiled (shuffled tiles, 2 cores) matches the global output."""
     scn = irreg_tiled_scene
@@ -568,6 +570,7 @@ def test_region_growing_fill_tiled_matches_global_two_cores(tmp_path, irreg_tile
     np.testing.assert_array_equal(t2_arr, g_arr)
 
 
+@pytest.mark.slow
 def test_region_growing_fill_tiled_4_connectivity_max_iters_matches_global(
     tmp_path, irreg_tiled_scene
 ):
@@ -603,6 +606,7 @@ def test_region_growing_fill_tiled_4_connectivity_max_iters_matches_global(
         np.testing.assert_array_equal(t4_arr, s_g4.read(1))
 
 
+@pytest.mark.slow
 def test_region_growing_fill_tiled_one_pixel_tiles_int32_nodata(tmp_path):
     """1 x 1 pixel tiles of an int32 grid with nodata -99 match the global output."""
     origin = (0.0, 250.0)

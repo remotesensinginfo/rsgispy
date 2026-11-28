@@ -369,6 +369,7 @@ def test_stratified_block_cv_fewer_rare_blocks_than_folds():
     assert sum(n_p > 0 for n_p in pres_per_fold) == 2
 
 
+@pytest.mark.tutorial_data
 @pytest.mark.skipif(
     not os.path.exists(TUTORIAL_TRAIN), reason="rsgispy-tutorials not available"
 )

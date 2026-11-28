@@ -19,6 +19,8 @@ pytest.importorskip("sklearn")
 pytest.importorskip("scipy")
 matplotlib.use("Agg")
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples",
     "species_distribution_modelling.py",

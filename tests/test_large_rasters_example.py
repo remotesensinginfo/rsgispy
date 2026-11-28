@@ -14,6 +14,8 @@ import rasterio
 
 from seg_ml_scene import HEIGHT, WIDTH, make_seg_scene
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "large_rasters.py"
 )

@@ -197,3 +197,7 @@ include = ["rsgispy*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "slow: long-running tests (worked examples, tutorial-data examples, long parity checks)",
+    "tutorial_data: needs the rsgispy tutorial data (set by environment variables or a rsgispy-tutorials checkout)",
+]

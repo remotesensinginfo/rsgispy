@@ -19,6 +19,8 @@ from change_scene import make_change_scene
 pytest.importorskip("sklearn")
 matplotlib.use("Agg")
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "change_detection.py"
 )

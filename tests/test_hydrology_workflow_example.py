@@ -15,6 +15,8 @@ from hydro_scene import LC_NAMES, OUT_EPSG, make_hydro_scene
 
 pytest.importorskip("matplotlib")
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "hydrology_workflow.py"
 )

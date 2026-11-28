@@ -17,6 +17,8 @@ from mca_scene import make_mca_scene
 
 pytest.importorskip("scipy")  # calc_dist_to_img_vals
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples",
     "multi_criteria_analysis.py",

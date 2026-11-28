@@ -20,6 +20,8 @@ from tile_graph_scene import make_tile_graph_scene
 
 pytest.importorskip("sklearn")
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "tile_graph.py"
 )
