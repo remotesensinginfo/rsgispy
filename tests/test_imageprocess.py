@@ -701,3 +701,25 @@ def test_extract_roi_feature_matrix():
     )
     assert empty_feats.shape == (0, 2)
     assert empty_idx.size == 0
+
+
+def test_compute_spatial_intersection_rejects_subpixel_misalignment(tmp_path):
+    """H9: grids offset by a fraction of a pixel raise, pointing to resampling."""
+    a_path = str(tmp_path / "a.tif")
+    b_path = str(tmp_path / "b.tif")
+    c_path = str(tmp_path / "c.tif")
+    data = np.ones((1, 6, 6), dtype=np.float32)
+    _create_test_raster(a_path, data, origin=(0.0, 100.0))
+    _create_test_raster(b_path, data, origin=(0.4, 100.0))  # 0.4 pixel shift
+    _create_test_raster(c_path, data, origin=(2.0, 99.0))  # whole pixels: fine
+    with rasterio.open(a_path) as ds_a, rasterio.open(b_path) as ds_b:
+        with pytest.raises(rsgispy.RSGISPyException, match="resample_img_to_match"):
+            rsgispy.imageprocess.compute_spatial_intersection(
+                {a_path: ds_a, b_path: ds_b}
+            )
+    with rasterio.open(a_path) as ds_a, rasterio.open(c_path) as ds_c:
+        grid = rsgispy.imageprocess.compute_spatial_intersection(
+            {a_path: ds_a, c_path: ds_c}
+        )
+        assert (grid.width, grid.height) == (4, 5)
+        assert grid.offsets[a_path] == (2, 1)
