@@ -31,6 +31,7 @@ from rsgispy.vectorprocess import (
     read_vec_info,
     to_python_scalar,
     validate_columns_exist,
+    write_back_vec_gdf,
     write_vec_gdf,
 )
 
@@ -127,7 +128,8 @@ def write_vec_column_to_layer(
                              ``str``, ``'int'``, ``'float'``, ``'str'``, or
                              ``None`` to preserve input values).
     :param att_col_data: Sequence of values matching the feature count.
-    :param vec_lyr: Layer name when ``out_vec_lyr_obj`` is a vector file path.
+    :param vec_lyr: Layer name when ``out_vec_lyr_obj`` is a vector file path
+                    (``None`` for the first layer, which is then updated).
     :param out_format: Output format driver when writing back to a file path
                        (inferred from extension if ``None``).
     :param out_compress: Optional GeoParquet compression setting when writing
@@ -173,13 +175,11 @@ def write_vec_column_to_layer(
 
     gdf[target_col] = cast_col_data(att_col_data, att_col_datatype)
     if not is_gdf:
-        write_vec_gdf(
+        write_back_vec_gdf(
             gdf,
-            out_vec_file=out_vec_lyr_obj,  # type: ignore[arg-type]
-            out_vec_lyr=vec_lyr,
+            out_vec_lyr_obj,
+            vec_lyr,
             out_format=out_format,
-            overwrite=False,
-            replace_layer=True,
             out_compress=out_compress,
         )
     return gdf
@@ -206,7 +206,8 @@ def write_vec_column(
 
     :param out_vec_file: Path to the vector file to update, or input
                          :class:`geopandas.GeoDataFrame`.
-    :param out_vec_lyr: Layer name within ``out_vec_file`` (or ``None``).
+    :param out_vec_lyr: Layer name within ``out_vec_file`` (or ``None`` for
+                        the first layer, which is then the layer updated).
     :param att_column: Name of the output attribute column.
     :param att_col_datatype: Target column type (e.g., ``int``, ``float``,
                              ``str``, ``'int'``, ``'float'``, ``'str'``, or
@@ -233,29 +234,16 @@ def write_vec_column(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    is_gdf_input = isinstance(out_vec_file, gpd.GeoDataFrame)
     gdf = read_vec_gdf(out_vec_file, out_vec_lyr)
     write_vec_column_to_layer(gdf, att_column, att_col_datatype, att_col_data)
-    if dest_vec_file is not None:
-        write_vec_gdf(
-            gdf,
-            dest_vec_file,
-            out_vec_lyr,
-            out_format=out_format,
-            out_compress=out_compress,
-        )
-        return None
-    if is_gdf_input:
-        return gdf
-    write_vec_gdf(
+    return write_back_vec_gdf(
         gdf,
-        out_vec_file,  # type: ignore[arg-type]
+        out_vec_file,
         out_vec_lyr,
+        out_vec_file=dest_vec_file,
         out_format=out_format,
-        replace_layer=True,
         out_compress=out_compress,
     )
-    return None
 
 
 def read_vec_column(

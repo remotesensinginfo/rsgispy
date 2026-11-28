@@ -21,6 +21,7 @@ from rsgispy.vectorprocess import (
     get_gdf_bbox,
     read_vec_gdf as read_vec_file,
     resolve_vector_crs,
+    write_back_vec_gdf,
     write_vec_gdf as write_vec_file,
 )
 
@@ -70,28 +71,16 @@ def run_zonal_file_op(
     to disk (to ``out_vec_file`` or in-place onto ``vec_file``) or return the
     in-memory :class:`geopandas.GeoDataFrame`.
     """
-    is_gdf_input = isinstance(vec_file, gpd.GeoDataFrame)
     vec_gdf = read_vec_file(vec_file, vec_lyr)
     vec_gdf = compute_fn(vec_gdf)
-    target_lyr = out_vec_lyr if out_vec_lyr is not None else vec_lyr
-    if out_vec_file is not None:
-        write_vec_file(
-            vec_gdf,
-            out_vec_file,
-            target_lyr,
-            out_compress=out_compress,
-        )
-        return None
-    if is_gdf_input:
-        return vec_gdf
-    write_vec_file(
+    return write_back_vec_gdf(
         vec_gdf,
-        vec_file,  # type: ignore[arg-type]
-        target_lyr,
-        replace_layer=True,
+        vec_file,
+        vec_lyr,
+        out_vec_file=out_vec_file,
+        out_vec_lyr=out_vec_lyr,
         out_compress=out_compress,
     )
-    return None
 
 
 def normalise_band_list(

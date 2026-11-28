@@ -21,7 +21,6 @@ from shapely.geometry import (
 import rsgispy
 from rsgispy.imageprocess import ensure_file_exists
 import rsgispy.tools.files
-from rsgispy.tools.geometry import calc_bbox_area
 import rsgispy.tools.strings
 import rsgispy.tools.utm
 import rsgispy.vector._spatial as _vec_spatial
@@ -29,7 +28,7 @@ from rsgispy.vectorprocess import (
     CRSLike,
     VectorInput,
     align_gdf_crs,
-    bbox_to_rsgis,
+    ensure_matching_crs,
     check_format_name,
     extract_geom_pts,
     finish_vec_output,
@@ -942,7 +941,8 @@ def merge_utm_vecs_wgs84(
     Merge input vector files or :class:`geopandas.GeoDataFrame` objects
     projected in UTM zones into a single WGS84 (``EPSG:4326``) vector layer,
     splitting features crossing UTM zone boundaries and unwrapping geometries
-    spanning the 180/-180 antimeridian.
+    spanning the 180/-180 antimeridian. Every non-empty layer is merged,
+    including point and line layers whose bounding box has zero area.
 
     :param in_vec_files: Sequence of input UTM vector file paths or
                          :class:`geopandas.GeoDataFrame` objects.
@@ -951,7 +951,9 @@ def merge_utm_vecs_wgs84(
     :param out_vec_lyr: Output vector layer name.
     :param out_format: Output vector format (Default = ``'GPKG'``).
     :param n_hemi_utm_file: Path (or GeoDataFrame) for Northern hemisphere UTM
-                            zone boundaries (layers ``'01'`` to ``'60'``).
+                            zone boundaries (layers ``'01'`` to ``'60'``). The
+                            zone layers may be in any CRS (typically WGS84);
+                            features are split in the zone layer's CRS.
     :param s_hemi_utm_file: Path (or GeoDataFrame) for Southern hemisphere UTM
                             zone boundaries (layers ``'01'`` to ``'60'``).
     :param width_thres: Longitude width threshold in degrees for unwrapping
@@ -1000,9 +1002,6 @@ def merge_utm_vecs_wgs84(
             data_gdf = read_vec_gdf(vec_file, vec_lyr=lyr)
             if len(data_gdf) == 0:
                 continue
-            bbox = bbox_to_rsgis(data_gdf.total_bounds)
-            if calc_bbox_area(bbox) <= 0:
-                continue
 
             vec_epsg = get_epsg_proj_from_vec(
                 data_gdf if isinstance(vec_file, gpd.GeoDataFrame) else vec_file,
@@ -1027,6 +1026,10 @@ def merge_utm_vecs_wgs84(
                 utm_gdf = read_vec_gdf(
                     utm_zones_file, vec_lyr=zone_str, copy=False
                 )
+                # Overlay in the zone layer's CRS: the zone edges stay exact
+                # (meridians are straight lines in WGS84 zone files), and the
+                # data is reprojected to WGS84 for the output anyway.
+                data_gdf = ensure_matching_crs(utm_gdf, data_gdf)
                 data_inter = gpd.overlay(
                     data_gdf, utm_gdf, how="intersection"
                 )

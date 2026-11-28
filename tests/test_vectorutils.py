@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 import rasterio
 from rasterio.transform import from_origin
-from shapely.geometry import MultiPolygon, Point, Polygon, box
+from shapely.geometry import LineString, MultiPolygon, Point, Polygon, box
 
 import rsgispy
 import rsgispy.vectorprocess
@@ -898,3 +898,69 @@ def test_vector_consolidation_bbox_and_uniform_vector_input(tmp_path):
     )
     assert len(exploded_list) == 1
     assert len(exploded_list[0]) == 2
+
+
+def _write_wgs84_utm_zone_files(tmp_path):
+    """Write north/south UTM zone files (zones 30 and 31) in EPSG:4326."""
+    n_zones = str(tmp_path / "n_utm_wgs.gpkg")
+    s_zones = str(tmp_path / "s_utm_wgs.gpkg")
+    for zone, min_lon in (("30", -6.0), ("31", 0.0)):
+        gpd.GeoDataFrame(
+            {"z": [int(zone)]},
+            geometry=[box(min_lon, 0.0, min_lon + 6.0, 84.0)],
+            crs="EPSG:4326",
+        ).to_file(n_zones, layer=zone, driver="GPKG")
+        gpd.GeoDataFrame(
+            {"z": [int(zone)]},
+            geometry=[box(min_lon, -80.0, min_lon + 6.0, 0.0)],
+            crs="EPSG:4326",
+        ).to_file(s_zones, layer=zone, driver="GPKG")
+    return n_zones, s_zones
+
+
+def test_merge_utm_vecs_wgs84_splits_at_zone_boundary_wgs84_zones(tmp_path):
+    """H6: zone layers in WGS84 are reprojected before the overlay."""
+    n_zones, s_zones = _write_wgs84_utm_zone_files(tmp_path)
+    cross_gdf = gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[box(-0.5, 52.0, 0.5, 52.5)],
+        crs="EPSG:4326",
+    ).to_crs(epsg=32630)
+    merged = vu_io.merge_utm_vecs_wgs84(
+        [cross_gdf],
+        None,
+        n_hemi_utm_file=n_zones,
+        s_hemi_utm_file=s_zones,
+        use_pbar=False,
+    )
+    assert merged.crs.to_epsg() == 4326
+    # The polygon is split into the part inside zone 30 and the part outside.
+    assert len(merged) == 2
+    max_x = sorted(float(v) for v in merged.bounds["maxx"])
+    assert max_x[0] == pytest.approx(0.0, abs=1e-6)
+    assert merged.to_crs(epsg=32630).area.sum() == pytest.approx(
+        cross_gdf.area.sum(), rel=1e-3
+    )
+
+
+def test_merge_utm_vecs_wgs84_keeps_zero_area_layers(tmp_path):
+    """H6: single-point and axis-parallel line layers are not dropped."""
+    n_zones, s_zones = _write_wgs84_utm_zone_files(tmp_path)
+    pt_gdf = gpd.GeoDataFrame(
+        {"id": [1]}, geometry=[Point(-3.0, 52.0)], crs="EPSG:4326"
+    ).to_crs(epsg=32630)
+    x0, y0 = pt_gdf.geometry.iloc[0].x, pt_gdf.geometry.iloc[0].y
+    line_gdf = gpd.GeoDataFrame(
+        {"id": [2]},
+        geometry=[LineString([(x0, y0), (x0 + 1000.0, y0)])],
+        crs="EPSG:32630",
+    )
+    merged = vu_io.merge_utm_vecs_wgs84(
+        [pt_gdf, line_gdf],
+        None,
+        n_hemi_utm_file=n_zones,
+        s_hemi_utm_file=s_zones,
+        use_pbar=False,
+    )
+    assert sorted(merged["id"].tolist()) == [1, 2]
+    assert merged.crs.to_epsg() == 4326

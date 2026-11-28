@@ -897,3 +897,61 @@ def test_vector_maths_intermediate_variables():
         )
     with pytest.raises(rsgispy.RSGISPyException):
         va_cols.vector_maths(gdf, None, out_col="a", exp="ndvi = ndvi + 1")
+
+
+def test_vector_joins_and_counts_align_crs():
+    """H5: secondary layers in another CRS are reprojected before joining."""
+    polys_utm = gpd.GeoDataFrame(
+        {"pid": [1, 2]},
+        geometry=[
+            box(500000.0, 5800000.0, 501000.0, 5801000.0),
+            box(502000.0, 5800000.0, 503000.0, 5801000.0),
+        ],
+        crs="EPSG:32630",
+    )
+    pts_utm = gpd.GeoDataFrame(
+        {"val": [10, 20, 30]},
+        geometry=[
+            Point(500500.0, 5800500.0),
+            Point(500600.0, 5800600.0),
+            Point(502500.0, 5800500.0),
+        ],
+        crs="EPSG:32630",
+    )
+    pts_wgs = pts_utm.to_crs("EPSG:4326")
+
+    cnt_gdf = vs_metrics.count_pt_intersects(polys_utm, None, pts_wgs, None)
+    assert cnt_gdf.sort_values("pid")["n_points"].tolist() == [2, 1]
+
+    ann_gdf = va_spatial.annotate_vec_selection(polys_utm, None, pts_wgs, None)
+    assert ann_gdf["sel_feats"].tolist() == [True, True]
+
+    sjoin_gdf = va_spatial.perform_spatial_join(
+        pts_utm, None, polys_utm.to_crs("EPSG:4326"), None, join_op="within"
+    )
+    assert sorted(sjoin_gdf["pid"].tolist()) == [1, 1, 2]
+    assert sjoin_gdf.crs == pts_utm.crs
+
+    near_gdf = vs_metrics.calc_near_dist_to_feats(
+        pts_utm.iloc[[0]], None, polys_utm.iloc[[1]].to_crs("EPSG:4326"), None
+    )
+    # Distance from x=500500 to the second polygon's edge at x=502000, in metres.
+    assert near_gdf["dist"].iloc[0] == pytest.approx(1500.0, abs=1.0)
+
+
+def test_in_place_column_writes_keep_layer_name(tmp_path):
+    """H7: in-place writes with vec_lyr=None update the existing layer."""
+    vec_path = str(tmp_path / "data.gpkg")
+    _make_polys_gpkg(vec_path, layer="polys")
+    n_feats = len(gpd.read_file(vec_path, layer="polys"))
+
+    va_spatial.pop_bbox_cols(vec_path, None)
+    va_io.write_vec_column(vec_path, None, "newcol", int, list(range(n_feats)))
+    va_io.write_vec_column_to_layer(
+        vec_path, "other", float, [1.5] * n_feats
+    )
+
+    assert rsgispy.vectorprocess.list_vec_layers(vec_path) == ["polys"]
+    out_gdf = gpd.read_file(vec_path, layer="polys")
+    for col in ("xmin", "newcol", "other"):
+        assert col in out_gdf.columns

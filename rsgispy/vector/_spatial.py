@@ -16,6 +16,7 @@ import rsgispy
 from rsgispy.vectorprocess import (
     VectorInput,
     crs_to_epsg,
+    ensure_matching_crs,
     extract_geom_pts,
     prepare_optional_out_vec,
     read_vec_gdf,
@@ -374,11 +375,14 @@ def _check_vec_spatial_predicate(
 ) -> bool:
     """
     Evaluate a spatial predicate between two vector layers using ``geopandas``
-    spatial indexing.
+    spatial indexing. The comparison layer is reprojected onto the base
+    layer's CRS when both are defined and differ.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     base_gdf = read_vec_gdf(vec_base_file, vec_base_lyr, copy=False)
-    comp_gdf = read_vec_gdf(vec_comp_file, vec_comp_lyr, copy=False)
+    comp_gdf = ensure_matching_crs(
+        base_gdf, read_vec_gdf(vec_comp_file, vec_comp_lyr, copy=False)
+    )
 
     base_geoms = base_gdf.geometry[base_gdf.geometry.notna()]
     comp_geoms = comp_gdf.geometry[comp_gdf.geometry.notna()]
@@ -437,6 +441,7 @@ def vec_intersects_vec(
     :param vec_base_file: Base vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_base_lyr: Base vector layer name (or ``None``).
     :param vec_comp_file: Comparison vector file path or :class:`geopandas.GeoDataFrame`.
+                          Reprojected onto the base layer's CRS if they differ.
     :param vec_comp_lyr: Comparison vector layer name (or ``None``).
     :param use_pbar: Show progress bar (Default = ``True``).
     :return: ``True`` if an intersection exists.
@@ -475,6 +480,7 @@ def vec_overlaps_vec(
     :param vec_base_file: Base vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_base_lyr: Base vector layer name (or ``None``).
     :param vec_comp_file: Comparison vector file path or :class:`geopandas.GeoDataFrame`.
+                          Reprojected onto the base layer's CRS if they differ.
     :param vec_comp_lyr: Comparison vector layer name (or ``None``).
     :param use_pbar: Show progress bar (Default = ``True``).
     :return: ``True`` if an overlap exists.
@@ -513,6 +519,7 @@ def vec_within_vec(
     :param vec_base_file: Base vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_base_lyr: Base vector layer name (or ``None``).
     :param vec_comp_file: Comparison vector file path or :class:`geopandas.GeoDataFrame`.
+                          Reprojected onto the base layer's CRS if they differ.
     :param vec_comp_lyr: Comparison vector layer name (or ``None``).
     :param use_pbar: Show progress bar (Default = ``True``).
     :return: ``True`` if all comparison geometries are within base geometries.
@@ -550,6 +557,7 @@ def vec_contains_vec(
     :param vec_base_file: Base vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_base_lyr: Base vector layer name (or ``None``).
     :param vec_comp_file: Comparison vector file path or :class:`geopandas.GeoDataFrame`.
+                          Reprojected onto the base layer's CRS if they differ.
     :param vec_comp_lyr: Comparison vector layer name (or ``None``).
     :param use_pbar: Show progress bar (Default = ``True``).
     :return: ``True`` if every comparison geometry is contained by a base
@@ -589,6 +597,7 @@ def vec_touches_vec(
     :param vec_base_file: Base vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_base_lyr: Base vector layer name (or ``None``).
     :param vec_comp_file: Comparison vector file path or :class:`geopandas.GeoDataFrame`.
+                          Reprojected onto the base layer's CRS if they differ.
     :param vec_comp_lyr: Comparison vector layer name (or ``None``).
     :param use_pbar: Show progress bar (Default = ``True``).
     :return: ``True`` if a touching pair exists.
@@ -627,6 +636,7 @@ def vec_crosses_vec(
     :param vec_base_file: Base vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_base_lyr: Base vector layer name (or ``None``).
     :param vec_comp_file: Comparison vector file path or :class:`geopandas.GeoDataFrame`.
+                          Reprojected onto the base layer's CRS if they differ.
     :param vec_comp_lyr: Comparison vector layer name (or ``None``).
     :param use_pbar: Show progress bar (Default = ``True``).
     :return: ``True`` if a crossing pair exists.

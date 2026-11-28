@@ -881,3 +881,117 @@ def test_zonalstats_constants_helpers_and_kwonly(tmp_path):
             None,
             None,
         )
+
+
+def test_zonal_file_op_in_place_keeps_layer_name(tmp_path):
+    """H7: in-place update with vec_lyr=None writes back to the real layer."""
+    arr = np.arange(36, dtype=np.float32).reshape(6, 6)
+    tif_path = str(tmp_path / "vals.tif")
+    _write_test_raster(tif_path, arr)
+    vec_path = str(tmp_path / "zones.gpkg")
+    gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[box(500000.0, 5199960.0, 500040.0, 5200000.0)],
+        crs="EPSG:32630",
+    ).to_file(vec_path, layer="polys", driver="GPKG")
+
+    zs_poly.calc_zonal_band_stats_file(
+        vec_path,
+        None,
+        tif_path,
+        img_band=1,
+        min_thres=-1.0,
+        max_thres=1000.0,
+        out_no_data_val=-1.0,
+        mean_field="b1_mean",
+        use_pbar=False,
+    )
+    assert rsgispy.vectorprocess.list_vec_layers(vec_path) == ["polys"]
+    out_gdf = gpd.read_file(vec_path, layer="polys")
+    assert "b1_mean" in out_gdf.columns
+
+
+def test_vec_def_epsg_only_applies_when_crs_undefined(tmp_path):
+    """vec_def_epsg is a fallback for an undefined CRS, not an override."""
+    gdf = gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[box(500000.0, 5199960.0, 500040.0, 5200000.0)],
+        crs="EPSG:32630",
+    )
+    resolve = rsgispy.vectorprocess.resolve_vector_crs
+    assert resolve(gdf, 4326).to_epsg() == 32630
+    assert resolve(gdf.set_crs(None, allow_override=True), 32630).to_epsg() == 32630
+    with pytest.raises(rsgispy.RSGISPyException):
+        resolve(gdf.set_crs(None, allow_override=True))
+
+    arr = np.arange(36, dtype=np.float32).reshape(6, 6)
+    tif_path = str(tmp_path / "vals.tif")
+    _write_test_raster(tif_path, arr)
+    out_gdf = zs_poly.calc_zonal_band_stats(
+        gdf,
+        tif_path,
+        img_band=1,
+        min_thres=-1.0,
+        max_thres=1000.0,
+        out_no_data_val=-1.0,
+        count_field="n",
+        vec_def_epsg=4326,
+        use_pbar=False,
+    )
+    assert out_gdf["n"].iloc[0] == 16
+
+
+def test_test_poly_pts_fallback_samples_point_inside_concave_polygon(tmp_path):
+    """The fallback samples a point inside the polygon, not its centroid."""
+    from shapely.ops import unary_union
+
+    # Pixel centres are at x = 500005, 500015, ... and y = 5199995, 5199985, ...
+    # The thin C-shaped polygon below contains no pixel centre, and its
+    # centroid lies in the hollow (value 99) rather than on the polygon (1).
+    arr = np.ones((6, 6), dtype=np.float32)
+    arr[1:5, 1:6] = 99.0
+    tif_path = str(tmp_path / "vals.tif")
+    _write_test_raster(tif_path, arr)
+    c_shape = unary_union(
+        [
+            box(500001.0, 5199941.0, 500003.0, 5199999.0),
+            box(500001.0, 5199997.0, 500059.0, 5199999.0),
+            box(500001.0, 5199941.0, 500059.0, 5199943.0),
+        ]
+    )
+    assert not c_shape.contains(c_shape.centroid)
+    gdf = gpd.GeoDataFrame({"id": [1]}, geometry=[c_shape], crs="EPSG:32630")
+
+    out_gdf = zs_poly.calc_zonal_band_stats_test_poly_pts(
+        gdf,
+        tif_path,
+        img_band=1,
+        min_thres=-1.0,
+        max_thres=1000.0,
+        out_no_data_val=-1.0,
+        mean_field="b1_mean",
+        use_pbar=False,
+    )
+    assert out_gdf["b1_mean"].iloc[0] == pytest.approx(1.0)
+
+
+def test_calc_zonal_band_pxl_counts_total_includes_nodata(tmp_path):
+    """The documented total is the polygon's pixel footprint, nodata included."""
+    arr = np.array([[1, 1], [2, 0]], dtype=np.uint8)
+    tif_path = str(tmp_path / "cls.tif")
+    _write_test_raster(tif_path, arr, nodata=0)
+    gdf = gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[box(500000.0, 5199980.0, 500020.0, 5200000.0)],
+        crs="EPSG:32630",
+    )
+    out_gdf = zs_poly.calc_zonal_band_pxl_counts(
+        gdf,
+        tif_path,
+        img_band=1,
+        vals_lut={0: "nodata_pxls", 1: "c1", 2: "c2"},
+        total_field="total",
+        use_pbar=False,
+    )
+    row = out_gdf.iloc[0]
+    assert (row["total"], row["c1"], row["c2"], row["nodata_pxls"]) == (4, 2, 1, 1)
