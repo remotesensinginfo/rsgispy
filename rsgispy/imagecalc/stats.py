@@ -363,7 +363,7 @@ def _stack_stat_block(
         return cast_result_block(stat_arr, win_h, win_w, out_np_dtype)
     has_data = build_valid_mask(stack_arr).any(axis=0)
     return cast_result_block(
-        np.where(has_data, stat_arr, out_nd), win_h, win_w, out_np_dtype
+        stat_arr, win_h, win_w, out_np_dtype, nodata=out_nd, valid_mask=has_data
     )
 
 
