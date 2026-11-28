@@ -1431,8 +1431,9 @@ def test_calc_area_under_curve(tmp_path):
     )
     _write_raster(in_p, arr)
 
+    # The old rectangle sum, sum(band_i * band_widths[i]), as in RSGISLib.
     si.calc_area_under_curve(
-        str(in_p), str(out_p), [0.5, 2.0], use_pbar=False
+        str(in_p), str(out_p), [0.5, 2.0], method="rectangle", use_pbar=False
     )
     with rasterio.open(out_p) as src:
         np.testing.assert_allclose(
@@ -1443,3 +1444,44 @@ def test_calc_area_under_curve(tmp_path):
         si.calc_area_under_curve(str(in_p), str(out_p), None, use_pbar=False)
     with pytest.raises(rsgispy.RSGISPyException):
         si.calc_area_under_curve(str(in_p), str(out_p), [1.0], use_pbar=False)
+
+
+def test_calc_area_under_curve_trapezoid_and_nodata(tmp_path):
+    """The default trapezoid rule between band centres, with nodata handling."""
+    in_p = tmp_path / "auc_tz.tif"
+    out_p = tmp_path / "auc_tz_out.tif"
+    arr = np.array(
+        [
+            [[1.0, 2.0, -99.0]],
+            [[3.0, 2.0, 5.0]],
+            [[5.0, 2.0, 7.0]],
+        ],
+        dtype=np.float32,
+    )
+    _write_raster(in_p, arr, nodata=-99.0)
+    # Widths 10, 20, 10: band centres at 5, 20, 35.
+    si.calc_area_under_curve(str(in_p), str(out_p), [10.0, 20.0, 10.0],
+                             use_pbar=False)
+    centres = [5.0, 20.0, 35.0]
+    with rasterio.open(out_p) as src:
+        assert src.nodata == -99.0
+        out = src.read(1)
+    np.testing.assert_allclose(out[0, 0], np.trapezoid([1.0, 3.0, 5.0], centres))
+    np.testing.assert_allclose(out[0, 1], np.trapezoid([2.0, 2.0, 2.0], centres))
+    assert out[0, 2] == -99.0  # one band is nodata
+
+    # Explicit band centres (e.g. wavelengths) and an explicit no_data_val.
+    out_c = tmp_path / "auc_centres.tif"
+    si.calc_area_under_curve(str(in_p), str(out_c), None,
+                             band_centres=[450.0, 550.0, 650.0],
+                             no_data_val=-1.0, use_pbar=False)
+    with rasterio.open(out_c) as src:
+        assert src.nodata == -1.0
+        np.testing.assert_allclose(
+            src.read(1)[0, 0], np.trapezoid([1.0, 3.0, 5.0], [450.0, 550.0, 650.0])
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        si.calc_area_under_curve(str(in_p), str(out_c), None, use_pbar=False)
+    with pytest.raises(rsgispy.RSGISPyException):
+        si.calc_area_under_curve(str(in_p), str(out_c), [1.0, 1.0, 1.0],
+                                 method="simpson", use_pbar=False)
