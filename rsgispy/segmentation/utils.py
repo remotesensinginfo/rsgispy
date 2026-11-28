@@ -801,6 +801,7 @@ def eliminate_small_segments_array(
     min_pixels: int = 10,
     no_data_val: int = 0,
     use_numba: bool = True,
+    data_no_data_val: Optional[float] = None,
 ) -> np.ndarray:
     """
     Eliminate segments smaller than ``min_pixels`` by merging them into their
@@ -824,6 +825,9 @@ def eliminate_small_segments_array(
         Label value treated as masked/invalid background (Default = ``0``).
     use_numba : bool, optional
         Use ``numba``-compiled merging loops when available (Default = ``True``).
+    data_no_data_val : float or None, optional
+        No-data value of ``data`` (Default = ``None``). Pixels where any band
+        is non-finite or equal to it are left out of the segment means.
 
     Returns
     -------
@@ -858,22 +862,35 @@ def eliminate_small_segments_array(
 
     has_data = data is not None
     if has_data:
-        arr_3d, _ = normalise_array_input(data, no_data_val=None)
+        arr_3d, data_valid = normalise_array_input(
+            data, no_data_val=data_no_data_val
+        )
         if arr_3d.shape[1:] != compact.shape:
             raise rsgispy.RSGISPyException(
                 f"data spatial shape {arr_3d.shape[1:]} does not match "
                 f"labels shape {compact.shape}."
             )
         n_bands = arr_3d.shape[0]
-        band_sums = np.zeros((n_seg + 1, n_bands), dtype=np.float64)
         flat_lbl = compact.ravel()
+        flat_valid = data_valid.ravel()
+        valid_counts = np.bincount(
+            flat_lbl[flat_valid], minlength=n_seg + 1
+        ).astype(np.float64)
+        # The merge kernel takes band sums over all pixels (mean = sum /
+        # count): give it each segment's mean over its valid data pixels
+        # times its pixel count. Segments without valid data use the band
+        # mean of all valid pixels.
+        band_sums = np.zeros((n_seg + 1, n_bands), dtype=np.float64)
         for b_i in range(n_bands):
-            band_vals = np.where(
-                np.isfinite(arr_3d[b_i]), arr_3d[b_i], 0.0
-            ).ravel()
-            band_sums[:, b_i] = np.bincount(
-                flat_lbl, weights=band_vals, minlength=n_seg + 1
+            vals = arr_3d[b_i].ravel()
+            valid_sums = np.bincount(
+                flat_lbl[flat_valid], weights=vals[flat_valid], minlength=n_seg + 1
             )
+            fallback = float(vals[flat_valid].mean()) if flat_valid.any() else 0.0
+            means = np.full(n_seg + 1, fallback)
+            has_vals = valid_counts > 0
+            means[has_vals] = valid_sums[has_vals] / valid_counts[has_vals]
+            band_sums[:, b_i] = means * counts
     else:
         band_sums = np.zeros((n_seg + 1, 1), dtype=np.float64)
 
@@ -925,7 +942,8 @@ def eliminate_small_segments(
         Path to the output cleaned label raster.
     ref_img : str or os.PathLike or None, optional
         Optional spectral reference image aligned to ``input_img`` used to
-        merge small segments into their spectrally closest neighbour. When
+        merge small segments into their spectrally closest neighbour (its
+        header no-data pixels are left out of the segment means). When
         ``None``, small segments merge into their largest adjacent neighbour.
     min_pixels : int, optional
         Minimum segment size in pixels (Default = ``10``).
@@ -957,6 +975,7 @@ def eliminate_small_segments(
         labels = src.read(1)
 
     ref_data: Optional[np.ndarray] = None
+    ref_nd: Optional[float] = None
     if ref_img is not None:
         ref_path = os.fspath(ref_img)
         ensure_file_exists(ref_path, label="Reference spectral image")
@@ -968,6 +987,7 @@ def eliminate_small_segments(
                 )
             sel_bands = normalise_band_selection(ref_src, bands, ref_path)
             ref_data = ref_src.read(sel_bands, out_dtype=np.float64)
+            ref_nd = ref_src.nodata
 
     cleaned = eliminate_small_segments_array(
         labels=labels,
@@ -975,6 +995,7 @@ def eliminate_small_segments(
         min_pixels=min_pixels,
         no_data_val=nd_int,
         use_numba=use_numba,
+        data_no_data_val=ref_nd,
     )
     write_label_raster_from_array(
         labels=cleaned,
