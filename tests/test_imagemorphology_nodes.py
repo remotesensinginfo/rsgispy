@@ -165,3 +165,36 @@ def test_morph_node_operator_file(inputs):
     assert graph.node_meta[node].nodata == -9999.0
     ref, _, _ = _read(str(tmp / "d.tif"))
     np.testing.assert_array_equal(graph.run(use_pbar=False)["d"], ref)
+
+
+@pytest.mark.parametrize("mode", ["reflect", "constant"])
+def test_morph_nodes_border_mode_equal_file_functions(inputs, mode):
+    """The node builders take border_mode / border_fill like the file functions."""
+    tmp = inputs["dir"]
+    # Reflect padding cannot change a square-operator dilation (the reflected
+    # pixels are already under the operator); a high constant does.
+    fill = 250.0 if mode == "constant" else 0.0
+    bkw = {"border_mode": mode, "border_fill": fill}
+    rm.image_dilate(inputs["u8"], str(tmp / "d.tif"), op_size=5, use_pbar=False, **bkw)
+    rm.image_closing(inputs["u8"], str(tmp / "c.tif"), op_size=3, use_pbar=False, **bkw)
+    rm.image_white_top_hat(inputs["u8"], str(tmp / "w.tif"), use_pbar=False, **bkw)
+    src = RasterSource(inputs["u8"])
+    nodes = {
+        "d": rm.image_dilate_node(src, op_size=5, dtype=np.uint8, **bkw),
+        "c": rm.image_closing_node(src, op_size=3, dtype=np.uint8, **bkw),
+        "w": rm.image_white_top_hat_node(src, dtype=np.uint8, **bkw),
+    }
+    res = TileGraph(
+        [MemorySink(n, dtype=np.uint8, name=k) for k, n in nodes.items()], block_size=9
+    ).run(use_pbar=False)
+    for key in nodes:
+        ref, _, _ = _read(str(tmp / f"{key}.tif"))
+        np.testing.assert_array_equal(res[key], ref)
+    default = TileGraph(
+        MemorySink(rm.image_dilate_node(src, op_size=5, dtype=np.uint8), dtype=np.uint8,
+                   name="e"), block_size=9,
+    ).run(use_pbar=False)["e"]
+    assert np.array_equal(default, res["d"]) == (mode != "constant")
+    np.testing.assert_array_equal(default[:, 2:-2, 2:-2], res["d"][:, 2:-2, 2:-2])
+    with pytest.raises(rsgispy.RSGISPyException):
+        rm.image_erode_node(src, border_mode="wrap")

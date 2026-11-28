@@ -5,7 +5,7 @@ Statistical, dispersion, and local-difference moving-window raster filters.
 
 from typing import List, Optional
 
-from rsgispy._io import RasterSource, TileNode
+from rsgispy._io import RasterSource, TileNode, halo_border_from_mode
 from rsgispy.imagefilter._helpers import (
     run_filter_node,
     stat_coeff_of_var,
@@ -74,6 +74,8 @@ def apply_median_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -87,6 +89,13 @@ def apply_median_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -105,6 +114,8 @@ def apply_median_filter(
         src,
         median_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -124,6 +135,8 @@ def apply_mean_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -137,6 +150,13 @@ def apply_mean_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -152,6 +172,8 @@ def apply_mean_filter(
         src,
         mean_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -171,6 +193,8 @@ def apply_min_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -184,6 +208,13 @@ def apply_min_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -199,6 +230,8 @@ def apply_min_filter(
         src,
         min_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -218,6 +251,8 @@ def apply_max_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -231,6 +266,13 @@ def apply_max_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -246,6 +288,8 @@ def apply_max_filter(
         src,
         max_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -265,6 +309,8 @@ def apply_mode_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -280,6 +326,13 @@ def apply_mode_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -298,6 +351,8 @@ def apply_mode_filter(
         src,
         mode_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -317,6 +372,8 @@ def apply_stddev_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -330,6 +387,13 @@ def apply_stddev_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -345,6 +409,8 @@ def apply_stddev_filter(
         src,
         stddev_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -364,6 +430,8 @@ def apply_range_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -377,6 +445,13 @@ def apply_range_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -392,6 +467,8 @@ def apply_range_filter(
         src,
         range_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -411,6 +488,8 @@ def apply_total_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -424,6 +503,13 @@ def apply_total_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -439,6 +525,8 @@ def apply_total_filter(
         src,
         total_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -458,6 +546,8 @@ def apply_mean_diff_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -471,6 +561,13 @@ def apply_mean_diff_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -488,6 +585,8 @@ def apply_mean_diff_filter(
         src,
         mean_diff_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -507,6 +606,8 @@ def apply_mean_diff_abs_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -520,6 +621,13 @@ def apply_mean_diff_abs_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -537,6 +645,8 @@ def apply_mean_diff_abs_filter(
         src,
         mean_diff_abs_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -556,6 +666,8 @@ def apply_total_diff_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -569,6 +681,13 @@ def apply_total_diff_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -586,6 +705,8 @@ def apply_total_diff_filter(
         src,
         total_diff_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -605,6 +726,8 @@ def apply_total_diff_abs_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -618,6 +741,13 @@ def apply_total_diff_abs_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -635,6 +765,8 @@ def apply_total_diff_abs_filter(
         src,
         total_diff_abs_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -654,6 +786,8 @@ def apply_coeff_of_var_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -669,6 +803,13 @@ def apply_coeff_of_var_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -686,6 +827,8 @@ def apply_coeff_of_var_filter(
         src,
         coeff_of_var_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -705,6 +848,8 @@ def apply_norm_var_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -718,6 +863,13 @@ def apply_norm_var_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -735,6 +887,8 @@ def apply_norm_var_filter(
         src,
         norm_var_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -754,6 +908,8 @@ def apply_norm_var_sqrt_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -768,6 +924,13 @@ def apply_norm_var_sqrt_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -785,6 +948,8 @@ def apply_norm_var_sqrt_filter(
         src,
         norm_var_sqrt_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -804,6 +969,8 @@ def apply_norm_var_ln_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -818,6 +985,13 @@ def apply_norm_var_ln_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -835,6 +1009,8 @@ def apply_norm_var_ln_filter(
         src,
         norm_var_ln_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -854,6 +1030,8 @@ def apply_texture_var_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -867,6 +1045,13 @@ def apply_texture_var_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -884,6 +1069,8 @@ def apply_texture_var_filter(
         src,
         texture_var_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
         ),
         output_img,
@@ -900,6 +1087,8 @@ def median_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -916,6 +1105,13 @@ def median_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'median_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -928,11 +1124,13 @@ def median_filter_node(
         node = median_filter_node(mean_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_median,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "median_filter",
     )
 
@@ -942,6 +1140,8 @@ def mean_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -958,6 +1158,13 @@ def mean_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'mean_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -970,11 +1177,13 @@ def mean_filter_node(
         node = mean_filter_node(median_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_mean,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "mean_filter",
     )
 
@@ -984,6 +1193,8 @@ def min_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1000,6 +1211,13 @@ def min_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'min_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1012,11 +1230,13 @@ def min_filter_node(
         node = min_filter_node(mean_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_min,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "min_filter",
     )
 
@@ -1026,6 +1246,8 @@ def max_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1042,6 +1264,13 @@ def max_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'max_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1054,11 +1283,13 @@ def max_filter_node(
         node = max_filter_node(mean_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_max,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "max_filter",
     )
 
@@ -1068,6 +1299,8 @@ def mode_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1085,6 +1318,13 @@ def mode_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'mode_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1097,11 +1337,13 @@ def mode_filter_node(
         node = mode_filter_node(mean_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_mode,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "mode_filter",
     )
 
@@ -1111,6 +1353,8 @@ def stddev_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1127,6 +1371,13 @@ def stddev_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'stddev_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1139,11 +1390,13 @@ def stddev_filter_node(
         node = stddev_filter_node(mean_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_stddev,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "stddev_filter",
     )
 
@@ -1153,6 +1406,8 @@ def range_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1169,6 +1424,13 @@ def range_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'range_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1181,11 +1443,13 @@ def range_filter_node(
         node = range_filter_node(mean_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_range,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "range_filter",
     )
 
@@ -1195,6 +1459,8 @@ def total_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1211,6 +1477,13 @@ def total_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'total_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1223,11 +1496,13 @@ def total_filter_node(
         node = total_filter_node(mean_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_total,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "total_filter",
     )
 
@@ -1237,6 +1512,8 @@ def mean_diff_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1254,6 +1531,13 @@ def mean_diff_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'mean_diff_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1266,11 +1550,13 @@ def mean_diff_filter_node(
         node = mean_diff_filter_node(mean_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_mean_diff,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "mean_diff_filter",
     )
 
@@ -1280,6 +1566,8 @@ def mean_diff_abs_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1297,6 +1585,13 @@ def mean_diff_abs_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'mean_diff_abs_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1309,11 +1604,13 @@ def mean_diff_abs_filter_node(
         node = mean_diff_abs_filter_node(mean_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_mean_diff_abs,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "mean_diff_abs_filter",
     )
 
@@ -1323,6 +1620,8 @@ def total_diff_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1340,6 +1639,13 @@ def total_diff_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'total_diff_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1352,11 +1658,13 @@ def total_diff_filter_node(
         node = total_diff_filter_node(mean_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_total_diff,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "total_diff_filter",
     )
 
@@ -1366,6 +1674,8 @@ def total_diff_abs_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1383,6 +1693,13 @@ def total_diff_abs_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'total_diff_abs_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1395,11 +1712,13 @@ def total_diff_abs_filter_node(
         node = total_diff_abs_filter_node(mean_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_total_diff_abs,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "total_diff_abs_filter",
     )
 
@@ -1409,6 +1728,8 @@ def coeff_of_var_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1426,6 +1747,13 @@ def coeff_of_var_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'coeff_of_var_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1438,11 +1766,13 @@ def coeff_of_var_filter_node(
         node = coeff_of_var_filter_node(mean_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_coeff_of_var,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "coeff_of_var_filter",
     )
 
@@ -1452,6 +1782,8 @@ def norm_var_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1469,6 +1801,13 @@ def norm_var_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'norm_var_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1481,11 +1820,13 @@ def norm_var_filter_node(
         node = norm_var_filter_node(mean_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_norm_var,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "norm_var_filter",
     )
 
@@ -1495,6 +1836,8 @@ def norm_var_sqrt_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1512,6 +1855,13 @@ def norm_var_sqrt_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'norm_var_sqrt_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1524,11 +1874,13 @@ def norm_var_sqrt_filter_node(
         node = norm_var_sqrt_filter_node(mean_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_norm_var_sqrt,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "norm_var_sqrt_filter",
     )
 
@@ -1538,6 +1890,8 @@ def norm_var_ln_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1555,6 +1909,13 @@ def norm_var_ln_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'norm_var_ln_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1567,11 +1928,13 @@ def norm_var_ln_filter_node(
         node = norm_var_ln_filter_node(mean_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_norm_var_ln,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "norm_var_ln_filter",
     )
 
@@ -1581,6 +1944,8 @@ def texture_var_filter_node(
     filter_size: int = 3,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1597,6 +1962,13 @@ def texture_var_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'texture_var_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1609,10 +1981,12 @@ def texture_var_filter_node(
         node = texture_var_filter_node(mean_filter_node(src, 3), filter_size=5)
         TileGraph(DiskSink(node, "out.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     return window_stat_node(
         source,
         filter_size,
         stat_texture_var,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "texture_var_filter",
     )

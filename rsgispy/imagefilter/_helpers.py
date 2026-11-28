@@ -661,7 +661,11 @@ def _convolve_tile_with_mask(
     kernel: np.ndarray,
     zero_dc: bool,
 ) -> np.ndarray:
-    """Convolve a ``(h, w, kh, kw)`` window array with a 2D kernel."""
+    """
+    Correlate a ``(h, w, kh, kw)`` window array with a 2D kernel (each
+    window weighted by ``kernel`` as laid out, without flipping; flip the
+    kernel first for a convolution).
+    """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     out = np.full(centre_valid.shape, np.nan, dtype=np.float64)
     if np.all(valid):
@@ -879,7 +883,7 @@ def window_stat_node(
     )
 
 
-def kernel_conv_node(
+def kernel_correlate_node(
     source: TileNode,
     kernel: np.ndarray,
     zero_dc: bool = False,
@@ -888,7 +892,14 @@ def kernel_conv_node(
     border: Optional[HaloBorder] = None,
     name: Optional[str] = None,
 ) -> FilterWindowOp:
-    """Build a composable :class:`~rsgispy._io.WindowOp` for a 2D convolution kernel."""
+    """
+    Build a composable :class:`~rsgispy._io.WindowOp` for a 2D
+    **correlation** with ``kernel``: ``out[r, c] = sum(kernel[i, j] *
+    in[r + i - kh // 2, c + j - kw // 2])``, i.e. the kernel is laid over
+    the window as written, without flipping (see :func:`kernel_conv_node`).
+    The built-in edge kernels (:func:`sobel_kernels`, :func:`prewitt_kernels`,
+    the Gaussian derivatives) are defined for this form.
+    """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     k_arr = validate_kernel(kernel)
 
@@ -906,6 +917,35 @@ def kernel_conv_node(
         source=source,
         win_shape=(int(k_arr.shape[0]), int(k_arr.shape[1])),
         tile_fn=_tile_conv,
+        no_data_val=no_data_val,
+        border=border,
+        name=name,
+    )
+
+
+def kernel_conv_node(
+    source: TileNode,
+    kernel: np.ndarray,
+    zero_dc: bool = False,
+    *,
+    no_data_val: Optional[float] = None,
+    border: Optional[HaloBorder] = None,
+    name: Optional[str] = None,
+) -> FilterWindowOp:
+    """
+    Build a composable :class:`~rsgispy._io.WindowOp` for a true 2D
+    **convolution** with ``kernel``: ``out[r, c] = sum(kernel[i, j] *
+    in[r - i + kh // 2, c - j + kw // 2])``, i.e. a correlation
+    (:func:`kernel_correlate_node`) with the kernel flipped in both axes.
+    Kernels symmetric under a 180 degree rotation give the same result as
+    the correlation.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    k_arr = validate_kernel(kernel)
+    return kernel_correlate_node(
+        source,
+        np.ascontiguousarray(k_arr[::-1, ::-1]),
+        zero_dc,
         no_data_val=no_data_val,
         border=border,
         name=name,

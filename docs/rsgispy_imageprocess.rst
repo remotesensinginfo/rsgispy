@@ -200,6 +200,9 @@ same builder.
    * - :func:`~rsgispy.imagefilter.smooth.apply_kernel_filter`
      - :func:`~rsgispy.imagefilter.smooth.kernel_filter_node`
      - ``'kernel'``
+   * - :func:`~rsgispy.imagefilter.smooth.apply_kernel_correlation_filter`
+     - :func:`~rsgispy.imagefilter.smooth.kernel_correlation_filter_node`
+     - ``'kernel_correlation'``
    * - ``edge.apply_sobel_filter``, ``apply_sobel_x_filter``,
        ``apply_sobel_y_filter``, ``apply_prewitt_filter``,
        ``apply_prewitt_x_filter``, ``apply_prewitt_y_filter``

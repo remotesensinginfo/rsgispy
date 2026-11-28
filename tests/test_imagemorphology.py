@@ -401,3 +401,81 @@ def test_local_minima_strict_finds_border_minima(tmp_path, sequencial_out):
         )
         res = TileGraph(MemorySink(node, name="m"), block_size=3).run(use_pbar=False)
         np.testing.assert_array_equal(res["m"][0] > 0, expected)
+
+
+def _morph_reference(arr, size, reducer, mode, fill=0.0):
+    """Reference square-operator dilation / erosion with ``np.pad`` borders."""
+    from numpy.lib.stride_tricks import sliding_window_view  # pylint: disable=import-outside-toplevel
+
+    kwargs = {"constant_values": fill} if mode == "constant" else {}
+    pad = np.pad(arr.astype(np.float64), size // 2, mode=mode, **kwargs)
+    return reducer(sliding_window_view(pad, (size, size)), axis=(-2, -1))
+
+
+@pytest.mark.parametrize(
+    "mode, fill", [("edge", 0.0), ("reflect", 0.0), ("symmetric", 0.0), ("constant", 200.0)]
+)
+def test_morphology_border_mode(tmp_path, mode, fill):
+    """border_mode / border_fill set how the operator is filled beyond the
+    image edge for dilation, erosion, gradient, opening, closing and top-hats."""
+    rng = np.random.default_rng(3)
+    arr = rng.integers(1, 120, size=(9, 11)).astype(np.uint8)
+    in_p = tmp_path / "bm_in.tif"
+    _write_raster(in_p, arr)
+
+    def _run(fn, tag, **kwargs):
+        out_p = tmp_path / f"{tag}_{mode}.tif"
+        fn(str(in_p), str(out_p), op_size=3, border_mode=mode, border_fill=fill,
+           use_pbar=False, **kwargs)
+        with rasterio.open(out_p) as src:
+            return src.read(1).astype(np.float64)
+
+    dil = _morph_reference(arr, 3, np.max, mode, fill)
+    ero = _morph_reference(arr, 3, np.min, mode, fill)
+    np.testing.assert_array_equal(_run(rimorph.image_dilate, "dil"), dil)
+    np.testing.assert_array_equal(_run(rimorph.image_erode, "ero"), ero)
+    np.testing.assert_array_equal(
+        _run(rimorph.image_gradient, "grad"), np.minimum(dil - ero, 255)
+    )
+    np.testing.assert_array_equal(_run(rimorph.image_dilate_combined_out, "dilc"), dil)
+    # Opening: the dilation pads the eroded image with the same border.
+    opened = _morph_reference(ero, 3, np.max, mode, fill)
+    np.testing.assert_array_equal(_run(rimorph.image_opening, "open"), opened)
+    np.testing.assert_array_equal(
+        _run(rimorph.image_white_top_hat, "wth"),
+        np.clip(arr.astype(np.float64) - opened, 0, 255)
+    )
+    closed = _morph_reference(dil, 3, np.min, mode, fill)
+    np.testing.assert_array_equal(_run(rimorph.image_closing, "close"), closed)
+    np.testing.assert_array_equal(
+        _run(rimorph.image_black_top_hat, "bth"),
+        np.clip(closed - arr.astype(np.float64), 0, 255)
+    )
+
+
+def test_morphology_border_mode_default_signatures_and_errors(tmp_path):
+    """border_mode defaults to 'edge' (keyword-only) on every morphology
+    function except the local minima; bad modes raise."""
+    raster_fns = [
+        getattr(rimorph, name)
+        for name in rimorph.__all__
+        if name != "create_circular_op" and "local_minima" not in name
+    ]
+    assert len(raster_fns) == 17
+    for fn in raster_fns:
+        sig = inspect.signature(fn)
+        for kw_name, default in (("border_mode", "edge"), ("border_fill", 0.0)):
+            assert kw_name in sig.parameters, f"{fn.__name__} missing {kw_name}"
+            assert sig.parameters[kw_name].kind == inspect.Parameter.KEYWORD_ONLY
+            assert sig.parameters[kw_name].default == default
+    arr = np.arange(30, dtype=np.uint8).reshape(5, 6)
+    in_p = tmp_path / "def_in.tif"
+    _write_raster(in_p, arr)
+    rimorph.image_erode(str(in_p), str(tmp_path / "a.tif"), use_pbar=False)
+    rimorph.image_erode(str(in_p), str(tmp_path / "b.tif"), border_mode="edge", use_pbar=False)
+    with rasterio.open(tmp_path / "a.tif") as a_ds, rasterio.open(tmp_path / "b.tif") as b_ds:
+        np.testing.assert_array_equal(a_ds.read(), b_ds.read())
+    with pytest.raises(rsgispy.RSGISPyException):
+        rimorph.image_erode(
+            str(in_p), str(tmp_path / "c.tif"), border_mode="wrap", use_pbar=False
+        )
