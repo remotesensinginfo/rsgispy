@@ -629,3 +629,57 @@ def test_optional_imaging_missing():
     finally:
         sys.modules["rsgispy.tools.imaging"] = orig_imaging
         rtools.imaging = orig_imaging
+
+
+def test_utm_zone_number_at_180_is_1():
+    """Longitude 180 is the same meridian as -180: zone 1, not 61."""
+    import rsgispy.tools.utm as utm_mod  # pylint: disable=import-outside-toplevel
+
+    assert utm_mod.latlon_to_zone_number(10.0, 180.0) == 1
+    assert utm_mod.latlon_to_zone_number(10.0, -180.0) == 1
+    assert utm_mod.latlon_to_zone_number(10.0, 179.9) == 60
+    zones = utm_mod.latlon_arr_to_utm_zone_number(
+        np.array([10.0, 10.0, 10.0]), np.array([180.0, -180.0, 179.9])
+    )
+    assert zones.tolist() == [1, 1, 60]
+
+
+def test_utm_from_epsg_validates_code():
+    """utm_from_epsg rejects codes that are not WGS84 UTM zones."""
+    import rsgispy.tools.utm as utm_mod  # pylint: disable=import-outside-toplevel
+
+    assert utm_mod.utm_from_epsg(32601) == (1, "N")
+    assert utm_mod.utm_from_epsg(32760) == (60, "S")
+    for bad in (4326, 32600, 32661, 32700, 32761, 27700):
+        with pytest.raises(rsgispy.RSGISPyException):
+            utm_mod.utm_from_epsg(bad)
+
+
+def test_split_wgs84_bbox_utm_zones_exceptions_and_antimeridian():
+    """The Norway and Svalbard exceptions and antimeridian bboxes are split right."""
+    import rsgispy.tools.utm as utm_mod  # pylint: disable=import-outside-toplevel
+
+    # Norway: zone 32 is widened to 3-12 E between 56 and 64 N.
+    assert utm_mod.split_wgs84_bbox_utm_zones((4.0, 5.5, 58.0, 60.0)) == [
+        [32, [4.0, 5.5, 58.0, 60.0]]
+    ]
+    # Svalbard: zone 33 covers 9-21 E between 72 and 84 N.
+    assert utm_mod.split_wgs84_bbox_utm_zones((10.0, 20.0, 75.0, 78.0)) == [
+        [33, [10.0, 20.0, 75.0, 78.0]]
+    ]
+    # Across the Norway band edge: zone 31 below 56 N, zone 32 above.
+    assert utm_mod.split_wgs84_bbox_utm_zones((4.0, 5.0, 54.0, 58.0)) == [
+        [31, [4.0, 5.0, 54.0, 56.0]],
+        [32, [4.0, 5.0, 56.0, 58.0]],
+    ]
+    # Standard zones are unchanged.
+    assert utm_mod.split_wgs84_bbox_utm_zones((-7.0, 1.0, 51.0, 53.0)) == [
+        [29, [-7.0, -6.0, 51.0, 53.0]],
+        [30, [-6.0, 0.0, 51.0, 53.0]],
+        [31, [0.0, 1.0, 51.0, 53.0]],
+    ]
+    # MinX > MaxX crosses the antimeridian: zones 60 and 1.
+    assert utm_mod.split_wgs84_bbox_utm_zones((178.0, -178.0, 10.0, 12.0)) == [
+        [60, [178.0, 180.0, 10.0, 12.0]],
+        [1, [-180.0, -178.0, 10.0, 12.0]],
+    ]
