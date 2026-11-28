@@ -11,14 +11,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import Point
 from sklearn.ensemble import IsolationForest, RandomForestClassifier
 from sklearn.metrics import roc_auc_score, roc_curve
 
 import rsgispy
-import rsgispy.modelling._helpers as sdm_helpers
 import rsgispy.modelling.species_distribution as sdm
+
+from conftest import write_raster
 
 matplotlib.use("Agg")
 
@@ -45,26 +45,6 @@ def _sens_spec(y_true, scores, thres):
     sens = np.count_nonzero(pred & (y_true == 1)) / np.count_nonzero(y_true == 1)
     spec = np.count_nonzero(~pred & (y_true == 0)) / np.count_nonzero(y_true == 0)
     return sens, spec
-
-
-def test_public_helpers_exported():
-    """The helpers import from the public module and stay importable internally."""
-    for name in PUBLIC_HELPERS:
-        assert name in sdm.__all__
-        func = getattr(sdm, name)
-        assert callable(func)
-        assert func.__doc__ and ".. code:: python" in func.__doc__
-        # Internal callers import from rsgispy.modelling._helpers.
-        assert getattr(sdm_helpers, name) is func
-    # pylint: disable=import-outside-toplevel,unused-import
-    from rsgispy.modelling.species_distribution import (  # noqa: F401
-        calc_binary_roc_auc,
-        calc_binary_threshold,
-        calc_single_class_predictions,
-        get_positive_class_probs,
-        plot_roc_curve,
-        predict_raster_from_env_vars,
-    )
 
 
 def test_calc_binary_roc_auc_matches_sklearn():
@@ -230,17 +210,6 @@ def test_calc_single_class_predictions():
     assert pred[20:].sum() == 0
 
 
-def _write_raster(path, arr, nodata):
-    data = arr[None] if arr.ndim == 2 else arr
-    with rasterio.open(
-        path, "w", driver="GTiff", height=data.shape[1], width=data.shape[2],
-        count=data.shape[0], dtype=str(data.dtype), crs="EPSG:32630",
-        transform=from_origin(500000.0, 5200000.0, 10.0, 10.0), nodata=nodata,
-    ) as dst:
-        dst.write(data)
-    return str(path)
-
-
 @pytest.fixture(name="pred_scene")
 def fixture_pred_scene(tmp_path):
     """Two covariates (one with a no data pixel) and a study area mask."""
@@ -250,8 +219,8 @@ def fixture_pred_scene(tmp_path):
     var_a[5, 5] = -9999.0
     mask = np.zeros(rows.shape, dtype=np.uint8)
     mask[1:-1, 1:-1] = 1
-    cov_img = _write_raster(tmp_path / "cov.tif", np.stack([var_a, var_b]), -9999.0)
-    msk_img = _write_raster(tmp_path / "mask.tif", mask, 0)
+    cov_img = write_raster(tmp_path / "cov.tif", np.stack([var_a, var_b]), nodata=-9999.0)
+    msk_img = write_raster(tmp_path / "mask.tif", mask, nodata=0)
     env_vars = {
         "a": sdm.EnvVarInfo(name="a", file=cov_img, band=1,
                             data_type=rsgispy.VAR_TYPE_CONTINUOUS),

@@ -4,6 +4,7 @@ Tests for rsgispy.tools.files, rsgispy.tools.hashing, and rsgispy.tools.archives
 
 import datetime
 import hashlib
+import io
 import os
 import stat
 import tarfile
@@ -424,3 +425,56 @@ def test_safe_join_rejects_traversal(tmp_path):
     for bad in ("../x.tif", "pub/../../x.tif", "a/../.."):
         with pytest.raises(rsgispy.RSGISPyException):
             rfiles.safe_join(out_dir, bad, keep_subdirs=True)
+
+
+def test_archives_zip_and_tar_traversal_guards(tmp_path):
+    """Reject path traversal, absolute paths, and symlinks in zip/tar archives."""
+    for name in ("out_z1", "out_z2", "out_z3", "out_t1", "out_t2", "out_good"):
+        (tmp_path / name).mkdir()
+
+    bad_zip = tmp_path / "traversal.zip"
+    with zipfile.ZipFile(bad_zip, "w") as zf:
+        zf.writestr("../escape.txt", "nope")
+    with pytest.raises(rsgispy.RSGISPyException, match="Unsafe"):
+        archives.unzip_file(str(bad_zip), str(tmp_path / "out_z1"))
+
+    abs_zip = tmp_path / "abs.zip"
+    with zipfile.ZipFile(abs_zip, "w") as zf:
+        zf.writestr("/tmp/escape.txt", "nope")
+    with pytest.raises(rsgispy.RSGISPyException, match="Unsafe"):
+        archives.unzip_file(str(abs_zip), str(tmp_path / "out_z2"))
+
+    sym_zip = tmp_path / "symlink.zip"
+    with zipfile.ZipFile(sym_zip, "w") as zf:
+        zinfo = zipfile.ZipInfo("link.txt")
+        zinfo.external_attr = (stat.S_IFLNK | 0o777) << 16
+        zf.writestr(zinfo, "/etc/passwd")
+    with pytest.raises(rsgispy.RSGISPyException, match="symlink"):
+        archives.unzip_file(str(sym_zip), str(tmp_path / "out_z3"))
+
+    bad_tar = tmp_path / "traversal.tar.gz"
+    with tarfile.open(bad_tar, "w:gz") as tf:
+        tinfo = tarfile.TarInfo(name="../escape.txt")
+        payload = b"evil"
+        tinfo.size = len(payload)
+        tf.addfile(tinfo, io.BytesIO(payload))
+    with pytest.raises(rsgispy.RSGISPyException, match="Unsafe"):
+        archives.untar_gz_file(str(bad_tar), str(tmp_path / "out_t1"))
+
+    sym_tar = tmp_path / "symlink.tar.gz"
+    with tarfile.open(sym_tar, "w:gz") as tf:
+        tinfo = tarfile.TarInfo(name="bad_link")
+        tinfo.type = tarfile.SYMTYPE
+        tinfo.linkname = "../../outside"
+        tf.addfile(tinfo)
+    with pytest.raises(rsgispy.RSGISPyException, match="symlink"):
+        archives.untar_gz_file(str(sym_tar), str(tmp_path / "out_t2"))
+
+    good_zip = tmp_path / "good.zip"
+    with zipfile.ZipFile(good_zip, "w") as zf:
+        zf.writestr("sub/hello.txt", "world")
+    out_dir = archives.unzip_file(str(good_zip), str(tmp_path / "out_good"))
+    assert (tmp_path / "out_good" / "good" / "sub" / "hello.txt").read_text(
+        encoding="utf-8"
+    ) == "world"
+    assert os.path.isdir(out_dir)

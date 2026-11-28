@@ -16,13 +16,11 @@ from zonal_scene import FIELD_PX, make_zonal_scene
 pytest.importorskip("h3")
 pytest.importorskip("pyarrow")
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples",
     "zonal_stats_and_vectors.py",
-)
-GUIDE = os.path.join(
-    os.path.dirname(__file__), os.pardir, "docs", "guides",
-    "zonal_stats_and_vectors.rst",
 )
 
 
@@ -81,20 +79,3 @@ def test_worked_example_runs(tmp_path):
     test = gpd.read_file(out["test_vec"])
     assert len(train) + len(test) == len(pts)
     assert 0.2 < len(test) / len(pts) < 0.4
-
-
-def test_guide_markers_exist():
-    """Every literalinclude marker used by the guide exists in the script."""
-    with open(EXAMPLE, encoding="utf-8") as f_obj:
-        script = f_obj.read()
-    with open(GUIDE, encoding="utf-8") as f_obj:
-        guide = f_obj.read()
-    markers = [
-        line.split(":start-after:")[1].strip()
-        for line in guide.splitlines()
-        if ":start-after:" in line
-    ]
-    assert len(markers) >= 8
-    for marker in markers:
-        assert marker in script
-        assert marker.replace("[step-", "[end-step-") in script

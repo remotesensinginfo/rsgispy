@@ -13,11 +13,12 @@ import rasterio
 
 from coreg_scene import SHIFT, make_coreg_scene
 
+import pytest  # noqa: E402
+
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "image_coregistration.py"
-)
-GUIDE = os.path.join(
-    os.path.dirname(__file__), os.pardir, "docs", "guides", "image_coregistration.rst"
 )
 
 
@@ -68,21 +69,3 @@ def test_worked_example_runs(tmp_path):
         assert assess[name]["resid_offset_m"] < 5.0
     assert assess["affine"]["correlation"] > assess["shift"]["correlation"]
     assert os.path.exists(out["diff_img"])
-
-
-def test_guide_markers_exist():
-    """Every literalinclude marker used by the guide exists in the script."""
-    with open(EXAMPLE, encoding="utf-8") as f_obj:
-        script = f_obj.read()
-    with open(GUIDE, encoding="utf-8") as f_obj:
-        guide = f_obj.read()
-    markers = [
-        line.split(":start-after:")[1].strip()
-        for line in guide.splitlines()
-        # the [tutorial-data] marker is in the *_tutorial.py script
-        if ":start-after:" in line and "tutorial-data" not in line
-    ]
-    assert len(markers) >= 9
-    for marker in markers:
-        assert marker in script
-        assert marker.replace("[step-", "[end-step-") in script

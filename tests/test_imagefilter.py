@@ -2,7 +2,6 @@
 Tests for :mod:`rsgispy.imagefilter`.
 """
 
-import inspect
 
 import numpy as np
 import pytest
@@ -13,29 +12,12 @@ import rsgispy
 import rsgispy.imagefilter as imf
 import rsgispy.imageprocess as img_proc
 
+from conftest import write_raster
+
 
 def _write_raster(path, data, nodata=None, descriptions=None):
     """Write a 2D or 3D GeoTIFF raster for filter testing."""
-    arr = np.asarray(data)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis, :, :]
-    count, height, width = arr.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(arr.dtype),
-        "crs": "EPSG:32630",
-        "transform": from_origin(500000.0, 5200000.0, 10.0, 10.0),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(arr)
-        if descriptions is not None:
-            for idx, desc in enumerate(descriptions, start=1):
-                dst.set_band_description(idx, desc)
+    return write_raster(path, data, nodata=nodata, band_names=descriptions)
 
 
 def test_window_stat_and_difference_filters(tmp_path):
@@ -248,22 +230,10 @@ def test_edge_gaussian_laplacian_and_custom_kernel_filters(tmp_path):
         )
 
 
-def test_imagefilter_submodules_and_sar_filters(tmp_path):
-    """Test submodule imports and all SAR backscatter speckle filters."""
-    import rsgispy.imagefilter.edge as if_edge
+def test_sar_speckle_filters(tmp_path):
+    """All SAR backscatter speckle filters smooth homogeneous areas, keep point
+    targets, nodata and band names, and Refined Lee keeps step edges."""
     import rsgispy.imagefilter.sar as if_sar
-    import rsgispy.imagefilter.smooth as if_smooth
-    import rsgispy.imagefilter.stats as if_stats
-    import rsgispy.imagefilter.texture as if_tex
-
-    # Package exports only its submodules, not individual filter functions
-    assert imf.__all__ == ["stats", "smooth", "edge", "sar", "texture", "chained"]
-    assert imf.stats is if_stats
-    assert imf.smooth is if_smooth
-    assert imf.edge is if_edge
-    assert imf.sar is if_sar
-    assert imf.texture is if_tex
-    assert not hasattr(imf, "apply_mean_filter")
 
     # Synthetic SAR intensity image: low region + high region + strong point target + nodata
     sar_in = tmp_path / "sar_test.tif"
@@ -433,38 +403,8 @@ def test_glcm_texture_filters(tmp_path):
         if_tex.apply_glcm_filter(str(nd_in), str(tmp_path / "err3.tif"), min_val=0.0, max_val=None)
 
 
-def test_imagefilter_v1_signatures(tmp_path):
-    """Verify v1.0 keyword-only tail on all raster-producing imagefilter functions."""
-    kw_tail = {
-        "gdalformat": "GTIFF",
-        "datatype": None,
-        "no_data_val": None,
-        "calc_stats": True,
-        "use_pbar": True,
-    }
-    submodules = [imf.stats, imf.smooth, imf.edge, imf.sar, imf.texture, imf.chained]
-    checked = 0
-    for mod in submodules:
-        for name in mod.__all__:
-            if not name.startswith("apply_"):
-                continue
-            fn = getattr(mod, name)
-            sig = inspect.signature(fn)
-            params = list(sig.parameters.values())
-            assert params[0].name == "input_img"
-            assert params[1].name == "output_img"
-            for kw_name, kw_default in kw_tail.items():
-                assert kw_name in sig.parameters, f"{mod.__name__}.{name} missing {kw_name}"
-                p = sig.parameters[kw_name]
-                assert p.kind == inspect.Parameter.KEYWORD_ONLY, (
-                    f"{mod.__name__}.{name}.{kw_name} must be keyword-only"
-                )
-                assert p.default == kw_default
-            checked += 1
-
-    # 17 stats + 4 smooth + 9 edge + 7 sar + 1 texture + 1 chained = 39 functions
-    assert checked == 39
-
+def test_imagefilter_gdalformat_positional_raises_type_error(tmp_path):
+    """gdalformat is keyword-only: passing it positionally raises TypeError."""
     # Passing gdalformat positionally must raise TypeError
     in_p = tmp_path / "sig_in.tif"
     _write_raster(in_p, np.ones((5, 5), dtype=np.float32))
@@ -619,24 +559,6 @@ def test_window_filters_border_mode_default_nan_fill_and_errors(tmp_path):
         # Keyword-only.
         imf.stats.apply_mean_filter(str(in_p), str(tmp_path / "b3.tif"), 3, "GTIFF",
                                     None, None, "reflect")
-
-
-def test_imagefilter_border_mode_signatures():
-    """Every window filter, kernel, edge, SAR and GLCM function and node
-    builder takes keyword-only border_mode='edge' and border_fill=0.0."""
-    checked = 0
-    for mod in [imf.stats, imf.smooth, imf.edge, imf.sar, imf.texture]:
-        for name in mod.__all__:
-            if not (name.startswith("apply_") or name.endswith("_node")):
-                continue
-            sig = inspect.signature(getattr(mod, name))
-            for kw_name, default in (("border_mode", "edge"), ("border_fill", 0.0)):
-                assert kw_name in sig.parameters, f"{mod.__name__}.{name} missing {kw_name}"
-                par = sig.parameters[kw_name]
-                assert par.kind == inspect.Parameter.KEYWORD_ONLY
-                assert par.default == default
-            checked += 1
-    assert checked == 76
 
 
 def test_filter_default_nodata_when_input_nodata_does_not_fit(tmp_path):

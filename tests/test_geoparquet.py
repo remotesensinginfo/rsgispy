@@ -13,7 +13,6 @@ import geopandas as gpd
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import MultiPolygon, Point, box
 
 import rsgispy
@@ -43,6 +42,8 @@ import rsgispy.vectorprocess as vp
 import rsgispy.zonalstats.point as zs_pt
 import rsgispy.zonalstats.polygon as zs_poly
 
+from conftest import write_raster
+
 pq = pytest.importorskip("pyarrow.parquet")
 
 
@@ -58,35 +59,6 @@ def _parquet_codec(path: str) -> str:
     """Return the Arrow Parquet compression codec string for column 0."""
     meta = pq.read_metadata(path)
     return str(meta.row_group(0).column(0).compression)
-
-
-def _write_test_raster(
-    path: str,
-    arr: np.ndarray,
-    epsg: int = 32630,
-    tl_x: float = 500000.0,
-    tl_y: float = 5600100.0,
-    res: float = 10.0,
-    nodata=None,
-) -> str:
-    """Write a single-band GeoTIFF for GeoParquet integration tests."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    data = np.asarray(arr)
-    height, width = data.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=1,
-        dtype=data.dtype,
-        crs=f"EPSG:{epsg}",
-        transform=from_origin(tl_x, tl_y, res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(data, 1)
-    return path
 
 
 def _sample_polys(epsg: int = 32630) -> gpd.GeoDataFrame:
@@ -313,8 +285,9 @@ def test_vectorutils_geoparquet(tmp_path):
     assert _parquet_codec(pq_rsub) == "SNAPPY"
 
 
-def test_vectorgeoms_geoparquet(tmp_path):
-    """Test vectorgeoms (overlay, spatial, polygons, lines, create) with GeoParquet."""
+@pytest.fixture
+def overlay_pq_pair(tmp_path):
+    """Two adjacent polygons (``a.parquet``) and an ROI (``b.parquet``) overlapping both."""
     pq_a = str(tmp_path / "a.parquet")
     pq_b = str(tmp_path / "b.parquet")
     vp.write_vec_gdf(
@@ -333,7 +306,12 @@ def test_vectorgeoms_geoparquet(tmp_path):
         ),
         pq_b,
     )
+    return pq_a, pq_b
 
+
+def test_vectorgeoms_overlay_geoparquet(tmp_path, overlay_pq_pair):
+    """Test vectorgeoms clip and intersection with compressed GeoParquet outputs."""
+    pq_a, pq_b = overlay_pq_pair
     pq_clip = str(tmp_path / "clip.parquet")
     vg_overlay.clip_vec_lyr(
         pq_a, None, pq_b, None, pq_clip, out_format="PARQUET", out_compress="zstd"
@@ -348,6 +326,9 @@ def test_vectorgeoms_geoparquet(tmp_path):
     assert _parquet_codec(pq_inter) == "GZIP"
     assert gpd.read_parquet(pq_inter).area.sum() == pytest.approx(100.0)
 
+
+def test_vectorgeoms_explode_geoparquet_and_multi_layer_guard(tmp_path):
+    """Test explode_vec_files to GeoParquet and its multi-layer input guard."""
     # Polygons + explode_vec_files guard
     pq_multi = str(tmp_path / "multi.parquet")
     vp.write_vec_gdf(
@@ -383,6 +364,10 @@ def test_vectorgeoms_geoparquet(tmp_path):
             [gpkg_multi_lyr], pq_exp_dir, out_format="PARQUET", use_pbar=False
         )
 
+
+def test_vectorgeoms_buffer_geoparquet(tmp_path, overlay_pq_pair):
+    """Test buffer_vec_layer_gp with a compressed GeoParquet output."""
+    pq_a, _ = overlay_pq_pair
     pq_buf = str(tmp_path / "buf.parquet")
     vg_polys.buffer_vec_layer_gp(
         pq_a, None, 2.0, pq_buf, out_format="PARQUET", out_compress="snappy"
@@ -390,6 +375,9 @@ def test_vectorgeoms_geoparquet(tmp_path):
     assert _parquet_codec(pq_buf) == "SNAPPY"
     assert gpd.read_parquet(pq_buf).area.iloc[0] > 100.0
 
+
+def test_vectorgeoms_spatial_geoparquet(tmp_path):
+    """Test bbox_intersects_vec_lyr and create_alpha_shape with GeoParquet."""
     # Spatial: alpha shape
     pts_pq = str(tmp_path / "hull_pts.parquet")
     vg_create.write_pts_to_vec(
@@ -418,6 +406,9 @@ def test_vectorgeoms_geoparquet(tmp_path):
         assert created is True
         assert _parquet_codec(hull_pq) == "GZIP"
 
+
+def test_vectorgeoms_lines_geoparquet(tmp_path):
+    """Test create_lines_vec and create_orthg_lines with GeoParquet."""
     # Lines
     lines_pq = str(tmp_path / "lines.parquet")
     vg_create.create_lines_vec(
@@ -444,11 +435,14 @@ def test_vectorgeoms_geoparquet(tmp_path):
     assert _parquet_codec(orthg_pq) == "GZIP"
     assert len(gpd.read_parquet(orthg_pq)) == 3
 
+
+def test_vector_create_polygonise_and_grid_geoparquet(tmp_path):
+    """Test polygonise_raster_to_vec_lyr and define_grid with GeoParquet and their guards."""
     # Create: polygonise + existing file guard + define_grid multi-zone guard
     cls_tif = str(tmp_path / "cls.tif")
     arr = np.zeros((8, 8), dtype=np.uint8)
     arr[1:4, 1:4] = 1
-    _write_test_raster(cls_tif, arr, nodata=0)
+    write_raster(cls_tif, arr, nodata=0, origin=(500000.0, 5600100.0))
 
     poly_pq = str(tmp_path / "poly_ras.parquet")
     vg_create.polygonise_raster_to_vec_lyr(
@@ -494,8 +488,9 @@ def test_vectorgeoms_geoparquet(tmp_path):
         )
 
 
-def test_vectorattrs_vectorstats_zonalstats_geoparquet(tmp_path):
-    """Test vectorattrs, vectorstats, and zonalstats reading/writing compressed GeoParquet."""
+@pytest.fixture
+def attr_polys_pq(tmp_path):
+    """Three attributed 20 m squares written to a Snappy-compressed GeoParquet."""
     polys_pq = str(tmp_path / "polys.parquet")
     vp.write_vec_gdf(
         gpd.GeoDataFrame(
@@ -517,6 +512,12 @@ def test_vectorattrs_vectorstats_zonalstats_geoparquet(tmp_path):
         polys_pq,
         out_compress="snappy",
     )
+    return polys_pq
+
+
+def test_vectorattrs_io_geoparquet(tmp_path, attr_polys_pq):
+    """Test vectorattrs.io in-place and copy operations on compressed GeoParquet."""
+    polys_pq = attr_polys_pq
     assert _parquet_codec(polys_pq) == "SNAPPY"
 
     # vectorattrs.io in-place & copy operations + export_vec_attrs_to_parquet out_compress
@@ -546,6 +547,10 @@ def test_vectorattrs_vectorstats_zonalstats_geoparquet(tmp_path):
     )
     assert _parquet_codec(attr_pq) == "ZSTD"
 
+
+def test_vectorattrs_columns_and_spatial_geoparquet(tmp_path, attr_polys_pq):
+    """Test vectorattrs column and bbox helpers writing compressed GeoParquet."""
+    polys_pq = attr_polys_pq
     # vectorattrs.columns & spatial
     fid_pq = str(tmp_path / "fid.parquet")
     va_cols.add_fid_col(
@@ -579,6 +584,10 @@ def test_vectorattrs_vectorstats_zonalstats_geoparquet(tmp_path):
     assert _parquet_codec(bbox_pq) == "GZIP"
     assert "xmin" in vu_meta.get_vec_lyr_cols(bbox_pq)
 
+
+def test_vectorstats_metrics_geoparquet(tmp_path, attr_polys_pq):
+    """Test vectorstats.metrics area and feature counts with GeoParquet."""
+    polys_pq = attr_polys_pq
     # vectorstats.metrics
     area_pq = str(tmp_path / "area.parquet")
     vs_metrics.calc_vec_area(
@@ -591,10 +600,14 @@ def test_vectorattrs_vectorstats_zonalstats_geoparquet(tmp_path):
         "Water": 1,
     }
 
+
+def test_zonalstats_geoparquet_in_place_updates(tmp_path, attr_polys_pq):
+    """Test zonalstats polygon and point in-place GeoParquet updates with out_compress."""
+    polys_pq = attr_polys_pq
     # zonalstats.polygon & point in-place GeoParquet updates with out_compress
     ras_tif = str(tmp_path / "zonal.tif")
     arr = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
-    _write_test_raster(ras_tif, arr, tl_x=500000.0, tl_y=5600080.0, res=10.0)
+    write_raster(ras_tif, arr, origin=(500000.0, 5600080.0), pixel_size=10.0)
 
     zs_poly.calc_zonal_band_stats_file(
         polys_pq,
@@ -664,17 +677,38 @@ def test_vectorattrs_vectorstats_zonalstats_geoparquet(tmp_path):
     assert va_io.read_vec_column(pts_pq, None, "pval") == pytest.approx([1.0, 19.0])
 
 
-def test_imageutils_imagecalc_elevation_geoparquet(tmp_path):
-    """Test imagelut, spatial, subsetting, warp cutline, rasterise, imagecalc, and roughness."""
+@pytest.fixture
+def tile_rasters(tmp_path):
+    """Two adjacent 8 x 8 constant tiles (10 and 20) side by side."""
     t1 = str(tmp_path / "t1.tif")
     t2 = str(tmp_path / "t2.tif")
-    _write_test_raster(
-        t1, np.full((8, 8), 10.0, dtype=np.float32), tl_x=500000.0, tl_y=5600080.0
+    write_raster(
+        t1, np.full((8, 8), 10.0, dtype=np.float32), origin=(500000.0, 5600080.0)
     )
-    _write_test_raster(
-        t2, np.full((8, 8), 20.0, dtype=np.float32), tl_x=500080.0, tl_y=5600080.0
+    write_raster(
+        t2, np.full((8, 8), 20.0, dtype=np.float32), origin=(500080.0, 5600080.0)
     )
+    return t1, t2
 
+
+@pytest.fixture
+def roi_utm_pq(tmp_path):
+    """A 40 m square ROI (``val`` = 5) over the first tile, as GeoParquet."""
+    roi_pq = str(tmp_path / "roi_utm.parquet")
+    vp.write_vec_gdf(
+        gpd.GeoDataFrame(
+            {"val": [5.0]},
+            geometry=[box(500010.0, 5600020.0, 500050.0, 5600060.0)],
+            crs="EPSG:32630",
+        ),
+        roi_pq,
+    )
+    return roi_pq
+
+
+def test_imagelut_geoparquet(tmp_path, tile_rasters):
+    """Test the image extent LUT written to and queried from GeoParquet."""
+    t1, t2 = tile_rasters
     lut_pq = str(tmp_path / "img_lut.parquet")
     iu_lut.create_img_extent_lut(
         [t1, t2],
@@ -714,16 +748,11 @@ def test_imageutils_imagecalc_elevation_geoparquet(tmp_path):
     )
     assert iu_lut.query_file_lut(lut_pq, None, roi_wgs_pq) == [t1]
 
+
+def test_subset_rasterise_and_grid_geoparquet(tmp_path, tile_rasters, roi_utm_pq):
+    """Test subset, rasterise_vec_lyr and grid_scattered_pts with GeoParquet inputs."""
+    t1, _ = tile_rasters
     # subsetting.subset + rasterise.rasterise_vec_lyr + spatial.grid_scattered_pts
-    roi_utm_pq = str(tmp_path / "roi_utm.parquet")
-    vp.write_vec_gdf(
-        gpd.GeoDataFrame(
-            {"val": [5.0]},
-            geometry=[box(500010.0, 5600020.0, 500050.0, 5600060.0)],
-            crs="EPSG:32630",
-        ),
-        roi_utm_pq,
-    )
     sub_tif = str(tmp_path / "sub.tif")
     iu_sub.subset(
         t1,
@@ -776,6 +805,10 @@ def test_imageutils_imagecalc_elevation_geoparquet(tmp_path):
     with rasterio.open(idw_tif) as src:
         assert src.read(1)[0, 0] == pytest.approx(1.0)
 
+
+def test_gdal_warp_geoparquet_cutline(tmp_path, tile_rasters, roi_utm_pq):
+    """Test gdal_warp with a GeoParquet cutline and the cutline_where guard."""
+    t1, _ = tile_rasters
     # gdal_warp GeoParquet cutline + guard against cutline_where/cutline_sql
     crop_tif = str(tmp_path / "warp_cut.tif")
     iu_warp.gdal_warp(
@@ -789,13 +822,16 @@ def test_imageutils_imagecalc_elevation_geoparquet(tmp_path):
             t1, crop_tif, cutline=roi_utm_pq, cutline_where="val = 5"
         )
 
+
+def test_pt_smpl_img_vals_and_roughness_geoparquet(tmp_path):
+    """Test calc_pt_smpl_img_vals and the roughness profile metrics with GeoParquet."""
     # calc_pt_smpl_img_vals & elevation.roughness with GeoParquet & out_compress
     yy, xx = np.mgrid[0:32, 0:32]
     dem_arr = (
         100.0 + 0.5 * xx + 2.0 * np.sin(2.0 * np.pi * xx / 6.0)
     ).astype(np.float32)
     dem_tif = str(tmp_path / "dem.tif")
-    _write_test_raster(dem_tif, dem_arr, tl_x=500000.0, tl_y=5600320.0)
+    write_raster(dem_tif, dem_arr, origin=(500000.0, 5600320.0))
 
     dem_pts_pq = str(tmp_path / "dem_pts.parquet")
     vp.write_vec_gdf(
@@ -833,9 +869,9 @@ def test_imageutils_imagecalc_elevation_geoparquet(tmp_path):
     assert "avg_ra" in gpd.read_parquet(rough_pq).columns
 
 
-def test_dataaccess_droneutils_checkdatasets_geoparquet(tmp_path, monkeypatch):
-    """Test openstreetmap, droneutils, and checkdatasets with GeoParquet & compression."""
-    # OpenStreetMap GeoParquet export
+@pytest.fixture
+def osm_sample_gdf(monkeypatch):
+    """Patch osmnx so OpenStreetMap queries return one building polygon."""
     sample_gdf = gpd.GeoDataFrame(
         {"addr:street": ["High St"], "geometry": [box(-4.09, 52.41, -4.08, 52.42)]},
         crs="EPSG:4326",
@@ -849,6 +885,12 @@ def test_dataaccess_droneutils_checkdatasets_geoparquet(tmp_path, monkeypatch):
         ),
         raising=False,
     )
+    return sample_gdf
+
+
+@pytest.fixture
+def osm_pq(tmp_path, osm_sample_gdf):
+    """The patched OpenStreetMap buildings exported to a Zstd GeoParquet."""
     osm_pq = str(tmp_path / "osm.parquet")
     osm.get_osm_to_file(
         osm_pq,
@@ -858,6 +900,12 @@ def test_dataaccess_droneutils_checkdatasets_geoparquet(tmp_path, monkeypatch):
         out_format="PARQUET",
         out_compress="zstd",
     )
+    return osm_pq
+
+
+def test_openstreetmap_geoparquet_export(tmp_path, osm_pq):
+    """Test get_osm_to_file and get_osm_multi_to_file writing compressed GeoParquet."""
+    # OpenStreetMap GeoParquet export
     assert _parquet_codec(osm_pq) == "ZSTD"
     assert len(gpd.read_parquet(osm_pq)) == 1
 
@@ -873,102 +921,109 @@ def test_dataaccess_droneutils_checkdatasets_geoparquet(tmp_path, monkeypatch):
     assert _parquet_codec(osm_multi_pq) == "GZIP"
     assert len(gpd.read_parquet(osm_multi_pq)) == 2
 
+
+@pytest.mark.skipif(not rsgispy.droneutils.HAVE_EXIFTOOL, reason="exiftool not installed")
+def test_droneutils_flightline_geoparquet(tmp_path, monkeypatch):
+    """Test create_flightline_vec to GeoParquet and its single-layer output guard."""
     # Droneutils flightline GeoParquet & single-layer guard
-    if rsgispy.droneutils.HAVE_EXIFTOOL:
-        img1 = str(tmp_path / "d1.jpg")
-        img2 = str(tmp_path / "d2.jpg")
-        for p in (img1, img2):
-            with open(p, "wb") as fp:
-                fp.write(b"fakejpeg")
+    img1 = str(tmp_path / "d1.jpg")
+    img2 = str(tmp_path / "d2.jpg")
+    for p in (img1, img2):
+        with open(p, "wb") as fp:
+            fp.write(b"fakejpeg")
 
-        meta = {
-            img1: {
-                "EXIF:DateTimeOriginal": "2024:06:01 10:00:00",
-                "Composite:GPSLatitude": 52.4,
-                "Composite:GPSLongitude": -4.08,
-                "XMP:RelativeAltitude": 50.0,
-                "XMP:AbsoluteAltitude": 120.0,
-                "XMP:GimbalRollDegree": 0.0,
-                "XMP:GimbalPitchDegree": -90.0,
-                "XMP:GimbalYawDegree": 45.0,
-                "XMP:FlightPitchDegree": 1.0,
-                "XMP:FlightRollDegree": 2.0,
-                "XMP:FlightYawDegree": 90.0,
-                "EXIF:FocalLength": 8.8,
-                "EXIF:FocalLengthIn35mmFormat": 24.0,
-                "EXIF:ImageWidth": 4000,
-                "EXIF:ImageHeight": 3000,
-                "EXIF:MaxApertureValue": 2.8,
-                "EXIF:Model": "FC6310",
-                "XMP:RigCameraIndex": 0,
-            },
-            img2: {
-                "EXIF:DateTimeOriginal": "2024:06:01 10:00:05",
-                "Composite:GPSLatitude": 52.401,
-                "Composite:GPSLongitude": -4.081,
-                "XMP:RelativeAltitude": 51.0,
-                "XMP:AbsoluteAltitude": 121.0,
-                "XMP:GimbalRollDegree": 0.1,
-                "XMP:GimbalPitchDegree": -89.5,
-                "XMP:GimbalYawDegree": 46.0,
-                "XMP:FlightPitchDegree": 1.0,
-                "XMP:FlightRollDegree": 2.0,
-                "XMP:FlightYawDegree": 90.0,
-                "EXIF:FocalLength": 8.8,
-                "EXIF:FocalLengthIn35mmFormat": 24.0,
-                "EXIF:ImageWidth": 4000,
-                "EXIF:ImageHeight": 3000,
-                "EXIF:MaxApertureValue": 2.8,
-                "EXIF:Model": "FC6310",
-                "XMP:SensorIndex": 1,
-            },
-        }
+    meta = {
+        img1: {
+            "EXIF:DateTimeOriginal": "2024:06:01 10:00:00",
+            "Composite:GPSLatitude": 52.4,
+            "Composite:GPSLongitude": -4.08,
+            "XMP:RelativeAltitude": 50.0,
+            "XMP:AbsoluteAltitude": 120.0,
+            "XMP:GimbalRollDegree": 0.0,
+            "XMP:GimbalPitchDegree": -90.0,
+            "XMP:GimbalYawDegree": 45.0,
+            "XMP:FlightPitchDegree": 1.0,
+            "XMP:FlightRollDegree": 2.0,
+            "XMP:FlightYawDegree": 90.0,
+            "EXIF:FocalLength": 8.8,
+            "EXIF:FocalLengthIn35mmFormat": 24.0,
+            "EXIF:ImageWidth": 4000,
+            "EXIF:ImageHeight": 3000,
+            "EXIF:MaxApertureValue": 2.8,
+            "EXIF:Model": "FC6310",
+            "XMP:RigCameraIndex": 0,
+        },
+        img2: {
+            "EXIF:DateTimeOriginal": "2024:06:01 10:00:05",
+            "Composite:GPSLatitude": 52.401,
+            "Composite:GPSLongitude": -4.081,
+            "XMP:RelativeAltitude": 51.0,
+            "XMP:AbsoluteAltitude": 121.0,
+            "XMP:GimbalRollDegree": 0.1,
+            "XMP:GimbalPitchDegree": -89.5,
+            "XMP:GimbalYawDegree": 46.0,
+            "XMP:FlightPitchDegree": 1.0,
+            "XMP:FlightRollDegree": 2.0,
+            "XMP:FlightYawDegree": 90.0,
+            "EXIF:FocalLength": 8.8,
+            "EXIF:FocalLengthIn35mmFormat": 24.0,
+            "EXIF:ImageWidth": 4000,
+            "EXIF:ImageHeight": 3000,
+            "EXIF:MaxApertureValue": 2.8,
+            "EXIF:Model": "FC6310",
+            "XMP:SensorIndex": 1,
+        },
+    }
 
-        class _FakeExif:
-            def __enter__(self):
-                return self
+    class _FakeExif:
+        def __enter__(self):
+            return self
 
-            def __exit__(self, *_args):
-                return False
+        def __exit__(self, *_args):
+            return False
 
-            def get_metadata(self, p):
-                return [meta[p]]
+        def get_metadata(self, p):
+            return [meta[p]]
 
-        monkeypatch.setattr(
-            rsgispy.droneutils,
-            "exiftool",
-            types.SimpleNamespace(ExifToolHelper=_FakeExif),
-        )
-        monkeypatch.setattr(
-            rsgispy.tools.files, "sort_file_by_datetime", lambda imgs: list(imgs)
-        )
+    monkeypatch.setattr(
+        rsgispy.droneutils,
+        "exiftool",
+        types.SimpleNamespace(ExifToolHelper=_FakeExif),
+    )
+    monkeypatch.setattr(
+        rsgispy.tools.files, "sort_file_by_datetime", lambda imgs: list(imgs)
+    )
 
-        pts_pq = str(tmp_path / "flight_pts.parquet")
-        lines_pq = str(tmp_path / "flight_lines.parquet")
+    pts_pq = str(tmp_path / "flight_pts.parquet")
+    lines_pq = str(tmp_path / "flight_lines.parquet")
+    rsgispy.droneutils.create_flightline_vec(
+        [img1, img2],
+        pts_pq,
+        "pts",
+        lines_pq,
+        "lines",
+        out_format="PARQUET",
+        out_compress="zstd",
+    )
+    assert _parquet_codec(pts_pq) == "ZSTD"
+    assert _parquet_codec(lines_pq) == "ZSTD"
+    assert len(gpd.read_parquet(pts_pq)) == 2
+    assert len(gpd.read_parquet(lines_pq)) == 1
+
+    with pytest.raises(rsgispy.RSGISPyException):
         rsgispy.droneutils.create_flightline_vec(
             [img1, img2],
             pts_pq,
             "pts",
-            lines_pq,
+            pts_pq,
             "lines",
             out_format="PARQUET",
-            out_compress="zstd",
         )
-        assert _parquet_codec(pts_pq) == "ZSTD"
-        assert _parquet_codec(lines_pq) == "ZSTD"
-        assert len(gpd.read_parquet(pts_pq)) == 2
-        assert len(gpd.read_parquet(lines_pq)) == 1
 
-        with pytest.raises(rsgispy.RSGISPyException):
-            rsgispy.droneutils.create_flightline_vec(
-                [img1, img2],
-                pts_pq,
-                "pts",
-                pts_pq,
-                "lines",
-                out_format="PARQUET",
-            )
 
+def test_checkdatasets_geoparquet(tmp_path, osm_sample_gdf, osm_pq):
+    """Test check_gdal_vector_file with plain, compressed and non-geo Parquet files."""
+    sample_gdf = osm_sample_gdf
     # tools.checkdatasets.check_gdal_vector_file with GeoParquet
     ok, err = chk.check_gdal_vector_file(osm_pq, chk_proj=True, epsg_code=4326)
     assert ok is True

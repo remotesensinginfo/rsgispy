@@ -32,7 +32,6 @@ import tempfile
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imagefilter.edge as if_edge
@@ -41,6 +40,10 @@ import rsgispy.imagefilter.smooth as if_smooth
 import rsgispy.imagefilter.stats as if_stats
 import rsgispy.imagefilter.texture as if_tex
 
+from conftest import write_raster
+
+# Top-left corner of the synthetic inputs.
+ORIGIN = (500000.0, 5000000.0)
 GOLDEN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "golden")
 BLOCK_SIZES = (7, 16, 256)
 IMG_H, IMG_W = 21, 26
@@ -120,25 +123,6 @@ def _pattern(n_bands, seed, modulus):
     return np.stack(bands)
 
 
-def _write(path, arr, nodata=None, names=None):
-    profile = {
-        "driver": "GTiff",
-        "height": arr.shape[1],
-        "width": arr.shape[2],
-        "count": arr.shape[0],
-        "dtype": str(arr.dtype),
-        "crs": "EPSG:32630",
-        "transform": from_origin(500000.0, 5000000.0, 10.0, 10.0),
-        "nodata": nodata,
-    }
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(arr)
-        if names:
-            for idx, name in enumerate(names, start=1):
-                dst.set_band_description(idx, name)
-    return path
-
-
 def make_inputs(tmp_dir):
     """
     Write the synthetic inputs; return ``{variant: (path, call_kwargs)}``.
@@ -164,12 +148,13 @@ def make_inputs(tmp_dir):
     f64[0, 17:20, 20:23] = 300.0
     f64[0, 0, IMG_W - 1] = 300.0
     return {
-        "f32nd": (_write(os.path.join(tmp_dir, "f32nd.tif"), f32, nodata=-9999.0,
-                         names=["red", "nir"]), {}),
-        "u16nd": (_write(os.path.join(tmp_dir, "u16nd.tif"), u16, nodata=0),
+        "f32nd": (write_raster(os.path.join(tmp_dir, "f32nd.tif"), f32, nodata=-9999.0,
+                               band_names=["red", "nir"], origin=ORIGIN), {}),
+        "u16nd": (write_raster(os.path.join(tmp_dir, "u16nd.tif"), u16, nodata=0, origin=ORIGIN),
                   {"datatype": rsgispy.TYPE_16UINT}),
-        "f32nan": (_write(os.path.join(tmp_dir, "f32nan.tif"), f32n), {}),
-        "f64x": (_write(os.path.join(tmp_dir, "f64x.tif"), f64, names=["dem"]),
+        "f32nan": (write_raster(os.path.join(tmp_dir, "f32nan.tif"), f32n, origin=ORIGIN), {}),
+        "f64x": (write_raster(os.path.join(tmp_dir, "f64x.tif"), f64, band_names=["dem"],
+                              origin=ORIGIN),
                  {"no_data_val": 300.0, "datatype": rsgispy.TYPE_8UINT}),
     }
 

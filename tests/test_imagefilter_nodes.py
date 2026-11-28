@@ -9,7 +9,6 @@ validate their parameters like the file functions.
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imagefilter.chained as if_chained
@@ -25,24 +24,10 @@ from rsgispy.imageprocess import (
     TileGraph,
 )
 
+from conftest import write_raster
 
-def _write(path, arr, nodata=None, names=None):
-    profile = {
-        "driver": "GTiff",
-        "height": arr.shape[1],
-        "width": arr.shape[2],
-        "count": arr.shape[0],
-        "dtype": str(arr.dtype),
-        "crs": "EPSG:32630",
-        "transform": from_origin(500000.0, 5000000.0, 10.0, 10.0),
-        "nodata": nodata,
-    }
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(arr)
-        if names:
-            for idx, name in enumerate(names, start=1):
-                dst.set_band_description(idx, name)
-    return str(path)
+# Top-left corner of the synthetic inputs.
+ORIGIN = (500000.0, 5000000.0)
 
 
 def _read(path):
@@ -65,9 +50,9 @@ def inputs(tmp_path_factory):
     nan[0, 20, 0] = np.nan
     nan[0, 3:5, 30:33] = np.nan
     return {
-        "nodata": (_write(tmp / "nd.tif", nd, nodata=-9999.0, names=["vv", "vh"]),
-                   -9999.0),
-        "none": (_write(tmp / "nan.tif", nan), None),
+        "nodata": (write_raster(tmp / "nd.tif", nd, nodata=-9999.0, band_names=["vv", "vh"],
+                                origin=ORIGIN), -9999.0),
+        "none": (write_raster(tmp / "nan.tif", nan, origin=ORIGIN), None),
     }
 
 
@@ -323,7 +308,7 @@ def test_filter_nodes_border_mode(mode, tmp_path):
         np.testing.assert_allclose(res["m"][0], ref, rtol=1e-12)
 
     # GLCM node == file function, and the border changes only the edge pixels.
-    in_p = _write(tmp_path / "glcm_in.tif", arr.astype(np.float32))
+    in_p = write_raster(tmp_path / "glcm_in.tif", arr.astype(np.float32), origin=ORIGIN)
     glcm_kw = {"properties": ["contrast"], "filter_size": 5, "min_val": 0.0,
                "max_val": 20.0, "n_levels": 8}
     if_tex.apply_glcm_filter(in_p, str(tmp_path / "g.tif"), **glcm_kw,

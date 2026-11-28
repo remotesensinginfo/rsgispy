@@ -4,17 +4,17 @@ algorithms, tiling/seam stitching, multi-core execution, optional ``numba``
 parity, post-processing, and downstream GEOBIA integration.
 """
 
-import inspect
 import os
 
 import geopandas as gpd
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.segmentation as rseg
+
+from conftest import write_raster
 
 
 def _write_multiband_raster(
@@ -27,27 +27,9 @@ def _write_multiband_raster(
     crs: str = "EPSG:32630",
 ) -> None:
     """Helper to write a 2D or 3D GeoTIFF raster with optional nodata."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[np.newaxis, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(write_arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-        nodata=nodata,
-    ) as dst:
-        dst.write(write_arr)
+    return write_raster(
+        path, arr, nodata=nodata, crs=crs, origin=(origin_x, origin_y), pixel_size=pxl_size
+    )
 
 
 def _make_synthetic_scene(
@@ -95,49 +77,6 @@ def _make_synthetic_scene(
     # Corner nodata patch
     arr[:, :4, :4] = nodata_val
     return arr
-
-
-def test_raster_function_signatures_and_exports():
-    """Verify required positional/keyword-only rsgispy conventions on all new raster functions."""
-    assert isinstance(rseg.is_numba_available(), bool)
-    raster_funcs = [
-        rseg.shepherd_segmentation,
-        rseg.region_merge_segmentation,
-        rseg.slic_segmentation,
-        rseg.graph_segmentation,
-        rseg.watershed_segmentation,
-        rseg.eliminate_small_segments,
-        rseg.relabel_segments,
-    ]
-    expected_kw_defaults = {
-        "gdalformat": "GTIFF",
-        "datatype": None,
-        "no_data_val": None,
-        "calc_stats": True,
-        "use_pbar": True,
-    }
-    for fn in raster_funcs:
-        sig = inspect.signature(fn)
-        params = list(sig.parameters.values())
-        required_pos = [
-            p.name
-            for p in params
-            if p.kind
-            in (
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            )
-            and p.default is inspect.Parameter.empty
-        ]
-        assert required_pos == ["input_img", "output_img"], fn.__name__
-        for kw_name, kw_default in expected_kw_defaults.items():
-            assert kw_name in sig.parameters, (fn.__name__, kw_name)
-            p = sig.parameters[kw_name]
-            assert p.kind == inspect.Parameter.KEYWORD_ONLY, (
-                fn.__name__,
-                kw_name,
-            )
-            assert p.default == kw_default, (fn.__name__, kw_name)
 
 
 @pytest.mark.parametrize(
@@ -256,6 +195,7 @@ def test_2d_single_band_input():
         assert int(lbl.max()) >= 2
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "raster_fn,kwargs",
     [

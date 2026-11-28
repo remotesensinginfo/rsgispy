@@ -13,13 +13,14 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import LineString, Point
 
 import rsgispy
 import rsgispy.modelling.species_distribution as sdm
 from rsgispy.vector.create import create_random_pts_in_bbox
 from rsgispy.zonalstats.point import ext_point_band_values
+
+from conftest import write_raster
 
 pytest.importorskip("sklearn")
 from sklearn.linear_model import LogisticRegression  # noqa: E402
@@ -30,23 +31,9 @@ X0, Y0, RES, SIZE = 400000.0, 5800000.0, 100.0, 40
 
 
 def _write(path, arr, nodata=None, dtype=None):
-    arr = np.asarray(arr)
-    if dtype is not None:
-        arr = arr.astype(dtype)
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=arr.shape[0],
-        width=arr.shape[1],
-        count=1,
-        dtype=arr.dtype,
-        crs=CRS,
-        transform=from_origin(X0, Y0, RES, RES),
-        nodata=nodata,
-    ) as dst:
-        dst.write(arr[np.newaxis])
-    return str(path)
+    return write_raster(
+        path, arr, dtype=dtype, nodata=nodata, crs=CRS, origin=(X0, Y0), pixel_size=RES
+    )
 
 
 def _read(path):

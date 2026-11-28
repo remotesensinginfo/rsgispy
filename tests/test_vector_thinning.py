@@ -9,13 +9,13 @@ Tests for spatial thinning (rarefaction) of point samples:
 import geopandas as gpd
 import numpy as np
 import pytest
-import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import Point, box
 
 import rsgispy
 import rsgispy.modelling.species_distribution as sdm
 import rsgispy.vector.geoms as vgeoms
+
+from conftest import write_raster
 
 CRS = "EPSG:32630"
 
@@ -42,19 +42,13 @@ def _min_pair_dist(gdf: gpd.GeoDataFrame) -> float:
 
 
 def _write_ref_img(path, n_rows=10, n_cols=10, res=100.0, x0=0.0, y0=1000.0):
-    with rasterio.open(
+    return write_raster(
         path,
-        "w",
-        driver="GTiff",
-        height=n_rows,
-        width=n_cols,
-        count=1,
-        dtype="uint8",
+        np.ones((n_rows, n_cols), dtype=np.uint8),
         crs=CRS,
-        transform=from_origin(x0, y0, res, res),
-    ) as dst:
-        dst.write(np.ones((1, n_rows, n_cols), dtype=np.uint8))
-    return str(path)
+        origin=(x0, y0),
+        pixel_size=res,
+    )
 
 
 # --------------------------------------------------------------------------

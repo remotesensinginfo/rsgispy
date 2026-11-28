@@ -11,21 +11,9 @@ import geopandas as gpd
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import Point
 
 import rsgispy
-from rsgispy._io import (
-    ArraySource,
-    BandMathOp,
-    DiskSink,
-    HaloBorder,
-    MemorySink,
-    PointwiseOp,
-    TileGraph,
-    WindowOp,
-    run_tile_graph,
-)
 import rsgispy.classification.classpostprocess as classpost
 import rsgispy.elevation.filtering as elev_filt
 import rsgispy.imagefilter.chained as if_chained
@@ -34,23 +22,20 @@ import rsgispy.imagefilter.smooth as if_smooth
 import rsgispy.imagefilter.stats as if_stats
 import rsgispy.imagemorphology as morph
 import rsgispy.imageutils.rasterise as iu_rast
+from rsgispy._io import (
+    ArraySource,
+    BandMathOp,
+    DiskSink,
+    HaloBorder,
+    MemorySink,
+    PointwiseOp,
+    RasterSource,
+    TileGraph,
+    WindowOp,
+    run_tile_graph,
+)
 
-
-def _write_raster(path, arr, nodata=None, crs="EPSG:32630", res=10.0):
-    arr3 = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
-    count, height, width = arr3.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(arr3.dtype),
-        "crs": crs,
-        "transform": from_origin(500000.0, 5000000.0, res, res),
-        "nodata": nodata,
-    }
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(arr3)
+from conftest import write_raster
 
 
 def test_tilegraph_cumulative_halo_bit_exact_and_skip_connection():
@@ -67,7 +52,7 @@ def test_tilegraph_cumulative_halo_bit_exact_and_skip_connection():
         pass1_img = os.path.join(tmp, "pass1.tif")
         pass2_img = os.path.join(tmp, "pass2.tif")
         chained_img = os.path.join(tmp, "chained.tif")
-        _write_raster(in_img, arr, nodata=-9999.0)
+        write_raster(in_img, arr, origin=(500000.0, 5000000.0), nodata=-9999.0)
 
         # Multi-pass reference via disk
         if_stats.apply_mean_filter(
@@ -152,7 +137,7 @@ def test_filter_chain_edge_and_band_math():
         med_img = os.path.join(tmp, "med.tif")
         sob_img = os.path.join(tmp, "sob.tif")
         out_img = os.path.join(tmp, "chain.tif")
-        _write_raster(in_img, arr)
+        write_raster(in_img, arr, origin=(500000.0, 5000000.0))
 
         if_stats.apply_median_filter(
             in_img,
@@ -196,7 +181,7 @@ def test_imagemorphology_fused_opening_closing_tophat():
     arr = rng.integers(0, 255, size=(2, 33, 35)).astype(np.uint8)
     with tempfile.TemporaryDirectory() as tmp:
         in_img = os.path.join(tmp, "in.tif")
-        _write_raster(in_img, arr)
+        write_raster(in_img, arr, origin=(500000.0, 5000000.0))
 
         # Reference opening (2x erode -> 2x dilate)
         e1 = os.path.join(tmp, "e1.tif")
@@ -336,7 +321,7 @@ def test_in_memory_dist_zones_and_resampling_detrend():
         out_zones = os.path.join(tmp, "zones.tif")
         y_idx, x_idx = np.mgrid[0:20, 0:20]
         dem = (100.0 + 2.0 * x_idx + 1.5 * y_idx).astype(np.float32)
-        _write_raster(ref_img, dem, nodata=-9999.0, res=10.0)
+        write_raster(ref_img, dem, origin=(500000.0, 5000000.0), nodata=-9999.0)
 
         gdf = gpd.GeoDataFrame(
             {"id": [1]},
@@ -391,7 +376,7 @@ def test_classification_postprocess_pipeline_matches_sequential():
         m2_img = os.path.join(tmp, "m2.tif")
         ref_out = os.path.join(tmp, "ref_out.tif")
         pipe_out = os.path.join(tmp, "pipe_out.tif")
-        _write_raster(in_img, arr, nodata=0)
+        write_raster(in_img, arr, origin=(500000.0, 5000000.0), nodata=0)
 
         classpost.apply_majority_filter(
             in_img, m1_img, filter_size=3, no_data_val=0, calc_stats=False, use_pbar=False
@@ -438,3 +423,26 @@ def test_tilegraph_validation_errors():
     with pytest.raises(rsgispy.RSGISPyException):
         DiskSink(src, "/tmp/should_not_exist.tif")
         if_chained.apply_filter_chain("missing.tif", "out.tif", steps=[])
+
+
+def test_band_math_op_reuses_parser_across_non_square_tiles(tmp_path):
+    arr = np.arange(25 * 30, dtype=np.float32).reshape(25, 30)
+    in_img = write_raster(tmp_path / "bm_in.tif", arr, origin=(500000.0, 5800000.0))
+    out_img = str(tmp_path / "bm_out.tif")
+
+    src_node = RasterSource(in_img)
+    math_node = BandMathOp(
+        inputs={"b1": src_node},
+        expr="b1 * 2.0 + 1.0",
+    )
+    sink = DiskSink(
+        source=math_node,
+        output_img=out_img,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+        nodata=None,
+    )
+    TileGraph(sinks=sink, block_size=16).run(use_pbar=False)
+
+    with rasterio.open(out_img) as dst:
+        np.testing.assert_allclose(dst.read(1), arr * 2.0 + 1.0, rtol=1e-6)

@@ -7,7 +7,6 @@ import math
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.elevation.filtering as elev_filt
@@ -15,25 +14,11 @@ import rsgispy.elevation.fusion as elev_fus
 import rsgispy.elevation.illumination as elev_illum
 import rsgispy.elevation.terrain as elev_terr
 
+from conftest import write_raster
+
 
 def _write_raster(path, arr, res=10.0, nodata=None, crs="EPSG:32630"):
-    data = np.asarray(arr)
-    if data.ndim == 2:
-        data = data[np.newaxis, :, :]
-    count, height, width = data.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": from_origin(500000.0, 5200000.0, res, res),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(str(path), "w", **profile) as dst:
-        dst.write(data)
+    return write_raster(path, arr, pixel_size=res, nodata=nodata, crs=crs)
 
 
 def test_slope_aspect_categorise_and_pxl_res(tmp_path):
@@ -312,3 +297,41 @@ def test_filtering_fill_detrend_and_fusion(tmp_path):
     with rasterio.open(resamp_out) as rds:
         assert rds.width == 10 and rds.height == 10
         assert float(rds.read(1)[5, 5]) == pytest.approx(25.0, abs=1e-3)
+
+
+def test_resampling_detrend_dem_same_with_and_without_tmp_dir(tmp_path):
+    y, x = np.mgrid[0:32, 0:32].astype(np.float32)
+    dem = 100.0 + 2.0 * x + 1.5 * y + 5.0 * np.sin(x / 2.0)
+    dem[0:4, 0:4] = -9999.0
+    in_dem = write_raster(tmp_path / "dem.tif", dem, nodata=-9999.0, origin=(500000.0, 5800000.0))
+
+    out_mem = str(tmp_path / "detrend_mem.tif")
+    elev_filt.resampling_detrend_dem(
+        input_img=in_dem,
+        output_img=out_mem,
+        resmp_res=40.0,
+        no_data_val=-9999.0,
+        calc_stats=False,
+        use_pbar=False,
+    )
+
+    tmp_dir = tmp_path / "scratch"
+    tmp_dir.mkdir()
+    out_disk = str(tmp_path / "detrend_disk.tif")
+    elev_filt.resampling_detrend_dem(
+        input_img=in_dem,
+        output_img=out_disk,
+        resmp_res=40.0,
+        tmp_dir=str(tmp_dir),
+        no_data_val=-9999.0,
+        calc_stats=False,
+        use_pbar=False,
+    )
+
+    with rasterio.open(out_mem) as a, rasterio.open(out_disk) as b:
+        arr_a = a.read(1)
+        arr_b = b.read(1)
+        assert arr_a.shape == (32, 32)
+        assert np.allclose(arr_a, arr_b, equal_nan=True)
+        assert arr_a[0, 0] == -9999.0
+        assert np.isfinite(arr_a[16, 16])

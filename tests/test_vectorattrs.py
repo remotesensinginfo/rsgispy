@@ -22,6 +22,9 @@ import rsgispy.vector.attrs as va_io
 import rsgispy.vector.attrs as va_spatial
 import rsgispy.vector.stats as vs_metrics
 import rsgispy.vector.stats as vs_vario
+from rsgispy import vectorprocess as vp
+
+from conftest import write_vector
 
 
 def _can_import(mod_name: str) -> bool:
@@ -49,7 +52,7 @@ def _make_polys_gpkg(path: str, layer: str = "polys") -> None:
         ],
         crs="EPSG:32630",
     )
-    gdf.to_file(path, layer=layer, driver="GPKG")
+    write_vector(path, gdf, layer=layer, driver="GPKG")
 
 
 def _make_points_gpkg(path: str, layer: str = "pts") -> None:
@@ -67,7 +70,7 @@ def _make_points_gpkg(path: str, layer: str = "pts") -> None:
         ],
         crs="EPSG:32630",
     )
-    gdf.to_file(path, layer=layer, driver="GPKG")
+    write_vector(path, gdf, layer=layer, driver="GPKG")
 
 
 def test_io_read_write_drop_rename_sort_export(tmp_path):
@@ -141,83 +144,116 @@ def test_io_read_write_drop_rename_sort_export(tmp_path):
         assert "geometry" not in pd.read_parquet(pq_out).columns
 
 
-def test_columns_creation_luts_text_dates_and_angles(tmp_path, monkeypatch):
-    """Test vectorattrs.columns functions including GeoJSON format normalisation and use_pbar."""
+@pytest.fixture
+def polys_gpkg_path(tmp_path):
+    """The three-polygon test layer written to a GeoPackage (layer 'polys')."""
     gpkg = str(tmp_path / "polys.gpkg")
     _make_polys_gpkg(gpkg, "polys")
+    return gpkg
 
-    fid_out = str(tmp_path / "fid.gpkg")
-    va_cols.add_fid_col(gpkg, "polys", fid_out, "polys", out_col="fid_val")
-    assert va_io.read_vec_column(fid_out, "polys", "fid_val") == [1, 2, 3]
 
-    unq_out = str(tmp_path / "unq.gpkg")
-    lut_json = str(tmp_path / "lut.json")
+@pytest.fixture
+def numeric_col_chain(tmp_path, polys_gpkg_path):
+    """Add the FID, unique-ID, numeric and numeric-LUT columns one after another."""
+    paths = {
+        "fid": str(tmp_path / "fid.gpkg"),
+        "unq": str(tmp_path / "unq.gpkg"),
+        "lut_json": str(tmp_path / "lut.json"),
+        "num": str(tmp_path / "num.gpkg"),
+        "lut_num": str(tmp_path / "lut_num.gpkg"),
+        "rng": str(tmp_path / "rng.gpkg"),
+        "lst": str(tmp_path / "lst.gpkg"),
+    }
+    va_cols.add_fid_col(polys_gpkg_path, "polys", paths["fid"], "polys", out_col="fid_val")
     va_cols.add_unq_numeric_col(
-        fid_out, "polys", "cls", "cls_id", unq_out, "polys", lut_json_file=lut_json
+        paths["fid"], "polys", "cls", "cls_id", paths["unq"], "polys",
+        lut_json_file=paths["lut_json"],
     )
-    assert va_io.read_vec_column(unq_out, "polys", "cls_id") == [1, 2, 1]
-    with open(lut_json, "r", encoding="utf-8") as fp:
-        lut_data = json.load(fp)
-    assert lut_data["val"]["Forest"] == 1
-    assert lut_data["val"]["Water"] == 2
-
-    num_out = str(tmp_path / "num.gpkg")
     va_cols.add_numeric_col(
-        unq_out, "polys", "wt", num_out, "polys", out_val=5, out_col_int=True
+        paths["unq"], "polys", "wt", paths["num"], "polys", out_val=5, out_col_int=True
     )
-    assert va_io.read_vec_column(num_out, "polys", "wt") == [5, 5, 5]
-
-    lut_num = str(tmp_path / "lut_num.gpkg")
     va_cols.add_numeric_col_lut(
-        num_out,
+        paths["num"],
         "polys",
         "cls",
         {"Forest": 1.5, "Water": 2.5},
         "cls_wt",
-        lut_num,
+        paths["lut_num"],
         "polys",
         col_dtype="float",
     )
-    assert va_io.read_vec_column(lut_num, "polys", "cls_wt") == [1.5, 2.5, 1.5]
-
-    rng_out = str(tmp_path / "rng.gpkg")
     va_cols.add_numeric_col_range_lut(
-        lut_num,
+        paths["lut_num"],
         "polys",
         "val",
-        rng_out,
+        paths["rng"],
         "polys",
         "val_bin",
         {1: (0.0, 100.0), 2: (100.0, 500.0)},
     )
-    assert va_io.read_vec_column(rng_out, "polys", "val_bin") == [1, 2, 0]
-
-    lst_out = str(tmp_path / "lst.gpkg")
     va_cols.add_numeric_col_from_lst_lut(
-        rng_out, "polys", "cls", [("Water", 9)], "w_id", lst_out, "polys"
+        paths["rng"], "polys", "cls", [("Water", 9)], "w_id", paths["lst"], "polys"
     )
-    assert va_io.read_vec_column(lst_out, "polys", "w_id") == [0, 9, 0]
+    return paths
 
-    str_out = str(tmp_path / "str.gpkg")
-    va_cols.add_string_col(lst_out, "polys", "tag", str_out, "polys", out_val="v1")
-    assert va_io.read_vec_column(str_out, "polys", "tag") == ["v1", "v1", "v1"]
 
-    str_lut_out = str(tmp_path / "str_lut.gpkg")
+@pytest.fixture
+def string_col_chain(tmp_path, numeric_col_chain):
+    """Add the string, string-LUT and random value columns to the numeric chain."""
+    paths = {
+        "str": str(tmp_path / "str.gpkg"),
+        "str_lut": str(tmp_path / "str_lut.gpkg"),
+        "ran": str(tmp_path / "ran.gpkg"),
+    }
+    va_cols.add_string_col(
+        numeric_col_chain["lst"], "polys", "tag", paths["str"], "polys", out_val="v1"
+    )
     va_cols.add_string_col_lut(
-        str_out,
+        paths["str"],
         "polys",
         "cls_id",
         {1: "Tree", 2: "H2O"},
         "cls_short",
-        str_lut_out,
+        paths["str_lut"],
         "polys",
     )
-    assert va_io.read_vec_column(str_lut_out, "polys", "cls_short") == ["Tree", "H2O", "Tree"]
+    va_cols.add_ran_vals_cols(paths["str_lut"], "polys", paths["ran"], "polys", rnd_seed=123)
+    return paths
 
-    ran_out = str(tmp_path / "ran.gpkg")
-    va_cols.add_ran_vals_cols(str_lut_out, "polys", ran_out, "polys", rnd_seed=123)
-    assert len(va_io.read_vec_column(ran_out, "polys", "ran_vals")) == 3
 
+def test_columns_add_numeric_cols_and_luts(numeric_col_chain):
+    """Test the vectorattrs.columns FID, unique-ID, numeric and numeric-LUT columns."""
+    paths = numeric_col_chain
+    assert va_io.read_vec_column(paths["fid"], "polys", "fid_val") == [1, 2, 3]
+
+    assert va_io.read_vec_column(paths["unq"], "polys", "cls_id") == [1, 2, 1]
+    with open(paths["lut_json"], "r", encoding="utf-8") as fp:
+        lut_data = json.load(fp)
+    assert lut_data["val"]["Forest"] == 1
+    assert lut_data["val"]["Water"] == 2
+
+    assert va_io.read_vec_column(paths["num"], "polys", "wt") == [5, 5, 5]
+    assert va_io.read_vec_column(paths["lut_num"], "polys", "cls_wt") == [1.5, 2.5, 1.5]
+    assert va_io.read_vec_column(paths["rng"], "polys", "val_bin") == [1, 2, 0]
+    assert va_io.read_vec_column(paths["lst"], "polys", "w_id") == [0, 9, 0]
+
+
+def test_columns_add_string_and_random_cols(string_col_chain):
+    """Test the vectorattrs.columns string, string-LUT and random value columns."""
+    paths = string_col_chain
+    assert va_io.read_vec_column(paths["str"], "polys", "tag") == ["v1", "v1", "v1"]
+    assert va_io.read_vec_column(paths["str_lut"], "polys", "cls_short") == [
+        "Tree", "H2O", "Tree"
+    ]
+    assert len(va_io.read_vec_column(paths["ran"], "polys", "ran_vals")) == 3
+
+
+def test_columns_text_dates_and_names_geojson_and_use_pbar(
+    tmp_path, monkeypatch, string_col_chain
+):
+    """Test check_str_col (GeoJSON format normalisation), find/replace, date and
+    name columns, and use_pbar."""
+    ran_out = string_col_chain["ran"]
     clean_out = str(tmp_path / "clean.geojson")
     pbar_states = []
 
@@ -284,7 +320,9 @@ def test_columns_creation_luts_text_dates_and_angles(tmp_path, monkeypatch):
         "tile_E050N020",
     ]
 
-    # Angle sets
+
+def test_columns_angle_sets(tmp_path):
+    """Test create_angle_sets and create_orthogonal_angle_sets."""
     pts_gpkg = str(tmp_path / "pts.gpkg")
     _make_points_gpkg(pts_gpkg, "pts")
     ang_out = str(tmp_path / "ang_sets.gpkg")
@@ -393,9 +431,10 @@ def test_spatial_attrs_and_vectorstats(tmp_path):
         vs_vario.calc_empirical_semivariogram(polys_gpkg, "polys", "val")
 
 
-def test_vectorattrs_gdf_in_memory(tmp_path):
-    """Test VectorInput GeoDataFrame input and in-memory GeoDataFrame returns in vectorattrs."""
-    polys_gdf = gpd.GeoDataFrame(
+@pytest.fixture
+def polys_gdf():
+    """The three-polygon test layer as an in-memory GeoDataFrame."""
+    return gpd.GeoDataFrame(
         {
             "cls": ["Forest", "Water", "Forest"],
             "val": [10.0, 250.0, -5.0],
@@ -411,6 +450,20 @@ def test_vectorattrs_gdf_in_memory(tmp_path):
         ],
         crs="EPSG:32630",
     )
+
+
+@pytest.fixture
+def two_pts_gdf():
+    """Two points, one in each of the first two test polygons."""
+    return gpd.GeoDataFrame(
+        {"pid": [1, 2]},
+        geometry=[Point(5.0, 5.0), Point(25.0, 5.0)],
+        crs="EPSG:32630",
+    )
+
+
+def test_vectorattrs_io_gdf_in_memory(tmp_path, polys_gdf):
+    """Test vectorattrs.io with GeoDataFrame input and in-memory GeoDataFrame returns."""
     orig_cols = list(polys_gdf.columns)
 
     assert va_io.read_vec_column(polys_gdf, None, "cls") == [
@@ -444,7 +497,11 @@ def test_vectorattrs_gdf_in_memory(tmp_path):
     va_io.export_vec_attrs_to_csv(polys_gdf, None, csv_out)
     assert os.path.exists(csv_out)
 
-    # vectorattrs.columns in-memory chaining
+
+def test_vectorattrs_columns_gdf_in_memory(polys_gdf):
+    """Test vectorattrs.columns in-memory chaining of GeoDataFrame returns."""
+    orig_cols = list(polys_gdf.columns)
+
     fid_gdf = va_cols.add_fid_col(polys_gdf, None, out_col="fid_val")
     assert fid_gdf["fid_val"].tolist() == [1, 2, 3]
     assert list(polys_gdf.columns) == orig_cols
@@ -476,7 +533,11 @@ def test_vectorattrs_gdf_in_memory(tmp_path):
     date_gdf = va_cols.create_date_col(repl_gdf, None, "yr", "mo", "dy", "obs_dt")
     assert len(date_gdf["obs_dt"]) == 3
 
-    # vectorattrs.spatial in-memory
+
+def test_vectorattrs_spatial_gdf_in_memory(polys_gdf, two_pts_gdf):
+    """Test vectorattrs.spatial with GeoDataFrame input and in-memory returns."""
+    orig_cols = list(polys_gdf.columns)
+
     bbox_gdf = va_spatial.add_geom_bbox_cols(polys_gdf, None)
     assert bbox_gdf["MaxX"].tolist() == [10.0, 40.0, 60.0]
     assert list(polys_gdf.columns) == orig_cols
@@ -491,17 +552,17 @@ def test_vectorattrs_gdf_in_memory(tmp_path):
     ann_gdf = va_spatial.annotate_vec_selection(polys_gdf, None, roi_gdf, None)
     assert ann_gdf["sel_feats"].tolist() == [True, True, False]
 
-    pts_gdf = gpd.GeoDataFrame(
-        {"pid": [1, 2]},
-        geometry=[Point(5.0, 5.0), Point(25.0, 5.0)],
-        crs="EPSG:32630",
-    )
     sjoin_gdf = va_spatial.perform_spatial_join(
-        pts_gdf, None, polys_gdf, None, join_op="within"
+        two_pts_gdf, None, polys_gdf, None, join_op="within"
     )
     assert len(sjoin_gdf) == 2
 
-    # vectorstats.metrics & vectorstats.variogram in-memory
+
+def test_vectorstats_gdf_in_memory(polys_gdf, two_pts_gdf):
+    """Test vectorstats.metrics and vectorstats.variogram with in-memory GeoDataFrames."""
+    orig_cols = list(polys_gdf.columns)
+    pts_gdf = two_pts_gdf
+
     area_gdf = vs_metrics.calc_vec_area(polys_gdf, None, "area_m2")
     assert isinstance(area_gdf, gpd.GeoDataFrame)
     assert area_gdf["area_m2"].tolist() == [100.0, 200.0, 200.0]
@@ -955,3 +1016,117 @@ def test_in_place_column_writes_keep_layer_name(tmp_path):
     out_gdf = gpd.read_file(vec_path, layer="polys")
     for col in ("xmin", "newcol", "other"):
         assert col in out_gdf.columns
+
+
+def test_attrs_geometry_free_reads_columns_and_stats_metrics(tmp_path):
+    """Test geometry-free attrs reads, NaN unq_numeric, 360 deg angle, stats metrics."""
+    gdf = gpd.GeoDataFrame(
+        {"cls": ["a", "b", "a"], "val": [1, 2, 3]},
+        geometry=[Point(0, 0), Point(1, 1), Point(2, 2)],
+        crs="EPSG:4326",
+    )
+    gpkg = str(tmp_path / "attrs.gpkg")
+    pq = str(tmp_path / "attrs.parquet")
+    vp.write_vec_gdf(gdf, gpkg, "pts", out_format="GPKG", overwrite=True)
+    vp.write_vec_gdf(gdf, pq, "pts", out_format="Parquet", overwrite=True)
+
+    assert va_cols.read_vec_column(gpkg, "pts", "val") == [1, 2, 3]
+    assert va_cols.read_vec_column(pq, None, "val") == [1, 2, 3]
+    assert set(va_cols.get_unq_col_values(pq, None, "cls")) == {"a", "b"}
+
+    csv_out = str(tmp_path / "attrs.csv")
+    va_cols.export_vec_attrs_to_csv(
+        gdf.rename_geometry("geom"), None, csv_out
+    )
+    csv_df = pd.read_csv(csv_out, index_col=0)
+    assert list(csv_df.columns) == ["cls", "val"]
+
+    # add_unq_numeric_col with NaN/None
+    nan_gdf = gpd.GeoDataFrame(
+        {"cat": ["x", None, "y", np.nan]},
+        geometry=[Point(i, 0) for i in range(4)],
+        crs="EPSG:4326",
+    )
+    num_gdf = va_cols.add_unq_numeric_col(
+        nan_gdf, None, unq_col="cat", out_col="cat_id", out_vec_file=None
+    )
+    assert num_gdf["cat_id"].iloc[1] == num_gdf["cat_id"].iloc[3]
+    assert num_gdf["cat_id"].iloc[0] != num_gdf["cat_id"].iloc[1]
+    assert num_gdf["cat_id"].iloc[0] != num_gdf["cat_id"].iloc[2]
+
+    # create_angle_sets includes angle == 360.0 (wraps into 0 deg sector)
+    ang_gdf = gpd.GeoDataFrame(
+        {"ang": [0.0, 90.0, 360.0]},
+        geometry=[Point(i, 0) for i in range(3)],
+        crs="EPSG:4326",
+    )
+    sets_gdf = va_cols.create_angle_sets(
+        ang_gdf,
+        None,
+        angle_col="ang",
+        start_angle=0,
+        angle_set_width=90,
+        out_vec_file=None,
+        out_angle_set_col="ang_set",
+    )
+    assert sets_gdf["ang_set"].iloc[2] == sets_gdf["ang_set"].iloc[0]
+    assert sets_gdf["ang_set"].iloc[2] > 0
+
+    # _stats_metrics: null/empty geoms, duplicate index, colliding col name
+    pts_null = gpd.GeoDataFrame(
+        {"id": [1, 2, 3]},
+        geometry=[Point(0.0, 0.0), None, Point(10.0, 0.0)],
+        crs="EPSG:32630",
+    )
+    npts = vs_metrics.calc_npts_in_radius(
+        pts_null, None, radius=15.0, out_col_name="cnt", out_vec_file=None
+    )
+    assert npts["cnt"].iloc[0] == 1
+    assert npts["cnt"].iloc[1] == 0
+    assert npts["cnt"].iloc[2] == 1
+
+    dist_ang = vs_metrics.calc_vec_pt_dist_angle(
+        pts_null,
+        None,
+        out_vec_file=None,
+        x_centre=0.0,
+        y_centre=0.0,
+        dist_col="d",
+        angle_col="a",
+    )
+    assert np.isnan(dist_ang["d"].iloc[1])
+    assert dist_ang["d"].iloc[2] == pytest.approx(10.0)
+
+    dup_idx_gdf = gpd.GeoDataFrame(
+        {"val": [10, 20]},
+        geometry=[Point(0.0, 0.0), Point(10.0, 0.0)],
+        index=[5, 5],
+        crs="EPSG:32630",
+    )
+    ref_pts = gpd.GeoDataFrame(
+        {"r": [1]}, geometry=[Point(3.0, 0.0)], crs="EPSG:32630"
+    )
+    near_gdf = vs_metrics.calc_near_dist_to_feats(
+        dup_idx_gdf,
+        None,
+        ref_pts,
+        None,
+        out_col="near_d",
+        out_vec_file=None,
+    )
+    assert list(near_gdf["near_d"]) == pytest.approx([3.0, 7.0])
+
+    polys_c = gpd.GeoDataFrame(
+        {"shared": ["p1"]},
+        geometry=[box(0, 0, 10, 10)],
+        crs="EPSG:32630",
+    )
+    pts_c = gpd.GeoDataFrame(
+        {"shared": ["x1", "x2"]},
+        geometry=[Point(2, 2), Point(5, 5)],
+        crs="EPSG:32630",
+    )
+    cnt_gdf = vs_metrics.count_pt_intersects(
+        polys_c, None, pts_c, None, out_count_col="n_pts", out_vec_file=None
+    )
+    assert cnt_gdf["n_pts"].iloc[0] == 2

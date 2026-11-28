@@ -11,9 +11,12 @@ import textwrap
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
+from rsgispy.classification.classpostprocess import majority_filter_node
+from rsgispy.elevation.terrain import slope_node
+from rsgispy.imagefilter.sar import refined_lee_filter_node
+from rsgispy.imagefilter.stats import mean_filter_node, median_filter_node
 from rsgispy.imageprocess import (
     BandMathOp,
     DiskSink,
@@ -25,20 +28,8 @@ from rsgispy.imageprocess import (
     TileGraph,
     run_tile_graph,
 )
-from rsgispy.classification.classpostprocess import majority_filter_node
-from rsgispy.elevation.terrain import slope_node
-from rsgispy.imagefilter.sar import refined_lee_filter_node
-from rsgispy.imagefilter.stats import mean_filter_node, median_filter_node
 
-
-def _write(path, arr, nodata=None):
-    with rasterio.open(
-        path, "w", driver="GTiff", height=arr.shape[1], width=arr.shape[2],
-        count=arr.shape[0], dtype=str(arr.dtype), crs="EPSG:32630",
-        transform=from_origin(500000.0, 5000000.0, 10.0, 10.0), nodata=nodata,
-    ) as dst:
-        dst.write(arr)
-    return path
+from conftest import write_raster
 
 
 @pytest.fixture(name="img")
@@ -46,7 +37,9 @@ def _img(tmp_path):
     rng = np.random.default_rng(1)
     arr = rng.gamma(3.0, 30.0, size=(3, 101, 87)).astype(np.float32)
     arr[:, 10:14, 20:40] = -9999.0
-    return _write(os.path.join(tmp_path, "in.tif"), arr, nodata=-9999.0)
+    return write_raster(
+        os.path.join(tmp_path, "in.tif"), arr, nodata=-9999.0, origin=(500000.0, 5000000.0)
+    )
 
 
 def _build(img, out_path):

@@ -9,53 +9,21 @@ from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import pytest
-import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import Point, box
 
 import rsgispy
 import rsgispy.regression as rreg
 import rsgispy.regression.regdata as rrd
+from rsgispy.regression.regdata import split_reg_samples
+
+from conftest import write_raster
 
 _HAS_PARQUET = (
     importlib.util.find_spec("pyarrow") is not None
     or importlib.util.find_spec("fastparquet") is not None
 )
-
-
-def _write_raster(
-    path: Path,
-    arr: np.ndarray,
-    origin_x: float = 500000.0,
-    origin_y: float = 5600000.0,
-    pxl_size: float = 10.0,
-    crs: str = "EPSG:32630",
-    nodata: float = -999.0,
-) -> str:
-    """Write a 2D or 3D GeoTIFF raster for testing."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[None, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-        nodata=nodata,
-    ) as dst:
-        dst.write(write_arr)
-    return str(path)
 
 
 def _create_landsat_fixture(tmp_path: Path):
@@ -67,8 +35,11 @@ def _create_landsat_fixture(tmp_path: Path):
     b_swir = 0.25 - 0.01 * yy
     b_red[2, 2] = -999.0
 
-    lsat_img = _write_raster(
-        tmp_path / "landsat.tif", np.stack([b_red, b_nir, b_swir]), nodata=-999.0
+    lsat_img = write_raster(
+        tmp_path / "landsat.tif",
+        np.stack([b_red, b_nir, b_swir]),
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
     )
 
     pts = []
@@ -333,3 +304,33 @@ def test_reg_poly_id_col_points(tmp_path: Path):
     )
     assert df["train_grp"].is_unique
     assert df["train_grp"].iloc[0] == "pt0"
+
+
+def test_split_reg_samples_duplicate_index_no_leakage():
+    """split_reg_samples keeps the splits disjoint when the index has duplicate labels."""
+    n_rows = 40
+    # Deliberately create non-unique index labels (e.g., from pd.concat without ignore_index)
+    dup_index = [i % 5 for i in range(n_rows)]
+    reg_df = pd.DataFrame(
+        {
+            "row_uid": np.arange(n_rows),
+            "b1": np.linspace(0.0, 10.0, n_rows),
+            "target": np.linspace(1.0, 100.0, n_rows),
+        },
+        index=dup_index,
+    )
+    tr_reg, te_reg, va_reg = split_reg_samples(
+        reg_df,
+        train_prop=0.6,
+        test_prop=0.2,
+        valid_prop=0.2,
+        stratify_col="target",
+        n_bins=4,
+        rnd_seed=42,
+    )
+    assert len(tr_reg) + len(te_reg) + len(va_reg) == n_rows
+    reg_sets = [set(tr_reg["row_uid"]), set(te_reg["row_uid"]), set(va_reg["row_uid"])]
+    assert reg_sets[0].isdisjoint(reg_sets[1])
+    assert reg_sets[0].isdisjoint(reg_sets[2])
+    assert reg_sets[1].isdisjoint(reg_sets[2])
+    assert reg_sets[0] | reg_sets[1] | reg_sets[2] == set(range(n_rows))

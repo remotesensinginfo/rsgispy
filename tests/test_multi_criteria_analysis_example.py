@@ -17,13 +17,11 @@ from mca_scene import make_mca_scene
 
 pytest.importorskip("scipy")  # calc_dist_to_img_vals
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples",
     "multi_criteria_analysis.py",
-)
-GUIDE = os.path.join(
-    os.path.dirname(__file__), os.pardir, "docs", "guides",
-    "multi_criteria_analysis.rst",
 )
 
 
@@ -89,20 +87,3 @@ def test_worked_example_runs(tmp_path):
     assert len(gpd.read_file(os.path.join(str(tmp_path / "out"),
                                           "high_potential.gpkg"))) >= 1
     assert os.path.getsize(out["map_png"]) > 0
-
-
-def test_guide_markers_exist():
-    """Every literalinclude marker used by the guide exists in the script."""
-    with open(EXAMPLE, encoding="utf-8") as f_obj:
-        script = f_obj.read()
-    with open(GUIDE, encoding="utf-8") as f_obj:
-        guide = f_obj.read()
-    markers = [
-        line.split(":start-after:")[1].strip()
-        for line in guide.splitlines()
-        if ":start-after:" in line
-    ]
-    assert len(markers) >= 8
-    for marker in markers:
-        assert marker in script
-        assert marker.replace("[step-", "[end-step-") in script

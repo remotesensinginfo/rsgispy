@@ -2,14 +2,16 @@
 
 import io
 import os
+import stat
 import sys
 import types
+from unittest.mock import patch
 
 import numpy as np
+import pyproj
 import pytest
 import rasterio
 from PIL import Image
-import pyproj
 
 import rsgispy
 import rsgispy.tools.ftp as ftp
@@ -425,6 +427,7 @@ def test_optional_requests_missing_tools(tmp_path):
     """Verify web and http prevent executing optional-dep functions when missing."""
     import importlib
     from unittest.mock import patch
+
     import rsgispy.tools as rtools
 
     orig_web = web
@@ -512,6 +515,7 @@ def test_optional_pysondb_missing_tools():
     """Verify http and ftp expose pysondb functions and raise RSGISPyException."""
     import importlib
     from unittest.mock import patch
+
     import rsgispy.tools as rtools
 
     orig_http = http
@@ -567,6 +571,7 @@ def test_optional_imaging_missing():
     """Verify imaging exposes functions and raises RSGISPyException when deps missing."""
     import importlib
     from unittest.mock import patch
+
     import rsgispy.tools as rtools
 
     orig_imaging = imaging
@@ -863,3 +868,241 @@ def test_tile_for_point_clamps_latitude():
     assert tc._lonlat_to_frac_xyz(-4.08, 52.41, 12) == pytest.approx(
         (2001.5786666666665, 1345.3586098628425), abs=1e-9
     )
+
+
+def test_http_json_rejects_5xx_and_wget_security_options(tmp_path, monkeypatch):
+    """Verify HTTP >= 400 rejection and wget SSL/config-file handling."""
+
+    class _Resp500:
+        status_code = 500
+        text = "Internal Server Error"
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(http, "HAVE_REQUESTS", True)
+    monkeypatch.setattr(
+        http,
+        "requests",
+        types.SimpleNamespace(post=lambda *args, **kwargs: _Resp500()),
+        raising=False,
+    )
+    with pytest.raises(rsgispy.RSGISPyException, match="500"):
+        http.send_http_json_request("https://example.com/api", {"a": 1})
+
+    recorded_cmds = []
+    recorded_cfg = {}
+
+    def _fake_call(cmd):
+        recorded_cmds.append(list(cmd))
+        for arg in cmd:
+            if arg.startswith("--config="):
+                cfg_path = arg.split("=", 1)[1]
+                recorded_cfg["path"] = cfg_path
+                recorded_cfg["mode"] = stat.S_IMODE(os.stat(cfg_path).st_mode)
+                with open(cfg_path, "r", encoding="utf-8") as fp:
+                    recorded_cfg["content"] = fp.read()
+        return 0
+
+    monkeypatch.setattr(http.subprocess, "call", _fake_call)
+
+    out_path = str(tmp_path / "file.bin")
+    ok, _ = http.wget_download_file(
+        "https://example.com/file.bin",
+        out_path,
+        username="alice",
+        password="secret",
+    )
+    assert ok is True
+    assert "--no-check-certificate" not in recorded_cmds[0]
+    assert all("--password" not in arg for arg in recorded_cmds[0])
+    assert any(arg.startswith("--config=") for arg in recorded_cmds[0])
+    assert "user = alice\npassword = secret\n" == recorded_cfg["content"]
+    if os.name != "nt":
+        assert recorded_cfg["mode"] == 0o600
+    assert not os.path.exists(recorded_cfg["path"])
+
+    ok2, _ = http.wget_download_file(
+        "https://example.com/file.bin", out_path, verify_ssl=False
+    )
+    assert ok2 is True
+    assert "--no-check-certificate" in recorded_cmds[1]
+
+    with pytest.raises(rsgispy.RSGISPyException, match="newline"):
+        http.wget_download_file(
+            "https://example.com/file.bin",
+            out_path,
+            username="alice\nbad",
+            password="secret",
+        )
+
+
+def test_ftp_list_parser_spaces_and_special_entries():
+    """Preserve spaces in FTP LIST filenames and ignore total/. /.. entries."""
+    # pylint: disable=protected-access
+    assert ftp._parse_ftp_list_line("") is None
+    assert ftp._parse_ftp_list_line("total 42") is None
+    assert ftp._parse_ftp_list_line(
+        "-rw-r--r-- 1 user group 1024 Jun 01 12:00 my raster file.tif"
+    ) == (False, "my raster file.tif")
+    assert ftp._parse_ftp_list_line(
+        "drwxr-xr-x 2 user group 4096 Jun 01 12:00 sub folder"
+    ) == (True, "sub folder")
+
+    class _FakeFTP:
+        def __init__(self):
+            self.cwd_path = "/root"
+
+        def cwd(self, path):
+            self.cwd_path = path
+
+        def retrlines(self, _cmd, callback):
+            if self.cwd_path == "/root":
+                lines = (
+                    "total 16",
+                    "drwxr-xr-x 2 u g 4096 Jun 01 12:00 .",
+                    "drwxr-xr-x 2 u g 4096 Jun 01 12:00 ..",
+                    "drwxr-xr-x 2 u g 4096 Jun 01 12:00 data dir",
+                    "-rw-r--r-- 1 u g 100 Jun 01 12:00 scene 01.tif",
+                )
+            else:
+                lines = ("-rw-r--r-- 1 u g 200 Jun 01 12:00 nested file.tif",)
+            for ln in lines:
+                callback(ln)
+
+    ftp_files = {}
+    non_dirs = ftp._traverse_nlst_ftp_dirs(
+        _FakeFTP(), "/root", ftp_files, try_n_times=1
+    )
+    assert "/root/data dir" in ftp_files
+    assert ftp_files["/root"] == ["/root/scene 01.tif"]
+    assert ftp_files["/root/data dir"] == ["/root/data dir/nested file.tif"]
+    assert sorted(non_dirs) == [
+        "/root/data dir/nested file.tif",
+        "/root/scene 01.tif",
+    ]
+
+
+def test_tilecache_tile_size_and_get_tiles():
+    """Verify tile_size support and get_tiles boundary/TMS indexing."""
+    res_256 = tilecache.resolution(10, tile_size=256)
+    res_512 = tilecache.resolution(10, tile_size=512)
+    assert np.isclose(res_512, res_256 / 2.0)
+
+    t256 = tilecache.get_tile_for_point(-4.08, 52.41, zoom=10, tile_size=256)
+    t512 = tilecache.get_tile_for_point(-4.08, 52.41, zoom=10, tile_size=512)
+    assert t256 == t512
+
+    # Exact quadrant at zoom=1: west=[-180,0], north=[0,85] -> XYZ (0,0,1), TMS (0,1,1)
+    xyz_tiles = tilecache.get_tiles([-180.0, 0.0, 0.0, 85.0], zooms=1, tms=False)
+    tms_tiles = tilecache.get_tiles([-180.0, 0.0, 0.0, 85.0], zooms=1, tms=True)
+    assert xyz_tiles[1] == [(0, 0, 1)]
+    assert tms_tiles[1] == [(0, 1, 1)]
+
+
+def test_wmts_optional_deps_timeout_and_mixed_tile_modes(tmp_path, monkeypatch):
+    """Verify optional dependency guards, timeout forwarding, and mode normalisation."""
+    with patch.dict(sys.modules, {"owslib": None, "owslib.wmts": None}):
+        with pytest.raises(rsgispy.RSGISPyException, match="owslib"):
+            wmts.get_wmts_layer_list("https://example.com/wmts")
+
+    monkeypatch.setattr(wmts, "HAVE_PIL", False)
+    with pytest.raises(rsgispy.RSGISPyException, match="pillow"):
+        wmts.get_wmts_as_img(
+            "https://example.com/wmts",
+            "layer",
+            [0.0, 1000.0, 0.0, 1000.0],
+            3857,
+            str(tmp_path / "out.tif"),
+        )
+    monkeypatch.setattr(wmts, "HAVE_PIL", True)
+
+    captured_timeout = {}
+    tile_modes = ["RGB", "RGBA", "L", "P"]
+
+    class _FakeTileMatrix:
+        def __init__(self):
+            self.identifier = "1"
+            self.scaledenominator = 279541132.0143589
+            self.topleftcorner = (-20037508.34, 20037508.34)
+            self.tilewidth = 256
+            self.tileheight = 256
+            self.matrixwidth = 2
+            self.matrixheight = 2
+
+    class _FakeTMS:
+        def __init__(self):
+            self.crs = "EPSG:3857"
+            self.tilematrix = {"1": _FakeTileMatrix()}
+
+    class _FakeLayer:
+        def __init__(self):
+            self.tilematrixsets = ["GoogleMapsCompatible"]
+            self.styles = {"default": {}}
+
+    class _FakeWMTSWithTimeout:
+        def __init__(self, url, timeout=None):
+            captured_timeout["url"] = url
+            captured_timeout["timeout"] = timeout
+            self.contents = {"lyr": _FakeLayer()}
+            self.tilematrixsets = {"GoogleMapsCompatible": _FakeTMS()}
+            self._call_idx = 0
+
+        def gettile(self, **_kwargs):
+            mode = tile_modes[self._call_idx % len(tile_modes)]
+            self._call_idx += 1
+            if mode == "P":
+                pil_img = Image.new("RGB", (256, 256), color=(10, 20, 30)).convert("P")
+            elif mode == "L":
+                pil_img = Image.new("L", (256, 256), color=128)
+            elif mode == "RGBA":
+                pil_img = Image.new("RGBA", (256, 256), color=(10, 20, 30, 255))
+            else:
+                pil_img = Image.new("RGB", (256, 256), color=(10, 20, 30))
+            buf = io.BytesIO()
+            pil_img.save(buf, format="PNG")
+            buf.seek(0)
+            return buf
+
+    fake_owslib_wmts = types.ModuleType("owslib.wmts")
+    fake_owslib_wmts.WebMapTileService = _FakeWMTSWithTimeout
+    fake_owslib = types.ModuleType("owslib")
+    fake_owslib.wmts = fake_owslib_wmts
+
+    with patch.dict(
+        sys.modules, {"owslib": fake_owslib, "owslib.wmts": fake_owslib_wmts}
+    ):
+        layers = wmts.get_wmts_layer_list("https://example.com/wmts", timeout=12.5)
+        assert layers == ["lyr"]
+        assert captured_timeout["timeout"] == 12.5
+
+        out_tif = str(tmp_path / "mixed_modes.tif")
+        wmts.get_wmts_as_img(
+            "https://example.com/wmts",
+            "lyr",
+            [-5000000.0, 5000000.0, -5000000.0, 5000000.0],
+            3857,
+            out_tif,
+            zoom_level="1",
+            tmp_dir=str(tmp_path / "wmts_tmp"),
+            timeout=15.0,
+        )
+        assert captured_timeout["timeout"] == 15.0
+
+    with rasterio.open(out_tif) as ds:
+        assert ds.count == 3
+        assert ds.width > 0 and ds.height > 0
+
+
+def test_imaging_optional_pil_guard(tmp_path, monkeypatch):
+    """Verify PIL guards in imaging.py raise RSGISPyException with pillow/imaging."""
+    monkeypatch.setattr(imaging, "HAVE_PIL", False)
+    with pytest.raises(rsgispy.RSGISPyException, match="pillow"):
+        imaging.list_exif_info_pil(str(tmp_path / "x.jpg"))
+    monkeypatch.setattr(imaging, "HAVE_IMAGEIO", True)
+    with pytest.raises(rsgispy.RSGISPyException, match="pillow"):
+        imaging.animate_img_set(
+            [str(tmp_path / "x.png")],
+            str(tmp_path / "out.gif"),
+            resize=True,
+        )

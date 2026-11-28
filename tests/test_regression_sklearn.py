@@ -12,7 +12,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from sklearn.ensemble import (
     ExtraTreesRegressor,
     GradientBoostingRegressor,
@@ -28,40 +27,9 @@ import rsgispy
 import rsgispy.imageutils.colourtable as rct
 import rsgispy.regression.regdata as rrd
 import rsgispy.regression.regsklearn as rsk
+from rsgispy.regression.regsklearn import load_sklearn_regressor, save_sklearn_regressor
 
-
-def _write_raster(
-    path: Path,
-    arr: np.ndarray,
-    origin_x: float = 500000.0,
-    origin_y: float = 5600000.0,
-    pxl_size: float = 10.0,
-    crs: str = "EPSG:32630",
-    nodata: float = -999.0,
-) -> str:
-    """Write a 2D or 3D GeoTIFF raster for testing."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[None, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-        nodata=nodata,
-    ) as dst:
-        dst.write(write_arr)
-    return str(path)
+from conftest import write_raster
 
 
 def _build_reg_scene(tmp_path: Path):
@@ -78,11 +46,25 @@ def _build_reg_scene(tmp_path: Path):
 
     coarse = 5.0 + 2.0 * np.mgrid[0:8, 0:8][0].astype(np.float32)
 
-    s2_img = _write_raster(tmp_path / "s2.tif", np.stack([b1, b2]), nodata=-999.0)
-    coarse_img = _write_raster(
-        tmp_path / "coarse.tif", coarse, pxl_size=20.0, nodata=-999.0
+    s2_img = write_raster(
+        tmp_path / "s2.tif",
+        np.stack([b1, b2]),
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
     )
-    msk_img = _write_raster(tmp_path / "mask.tif", mask, nodata=0.0)
+    coarse_img = write_raster(
+        tmp_path / "coarse.tif",
+        coarse,
+        origin=(500000.0, 5600000.0),
+        pixel_size=20.0,
+        nodata=-999.0,
+    )
+    msk_img = write_raster(
+        tmp_path / "mask.tif",
+        mask,
+        origin=(500000.0, 5600000.0),
+        nodata=0.0,
+    )
 
     rng = np.random.default_rng(123)
     n_tot = 120
@@ -493,3 +475,21 @@ def test_regressor_param_search_with_spatial_and_group_splitters():
     assert isinstance(best, RandomForestRegressor)
     with pytest.raises(rsgispy.RSGISPyException, match="coords"):
         rsk.perform_sklearn_regressor_param_search(cv=spatial_cv, **common)
+
+
+def test_regression_model_save_load_roundtrip(tmp_path):
+    """Verify sklearn regression models round-trip cleanly via save/load_sklearn_regressor."""
+    rng = np.random.default_rng(99)
+    x_tr = rng.normal(size=(40, 3))
+    y_tr = 2.0 * x_tr[:, 0] - 0.5 * x_tr[:, 1] + 1.5
+    reg = Ridge(alpha=0.5).fit(x_tr, y_tr)
+
+    model_path = tmp_path / "subdir" / "ridge_reg.joblib"
+    save_sklearn_regressor(reg, model_path)
+    assert model_path.is_file()
+
+    loaded = load_sklearn_regressor(model_path)
+    assert np.allclose(loaded.predict(x_tr), reg.predict(x_tr))
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        load_sklearn_regressor(tmp_path / "does_not_exist.joblib")

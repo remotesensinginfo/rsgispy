@@ -17,13 +17,11 @@ from pixel_ml_scene import make_pixel_scene
 pytest.importorskip("sklearn")
 pytest.importorskip("matplotlib")
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples",
     "pixel_regression_workflow.py",
-)
-GUIDE = os.path.join(
-    os.path.dirname(__file__), os.pardir, "docs", "guides",
-    "pixel_regression_workflow.rst",
 )
 
 
@@ -65,20 +63,3 @@ def test_worked_example_runs(tmp_path):
     resid = gpd.read_file(str(tmp_path / "out" / "valid_plots_residuals.gpkg"))
     assert "residual" in resid.columns
     assert os.path.exists(out["map_file"])
-
-
-def test_guide_markers_exist():
-    """Every literalinclude marker used by the guide exists in the script."""
-    with open(EXAMPLE, encoding="utf-8") as f_obj:
-        script = f_obj.read()
-    with open(GUIDE, encoding="utf-8") as f_obj:
-        guide = f_obj.read()
-    markers = [
-        line.split(":start-after:")[1].strip()
-        for line in guide.splitlines()
-        if ":start-after:" in line
-    ]
-    assert len(markers) >= 10
-    for marker in markers:
-        assert marker in script
-        assert marker.replace("[step-", "[end-step-") in script

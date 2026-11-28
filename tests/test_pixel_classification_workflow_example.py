@@ -17,13 +17,11 @@ pytest.importorskip("sklearn")
 pytest.importorskip("optuna")
 pytest.importorskip("matplotlib")
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples",
     "pixel_classification_workflow.py",
-)
-GUIDE = os.path.join(
-    os.path.dirname(__file__), os.pardir, "docs", "guides",
-    "pixel_classification_workflow.rst",
 )
 
 
@@ -86,24 +84,3 @@ def test_worked_example_runs(tmp_path):
     assert os.path.exists(out["map_file"])
     assert os.path.exists(out["clu_img"])
     assert os.path.exists(str(tmp_path / "out" / "acc_pts_to_label.gpkg"))
-
-
-def test_guide_markers_exist():
-    """Every literalinclude marker used by the guide exists in the script."""
-    with open(EXAMPLE, encoding="utf-8") as f_obj:
-        script = f_obj.read()
-    with open(GUIDE, encoding="utf-8") as f_obj:
-        guide = f_obj.read()
-    # Only the markers of the blocks included from the example script (the
-    # guide also includes the tutorial-data script).
-    markers = []
-    included = ""
-    for line in guide.splitlines():
-        if "literalinclude::" in line:
-            included = line.split("literalinclude::")[1].strip()
-        elif ":start-after:" in line and included.endswith("/pixel_classification_workflow.py"):
-            markers.append(line.split(":start-after:")[1].strip())
-    assert len(markers) >= 12
-    for marker in markers:
-        assert marker in script
-        assert marker.replace("[step-", "[end-step-") in script

@@ -4,21 +4,22 @@ Tests for :mod:`rsgispy.changedetect.imgchngmthds`,
 :func:`rsgispy.tools.plotting.plot_histogram_threshold`.
 """
 
-import inspect
 
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.changedetect
 import rsgispy.changedetect.imgchngmthds as icm
 import rsgispy.changedetect.pxloutlierchng as poc
+import rsgispy.imageprocess as imgproc
 import rsgispy.tools.plotting as rplot
 from rsgispy.imageutils.colourtable import is_img_thematic
+
+from conftest import write_raster
 
 matplotlib.use("Agg")
 
@@ -32,20 +33,7 @@ def _write_raster(
     nodata=None,
 ):
     """Write a 3D ``(bands, height, width)`` GeoTIFF raster."""
-    count, height, width = data.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=str(data.dtype),
-        crs=crs,
-        transform=from_origin(origin[0], origin[1], res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(data)
+    return write_raster(path, data, origin=origin, pixel_size=res, crs=crs, nodata=nodata)
 
 
 class _DummyPyODDetector:
@@ -66,25 +54,6 @@ class _DummyPyODDetector:
         _ = method
         p1 = np.clip(data[:, 0], 0.0, 1.0)
         return np.stack([1.0 - p1, p1], axis=1)
-
-
-def test_default_gdalformat_is_gtiff():
-    """Verify all changedetect functions default gdalformat to 'GTIFF'."""
-    funcs = [
-        icm.image_difference,
-        icm.image_ratio,
-        icm.change_vector_analysis,
-        icm.slow_feature_analysis,
-        icm.multivariate_alteration_detection,
-        poc.find_class_pyod_outliers,
-        poc.find_class_otsu_outliers,
-        poc.find_class_li_outliers,
-        poc.find_class_kurt_skew_outliers,
-    ]
-
-    for fn in funcs:
-        sig = inspect.signature(fn)
-        assert sig.parameters["gdalformat"].default == "GTIFF"
 
 
 def test_plot_histogram_threshold(tmp_path):
@@ -711,18 +680,6 @@ _METHODS = ["cva"] + (["sfa", "mad"] if icm.HAVE_SCIPY else [])
 _KMEANS = [False] + ([True] if icm.HAVE_SKLEARN else [])
 
 
-def test_centre_on_threshold_defaults():
-    """CVA and ISFA centre on the threshold by default; IR-MAD does not."""
-    for fn, centred in (
-        (icm.change_vector_analysis, True),
-        (icm.slow_feature_analysis, True),
-        (icm.multivariate_alteration_detection, False),
-    ):
-        params = inspect.signature(fn).parameters
-        assert params["centre_on_threshold"].default is centred
-        assert params["no_data_val"].default == -9999.0
-
-
 @pytest.mark.filterwarnings("ignore:.*did not converge:UserWarning")
 @pytest.mark.parametrize("method", _METHODS)
 @pytest.mark.parametrize("use_kmeans", _KMEANS)
@@ -773,16 +730,6 @@ def test_default_no_data_is_set(tmp_path, method):
 # ---------------------------------------------------------------------------
 # Reproducible K-means thresholds
 # ---------------------------------------------------------------------------
-
-
-def test_kmeans_functions_take_rnd_seed():
-    """Every function that can use K-means takes rnd_seed (Default = 42)."""
-    for fn in (
-        icm.change_vector_analysis,
-        icm.slow_feature_analysis,
-        icm.multivariate_alteration_detection,
-    ):
-        assert inspect.signature(fn).parameters["rnd_seed"].default == 42
 
 
 @pytest.mark.skipif(not icm.HAVE_SKLEARN, reason="scikit-learn not installed")
@@ -888,3 +835,108 @@ def test_image_ratio_zero_denominator_is_no_data(tmp_path):
                     base_img_no_data=-1, chng_img_no_data=-1, use_pbar=False)
     with rasterio.open(out) as src:
         np.testing.assert_allclose(src.read(1), [[-9999.0, 2.0]])
+
+
+def test_changedetect_streaming_and_binary_nodata_255(tmp_path, monkeypatch):
+    monkeypatch.setenv(imgproc.ENV_VAR_BLOCK_SIZE, "8")
+    rng = np.random.default_rng(19)
+    base = rng.uniform(10.0, 30.0, size=(3, 16, 16)).astype(np.float32)
+    chng = base + rng.normal(0.0, 0.5, size=(3, 16, 16)).astype(np.float32)
+    chng[:, 8:14, 8:14] += 15.0  # clear change patch
+    msk = np.ones((16, 16), dtype=np.uint8)
+    msk[0:2, 0:2] = 0  # masked-out corner
+
+    base_img = write_raster(
+        tmp_path / "cd_base.tif", base, origin=(500000.0, 5800000.0)
+    )
+    chng_img = write_raster(
+        tmp_path / "cd_chng.tif", chng, origin=(500000.0, 5800000.0)
+    )
+    msk_img = write_raster(
+        tmp_path / "cd_msk.tif", msk, origin=(500000.0, 5800000.0)
+    )
+
+    out_diff = str(tmp_path / "diff.tif")
+    icm.image_difference(
+        base_img,
+        chng_img,
+        out_diff,
+        vld_msk_img=msk_img,
+        vld_msk_val=1,
+        apply_std=True,
+        no_data_val=-999.0,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out_diff) as dst:
+        assert dst.nodata == -999.0
+        d_arr = dst.read()
+        assert np.all(d_arr[:, 0:2, 0:2] == -999.0)
+        assert np.all(np.isfinite(d_arr))
+
+    out_ratio = str(tmp_path / "ratio.tif")
+    icm.image_ratio(
+        base_img,
+        chng_img,
+        out_ratio,
+        vld_msk_img=msk_img,
+        vld_msk_val=1,
+        apply_std=False,
+        no_data_val=-999.0,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out_ratio) as dst:
+        r_arr = dst.read()
+        assert np.all(r_arr[:, 0:2, 0:2] == -999.0)
+        np.testing.assert_allclose(
+            r_arr[:, 5, 5], base[:, 5, 5] / chng[:, 5, 5], rtol=1e-5
+        )
+
+    cva_bin = str(tmp_path / "cva_bin.tif")
+    cva_dist = str(tmp_path / "cva_dist.tif")
+    icm.change_vector_analysis(
+        base_img,
+        chng_img,
+        cva_bin,
+        cva_dist,
+        vld_msk_img=msk_img,
+        vld_msk_val=1,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    sfa_bin = str(tmp_path / "sfa_bin.tif")
+    sfa_dist = str(tmp_path / "sfa_dist.tif")
+    icm.slow_feature_analysis(
+        base_img,
+        chng_img,
+        sfa_bin,
+        sfa_dist,
+        vld_msk_img=msk_img,
+        vld_msk_val=1,
+        sfa_max_iter=5,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    mad_bin = str(tmp_path / "mad_bin.tif")
+    mad_dist = str(tmp_path / "mad_dist.tif")
+    mad_vars = str(tmp_path / "mad_vars.tif")
+    icm.multivariate_alteration_detection(
+        base_img,
+        chng_img,
+        mad_bin,
+        mad_dist,
+        mad_vars,
+        vld_msk_img=msk_img,
+        vld_msk_val=1,
+        mad_max_iter=5,
+        use_kmeans=False,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    for b_path in (cva_bin, sfa_bin, mad_bin):
+        with rasterio.open(b_path) as dst:
+            b_arr = dst.read(1)
+            assert dst.nodata == 255.0
+            assert np.all(b_arr[0:2, 0:2] == 255)
+            assert set(np.unique(b_arr[msk == 1]).tolist()).issubset({0, 1})

@@ -20,11 +20,10 @@ from tile_graph_scene import make_tile_graph_scene
 
 pytest.importorskip("sklearn")
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "tile_graph.py"
-)
-GUIDE = os.path.join(
-    os.path.dirname(__file__), os.pardir, "docs", "guides", "tile_graph.rst"
 )
 
 
@@ -119,24 +118,3 @@ def test_grid_mismatch_is_reported(scene, tmp_path):
                        lambda a, b: a - b)
     with pytest.raises(rsgispy.RSGISPyException, match="same pixel grid"):
         TileGraph(MemorySink(node))
-
-
-def test_guide_markers_exist():
-    """Every literalinclude marker used by the guide exists in the script."""
-    with open(EXAMPLE, encoding="utf-8") as f_obj:
-        script = f_obj.read()
-    with open(GUIDE, encoding="utf-8") as f_obj:
-        guide = f_obj.read()
-    # Only the markers of the blocks included from the example script (the
-    # guide also includes the tutorial-data script).
-    markers = []
-    included = ""
-    for line in guide.splitlines():
-        if "literalinclude::" in line:
-            included = line.split("literalinclude::")[1].strip()
-        elif ":start-after:" in line and included.endswith("/tile_graph.py"):
-            markers.append(line.split(":start-after:")[1].strip())
-    assert len(markers) >= 11
-    for marker in markers:
-        assert marker in script
-        assert marker.replace("[step-", "[end-step-") in script

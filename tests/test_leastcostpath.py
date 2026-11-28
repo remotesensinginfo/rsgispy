@@ -2,7 +2,6 @@
 Tests for :mod:`rsgispy.imagecalc.leastcostpath`.
 """
 
-import inspect
 
 import numpy as np
 import pytest
@@ -12,29 +11,7 @@ from rasterio.transform import from_origin
 import rsgispy
 import rsgispy.imagecalc.leastcostpath as lcp
 
-
-def _write_cost_raster(path, arr, origin=(0.0, 100.0), res=10.0, crs="EPSG:32630"):
-    """Write a single- or multi-band GeoTIFF cost surface."""
-    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
-    count, height, width = data.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=str(data.dtype),
-        crs=crs,
-        transform=from_origin(origin[0], origin[1], res, res),
-    ) as dst:
-        dst.write(data)
-
-
-def test_default_gdalformat_is_gtiff():
-    """Verify gdalformat defaults to 'GTIFF'."""
-    sig = inspect.signature(lcp.perform_least_cost_path_calc)
-    assert sig.parameters["gdalformat"].default == "GTIFF"
+from conftest import write_raster
 
 
 def test_least_cost_path_avoids_barrier(tmp_path):
@@ -44,7 +21,7 @@ def test_least_cost_path_avoids_barrier(tmp_path):
 
     cost = np.ones((7, 7), dtype=np.float32)
     cost[1:6, 3] = 1000.0  # high barrier forcing path to route around row 0 or 6
-    _write_cost_raster(cost_img, cost)
+    write_raster(cost_img, cost, origin=(0.0, 100.0))
 
     # Start (row=3, col=1) -> x=15, y=65 ; Stop (row=3, col=5) -> x=55, y=65
     lcp.perform_least_cost_path_calc(
@@ -72,7 +49,7 @@ def test_least_cost_path_dijkstra_fallback_matches_skimage(tmp_path, monkeypatch
 
     cost = np.ones((6, 6), dtype=np.float32)
     cost[0:5, 2] = 500.0  # only row 5 column 2 has cost 1
-    _write_cost_raster(cost_img, cost)
+    write_raster(cost_img, cost, origin=(0.0, 100.0))
 
     start = (5.0, 85.0)  # row=1, col=0
     stop = (45.0, 85.0)  # row=1, col=4
@@ -103,7 +80,7 @@ def test_least_cost_path_band_selection_and_validation(tmp_path):
     b1 = np.ones((5, 5), dtype=np.float32)
     b2 = np.ones((5, 5), dtype=np.float32)
     b2[0:4, 2] = 500.0
-    _write_cost_raster(cost_img, np.stack([b1, b2], axis=0))
+    write_raster(cost_img, np.stack([b1, b2], axis=0), origin=(0.0, 100.0))
 
     lcp.perform_least_cost_path_calc(
         str(cost_img),
@@ -128,11 +105,45 @@ def test_least_cost_path_band_selection_and_validation(tmp_path):
     neg_img = tmp_path / "neg.tif"
     neg_arr = np.ones((4, 4), dtype=np.float32)
     neg_arr[1, 1] = -2.0
-    _write_cost_raster(neg_img, neg_arr)
+    write_raster(neg_img, neg_arr, origin=(0.0, 100.0))
     with pytest.raises(rsgispy.RSGISPyException):
         lcp.perform_least_cost_path_calc(
             str(neg_img),
             str(out_img),
             start_coord=(5.0, 95.0),
             stop_coord=(35.0, 65.0),
+        )
+
+
+def test_least_cost_path_avoids_nan_and_nodata_barriers(tmp_path):
+    cost = np.ones((7, 7), dtype=np.float32)
+    # Build vertical wall at col=3 except row=6, mixing NaN and nodata (-999)
+    cost[0:3, 3] = np.nan
+    cost[3:6, 3] = -999.0
+    tf = from_origin(0.0, 70.0, 10.0, 10.0)
+    cost_img = write_raster(tmp_path / "cost.tif", cost, transform=tf, nodata=-999.0)
+    out_img = str(tmp_path / "lcp.tif")
+
+    # Start (row=1, col=1) -> (15, 55), Stop (row=1, col=5) -> (55, 55)
+    lcp.perform_least_cost_path_calc(
+        cost_surface_img=cost_img,
+        output_img=out_img,
+        start_coord=(15.0, 55.0),
+        stop_coord=(55.0, 55.0),
+    )
+    with rasterio.open(out_img) as dst:
+        path_arr = dst.read(1)
+        assert path_arr[1, 1] == 1
+        assert path_arr[1, 5] == 1
+        # Must not cross any barrier cell, and must pass through gap at (6, 3)
+        assert not np.any(path_arr[0:6, 3] == 1)
+        assert path_arr[6, 3] == 1
+
+    # Start inside nodata cell must raise RSGISPyException
+    with pytest.raises(rsgispy.RSGISPyException):
+        lcp.perform_least_cost_path_calc(
+            cost_surface_img=cost_img,
+            output_img=str(tmp_path / "lcp_bad.tif"),
+            start_coord=(35.0, 35.0),  # (row=3, col=3) is -999
+            stop_coord=(55.0, 55.0),
         )

@@ -18,7 +18,7 @@ import pyarrow.parquet as pq
 import pytest
 import rasterio
 import rasterio.features
-from rasterio.transform import Affine, from_origin
+from rasterio.transform import Affine
 import shapely
 
 import rsgispy
@@ -28,27 +28,11 @@ from rsgispy import _polygonise_tile as ptile
 from rsgispy._numba import HAS_NUMBA, disable_numba
 import rsgispy.vector.create as vec_create
 
+from conftest import write_raster
+
 needs_numba = pytest.mark.skipif(not HAS_NUMBA, reason="numba not installed")
 
 BACKENDS = ["numba", "rasterio"]
-
-
-def _write(path, arr, transform=None, nodata=None):
-    transform = transform if transform is not None else from_origin(500000, 5200000, 10, 10)
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=arr.shape[0],
-        width=arr.shape[1],
-        count=1,
-        dtype=arr.dtype,
-        crs="EPSG:32630",
-        transform=transform,
-        nodata=nodata,
-    ) as dst:
-        dst.write(arr, 1)
-    return str(path)
 
 
 def _hard_case_array():
@@ -113,7 +97,7 @@ def _assert_equivalent(ref, new, col="PXLVAL", check_vertices=False):
 
 @pytest.fixture(name="hard_img")
 def fixture_hard_img(tmp_path):
-    return _write(tmp_path / "hard.tif", _hard_case_array())
+    return write_raster(tmp_path / "hard.tif", _hard_case_array())
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +129,7 @@ def test_matches_existing_function_random(tmp_path, backend, use_8_conn):
     rng = np.random.default_rng(42)
     for trial in range(4):
         arr = _blob_array(rng, 23 + 7 * trial, 31 - 3 * trial, 2 + trial)
-        img = _write(tmp_path / f"blob_{trial}.tif", arr)
+        img = write_raster(tmp_path / f"blob_{trial}.tif", arr)
         ref = vec_create.polygonise_raster_to_vec_lyr(
             None, None, "GPKG", img, use_8_conn=use_8_conn
         )
@@ -165,7 +149,7 @@ def test_matches_existing_function_random(tmp_path, backend, use_8_conn):
 
 def test_eight_connectivity_writes_valid_multipolygons(tmp_path):
     arr = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.uint8)
-    img = _write(tmp_path / "diag.tif", arr)
+    img = write_raster(tmp_path / "diag.tif", arr)
     for backend in BACKENDS:
         gdf = vec_create.polygonise_raster_tiled(
             img, None, use_8_conn=True, tile_size=2, backend=backend, use_pbar=False
@@ -180,10 +164,8 @@ def test_eight_connectivity_writes_valid_multipolygons(tmp_path):
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_orientation_and_south_up_transform(tmp_path, backend):
     arr = _hard_case_array()
-    north = _write(tmp_path / "north.tif", arr)
-    south = _write(
-        tmp_path / "south.tif", arr, transform=Affine(10, 0, 500000, 0, 10, 5200000)
-    )
+    north = write_raster(tmp_path / "north.tif", arr)
+    south = write_raster(tmp_path / "south.tif", arr, transform=Affine(10, 0, 500000, 0, 10, 5200000))
     for img in (north, south):
         gdf = vec_create.polygonise_raster_tiled(
             img, None, tile_size=9, backend=backend, use_pbar=False
@@ -198,7 +180,7 @@ def test_orientation_and_south_up_transform(tmp_path, backend):
 
 def test_awkward_geotransform_within_rounding(tmp_path):
     arr = _hard_case_array()
-    img = _write(
+    img = write_raster(
         tmp_path / "geo.tif",
         arr,
         transform=Affine(0.000269494585236, 0, -3.123456789, 0, -0.000269494585236, 52.98765),
@@ -226,7 +208,7 @@ def test_awkward_geotransform_within_rounding(tmp_path):
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_n_jobs_identical_output(tmp_path, backend):
     rng = np.random.default_rng(7)
-    img = _write(tmp_path / "blob.tif", _blob_array(rng, 90, 70, 6))
+    img = write_raster(tmp_path / "blob.tif", _blob_array(rng, 90, 70, 6))
     outs = []
     for n_jobs in (1, 2):
         out = str(tmp_path / f"out_{backend}_{n_jobs}.parquet")
@@ -363,9 +345,9 @@ def test_tile_kernels_match_gdal_on_random_tiles(use_8_conn):
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_mask_and_no_data(tmp_path, backend):
     arr = _hard_case_array()
-    img = _write(tmp_path / "hard.tif", arr)
+    img = write_raster(tmp_path / "hard.tif", arr)
     msk_arr = ((np.arange(1600).reshape(40, 40) % 7) != 0).astype(np.uint8)
-    msk = _write(tmp_path / "msk.tif", msk_arr)
+    msk = write_raster(tmp_path / "msk.tif", msk_arr)
     ref = vec_create.polygonise_raster_to_vec_lyr(None, None, "GPKG", img, mask_img=msk)
     new = vec_create.polygonise_raster_tiled(
         img, None, mask_img=msk, tile_size=9, backend=backend, use_pbar=False
@@ -390,7 +372,7 @@ def test_float_raster(tmp_path, backend):
     arr[3:6, 3:30] = np.nan
     arr[20, 20] = -0.0
     arr[21, 20] = 0.0
-    img = _write(tmp_path / "f.tif", arr)
+    img = write_raster(tmp_path / "f.tif", arr)
     ref = vec_create.polygonise_raster_to_vec_lyr(None, None, "GPKG", img)
     ref = ref[~np.isnan(ref["PXLVAL"])]
     new = vec_create.polygonise_raster_tiled(
@@ -412,8 +394,8 @@ def test_float_raster(tmp_path, backend):
 def test_large_integer_labels(tmp_path, backend, dtype, offset):
     base = _hard_case_array()
     arr = (base.astype(np.int64).astype(dtype) + dtype(offset)).astype(dtype)
-    img = _write(tmp_path / "big.tif", arr)
-    ref_img = _write(tmp_path / "small.tif", base)
+    img = write_raster(tmp_path / "big.tif", arr)
+    ref_img = write_raster(tmp_path / "small.tif", base)
     ref = vec_create.polygonise_raster_tiled(
         ref_img, None, tile_size=9, backend=backend, use_pbar=False
     )
@@ -426,7 +408,7 @@ def test_large_integer_labels(tmp_path, backend, dtype, offset):
 
 
 def test_empty_and_all_masked(tmp_path):
-    img = _write(tmp_path / "zeros.tif", np.zeros((25, 30), dtype=np.uint16))
+    img = write_raster(tmp_path / "zeros.tif", np.zeros((25, 30), dtype=np.uint16))
     gdf = vec_create.polygonise_raster_tiled(img, None, no_data_val=0, use_pbar=False)
     assert len(gdf) == 0
     assert "PXLVAL" in gdf.columns
@@ -477,7 +459,7 @@ def test_dissolve_sort_and_pxl_count(hard_img, backend, use_8_conn):
 def test_sorted_output_independent_of_tiling(tmp_path):
     rng = np.random.default_rng(9)
     arr = _blob_array(rng, 45, 38, 5)  # few values: many polygons per value
-    img = _write(tmp_path / "blob.tif", arr)
+    img = write_raster(tmp_path / "blob.tif", arr)
     outs = [
         vec_create.polygonise_raster_tiled(
             img, None, sort_by_value=True, tile_size=ts, backend=be, use_pbar=False
@@ -501,7 +483,7 @@ def test_pxl_count_per_polygon(hard_img):
 def test_sort_and_dissolve_out_of_core(tmp_path, monkeypatch):
     rng = np.random.default_rng(5)
     arr = _blob_array(rng, 60, 50, 40)
-    img = _write(tmp_path / "blob.tif", arr)
+    img = write_raster(tmp_path / "blob.tif", arr)
     ref = vec_create.polygonise_raster_tiled(img, None, tile_size=11, use_pbar=False)
     in_mem_sorted = vec_create.polygonise_raster_tiled(
         img, None, tile_size=11, sort_by_value=True, use_pbar=False
@@ -569,7 +551,7 @@ def test_validation_errors(tmp_path, hard_img):
         vec_create.polygonise_raster_tiled(
             hard_img, None, inc_pxl_count=True, pxl_count_fieldname="PXLVAL"
         )
-    small = _write(tmp_path / "small.tif", np.ones((5, 5), dtype=np.uint8))
+    small = write_raster(tmp_path / "small.tif", np.ones((5, 5), dtype=np.uint8))
     with pytest.raises(rsgispy.RSGISPyException, match="Mask image"):
         vec_create.polygonise_raster_tiled(hard_img, None, mask_img=small)
     with pytest.raises(rsgispy.RSGISPyException):
@@ -590,7 +572,7 @@ def test_polygonise_raster_to_vec_lyr_new_order_and_no_data(tmp_path):
     arr = np.zeros((6, 6), dtype=np.uint8)
     arr[1:3, 1:3] = 1
     arr[4:6, 3:6] = 2
-    img = _write(tmp_path / "cls.tif", arr)
+    img = write_raster(tmp_path / "cls.tif", arr)
     every = vec_create.polygonise_raster_to_vec_lyr(img)
     assert sorted(every["PXLVAL"].unique().tolist()) == [0, 1, 2]
     no_zero = vec_create.polygonise_raster_to_vec_lyr(img, None, None, 1, no_data_val=0)

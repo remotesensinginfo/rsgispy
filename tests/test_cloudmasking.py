@@ -10,28 +10,11 @@ import os
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imagecalibration.cloudmasking as cldmsk
 
-
-def _write_gtiff(path, arr, nodata=None):
-    count, height, width = arr.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(arr.dtype),
-        "crs": "EPSG:32630",
-        "transform": from_origin(500000.0, 5700000.0, 10.0, 10.0),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(arr)
-    return path
+from conftest import write_raster
 
 
 def _fake_predict_factory(calls):
@@ -55,7 +38,7 @@ def _make_input(tmp_path, n_bands, height=70, width=90):
     rng = np.random.default_rng(42)
     data = rng.integers(1, 4000, size=(n_bands, height, width)).astype(np.uint16)
     data[:, :5, :7] = 0  # no-data corner
-    return _write_gtiff(str(tmp_path / "in.tif"), data), data
+    return write_raster(str(tmp_path / "in.tif"), data, origin=(500000.0, 5700000.0)), data
 
 
 def _expected(data, scale=10000.0, offset=0.0):

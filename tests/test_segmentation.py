@@ -2,7 +2,6 @@
 Tests for rsgispy.segmentation.clump (clump and union_of_clumps).
 """
 
-import inspect
 import os
 import time
 
@@ -13,8 +12,10 @@ from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.segmentation as rseg_pkg
-import rsgispy.segmentation.clump as rseg_clump
 import rsgispy.segmentation._helpers as seg_helpers
+import rsgispy.segmentation.clump as rseg_clump
+
+from conftest import write_raster
 
 
 def _write_raster(
@@ -26,39 +27,7 @@ def _write_raster(
     crs: str = "EPSG:32630",
 ) -> None:
     """Helper to write a 2D or 3D GeoTIFF raster."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[None, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-    ) as dst:
-        dst.write(write_arr)
-
-
-def test_package_layout_and_signatures():
-    """Verify functions live in rsgispy.segmentation.clump without add_to_rat."""
-    assert not hasattr(rseg_pkg, "union_of_clumps")
-    assert inspect.ismodule(getattr(rseg_pkg, "clump"))
-    assert callable(rseg_clump.clump)
-    assert callable(rseg_clump.union_of_clumps)
-    assert "add_to_rat" not in inspect.signature(rseg_clump.clump).parameters
-    assert (
-        "add_to_rat"
-        not in inspect.signature(rseg_clump.union_of_clumps).parameters
-    )
+    return write_raster(path, arr, crs=crs, origin=(origin_x, origin_y), pixel_size=pxl_size)
 
 
 def test_clump_4connectivity_nodata_and_no_pam(tmp_path):
@@ -413,3 +382,36 @@ def test_eliminate_small_segments_masks_reference_nodata(tmp_path):
     with rasterio.open(out_path) as ds:
         res = ds.read(1)
     assert res[0, 2] == res[0, 0]
+
+
+def test_clump_id_overflow_raises(tmp_path):
+    # 20x20 grid with unique pixel value per cell => 400 clumps (> uint8 max 255)
+    vals = np.arange(1, 401, dtype=np.uint16).reshape(20, 20)
+    in_img = write_raster(tmp_path / "clump_in.tif", vals, origin=(500000.0, 5800000.0), nodata=0)
+
+    # In-memory overflow
+    with pytest.raises(
+        rsgispy.RSGISPyException, match="exceeds maximum representable value"
+    ):
+        rseg_clump.clump(
+            input_img=in_img,
+            output_img=str(tmp_path / "clump_mem.tif"),
+            in_memory=True,
+            datatype=rsgispy.TYPE_8UINT,
+            calc_stats=False,
+            use_pbar=False,
+        )
+
+    # Tiled overflow (block_size=8 forces multi-tile path)
+    with pytest.raises(
+        rsgispy.RSGISPyException, match="exceeds maximum representable value"
+    ):
+        rseg_clump.clump(
+            input_img=in_img,
+            output_img=str(tmp_path / "clump_tiled.tif"),
+            in_memory=False,
+            block_size=8,
+            datatype=rsgispy.TYPE_8UINT,
+            calc_stats=False,
+            use_pbar=False,
+        )

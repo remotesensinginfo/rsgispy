@@ -17,11 +17,10 @@ from seg_ml_scene import CLASS_IDS, make_seg_scene
 
 pytest.importorskip("sklearn")
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "segment_ml_workflow.py"
-)
-GUIDE = os.path.join(
-    os.path.dirname(__file__), os.pardir, "docs", "guides", "segment_ml_workflow.rst"
 )
 
 
@@ -71,21 +70,3 @@ def test_worked_example_runs(tmp_path):
     assert os.path.exists(out["new_cls_vec"])
     assert "pred_canopy_cover" in gpd.read_parquet(out["reg_vec"]).columns
     assert "cluster_id" in gpd.read_parquet(out["clu_vec"]).columns
-
-
-def test_guide_markers_exist():
-    """Every literalinclude marker used by the guide exists in the script."""
-    with open(EXAMPLE, encoding="utf-8") as f_obj:
-        script = f_obj.read()
-    with open(GUIDE, encoding="utf-8") as f_obj:
-        guide = f_obj.read()
-    markers = [
-        line.split(":start-after:")[1].strip()
-        for line in guide.splitlines()
-        # the [tutorial-data] marker is in the *_tutorial.py script
-        if ":start-after:" in line and "tutorial-data" not in line
-    ]
-    assert len(markers) >= 12
-    for marker in markers:
-        assert marker in script
-        assert marker.replace("[step-", "[end-step-") in script

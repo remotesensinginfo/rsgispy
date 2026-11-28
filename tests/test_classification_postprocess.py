@@ -10,7 +10,6 @@ from typing import Dict, Optional, Sequence
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.classification as rsgis_cls
@@ -18,6 +17,8 @@ import rsgispy.classification.classpostprocess as classpost
 import rsgispy.imagefilter.stats as imagefilter_stats
 from rsgispy.imageprocess import get_default_block_size, set_default_block_size
 from rsgispy.imageutils.colourtable import is_img_thematic
+
+from conftest import write_raster
 
 
 def _write_raster(
@@ -29,26 +30,16 @@ def _write_raster(
     cmap_band: int = 1,
 ) -> Path:
     """Create a synthetic GeoTIFF raster for classification post-processing tests."""
-    height, width = bands[0].shape
-    dtype = bands[0].dtype
-    with rasterio.open(
+    write_raster(
         path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=len(bands),
-        dtype=dtype,
-        crs="EPSG:32630",
-        transform=from_origin(500000.0, 6000000.0, 10.0, 10.0),
+        list(bands),
+        dtype=bands[0].dtype,
         nodata=nodata,
-    ) as dst:
-        for idx, arr in enumerate(bands, start=1):
-            dst.write(arr, idx)
-            if descriptions is not None:
-                dst.set_band_description(idx, descriptions[idx - 1])
-        if colormap is not None:
-            dst.write_colormap(cmap_band, colormap)
+        origin=(500000.0, 6000000.0),
+        band_names=descriptions,
+        colormap=colormap,
+        colormap_band=cmap_band,
+    )
     return path
 
 

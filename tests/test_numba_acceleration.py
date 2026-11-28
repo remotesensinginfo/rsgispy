@@ -29,6 +29,8 @@ from rsgispy._numba import (
     warn_numba_fallback,
 )
 
+from conftest import write_raster
+
 needs_numba = pytest.mark.skipif(not HAS_NUMBA, reason="numba not installed")
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -264,25 +266,6 @@ def test_priority_flood_kernel_matches_python():
         np.testing.assert_array_equal(out_a[vld], out_b[vld])
 
 
-def _write_raster(path, arr, nodata=None, res=10.0):
-    import rasterio
-    from rasterio.transform import from_origin
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=arr.shape[0],
-        width=arr.shape[1],
-        count=1,
-        dtype=arr.dtype.name,
-        crs="EPSG:32630",
-        transform=from_origin(400000.0, 5600000.0, res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(arr, 1)
-
-
 @needs_numba
 def test_fill_dem_and_shadow_mask_end_to_end_equivalent(tmp_path):
     import rasterio
@@ -297,9 +280,19 @@ def test_fill_dem_and_shadow_mask_end_to_end_equivalent(tmp_path):
     dem_i[5:9, 5:9] = -9999
     vld = np.ones((h, w), dtype=np.uint8)
     vld[:, :2] = 0
-    _write_raster(str(tmp_path / "dem_i.tif"), dem_i, nodata=-9999)
-    _write_raster(str(tmp_path / "vld.tif"), vld)
-    _write_raster(str(tmp_path / "dem_f.tif"), dem_f.astype(np.float32), nodata=-9999)
+    write_raster(
+        str(tmp_path / "dem_i.tif"),
+        dem_i,
+        origin=(400000.0, 5600000.0),
+        nodata=-9999,
+    )
+    write_raster(str(tmp_path / "vld.tif"), vld, origin=(400000.0, 5600000.0))
+    write_raster(
+        str(tmp_path / "dem_f.tif"),
+        dem_f.astype(np.float32),
+        origin=(400000.0, 5600000.0),
+        nodata=-9999,
+    )
 
     outputs = {}
     for label, ctx in (("jit", None), ("py", disable_numba)):

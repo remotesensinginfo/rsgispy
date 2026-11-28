@@ -10,7 +10,6 @@ import os
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imagefilter.chained as if_chained
@@ -36,26 +35,14 @@ from rsgispy.imageprocess import (
     same_bands_meta,
 )
 
+from conftest import write_raster
+
 
 def _write(path, arr, nodata=None, crs="EPSG:32630", origin=(500000.0, 5000000.0),
            res=10.0, names=None):
-    arr3 = arr[np.newaxis] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": arr3.shape[1],
-        "width": arr3.shape[2],
-        "count": arr3.shape[0],
-        "dtype": str(arr3.dtype),
-        "crs": crs,
-        "transform": from_origin(origin[0], origin[1], res, res),
-        "nodata": nodata,
-    }
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(arr3)
-        if names:
-            for idx, name in enumerate(names, start=1):
-                dst.set_band_description(idx, name)
-    return str(path)
+    return write_raster(
+        path, arr, nodata=nodata, crs=crs, origin=origin, pixel_size=res, band_names=names or None
+    )
 
 
 def _read(path):

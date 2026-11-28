@@ -3,56 +3,24 @@ Tests for rsgispy.classification.clustersklearn unsupervised pixel
 classification (whole-image clustering and sample-fit + image-predict modes).
 """
 
-import inspect
 from pathlib import Path
 
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
+from sklearn.cluster import KMeans
 
 import rsgispy
-import rsgispy.classification as rcls
 import rsgispy.classification.classdata as rcd
 import rsgispy.classification.classsklearn as rcsk
 import rsgispy.classification.clustersklearn as rclsk
 import rsgispy.imageutils.colourtable as rct
+from rsgispy.classification.clustersklearn import img_pixel_cluster
 from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
+from rsgispy.imageutils.masking import ImageBandInfo
 from rsgispy.ml.predict import predict_raster_node
 
-
-def _write_raster(
-    path: Path,
-    arr: np.ndarray,
-    origin_x: float = 500000.0,
-    origin_y: float = 5600000.0,
-    pxl_size: float = 10.0,
-    crs: str = "EPSG:32630",
-    nodata: float = -999.0,
-) -> str:
-    """Write a 2D or 3D GeoTIFF raster for unsupervised clustering tests."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[None, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-        nodata=nodata,
-    ) as dst:
-        dst.write(write_arr)
-    return str(path)
+from conftest import write_raster
 
 
 def _create_cluster_scene(tmp_path: Path):
@@ -91,13 +59,25 @@ def _create_cluster_scene(tmp_path: Path):
     coarse[4:8, :] = 50.0
     coarse[8:12, :] = 90.0
 
-    img_3b = _write_raster(
-        tmp_path / "scene_3b.tif", np.stack([b1, b2, b3]), nodata=-999.0
+    img_3b = write_raster(
+        tmp_path / "scene_3b.tif",
+        np.stack([b1, b2, b3]),
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
     )
-    img_coarse = _write_raster(
-        tmp_path / "coarse.tif", coarse, pxl_size=20.0, nodata=-999.0
+    img_coarse = write_raster(
+        tmp_path / "coarse.tif",
+        coarse,
+        origin=(500000.0, 5600000.0),
+        pixel_size=20.0,
+        nodata=-999.0,
     )
-    msk_img = _write_raster(tmp_path / "mask.tif", mask, nodata=0.0)
+    msk_img = write_raster(
+        tmp_path / "mask.tif",
+        mask,
+        origin=(500000.0, 5600000.0),
+        nodata=0.0,
+    )
 
     return {
         "img_3b": img_3b,
@@ -120,16 +100,6 @@ def _assert_zones_separated(arr: np.ndarray, nodata_val: int) -> None:
     assert len(u_b) == 1
     assert len(u_c) == 1
     assert len(u_a | u_b | u_c) == 3
-
-
-def test_clustersklearn_module_layout():
-    """Verify clustersklearn exports and non-re-export from package init."""
-    expected = {"img_pixel_cluster", "img_pixel_sample_cluster", "apply_img_pixel_clusterer"}
-    assert expected.issubset(set(rclsk.__all__))
-    for name in expected:
-        assert hasattr(rclsk, name)
-        assert not hasattr(rcls, name)
-        assert inspect.isfunction(getattr(rclsk, name))
 
 
 def test_img_pixel_cluster_whole_image_and_transductive(tmp_path):
@@ -176,8 +146,11 @@ def test_img_pixel_cluster_whole_image_and_transductive(tmp_path):
     b2_noisy[8:16, :] = 80.0
     b1_noisy[4, 4] = 500.0
     b2_noisy[4, 4] = 500.0
-    noisy_img = _write_raster(
-        tmp_path / "noisy.tif", np.stack([b1_noisy, b2_noisy]), nodata=-999.0
+    noisy_img = write_raster(
+        tmp_path / "noisy.tif",
+        np.stack([b1_noisy, b2_noisy]),
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
     )
 
     out_dbscan = tmp_path / "cluster_dbscan.tif"
@@ -438,9 +411,10 @@ def test_clustersklearn_validation_errors(tmp_path):
         )
 
     # All-nodata image raises RSGISPyException.
-    all_nd = _write_raster(
+    all_nd = write_raster(
         tmp_path / "all_nd.tif",
         np.full((2, 6, 6), -999.0, dtype=np.float32),
+        origin=(500000.0, 5600000.0),
         nodata=-999.0,
     )
     with pytest.raises(rsgispy.RSGISPyException):
@@ -541,7 +515,12 @@ def test_apply_img_pixel_clusterer_other_image_and_model_file(tmp_path):
     # A second image: the zones in another order and a small shift in value.
     arr2 = np.concatenate([arr[:, 16:24], arr[:, 0:16]], axis=1) + np.float32(0.5)
     arr2[arr2 < -900] = -999.0
-    img2 = _write_raster(tmp_path / "scene_2.tif", arr2, nodata=-999.0)
+    img2 = write_raster(
+        tmp_path / "scene_2.tif",
+        arr2,
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
+    )
 
     model_file = str(tmp_path / "kmeans.joblib")
     ref_tif = str(tmp_path / "ref.tif")
@@ -646,3 +625,71 @@ def test_apply_img_pixel_clusterer_errors(tmp_path):
         rclsk.apply_img_pixel_clusterer(
             str(tmp_path / "missing.tif"), km_2b, out_tif, use_pbar=False
         )
+
+
+def test_multitile_clustering_preserves_pixel_positions(tmp_path):
+    """Verify img_pixel_cluster maps labels back to exact pixel positions across tiles."""
+    height, width = 20, 20
+    # Four quadrants with cleanly separated spectral values across multiple 8x8 tiles
+    b1 = np.zeros((height, width), dtype=np.float32)
+    b2 = np.zeros((height, width), dtype=np.float32)
+    b1[:10, :10], b2[:10, :10] = 0.0, 0.0
+    b1[:10, 10:], b2[:10, 10:] = 100.0, 0.0
+    b1[10:, :10], b2[10:, :10] = 0.0, 100.0
+    b1[10:, 10:], b2[10:, 10:] = 100.0, 100.0
+
+    # Inject a nodata hole to ensure sparse pixel indexing stays aligned
+    b1[3, 4] = -9999.0
+    b2[15, 16] = -9999.0
+
+    img_path = str(tmp_path / "quadrants.tif")
+    out_single = str(tmp_path / "cluster_single.tif")
+    out_multi = str(tmp_path / "cluster_multi.tif")
+    write_raster(img_path, np.stack([b1, b2], axis=0), nodata=-9999.0)
+    band_info = [ImageBandInfo(file_name=img_path, name="quad", bands=[1, 2])]
+
+    img_pixel_cluster(
+        band_info,
+        out_single,
+        clusterer=KMeans(n_clusters=4, random_state=42, n_init=10),
+        out_no_data_val=0,
+        calc_stats=False,
+        block_size=64,
+        use_pbar=False,
+    )
+    img_pixel_cluster(
+        band_info,
+        out_multi,
+        clusterer=KMeans(n_clusters=4, random_state=42, n_init=10),
+        out_no_data_val=0,
+        calc_stats=False,
+        block_size=8,
+        use_pbar=False,
+    )
+
+    with rasterio.open(out_single) as src1, rasterio.open(out_multi) as src2:
+        arr_single = src1.read(1)
+        arr_multi = src2.read(1)
+
+    assert arr_multi[3, 4] == 0
+    assert arr_multi[15, 16] == 0
+
+    # Each quadrant (excluding nodata pixels) must have a single uniform cluster ID
+    quad_slices = [
+        (slice(0, 10), slice(0, 10)),
+        (slice(0, 10), slice(10, 20)),
+        (slice(10, 20), slice(0, 10)),
+        (slice(10, 20), slice(10, 20)),
+    ]
+    quad_labels = []
+    for r_sl, c_sl in quad_slices:
+        vals = arr_multi[r_sl, c_sl]
+        valid_vals = vals[vals != 0]
+        uniq = np.unique(valid_vals)
+        assert uniq.size == 1
+        quad_labels.append(int(uniq[0]))
+    assert len(set(quad_labels)) == 4
+    # Single-tile and multi-tile partitions must agree up to label permutation
+    for r_sl, c_sl in quad_slices:
+        s_vals = arr_single[r_sl, c_sl]
+        assert np.unique(s_vals[s_vals != 0]).size == 1

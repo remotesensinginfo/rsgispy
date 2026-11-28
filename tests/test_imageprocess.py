@@ -6,10 +6,11 @@ from contextlib import ExitStack
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imageprocess
+
+from conftest import write_raster
 
 
 def _create_test_raster(
@@ -22,22 +23,15 @@ def _create_test_raster(
     nodata=None,
 ):
     """Helper to write a multi-band test GeoTIFF."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    count, height, width = bands_data.shape
-    transform = from_origin(origin[0], origin[1], pixel_size[0], pixel_size[1])
-    with rasterio.open(
+    return write_raster(
         path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
+        bands_data,
         dtype=dtype,
-        crs=crs,
-        transform=transform,
         nodata=nodata,
-    ) as dst:
-        dst.write(bands_data.astype(dtype))
+        crs=crs,
+        origin=origin,
+        pixel_size=pixel_size,
+    )
 
 
 def test_normalise_band_defs(tmp_path):

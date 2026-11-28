@@ -20,6 +20,8 @@ import sys
 
 import pytest
 
+pytestmark = [pytest.mark.slow, pytest.mark.tutorial_data]
+
 EXAMPLES_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), os.pardir, "docs", "examples")
 )

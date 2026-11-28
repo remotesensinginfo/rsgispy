@@ -9,52 +9,14 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import Point, box
 
 import rsgispy
 import rsgispy.zonalstats.point as zs_pt
 import rsgispy.zonalstats.polygon as zs_poly
+from rsgispy import RSGISPyException
 
-
-def _write_test_raster(path: str, data: np.ndarray, epsg: int = 32630, nodata=None) -> None:
-    """Write a 2D array as a 1-band GeoTIFF with 10m pixels rooted at (500000, 5200000)."""
-    height, width = data.shape
-    transform = from_origin(500000.0, 5200000.0, 10.0, 10.0)
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=1,
-        dtype=data.dtype,
-        crs=f"EPSG:{epsg}",
-        transform=transform,
-        nodata=nodata,
-    ) as dst:
-        dst.write(data, 1)
-
-
-def _write_multiband_test_raster(
-    path: str, data: np.ndarray, epsg: int = 32630, nodata=None
-) -> None:
-    """Write a 3D (bands, H, W) array as a GeoTIFF rooted at (500000, 5200000)."""
-    count, height, width = data.shape
-    transform = from_origin(500000.0, 5200000.0, 10.0, 10.0)
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=data.dtype,
-        crs=f"EPSG:{epsg}",
-        transform=transform,
-        nodata=nodata,
-    ) as dst:
-        dst.write(data)
+from conftest import write_raster
 
 
 def test_calc_zonal_band_stats_and_file(tmp_path):
@@ -72,7 +34,7 @@ def test_calc_zonal_band_stats_and_file(tmp_path):
         dtype=np.float32,
     )
     tif_path = str(tmp_path / "vals.tif")
-    _write_test_raster(tif_path, arr, nodata=-9999.0)
+    write_raster(tif_path, arr, nodata=-9999.0)
 
     # Poly 1 covers top-left 4x4 (cols 0..3, rows 0..3) including row1 col3=999
     # (above max_thres=100) and row3 col0=-9999 (nodata)
@@ -160,7 +122,7 @@ def test_calc_zonal_poly_pts_and_test_poly_pts(tmp_path):
     """Test centroid-based stats and hybrid polygon/centroid fallback with percentiles."""
     arr = np.arange(1, 26, dtype=np.float32).reshape(5, 5)
     tif_path = str(tmp_path / "grid.tif")
-    _write_test_raster(tif_path, arr, nodata=0.0)
+    write_raster(tif_path, arr, nodata=0.0)
 
     # Poly covering 2x2 pixels (rows 0..1, cols 0..1 -> values 1, 2, 6, 7)
     big_poly = box(500000.0, 5199980.0, 500020.0, 5200000.0)
@@ -229,7 +191,7 @@ def test_calc_zonal_band_pxl_counts_and_ext_point_band_values(tmp_path):
         dtype=np.int16,
     )
     tif_path = str(tmp_path / "cat.tif")
-    _write_test_raster(tif_path, cat_arr, nodata=9)
+    write_raster(tif_path, cat_arr, nodata=9)
 
     poly = box(500000.0, 5199960.0, 500040.0, 5200000.0)
     poly_gpkg = str(tmp_path / "cats.gpkg")
@@ -320,7 +282,7 @@ def test_zonalstats_vector_input_gdf(tmp_path):
     """Test VectorInput GeoDataFrame input and optional in-memory output in zonalstats."""
     arr = np.arange(1, 17, dtype=np.float32).reshape(4, 4)
     tif_path = str(tmp_path / "grid4.tif")
-    _write_test_raster(tif_path, arr, nodata=0.0)
+    write_raster(tif_path, arr, nodata=0.0)
 
     poly_gdf = gpd.GeoDataFrame(
         {"id": [1]},
@@ -402,7 +364,7 @@ def test_ext_point_band_values_multiband(tmp_path):
     b2 = np.array([[100.0, 200.0], [300.0, 400.0]], dtype=np.float32)
     b3 = np.array([[1.5, 2.5], [999.0, 4.5]], dtype=np.float32)
     tif_path = str(tmp_path / "mb3.tif")
-    _write_multiband_test_raster(tif_path, np.stack([b1, b2, b3]), nodata=-9999.0)
+    write_raster(tif_path, np.stack([b1, b2, b3]), nodata=-9999.0)
 
     pts_gdf = gpd.GeoDataFrame(
         {"id": [1, 2, 3, 4]},
@@ -491,9 +453,13 @@ def test_ext_point_band_values_multiband(tmp_path):
         )
 
 
-def test_export_poly_pxls_to_df(tmp_path):
-    """Test export_poly_pxls_to_df for DataFrame return, Parquet compression, and CSV."""
-    # 4x4 grid, 3 bands
+@pytest.fixture
+def poly_pxls_scene(tmp_path):
+    """A 4 x 4, 3-band raster (nodata -9999, one b1 value 999) and two polygons.
+
+    Poly 0: top-left 2x2 (4 pixels, 1 is nodata -> 3 valid pixels)
+    Poly 1: bottom-right 2x2 (4 pixels, row3 col3 has b1=999 > max_thres=500 -> 3 valid)
+    """
     b1 = np.array(
         [
             [1.0, 2.0, 3.0, 4.0],
@@ -508,10 +474,8 @@ def test_export_poly_pxls_to_df(tmp_path):
     b3 = b1 + 100.0
     b3[1, 1] = -9999.0
     tif_path = str(tmp_path / "poly_mb.tif")
-    _write_multiband_test_raster(tif_path, np.stack([b1, b2, b3]), nodata=-9999.0)
+    write_raster(tif_path, np.stack([b1, b2, b3]), nodata=-9999.0)
 
-    # Poly 0: top-left 2x2 (4 pixels, 1 is nodata -> 3 valid pixels)
-    # Poly 1: bottom-right 2x2 (4 pixels, row3 col3 has b1=999 > max_thres=500 -> 3 valid)
     polys_gdf = gpd.GeoDataFrame(
         {"cls": ["forest", "urban"]},
         geometry=[
@@ -520,8 +484,16 @@ def test_export_poly_pxls_to_df(tmp_path):
         ],
         crs="EPSG:32630",
     )
+    return tif_path, polys_gdf
 
-    # 1. Return DataFrame in memory with selected bands, attr_cols, coords, and nodata masking
+
+def test_export_poly_pxls_to_df_in_memory(poly_pxls_scene):
+    """export_poly_pxls_to_df returns a DataFrame: selected bands, attr_cols,
+    coords, nodata masking, all bands, a single band with a reprojected vector,
+    and an empty selection."""
+    tif_path, polys_gdf = poly_pxls_scene
+
+    # Return DataFrame in memory with selected bands, attr_cols, coords, and nodata masking
     df = zs_poly.export_poly_pxls_to_df(
         polys_gdf,
         tif_path,
@@ -544,14 +516,14 @@ def test_export_poly_pxls_to_df(tmp_path):
     assert df["x"].iloc[0] == pytest.approx(500005.0)
     assert df["y"].iloc[0] == pytest.approx(5199995.0)
 
-    # 2. All bands (img_bands=None) and mask_nodata=False
+    # All bands (img_bands=None) and mask_nodata=False
     df_all = zs_poly.export_poly_pxls_to_df(
         polys_gdf, tif_path, img_bands=None, mask_nodata=False, use_pbar=False
     )
     assert list(df_all.columns) == ["poly_fid", "band_1", "band_2", "band_3"]
     assert len(df_all) == 8
 
-    # 3. Single band as int & reprojected input vector
+    # Single band as int & reprojected input vector
     df_reproj = zs_poly.export_poly_pxls_to_df(
         polys_gdf.to_crs("EPSG:4326"),
         tif_path,
@@ -562,7 +534,7 @@ def test_export_poly_pxls_to_df(tmp_path):
     assert list(df_reproj.columns) == ["poly_fid", "band_2"]
     assert len(df_reproj) == 7
 
-    # 4. Empty pixel selection (polygon covering only nodata pixel)
+    # Empty pixel selection (polygon covering only nodata pixel)
     nodata_poly = gpd.GeoDataFrame(
         {"cls": ["nodata"]},
         geometry=[box(500010.0, 5199980.0, 500020.0, 5199990.0)],
@@ -575,7 +547,13 @@ def test_export_poly_pxls_to_df(tmp_path):
     assert len(df_empty) == 0
     assert list(df_empty.columns) == ["poly_fid", "band_1", "band_2"]
 
-    # 5. Export to CSV from GPKG path input
+
+def test_export_poly_pxls_to_csv_and_parquet(tmp_path, poly_pxls_scene):
+    """export_poly_pxls_to_df writes CSV from a GPKG path input and Parquet with
+    compression options (when pyarrow is installed)."""
+    tif_path, polys_gdf = poly_pxls_scene
+
+    # Export to CSV from GPKG path input
     poly_gpkg = str(tmp_path / "polys.gpkg")
     polys_gdf.to_file(poly_gpkg, layer="zones")
     csv_out = str(tmp_path / "pixels.csv")
@@ -594,7 +572,7 @@ def test_export_poly_pxls_to_df(tmp_path):
     assert len(df_csv) == 7
     assert list(df_csv.columns) == ["poly_fid", "cls", "b1", "b3"]
 
-    # 6. Export to Parquet with compression options (when pyarrow installed)
+    # Export to Parquet with compression options (when pyarrow installed)
     if importlib.util.find_spec("pyarrow") is not None:
         import pyarrow.parquet as pq
 
@@ -638,7 +616,11 @@ def test_export_poly_pxls_to_df(tmp_path):
         meta_uncomp = pq.ParquetFile(pq_uncomp).metadata
         assert meta_uncomp.row_group(0).column(0).compression == "UNCOMPRESSED"
 
-    # 7. Validation errors
+
+def test_export_poly_pxls_to_df_validation_errors(tmp_path, poly_pxls_scene):
+    """Mismatched band names, missing attribute columns, an invalid codec or
+    output format, and point geometries raise."""
+    tif_path, polys_gdf = poly_pxls_scene
     with pytest.raises(rsgispy.RSGISPyException):
         zs_poly.export_poly_pxls_to_df(
             polys_gdf, tif_path, img_bands=[1, 2], band_names=["only_one"]
@@ -677,21 +659,21 @@ def _write_mixed_dtype_vrt(tmp_path):
     refl[:, 0, 0] = 0  # no data in both reflectance bands
     refl[1, 2, 3] = 0  # no data in reflectance band 2 only
     refl_img = str(tmp_path / "refl_u16.tif")
-    _write_multiband_test_raster(refl_img, refl, nodata=0)
+    write_raster(refl_img, refl, nodata=0)
 
     idx = (np.arange(6 * 6, dtype=np.float32).reshape(6, 6) / 7.0 - 2.0).astype(
         np.float32
     )
     idx[4, 4] = -9999.0
     idx_img = str(tmp_path / "idx_f32.tif")
-    _write_test_raster(idx_img, idx, nodata=-9999.0)
+    write_raster(idx_img, idx, nodata=-9999.0)
 
     # 0.1 is not exactly representable as float32: the comparison with the
     # band's no data value must be made in the band's own data type.
     nd01 = np.full((6, 6), 5.0, dtype=np.float32)
     nd01[3, 1] = np.float32(0.1)
     nd01_img = str(tmp_path / "nd01_f32.tif")
-    _write_test_raster(nd01_img, nd01, nodata=0.1)
+    write_raster(nd01_img, nd01, nodata=0.1)
 
     vrt = str(tmp_path / "mixed_stack.vrt")
     create_stack_images_vrt([refl_img, idx_img, nd01_img], vrt)
@@ -830,7 +812,7 @@ def test_zonalstats_constants_helpers_and_kwonly(tmp_path):
 
     arr = np.ones((2, 2), dtype=np.float32)
     tif_path = str(tmp_path / "kw.tif")
-    _write_test_raster(tif_path, arr, nodata=-9999.0)
+    write_raster(tif_path, arr, nodata=-9999.0)
     pts_gdf = gpd.GeoDataFrame(
         {"id": [1]}, geometry=[Point(500005.0, 5199995.0)], crs="EPSG:32630"
     )
@@ -890,7 +872,7 @@ def test_zonal_file_op_in_place_keeps_layer_name(tmp_path):
     """H7: in-place update with vec_lyr=None writes back to the real layer."""
     arr = np.arange(36, dtype=np.float32).reshape(6, 6)
     tif_path = str(tmp_path / "vals.tif")
-    _write_test_raster(tif_path, arr)
+    write_raster(tif_path, arr)
     vec_path = str(tmp_path / "zones.gpkg")
     gpd.GeoDataFrame(
         {"id": [1]},
@@ -929,7 +911,7 @@ def test_vec_def_epsg_only_applies_when_crs_undefined(tmp_path):
 
     arr = np.arange(36, dtype=np.float32).reshape(6, 6)
     tif_path = str(tmp_path / "vals.tif")
-    _write_test_raster(tif_path, arr)
+    write_raster(tif_path, arr)
     out_gdf = zs_poly.calc_zonal_band_stats(
         gdf,
         tif_path,
@@ -954,7 +936,7 @@ def test_test_poly_pts_fallback_samples_point_inside_concave_polygon(tmp_path):
     arr = np.ones((6, 6), dtype=np.float32)
     arr[1:5, 1:6] = 99.0
     tif_path = str(tmp_path / "vals.tif")
-    _write_test_raster(tif_path, arr)
+    write_raster(tif_path, arr)
     c_shape = unary_union(
         [
             box(500001.0, 5199941.0, 500003.0, 5199999.0),
@@ -982,7 +964,7 @@ def test_calc_zonal_band_pxl_counts_total_includes_nodata(tmp_path):
     """The documented total is the polygon's pixel footprint, nodata included."""
     arr = np.array([[1, 1], [2, 0]], dtype=np.uint8)
     tif_path = str(tmp_path / "cls.tif")
-    _write_test_raster(tif_path, arr, nodata=0)
+    write_raster(tif_path, arr, nodata=0)
     gdf = gpd.GeoDataFrame(
         {"id": [1]},
         geometry=[box(500000.0, 5199980.0, 500020.0, 5200000.0)],
@@ -1004,7 +986,7 @@ def test_polygon_zonal_stats_reproj_vec_and_empty_layers(tmp_path):
     """Polygon stats take reproj_vec, and an empty layer gives an empty result."""
     arr = np.arange(36, dtype=np.float32).reshape(6, 6)
     tif_path = str(tmp_path / "vals.tif")
-    _write_test_raster(tif_path, arr)
+    write_raster(tif_path, arr)
     utm_gdf = gpd.GeoDataFrame(
         {"id": [1]},
         geometry=[box(500000.0, 5199960.0, 500040.0, 5200000.0)],
@@ -1040,3 +1022,130 @@ def test_polygon_zonal_stats_reproj_vec_and_empty_layers(tmp_path):
     out_c = zs_poly.calc_zonal_band_pxl_counts(empty.copy(), tif_path, 1, {1: "c1"},
                                                "total", use_pbar=False)
     assert len(out_c) == 0 and {"c1", "total"} <= set(out_c.columns)
+
+
+def test_polygon_empty_count_float64_custom_geom_and_direct_helpers(
+    tmp_path
+):
+    """Empty polygon count is 0.0, float64 accuracy, custom geom col, direct APIs."""
+    # Large offset float32 array to verify float64 accumulation avoids precision loss
+    arr = np.full((4, 4), 1e7, dtype=np.float32)
+    arr[0, 0] = 1e7 + 1.0
+    arr[0, 1] = 1e7 + 3.0
+    tif = write_raster(str(tmp_path / "f32.tif"), arr, nodata=-9999.0)
+
+    poly_valid = box(500000.0, 5199980.0, 500020.0, 5200000.0)
+    poly_outside = box(600000.0, 5199980.0, 600020.0, 5200000.0)
+    gdf = gpd.GeoDataFrame(
+        {"name": ["in", "out"]},
+        geometry=[poly_valid, poly_outside],
+        crs="EPSG:32630",
+    )
+    res = zs_poly.calc_zonal_band_stats(
+        gdf.copy(),
+        tif,
+        img_band=1,
+        min_thres=0.0,
+        max_thres=1e8,
+        out_no_data_val=-1.0,
+        mean_field="mean_v",
+        stddev_field="std_v",
+        sum_field="sum_v",
+        count_field="cnt_v",
+        use_pbar=False,
+    )
+    assert res.loc[0, "cnt_v"] == pytest.approx(4.0)
+    assert res.loc[0, "sum_v"] == pytest.approx(4e7 + 4.0)
+    assert res.loc[0, "mean_v"] == pytest.approx(1e7 + 1.0)
+    # Empty/outside polygon reports 0.0 count and out_no_data_val for stats
+    assert res.loc[1, "cnt_v"] == pytest.approx(0.0)
+    assert res.loc[1, "mean_v"] == pytest.approx(-1.0)
+
+    # Direct test: calc_zonal_poly_pts_band_stats
+    pt_res = zs_poly.calc_zonal_poly_pts_band_stats(
+        gdf.copy(),
+        tif,
+        img_band=1,
+        out_field="cent_val",
+        use_pbar=False,
+    )
+    assert pt_res.loc[0, "cent_val"] == pytest.approx(1e7)
+
+    # Direct test: calc_zonal_band_pxl_counts
+    cat_arr = np.array(
+        [[1, 1, 2, 2], [1, 2, 2, 3], [3, 3, 3, 3], [0, 0, 0, 0]],
+        dtype=np.uint8,
+    )
+    cat_tif = write_raster(str(tmp_path / "cat.tif"), cat_arr, nodata=0)
+    cnt_res = zs_poly.calc_zonal_band_pxl_counts(
+        gdf.copy(),
+        cat_tif,
+        img_band=1,
+        vals_lut={1: "c1", 2: "c2"},
+        total_field="tot",
+        use_pbar=False,
+    )
+    assert cnt_res.loc[0, "c1"] == 3
+    assert cnt_res.loc[0, "c2"] == 1
+    assert cnt_res.loc[0, "tot"] == 4
+    assert cnt_res.loc[1, "tot"] == 0
+
+    # export_poly_pxls_to_df rejects custom geometry column name and extracts attrs
+    custom_gdf = gdf.copy().rename_geometry("geom")
+    with pytest.raises(RSGISPyException):
+        zs_poly.export_poly_pxls_to_df(
+            custom_gdf,
+            tif,
+            img_bands=[1],
+            attr_cols=["geom"],
+            use_pbar=False,
+        )
+    px_df = zs_poly.export_poly_pxls_to_df(
+        custom_gdf,
+        tif,
+        img_bands=[1],
+        attr_cols=["name"],
+        use_pbar=False,
+    )
+    assert len(px_df) == 4
+    assert set(px_df["name"]) == {"in"}
+
+
+def test_point_block_grouped_sampling_semantics(tmp_path):
+    """Block-grouped sampling matches expected values, nodata, thresholds, OOB, null."""
+    arr = np.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+    arr[0, 0] = -9999.0  # nodata
+    arr[20, 20] = 5000.0  # above max_thres
+    tif = write_raster(
+        str(tmp_path / "tiled.tif"),
+        arr,
+        nodata=-9999.0,
+        tiled=True,
+        blockxsize=16,
+        blockysize=16,
+    )
+    pts = gpd.GeoDataFrame(
+        {"pid": [0, 1, 2, 3, 4, 5]},
+        geometry=[
+            Point(500005.0, 5199995.0),  # (0, 0) nodata
+            Point(500015.0, 5199995.0),  # (0, 1) -> 1.0
+            Point(500205.0, 5199795.0),  # (20, 20) -> 5000.0 > max_thres
+            Point(500215.0, 5199795.0),  # (20, 21) -> 20*32 + 21 = 661.0
+            Point(600000.0, 5200000.0),  # out of bounds
+            None,  # null geometry
+        ],
+        crs="EPSG:32630",
+    )
+    out = zs_pt.ext_point_band_values(
+        pts,
+        tif,
+        img_band=1,
+        min_thres=0.0,
+        max_thres=2000.0,
+        out_no_data_val=-1.0,
+        out_field="val",
+        use_pbar=False,
+    )
+    assert list(out["val"]) == pytest.approx(
+        [-1.0, 1.0, -1.0, 661.0, -1.0, -1.0]
+    )
