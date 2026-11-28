@@ -170,12 +170,14 @@ def is_summer_winter(lat: float, date: datetime.date) -> int:
     """
     Determine whether ``date`` falls in summer (1) or winter (2) at latitude ``lat``.
 
-    Southern Hemisphere Winter (``lat < 0``): May - October (months 5..10).
-    Northern Hemisphere Summer (``lat >= 0``): April - September (months 4..9).
+    April - September (months 4..9) is summer in the Northern Hemisphere
+    (``lat >= 0``) and winter in the Southern Hemisphere (``lat < 0``);
+    October - March is the opposite.
 
-    The two hemispheres are deliberately not mirror images (the southern
-    winter is shifted one month later than the northern summer); this
-    matches RSGISLib's ``is_summer_winter``, so results are the same in both.
+    .. versionchanged:: 0.5.0
+       The hemispheres mirror each other. The southern winter was May -
+       October (as in RSGISLib), so April and October are now classed the
+       other way round south of the equator.
 
     :param lat: Latitude in decimal degrees.
     :param date: ``datetime.date`` (or ``datetime.datetime``) object.
@@ -188,13 +190,10 @@ def is_summer_winter(lat: float, date: datetime.date) -> int:
 
         season = rsgispy.tools.dates.is_summer_winter(52.4, datetime.date(2020, 7, 15))
     """
+    in_apr_sep = 4 <= date.month <= 9
     if lat < 0:
-        if 4 < date.month < 11:
-            return 2
-        return 1
-    if 3 < date.month < 10:
-        return 1
-    return 2
+        return 2 if in_apr_sep else 1
+    return 1 if in_apr_sep else 2
 
 
 def get_datetime_increment_lst(

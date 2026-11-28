@@ -205,6 +205,13 @@ def test_combinatorics_dates_dict_struct_and_encoding(tmp_path):
     ]
     assert rdates.is_summer_winter(52.0, datetime.date(2020, 7, 1)) == 1
     assert rdates.is_summer_winter(-30.0, datetime.date(2020, 7, 1)) == 2
+    # The hemispheres mirror each other: April-September is the northern
+    # summer and the southern winter.
+    for month in range(1, 13):
+        north = rdates.is_summer_winter(52.0, datetime.date(2020, month, 15))
+        south = rdates.is_summer_winter(-30.0, datetime.date(2020, month, 15))
+        assert north == (1 if 4 <= month <= 9 else 2)
+        assert south == (2 if 4 <= month <= 9 else 1)
 
     incs = rdates.get_datetime_increment_lst(
         datetime.datetime(2020, 1, 1),
