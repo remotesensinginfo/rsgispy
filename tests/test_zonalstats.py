@@ -814,12 +814,15 @@ def test_zonalstats_constants_helpers_and_kwonly(tmp_path):
     import rsgispy.zonalstats as zs
     from rsgispy.zonalstats._helpers import normalise_band_list
 
-    assert zs.METHOD_POLYCONTAINSPIXELCENTRE == 1
-    assert zs.METHOD_PIXELCONTAINSPOLYCENTRE == 5
-    assert zs.METHOD_POLYCONTAINSPIXELCENTER == zs.METHOD_POLYCONTAINSPIXELCENTRE
-    assert zs.METHOD_PIXELCONTAINSPOLYCENTER == zs.METHOD_PIXELCONTAINSPOLYCENTRE
-    assert "METHOD_POLYCONTAINSPIXELCENTRE" in zs.__all__
-    assert "METHOD_PIXELCONTAINSPOLYCENTRE" in zs.__all__
+    # The METHOD_* constants are no longer exported (no zonal function takes
+    # them); the old names still resolve, with a DeprecationWarning.
+    assert not any(name.startswith("METHOD_") for name in zs.__all__)
+    with pytest.warns(DeprecationWarning, match="METHOD_POLYCONTAINSPIXELCENTRE"):
+        assert zs.METHOD_POLYCONTAINSPIXELCENTRE == 1
+    with pytest.warns(DeprecationWarning):
+        assert zs.METHOD_PIXELCONTAINSPOLYCENTER == 5
+    with pytest.raises(AttributeError):
+        _ = zs.METHOD_NOT_A_METHOD
 
     assert normalise_band_list(None, 3, "img.tif") == [1, 2, 3]
     assert normalise_band_list(2, 3, "img.tif") == [2]

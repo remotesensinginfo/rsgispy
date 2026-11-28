@@ -716,15 +716,19 @@ def extract_avg_endmembers(
                             the polygon count (used when ``class_col`` is
                             ``None``).
     :param file_format: Optional format override when ``out_file`` is provided.
-    :param pxl_in_poly_method: Pixel-in-polygon selection constant from
-                               :mod:`rsgispy.zonalstats` (``METHOD_*``).
-                               Default = ``1`` (pixel centre within polygon).
+    :param pxl_in_poly_method: Pixel-in-polygon selection code (RSGISLib
+                               numbering): ``0`` pixel within polygon, ``1``
+                               pixel centre within polygon (Default), ``2``
+                               polygon overlaps pixel, ``3`` overlaps or
+                               contains, ``4`` pixel contains polygon, ``5``
+                               pixel contains the polygon centroid, ``6``
+                               adaptive, ``7`` envelope, ``8`` pixel area in
+                               polygon, ``9`` polygon area in pixel.
     :return: :class:`pandas.DataFrame` of shape ``(n_bands, n_classes)``.
 
     .. code:: python
 
         import rsgispy.imagespectral.endmembers as em
-        import rsgispy.zonalstats as zs
 
         em_df = em.extract_avg_endmembers(
             "image.tif",
@@ -732,7 +736,7 @@ def extract_avg_endmembers(
             "rois",
             out_file="endmembers.csv",
             class_col="landcover",
-            pxl_in_poly_method=zs.METHOD_POLYCONTAINSPIXELCENTRE,
+            pxl_in_poly_method=1,
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments

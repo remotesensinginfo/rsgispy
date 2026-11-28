@@ -14,7 +14,7 @@ making it suitable for segmentations with millions of segments.
 
 The statistics are identical to polygon zonal statistics computed on the
 polygonised labels with pixel-centre-in-polygon semantics
-(:data:`rsgispy.zonalstats.METHOD_POLYCONTAINSPIXELCENTRE`).
+(the pixel centre within the polygon).
 
 The module also provides :func:`join_label_stats_to_vec` to join a label
 statistics table onto a vector layer (e.g., the output of
@@ -755,7 +755,7 @@ def calc_label_zonal_stats(
     not allocate memory proportional to the largest ID.
 
     Compared with :func:`rsgispy.zonalstats.polygon.calc_zonal_band_stats`
-    on the polygonised labels (``METHOD_POLYCONTAINSPIXELCENTRE`` semantics,
+    on the polygonised labels (pixel-centre-in-polygon semantics,
     which this function reproduces exactly), it reads each pixel once rather
     than once per polygon and band. In a benchmark with a 2000 x 2000 pixel
     image, 40,000 labels and 4 bands (mean, stddev, min, max, count), it took

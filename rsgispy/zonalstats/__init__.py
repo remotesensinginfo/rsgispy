@@ -11,18 +11,10 @@ For zones defined by a label raster (e.g., segments from
 statistics for all labels in one streamed pass and is far faster than
 polygon zonal statistics for large numbers of zones.
 
-Pixel-in-polygon selection method constants:
-
-    * ``METHOD_POLYCONTAINSPIXEL = 0``
-    * ``METHOD_POLYCONTAINSPIXELCENTRE = 1``
-    * ``METHOD_POLYOVERLAPSPIXEL = 2``
-    * ``METHOD_POLYOVERLAPSORCONTAINSPIXEL = 3``
-    * ``METHOD_PIXELCONTAINSPOLY = 4``
-    * ``METHOD_PIXELCONTAINSPOLYCENTRE = 5``
-    * ``METHOD_ADAPTIVE = 6``
-    * ``METHOD_ENVELOPE = 7``
-    * ``METHOD_PIXELAREAINPOLY = 8``
-    * ``METHOD_POLYAREAINPIXEL = 9``
+.. versionchanged:: 0.5.0
+   The pixel-in-polygon ``METHOD_*`` constants are no longer exported: no
+   zonal statistics function takes them. The names still resolve, with a
+   :class:`DeprecationWarning`, and will be removed in a later release.
 """
 
 from rsgispy.zonalstats._helpers import (
@@ -36,42 +28,42 @@ from rsgispy.zonalstats.labels import (
     rasterise_label_values,
 )
 
-#: Pixel is completely contained within polygon (``0``).
-METHOD_POLYCONTAINSPIXEL = 0
-#: Pixel centre falls inside polygon (``1``).
-METHOD_POLYCONTAINSPIXELCENTRE = 1
-#: Compatibility alias for :data:`METHOD_POLYCONTAINSPIXELCENTRE`.
-METHOD_POLYCONTAINSPIXELCENTER = METHOD_POLYCONTAINSPIXELCENTRE
-#: Polygon overlaps pixel (``2``).
-METHOD_POLYOVERLAPSPIXEL = 2
-#: Polygon overlaps or contains pixel (``3``).
-METHOD_POLYOVERLAPSORCONTAINSPIXEL = 3
-#: Pixel contains polygon (``4``).
-METHOD_PIXELCONTAINSPOLY = 4
-#: Pixel contains polygon centroid (``5``).
-METHOD_PIXELCONTAINSPOLYCENTRE = 5
-#: Compatibility alias for :data:`METHOD_PIXELCONTAINSPOLYCENTRE`.
-METHOD_PIXELCONTAINSPOLYCENTER = METHOD_PIXELCONTAINSPOLYCENTRE
-#: Adaptive pixel-in-polygon method (``6``).
-METHOD_ADAPTIVE = 6
-#: Bounding envelope overlap method (``7``).
-METHOD_ENVELOPE = 7
-#: Pixel area within polygon method (``8``).
-METHOD_PIXELAREAINPOLY = 8
-#: Polygon area within pixel method (``9``).
-METHOD_POLYAREAINPIXEL = 9
+import warnings as _warnings
+
+#: Deprecated pixel-in-polygon method codes (RSGISLib numbering), kept only
+#: for :func:`__getattr__`. :func:`rsgispy.imagespectral.endmembers.
+#: extract_avg_endmembers` takes the integer codes directly.
+_DEPRECATED_METHODS = {
+    "METHOD_POLYCONTAINSPIXEL": 0,
+    "METHOD_POLYCONTAINSPIXELCENTRE": 1,
+    "METHOD_POLYCONTAINSPIXELCENTER": 1,
+    "METHOD_POLYOVERLAPSPIXEL": 2,
+    "METHOD_POLYOVERLAPSORCONTAINSPIXEL": 3,
+    "METHOD_PIXELCONTAINSPOLY": 4,
+    "METHOD_PIXELCONTAINSPOLYCENTRE": 5,
+    "METHOD_PIXELCONTAINSPOLYCENTER": 5,
+    "METHOD_ADAPTIVE": 6,
+    "METHOD_ENVELOPE": 7,
+    "METHOD_PIXELAREAINPOLY": 8,
+    "METHOD_POLYAREAINPIXEL": 9,
+}
+
+
+def __getattr__(name: str) -> int:
+    """Resolve the deprecated ``METHOD_*`` names with a warning."""
+    if name in _DEPRECATED_METHODS:
+        _warnings.warn(
+            f"rsgispy.zonalstats.{name} is deprecated and will be removed: no "
+            "zonal statistics function takes it. Pass the integer code "
+            f"({_DEPRECATED_METHODS[name]}) where one is needed.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return _DEPRECATED_METHODS[name]
+    raise AttributeError(f"module 'rsgispy.zonalstats' has no attribute '{name}'")
+
 
 __all__ = [
-    "METHOD_POLYCONTAINSPIXEL",
-    "METHOD_POLYCONTAINSPIXELCENTRE",
-    "METHOD_POLYOVERLAPSPIXEL",
-    "METHOD_POLYOVERLAPSORCONTAINSPIXEL",
-    "METHOD_PIXELCONTAINSPOLY",
-    "METHOD_PIXELCONTAINSPOLYCENTRE",
-    "METHOD_ADAPTIVE",
-    "METHOD_ENVELOPE",
-    "METHOD_PIXELAREAINPOLY",
-    "METHOD_POLYAREAINPIXEL",
     "open_validated_zonal_inputs",
     "open_validated_zonal_multiband_inputs",
     "sample_point_pixel",

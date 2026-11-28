@@ -28,7 +28,6 @@ import rsgispy.imagespectral.indices as si
 import rsgispy.imagespectral.preprocessing as sp
 import rsgispy.imagespectral.transforms as st
 import rsgispy.imagespectral.unmixing as su
-import rsgispy.zonalstats as zs
 
 matplotlib.use("Agg")
 
@@ -224,9 +223,6 @@ def test_convert_mtxt_to_df(tmp_path):
 
 def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
     """Verify extract_avg_endmembers returns a DataFrame with class columns."""
-    assert zs.METHOD_POLYCONTAINSPIXELCENTRE == 1
-    assert zs.METHOD_POLYOVERLAPSPIXEL == 2
-
     img_path = tmp_path / "img.tif"
     vec_path = tmp_path / "rois.gpkg"
     out_csv = tmp_path / "extracted_em.csv"
@@ -260,7 +256,7 @@ def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
         "rois",
         out_file=str(out_csv),
         class_col="landcover",
-        pxl_in_poly_method=zs.METHOD_POLYCONTAINSPIXELCENTRE,
+        pxl_in_poly_method=1,
     )
 
     assert isinstance(em_df, pd.DataFrame)
@@ -276,7 +272,7 @@ def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
         gdf,
         None,
         class_col="landcover",
-        pxl_in_poly_method=zs.METHOD_POLYCONTAINSPIXELCENTRE,
+        pxl_in_poly_method=1,
     )
     assert em.are_endmembers_equal(em_df, em_df_gdf)
 
