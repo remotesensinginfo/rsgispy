@@ -38,6 +38,8 @@ Integer outputs, clamping and no data
   ``calc_multi_img_band_stats``, ``get_img_sum_stats_in_pxl``) is the
   population one by default, as for ``calc_basic_img_band_stats``; pass
   ``ddof=1`` for the sample one (the previous behaviour).
+* ``image_pixel_column_summary`` takes the no-data value from the input header
+  by default; it used ``0``, which dropped real zeros.
 
 Grids, CRSs and vectors
 ~~~~~~~~~~~~~~~~~~~~~~~

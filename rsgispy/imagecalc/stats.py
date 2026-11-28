@@ -397,7 +397,7 @@ def image_pixel_column_summary(
     *,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
-    no_data_val: float = 0.0,
+    no_data_val: Optional[float] = None,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
     ddof: int = 0,
@@ -414,7 +414,8 @@ def image_pixel_column_summary(
 
     .. versionchanged:: 0.5.0
        ``StdDev`` defaults to the population standard deviation (it was the
-       sample one); pass ``ddof=1`` for the sample one.
+       sample one); pass ``ddof=1`` for the sample one. ``no_data_val``
+       defaults to the input header's no-data value (it was ``0.0``).
 
     :param input_img: Path to the input multi-band image file.
     :param output_img: Path to the output summary image file.
@@ -424,7 +425,9 @@ def image_pixel_column_summary(
                        (Default = ``'GTIFF'``).
     :param datatype: Output data type constant from ``rsgispy.TYPE_*``
                      (Default = ``rsgispy.TYPE_32FLOAT``).
-    :param no_data_val: Value treated as no-data when ``use_no_data`` is True.
+    :param no_data_val: Value treated as no-data when ``use_no_data`` is True
+                        (Default = ``None``: the input header's no-data
+                        value, if any).
                         It is also the output no-data value, written where no
                         band of a pixel is valid (for an integer ``datatype``
                         that cannot hold it, the type's max/min is used).
@@ -487,6 +490,8 @@ def image_pixel_column_summary(
                 f"Could not open input image '{input_img}': {err}"
             ) from err
 
+        if no_data_val is None:
+            no_data_val = src.nodata
         grid = compute_spatial_intersection({input_img: src})
         dst = open_output_dataset(
             stack=stack,

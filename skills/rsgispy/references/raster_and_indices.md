@@ -282,7 +282,7 @@ run_tile_graph(DiskSink(smooth, "ndvi_smooth.tif", datatype=rsgispy.TYPE_32FLOAT
   - `calc_basic_img_band_stats(input_img, no_data_val=None, use_no_data=True, use_pbar=True)` -> `(mins, maxs, means, stdevs)` arrays per band
   - `count_pxls_of_val(input_img, vals, img_band=None, use_pbar=True)` -> `np.ndarray`
   - `get_unique_values(input_img, img_band=1)` -> `np.ndarray`
-  - `image_pixel_column_summary(input_img, output_img, sum_stats: StatsSummary, use_no_data=True, *, gdalformat='GTIFF', datatype=9, no_data_val=0.0, use_pbar=True, creation_opts=None, ddof=0)` (StdDev divides by `n - ddof`: population by default, `ddof=1` for sample; also on `calc_multi_img_band_stats` and `get_img_sum_stats_in_pxl`)
+  - `image_pixel_column_summary(input_img, output_img, sum_stats: StatsSummary, use_no_data=True, *, gdalformat='GTIFF', datatype=9, no_data_val=None, use_pbar=True, creation_opts=None, ddof=0)` (`no_data_val=None` = input header value) (StdDev divides by `n - ddof`: population by default, `ddof=1` for sample; also on `calc_multi_img_band_stats` and `get_img_sum_stats_in_pxl`)
   - `calc_multi_img_band_stats(input_imgs, output_img, summary_stat, use_no_data=False, *, ...)` (`summary_stat`: `rsgispy.SUMTYPE_*`)
   - `get_img_sum_stats_in_pxl(in_ref_img, in_stats_img, output_img, sum_stats=(2,), stats_img_band=1, use_no_data=True, io_grid_x=16, io_grid_y=16, *, ...)`
   - `calc_mask_img_pxl_val_prob(input_img, in_msk_img, output_img, img_bands, msk_val, bin_widths=None, use_no_data=True, rescale_probs=True, *, gdalformat='GTIFF', use_pbar=True, creation_opts=None)`

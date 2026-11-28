@@ -94,6 +94,21 @@ def test_image_pixel_column_summary(tmp_path):
         assert src.nodata == -9999.0
         np.testing.assert_allclose(out[:, 0, 1], np.full(7, -9999.0))
 
+    # Without no_data_val the header value is used, and zeros are data.
+    zero_img = tmp_path / "col_zero.tif"
+    zarr = arr.copy()
+    zarr[0, 1, 0] = 0.0
+    _write_raster(zero_img, zarr, nodata=-9999.0)
+    ic_stats.image_pixel_column_summary(
+        str(zero_img), str(tmp_path / "col_hdr.tif"),
+        ic_stats.StatsSummary(calc_min=True, calc_mean=True), use_pbar=False,
+    )
+    with rasterio.open(tmp_path / "col_hdr.tif") as src:
+        assert src.nodata == -9999.0
+        hdr = src.read()
+    np.testing.assert_allclose(hdr[:, 1, 0], [0.0, 7.0 / 3.0], rtol=1e-6)
+    np.testing.assert_allclose(hdr[:, 0, 1], [-9999.0, -9999.0])
+
     # ddof=1 gives the sample standard deviation.
     ic_stats.image_pixel_column_summary(
         str(in_img), str(tmp_path / "sample.tif"), ss, datatype=rsgispy.TYPE_32FLOAT,
