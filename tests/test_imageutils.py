@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
+import rasterio.crs
 from rasterio.crs import CRS
 from rasterio.enums import ColorInterp, Compression
 from rasterio.transform import Affine, from_origin
@@ -18,15 +19,19 @@ from shapely.geometry import MultiPolygon, Point, Polygon, box
 
 import rsgispy
 import rsgispy.imagecalc.maths
+import rsgispy.imageutils.arrays as iu_arr
 import rsgispy.imageutils.blank
 import rsgispy.imageutils.blank as img_blank
+import rsgispy.imageutils.checks as iu_chk
 import rsgispy.imageutils.colourtable
 import rsgispy.imageutils.envopts
 import rsgispy.imageutils.masking
 import rsgispy.imageutils.metadata
+import rsgispy.imageutils.metadata as iu_meta
 import rsgispy.imageutils.mosaic
 import rsgispy.imageutils.mosaic as img_mosaic
 import rsgispy.imageutils.rasterise as img_ras
+import rsgispy.imageutils.sampling as iu_samp
 import rsgispy.imageutils.stats
 import rsgispy.imageutils.subsetting
 import rsgispy.imageutils.tiling
@@ -1994,3 +1999,301 @@ def test_blank_copy_and_buf_preserve_non_epsg_wkt_and_rotated_transform(tmp_path
         assert dst.crs == custom_crs
         # Origin shifted by (-2, -2) in pixel space of rotated transform
         assert dst.transform == rot_tf @ Affine.translation(-2, -2)
+
+
+def _write_test_tif(
+    path,
+    data,
+    tl_x=500000.0,
+    tl_y=5200000.0,
+    res=10.0,
+    crs="EPSG:32630",
+    nodata=None,
+):
+    """Write a 2D or 3D GeoTIFF test image."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    arr = np.asarray(data)
+    if arr.ndim == 2:
+        arr = arr[np.newaxis, :, :]
+    count, height, width = arr.shape
+    profile = {
+        "driver": "GTiff",
+        "height": height,
+        "width": width,
+        "count": count,
+        "dtype": str(arr.dtype),
+        "crs": crs,
+        "transform": from_origin(tl_x, tl_y, res, res),
+    }
+    if nodata is not None:
+        profile["nodata"] = nodata
+    with rasterio.open(str(path), "w", **profile) as dst:
+        dst.write(arr)
+
+
+def test_band_names_datatypes_formats_and_metadata(tmp_path):
+    """Test band names, datatype queries, formats, layer rename/delete, and tags."""
+    img = tmp_path / "meta.tif"
+    arr = np.arange(2 * 4 * 5, dtype=np.float32).reshape(2, 4, 5)
+    _write_test_tif(img, arr)
+
+    iu_meta.set_band_names(str(img), ["Red", "NIR"], feedback=True)
+    assert iu_meta.get_band_names(str(img)) == ["Red", "NIR"]
+    with pytest.raises(rsgispy.RSGISPyException):
+        iu_meta.set_band_names(str(img), ["B1", "B2", "B3"])
+
+    assert iu_meta.get_gdal_datatype_from_img(str(img)) == 6
+    assert (
+        iu_meta.get_rsgislib_datatype_from_img(str(img))
+        == rsgispy.TYPE_32FLOAT
+    )
+    assert iu_meta.get_gdal_datatype_name_from_img(str(img)) == "Float32"
+
+    assert iu_meta.get_gdal_format_from_ext("scene.kea") == "KEA"
+    assert iu_meta.get_gdal_format_from_ext("scene.tif") == "GTiff"
+    assert iu_meta.get_file_img_extension("GTIFF") == "tif"
+    assert iu_meta.get_file_img_extension("KEA") == "kea"
+    with pytest.raises(rsgispy.RSGISPyException):
+        iu_meta.get_gdal_format_from_ext("scene.xyz")
+    with pytest.raises(rsgispy.RSGISPyException):
+        iu_meta.get_file_img_extension("UNKNOWN_FMT")
+
+    iu_meta.set_img_metadata(str(img), "SENSOR", "Sentinel-2")
+    assert iu_meta.get_img_metadata(str(img), "SENSOR") == "Sentinel-2"
+    assert "SENSOR" in iu_meta.get_img_metadata_fields(str(img))
+    assert (
+        iu_meta.get_img_metadata_fields_dict(str(img))["SENSOR"]
+        == "Sentinel-2"
+    )
+
+    iu_meta.set_img_band_metadata(str(img), 2, "WAVELENGTH", "842nm")
+    assert iu_meta.get_img_band_metadata(str(img), 2, "WAVELENGTH") == "842nm"
+    assert "WAVELENGTH" in iu_meta.get_img_band_metadata_fields(str(img), 2)
+    assert (
+        iu_meta.get_img_band_metadata_fields_dict(str(img), 2)["WAVELENGTH"]
+        == "842nm"
+    )
+
+    band_info = iu_meta.get_img_band_info(str(img))
+    assert band_info.index.tolist() == [1, 2]
+    assert band_info.index.name == "band"
+    assert band_info["name"].tolist() == ["Red", "NIR"]
+    assert band_info["datatype"].tolist() == ["float32", "float32"]
+    assert band_info.loc[2, "WAVELENGTH"] == "842nm"
+    assert band_info.loc[1, "WAVELENGTH"] is None or band_info.isna().loc[1, "WAVELENGTH"]
+    assert iu_meta.get_img_band_info(str(img), bands=[2])["name"].tolist() == ["NIR"]
+    with pytest.raises(rsgispy.RSGISPyException):
+        iu_meta.get_img_band_info(str(img), bands=[3])
+
+    renamed = tmp_path / "meta_renamed.tif"
+    iu_meta.rename_gdal_layer(str(img), str(renamed))
+    assert not img.exists()
+    assert renamed.exists()
+    iu_meta.delete_gdal_layer(str(renamed))
+    assert not renamed.exists()
+
+
+def test_image_checks_and_overlap(tmp_path):
+    """Test resolution, bbox, projection, list checks, and overlap detection."""
+    img1 = tmp_path / "a.tif"
+    img2 = tmp_path / "b.tif"
+    img3 = tmp_path / "c_other_res.tif"
+    img4 = tmp_path / "d_wgs84.tif"
+    z = np.zeros((10, 10), dtype=np.float32)
+
+    _write_test_tif(img1, z, tl_x=500000.0, tl_y=5200000.0, res=10.0)
+    _write_test_tif(img2, z, tl_x=500050.0, tl_y=5199950.0, res=10.0)
+    _write_test_tif(img3, z, tl_x=500000.0, tl_y=5200000.0, res=20.0)
+    _write_test_tif(
+        img4, z, tl_x=-3.05, tl_y=47.0, res=0.01, crs="EPSG:4326"
+    )
+
+    assert iu_chk.do_img_res_match(str(img1), str(img2))
+    assert not iu_chk.do_img_res_match(str(img1), str(img3))
+
+    passed = iu_chk.check_img_lst(
+        [str(img1), str(img2), str(img3)],
+        exp_x_res=10.0,
+        exp_y_res=10.0,
+        bbox=(500000.0, 500040.0, 5199960.0, 5200000.0),
+        print_errors=False,
+    )
+    assert passed == [str(img1)]
+
+    assert iu_chk.check_img_file_comparison(
+        str(img1),
+        str(img2),
+        test_n_bands=True,
+        test_eql_bbox=False,
+        print_errors=False,
+    )
+    assert not iu_chk.check_img_file_comparison(
+        str(img1), str(img2), test_eql_bbox=True, print_errors=False
+    )
+    assert iu_chk.do_gdal_layers_have_same_proj(str(img1), str(img2))
+    assert not iu_chk.do_gdal_layers_have_same_proj(str(img1), str(img4))
+
+    assert iu_chk.do_images_overlap(str(img1), str(img2), over_thres=25.0)
+    assert not iu_chk.do_images_overlap(str(img1), str(img2), over_thres=60.0)
+    assert iu_chk.do_images_overlap(str(img1), str(img4))
+
+    iu_chk.test_img_lst_intersects([str(img1), str(img2)], stop_err=True)
+    with pytest.raises(rsgispy.RSGISPyException):
+        iu_chk.test_img_lst_intersects([str(img1), str(img3)], stop_err=True)
+
+
+def test_arrays_and_pixel_access(tmp_path):
+    """Test array-to-image creation and pixel/column/subset extraction."""
+    arr = np.arange(2 * 6 * 8, dtype=np.float32).reshape(2, 6, 8)
+    wkt = rasterio.crs.CRS.from_epsg(32630).to_wkt()  # pylint: disable=c-extension-no-member
+    out1 = tmp_path / "from_arr.tif"
+    iu_arr.create_img_from_array(
+        arr,
+        str(out1),
+        tl_x=500000.0,
+        tl_y=5200060.0,
+        out_img_res_x=10.0,
+        out_img_res_y=-10.0,
+        wkt_string=wkt,
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+        no_data_val=-999.0,
+    )
+
+    out2 = tmp_path / "from_ref.tif"
+    iu_arr.create_img_from_array_ref_img(
+        arr[0],
+        str(out1),
+        str(out2),
+        gdalformat="GTIFF",
+        datatype=rsgispy.TYPE_32FLOAT,
+    )
+    assert np.allclose(iu_arr.get_img_data_as_arr(str(out2))[0], arr[0])
+    assert np.allclose(
+        iu_arr.get_img_data_as_arr(str(out1), img_bands=[2, 1]),
+        arr[[1, 0]],
+    )
+
+    vals_pxl = iu_arr.get_img_pxl_values(str(out1), 2, [0, 3], [0, 2])
+    assert np.allclose(vals_pxl, [arr[1, 0, 0], arr[1, 2, 3]])
+
+    vals_coord = iu_arr.get_img_coords_pxl_values(
+        str(out1), 1, [500005.0, 500035.0], [5200055.0, 5200035.0]
+    )
+    assert np.allclose(vals_coord, [arr[0, 0, 0], arr[0, 2, 3]])
+
+    col_pxl = iu_arr.get_img_pxl_column(str(out1), 2, 1)
+    col_spa = iu_arr.get_img_column(str(out1), 500025.0, 5200045.0)
+    assert np.allclose(col_pxl, [arr[0, 1, 2], arr[1, 1, 2]])
+    assert np.allclose(col_spa, col_pxl)
+
+    iu_arr.set_img_pxl_values(str(out1), 1, [1], [1], pxl_value=777.0)
+    assert iu_arr.get_img_pxl_values(str(out1), 1, [1], [1])[0] == (
+        pytest.approx(777.0)
+    )
+
+    sub_arr = iu_arr.get_img_band_pxl_data(
+        str(out1), 2, [500020.0, 500050.0, 5200020.0, 5200050.0]
+    )
+    assert sub_arr.shape == (3, 3)
+    assert np.allclose(sub_arr, arr[1, 1:4, 2:5])
+
+
+def test_sampling_functions(tmp_path):
+    """Test mask sampling, strided pixel extraction, random pixels, and random raster."""
+    msk_path = tmp_path / "msk.tif"
+    msk = np.zeros((10, 10), dtype=np.uint8)
+    msk[1:5, 1:5] = 1
+    msk[6:9, 6:9] = 2
+    _write_test_tif(msk_path, msk)
+
+    sampled_msk = tmp_path / "sampled_msk.tif"
+    iu_samp.perform_random_pxl_sample_in_mask(
+        str(msk_path),
+        str(sampled_msk),
+        [1, 2],
+        4,
+        gdalformat="GTIFF",
+        rnd_seed=42,
+    )
+    with rasterio.open(sampled_msk) as src:
+        s_arr = src.read(1)
+        assert int((s_arr == 1).sum()) == 4
+        assert int((s_arr == 2).sum()) == 4
+
+    img_path = tmp_path / "vals.tif"
+    vals = np.arange(2 * 10 * 10, dtype=np.float32).reshape(2, 10, 10)
+    vals[:, 0, 0] = -999.0
+    _write_test_tif(img_path, vals, nodata=-999.0)
+
+    assert iu_samp.extract_img_pxl_sample(
+        str(img_path), pxl_n_sample=10, no_data_val=-999.0
+    ).shape == (10, 2)
+
+    in_msk = iu_samp.extract_img_pxl_vals_in_msk(
+        str(img_path), [2, 1], str(msk_path), 1, no_data_val=-999.0
+    )
+    assert in_msk.shape == (16, 2)
+    assert np.allclose(in_msk[:, 0], vals[1, 1:5, 1:5].ravel())
+
+    rnd_pts = tmp_path / "rnd_pts.tif"
+    iu_samp.assign_random_pxls(
+        str(img_path),
+        str(rnd_pts),
+        n_pts=8,
+        img_band=1,
+        gdalformat="GTIFF",
+        edge_pxl=1,
+        use_no_data=True,
+        rnd_seed=123,
+    )
+    with rasterio.open(rnd_pts) as src:
+        rp = src.read(1)
+        assert int((rp == 1).sum()) == 8
+        assert int(rp[0, :].sum()) == 0
+
+    rnd_img = tmp_path / "rnd_vals.tif"
+    iu_samp.generate_random_pxl_vals_img(
+        str(img_path),
+        str(rnd_img),
+        low_val=5,
+        up_val=15,
+        gdalformat="GTIFF",
+        rnd_seed=7,
+    )
+    with rasterio.open(rnd_img) as src:
+        ri = src.read(1)
+        assert ri.dtype == np.int32
+        assert ri.min() >= 5 and ri.max() < 15
+
+
+def test_point_sampling_reads_blocks_only(tmp_path, monkeypatch):
+    """Sampling reads only the blocks that hold points, with the same values."""
+    path = str(tmp_path / "tiled.tif")
+    arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
+    with rasterio.open(path, "w", driver="GTiff", width=64, height=64, count=1,
+                       dtype="float32", crs="EPSG:32630", tiled=True,
+                       blockxsize=16, blockysize=16,
+                       transform=from_origin(500000.0, 5200000.0, 10.0, 10.0)) as dst:
+        dst.write(arr, 1)
+    cols = np.array([0, 5, 17, 63, 40])
+    rows = np.array([0, 3, 2, 63, 33])
+    win_sizes = []
+    real_read = rasterio.io.DatasetReader.read
+
+    def _spy(self, *args, **kwargs):
+        win = kwargs.get("window")
+        win_sizes.append(None if win is None else (int(win.height), int(win.width)))
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(rasterio.io.DatasetReader, "read", _spy)
+    vals = iu_arr.get_img_pxl_values(path, 1, cols, rows)
+    np.testing.assert_array_equal(vals, arr[rows, cols])
+    assert win_sizes and all(w == (16, 16) for w in win_sizes)
+
+    win_sizes.clear()
+    x_coords = 500000.0 + (cols + 0.5) * 10.0
+    y_coords = 5200000.0 - (rows + 0.5) * 10.0
+    vals = iu_arr.get_img_coords_pxl_values(path, 1, x_coords, y_coords)
+    np.testing.assert_array_equal(vals, arr[rows, cols])
+    assert all(w == (16, 16) for w in win_sizes)

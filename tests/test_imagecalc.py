@@ -2,6 +2,8 @@
 Tests for rsgispy and rsgispy.imagecalc.maths.band_maths.
 """
 
+import importlib
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -11,9 +13,13 @@ from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.imagecalc._norm_helpers as norm_helpers
+import rsgispy.imagecalc.comparison as ic_cmp
+import rsgispy.imagecalc.distance as ic_dist
+import rsgispy.imagecalc.fill as ic_fill
 import rsgispy.imagecalc.maths
 import rsgispy.imagecalc.percentiles
 import rsgispy.imagecalc.stats
+import rsgispy.imagecalc.stats as ic_stats
 import rsgispy.imageprocess
 import rsgispy.imageprocess as imgproc
 
@@ -1023,3 +1029,75 @@ def test_subsample_band_values_tiled_reservoir(tmp_path, monkeypatch):
         assert not np.any(s1 == -999.0)
         # Samples should span across multiple tiles (not just first 50 pixels)
         assert float(np.max(s1)) > 100.0
+
+
+def test_optional_scipy_sklearn_guards(monkeypatch):
+    """Verify optional scipy/sklearn dependencies guard functions cleanly."""
+    # Test stats pure-numpy mode fallback when HAVE_SCIPY is False
+    monkeypatch.setattr(ic_stats, "HAVE_SCIPY", False)
+    col_data = np.array([[1.0, 5.0], [2.0, 5.0], [2.0, np.nan]])
+    modes = ic_stats._calc_mode_columns(col_data)  # pylint: disable=protected-access
+    np.testing.assert_allclose(modes, np.array([2.0, 5.0]))
+
+    # Simulate missing scipy and sklearn during fresh module import
+    with monkeypatch.context() as ctx:
+        for mod_name in (
+            "scipy",
+            "scipy.stats",
+            "scipy.ndimage",
+            "scipy.spatial",
+            "sklearn",
+            "sklearn.metrics",
+        ):
+            ctx.setitem(sys.modules, mod_name, None)
+
+        ctx.setattr(rsgispy.imagecalc, "comparison", ic_cmp)
+        ctx.setattr(rsgispy.imagecalc, "distance", ic_dist)
+        ctx.setattr(rsgispy.imagecalc, "fill", ic_fill)
+
+        for mod_name in (
+            "rsgispy.imagecalc.comparison",
+            "rsgispy.imagecalc.distance",
+            "rsgispy.imagecalc.fill",
+        ):
+            ctx.delitem(sys.modules, mod_name, raising=False)
+
+        cmp_fresh = importlib.import_module("rsgispy.imagecalc.comparison")
+        dist_fresh = importlib.import_module("rsgispy.imagecalc.distance")
+        fill_fresh = importlib.import_module("rsgispy.imagecalc.fill")
+
+        assert cmp_fresh.HAVE_SCIPY is False
+        assert cmp_fresh.HAVE_SKLEARN is False
+        for fn_name in (
+            "calc_img_correlation",
+            "calc_img_earth_move_dist",
+            "calc_img_mutual_info",
+            "calc_img_difference",
+        ):
+            assert hasattr(cmp_fresh, fn_name)
+            assert fn_name in cmp_fresh.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            cmp_fresh.calc_img_correlation("a.tif", "b.tif", 1, 1)
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            cmp_fresh.calc_img_earth_move_dist("a.tif", "b.tif", 1, 1)
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            cmp_fresh.calc_img_mutual_info("a.tif", "b.tif", 1, 1)
+
+        assert dist_fresh.HAVE_SCIPY is False
+        for fn_name in ("calc_dist_to_img_vals", "buffer_img_pxl_vals"):
+            assert hasattr(dist_fresh, fn_name)
+            assert fn_name in dist_fresh.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            dist_fresh.calc_dist_to_img_vals("in.tif", "out.tif", [1])
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            dist_fresh.buffer_img_pxl_vals("in.tif", "out.tif", [1], 10.0)
+
+        assert fill_fresh.HAVE_SCIPY is False
+        assert hasattr(fill_fresh, "calc_fill_regions_knn")
+        assert hasattr(fill_fresh, "region_growing_fill")
+        assert hasattr(fill_fresh, "region_growing_fill_tiled")
+        assert "calc_fill_regions_knn" in fill_fresh.__all__
+        assert "region_growing_fill" in fill_fresh.__all__
+        assert "region_growing_fill_tiled" in fill_fresh.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            fill_fresh.calc_fill_regions_knn("in.tif", "fill.tif", "out.tif", 0, 1)
