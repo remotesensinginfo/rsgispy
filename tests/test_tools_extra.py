@@ -773,3 +773,72 @@ def test_ftp_and_cmr_downloads_stay_in_out_dir(tmp_path, monkeypatch):
     ]))
     cmr_mod.download_granules_use_dwnld_db("db.json", str(out_dir), "creds.txt")
     assert written == [str(out_dir / "evil.h5")]
+
+
+def test_ftp_downloads_write_incomplete_then_rename(tmp_path, monkeypatch):
+    """A failed FTP download leaves no partial file; pycurl handles are closed."""
+    import rsgispy.tools.ftp as ftp_mod  # pylint: disable=import-outside-toplevel
+
+    class _FakeFTP:
+        fail = False
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def login(self, **kwargs):
+            pass
+
+        def retrbinary(self, cmd, callback):
+            callback(b"partial")
+            if _FakeFTP.fail:
+                raise OSError("connection lost")
+
+        def quit(self):
+            pass
+
+    monkeypatch.setattr(ftp_mod.ftplib, "FTP", _FakeFTP)
+    out = tmp_path / "f.bin"
+    _FakeFTP.fail = True
+    assert not ftp_mod.download_ftp_file("h", "/f.bin", str(out), print_info=False)
+    assert list(tmp_path.iterdir()) == []
+    _FakeFTP.fail = False
+    assert ftp_mod.download_ftp_file("h", "/f.bin", str(out), print_info=False)
+    assert out.read_bytes() == b"partial"
+    assert not (tmp_path / "f.bin.incomplete").exists()
+
+    closed = []
+
+    class _FakeCurl:
+        TOTAL_TIME = SIZE_DOWNLOAD = 0
+
+        def setopt(self, opt, val):
+            if opt == "WRITEDATA":
+                self.out_fp = val
+
+        def perform(self):
+            self.out_fp.write(b"x")
+            if _FakeCurl.fail:
+                raise fake_pycurl.error("boom")
+
+        def getinfo(self, _key):
+            return 0
+
+        def close(self):
+            closed.append(True)
+
+    fake_pycurl = types.ModuleType("pycurl")
+    fake_pycurl.error = type("error", (Exception,), {})
+    fake_pycurl.Curl = _FakeCurl
+    for name in ("URL", "FOLLOWLOCATION", "NOPROGRESS", "MAXREDIRS", "CONNECTTIMEOUT",
+                 "TIMEOUT", "FTP_RESPONSE_TIMEOUT", "NOSIGNAL", "WRITEDATA",
+                 "HTTPAUTH", "HTTPAUTH_ANY", "USERPWD"):
+        setattr(fake_pycurl, name, name)
+    monkeypatch.setitem(sys.modules, "pycurl", fake_pycurl)
+    out2 = tmp_path / "g.bin"
+    _FakeCurl.fail = True
+    assert not ftp_mod.download_curl_ftp_file("ftp://h", "/g.bin", str(out2), print_info=False)
+    assert not out2.exists() and not (tmp_path / "g.bin.incomplete").exists()
+    _FakeCurl.fail = False
+    assert ftp_mod.download_curl_ftp_file("ftp://h", "/g.bin", str(out2), print_info=False)
+    assert out2.read_bytes() == b"x"
+    assert closed == [True, True]
