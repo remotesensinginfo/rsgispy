@@ -293,6 +293,8 @@ def optimise_lightgbm_binary_classifier(
     :param n_trials: Number of Optuna trials (Default = ``50``).
     :param timeout: Optional Optuna time budget in seconds.
     :param direction: Optuna direction (``'maximize'`` or ``'minimize'``).
+                      Named scikit-learn scorers are greater-is-better, so
+                      ``'minimize'`` is only valid with a callable ``scoring``.
     :param early_stopping_rounds: Optional early stopping rounds on ``valid_data``.
     :param n_jobs: Number of parallel threads/workers.
     :param rnd_seed: Optional random seed.
@@ -423,6 +425,8 @@ def optimise_lightgbm_multiclass_classifier(
     :param n_trials: Number of Optuna trials (Default = ``50``).
     :param timeout: Optional Optuna time budget in seconds.
     :param direction: Optuna direction (``'maximize'`` or ``'minimize'``).
+                      Named scikit-learn scorers are greater-is-better, so
+                      ``'minimize'`` is only valid with a callable ``scoring``.
     :param early_stopping_rounds: Optional early stopping rounds on ``valid_data``.
     :param n_jobs: Number of parallel threads/workers.
     :param rnd_seed: Optional random seed.

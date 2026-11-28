@@ -609,3 +609,166 @@ def test_tune_estimator_and_nested_spatial_cv():
     assert len(ncv_reg.fold_scores) == 3
     assert "r2" in ncv_reg.overall_metrics
     assert ncv_reg.overall_metrics["r2"] > 0.8
+
+
+def _class_sorted_samples(n_per_cls=60, n_cls=3, seed=5):
+    """Well-separated classes stored class by class, as per-class extraction returns them."""
+    rng = np.random.default_rng(seed)
+    X = np.vstack(
+        [rng.normal(loc=4.0 * c, scale=0.5, size=(n_per_cls, 2)) for c in range(n_cls)]
+    )
+    y = np.repeat(np.arange(1, n_cls + 1), n_per_cls)
+    return X, y
+
+
+def test_nested_cv_int_folds_are_shuffled_and_stratified():
+    """An integer outer_cv must not give folds that leave out whole classes."""
+    X, y = _class_sorted_samples()
+    res = nested_spatial_cv(
+        estimator_factory=lambda p: RandomForestClassifier(
+            n_estimators=20, random_state=0
+        ),
+        X=X,
+        y=y,
+        task="classification",
+        outer_cv=3,
+        use_pbar=False,
+    )
+    assert min(res.fold_scores) > 0.9
+
+
+def test_int_cv_splits_respect_rnd_seed_and_cover_all_samples():
+    """Integer CV splits are seeded, stratified for classification and a partition."""
+    from rsgispy.ml.cv import _iter_cv_splits
+
+    X, y = _class_sorted_samples()
+    s1 = _iter_cv_splits(3, X, y, None, None, task="classification", rnd_seed=1)
+    s2 = _iter_cv_splits(3, X, y, None, None, task="classification", rnd_seed=1)
+    s3 = _iter_cv_splits(3, X, y, None, None, task="classification", rnd_seed=2)
+    assert all(np.array_equal(a[1], b[1]) for a, b in zip(s1, s2))
+    assert not all(np.array_equal(a[1], b[1]) for a, b in zip(s1, s3))
+    val_all = np.concatenate([v for _, v in s1])
+    assert sorted(val_all.tolist()) == list(range(len(y)))
+    for tr_idx, val_idx in s1:
+        assert len(np.intersect1d(tr_idx, val_idx)) == 0
+        # Each class is (near) equally represented in every validation fold.
+        _, counts = np.unique(y[val_idx], return_counts=True)
+        assert counts.size == 3 and counts.min() >= 19
+
+    y_reg = np.linspace(0.0, 1.0, 90)
+    r_splits = _iter_cv_splits(3, X[:90], y_reg, None, None, task="regression", rnd_seed=1)
+    # Shuffled: the first fold is not the first contiguous block of rows.
+    assert not np.array_equal(np.sort(r_splits[0][1]), np.arange(30))
+
+
+@pytest.mark.parametrize("scoring", ["rmse", "mae"])
+def test_tune_estimator_minimises_error_metrics(scoring):
+    """rmse / mae default to direction='minimize' so the best (lowest) error is picked."""
+    pytest.importorskip("optuna")
+    rng = np.random.default_rng(3)
+    X = rng.normal(size=(80, 2))
+    y = 3.0 * X[:, 0] + rng.normal(0.0, 0.1, size=80)
+    res = tune_estimator(
+        estimator_factory=lambda p: Ridge(**p),
+        X=X,
+        y=y,
+        param_space={"alpha": [0.01, 1000.0]},
+        task="regression",
+        cv=3,
+        scoring=scoring,
+        n_trials=6,
+        refit=False,
+        use_pbar=False,
+    )
+    assert res.best_params["alpha"] == 0.01
+    assert res.study.direction.name == "MINIMIZE"
+
+
+def test_tune_estimator_rejects_direction_conflicting_with_metric():
+    """An explicit direction that contradicts a known metric raises."""
+    pytest.importorskip("optuna")
+    X, y = _class_sorted_samples()
+    with pytest.raises(rsgispy.RSGISPyException, match="direction"):
+        tune_estimator(
+            estimator_factory=lambda p: Ridge(**p),
+            X=X,
+            y=y.astype(float),
+            param_space={"alpha": [0.1, 1.0]},
+            task="regression",
+            cv=3,
+            scoring="rmse",
+            direction="maximize",
+            n_trials=2,
+            use_pbar=False,
+        )
+
+
+def _binary_stack_and_clf(files):
+    b1, b2, b3 = files["arrays"]
+    stack = ImageFeatureStack(
+        [BandSpec(files["img1"], bands=(1, 2)), BandSpec(files["img2"], bands=(1,))]
+    )
+    valid = np.isfinite(b1) & (b1 != -9999.0) & np.isfinite(b2) & (b3 != -9999.0)
+    X = np.column_stack([b1[valid], b2[valid], b3[valid]])
+    y = np.where(X[:, 0] + X[:, 1] > 40.0, 1, 0)
+    clf = RandomForestClassifier(n_estimators=10, max_depth=4, random_state=0).fit(X, y)
+    return stack, clf, valid
+
+
+def test_predict_raster_threshold_nodata_does_not_collide_with_absence(
+    synthetic_stack_files, tmp_path
+):
+    """Thresholded 0/1 output must not use 0 (the absence class) as nodata."""
+    stack, clf, valid = _binary_stack_and_clf(synthetic_stack_files)
+    out = str(tmp_path / "thr.tif")
+    predict_raster(clf, stack, out, threshold=0.5, use_pbar=False, calc_stats=False)
+    with rasterio.open(out) as src:
+        arr = src.read(1)
+        nd = src.nodata
+    assert nd is not None and nd not in (0, 1)
+    assert set(np.unique(arr[valid]).tolist()) == {0, 1}
+    assert arr[0, 0] == nd
+
+
+def test_predict_raster_thematic_class_zero_uses_free_nodata(
+    synthetic_stack_files, tmp_path
+):
+    """thematic=True with a class 0 picks a nodata value that is not a class."""
+    stack, clf, valid = _binary_stack_and_clf(synthetic_stack_files)
+    out = str(tmp_path / "them.tif")
+    predict_raster(clf, stack, out, thematic=True, use_pbar=False, calc_stats=False)
+    with rasterio.open(out) as src:
+        nd = src.nodata
+        arr = src.read(1)
+    assert nd not in (0, 1)
+    assert 0 in np.unique(arr[valid])
+
+
+def test_predict_raster_explicit_nodata_colliding_with_class_raises(
+    synthetic_stack_files, tmp_path
+):
+    """An explicit no_data_val equal to an output class raises."""
+    stack, clf, _ = _binary_stack_and_clf(synthetic_stack_files)
+    with pytest.raises(rsgispy.RSGISPyException, match="no_data_val"):
+        predict_raster(
+            clf, stack, str(tmp_path / "x.tif"), threshold=0.5, no_data_val=0,
+            use_pbar=False,
+        )
+
+
+def test_predict_proba_raster_class_img_nodata_not_a_class(
+    synthetic_stack_files, tmp_path
+):
+    """out_class_img must not use a class label (here 0) as its nodata."""
+    stack, clf, valid = _binary_stack_and_clf(synthetic_stack_files)
+    cls_out = str(tmp_path / "cls.tif")
+    predict_proba_raster(
+        clf, stack, str(tmp_path / "prob.tif"), out_class_img=cls_out,
+        use_pbar=False, calc_stats=False,
+    )
+    with rasterio.open(cls_out) as src:
+        nd = src.nodata
+        arr = src.read(1)
+    assert nd not in (0, 1)
+    assert arr[0, 0] == nd
+    assert 0 in np.unique(arr[valid])

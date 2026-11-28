@@ -18,6 +18,56 @@ import rsgispy.tools.stats as rstats
 import rsgispy.tools.thresholding as rthresh
 
 
+def test_cqv_threshold_handles_negative_features():
+    """CQV uses |Q3 + Q1| so negative-valued features (dB, NDVI) are not dropped."""
+    rng = np.random.default_rng(0)
+    pos = rng.uniform(10.0, 20.0, size=200)
+    df = pd.DataFrame({"pos": pos, "neg": -pos})
+    cols = rfeatsel.cqv_threshold(df, lowthreshold=0.1, highthreshold=0.9)
+    assert cols == ["pos", "neg"]
+
+
+@pytest.mark.skipif(not rfeatsel.HAVE_SKLEARN, reason="needs scikit-learn")
+def test_lassolars_selection_is_scale_invariant():
+    """Selection does not depend on the units of the features."""
+    rng = np.random.default_rng(1)
+    n = 200
+    x1 = rng.normal(size=n)
+    x2 = rng.normal(size=n)
+    x_noise = rng.normal(size=n)
+    y = 2.0 * x1 + 1.0 * x2 + rng.normal(0.0, 0.1, size=n)
+    df = pd.DataFrame({"y": y, "x1": x1, "x2": x2, "x_noise": x_noise})
+    cols = ["x1", "x2", "x_noise"]
+    scaled = df.copy()
+    scaled["x2"] = scaled["x2"] * 1e-3
+    for alpha in (None, 0.05):
+        base = rfeatsel.lassolars_feature_selection(df, ["y"], cols, alpha_val=alpha)
+        sel = rfeatsel.lassolars_feature_selection(scaled, ["y"], cols, alpha_val=alpha)
+        assert {"x1", "x2"} <= set(base)
+        assert sel == base
+
+
+@pytest.mark.skipif(not rfeatsel.HAVE_SKLEARN, reason="needs scikit-learn")
+def test_lassolars_selection_uses_every_target():
+    """Alpha is chosen per target, so a noisy last target cannot hide another's feature."""
+    rng = np.random.default_rng(2)
+    n = 200
+    x1 = rng.normal(size=n)
+    x_noise = rng.normal(size=n)
+    df = pd.DataFrame(
+        {
+            # y1 depends weakly on x1; y2 (the last target) is pure noise, so
+            # a BIC alpha chosen from y2 alone removes every predictor.
+            "y1": 0.3 * x1 + rng.normal(0.0, 0.1, size=n),
+            "y2": rng.normal(0.0, 5.0, size=n),
+            "x1": x1,
+            "x_noise": x_noise,
+        }
+    )
+    sel = rfeatsel.lassolars_feature_selection(df, ["y1", "y2"], ["x1", "x_noise"])
+    assert "x1" in sel
+
+
 def test_feature_selection_and_vif():
     """Test calc_pandas_vif, cqv_threshold, corr_feature_selection, and lassolars."""
     rng = np.random.default_rng(42)

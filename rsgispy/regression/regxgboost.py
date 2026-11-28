@@ -242,6 +242,8 @@ def optimise_xgboost_regressor(
     :param n_trials: Number of Optuna trials (Default = ``50``).
     :param timeout: Optional Optuna study timeout in seconds.
     :param direction: Optimisation direction (Default = ``'maximize'``).
+                      Named scikit-learn scorers are greater-is-better, so
+                      ``'minimize'`` is only valid with a callable ``scoring``.
     :param early_stopping_rounds: Early stopping rounds when ``valid_data`` is
                                   provided.
     :param n_jobs: Number of parallel threads/jobs.

@@ -29,6 +29,7 @@ import pandas as pd
 import rsgispy
 from rsgispy.imageprocess import ensure_file_exists
 from rsgispy.tools._ml_tune import (
+    check_sklearn_scorer_direction,
     extract_best_optuna_params,
     resolve_cv_splitter,
     run_optuna_study,
@@ -985,6 +986,7 @@ def run_gbdt_optuna_optimisation(
     persistence for both classification and regression GBDT workflows.
     """
     # pylint: disable=too-many-arguments,too-many-locals
+    check_sklearn_scorer_direction(scoring, direction)
     scorer = (
         sklearn.metrics.get_scorer(scoring)
         if isinstance(scoring, str)

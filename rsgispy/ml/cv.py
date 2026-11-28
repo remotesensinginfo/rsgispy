@@ -584,35 +584,135 @@ def _evaluate_score(
     raise rsgispy.RSGISPyException(f"Unsupported scoring metric: {scoring!r}.")
 
 
+_MINIMISE_METRICS = frozenset({"rmse", "mae"})
+_MAXIMISE_METRICS = frozenset(
+    {
+        "r2",
+        "r2_score",
+        "neg_rmse",
+        "neg_root_mean_squared_error",
+        "neg_mae",
+        "neg_mean_absolute_error",
+        "accuracy",
+        "acc",
+        "f1",
+        "f1_macro",
+        "macro_f1",
+    }
+)
+
+
+def _resolve_direction(
+    direction: Optional[str],
+    scoring: Optional[Union[str, Callable[[np.ndarray, np.ndarray], float]]],
+) -> str:
+    """
+    Resolve the Optuna direction for ``scoring``.
+
+    Error metrics (``'rmse'``, ``'mae'``) are minimised and every other named
+    metric (including the default and the ``'neg_*'`` forms) is maximised. When
+    ``direction`` is ``None`` it is derived from the metric (``'maximize'`` for
+    a callable). An explicit ``direction`` that contradicts a named metric
+    raises, because Optuna would then select the worst model.
+    """
+    dir_norm = None if direction is None else str(direction).strip().lower()
+    if dir_norm is not None and dir_norm not in ("maximize", "minimize"):
+        raise rsgispy.RSGISPyException(
+            f"direction must be 'maximize' or 'minimize', got {direction!r}."
+        )
+    if callable(scoring):
+        return dir_norm if dir_norm is not None else "maximize"
+    key = None if scoring is None else str(scoring).strip().lower()
+    if key in _MINIMISE_METRICS:
+        expected = "minimize"
+    elif key is None or key in _MAXIMISE_METRICS:
+        expected = "maximize"
+    else:
+        raise rsgispy.RSGISPyException(f"Unsupported scoring metric: {scoring!r}.")
+    if dir_norm is not None and dir_norm != expected:
+        raise rsgispy.RSGISPyException(
+            f"direction={direction!r} contradicts scoring={scoring!r}, which "
+            f"must be optimised with direction='{expected}'. Leave direction "
+            "as None to derive it from the metric."
+        )
+    return expected
+
+
+def _int_kfold_splits(
+    n_splits: int,
+    y_arr: np.ndarray,
+    task: str,
+    rnd_seed: Optional[int],
+) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """
+    Shuffled K-fold splits for an integer ``cv`` without coordinates or groups.
+
+    Rows are shuffled with ``rnd_seed`` so the folds do not depend on the row
+    order (sample tables are usually stored class by class). Classification
+    folds are stratified: the shuffled rows of each class are dealt to the
+    folds in turn, so every class is represented in every fold as evenly as
+    its sample count allows.
+    """
+    n_s = int(y_arr.shape[0])
+    if n_splits < 2:
+        raise rsgispy.RSGISPyException(f"cv must be at least 2 folds, got {n_splits}.")
+    if n_s < n_splits:
+        raise rsgispy.RSGISPyException(
+            f"cv={n_splits} exceeds the number of samples ({n_s})."
+        )
+    rng = np.random.default_rng(rnd_seed)
+    fold_of = np.empty(n_s, dtype=np.intp)
+    if task == "classification":
+        offset = 0
+        for cls_val in np.unique(y_arr):
+            cls_idx = rng.permutation(np.flatnonzero(y_arr == cls_val))
+            fold_of[cls_idx] = (offset + np.arange(cls_idx.size)) % n_splits
+            offset += cls_idx.size
+    else:
+        perm = rng.permutation(n_s)
+        fold_of[perm] = np.arange(n_s) % n_splits
+    out: List[Tuple[np.ndarray, np.ndarray]] = []
+    for i in range(n_splits):
+        out.append((np.flatnonzero(fold_of != i), np.flatnonzero(fold_of == i)))
+    return out
+
+
 def _iter_cv_splits(
     cv: Any,
     x_data: Any,
     y_arr: np.ndarray,
     coords: Optional[np.ndarray],
     groups: Optional[np.ndarray],
+    *,
+    task: str = "classification",
+    rnd_seed: Optional[int] = 42,
 ) -> List[Tuple[np.ndarray, np.ndarray]]:
-    """Invoke ``cv.split`` supporting both spatial splitters and sklearn splitters."""
+    """
+    Invoke ``cv.split`` supporting both spatial splitters and sklearn splitters.
+
+    An integer ``cv`` gives :class:`SpatialBlockKFold` folds when ``coords``
+    are given, :class:`PolygonGroupKFold` folds when ``groups`` are given, and
+    otherwise shuffled (stratified for classification) K-fold splits seeded
+    with ``rnd_seed``.
+    """
+    # pylint: disable=too-many-arguments
     if isinstance(cv, (SpatialBlockKFold, SpatialBufferCV, PolygonGroupKFold)):
         return list(cv.split(x_data, y=y_arr, groups=groups, coords=coords))
-    if isinstance(cv, int):
+    if isinstance(cv, (int, np.integer)) and not isinstance(cv, bool):
+        n_splits = int(cv)
         if coords is not None:
             return list(
-                SpatialBlockKFold(n_splits=cv).split(x_data, y=y_arr, coords=coords)
+                SpatialBlockKFold(n_splits=n_splits, rnd_seed=rnd_seed).split(
+                    x_data, y=y_arr, coords=coords
+                )
             )
         if groups is not None:
             return list(
-                PolygonGroupKFold(n_splits=cv).split(x_data, y=y_arr, groups=groups)
+                PolygonGroupKFold(n_splits=n_splits, rnd_seed=rnd_seed).split(
+                    x_data, y=y_arr, groups=groups
+                )
             )
-        # Deterministic K-fold fallback
-        n_s = len(y_arr)
-        idx = np.arange(n_s, dtype=np.intp)
-        folds = np.array_split(idx, cv)
-        out: List[Tuple[np.ndarray, np.ndarray]] = []
-        for i in range(cv):
-            val_i = folds[i]
-            tr_i = np.concatenate([folds[j] for j in range(cv) if j != i])
-            out.append((tr_i, val_i))
-        return out
+        return _int_kfold_splits(n_splits, y_arr, task, rnd_seed)
     return list(cv.split(x_data, y_arr, groups))
 
 
@@ -631,7 +731,7 @@ def nested_spatial_cv(
     scoring: Optional[Union[str, Callable[[np.ndarray, np.ndarray], float]]] = None,
     n_trials: int = 20,
     timeout: Optional[float] = None,
-    direction: str = "maximize",
+    direction: Optional[str] = None,
     rnd_seed: Optional[int] = 42,
     use_pbar: bool = True,
 ) -> NestedCVResult:
@@ -651,7 +751,10 @@ def nested_spatial_cv(
     :param groups: Optional 1D group/polygon IDs array.
     :param outer_cv: Outer CV splitter (defaults to :class:`SpatialBlockKFold`
                      when ``coords`` is given, :class:`PolygonGroupKFold` when
-                     ``groups`` is given, or 5-fold CV otherwise).
+                     ``groups`` is given, or shuffled 5-fold CV, stratified
+                     for classification and seeded with ``rnd_seed``,
+                     otherwise). An integer gives the same choice of splitter
+                     with that number of folds.
     :param inner_cv: Inner CV splitter for Optuna tuning (defaults to 3-fold
                      spatial/group CV).
     :param param_space: Optional Optuna hyperparameter space dict or callable
@@ -660,11 +763,16 @@ def nested_spatial_cv(
     :param scaler: Optional :class:`~rsgispy.ml.scaling.FeatureScaler` cloned
                    and fitted strictly inside each training fold.
     :param scoring: Scoring name (``'accuracy'``, ``'macro_f1'``, ``'r2'``,
-                    ``'neg_rmse'``, ``'neg_mae'``) or callable ``(y_true, y_pred) -> float``.
+                    ``'rmse'``, ``'mae'``, ``'neg_rmse'``, ``'neg_mae'``) or
+                    callable ``(y_true, y_pred) -> float``.
     :param n_trials: Optuna trials per outer fold when ``param_space`` is given
                      (Default = ``20``).
     :param timeout: Optional Optuna timeout in seconds per outer fold.
-    :param direction: Optuna direction ``'maximize'`` (Default) or ``'minimize'``.
+    :param direction: Optuna direction ``'maximize'`` or ``'minimize'``. The
+                      default (``None``) derives it from ``scoring``: error
+                      metrics (``'rmse'``, ``'mae'``) are minimised and all
+                      others maximised. A direction that contradicts a named
+                      metric raises :class:`rsgispy.RSGISPyException`.
     :param rnd_seed: Random seed (Default = ``42``).
     :param use_pbar: Display Optuna/tqdm progress bars (Default = ``True``).
     :return: :class:`NestedCVResult` with out-of-fold predictions and metrics.
@@ -676,6 +784,7 @@ def nested_spatial_cv(
         raise rsgispy.RSGISPyException(
             f"task must be 'classification' or 'regression', got {task!r}."
         )
+    eff_direction = _resolve_direction(direction, scoring)
     y_arr = np.asarray(y)
     n_samples = y_arr.shape[0]
     c_arr = _validate_coords(coords, n_samples) if coords is not None else None
@@ -693,7 +802,9 @@ def nested_spatial_cv(
     else:
         eff_outer = outer_cv
 
-    outer_splits = _iter_cv_splits(eff_outer, X, y_arr, c_arr, g_arr)
+    outer_splits = _iter_cv_splits(
+        eff_outer, X, y_arr, c_arr, g_arr, task=task_norm, rnd_seed=rnd_seed
+    )
     if not outer_splits:
         raise rsgispy.RSGISPyException("outer_cv produced zero valid splits.")
 
@@ -759,7 +870,7 @@ def nested_spatial_cv(
                 scoring=scoring,
                 n_trials=n_trials,
                 timeout=timeout,
-                direction=direction,
+                direction=eff_direction,
                 refit=False,
                 rnd_seed=(
                     None if rnd_seed is None else int(rnd_seed) + fold_idx
