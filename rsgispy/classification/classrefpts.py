@@ -16,7 +16,9 @@ from rasterio.transform import Affine, xy as transform_xy
 from rasterio.windows import Window
 
 import rsgispy
-from rsgispy.classification._helpers import resolve_rng
+from rsgispy.tools._ml_data import (
+    resolve_rng,
+)
 from rsgispy.imageprocess import (
     build_valid_mask,
     ensure_file_exists,

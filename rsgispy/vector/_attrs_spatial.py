@@ -11,7 +11,14 @@ import geopandas as gpd
 import numpy as np
 
 import rsgispy
-from rsgispy.vectorprocess import VectorInput, read_vec_gdf, write_vec_gdf
+from rsgispy.vectorprocess import (
+    VectorInput,
+    ensure_matching_crs,
+    finish_vec_output,
+    read_vec_gdf,
+    write_back_vec_gdf,
+    write_vec_gdf,
+)
 
 __all__ = [
     "pop_bbox_cols",
@@ -60,7 +67,8 @@ def pop_bbox_cols(
     :param vec_file: Path to the vector file to update (in-place unless
                      ``out_vec_file`` is given) or
                      :class:`geopandas.GeoDataFrame`.
-    :param vec_lyr: Layer name within ``vec_file`` (or ``None``).
+    :param vec_lyr: Layer name within ``vec_file`` (or ``None`` for the first
+                    layer, which is then the layer updated in place).
     :param x_min_col: Output MinX column name (Default = ``'xmin'``).
     :param x_max_col: Output MaxX column name (Default = ``'xmax'``).
     :param y_min_col: Output MinY column name (Default = ``'ymin'``).
@@ -89,31 +97,19 @@ def pop_bbox_cols(
         rsgispy.vector.attrs.pop_bbox_cols("polys.gpkg", "polys")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    is_gdf_input = isinstance(vec_file, gpd.GeoDataFrame)
     gdf = read_vec_gdf(vec_file, vec_lyr)
     _populate_bbox_columns(
         gdf, x_min_col, x_max_col, y_min_col, y_max_col, fill_empty_zero=True
     )
-    if out_vec_file is not None:
-        write_vec_gdf(
-            gdf,
-            out_vec_file,
-            out_vec_lyr if out_vec_lyr is not None else vec_lyr,
-            out_format=out_format,
-            out_compress=out_compress,
-        )
-        return None
-    if is_gdf_input:
-        return gdf
-    write_vec_gdf(
+    return write_back_vec_gdf(
         gdf,
-        vec_file,  # type: ignore[arg-type]
-        out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+        vec_file,
+        vec_lyr,
+        out_vec_file=out_vec_file,
+        out_vec_lyr=out_vec_lyr,
         out_format=out_format,
-        replace_layer=True,
         out_compress=out_compress,
     )
-    return None
 
 
 def add_geom_bbox_cols(
@@ -194,7 +190,8 @@ def annotate_vec_selection(
 ) -> Optional[gpd.GeoDataFrame]:
     """
     Annotate features in ``vec_in_file`` with a boolean column indicating
-    whether each feature intersects any feature in ``vec_sel_file``.
+    whether each feature intersects any feature in ``vec_sel_file``. The
+    selection layer is reprojected onto the input layer's CRS if they differ.
 
     :param vec_in_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_in_lyr: Input vector layer name (or ``None``).
@@ -228,7 +225,9 @@ def annotate_vec_selection(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     in_gdf = read_vec_gdf(vec_in_file, vec_in_lyr, epsg=vec_in_epsg)
-    sel_gdf = read_vec_gdf(vec_sel_file, vec_sel_lyr, epsg=vec_sel_epsg)
+    sel_gdf = ensure_matching_crs(
+        in_gdf, read_vec_gdf(vec_sel_file, vec_sel_lyr, epsg=vec_sel_epsg)
+    )
 
     in_gdf[tmp_col_name] = np.arange(1, len(in_gdf) + 1, 1, dtype=int)
     in_sel_gdf = gpd.sjoin(
@@ -266,7 +265,8 @@ def perform_spatial_join(
 ) -> Optional[gpd.GeoDataFrame]:
     """
     Perform a spatial attribute join between two vector layers using
-    :func:`geopandas.sjoin`.
+    :func:`geopandas.sjoin`. The join layer is reprojected onto the base
+    layer's CRS if they differ.
 
     :param vec_base_file: Base vector file or :class:`geopandas.GeoDataFrame`
                           providing output geometries.
@@ -311,19 +311,17 @@ def perform_spatial_join(
         )
 
     base_gdf = read_vec_gdf(vec_base_file, vec_base_lyr, epsg=vec_base_epsg)
-    join_gdf = read_vec_gdf(vec_join_file, vec_join_lyr, epsg=vec_join_epsg)
+    join_gdf = ensure_matching_crs(
+        base_gdf, read_vec_gdf(vec_join_file, vec_join_lyr, epsg=vec_join_epsg)
+    )
 
     joined_gdf = gpd.sjoin(
         base_gdf, join_gdf, how=join_how, predicate=join_op
     )
-    if out_vec_file is None:
-        return joined_gdf
-    if len(joined_gdf) > 0:
-        write_vec_gdf(
-            joined_gdf,
-            out_vec_file,
-            out_vec_lyr,
-            out_format=out_format,
-            out_compress=out_compress,
-        )
-    return None
+    return finish_vec_output(
+        joined_gdf,
+        out_vec_file,
+        out_vec_lyr=out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )

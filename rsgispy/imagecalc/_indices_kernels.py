@@ -319,7 +319,6 @@ def _calc_msavi2_block(
     two_nir_plus_one = (2.0 * nir) + 1.0
     disc = (two_nir_plus_one ** 2) - (8.0 * (nir - red))
     valid = disc >= 0.0
-    out = np.zeros_like(disc, dtype=np.float64)
     root = np.sqrt(np.where(valid, disc, 0.0))
     out = np.where(valid, 0.5 * (two_nir_plus_one - root), 0.0)
     return out, valid

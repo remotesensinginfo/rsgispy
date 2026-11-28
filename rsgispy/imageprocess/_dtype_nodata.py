@@ -250,14 +250,35 @@ def fits_dtype_range(
     value: float,
     out_np_dtype: np.dtype,
     allow_round_int: bool = False,
+    allow_nonfinite_float: bool = False,
 ) -> bool:
     """
-    Return ``True`` if finite scalar ``value`` is representable in ``out_np_dtype``.
+    Return ``True`` if scalar ``value`` (e.g. a no-data value) can be stored
+    in ``out_np_dtype``. This is the single range check used across rsgispy
+    (including the tile-graph nodes and composites). The rules are:
+
+    * integer types: ``value`` must be finite, an integer (or, with
+      ``allow_round_int``, round to one) and within the type's range. NaN
+      and infinities never fit.
+    * float types: finite values must be within ``+/-finfo.max``; NaN and
+      infinities fit only when ``allow_nonfinite_float`` is ``True`` (they
+      are valid no-data values for float rasters).
+    * any other type: ``False``.
+
+    :param value: Scalar value to test.
+    :param out_np_dtype: Target NumPy dtype.
+    :param allow_round_int: For integer types, accept a non-integer value that
+                            rounds into range (Default = ``False``).
+    :param allow_nonfinite_float: For float types, accept NaN and infinities
+                                  (Default = ``False``).
+    :return: ``True`` if ``value`` fits.
     """
     out_np_dtype = np.dtype(out_np_dtype)
     f_val = float(value)
     if not math.isfinite(f_val):
-        return False
+        return bool(allow_nonfinite_float) and np.issubdtype(
+            out_np_dtype, np.floating
+        )
     if np.issubdtype(out_np_dtype, np.floating):
         info = np.finfo(out_np_dtype)
         return float(info.min) <= f_val <= float(info.max)  # pylint: disable=no-member
@@ -390,6 +411,76 @@ def resolve_nodata_and_fill(
     return eff_nd, (float(eff_nd) if eff_nd is not None else 0.0)
 
 
+#: Default output no-data value of floating-point outputs.
+DEFAULT_FLOAT_NODATA = -9999.0
+
+
+def default_out_nodata(out_np_dtype: Any, thematic: bool = False) -> float:
+    """
+    The package-wide default output no-data value for ``out_np_dtype``:
+
+    * floating-point types: ``-9999``;
+    * signed integers: the type's minimum (e.g. ``-32768`` for ``int16``);
+    * unsigned integers: the type's maximum (e.g. ``255`` for ``uint8``), or
+      ``0`` for a thematic (class / label) output (``thematic=True``).
+
+    :param out_np_dtype: NumPy dtype of the output raster.
+    :param thematic: The output is a thematic unsigned integer map, where
+                     ``0`` is the conventional no-data / no-class value
+                     (Default = ``False``).
+    :return: Default no-data value as a float.
+    """
+    out_np_dtype = np.dtype(out_np_dtype)
+    if np.issubdtype(out_np_dtype, np.floating):
+        return DEFAULT_FLOAT_NODATA
+    if np.issubdtype(out_np_dtype, np.unsignedinteger):
+        return 0.0 if thematic else float(np.iinfo(out_np_dtype).max)
+    if np.issubdtype(out_np_dtype, np.integer):
+        return float(np.iinfo(out_np_dtype).min)
+    raise rsgispy.RSGISPyException(
+        f"No default no-data value for data type '{out_np_dtype.name}'."
+    )
+
+
+def validate_out_nodata(
+    out_no_data_val: Optional[float],
+    out_np_dtype: Any,
+    *,
+    default_to_type: bool = True,
+    label: str = "out_no_data_val",
+) -> Optional[float]:
+    """
+    Resolve and validate a user-requested output no-data value.
+
+    ``None`` gives :func:`default_out_nodata` (``-9999`` for float types,
+    the type's minimum for signed and maximum for unsigned integers) when
+    ``default_to_type`` is ``True``, otherwise ``None``. An explicit value
+    must be representable by ``out_np_dtype`` (NaN is allowed for float
+    types), else :class:`rsgispy.RSGISPyException` is raised.
+
+    :param out_no_data_val: Requested output no-data value (or ``None``).
+    :param out_np_dtype: NumPy dtype of the output raster.
+    :param default_to_type: Return the type default for ``None``
+                            (Default = ``True``); ``False`` returns ``None``.
+    :param label: Name of the value in the error message.
+    :return: The output no-data value as a float, or ``None``.
+    """
+    out_np_dtype = np.dtype(out_np_dtype)
+    if out_no_data_val is None:
+        if not default_to_type:
+            return None
+        return default_out_nodata(out_np_dtype)
+    nd_val = float(out_no_data_val)
+    if math.isinf(nd_val) or not fits_dtype_range(
+        nd_val, out_np_dtype, allow_nonfinite_float=True
+    ):
+        raise rsgispy.RSGISPyException(
+            f"{label} ({out_no_data_val}) cannot be represented by the output "
+            f"data type '{out_np_dtype.name}'."
+        )
+    return nd_val
+
+
 def _same_nodata(cur_val: Optional[float], new_val: Optional[float]) -> bool:
     """Return ``True`` if two no-data values (``None``/NaN aware) are equal."""
     if cur_val is None or new_val is None:
@@ -513,23 +604,91 @@ def parse_epsg_crs(epsg_code: Optional[int]) -> Optional[Any]:
         ) from err
 
 
+def round_clamp_to_dtype(
+    arr: Union[np.ndarray, float, int],
+    out_np_dtype: Any,
+    nodata: Optional[float] = None,
+    valid_mask: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """
+    Convert ``arr`` to ``out_np_dtype`` with the package's integer casting
+    policy:
+
+    * integer outputs are rounded to the nearest integer (``numpy.rint``),
+      then clamped to the data type's range, so values never wrap or
+      truncate (e.g. ``[200.4, 400, -2]`` to uint8 gives ``[200, 255, 0]``);
+    * non-finite values, and pixels where ``valid_mask`` is ``False``, are
+      set to ``nodata`` (``0`` for integer outputs when ``nodata`` is
+      ``None``);
+    * when ``valid_mask`` and ``nodata`` are both given, a valid pixel whose
+      rounded, clamped value equals ``nodata`` is moved one step away from it
+      (``nodata + 1``, or ``nodata - 1`` at the top of the range), so valid
+      data never becomes nodata.
+
+    Float outputs are cast directly, with masked pixels set to ``nodata``
+    when it is given.
+
+    :param arr: Input array (or scalar).
+    :param out_np_dtype: Target NumPy dtype.
+    :param nodata: Output no-data value (or ``None``).
+    :param valid_mask: Optional boolean mask of valid pixels, broadcastable
+                       to ``arr``.
+    :return: Array of dtype ``out_np_dtype``.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.imageprocess
+
+        out = rsgispy.imageprocess.round_clamp_to_dtype(
+            np.array([200.4, 400.0, -2.0]), np.uint8
+        )  # [200, 255, 0]
+    """
+    out_np_dtype = np.dtype(out_np_dtype)
+    arr = np.asarray(arr, dtype=np.float64)
+    finite = np.isfinite(arr)
+    good = finite if valid_mask is None else (finite & np.asarray(valid_mask, bool))
+    if not np.issubdtype(out_np_dtype, np.integer):
+        if nodata is None:
+            return arr.astype(out_np_dtype, copy=False)
+        return np.where(good, arr, nodata).astype(out_np_dtype, copy=False)
+
+    info = np.iinfo(out_np_dtype)
+    nd_ok = nodata is not None and fits_dtype_range(nodata, out_np_dtype)
+    fill = float(nodata) if nd_ok else 0.0
+    with np.errstate(invalid="ignore"):
+        vals = np.clip(np.rint(np.where(finite, arr, fill)), info.min, info.max)
+    if nd_ok and valid_mask is not None:
+        bump = fill + 1.0 if fill < info.max else fill - 1.0
+        vals = np.where(good & (vals == fill), bump, vals)
+    vals = np.where(good, vals, fill)
+    return vals.astype(out_np_dtype)
+
+
 def cast_result_block(
     res: Union[np.ndarray, float, int],
     win_h: int,
     win_w: int,
     out_np_dtype: np.dtype,
-    clamp_int: bool = False,
+    *,
+    nodata: Optional[float] = None,
+    valid_mask: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
-    Convert a block calculation result to an array of the target NumPy dtype.
+    Convert a block calculation result to an array of the target NumPy dtype
+    using :func:`round_clamp_to_dtype`: integer outputs are rounded to the
+    nearest integer and clamped to the dtype range (they never wrap or
+    truncate), and non-finite values become ``nodata`` (``0`` when it is
+    ``None``).
 
     :param res: Result array or scalar from block calculation.
     :param win_h: Height of the current window in pixels.
     :param win_w: Width of the current window in pixels.
     :param out_np_dtype: Target NumPy dtype for the output raster.
-    :param clamp_int: If ``True`` and ``out_np_dtype`` is an integer dtype,
-                      clamp values to the dtype's valid range before casting
-                      (Default = ``False``).
+    :param nodata: Optional output no-data value.
+    :param valid_mask: Optional boolean mask of valid pixels; invalid pixels
+                       are set to ``nodata``, and valid pixels never take the
+                       ``nodata`` value (see :func:`round_clamp_to_dtype`).
     :return: NumPy array of shape ``(win_h, win_w)`` or ``(bands, win_h, win_w)``.
 
     .. code:: python
@@ -542,16 +701,15 @@ def cast_result_block(
             arr, 256, 256, np.dtype(np.float32)
         )
     """
-    out_np_dtype = np.dtype(out_np_dtype)
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     if np.ndim(res) == 0:
-        arr = np.full((win_h, win_w), res, dtype=np.float64)
-    else:
-        arr = np.asarray(res)
-
-    with np.errstate(invalid="ignore"):
-        if np.issubdtype(out_np_dtype, np.integer):
-            arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
-            if clamp_int:
-                info = np.iinfo(out_np_dtype)
-                arr = np.clip(arr, info.min, info.max)
-        return arr.astype(out_np_dtype, copy=False)
+        res = np.full((win_h, win_w), res, dtype=np.float64)
+    out_np_dtype = np.dtype(out_np_dtype)
+    arr = np.asarray(res)
+    if (
+        np.issubdtype(out_np_dtype, np.integer)
+        and arr.dtype == out_np_dtype
+        and valid_mask is None
+    ):
+        return arr
+    return round_clamp_to_dtype(arr, out_np_dtype, nodata, valid_mask)

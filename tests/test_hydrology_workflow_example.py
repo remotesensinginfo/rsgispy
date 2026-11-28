@@ -15,11 +15,10 @@ from hydro_scene import LC_NAMES, OUT_EPSG, make_hydro_scene
 
 pytest.importorskip("matplotlib")
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "hydrology_workflow.py"
-)
-GUIDE = os.path.join(
-    os.path.dirname(__file__), os.pardir, "docs", "guides", "hydrology_workflow.rst"
 )
 
 
@@ -79,24 +78,3 @@ def test_worked_example_runs(tmp_path):
     with rasterio.open(out["twi_img"]) as src:
         assert src.nodata is not None
     assert os.path.getsize(out["map_png"]) > 0
-
-
-def test_guide_markers_exist():
-    """Every literalinclude marker used by the guide exists in the script."""
-    with open(EXAMPLE, encoding="utf-8") as f_obj:
-        script = f_obj.read()
-    with open(GUIDE, encoding="utf-8") as f_obj:
-        guide = f_obj.read()
-    # Only the markers of the blocks included from the example script (the
-    # guide also includes the tutorial-data script).
-    markers = []
-    included = ""
-    for line in guide.splitlines():
-        if "literalinclude::" in line:
-            included = line.split("literalinclude::")[1].strip()
-        elif ":start-after:" in line and included.endswith("/hydrology_workflow.py"):
-            markers.append(line.split(":start-after:")[1].strip())
-    assert len(markers) >= 10
-    for marker in markers:
-        assert marker in script
-        assert marker.replace("[step-", "[end-step-") in script

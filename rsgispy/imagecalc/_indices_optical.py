@@ -32,9 +32,11 @@ from rsgispy.imageprocess import (
     RasterSource,
     TileNode,
     build_valid_mask,
+    default_out_nodata,
     ensure_file_exists,
     iter_dataset_windows,
     resolve_out_nodata as _ip_resolve_out_nodata,
+    round_clamp_to_dtype,
     validate_band_index,
 )
 
@@ -252,19 +254,21 @@ def _resolve_out_scaling(
 def _resolve_out_nodata(
     out_no_data_val: Optional[float], out_np_dtype: np.dtype
 ) -> float:
-    """Resolve and validate the output no-data value for the target dtype."""
+    """
+    Resolve and validate the output no-data value for the target dtype
+    (``None`` gives :func:`rsgispy.imageprocess.default_out_nodata`).
+    """
+    if out_no_data_val is None:
+        return default_out_nodata(out_np_dtype)
     res = _ip_resolve_out_nodata(
         out_np_dtype,
         out_no_data_val=out_no_data_val,
-        default_float=-999.0,
-        default_int=-999.0,
         clamp_int=True,
-        unsigned_clamp="zero",
         strict_explicit=True,
         allow_round_int=True,
         allow_nonfinite_float=True,
     )
-    return -999.0 if res is None else float(res)
+    return float(res)
 
 
 def _resolve_index_params(
@@ -369,20 +373,14 @@ def _format_output_band(
     out_nd: float,
     out_np_dtype: np.dtype,
 ) -> np.ndarray:
-    """Apply output gain/offset scaling, integerisation, and no-data masking."""
+    """
+    Apply output gain/offset scaling, then integerise and mask no-data with
+    :func:`rsgispy.imageprocess.round_clamp_to_dtype` (round, clamp, and keep
+    valid values off ``out_nd``).
+    """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     scaled = (index_arr * out_g) + out_o
-    good = valid_mask & np.isfinite(scaled)
-
-    if np.issubdtype(out_np_dtype, np.integer):
-        info = np.iinfo(out_np_dtype)
-        rounded = np.rint(np.where(good, scaled, out_nd))
-        clamped = np.clip(rounded, info.min, info.max)
-        result = np.where(good, clamped, out_nd)
-        return result.astype(out_np_dtype)
-
-    result = np.where(good, scaled, out_nd)
-    return result.astype(out_np_dtype)
+    return round_clamp_to_dtype(scaled, out_np_dtype, out_nd, valid_mask)
 
 
 def _setup_optical_indices(
@@ -606,7 +604,8 @@ def calc_indices_node(
     :param no_data_val: Optional input no-data value (Default = ``None``: the
                         no-data value of ``source``).
     :param out_no_data_val: Optional output no-data value (Default = ``None``:
-                            ``-999``, or the type's limit for narrow integers).
+                            ``-9999`` for float types, the type's minimum
+                            (signed) or maximum (unsigned) for integers).
     :param name: Optional node name (Default = ``'calc_indices'``).
     :return: :class:`~rsgispy.imageprocess.TileNode`.
 
@@ -748,8 +747,10 @@ def calc_indices(
     :param no_data_val: Optional input no-data value. If ``None``, reads the
                         no-data value(s) from the input image header.
     :param out_no_data_val: Optional output no-data value. If ``None``, uses
-                            ``-999.0`` for signed/floating-point types (or
-                            ``0`` / type minimum for narrow integer types).
+                            ``-9999`` for floating-point types and the type's
+                            minimum (signed) or maximum (unsigned) for integer
+                            types (:func:`rsgispy.imageprocess.default_out_nodata`;
+                            before 0.5.0 the default was ``-999``).
     :param calc_stats: If ``True``, populate band statistics, histograms, and
                        overview pyramids on ``output_img`` (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing

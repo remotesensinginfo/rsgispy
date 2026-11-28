@@ -101,7 +101,7 @@ def run_workflow(
                     6: "swir2"},
         indices=["NDVI", "MNDWI"],  # (NIR-R)/(NIR+R), (G-SWIR1)/(G+SWIR1)
         in_gain=refl_scale,  # to reflectance 0-1
-        no_data_val=0,  # output no data is -999
+        no_data_val=0,  # output no data is -9999
         use_pbar=use_pbar,
     )
     # [end-step-2-indices]

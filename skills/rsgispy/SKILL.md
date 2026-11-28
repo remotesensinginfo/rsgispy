@@ -1,11 +1,11 @@
 ---
 name: rsgispy
-description: Generate idiomatic Python code using rsgispy (v0.4.x), the pure-Python replacement for RSGISLib built on rasterio, geopandas, shapely, pyproj, numpy, pandas, and pymu-eval. Use whenever the user asks to write, debug, or migrate remote sensing, Earth observation, GIS, raster processing, satellite radiometric calibration or CloudSEN12 cloud masking, image co-registration, spectral or SAR index calculation (calc_indices, calc_sar_indices), band_maths / vector_maths expressions, zonal statistics, DEM terrain derivatives or hydrology, spatial/SAR filtering, segmentation, spectral unmixing, vector geometry/attribute operations, cartographic mapping, data access, CLI tools, or ML classification/regression/SDM pipelines using rsgispy or migrating from RSGISLib.
+description: Generate idiomatic Python code using rsgispy (v0.5.x), the pure-Python replacement for RSGISLib built on rasterio, geopandas, shapely, pyproj, numpy, pandas, and pymu-eval. Use whenever the user asks to write, debug, or migrate remote sensing, Earth observation, GIS, raster processing, satellite radiometric calibration or CloudSEN12 cloud masking, image co-registration, spectral or SAR index calculation (calc_indices, calc_sar_indices), band_maths / vector_maths expressions, zonal statistics, DEM terrain derivatives or hydrology, spatial/SAR filtering, segmentation, spectral unmixing, vector geometry/attribute operations, cartographic mapping, data access, CLI tools, or ML classification/regression/SDM pipelines using rsgispy or migrating from RSGISLib.
 ---
 
 # rsgispy Coding Guide
 
-`rsgispy` (v0.4.1) is a **pure-Python** replacement for RSGISLib with **zero** `osgeo` or `rsgislib` dependencies. Full online documentation is available at <https://rsgispy.readthedocs.io>.
+`rsgispy` (v0.5.0) is a **pure-Python** replacement for RSGISLib with **zero** `osgeo` or `rsgislib` dependencies. Full online documentation is available at <https://rsgispy.readthedocs.io>.
 
 > Always verify exact module paths, function names, and parameter names against the tables below or the bundled files in `references/`—do **not** invent RSGISLib-style camelCase names (`bandMath`, `calcSlope`) or guess unverified identifiers.
 
@@ -166,7 +166,6 @@ vector_maths(
 - **Default format**: Default `gdalformat` across `rsgispy` is `"GTIFF"` (not `"KEA"`).
 - **British English identifiers**: Several constants, functions, and kwargs use British spelling:
   - `rsgispy.INTERP_NEAREST_NEIGHBOUR` (and `RSGIS_INTERP_*` aliases do not exist; use `rsgispy.INTERP_*`).
-  - `rsgispy.zonalstats.METHOD_POLYCONTAINSPIXELCENTRE`, `METHOD_PIXELCONTAINSPOLYCENTRE`.
   - `keep_centre_on_tie` (`apply_majority_filter`), `copy_colour_table` (`classpostprocess`), `define_colour_table` / `get_colour_tab_info` (`imageutils.colourtable`), `colour` / `alt_colour` / `box_colour` / `swatch_edge_colour` / `colour_lut` (`mapping`, `ClassInfoObj`), `normalise_*` / `equalise_smpls` / `polygonise_*` / `vectorise_*` / `rasterise_*` / `categorise_aspect`.
   - `optimise_*` (`classcatboost`, `classlightgbm`, `classxgboost`, `regcatboost`, `reglightgbm`, `regxgboost`).
 - **Single-class SDM naming**: Use `fit_sklearn_sgl_cls_mdl`, `fit_kfold_sklearn_sgl_cls_mdls`, `pred_sklearn_sgl_cls_mdl_prob`, `pred_sklearn_sgl_cls_mdl_cls`, `pred_ensemble_sklearn_sgl_cls_mdls_prob`, `pred_ensemble_sklearn_sgl_cls_mdls_cls` (not `singcls` or `single_class`).

@@ -1,6 +1,6 @@
 # Mapping, Data Access, Drone Utilities, General Tools & CLI
 
-Covers `rsgispy.mapping.*`, `rsgispy.dataaccess.*`, `rsgispy.droneutils`, all 29 `rsgispy.tools.*` modules, and all 11 CLI entrypoints in `rsgispy` v0.4.1.
+Covers `rsgispy.mapping.*`, `rsgispy.dataaccess.*`, `rsgispy.droneutils`, all 29 `rsgispy.tools.*` modules, and all 11 CLI entrypoints in `rsgispy` v0.5.0.
 
 ---
 
@@ -70,7 +70,7 @@ Covers `rsgispy.mapping.*`, `rsgispy.dataaccess.*`, `rsgispy.droneutils`, all 29
 - **`utm`**: `min_max_eastings_for_lat`, `parse_utm_zone_str`, `epsg_for_utm(zone, hemisphere)`, `utm_from_epsg(epsg_code)`, `split_wgs84_bbox_utm_zones`, `check_valid_zone`, `to_latlon`, `from_latlon`, `latitude_to_zone_letter`, `latlon_to_zone_number`, `latlon_arr_to_utm_zone_number`, `latlon_to_mode_utm_zone_number`, `zone_number_to_central_longitude`.
 - **`projection`**: `get_epsg_code_from_wkt`, `get_wkt_from_epsg_code`, `get_crs_obj`, `degrees_to_metres`, `metres_to_degrees`, `get_deg_coord_as_str`, `great_circle_distance`.
 - **`tilecache`**: `TILE_SIZE=256`, `resolution`, `truncate_lng_lat`, `get_tile_for_point`, `get_tile_tl_lonlat`, `get_tile_bbox`, `flip_xyz_tms_tiles`, `get_web_mercator_xy`, `get_xy_mercator_lonlat`, `xy_mercator_bounds`, `get_quadkey_for_tile_path`, `get_tile_path_from_quadkey`, `get_tiles`, `convert_between_tms_xyz`.
-- **`files`**: `get_file_basename`, `is_path_valid`, `is_path_sibling_creatable`, `does_path_exists_or_creatable`, `get_dir_name`, `split_path_all`, `delete_file_silent`, `delete_file_with_basename`, `rm_files_size_gt`, `find_file`, `find_file_none`, `find_files_ext`, `find_files_mpaths_ext`, `find_first_file`, `get_files_mod_time`, `find_files_size_limits`, `is_cmd_tool_avail`, `file_is_hidden`, `get_dir_list`, `get_dir_list_srch`, `convert_file_size_units`, `get_file_size`, `get_file_mod_time`, `get_file_lock`, `release_file_lock`, `clean_file_locks`, `sort_imgs_to_dirs_utm`, `natural_sort_file_names`, `sort_file_by_datetime`, `work_dir_context`, `ensure_parent_dir`.
+- **`files`**: `get_file_basename`, `is_path_valid`, `is_path_sibling_creatable`, `does_path_exists_or_creatable`, `get_dir_name`, `split_path_all`, `delete_file_silent`, `delete_file_with_basename`, `rm_files_size_gt`, `find_file`, `find_file_none`, `find_files_ext` / `find_files_mpaths_ext` (sorted list of paths), `find_first_file`, `get_files_mod_time`, `find_files_size_limits`, `is_cmd_tool_avail`, `file_is_hidden`, `get_dir_list`, `get_dir_list_srch`, `convert_file_size_units`, `get_file_size`, `get_file_mod_time`, `get_file_lock`, `release_file_lock`, `clean_file_locks`, `sort_imgs_to_dirs_utm`, `natural_sort_file_names`, `sort_file_by_datetime`, `work_dir_context`, `ensure_parent_dir`.
 - **`archives`**: `create_directory_archive`, `untar_file`, `untar_gz_file`, `unzip_file`, `untar_bz_file`, `create_targz_arch`.
 - **`checkdatasets`**: `check_gdal_image_file`, `run_check_gdal_image_file`, `run_check_gdal_image_files`, `check_gdal_vector_file`, `run_check_gdal_vector_file`, `run_check_gdal_vector_files`, `cmp_to_ref_imgs`, `check_hdf5_file`, `run_check_hdf5_file`, `run_check_hdf5_files`.
 - **`jsonio`**: `RSGISNumpyArrayEncoder`, `to_json_compatible`, `write_dict_to_json`, `dict_to_json_str`, `write_dict_to_json_gz`, `read_json_to_dict`, `read_gz_json_to_dict`.
@@ -89,7 +89,7 @@ Covers `rsgispy.mapping.*`, `rsgispy.dataaccess.*`, `rsgispy.droneutils`, all 29
   - `wmts`: `get_wmts_layer_list`, `get_wmts_as_img`.
 - **`stats` / `thresholding` / `accuracy` / `featureselection`**:
   - `stats`: `mask_data_to_valid`, `calc_semivariogram`, `plot_semivariogram(vario_df, *, ..., axs=None, out_plot_file=None) -> (fig, axs)`, `standardise_img_data`, `normalise_img_data`, `validate_percentiles_0_100`, `compute_nanpercentiles`, `resolve_metric_type`, `calc_similarity_metric`, `phase_cross_correlation_2d` (integer peak, then re-correlation on the overlap with DFT-upsampled sub-pixel refinement; unbiased for windows ≥ 32 px with shifts below about a quarter of the window). `compute_nanpercentiles` is vectorised and matches `np.nanpercentile`.
-  - `thresholding`: `get_nbins_histogram`, `get_bin_centres`, `calc_{otsu,yen,isodata,li,kurt_skew}_threshold`, `calc_hist_cross_entropy`.
+  - `thresholding`: `get_nbins_histogram`, `get_bin_centres`, `calc_{otsu,yen,isodata,li,kurt_skew}_threshold`, `calc_hist_cross_entropy`. Otsu, Yen, ISODATA and cross-entropy take `bins=256` (int >= 2, or `"fd"` for Freedman-Diaconis).
   - `accuracy`: `bias_score`, `decompose_bias_variance`, `accuracy_scores_binary`, `bin_accuracy_scores_prob`.
   - `featureselection`: `cqv_threshold`, `calc_pandas_vif`, `lassolars_feature_selection`, `corr_feature_selection`, `breusch_pagan_test`.
 - **`plotting` / `imaging` / `maths` / `system`**:

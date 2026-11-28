@@ -29,6 +29,7 @@ import pandas as pd
 import rsgispy
 from rsgispy.imageprocess import ensure_file_exists
 from rsgispy.tools._ml_tune import (
+    check_sklearn_scorer_direction,
     extract_best_optuna_params,
     resolve_cv_splitter,
     run_optuna_study,
@@ -985,6 +986,7 @@ def run_gbdt_optuna_optimisation(
     persistence for both classification and regression GBDT workflows.
     """
     # pylint: disable=too-many-arguments,too-many-locals
+    check_sklearn_scorer_direction(scoring, direction)
     scorer = (
         sklearn.metrics.get_scorer(scoring)
         if isinstance(scoring, str)
@@ -1082,3 +1084,70 @@ def run_gbdt_optuna_optimisation(
             "search_obj": study,
         }
     return best_est
+
+
+def forward_gbdt_call(
+    impl: Callable[..., Any],
+    backend: Any,
+    func_name: str,
+    call_args: Mapping[str, Any],
+    *,
+    rename: Optional[Mapping[str, str]] = None,
+    **fixed: Any,
+) -> Any:
+    """
+    Call the shared GBDT implementation ``impl`` for a backend wrapper.
+
+    The public XGBoost / LightGBM / CatBoost classification and regression
+    functions keep their own names, signatures and docstrings, and forward
+    their arguments here (``call_args`` is the wrapper's ``locals()``, i.e.
+    its parameters). ``rename`` maps a wrapper parameter to the
+    implementation's name (e.g. ``{"cb_classifier": "classifier"}``) and
+    ``fixed`` adds backend-specific constants (e.g. ``binary=True``).
+    """
+    kwargs = {
+        (rename or {}).get(name, name): val for name, val in call_args.items()
+    }
+    kwargs.update(fixed)
+    return impl(backend=backend, func_name=func_name, **kwargs)
+
+
+#: Registered GBDT backend specs, keyed by ``(task, backend_name)``.
+_GBDT_BACKENDS: Dict[Tuple[str, str], Any] = {}
+
+#: Modules defining the backend specs, imported on first lookup.
+_GBDT_BACKEND_MODULES = {
+    "classification": "rsgispy.classification.class{name}",
+    "regression": "rsgispy.regression.reg{name}",
+}
+
+
+def register_gbdt_backend(task: str, name: str, spec: Any) -> Any:
+    """
+    Register the backend ``spec`` (a ``GBDTBackendSpec`` or
+    ``GBDTRegBackendSpec``) of GBDT library ``name`` (``'xgboost'``,
+    ``'lightgbm'`` or ``'catboost'``) for ``task`` (``'classification'`` or
+    ``'regression'``), and return it.
+    """
+    _GBDT_BACKENDS[(task, name)] = spec
+    return spec
+
+
+def get_gbdt_backend(task: str, name: str) -> Any:
+    """
+    Return the registered backend spec of GBDT library ``name`` for ``task``,
+    importing its module (which registers it) on first use.
+    """
+    key = (task, name)
+    if key not in _GBDT_BACKENDS:
+        # pylint: disable=import-outside-toplevel
+        import importlib
+
+        if task not in _GBDT_BACKEND_MODULES or name not in (
+            "xgboost", "lightgbm", "catboost"
+        ):
+            raise rsgispy.RSGISPyException(
+                f"Unknown GBDT backend '{name}' for task '{task}'."
+            )
+        importlib.import_module(_GBDT_BACKEND_MODULES[task].format(name=name))
+    return _GBDT_BACKENDS[key]

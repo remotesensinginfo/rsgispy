@@ -213,11 +213,77 @@ def validate_crs_and_res(
             )
 
 
+#: Largest allowed grid-origin offset, as a fraction of a pixel, between
+#: inputs combined pixel by pixel.
+GRID_ALIGN_TOL = 1e-6
+
+
+def _check_grid_alignment(datasets: Dict[str, Any], first_ds: Any) -> None:
+    """
+    Raise :class:`rsgispy.RSGISPyException` when the pixel grid of any dataset
+    is offset from that of ``first_ds`` by a fraction of a pixel (more than
+    :data:`GRID_ALIGN_TOL` of the pixel size): the inputs would otherwise be
+    combined with a silent sub-pixel shift.
+    """
+    ref = first_ds.transform
+    res_x, res_y = abs(ref.a), abs(ref.e)
+    for path, ds in datasets.items():
+        dx = (ds.transform.c - ref.c) / res_x
+        dy = (ds.transform.f - ref.f) / res_y
+        off_x = abs(dx - round(dx))
+        off_y = abs(dy - round(dy))
+        if off_x > GRID_ALIGN_TOL or off_y > GRID_ALIGN_TOL:
+            raise rsgispy.RSGISPyException(
+                f"The pixel grid of '{path}' is not aligned with that of the "
+                f"first input (offset by {off_x:.6g} x {off_y:.6g} pixels). "
+                "Resample it onto the same grid first, e.g. with "
+                "rsgispy.imageutils.warp.resample_img_to_match."
+            )
+
+
+def same_pixel_grid(
+    ds_a: Any, ds_b: Any, *, missing_crs_matches: bool = False
+) -> bool:
+    """
+    Return ``True`` when two open rasters are on the same pixel grid: the
+    same width and height, transforms equal to within ``1e-6`` of the pixel
+    size (:data:`GRID_ALIGN_TOL`), and the same CRS.
+
+    The CRS rule: two defined CRSs must be equal. When one or both are
+    ``None``, the grids match only if both are ``None``, unless
+    ``missing_crs_matches=True``, in which case a missing CRS matches any CRS
+    (for inputs that are known to share a CRS but may not record it).
+
+    :param ds_a: First open raster (``rasterio`` dataset).
+    :param ds_b: Second open raster.
+    :param missing_crs_matches: Treat a missing CRS as matching any CRS
+                                (Default = ``False``).
+    :return: ``True`` if the grids match.
+    """
+    if ds_a.width != ds_b.width or ds_a.height != ds_b.height:
+        return False
+    tol = GRID_ALIGN_TOL * max(abs(ds_a.transform.a), 1e-12)
+    if not np.allclose(
+        np.asarray(ds_a.transform)[:6], np.asarray(ds_b.transform)[:6],
+        rtol=0.0, atol=tol,
+    ):
+        return False
+    if ds_a.crs is None or ds_b.crs is None:
+        return missing_crs_matches or (ds_a.crs is None and ds_b.crs is None)
+    return ds_a.crs == ds_b.crs
+
+
 def compute_spatial_intersection(
     datasets: Dict[str, DatasetReader]
 ) -> IntersectionGrid:
     """
     Compute the spatial intersection grid and per-dataset pixel offsets.
+
+    The inputs must share a CRS, a pixel size and a pixel grid: an
+    :class:`rsgispy.RSGISPyException` is raised when their grid origins are
+    offset by a fraction of a pixel (more than ``1e-6`` of the pixel size);
+    resample them onto one grid first (e.g. with
+    :func:`rsgispy.imageutils.warp.resample_img_to_match`).
 
     :param datasets: Mapping of file path to opened rasterio DatasetReader.
     :return: IntersectionGrid describing the output extent and input pixel offsets.
@@ -256,6 +322,7 @@ def compute_spatial_intersection(
         )
 
     validate_crs_and_res(datasets, first_ds)
+    _check_grid_alignment(datasets, first_ds)
 
     bounds = (
         max(ds.bounds.left for ds in ds_list),

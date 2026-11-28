@@ -377,9 +377,11 @@ def radiance_to_toa_refl(
         for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             blk = src.read(window=win, out_dtype=np.float64)
             out_blk = np.empty_like(blk, dtype=np.float64)
+            valid_blk = np.empty(blk.shape, dtype=bool)
             for b_i, factor in enumerate(band_factors):
                 band_arr = blk[b_i]
                 valid = build_valid_mask(band_arr, no_data_val=eff_in_nd)
+                valid_blk[b_i] = valid
                 out_blk[b_i] = np.where(valid, band_arr * factor, fill_val)
             dst.write(
                 cast_result_block(
@@ -387,7 +389,8 @@ def radiance_to_toa_refl(
                     int(win.height),
                     int(win.width),
                     out_np_dtype,
-                    clamp_int=True,
+                    nodata=dst_nodata,
+                    valid_mask=None if dst_nodata is None else valid_blk,
                 ),
                 window=win,
             )
@@ -500,7 +503,6 @@ def landsat_thermal_rad_to_brightness(
                     int(win.height),
                     int(win.width),
                     out_np_dtype,
-                    clamp_int=True,
                 ),
                 window=win,
             )
@@ -512,7 +514,7 @@ def perform_dos_calc(
     non_negative: bool = True,
     no_data_val: Optional[float] = 0.0,
     dark_obj_refl_val: float = 0.0,
-    dark_obj_percentile: float = 0.01,
+    dark_obj_percentile: float = 1.0,
     copy_band_names: bool = True,
     *,
     gdalformat: str = "GTIFF",
@@ -539,8 +541,9 @@ def perform_dos_calc(
                         uses input dataset nodata if set).
     :param dark_obj_refl_val: Minimum dark-object reflectance offset added back
                               to subtracted values (Default = ``0.0``).
-    :param dark_obj_percentile: Image percentile fraction in ``[0, 1]`` defining
-                                the dark-object threshold (Default = ``0.01``).
+    :param dark_obj_percentile: Image percentile in ``[0, 100]`` defining the
+                                dark-object threshold (Default = ``1.0``, the
+                                1st percentile).
     :param copy_band_names: If ``True``, copy band descriptions from
                             ``input_img`` to ``output_img`` (Default = ``True``).
     :param gdalformat: Output GDAL driver format (Default = ``'GTIFF'``).
@@ -560,8 +563,13 @@ def perform_dos_calc(
             "toa_refl.tif",
             "dos_sref.tif",
             no_data_val=0.0,
-            dark_obj_percentile=0.01,
+            dark_obj_percentile=1.0,
         )
+
+    .. versionchanged:: 0.5.0
+       ``dark_obj_percentile`` is on the 0-100 scale, as for
+       :func:`rsgispy.imagecalc.percentiles.calc_band_percentile` (it was a
+       0-1 fraction).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
@@ -570,6 +578,11 @@ def perform_dos_calc(
     if not math.isfinite(dark_refl):
         raise rsgispy.RSGISPyException(
             f"dark_obj_refl_val must be finite, got {dark_obj_refl_val!r}."
+        )
+    dark_pct = float(dark_obj_percentile)
+    if not 0.0 <= dark_pct <= 100.0:
+        raise rsgispy.RSGISPyException(
+            f"dark_obj_percentile must be in [0, 100], got {dark_obj_percentile!r}."
         )
     norm_opts = normalise_creation_options(creation_opts)
 
@@ -584,7 +597,7 @@ def perform_dos_calc(
 
     percent_vals = calc_band_percentile(
         input_img=input_img,
-        percentile=dark_obj_percentile,
+        percentile=dark_pct,
         no_data_val=eff_in_nd,
     )
     if len(percent_vals) != n_bands:
@@ -623,9 +636,11 @@ def perform_dos_calc(
         for win in iter_dataset_windows(src.height, src.width, use_pbar=use_pbar):
             blk = src.read(window=win, out_dtype=np.float64)
             out_blk = np.empty_like(blk, dtype=np.float64)
+            valid_blk = np.empty(blk.shape, dtype=bool)
             for b_i, offset_val in enumerate(percent_vals):
                 arr = blk[b_i]
                 valid = build_valid_mask(arr, no_data_val=eff_in_nd)
+                valid_blk[b_i] = valid
                 corrected = (arr - float(offset_val)) + dark_refl
                 if non_negative:
                     corrected = np.maximum(corrected, min_floor)
@@ -636,7 +651,8 @@ def perform_dos_calc(
                     int(win.height),
                     int(win.width),
                     out_np_dtype,
-                    clamp_int=True,
+                    nodata=dst_nodata,
+                    valid_mask=None if dst_nodata is None else valid_blk,
                 ),
                 window=win,
             )

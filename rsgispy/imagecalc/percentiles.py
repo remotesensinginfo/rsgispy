@@ -27,6 +27,7 @@ from rsgispy.imageprocess import (
     ensure_file_exists,
     fits_dtype_range,
     iter_image_blocks,
+    iter_single_image_band_blocks,
     open_input_datasets,
     open_multi_image_datasets,
 )
@@ -84,14 +85,26 @@ def calc_band_percentile(
     input_img: str,
     percentile: float,
     no_data_val: Optional[float] = None,
+    use_pbar: bool = False,
 ) -> List[float]:
     """
     Calculate a percentile value for each band of an input image.
 
+    The image is read block by block (only the valid values are kept), and
+    the percentile is exact (``numpy.percentile`` with linear interpolation).
+
+    .. versionchanged:: 0.5.0
+       ``percentile`` is in ``[0, 100]``, as in
+       :func:`calc_band_percentile_msk` and :func:`calc_imgs_pxl_percentiles`
+       (it was a fraction in ``[0, 1]``).
+
     :param input_img: Path to the input image file.
-    :param percentile: Percentile fraction between ``0.0`` and ``1.0`` inclusive.
+    :param percentile: Percentile between ``0`` and ``100`` inclusive.
     :param no_data_val: Optional no-data value to exclude (or ``None``).
-    :return: List of float percentile values, one per band.
+    :param use_pbar: If ``True``, display a tqdm progress bar (Default =
+                     ``False``).
+    :return: List of float percentile values, one per band (NaN for a band
+             without valid values).
 
     .. code:: python
 
@@ -99,30 +112,36 @@ def calc_band_percentile(
 
         pct_vals = rsgispy.imagecalc.percentiles.calc_band_percentile(
             input_img="img.tif",
-            percentile=0.95,
+            percentile=95.0,
             no_data_val=0.0,
         )
     """
-    if percentile < 0.0 or percentile > 1.0:
-        raise rsgispy.RSGISPyException("Percentile value must be between 0 - 1.")
+    if percentile < 0.0 or percentile > 100.0:
+        raise rsgispy.RSGISPyException(
+            "Percentile value must be between 0 - 100."
+        )
     ensure_file_exists(input_img)
 
-    pct_val = float(percentile) * 100.0
-    out_vals: List[float] = []
-    with rasterio.open(input_img, "r") as src:
-        for band_idx in range(1, src.count + 1):
-            arr = src.read(band_idx, out_dtype=np.float64).ravel()
-            if no_data_val is not None:
-                if isinstance(no_data_val, float) and math.isnan(no_data_val):
-                    arr = arr[~np.isnan(arr)]
-                else:
-                    arr = arr[arr != no_data_val]
-            arr = arr[np.isfinite(arr)]
-            if arr.size == 0:
-                out_vals.append(float("nan"))
-            else:
-                out_vals.append(float(np.percentile(arr, pct_val)))
+    nd_is_nan = no_data_val is not None and math.isnan(float(no_data_val))
+    band_vals: Optional[List[List[np.ndarray]]] = None
+    for _, block_arrays in iter_single_image_band_blocks(
+        input_img=input_img, read_dtype=np.float64, use_pbar=use_pbar
+    ):
+        if band_vals is None:
+            band_vals = [[] for _ in block_arrays]
+        for idx, band_arr in enumerate(block_arrays):
+            vals = band_arr.ravel()
+            keep = np.isfinite(vals)
+            if no_data_val is not None and not nd_is_nan:
+                keep &= vals != no_data_val
+            band_vals[idx].append(vals[keep])
 
+    out_vals: List[float] = []
+    for chunks in band_vals or []:
+        vals = np.concatenate(chunks) if chunks else np.empty(0)
+        out_vals.append(
+            float(np.percentile(vals, float(percentile))) if vals.size else float("nan")
+        )
     return out_vals
 
 

@@ -19,24 +19,17 @@ import rsgispy.imageutils.composite as comp
 from rsgispy._numba import disable_numba
 from rsgispy.imageprocess import ArraySource, MemorySink, TileGraph
 
+from conftest import write_raster
+
 ND = -9999.0
 SHAPE = (23, 29)
 TRANSFORM = from_origin(500000.0, 5700000.0, 10.0, 10.0)
 
 
 def _write(path, arr, dtype="float64", nodata=ND, names=None, transform=TRANSFORM):
-    arr = np.asarray(arr)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis]
-    with rasterio.open(
-        path, "w", driver="GTiff", height=arr.shape[1], width=arr.shape[2],
-        count=arr.shape[0], dtype=dtype, crs="EPSG:32630", transform=transform,
-        nodata=nodata,
-    ) as dst:
-        dst.write(arr.astype(dtype))
-        if names is not None:
-            dst.descriptions = tuple(names)
-    return str(path)
+    return write_raster(
+        path, arr, dtype=dtype, nodata=nodata, band_names=names, transform=transform
+    )
 
 
 def _read(path):

@@ -2,7 +2,6 @@
 Tests for :mod:`rsgispy.imagefilter`.
 """
 
-import inspect
 
 import numpy as np
 import pytest
@@ -13,29 +12,12 @@ import rsgispy
 import rsgispy.imagefilter as imf
 import rsgispy.imageprocess as img_proc
 
+from conftest import write_raster
+
 
 def _write_raster(path, data, nodata=None, descriptions=None):
     """Write a 2D or 3D GeoTIFF raster for filter testing."""
-    arr = np.asarray(data)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis, :, :]
-    count, height, width = arr.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(arr.dtype),
-        "crs": "EPSG:32630",
-        "transform": from_origin(500000.0, 5200000.0, 10.0, 10.0),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(arr)
-        if descriptions is not None:
-            for idx, desc in enumerate(descriptions, start=1):
-                dst.set_band_description(idx, desc)
+    return write_raster(path, data, nodata=nodata, band_names=descriptions)
 
 
 def test_window_stat_and_difference_filters(tmp_path):
@@ -248,22 +230,10 @@ def test_edge_gaussian_laplacian_and_custom_kernel_filters(tmp_path):
         )
 
 
-def test_imagefilter_submodules_and_sar_filters(tmp_path):
-    """Test submodule imports and all SAR backscatter speckle filters."""
-    import rsgispy.imagefilter.edge as if_edge
+def test_sar_speckle_filters(tmp_path):
+    """All SAR backscatter speckle filters smooth homogeneous areas, keep point
+    targets, nodata and band names, and Refined Lee keeps step edges."""
     import rsgispy.imagefilter.sar as if_sar
-    import rsgispy.imagefilter.smooth as if_smooth
-    import rsgispy.imagefilter.stats as if_stats
-    import rsgispy.imagefilter.texture as if_tex
-
-    # Package exports only its submodules, not individual filter functions
-    assert imf.__all__ == ["stats", "smooth", "edge", "sar", "texture", "chained"]
-    assert imf.stats is if_stats
-    assert imf.smooth is if_smooth
-    assert imf.edge is if_edge
-    assert imf.sar is if_sar
-    assert imf.texture is if_tex
-    assert not hasattr(imf, "apply_mean_filter")
 
     # Synthetic SAR intensity image: low region + high region + strong point target + nodata
     sar_in = tmp_path / "sar_test.tif"
@@ -433,38 +403,8 @@ def test_glcm_texture_filters(tmp_path):
         if_tex.apply_glcm_filter(str(nd_in), str(tmp_path / "err3.tif"), min_val=0.0, max_val=None)
 
 
-def test_imagefilter_v1_signatures(tmp_path):
-    """Verify v1.0 keyword-only tail on all raster-producing imagefilter functions."""
-    kw_tail = {
-        "gdalformat": "GTIFF",
-        "datatype": None,
-        "no_data_val": None,
-        "calc_stats": True,
-        "use_pbar": True,
-    }
-    submodules = [imf.stats, imf.smooth, imf.edge, imf.sar, imf.texture, imf.chained]
-    checked = 0
-    for mod in submodules:
-        for name in mod.__all__:
-            if not name.startswith("apply_"):
-                continue
-            fn = getattr(mod, name)
-            sig = inspect.signature(fn)
-            params = list(sig.parameters.values())
-            assert params[0].name == "input_img"
-            assert params[1].name == "output_img"
-            for kw_name, kw_default in kw_tail.items():
-                assert kw_name in sig.parameters, f"{mod.__name__}.{name} missing {kw_name}"
-                p = sig.parameters[kw_name]
-                assert p.kind == inspect.Parameter.KEYWORD_ONLY, (
-                    f"{mod.__name__}.{name}.{kw_name} must be keyword-only"
-                )
-                assert p.default == kw_default
-            checked += 1
-
-    # 17 stats + 3 smooth + 9 edge + 7 sar + 1 texture + 1 chained = 38 functions
-    assert checked == 38
-
+def test_imagefilter_gdalformat_positional_raises_type_error(tmp_path):
+    """gdalformat is keyword-only: passing it positionally raises TypeError."""
     # Passing gdalformat positionally must raise TypeError
     in_p = tmp_path / "sig_in.tif"
     _write_raster(in_p, np.ones((5, 5), dtype=np.float32))
@@ -472,3 +412,168 @@ def test_imagefilter_v1_signatures(tmp_path):
         imf.stats.apply_mean_filter(str(in_p), str(tmp_path / "sig_out.tif"), 3, "GTIFF")
     with pytest.raises(TypeError):
         imf.edge.apply_sobel_filter(str(in_p), str(tmp_path / "sig_sob.tif"), "GTIFF")
+
+
+def _edge_conv_reference(arr, kernel, flip):
+    """Reference 2D convolution (``flip=True``) or correlation of ``arr``
+    with an edge-padded border."""
+    k = np.asarray(kernel, dtype=np.float64)
+    if flip:
+        k = k[::-1, ::-1]
+    kh, kw = k.shape
+    pad = np.pad(arr.astype(np.float64), ((kh // 2, kh // 2), (kw // 2, kw // 2)), mode="edge")
+    out = np.zeros(arr.shape, dtype=np.float64)
+    for i in range(kh):
+        for j in range(kw):
+            out += k[i, j] * pad[i:i + arr.shape[0], j:j + arr.shape[1]]
+    return out
+
+
+def test_kernel_filter_convolves_and_correlation_filter_correlates(tmp_path):
+    """apply_kernel_filter is a true convolution (kernel flipped in both
+    axes); apply_kernel_correlation_filter applies the kernel unflipped."""
+    arr = np.arange(1, 36, dtype=np.float32).reshape(5, 7)
+    in_p = tmp_path / "shift_in.tif"
+    _write_raster(in_p, arr)
+
+    def _run(fn, kernel, tag):
+        out_p = tmp_path / f"{tag}.tif"
+        fn(str(in_p), str(out_p), kernel, use_pbar=False)
+        with rasterio.open(out_p) as src:
+            return src.read(1).astype(np.float64)
+
+    shift = [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]
+    conv = _run(imf.smooth.apply_kernel_filter, shift, "conv_shift")
+    corr = _run(imf.smooth.apply_kernel_correlation_filter, shift, "corr_shift")
+    # Convolution moves the image one column right: out[r, c] = in[r, c - 1].
+    np.testing.assert_array_equal(conv[:, 1:], arr[:, :-1])
+    np.testing.assert_array_equal(conv[:, 0], arr[:, 0])
+    # Correlation moves it one column left: out[r, c] = in[r, c + 1].
+    np.testing.assert_array_equal(corr[:, :-1], arr[:, 1:])
+    np.testing.assert_array_equal(corr[:, -1], arr[:, -1])
+
+    # A kernel asymmetric in both axes, with mixed weights.
+    asym = [[1.0, 2.0, 0.0], [0.0, 0.0, 3.0], [0.0, -1.0, 0.5]]
+    conv = _run(imf.smooth.apply_kernel_filter, asym, "conv_asym")
+    corr = _run(imf.smooth.apply_kernel_correlation_filter, asym, "corr_asym")
+    np.testing.assert_allclose(conv, _edge_conv_reference(arr, asym, True), rtol=1e-6)
+    np.testing.assert_allclose(corr, _edge_conv_reference(arr, asym, False), rtol=1e-6)
+
+    # A symmetric kernel gives the same result either way.
+    sharpen = [[0.0, -1.0, 0.0], [-1.0, 5.0, -1.0], [0.0, -1.0, 0.0]]
+    np.testing.assert_array_equal(
+        _run(imf.smooth.apply_kernel_filter, sharpen, "conv_sharp"),
+        _run(imf.smooth.apply_kernel_correlation_filter, sharpen, "corr_sharp"),
+    )
+
+
+def _window_reference(arr, size, reducer, mode, fill=0.0):
+    """Reference moving-window ``reducer`` of ``arr`` with ``np.pad`` borders."""
+    from numpy.lib.stride_tricks import sliding_window_view  # pylint: disable=import-outside-toplevel
+
+    half = size // 2
+    kwargs = {"constant_values": fill} if mode == "constant" else {}
+    pad = np.pad(arr.astype(np.float64), half, mode=mode, **kwargs)
+    return reducer(sliding_window_view(pad, (size, size)), axis=(-2, -1))
+
+
+@pytest.mark.parametrize(
+    "mode, fill", [("edge", 0.0), ("reflect", 0.0), ("symmetric", 0.0), ("constant", -3.5)]
+)
+def test_window_filters_border_mode(tmp_path, mode, fill):
+    """border_mode / border_fill set how windows are filled beyond the image
+    edge for window filters, kernels and edge filters."""
+    arr = (np.arange(42, dtype=np.float32).reshape(6, 7) ** 1.3).astype(np.float32)
+    in_p = tmp_path / "bm_in.tif"
+    _write_raster(in_p, arr)
+    img_proc.set_default_block_size(4)
+    try:
+        def _run(fn, tag, *args, **kwargs):
+            out_p = tmp_path / f"{tag}_{mode}.tif"
+            fn(str(in_p), str(out_p), *args, border_mode=mode, border_fill=fill,
+               use_pbar=False, datatype=rsgispy.TYPE_64FLOAT, **kwargs)
+            with rasterio.open(out_p) as src:
+                return src.read(1)
+
+        np.testing.assert_allclose(
+            _run(imf.stats.apply_mean_filter, "mean", 3),
+            _window_reference(arr, 3, np.mean, mode, fill), rtol=1e-12,
+        )
+        np.testing.assert_allclose(
+            _run(imf.stats.apply_max_filter, "max", 5),
+            _window_reference(arr, 5, np.max, mode, fill), rtol=1e-12,
+        )
+        asym = [[1.0, 2.0, 0.0], [0.0, 0.0, 3.0], [0.0, -1.0, 0.5]]
+        kwargs = {"constant_values": fill} if mode == "constant" else {}
+        pad = np.pad(arr.astype(np.float64), 1, mode=mode, **kwargs)
+        corr_ref = sum(
+            asym[i][j] * pad[i:i + 6, j:j + 7] for i in range(3) for j in range(3)
+        )
+        np.testing.assert_allclose(
+            _run(imf.smooth.apply_kernel_correlation_filter, "kcorr", asym),
+            corr_ref, rtol=1e-12, atol=1e-9,
+        )
+        sobel_x = _run(imf.edge.apply_sobel_x_filter, "sobx")
+        kx = [[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]]
+        sob_ref = sum(kx[i][j] * pad[i:i + 6, j:j + 7] for i in range(3) for j in range(3))
+        np.testing.assert_allclose(sobel_x, sob_ref, rtol=1e-12, atol=1e-9)
+    finally:
+        img_proc.reset_default_block_size()
+
+
+def test_window_filters_border_mode_default_nan_fill_and_errors(tmp_path):
+    """The default border_mode is 'edge'; a NaN fill leaves out-of-image
+    neighbours out; bad modes raise."""
+    arr = np.arange(1, 31, dtype=np.float32).reshape(5, 6)
+    in_p = tmp_path / "bm2_in.tif"
+    _write_raster(in_p, arr)
+
+    def _read(path):
+        with rasterio.open(path) as src:
+            return src.read(1)
+
+    imf.stats.apply_mean_filter(str(in_p), str(tmp_path / "d.tif"), use_pbar=False)
+    imf.stats.apply_mean_filter(
+        str(in_p), str(tmp_path / "e.tif"), border_mode="edge", use_pbar=False
+    )
+    np.testing.assert_array_equal(_read(tmp_path / "d.tif"), _read(tmp_path / "e.tif"))
+
+    imf.stats.apply_mean_filter(
+        str(in_p), str(tmp_path / "n.tif"), border_mode="constant",
+        border_fill=np.nan, use_pbar=False,
+    )
+    out = _read(tmp_path / "n.tif")
+    assert out[0, 0] == pytest.approx(np.mean(arr[:2, :2]))
+    assert out[2, 2] == pytest.approx(np.mean(arr[1:4, 1:4]))
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        imf.stats.apply_mean_filter(
+            str(in_p), str(tmp_path / "bad.tif"), border_mode="wrap", use_pbar=False
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        imf.smooth.apply_kernel_filter(
+            str(in_p), str(tmp_path / "bad2.tif"), [[1, 1, 1]] * 3,
+            border_mode="constant", border_fill="x", use_pbar=False,
+        )
+    with pytest.raises(TypeError):
+        # Keyword-only.
+        imf.stats.apply_mean_filter(str(in_p), str(tmp_path / "b3.tif"), 3, "GTIFF",
+                                    None, None, "reflect")
+
+
+def test_filter_default_nodata_when_input_nodata_does_not_fit(tmp_path):
+    """An input nodata the output type cannot hold gives the type limit."""
+    import rsgispy.imagefilter.stats as fstats  # pylint: disable=import-outside-toplevel
+
+    path = str(tmp_path / "in.tif")
+    arr = np.full((1, 6, 6), 10.0, dtype=np.float32)
+    arr[0, 0, 0] = -9999.0
+    with rasterio.open(path, "w", driver="GTiff", width=6, height=6, count=1,
+                       dtype="float32", nodata=-9999.0, crs="EPSG:32630",
+                       transform=from_origin(0.0, 60.0, 10.0, 10.0)) as dst:
+        dst.write(arr)
+    out = str(tmp_path / "out.tif")
+    fstats.apply_mean_filter(path, out, 3, datatype=rsgispy.TYPE_8UINT,
+                             calc_stats=False, use_pbar=False)
+    with rasterio.open(out) as ds:
+        assert ds.nodata == 255

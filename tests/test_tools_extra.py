@@ -2,14 +2,16 @@
 
 import io
 import os
+import stat
 import sys
 import types
+from unittest.mock import patch
 
 import numpy as np
+import pyproj
 import pytest
 import rasterio
 from PIL import Image
-import pyproj
 
 import rsgispy
 import rsgispy.tools.ftp as ftp
@@ -425,6 +427,7 @@ def test_optional_requests_missing_tools(tmp_path):
     """Verify web and http prevent executing optional-dep functions when missing."""
     import importlib
     from unittest.mock import patch
+
     import rsgispy.tools as rtools
 
     orig_web = web
@@ -512,6 +515,7 @@ def test_optional_pysondb_missing_tools():
     """Verify http and ftp expose pysondb functions and raise RSGISPyException."""
     import importlib
     from unittest.mock import patch
+
     import rsgispy.tools as rtools
 
     orig_http = http
@@ -567,6 +571,7 @@ def test_optional_imaging_missing():
     """Verify imaging exposes functions and raises RSGISPyException when deps missing."""
     import importlib
     from unittest.mock import patch
+
     import rsgispy.tools as rtools
 
     orig_imaging = imaging
@@ -629,3 +634,510 @@ def test_optional_imaging_missing():
     finally:
         sys.modules["rsgispy.tools.imaging"] = orig_imaging
         rtools.imaging = orig_imaging
+
+
+def test_utm_zone_number_at_180_is_1():
+    """Longitude 180 is the same meridian as -180: zone 1, not 61."""
+    import rsgispy.tools.utm as utm_mod  # pylint: disable=import-outside-toplevel
+
+    assert utm_mod.latlon_to_zone_number(10.0, 180.0) == 1
+    assert utm_mod.latlon_to_zone_number(10.0, -180.0) == 1
+    assert utm_mod.latlon_to_zone_number(10.0, 179.9) == 60
+    zones = utm_mod.latlon_arr_to_utm_zone_number(
+        np.array([10.0, 10.0, 10.0]), np.array([180.0, -180.0, 179.9])
+    )
+    assert zones.tolist() == [1, 1, 60]
+
+
+def test_utm_from_epsg_validates_code():
+    """utm_from_epsg rejects codes that are not WGS84 UTM zones."""
+    import rsgispy.tools.utm as utm_mod  # pylint: disable=import-outside-toplevel
+
+    assert utm_mod.utm_from_epsg(32601) == (1, "N")
+    assert utm_mod.utm_from_epsg(32760) == (60, "S")
+    for bad in (4326, 32600, 32661, 32700, 32761, 27700):
+        with pytest.raises(rsgispy.RSGISPyException):
+            utm_mod.utm_from_epsg(bad)
+
+
+def test_split_wgs84_bbox_utm_zones_exceptions_and_antimeridian():
+    """The Norway and Svalbard exceptions and antimeridian bboxes are split right."""
+    import rsgispy.tools.utm as utm_mod  # pylint: disable=import-outside-toplevel
+
+    # Norway: zone 32 is widened to 3-12 E between 56 and 64 N.
+    assert utm_mod.split_wgs84_bbox_utm_zones((4.0, 5.5, 58.0, 60.0)) == [
+        [32, [4.0, 5.5, 58.0, 60.0]]
+    ]
+    # Svalbard: zone 33 covers 9-21 E between 72 and 84 N.
+    assert utm_mod.split_wgs84_bbox_utm_zones((10.0, 20.0, 75.0, 78.0)) == [
+        [33, [10.0, 20.0, 75.0, 78.0]]
+    ]
+    # Across the Norway band edge: zone 31 below 56 N, zone 32 above.
+    assert utm_mod.split_wgs84_bbox_utm_zones((4.0, 5.0, 54.0, 58.0)) == [
+        [31, [4.0, 5.0, 54.0, 56.0]],
+        [32, [4.0, 5.0, 56.0, 58.0]],
+    ]
+    # Standard zones are unchanged.
+    assert utm_mod.split_wgs84_bbox_utm_zones((-7.0, 1.0, 51.0, 53.0)) == [
+        [29, [-7.0, -6.0, 51.0, 53.0]],
+        [30, [-6.0, 0.0, 51.0, 53.0]],
+        [31, [0.0, 1.0, 51.0, 53.0]],
+    ]
+    # MinX > MaxX crosses the antimeridian: zones 60 and 1.
+    assert utm_mod.split_wgs84_bbox_utm_zones((178.0, -178.0, 10.0, 12.0)) == [
+        [60, [178.0, 180.0, 10.0, 12.0]],
+        [1, [-180.0, -178.0, 10.0, 12.0]],
+    ]
+
+
+@pytest.mark.parametrize(
+    "func", ["calc_otsu_threshold", "calc_yen_threshold", "calc_isodata_threshold"]
+)
+def test_thresholds_ignore_nonfinite_and_flatten(func):
+    """Otsu, Yen and ISODATA skip NaN/inf and give the same result for 2-D input."""
+    import rsgispy.tools.thresholding as thr  # pylint: disable=import-outside-toplevel
+
+    rng = np.random.default_rng(3)
+    data = np.concatenate([rng.normal(2.0, 0.5, 300), rng.normal(6.0, 0.5, 300)])
+    thres_fn = getattr(thr, func)
+    ref = thres_fn(data)
+    assert 2.0 < ref < 6.0
+    with_nan = np.concatenate([data, [np.nan, np.inf, -np.inf]])
+    assert thres_fn(with_nan) == pytest.approx(ref)
+    assert thres_fn(data.reshape(20, 30)) == pytest.approx(ref)
+    with pytest.raises(rsgispy.RSGISPyException):
+        thres_fn(np.array([np.nan, np.nan]))
+    assert thr.get_nbins_histogram(data.reshape(20, 30)) == thr.get_nbins_histogram(data)
+
+
+@pytest.mark.parametrize(
+    "func", ["calc_otsu_threshold", "calc_yen_threshold", "calc_isodata_threshold"]
+)
+def test_thresholds_default_to_256_bins(func):
+    """The histogram thresholds use 256 bins by default; ``bins='fd'`` keeps
+    the Freedman-Diaconis rule, and a single outlier no longer explodes the
+    number of bins."""
+    import rsgispy.tools.thresholding as thr  # pylint: disable=import-outside-toplevel
+
+    rng = np.random.default_rng(3)
+    data = np.concatenate([rng.normal(2.0, 0.5, 300), rng.normal(6.0, 0.5, 300)])
+    thres_fn = getattr(thr, func)
+    assert thres_fn(data) == pytest.approx(thres_fn(data, bins=256))
+    assert 2.0 < thres_fn(data, bins="fd") < 6.0
+    assert 2.0 < thres_fn(data, bins=64) < 6.0
+    # One extreme outlier: FD would need ~10^7 bins; 256 bins stay cheap.
+    with_outlier = np.concatenate([data, [1.0e8]])
+    assert np.isfinite(thres_fn(with_outlier))
+    for bad in (1, 0, -5, "auto", 2.5):
+        with pytest.raises(rsgispy.RSGISPyException):
+            thres_fn(data, bins=bad)
+
+
+def test_hist_cross_entropy_takes_bins():
+    """calc_hist_cross_entropy takes the same ``bins`` argument."""
+    import rsgispy.tools.thresholding as thr  # pylint: disable=import-outside-toplevel
+
+    rng = np.random.default_rng(4)
+    data = np.concatenate([rng.normal(2.0, 0.5, 300), rng.normal(6.0, 0.5, 300)])
+    assert thr.calc_hist_cross_entropy(data, 4.0) == pytest.approx(
+        thr.calc_hist_cross_entropy(data, 4.0, bins=256)
+    )
+    assert np.isfinite(thr.calc_hist_cross_entropy(data, 4.0, bins="fd"))
+
+
+def test_date_helpers_reject_bad_input():
+    """Non-positive intervals and dates before the base date raise."""
+    import datetime  # pylint: disable=import-outside-toplevel
+
+    import rsgispy.tools.dates as rdates  # pylint: disable=import-outside-toplevel
+
+    start = datetime.datetime(2020, 1, 1)
+    end = datetime.datetime(2020, 1, 4)
+    assert len(rdates.get_datetime_increment_lst(start, end, datetime.timedelta(days=1))) == 3
+    for bad in (datetime.timedelta(0), datetime.timedelta(days=-1)):
+        with pytest.raises(ValueError):
+            rdates.get_datetime_increment_lst(start, end, bad)
+
+    base = datetime.date(2020, 3, 1)
+    assert rdates.get_days_since(2020, 61, base) == 0
+    assert rdates.get_days_since_date(2020, 3, 2, base) == 1
+    for call in (
+        lambda: rdates.get_days_since(2020, 10, base),  # same year, before
+        lambda: rdates.get_days_since(2019, 100, base),  # earlier year
+        lambda: rdates.get_days_since_date(2020, 2, 1, base),
+        lambda: rdates.get_days_since_date(2019, 6, 1, base),
+    ):
+        with pytest.raises(rsgispy.RSGISPyException):
+            call()
+
+
+def test_ftp_and_cmr_downloads_stay_in_out_dir(tmp_path, monkeypatch):
+    """Remote names with '../' cannot write outside the output folder."""
+    import rsgispy.dataaccess.nasa_cmr as cmr_mod  # pylint: disable=import-outside-toplevel
+    import rsgispy.tools.ftp as ftp_mod  # pylint: disable=import-outside-toplevel
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    written = []
+
+    def _fake_dl(**kwargs):
+        written.append(kwargs.get("local_file") or kwargs.get("out_file_path"))
+        return True
+
+    def _run_queue(records):
+        def _proc(_mod, _db, record_fn, use_pbar=True):
+            for rec in records:
+                try:
+                    record_fn(rec)
+                except rsgispy.RSGISPyException:
+                    written.append("rejected")
+        return _proc
+
+    monkeypatch.setattr(ftp_mod, "HAVE_PYSONDB", True)
+    monkeypatch.setattr(ftp_mod, "download_ftp_file", _fake_dl)
+    monkeypatch.setattr(ftp_mod, "process_download_queue_db", _run_queue([
+        {"ftp_url": "h", "rmt_path": "/pub/../../evil.txt"},
+        {"ftp_url": "h", "rmt_path": "/pub/data/ok.txt"},
+    ]))
+    ftp_mod.download_files_use_lst_db("db.json", str(out_dir), create_dir_struct=True)
+    assert written == ["rejected", str(out_dir / "pub" / "data" / "ok.txt")]
+
+    written.clear()
+    monkeypatch.setattr(cmr_mod, "HAVE_PYSONDB", True)
+    monkeypatch.setattr(cmr_mod, "HAVE_REQUESTS", True)
+    monkeypatch.setattr(cmr_mod.rsgispy.tools.credentials, "get_username_password",
+                        lambda _f: ("u", "p"))
+    monkeypatch.setattr(cmr_mod, "cmr_download_file_http", _fake_dl)
+    monkeypatch.setattr(cmr_mod, "process_download_queue_db", _run_queue([
+        {"producer_granule_id": "../../evil.h5", "granule_url": "https://x/a"},
+    ]))
+    cmr_mod.download_granules_use_dwnld_db("db.json", str(out_dir), "creds.txt")
+    assert written == [str(out_dir / "evil.h5")]
+
+
+def test_ftp_downloads_write_incomplete_then_rename(tmp_path, monkeypatch):
+    """A failed FTP download leaves no partial file; pycurl handles are closed."""
+    import rsgispy.tools.ftp as ftp_mod  # pylint: disable=import-outside-toplevel
+
+    class _FakeFTP:
+        fail = False
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def login(self, **kwargs):
+            pass
+
+        def retrbinary(self, cmd, callback):
+            callback(b"partial")
+            if _FakeFTP.fail:
+                raise OSError("connection lost")
+
+        def quit(self):
+            pass
+
+    monkeypatch.setattr(ftp_mod.ftplib, "FTP", _FakeFTP)
+    out = tmp_path / "f.bin"
+    _FakeFTP.fail = True
+    assert not ftp_mod.download_ftp_file("h", "/f.bin", str(out), print_info=False)
+    assert list(tmp_path.iterdir()) == []
+    _FakeFTP.fail = False
+    assert ftp_mod.download_ftp_file("h", "/f.bin", str(out), print_info=False)
+    assert out.read_bytes() == b"partial"
+    assert not (tmp_path / "f.bin.incomplete").exists()
+
+    closed = []
+
+    class _FakeCurl:
+        TOTAL_TIME = SIZE_DOWNLOAD = 0
+
+        def setopt(self, opt, val):
+            if opt == "WRITEDATA":
+                self.out_fp = val
+
+        def perform(self):
+            self.out_fp.write(b"x")
+            if _FakeCurl.fail:
+                raise fake_pycurl.error("boom")
+
+        def getinfo(self, _key):
+            return 0
+
+        def close(self):
+            closed.append(True)
+
+    fake_pycurl = types.ModuleType("pycurl")
+    fake_pycurl.error = type("error", (Exception,), {})
+    fake_pycurl.Curl = _FakeCurl
+    for name in ("URL", "FOLLOWLOCATION", "NOPROGRESS", "MAXREDIRS", "CONNECTTIMEOUT",
+                 "TIMEOUT", "FTP_RESPONSE_TIMEOUT", "NOSIGNAL", "WRITEDATA",
+                 "HTTPAUTH", "HTTPAUTH_ANY", "USERPWD"):
+        setattr(fake_pycurl, name, name)
+    monkeypatch.setitem(sys.modules, "pycurl", fake_pycurl)
+    out2 = tmp_path / "g.bin"
+    _FakeCurl.fail = True
+    assert not ftp_mod.download_curl_ftp_file("ftp://h", "/g.bin", str(out2), print_info=False)
+    assert not out2.exists() and not (tmp_path / "g.bin.incomplete").exists()
+    _FakeCurl.fail = False
+    assert ftp_mod.download_curl_ftp_file("ftp://h", "/g.bin", str(out2), print_info=False)
+    assert out2.read_bytes() == b"x"
+    assert closed == [True, True]
+
+
+def test_tile_for_point_clamps_latitude():
+    """Latitudes beyond +/-85.0511 map to the edge tiles instead of failing."""
+    import rsgispy.tools.tilecache as tc  # pylint: disable=import-outside-toplevel
+
+    for tms in (True, False):
+        n_max = 2**5 - 1
+        top = tc.get_tile_for_point(10.0, 90.0, 5, tms=tms)
+        bottom = tc.get_tile_for_point(10.0, -90.0, 5, tms=tms)
+        assert top == tc.get_tile_for_point(10.0, 85.0511, 5, tms=tms)
+        assert bottom == tc.get_tile_for_point(10.0, -85.0511, 5, tms=tms)
+        assert {top[1], bottom[1]} == {0, n_max}
+    # The shared formula gives the same tiles as before for normal latitudes.
+    mx, my = tc.get_web_mercator_xy(-4.08, 52.41)
+    assert (mx, my) == pytest.approx((-454183.52243655623, 6874600.935967932))
+    assert tc.get_tile_for_point(-4.08, 52.41, 12, tms=False)[:2] == (2001, 1345)
+    # pylint: disable=protected-access
+    assert tc._lonlat_to_frac_xyz(-4.08, 52.41, 12) == pytest.approx(
+        (2001.5786666666665, 1345.3586098628425), abs=1e-9
+    )
+
+
+def test_http_json_rejects_5xx_and_wget_security_options(tmp_path, monkeypatch):
+    """Verify HTTP >= 400 rejection and wget SSL/config-file handling."""
+
+    class _Resp500:
+        status_code = 500
+        text = "Internal Server Error"
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(http, "HAVE_REQUESTS", True)
+    monkeypatch.setattr(
+        http,
+        "requests",
+        types.SimpleNamespace(post=lambda *args, **kwargs: _Resp500()),
+        raising=False,
+    )
+    with pytest.raises(rsgispy.RSGISPyException, match="500"):
+        http.send_http_json_request("https://example.com/api", {"a": 1})
+
+    recorded_cmds = []
+    recorded_cfg = {}
+
+    def _fake_call(cmd):
+        recorded_cmds.append(list(cmd))
+        for arg in cmd:
+            if arg.startswith("--config="):
+                cfg_path = arg.split("=", 1)[1]
+                recorded_cfg["path"] = cfg_path
+                recorded_cfg["mode"] = stat.S_IMODE(os.stat(cfg_path).st_mode)
+                with open(cfg_path, "r", encoding="utf-8") as fp:
+                    recorded_cfg["content"] = fp.read()
+        return 0
+
+    monkeypatch.setattr(http.subprocess, "call", _fake_call)
+
+    out_path = str(tmp_path / "file.bin")
+    ok, _ = http.wget_download_file(
+        "https://example.com/file.bin",
+        out_path,
+        username="alice",
+        password="secret",
+    )
+    assert ok is True
+    assert "--no-check-certificate" not in recorded_cmds[0]
+    assert all("--password" not in arg for arg in recorded_cmds[0])
+    assert any(arg.startswith("--config=") for arg in recorded_cmds[0])
+    assert "user = alice\npassword = secret\n" == recorded_cfg["content"]
+    if os.name != "nt":
+        assert recorded_cfg["mode"] == 0o600
+    assert not os.path.exists(recorded_cfg["path"])
+
+    ok2, _ = http.wget_download_file(
+        "https://example.com/file.bin", out_path, verify_ssl=False
+    )
+    assert ok2 is True
+    assert "--no-check-certificate" in recorded_cmds[1]
+
+    with pytest.raises(rsgispy.RSGISPyException, match="newline"):
+        http.wget_download_file(
+            "https://example.com/file.bin",
+            out_path,
+            username="alice\nbad",
+            password="secret",
+        )
+
+
+def test_ftp_list_parser_spaces_and_special_entries():
+    """Preserve spaces in FTP LIST filenames and ignore total/. /.. entries."""
+    # pylint: disable=protected-access
+    assert ftp._parse_ftp_list_line("") is None
+    assert ftp._parse_ftp_list_line("total 42") is None
+    assert ftp._parse_ftp_list_line(
+        "-rw-r--r-- 1 user group 1024 Jun 01 12:00 my raster file.tif"
+    ) == (False, "my raster file.tif")
+    assert ftp._parse_ftp_list_line(
+        "drwxr-xr-x 2 user group 4096 Jun 01 12:00 sub folder"
+    ) == (True, "sub folder")
+
+    class _FakeFTP:
+        def __init__(self):
+            self.cwd_path = "/root"
+
+        def cwd(self, path):
+            self.cwd_path = path
+
+        def retrlines(self, _cmd, callback):
+            if self.cwd_path == "/root":
+                lines = (
+                    "total 16",
+                    "drwxr-xr-x 2 u g 4096 Jun 01 12:00 .",
+                    "drwxr-xr-x 2 u g 4096 Jun 01 12:00 ..",
+                    "drwxr-xr-x 2 u g 4096 Jun 01 12:00 data dir",
+                    "-rw-r--r-- 1 u g 100 Jun 01 12:00 scene 01.tif",
+                )
+            else:
+                lines = ("-rw-r--r-- 1 u g 200 Jun 01 12:00 nested file.tif",)
+            for ln in lines:
+                callback(ln)
+
+    ftp_files = {}
+    non_dirs = ftp._traverse_nlst_ftp_dirs(
+        _FakeFTP(), "/root", ftp_files, try_n_times=1
+    )
+    assert "/root/data dir" in ftp_files
+    assert ftp_files["/root"] == ["/root/scene 01.tif"]
+    assert ftp_files["/root/data dir"] == ["/root/data dir/nested file.tif"]
+    assert sorted(non_dirs) == [
+        "/root/data dir/nested file.tif",
+        "/root/scene 01.tif",
+    ]
+
+
+def test_tilecache_tile_size_and_get_tiles():
+    """Verify tile_size support and get_tiles boundary/TMS indexing."""
+    res_256 = tilecache.resolution(10, tile_size=256)
+    res_512 = tilecache.resolution(10, tile_size=512)
+    assert np.isclose(res_512, res_256 / 2.0)
+
+    t256 = tilecache.get_tile_for_point(-4.08, 52.41, zoom=10, tile_size=256)
+    t512 = tilecache.get_tile_for_point(-4.08, 52.41, zoom=10, tile_size=512)
+    assert t256 == t512
+
+    # Exact quadrant at zoom=1: west=[-180,0], north=[0,85] -> XYZ (0,0,1), TMS (0,1,1)
+    xyz_tiles = tilecache.get_tiles([-180.0, 0.0, 0.0, 85.0], zooms=1, tms=False)
+    tms_tiles = tilecache.get_tiles([-180.0, 0.0, 0.0, 85.0], zooms=1, tms=True)
+    assert xyz_tiles[1] == [(0, 0, 1)]
+    assert tms_tiles[1] == [(0, 1, 1)]
+
+
+def test_wmts_optional_deps_timeout_and_mixed_tile_modes(tmp_path, monkeypatch):
+    """Verify optional dependency guards, timeout forwarding, and mode normalisation."""
+    with patch.dict(sys.modules, {"owslib": None, "owslib.wmts": None}):
+        with pytest.raises(rsgispy.RSGISPyException, match="owslib"):
+            wmts.get_wmts_layer_list("https://example.com/wmts")
+
+    monkeypatch.setattr(wmts, "HAVE_PIL", False)
+    with pytest.raises(rsgispy.RSGISPyException, match="pillow"):
+        wmts.get_wmts_as_img(
+            "https://example.com/wmts",
+            "layer",
+            [0.0, 1000.0, 0.0, 1000.0],
+            3857,
+            str(tmp_path / "out.tif"),
+        )
+    monkeypatch.setattr(wmts, "HAVE_PIL", True)
+
+    captured_timeout = {}
+    tile_modes = ["RGB", "RGBA", "L", "P"]
+
+    class _FakeTileMatrix:
+        def __init__(self):
+            self.identifier = "1"
+            self.scaledenominator = 279541132.0143589
+            self.topleftcorner = (-20037508.34, 20037508.34)
+            self.tilewidth = 256
+            self.tileheight = 256
+            self.matrixwidth = 2
+            self.matrixheight = 2
+
+    class _FakeTMS:
+        def __init__(self):
+            self.crs = "EPSG:3857"
+            self.tilematrix = {"1": _FakeTileMatrix()}
+
+    class _FakeLayer:
+        def __init__(self):
+            self.tilematrixsets = ["GoogleMapsCompatible"]
+            self.styles = {"default": {}}
+
+    class _FakeWMTSWithTimeout:
+        def __init__(self, url, timeout=None):
+            captured_timeout["url"] = url
+            captured_timeout["timeout"] = timeout
+            self.contents = {"lyr": _FakeLayer()}
+            self.tilematrixsets = {"GoogleMapsCompatible": _FakeTMS()}
+            self._call_idx = 0
+
+        def gettile(self, **_kwargs):
+            mode = tile_modes[self._call_idx % len(tile_modes)]
+            self._call_idx += 1
+            if mode == "P":
+                pil_img = Image.new("RGB", (256, 256), color=(10, 20, 30)).convert("P")
+            elif mode == "L":
+                pil_img = Image.new("L", (256, 256), color=128)
+            elif mode == "RGBA":
+                pil_img = Image.new("RGBA", (256, 256), color=(10, 20, 30, 255))
+            else:
+                pil_img = Image.new("RGB", (256, 256), color=(10, 20, 30))
+            buf = io.BytesIO()
+            pil_img.save(buf, format="PNG")
+            buf.seek(0)
+            return buf
+
+    fake_owslib_wmts = types.ModuleType("owslib.wmts")
+    fake_owslib_wmts.WebMapTileService = _FakeWMTSWithTimeout
+    fake_owslib = types.ModuleType("owslib")
+    fake_owslib.wmts = fake_owslib_wmts
+
+    with patch.dict(
+        sys.modules, {"owslib": fake_owslib, "owslib.wmts": fake_owslib_wmts}
+    ):
+        layers = wmts.get_wmts_layer_list("https://example.com/wmts", timeout=12.5)
+        assert layers == ["lyr"]
+        assert captured_timeout["timeout"] == 12.5
+
+        out_tif = str(tmp_path / "mixed_modes.tif")
+        wmts.get_wmts_as_img(
+            "https://example.com/wmts",
+            "lyr",
+            [-5000000.0, 5000000.0, -5000000.0, 5000000.0],
+            3857,
+            out_tif,
+            zoom_level="1",
+            tmp_dir=str(tmp_path / "wmts_tmp"),
+            timeout=15.0,
+        )
+        assert captured_timeout["timeout"] == 15.0
+
+    with rasterio.open(out_tif) as ds:
+        assert ds.count == 3
+        assert ds.width > 0 and ds.height > 0
+
+
+def test_imaging_optional_pil_guard(tmp_path, monkeypatch):
+    """Verify PIL guards in imaging.py raise RSGISPyException with pillow/imaging."""
+    monkeypatch.setattr(imaging, "HAVE_PIL", False)
+    with pytest.raises(rsgispy.RSGISPyException, match="pillow"):
+        imaging.list_exif_info_pil(str(tmp_path / "x.jpg"))
+    monkeypatch.setattr(imaging, "HAVE_IMAGEIO", True)
+    with pytest.raises(rsgispy.RSGISPyException, match="pillow"):
+        imaging.animate_img_set(
+            [str(tmp_path / "x.png")],
+            str(tmp_path / "out.gif"),
+            resize=True,
+        )

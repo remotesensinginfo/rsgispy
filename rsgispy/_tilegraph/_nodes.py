@@ -861,7 +861,7 @@ class StackBands(TileNode):
       to ``no_data_val``, which becomes the stack's no-data value. This keeps
       the sinks' rule (a pixel invalid in any band is invalid) working for
       every input, e.g. Sentinel-2 bands with no data ``0`` stacked with an
-      index with no data ``-999``;
+      index with no data ``-9999``;
     * with ``no_data_val='auto'``, the same, with the first input's no-data
       value when it has one, else NaN for a floating-point stack; for any
       other stack :class:`rsgispy.RSGISPyException` asks for a value.
@@ -1058,13 +1058,18 @@ class StackBands(TileNode):
 class Cast(TileNode):
     """
     Cast a node's blocks to another NumPy dtype. Integer casts replace
-    non-finite values with ``0`` and, with ``clamp_int=True``, clamp values
-    to the dtype's range first (as :class:`DiskSink` does).
+    non-finite values with ``0``, round to the nearest integer and clamp to
+    the dtype's range (as :class:`DiskSink` does).
+
+    When the input has a no-data value, no-data pixels are written as the
+    output no-data value, and valid pixels never take it. If the target
+    dtype cannot hold the input no-data value (e.g. ``-9999`` cast to
+    ``uint8``), the output no-data value becomes the type's maximum for
+    unsigned and its minimum for signed integers, and the node metadata
+    records it.
 
     :param source: Upstream :class:`TileNode`.
     :param dtype: Target NumPy dtype.
-    :param clamp_int: Clamp to the integer range before casting
-                      (Default = ``True``).
     :param name: Optional node identifier.
 
     .. code:: python
@@ -1080,15 +1085,34 @@ class Cast(TileNode):
         self,
         source: TileNode,
         dtype: Any,
-        clamp_int: bool = True,
         name: Optional[str] = None,
     ) -> None:
         super().__init__(inputs=(source,), name=name)
         self.dtype = np.dtype(dtype)
-        self.clamp_int = bool(clamp_int)
+        self._in_nodata: Optional[float] = None
+
+    def _resolve_nodata(self, in_nd: Optional[float]) -> Optional[float]:
+        """
+        Output no-data value: ``in_nd`` when ``self.dtype`` can hold it,
+        otherwise the type's maximum (unsigned) or minimum (signed integer).
+        """
+        # pylint: disable=import-outside-toplevel
+        from rsgispy.imageprocess import fits_dtype_range
+
+        if in_nd is None:
+            return None
+        if not np.issubdtype(self.dtype, np.integer):
+            return float(in_nd)
+        if math.isfinite(float(in_nd)) and fits_dtype_range(in_nd, self.dtype):
+            return float(in_nd)
+        info = np.iinfo(self.dtype)
+        return float(info.max if info.min == 0 else info.min)
 
     def infer_meta(self, inputs: Sequence[NodeMeta]) -> NodeMeta:
-        return inputs[0].replace(dtype=self.dtype)
+        self._in_nodata = inputs[0].nodata
+        return inputs[0].replace(
+            dtype=self.dtype, nodata=self._resolve_nodata(inputs[0].nodata)
+        )
 
     def evaluate(
         self,
@@ -1103,9 +1127,22 @@ class Cast(TileNode):
 
         aligned = inputs[0].crop(halo_y, halo_x)
         arr = aligned.data
-        out = cast_result_block(
-            arr, int(arr.shape[1]), int(arr.shape[2]), self.dtype, clamp_int=self.clamp_int
-        )
+        in_nd = self._in_nodata
+        if in_nd is None:
+            out = cast_result_block(
+                arr, int(arr.shape[1]), int(arr.shape[2]), self.dtype
+            )
+        else:
+            arr_f = np.asarray(arr, dtype=np.float64)
+            nd_mask = np.isnan(arr_f) if math.isnan(in_nd) else (arr_f == in_nd)
+            out = cast_result_block(
+                arr_f,
+                int(arr.shape[1]),
+                int(arr.shape[2]),
+                self.dtype,
+                nodata=self._resolve_nodata(in_nd),
+                valid_mask=~nd_mask,
+            )
         return aligned.with_data(out)
 
     def describe_params(self) -> str:
@@ -1220,12 +1257,12 @@ class SetBandNames(TileNode):
 
 
 def _same_nodata(val_a: Optional[float], val_b: Optional[float]) -> bool:
-    """Compare two no-data values (``None`` and NaN aware)."""
-    if val_a is None or val_b is None:
-        return val_a is None and val_b is None
-    if math.isnan(float(val_a)) or math.isnan(float(val_b)):
-        return math.isnan(float(val_a)) and math.isnan(float(val_b))
-    return float(val_a) == float(val_b)
+    """Compare two no-data values (``None`` and NaN aware):
+    :func:`rsgispy.imageprocess._dtype_nodata._same_nodata`."""
+    # pylint: disable=import-outside-toplevel
+    from rsgispy.imageprocess._dtype_nodata import _same_nodata as _shared
+
+    return _shared(val_a, val_b)
 
 
 def datatype_from_meta(meta: NodeMeta) -> int:
@@ -1249,16 +1286,12 @@ def datatype_from_meta(meta: NodeMeta) -> int:
 
 
 def _nodata_fits(nodata: float, np_dtype: np.dtype) -> bool:
-    """``True`` if ``nodata`` can be stored in rasters of ``np_dtype``."""
-    val = float(nodata)
-    if np.issubdtype(np_dtype, np.integer):
-        if not math.isfinite(val) or not val.is_integer():
-            return False
-        info = np.iinfo(np_dtype)
-        return info.min <= val <= info.max
-    if math.isnan(val) or math.isinf(val):
-        return True
-    return abs(val) <= float(np.finfo(np_dtype).max)  # pylint: disable=no-member
+    """``True`` if ``nodata`` can be stored in rasters of ``np_dtype`` (NaN and
+    infinities fit float types): :func:`rsgispy.imageprocess.fits_dtype_range`."""
+    # pylint: disable=import-outside-toplevel
+    from rsgispy.imageprocess import fits_dtype_range
+
+    return fits_dtype_range(nodata, np_dtype, allow_nonfinite_float=True)
 
 
 def _parse_sink_classes(
@@ -1296,7 +1329,10 @@ class DiskSink(TileSink):
 
     When ``nodata`` or ``band_names`` are not given (and ``inherit_meta`` is
     ``True``), the no-data value and band names of the input node's metadata
-    are used (the no-data value only when the output data type can store it).
+    are used. When the output data type cannot store the input no-data value
+    (e.g. ``-9999`` written as ``uint8``), those pixels are written as
+    :func:`rsgispy.imageprocess.default_out_nodata` (``255`` for ``uint8``),
+    which is recorded as the output no-data value, as the file functions do.
 
     When ``datatype`` is ``None`` (the default) the data type comes from the
     input node's metadata (see :func:`datatype_from_meta`): integer and
@@ -1329,8 +1365,6 @@ class DiskSink(TileSink):
     :param datatype: ``rsgispy.TYPE_*`` constant (Default = ``None``: from the
                      input node's metadata).
     :param nodata: Optional output nodata value.
-    :param clamp_int: Clamp values to integer type bounds before casting
-                      (Default = ``True``).
     :param creation_opts: Optional GDAL/rasterio creation options mapping.
     :param band_names: Optional sequence of output band description strings.
     :param calc_stats: If ``True``, populate raster statistics and pyramids
@@ -1380,7 +1414,6 @@ class DiskSink(TileSink):
         gdalformat: str = "GTIFF",
         datatype: Optional[int] = None,
         nodata: Optional[float] = None,
-        clamp_int: bool = True,
         creation_opts: Optional[Mapping[str, Any]] = None,
         band_names: Optional[Sequence[str]] = None,
         calc_stats: Optional[bool] = None,
@@ -1404,7 +1437,6 @@ class DiskSink(TileSink):
         self.datatype: Optional[int] = None if datatype is None else int(datatype)
         self._resolved_datatype: Optional[int] = self.datatype
         self.nodata: Optional[float] = nodata
-        self.clamp_int: bool = bool(clamp_int)
         self.creation_opts: Optional[Mapping[str, Any]] = creation_opts
         self.band_names: Optional[List[str]] = (
             list(band_names) if band_names is not None else None
@@ -1508,13 +1540,19 @@ class DiskSink(TileSink):
             self._resolved_datatype = datatype_from_meta(meta)
         out_np_dt = np.dtype(rsgispy.get_numpy_datatype(self.out_datatype))
         nodata = self.nodata
-        if (
-            nodata is None
-            and self.inherit_meta
-            and meta.nodata is not None
-            and _nodata_fits(meta.nodata, out_np_dt)
-        ):
-            nodata = float(meta.nodata)
+        self._remap_nodata_from = None
+        if nodata is None and self.inherit_meta and meta.nodata is not None:
+            if _nodata_fits(meta.nodata, out_np_dt):
+                nodata = float(meta.nodata)
+            else:
+                # The output type cannot hold the input no-data value (e.g.
+                # -9999 written as uint8): write those pixels as the default
+                # output no-data value instead, as the file functions do.
+                # pylint: disable=import-outside-toplevel
+                from rsgispy.imageprocess import default_out_nodata
+
+                nodata = default_out_nodata(out_np_dt)
+                self._remap_nodata_from = float(meta.nodata)
         names = self.band_names
         if names is None and self.inherit_meta and meta.band_names is not None:
             names = list(meta.band_names)
@@ -1606,13 +1644,22 @@ class DiskSink(TileSink):
         dst = run["dst"]
         if dst is None:
             dst = self._open_dataset(int(block.shape[0]))
-        cast_blk = cast_result_block(
-            block,
-            int(window.height),
-            int(window.width),
-            run["np_dtype"],
-            clamp_int=self.clamp_int,
-        )
+        remap_from = getattr(self, "_remap_nodata_from", None)
+        if remap_from is None:
+            cast_blk = cast_result_block(
+                block, int(window.height), int(window.width), run["np_dtype"]
+            )
+        else:
+            blk_f = np.asarray(block, dtype=np.float64)
+            is_nd = np.isnan(blk_f) if math.isnan(remap_from) else blk_f == remap_from
+            cast_blk = cast_result_block(
+                blk_f,
+                int(window.height),
+                int(window.width),
+                run["np_dtype"],
+                nodata=run["nodata"],
+                valid_mask=~is_nd,
+            )
         dst.write(cast_blk, window=window)
 
     def close(self) -> None:
@@ -1641,8 +1688,6 @@ class MemorySink(TileSink):
     :param source: Upstream :class:`TileNode` producing the output tiles.
     :param dtype: Optional output NumPy dtype (inferred from first tile when
                   ``None``).
-    :param clamp_int: Clamp values to integer bounds when casting
-                      (Default = ``True``).
     :param name: Optional sink identifier (used as key in
                  :meth:`TileGraph.run` return dictionary).
     """
@@ -1654,12 +1699,10 @@ class MemorySink(TileSink):
         self,
         source: TileNode,
         dtype: Any = None,
-        clamp_int: bool = True,
         name: Optional[str] = None,
     ) -> None:
         super().__init__(source, name=name)
         self.dtype: Optional[np.dtype] = np.dtype(dtype) if dtype is not None else None
-        self.clamp_int: bool = bool(clamp_int)
         self.result: Optional[np.ndarray] = None
         self._shape: Optional[Tuple[int, int]] = None
         self._array: Optional[np.ndarray] = None
@@ -1693,7 +1736,6 @@ class MemorySink(TileSink):
             int(window.height),
             int(window.width),
             out_np_dt,
-            clamp_int=self.clamp_int,
         )
         r0 = int(window.row_off)
         c0 = int(window.col_off)

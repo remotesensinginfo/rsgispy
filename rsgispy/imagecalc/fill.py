@@ -242,7 +242,7 @@ def calc_fill_regions_knn(
                 out_f = np.zeros((win_h, win_w), dtype=np.float64)
                 out_f[loc_rows, loc_cols] = fill_vals
                 out_arr = cast_result_block(
-                    out_f, win_h, win_w, out_np_dtype, clamp_int=True
+                    out_f, win_h, win_w, out_np_dtype
                 )
             else:
                 out_arr = np.zeros((win_h, win_w), dtype=out_np_dtype)

@@ -20,6 +20,8 @@ import sys
 
 import pytest
 
+pytestmark = [pytest.mark.slow, pytest.mark.tutorial_data]
+
 EXAMPLES_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), os.pardir, "docs", "examples")
 )
@@ -57,4 +59,48 @@ def test_tutorial_data_example_runs(path, tmp_path):
     """The guide example runs on the tutorial data."""
     mod = _load(path)
     out = mod.run(DATA_DIR, str(tmp_path), use_pbar=False)
-    assert isinstance(out, dict)
+    assert isinstance(out, dict) and out, "run() must return a non-empty dict"
+    assert all(isinstance(key, str) for key in out)
+    # Keys the tutorial scripts add to the guide workflow's outputs.
+    script = os.path.basename(path)
+    for key in _TUTORIAL_KEYS.get(script, ()):
+        assert key in out, f"{script}: missing output {key!r}"
+    # Every output path written into out_dir exists and is not empty, and at
+    # least one output was written there.
+    out_paths = [p for p in _iter_str_values(out) if _under(p, str(tmp_path))]
+    assert out_paths, f"{script}: no outputs written to out_dir"
+    for out_path in out_paths:
+        assert os.path.exists(out_path), f"{script}: {out_path} not written"
+        if os.path.isfile(out_path):
+            assert os.path.getsize(out_path) > 0, f"{script}: {out_path} is empty"
+
+
+# Outputs each tutorial script's run() adds itself (the rest come from the
+# guide workflow it calls and are checked by that workflow's own test).
+_TUTORIAL_KEYS = {
+    "change_detection_tutorial.py": ("ls_imgs", "lc_img", "maps_png"),
+    "making_maps_tutorial.py": ("s2_img", "cls_img", "ndvi_img", "dem_img"),
+    "pixel_classification_workflow_tutorial.py": ("fig_file",),
+    "tile_graph_tutorial.py": ("fig_file",),
+}
+
+
+def _iter_str_values(obj):
+    """Yield the string values in a (nested) dict / list / tuple."""
+    if isinstance(obj, (str, os.PathLike)):
+        yield os.fspath(obj)
+    elif isinstance(obj, dict):
+        for val in obj.values():
+            yield from _iter_str_values(val)
+    elif isinstance(obj, (list, tuple)):
+        for val in obj:
+            yield from _iter_str_values(val)
+
+
+def _under(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([os.path.abspath(path), os.path.abspath(root)]) == (
+            os.path.abspath(root)
+        )
+    except ValueError:
+        return False

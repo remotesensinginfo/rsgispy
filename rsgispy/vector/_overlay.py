@@ -16,6 +16,7 @@ from rsgispy.vectorprocess import (
     VectorInput,
     check_format_name,
     ensure_matching_crs,
+    finish_vec_output,
     prepare_optional_out_vec,
     read_vec_gdf,
     resolve_out_lyr_name,
@@ -57,17 +58,13 @@ def _overlay_vec_lyrs(
     over_data_gdf = ensure_matching_crs(data_gdf, over_data_gdf)
     res_gdf = gpd.overlay(data_gdf, over_data_gdf, how=how)
 
-    if out_path is None:
-        return res_gdf
-    if (res_gdf is not None) and len(res_gdf) > 0:
-        write_vec_gdf(
-            res_gdf,
-            out_path,
-            out_lyr,
-            out_format=out_format,
-            out_compress=out_compress,
-        )
-    return None
+    return finish_vec_output(
+        res_gdf,
+        out_path,
+        out_vec_lyr=out_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def vec_lyr_intersection_gp(

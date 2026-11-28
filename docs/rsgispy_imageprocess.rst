@@ -200,6 +200,9 @@ same builder.
    * - :func:`~rsgispy.imagefilter.smooth.apply_kernel_filter`
      - :func:`~rsgispy.imagefilter.smooth.kernel_filter_node`
      - ``'kernel'``
+   * - :func:`~rsgispy.imagefilter.smooth.apply_kernel_correlation_filter`
+     - :func:`~rsgispy.imagefilter.smooth.kernel_correlation_filter_node`
+     - ``'kernel_correlation'``
    * - ``edge.apply_sobel_filter``, ``apply_sobel_x_filter``,
        ``apply_sobel_y_filter``, ``apply_prewitt_filter``,
        ``apply_prewitt_x_filter``, ``apply_prewitt_y_filter``
@@ -407,7 +410,7 @@ builders.
 value for all its bands, and the sinks treat a pixel that is invalid in any
 band as invalid. :class:`~rsgispy.imageprocess.StackBands` keeps that rule
 working when its inputs disagree (e.g. Sentinel-2 bands with no data ``0``
-and an index with ``-999``):
+and an index with ``-9999``):
 
 * ``no_data_val=None`` (the default): the bands are stacked unchanged; the
   stack has the inputs' no-data value when they share one, else none

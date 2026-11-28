@@ -628,7 +628,12 @@ map to others. The functions in
 * :func:`~rsgispy.classification.classfeatures.calc_feature_response_curves`
   — how the predicted probability of ``target_class`` changes as one feature
   varies over its range while the others are held at their mean
-  (``summary_stat``). The CSV has columns ``<feature>_vals`` and
+  (``summary_stat``). With ``method='pdp'`` (partial dependence) the
+  probability is instead averaged over a sample of real training rows
+  (``pdp_background_samples``). ``out_grid_plot`` draws all the curves in one
+  figure, ``multi_panel=True`` gives one panel per class, and
+  ``plot_samples=True`` adds the training samples as 0/1 class membership.
+  The CSV has columns ``<feature>_vals`` and
   ``<feature>_<class>_prob``. A curve should change where the class
   boundaries are expected (e.g., Forest probability rising with NDVI);
   steps at odd places can indicate over-fitting or training errors.

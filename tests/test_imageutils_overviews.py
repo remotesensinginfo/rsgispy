@@ -14,6 +14,8 @@ from rasterio.transform import Affine, from_origin
 import rsgispy
 import rsgispy.imageutils.stats as iu_stats
 
+from conftest import write_raster
+
 
 def _write_geotiff(
     path,
@@ -28,44 +30,24 @@ def _write_geotiff(
     descriptions=None,
 ):
     """Write a test GeoTIFF with optional georeferencing, colormap, and metadata."""
-    # pylint: disable=too-many-arguments
-    arr = np.asarray(data)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis, :, :]
-    count, height, width = arr.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(arr.dtype),
-        "tiled": True,
-        "blockxsize": 32,
-        "blockysize": 32,
-    }
-    if crs is not None:
-        profile["crs"] = crs
-    if transform is not None:
-        profile["transform"] = transform
-    if nodata is not None:
-        profile["nodata"] = nodata
-
-    with rasterio.open(str(path), "w", **profile) as dst:
-        dst.write(arr)
-        if colormap is not None:
-            dst.write_colormap(1, colormap)
-        if tags:
-            dst.update_tags(**tags)
-        if band_tags:
-            for b_idx, b_tags in enumerate(band_tags, start=1):
-                if b_tags:
-                    dst.update_tags(b_idx, **b_tags)
-        if descriptions:
-            for b_idx, desc in enumerate(descriptions, start=1):
-                if desc is not None:
-                    dst.set_band_description(b_idx, desc)
+    return write_raster(
+        path,
+        data,
+        crs=crs,
+        transform=transform,
+        origin=None,
+        nodata=nodata,
+        colormap=colormap,
+        tags=tags,
+        band_tags={idx: b_tags for idx, b_tags in enumerate(band_tags or [], start=1) if b_tags},
+        band_names=descriptions or None,
+        tiled=True,
+        blockxsize=32,
+        blockysize=32,
+    )
 
 
+@pytest.mark.slow
 def test_build_img_pyramids_multi_core_external_matches_gdal(tmp_path):
     """External .ovr generated across multiple tiles/cores matches GDAL overviews."""
     rng = np.random.default_rng(42)
@@ -509,3 +491,48 @@ def test_pop_stats_multi_core_pyramids(tmp_path):
     assert not (tmp_path / "no_pyr.tif.ovr").exists()
     with rasterio.open(str(no_pyr), "r") as dst:
         assert dst.overviews(1) == []
+
+
+def test_build_img_pyramids_direct_multi_core_and_int64_thematic(tmp_path):
+    # Direct test for build_img_pyramids (min_size // 4 > 33 => >= 136x136)
+    arr = (np.arange(160 * 160, dtype=np.uint16).reshape(160, 160) % 250) + 1
+    pyr_img = write_raster(tmp_path / "pyr.tif", arr, origin=(500000.0, 5800000.0), nodata=0)
+    iu_stats.build_img_pyramids(pyr_img, resampling_method=Resampling.average)
+    with rasterio.open(pyr_img) as src:
+        assert 4 in src.overviews(1)
+
+    # Small image (< 136px) should be a clean no-op
+    small_img = write_raster(
+        tmp_path / "small.tif",
+        np.ones((32, 32), dtype=np.uint8),
+        origin=(500000.0, 5800000.0),
+    )
+    iu_stats.build_img_pyramids(small_img)
+    with rasterio.open(small_img) as src:
+        assert src.overviews(1) == []
+
+    # Multi-core pyramids across multiple levels reusing a single pool
+    mc_img = write_raster(tmp_path / "mc_pyr.tif", arr, origin=(500000.0, 5800000.0), nodata=0)
+    iu_stats.build_img_pyramids_multi_core(
+        mc_img,
+        resampling_method=Resampling.average,
+        levels=[2, 4, 8],
+        tile_size=64,
+        n_cores=2,
+        external=True,
+        use_pbar=False,
+    )
+    assert os.path.exists(f"{mc_img}.ovr")
+    with rasterio.open(mc_img) as src:
+        assert src.overviews(1) == [2, 4, 8]
+
+    # int64 thematic stats (histogram + stats tags on 64-bit integer)
+    cls_arr = np.array([[0, 1, 1], [2, 2, 2], [0, 3, 3]], dtype=np.int64)
+    i64_img = write_raster(tmp_path / "cls_i64.tif", cls_arr, origin=(500000.0, 5800000.0), nodata=0)
+    iu_stats.pop_thmt_img_stats(
+        i64_img, add_clr_tab=True, calc_pyramids=False, use_pbar=False
+    )
+    with rasterio.open(i64_img) as src:
+        tags = src.tags(1)
+        assert float(tags["STATISTICS_MINIMUM"]) == 1.0
+        assert float(tags["STATISTICS_MAXIMUM"]) == 3.0

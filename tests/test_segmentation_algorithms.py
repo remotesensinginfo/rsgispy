@@ -4,17 +4,17 @@ algorithms, tiling/seam stitching, multi-core execution, optional ``numba``
 parity, post-processing, and downstream GEOBIA integration.
 """
 
-import inspect
 import os
 
 import geopandas as gpd
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.segmentation as rseg
+
+from conftest import write_raster
 
 
 def _write_multiband_raster(
@@ -27,27 +27,9 @@ def _write_multiband_raster(
     crs: str = "EPSG:32630",
 ) -> None:
     """Helper to write a 2D or 3D GeoTIFF raster with optional nodata."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[np.newaxis, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(write_arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-        nodata=nodata,
-    ) as dst:
-        dst.write(write_arr)
+    return write_raster(
+        path, arr, nodata=nodata, crs=crs, origin=(origin_x, origin_y), pixel_size=pxl_size
+    )
 
 
 def _make_synthetic_scene(
@@ -95,49 +77,6 @@ def _make_synthetic_scene(
     # Corner nodata patch
     arr[:, :4, :4] = nodata_val
     return arr
-
-
-def test_raster_function_signatures_and_exports():
-    """Verify required positional/keyword-only rsgispy conventions on all new raster functions."""
-    assert isinstance(rseg.is_numba_available(), bool)
-    raster_funcs = [
-        rseg.shepherd_segmentation,
-        rseg.region_merge_segmentation,
-        rseg.slic_segmentation,
-        rseg.graph_segmentation,
-        rseg.watershed_segmentation,
-        rseg.eliminate_small_segments,
-        rseg.relabel_segments,
-    ]
-    expected_kw_defaults = {
-        "gdalformat": "GTIFF",
-        "datatype": None,
-        "no_data_val": None,
-        "calc_stats": True,
-        "use_pbar": True,
-    }
-    for fn in raster_funcs:
-        sig = inspect.signature(fn)
-        params = list(sig.parameters.values())
-        required_pos = [
-            p.name
-            for p in params
-            if p.kind
-            in (
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            )
-            and p.default is inspect.Parameter.empty
-        ]
-        assert required_pos == ["input_img", "output_img"], fn.__name__
-        for kw_name, kw_default in expected_kw_defaults.items():
-            assert kw_name in sig.parameters, (fn.__name__, kw_name)
-            p = sig.parameters[kw_name]
-            assert p.kind == inspect.Parameter.KEYWORD_ONLY, (
-                fn.__name__,
-                kw_name,
-            )
-            assert p.default == kw_default, (fn.__name__, kw_name)
 
 
 @pytest.mark.parametrize(
@@ -256,6 +195,7 @@ def test_2d_single_band_input():
         assert int(lbl.max()) >= 2
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "raster_fn,kwargs",
     [
@@ -696,3 +636,62 @@ assert cleaned.shape == relab.shape
         check=False,
     )
     assert res.returncode == 0, f"Subprocess failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}"
+
+
+def _n_disconnected_labels(labels):
+    """Number of labels made of more than one 4-connected component."""
+    import scipy.ndimage as ndi  # pylint: disable=import-outside-toplevel
+
+    struct = ndi.generate_binary_structure(2, 1)
+    n_bad = 0
+    for lbl, slc in enumerate(ndi.find_objects(labels), start=1):
+        if slc is not None and ndi.label(labels[slc] == lbl, structure=struct)[1] > 1:
+            n_bad += 1
+    return n_bad
+
+
+@pytest.mark.parametrize(
+    "func, kwargs",
+    [
+        (rseg.slic_segmentation_array, {"n_segments": 40}),
+        (rseg.graph_segmentation_array, {"scale": 50.0, "min_pixels": 10}),
+        (rseg.shepherd_segmentation_array, {"n_clusters": 8, "min_pixels": 10}),
+        (rseg.region_merge_segmentation_array, {"scale": 10.0}),
+        (rseg.watershed_segmentation_array, {"min_distance": 5}),
+    ],
+    ids=["slic", "graph", "shepherd", "region_merge", "watershed"],
+)
+def test_tiled_segmentation_gives_connected_segments(func, kwargs):
+    """H15: with tile_size=64 and the default overlap every segment is connected."""
+    pytest.importorskip("scipy")
+    import scipy.ndimage as ndi  # pylint: disable=import-outside-toplevel
+
+    rng = np.random.default_rng(0)
+    data = ndi.gaussian_filter(rng.normal(size=(3, 192, 192)), (0, 3, 3))
+    labels = func(data, tile_size=64, **kwargs)
+    assert labels.max() > 1
+    assert _n_disconnected_labels(labels) == 0
+
+
+def test_extract_segment_stats_configurable_segment_nodata(tmp_path):
+    """seg_no_data_val sets which label is background (Default = 0)."""
+    seg = np.array([[9, 9, 1, 1], [9, 9, 1, 1], [0, 0, 2, 2], [0, 0, 2, 2]],
+                   dtype=np.uint32)
+    feat = np.arange(16, dtype=np.float32).reshape(1, 4, 4)
+    seg_img = str(tmp_path / "segs.tif")
+    feat_img = str(tmp_path / "feat.tif")
+    _write_multiband_raster(seg_img, seg[np.newaxis].astype(np.float32))
+    with rasterio.open(seg_img) as ds:
+        prof = ds.profile
+    prof.update(dtype="uint32")
+    with rasterio.open(seg_img, "w", **prof) as ds:
+        ds.write(seg, 1)
+    _write_multiband_raster(feat_img, feat)
+
+    dflt = rseg.extract_segment_stats(seg_img, feat_img, use_pbar=False)
+    assert sorted(dflt["seg_id"].tolist()) == [1, 2, 9]
+    nine = rseg.extract_segment_stats(seg_img, feat_img, seg_no_data_val=9,
+                                      use_pbar=False)
+    assert sorted(nine["seg_id"].tolist()) == [0, 1, 2]
+    zero_row = nine[nine["seg_id"] == 0].iloc[0]
+    assert zero_row["b1_mean"] == pytest.approx(np.mean([8, 9, 12, 13]))

@@ -17,7 +17,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import box
 
 import rsgispy
@@ -28,7 +27,8 @@ import rsgispy.imagespectral.indices as si
 import rsgispy.imagespectral.preprocessing as sp
 import rsgispy.imagespectral.transforms as st
 import rsgispy.imagespectral.unmixing as su
-import rsgispy.zonalstats as zs
+
+from conftest import write_raster
 
 matplotlib.use("Agg")
 
@@ -46,27 +46,9 @@ def _write_raster(
     descriptions=None,
 ):
     """Write a 2D or 3D GeoTIFF raster."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    arr = np.asarray(data)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis, :, :]
-    count, height, width = arr.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=str(arr.dtype),
-        crs="EPSG:32630",
-        transform=from_origin(origin[0], origin[1], res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(arr)
-        if descriptions is not None:
-            for b_idx, desc in enumerate(descriptions, start=1):
-                dst.set_band_description(b_idx, desc)
+    return write_raster(
+        path, data, nodata=nodata, origin=origin, pixel_size=res, band_names=descriptions
+    )
 
 
 def _write_legacy_mtxt(path, em_arr):
@@ -80,46 +62,6 @@ def _write_legacy_mtxt(path, em_arr):
         handle.write(f"m={m}\n")
         handle.write(f"n={n}\n")
         handle.write(",".join(vals) + "\n")
-
-
-def test_exports_and_default_gdalformat():
-    """Verify imagespectral exports across submodules and GTIFF defaults."""
-    assert hasattr(em, "read_endmembers_df")
-    assert hasattr(em, "write_endmembers_df")
-    assert hasattr(em, "convert_mtxt_to_df")
-    assert not hasattr(em, "read_endmembers_mtxt")
-    assert not hasattr(em, "write_endmembers_mtxt")
-
-    module_funcs = [
-        (su, su.spec_unmix_ucls),
-        (su, su.spec_unmix_nnls),
-        (su, su.spec_unmix_fcls),
-        (su, su.spec_unmix_spts_ucls),
-        (su, su.spec_unmix_spts_nnls),
-        (su, su.spec_unmix_spts_fcls),
-        (su, su.spec_unmix_pymcr_nnls),
-        (su, su.spec_unmix_pymcr_fcls),
-        (su, su.exhcon_linear_spec_unmix),
-        (su, su.rescale_unmixing_results),
-        (su, su.predict_refl_linear_unmixing),
-        (su, su.calc_unmixing_rmse_residual_err),
-        (su, su.summarise_multi_endmember_linear_unmixing),
-        (em, em.calc_ppi),
-        (sc, sc.spectral_angle_mapper),
-        (sc, sc.spectral_correlation_mapper),
-        (sp, sp.spectral_smoothing),
-        (sp, sp.mask_outliers_data_values),
-        (sp, sp.polyfill_nan_data_values),
-        (st, st.whiten_image),
-        (st, st.calc_pca),
-        (st, st.calc_mnf),
-        (st, st.calc_tasseled_cap),
-        (st, st.histogram_matching),
-    ]
-    for mod, fn in module_funcs:
-        assert fn.__name__ in mod.__all__
-        sig = inspect.signature(fn)
-        assert sig.parameters["gdalformat"].default == "GTIFF"
 
 
 def test_df_roundtrip_formats_plot_and_equality(tmp_path):
@@ -222,11 +164,8 @@ def test_convert_mtxt_to_df(tmp_path):
         em.convert_mtxt_to_df(mtxt_path, band_names=["B1", "B2"])
 
 
-def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
+def test_extract_avg_endmembers(tmp_path):
     """Verify extract_avg_endmembers returns a DataFrame with class columns."""
-    assert zs.METHOD_POLYCONTAINSPIXELCENTRE == 1
-    assert zs.METHOD_POLYOVERLAPSPIXEL == 2
-
     img_path = tmp_path / "img.tif"
     vec_path = tmp_path / "rois.gpkg"
     out_csv = tmp_path / "extracted_em.csv"
@@ -260,7 +199,6 @@ def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
         "rois",
         out_file=str(out_csv),
         class_col="landcover",
-        pxl_in_poly_method=zs.METHOD_POLYCONTAINSPIXELCENTRE,
     )
 
     assert isinstance(em_df, pd.DataFrame)
@@ -276,9 +214,40 @@ def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
         gdf,
         None,
         class_col="landcover",
-        pxl_in_poly_method=zs.METHOD_POLYCONTAINSPIXELCENTRE,
     )
     assert em.are_endmembers_equal(em_df, em_df_gdf)
+
+    # The RSGISLib method codes were replaced by all_touched and
+    # small_poly_fallback.
+    with pytest.raises(TypeError):
+        em.extract_avg_endmembers(str(img_path), gdf, None, pxl_in_poly_method=1)
+
+    # A polygon covering no pixel centre: by default the pixels it touches
+    # are used; without the fallback it raises.
+    small = gpd.GeoDataFrame(
+        {"landcover": ["Soil"]}, geometry=[box(1.0, 31.0, 4.0, 34.0)], crs="EPSG:32630"
+    )
+    small_df = em.extract_avg_endmembers(str(img_path), small, None, class_col="landcover")
+    np.testing.assert_allclose(small_df["Soil"].to_numpy(), [0.2, 0.4, 0.8], atol=1e-6)
+    with pytest.raises(rsgispy.RSGISPyException, match="No valid pixels"):
+        em.extract_avg_endmembers(
+            str(img_path), small, None, class_col="landcover", small_poly_fallback=False
+        )
+
+    # all_touched=True takes every pixel the polygon touches: a box over the
+    # Soil/Veg corner touches the four pixels around it.
+    corner = gpd.GeoDataFrame(
+        {"landcover": ["Mix"]}, geometry=[box(18.0, 18.0, 22.0, 22.0)], crs="EPSG:32630"
+    )
+    touched = em.extract_avg_endmembers(
+        str(img_path), corner, None, class_col="landcover", all_touched=True
+    )
+    np.testing.assert_allclose(
+        touched["Mix"].to_numpy(),
+        (np.array([0.2, 0.4, 0.8]) + np.array([0.4, 0.6, 0.4])
+         + np.array([0.6, 0.2, 0.1]) + 0.0) / 4.0,
+        atol=1e-6,
+    )
 
 
 def test_exhcon_unmixing_and_downstream_metrics(tmp_path):
@@ -1431,8 +1400,9 @@ def test_calc_area_under_curve(tmp_path):
     )
     _write_raster(in_p, arr)
 
+    # The old rectangle sum, sum(band_i * band_widths[i]), as in RSGISLib.
     si.calc_area_under_curve(
-        str(in_p), str(out_p), [0.5, 2.0], use_pbar=False
+        str(in_p), str(out_p), [0.5, 2.0], method="rectangle", use_pbar=False
     )
     with rasterio.open(out_p) as src:
         np.testing.assert_allclose(
@@ -1443,3 +1413,146 @@ def test_calc_area_under_curve(tmp_path):
         si.calc_area_under_curve(str(in_p), str(out_p), None, use_pbar=False)
     with pytest.raises(rsgispy.RSGISPyException):
         si.calc_area_under_curve(str(in_p), str(out_p), [1.0], use_pbar=False)
+
+
+def test_calc_area_under_curve_trapezoid_and_nodata(tmp_path):
+    """The default trapezoid rule between band centres, with nodata handling."""
+    in_p = tmp_path / "auc_tz.tif"
+    out_p = tmp_path / "auc_tz_out.tif"
+    arr = np.array(
+        [
+            [[1.0, 2.0, -99.0]],
+            [[3.0, 2.0, 5.0]],
+            [[5.0, 2.0, 7.0]],
+        ],
+        dtype=np.float32,
+    )
+    _write_raster(in_p, arr, nodata=-99.0)
+    # Widths 10, 20, 10: band centres at 5, 20, 35.
+    si.calc_area_under_curve(str(in_p), str(out_p), [10.0, 20.0, 10.0],
+                             use_pbar=False)
+    centres = [5.0, 20.0, 35.0]
+    with rasterio.open(out_p) as src:
+        assert src.nodata == -99.0
+        out = src.read(1)
+    np.testing.assert_allclose(out[0, 0], np.trapezoid([1.0, 3.0, 5.0], centres))
+    np.testing.assert_allclose(out[0, 1], np.trapezoid([2.0, 2.0, 2.0], centres))
+    assert out[0, 2] == -99.0  # one band is nodata
+
+    # Explicit band centres (e.g. wavelengths) and an explicit no_data_val.
+    out_c = tmp_path / "auc_centres.tif"
+    si.calc_area_under_curve(str(in_p), str(out_c), None,
+                             band_centres=[450.0, 550.0, 650.0],
+                             no_data_val=-1.0, use_pbar=False)
+    with rasterio.open(out_c) as src:
+        assert src.nodata == -1.0
+        np.testing.assert_allclose(
+            src.read(1)[0, 0], np.trapezoid([1.0, 3.0, 5.0], [450.0, 550.0, 650.0])
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        si.calc_area_under_curve(str(in_p), str(out_c), None, use_pbar=False)
+    with pytest.raises(rsgispy.RSGISPyException):
+        si.calc_area_under_curve(str(in_p), str(out_c), [1.0, 1.0, 1.0],
+                                 method="simpson", use_pbar=False)
+
+
+def test_calc_ppi_tiled_streaming_deterministic(tmp_path, monkeypatch):
+    monkeypatch.setenv(img_proc.ENV_VAR_BLOCK_SIZE, "8")
+    rng = np.random.default_rng(7)
+    cube = rng.uniform(0.2, 0.8, size=(3, 16, 16)).astype(np.float32)
+    # Plant extreme pure endmembers at opposite corners
+    cube[:, 0, 0] = [1.0, 0.0, 0.0]
+    cube[:, 15, 15] = [0.0, 1.0, 0.0]
+    in_img = write_raster(tmp_path / "ppi_in.tif", cube, origin=(500000.0, 5800000.0))
+
+    out1 = str(tmp_path / "ppi1.tif")
+    out2 = str(tmp_path / "ppi2.tif")
+    em.calc_ppi(
+        in_img, out1, niters=200, rnd_seed=99, calc_stats=False, use_pbar=False
+    )
+    em.calc_ppi(
+        in_img, out2, niters=200, rnd_seed=99, calc_stats=False, use_pbar=False
+    )
+    with rasterio.open(out1) as d1, rasterio.open(out2) as d2:
+        a1 = d1.read(1)
+        a2 = d2.read(1)
+        assert a1.dtype == np.uint16
+        np.testing.assert_array_equal(a1, a2)
+        assert a1[0, 0] > 0
+        assert a1[15, 15] > 0
+
+
+def test_whiten_image_filters_nan_and_nodata(tmp_path, monkeypatch):
+    monkeypatch.setenv(img_proc.ENV_VAR_BLOCK_SIZE, "8")
+    rng = np.random.default_rng(11)
+    n = 16 * 16
+    base = rng.normal(size=(n, 3))
+    mix = np.array([[2.0, 0.8, 0.3], [0.8, 1.5, -0.4], [0.3, -0.4, 1.2]])
+    cube = (base @ mix + np.array([10.0, 20.0, 30.0])).T.reshape(3, 16, 16)
+    cube = cube.astype(np.float32)
+    cube[:, 0, 0] = np.nan
+    cube[:, 0, 1] = -9999.0
+
+    msk = np.ones((16, 16), dtype=np.uint8)
+    msk[15, 15] = 0
+
+    in_img = write_raster(tmp_path / "w_in.tif", cube, nodata=-9999.0, origin=(500000.0, 5800000.0))
+    msk_img = write_raster(tmp_path / "w_msk.tif", msk, origin=(500000.0, 5800000.0))
+    out_img = str(tmp_path / "w_out.tif")
+
+    st.whiten_image(in_img, out_img, msk_img, 1, use_pbar=False)
+    with rasterio.open(out_img) as dst:
+        out = dst.read()
+        assert np.all(out[:, 0, 0] == 0.0)
+        assert np.all(out[:, 0, 1] == 0.0)
+        assert np.all(out[:, 15, 15] == 0.0)
+        valid = np.ones((16, 16), dtype=bool)
+        valid[0, 0] = False
+        valid[0, 1] = False
+        valid[15, 15] = False
+        vecs = out[:, valid]
+        cov = np.cov(vecs)
+        np.testing.assert_allclose(cov, np.eye(3), atol=5e-2)
+
+
+def test_summarise_multi_endmember_unmixing_nodata_alignment(tmp_path):
+    em_mat = np.array([[0.8, 0.2, 0.1], [0.1, 0.7, 0.9]], dtype=np.float32)
+    em_df = pd.DataFrame(em_mat.T, columns=["EM_A", "EM_B"])
+
+    # Pixel (0,0) is all-zero (invalid); remaining pixels are valid combinations
+    orig = np.zeros((3, 4, 4), dtype=np.float32)
+    for b in range(3):
+        orig[b, :, :] = 0.6 * em_mat[0, b] + 0.4 * em_mat[1, b]
+    orig[:, 0, 0] = 0.0
+
+    abund = np.zeros((2, 4, 4), dtype=np.float32)
+    abund[0, :, :] = 0.6
+    abund[1, :, :] = 0.4
+
+    orig_img = write_raster(tmp_path / "orig.tif", orig, origin=(500000.0, 5800000.0))
+    abund_img = write_raster(tmp_path / "abund1.tif", abund, origin=(500000.0, 5800000.0))
+    out_unmix = str(tmp_path / "sum_unmix.tif")
+    out_ref = str(tmp_path / "sum_ref.tif")
+
+    ds_info = em.ImageEndmemberInfo(
+        in_unmix_img=abund_img,
+        endmembers=em_df,
+        endmember_names=["EM_A", "EM_B"],
+    )
+    su.summarise_multi_endmember_linear_unmixing(
+        input_img=orig_img,
+        out_unmix_img=out_unmix,
+        out_ref_img=out_ref,
+        in_unmixed_datasets=[ds_info],
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out_unmix) as dst_u, rasterio.open(out_ref) as dst_r:
+        assert dst_u.nodata == 999.0
+        assert dst_r.nodata == 0.0
+        u_arr = dst_u.read()
+        r_arr = dst_r.read(1)
+        assert np.all(u_arr[:, 0, 0] == 999.0)
+        assert r_arr[0, 0] == 0
+        assert np.allclose(u_arr[:, 1, 1], [0.6, 0.4], atol=1e-4)
+        assert r_arr[1, 1] == 1

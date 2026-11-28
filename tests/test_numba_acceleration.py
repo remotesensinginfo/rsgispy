@@ -29,6 +29,8 @@ from rsgispy._numba import (
     warn_numba_fallback,
 )
 
+from conftest import write_raster
+
 needs_numba = pytest.mark.skipif(not HAS_NUMBA, reason="numba not installed")
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -244,10 +246,9 @@ def test_dijkstra_kernel_matches_python():
 
 @needs_numba
 def test_priority_flood_kernel_matches_python():
-    from rsgispy.elevation.filtering import (
-        _priority_flood_fill_kernel,
-        _priority_flood_fill_py,
-    )
+    """The shared hydrology priority-flood equals the Soille & Gratin fallback."""
+    from rsgispy.elevation._hydro_kernels import priority_flood_kernel
+    from rsgispy.elevation.filtering import _priority_flood_fill_py
 
     rng = np.random.default_rng(1)
     for _ in range(20):
@@ -258,31 +259,11 @@ def test_priority_flood_kernel_matches_python():
         seed = vld & np.any(~sliding_window_view(vld_pad, (3, 3)), axis=(2, 3))
         out_a = np.zeros((h, w), dtype=np.int64)
         out_b = out_a.copy()
-        vis_a = ~vld
-        vis_b = vis_a.copy()
-        _priority_flood_fill_kernel(dem.astype(np.int64), seed, vis_a, out_a)
+        vis_b = ~vld
+        filled = priority_flood_kernel(dem.astype(np.float64), vld)
+        out_a[vld] = np.rint(filled[vld]).astype(np.int64)
         _priority_flood_fill_py(dem, seed, vis_b, out_b)
-        np.testing.assert_array_equal(out_a, out_b)
-        np.testing.assert_array_equal(vis_a, vis_b)
-
-
-def _write_raster(path, arr, nodata=None, res=10.0):
-    import rasterio
-    from rasterio.transform import from_origin
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=arr.shape[0],
-        width=arr.shape[1],
-        count=1,
-        dtype=arr.dtype.name,
-        crs="EPSG:32630",
-        transform=from_origin(400000.0, 5600000.0, res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(arr, 1)
+        np.testing.assert_array_equal(out_a[vld], out_b[vld])
 
 
 @needs_numba
@@ -299,9 +280,19 @@ def test_fill_dem_and_shadow_mask_end_to_end_equivalent(tmp_path):
     dem_i[5:9, 5:9] = -9999
     vld = np.ones((h, w), dtype=np.uint8)
     vld[:, :2] = 0
-    _write_raster(str(tmp_path / "dem_i.tif"), dem_i, nodata=-9999)
-    _write_raster(str(tmp_path / "vld.tif"), vld)
-    _write_raster(str(tmp_path / "dem_f.tif"), dem_f.astype(np.float32), nodata=-9999)
+    write_raster(
+        str(tmp_path / "dem_i.tif"),
+        dem_i,
+        origin=(400000.0, 5600000.0),
+        nodata=-9999,
+    )
+    write_raster(str(tmp_path / "vld.tif"), vld, origin=(400000.0, 5600000.0))
+    write_raster(
+        str(tmp_path / "dem_f.tif"),
+        dem_f.astype(np.float32),
+        origin=(400000.0, 5600000.0),
+        nodata=-9999,
+    )
 
     outputs = {}
     for label, ctx in (("jit", None), ("py", disable_numba)):

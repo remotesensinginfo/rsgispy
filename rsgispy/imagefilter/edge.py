@@ -1,16 +1,27 @@
+# pylint: disable=too-many-lines
 """
 Edge-detection and spatial derivative convolution filters for raster images.
+
+The directional filters (Sobel / Prewitt X and Y, Gaussian derivatives) lay
+their kernel over each window as written (a correlation, see
+:func:`rsgispy.imagefilter.smooth.apply_kernel_correlation_filter`), so the
+Sobel / Prewitt X derivatives (and the Gaussian first derivative with
+``filter_angle=0``) are positive where values increase to the right (east)
+and the Y derivatives positive where they increase downwards (south). The
+symmetric kernels (Laplacian, Gaussian second derivative) and the edge
+magnitudes give the same result as a true convolution.
 """
 
 from typing import List, Optional
 
 import numpy as np
 
-from rsgispy._io import RasterSource, TileNode
+from rsgispy._io import HaloBorder, RasterSource, TileNode, halo_border_from_mode
 from rsgispy.imagefilter._helpers import (
     gaussian_kernel,
     gradient_magnitude_node,
     kernel_conv_node,
+    kernel_correlate_node,
     laplacian_kernel,
     prewitt_kernels,
     run_filter_node,
@@ -46,6 +57,8 @@ def apply_sobel_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -58,6 +71,13 @@ def apply_sobel_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -71,7 +91,7 @@ def apply_sobel_filter(
     src = RasterSource(input_img)
     run_filter_node(
         src,
-        sobel_filter_node(src),
+        sobel_filter_node(src, border_mode=border_mode, border_fill=border_fill),
         output_img,
         gdalformat=gdalformat,
         datatype=datatype,
@@ -88,6 +108,8 @@ def apply_sobel_x_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -100,6 +122,13 @@ def apply_sobel_x_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -113,7 +142,7 @@ def apply_sobel_x_filter(
     src = RasterSource(input_img)
     run_filter_node(
         src,
-        sobel_x_filter_node(src),
+        sobel_x_filter_node(src, border_mode=border_mode, border_fill=border_fill),
         output_img,
         gdalformat=gdalformat,
         datatype=datatype,
@@ -130,6 +159,8 @@ def apply_sobel_y_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -142,6 +173,13 @@ def apply_sobel_y_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -155,7 +193,7 @@ def apply_sobel_y_filter(
     src = RasterSource(input_img)
     run_filter_node(
         src,
-        sobel_y_filter_node(src),
+        sobel_y_filter_node(src, border_mode=border_mode, border_fill=border_fill),
         output_img,
         gdalformat=gdalformat,
         datatype=datatype,
@@ -172,6 +210,8 @@ def apply_prewitt_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -184,6 +224,13 @@ def apply_prewitt_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -197,7 +244,7 @@ def apply_prewitt_filter(
     src = RasterSource(input_img)
     run_filter_node(
         src,
-        prewitt_filter_node(src),
+        prewitt_filter_node(src, border_mode=border_mode, border_fill=border_fill),
         output_img,
         gdalformat=gdalformat,
         datatype=datatype,
@@ -214,6 +261,8 @@ def apply_prewitt_x_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -226,6 +275,13 @@ def apply_prewitt_x_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -239,7 +295,7 @@ def apply_prewitt_x_filter(
     src = RasterSource(input_img)
     run_filter_node(
         src,
-        prewitt_x_filter_node(src),
+        prewitt_x_filter_node(src, border_mode=border_mode, border_fill=border_fill),
         output_img,
         gdalformat=gdalformat,
         datatype=datatype,
@@ -256,6 +312,8 @@ def apply_prewitt_y_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -268,6 +326,13 @@ def apply_prewitt_y_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -281,7 +346,7 @@ def apply_prewitt_y_filter(
     src = RasterSource(input_img)
     run_filter_node(
         src,
-        prewitt_y_filter_node(src),
+        prewitt_y_filter_node(src, border_mode=border_mode, border_fill=border_fill),
         output_img,
         gdalformat=gdalformat,
         datatype=datatype,
@@ -302,6 +367,8 @@ def apply_gaussian_1st_deriv_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -318,6 +385,13 @@ def apply_gaussian_1st_deriv_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -335,6 +409,8 @@ def apply_gaussian_1st_deriv_filter(
         src,
         gaussian_1st_deriv_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
             stddev_x=stddev_x,
             stddev_y=stddev_y,
@@ -360,6 +436,8 @@ def apply_gaussian_2nd_deriv_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -376,6 +454,13 @@ def apply_gaussian_2nd_deriv_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -393,6 +478,8 @@ def apply_gaussian_2nd_deriv_filter(
         src,
         gaussian_2nd_deriv_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
             stddev_x=stddev_x,
             stddev_y=stddev_y,
@@ -416,6 +503,8 @@ def apply_laplacian_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -430,6 +519,13 @@ def apply_laplacian_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
 
@@ -447,6 +543,8 @@ def apply_laplacian_filter(
         src,
         laplacian_filter_node(
             src,
+            border_mode=border_mode,
+            border_fill=border_fill,
             filter_size=filter_size,
             stddev=stddev,
         ),
@@ -463,6 +561,8 @@ def sobel_filter_node(
     source: TileNode,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -479,6 +579,13 @@ def sobel_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'sobel_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -498,6 +605,7 @@ def sobel_filter_node(
         kx,
         ky,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "sobel_filter",
     )
 
@@ -506,6 +614,8 @@ def prewitt_filter_node(
     source: TileNode,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -522,6 +632,13 @@ def prewitt_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'prewitt_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -541,6 +658,7 @@ def prewitt_filter_node(
         kx,
         ky,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "prewitt_filter",
     )
 
@@ -551,6 +669,8 @@ def laplacian_filter_node(
     stddev: float = 1.0,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -569,6 +689,13 @@ def laplacian_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'laplacian_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -582,12 +709,14 @@ def laplacian_filter_node(
         log = laplacian_filter_node(gaussian_smooth_filter_node(src, 5), 5, stddev=1.0)
         TileGraph(DiskSink(log, "smooth_log.tif")).run()
     """
+    # pylint: disable=too-many-arguments
     kernel = laplacian_kernel(filter_size, stddev)
     return kernel_conv_node(
         source,
         kernel,
         zero_dc=True,
         no_data_val=no_data_val,
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "laplacian_filter",
     )
 
@@ -597,10 +726,14 @@ def _directional_node(
     kernel: np.ndarray,
     no_data_val: Optional[float],
     name: str,
+    border: HaloBorder,
 ) -> TileNode:
-    """Zero-sum directional convolution node (Sobel/Prewitt/Gaussian derivative)."""
-    return kernel_conv_node(
-        source, kernel, zero_dc=True, no_data_val=no_data_val, name=name
+    """
+    Zero-sum directional node (Sobel/Prewitt/Gaussian derivative): the
+    kernel is correlated (not flipped), keeping the documented sign.
+    """
+    return kernel_correlate_node(
+        source, kernel, zero_dc=True, no_data_val=no_data_val, border=border, name=name
     )
 
 
@@ -608,6 +741,8 @@ def sobel_x_filter_node(
     source: TileNode,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -623,6 +758,13 @@ def sobel_x_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'sobel_x_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -640,13 +782,18 @@ def sobel_x_filter_node(
         TileGraph(DiskSink(direction, "edge_direction.tif")).run()
     """
     kx, _ = sobel_kernels()
-    return _directional_node(source, kx, no_data_val, name or "sobel_x_filter")
+    return _directional_node(
+        source, kx, no_data_val, name or "sobel_x_filter",
+        halo_border_from_mode(border_mode, border_fill),
+    )
 
 
 def sobel_y_filter_node(
     source: TileNode,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -662,6 +809,13 @@ def sobel_y_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'sobel_y_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -676,13 +830,18 @@ def sobel_y_filter_node(
         TileGraph(DiskSink(node, "median_sobel_y.tif")).run()
     """
     _, ky = sobel_kernels()
-    return _directional_node(source, ky, no_data_val, name or "sobel_y_filter")
+    return _directional_node(
+        source, ky, no_data_val, name or "sobel_y_filter",
+        halo_border_from_mode(border_mode, border_fill),
+    )
 
 
 def prewitt_x_filter_node(
     source: TileNode,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -698,6 +857,13 @@ def prewitt_x_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'prewitt_x_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -712,13 +878,18 @@ def prewitt_x_filter_node(
         TileGraph(DiskSink(node, "mean_prewitt_x.tif")).run()
     """
     kx, _ = prewitt_kernels()
-    return _directional_node(source, kx, no_data_val, name or "prewitt_x_filter")
+    return _directional_node(
+        source, kx, no_data_val, name or "prewitt_x_filter",
+        halo_border_from_mode(border_mode, border_fill),
+    )
 
 
 def prewitt_y_filter_node(
     source: TileNode,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -734,6 +905,13 @@ def prewitt_y_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'prewitt_y_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -748,7 +926,10 @@ def prewitt_y_filter_node(
         TileGraph(DiskSink(node, "mean_prewitt_y.tif")).run()
     """
     _, ky = prewitt_kernels()
-    return _directional_node(source, ky, no_data_val, name or "prewitt_y_filter")
+    return _directional_node(
+        source, ky, no_data_val, name or "prewitt_y_filter",
+        halo_border_from_mode(border_mode, border_fill),
+    )
 
 
 def gaussian_1st_deriv_filter_node(
@@ -759,6 +940,8 @@ def gaussian_1st_deriv_filter_node(
     filter_angle: float = 0.0,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -779,6 +962,13 @@ def gaussian_1st_deriv_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'gaussian_1st_deriv_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -797,7 +987,8 @@ def gaussian_1st_deriv_filter_node(
         filter_size, stddev_x, stddev_y, filter_angle, deriv_order=1
     )
     return _directional_node(
-        source, kernel, no_data_val, name or "gaussian_1st_deriv_filter"
+        source, kernel, no_data_val, name or "gaussian_1st_deriv_filter",
+        halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -809,6 +1000,8 @@ def gaussian_2nd_deriv_filter_node(
     filter_angle: float = 0.0,
     *,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -829,6 +1022,13 @@ def gaussian_2nd_deriv_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'gaussian_2nd_deriv_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -849,5 +1049,6 @@ def gaussian_2nd_deriv_filter_node(
         filter_size, stddev_x, stddev_y, filter_angle, deriv_order=2
     )
     return _directional_node(
-        source, kernel, no_data_val, name or "gaussian_2nd_deriv_filter"
+        source, kernel, no_data_val, name or "gaussian_2nd_deriv_filter",
+        halo_border_from_mode(border_mode, border_fill),
     )

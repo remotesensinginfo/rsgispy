@@ -5,7 +5,7 @@ Grey-Level Co-occurrence Matrix (GLCM) spatial texture filters for raster images
 from typing import List, Optional, Sequence, Tuple, Union
 
 import rsgispy
-from rsgispy._io import RasterSource, TileNode, resolve_input_nodata
+from rsgispy._io import RasterSource, TileNode, halo_border_from_mode, resolve_input_nodata
 from rsgispy.imagefilter._glcm_helpers import (
     GLCM_ALL_PROPERTIES,
     GLCM_ASM,
@@ -61,6 +61,8 @@ def apply_glcm_filter(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -99,6 +101,13 @@ def apply_glcm_filter(
     :param datatype: Output pixel data type constant (Default = ``None``,
                      resolves to :data:`rsgispy.TYPE_32FLOAT`).
     :param no_data_val: Optional explicit input nodata value (Default = ``None``).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar (Default = ``True``).
@@ -128,6 +137,8 @@ def apply_glcm_filter(
     src = RasterSource(input_img)
     node = glcm_filter_node(
         src,
+        border_mode=border_mode,
+        border_fill=border_fill,
         properties=properties,
         filter_size=filter_size,
         distances=distances,
@@ -196,6 +207,8 @@ def glcm_filter_node(
     *,
     band_bounds: Optional[Sequence[Tuple[float, float]]] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -236,6 +249,13 @@ def glcm_filter_node(
                         ignored, and output pixels without a value are set to
                         it (Default = ``None``: the no-data value of
                         ``source``'s metadata; see :ref:`tilegraph-nodata`).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'glcm_filter'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -290,5 +310,6 @@ def glcm_filter_node(
         bool(average_angles),
         bounds,
         no_data_val=resolve_input_nodata(source, no_data_val),
+        border=halo_border_from_mode(border_mode, border_fill),
         name=name or "glcm_filter",
     )

@@ -73,10 +73,16 @@ __all__ = [
     "predict_quantiles_raster_node",
     "calc_proba_confidence",
     "CONF_METHODS",
+    "predict_ensemble_members",
+    "calc_ensemble_uncertainty",
+    "UNCERT_METHODS",
 ]
 
 CONF_METHODS: Tuple[str, ...] = ("margin", "max_prob", "entropy")
 """Per-pixel classification confidence methods (see :func:`calc_proba_confidence`)."""
+
+UNCERT_METHODS: Tuple[str, ...] = ("std", "iqr", "cv")
+"""Per-pixel regression uncertainty methods (see :func:`calc_ensemble_uncertainty`)."""
 
 
 def _coerce_feature_stack(
@@ -119,6 +125,81 @@ def _apply_lut_1d(vals: np.ndarray, lut: Mapping[Any, Any]) -> np.ndarray:
     return out
 
 
+def _known_label_values(
+    estimator: Any,
+    threshold: Optional[float],
+    lut: Optional[Mapping[Any, Any]],
+) -> Optional[List[Any]]:
+    """
+    Every value a single-output label prediction can produce (the thresholded
+    0/1 or the estimator's ``classes_``), mapped through ``lut``, or ``None``
+    when the estimator does not expose its classes.
+    """
+    if threshold is not None:
+        values: List[Any] = [0, 1]
+    else:
+        classes = getattr(estimator, "classes_", None)
+        if classes is None:
+            return None
+        cls_arr = np.asarray(classes)
+        if cls_arr.ndim != 1 or cls_arr.size == 0:
+            return None
+        values = list(cls_arr.tolist())
+    if lut:
+        values = [
+            lut.get(int(v) if isinstance(v, (int, np.integer)) else v, v)
+            for v in values
+        ]
+    return values
+
+
+def _label_value_set(values: Sequence[Any]) -> set:
+    """Numeric label values as floats (non-numeric labels are skipped)."""
+    out = set()
+    for val in values:
+        try:
+            out.add(float(val))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _resolve_label_nodata(
+    no_data_val: Optional[float],
+    out_np_dt: np.dtype,
+    label_values: Optional[Sequence[Any]],
+) -> float:
+    """
+    Output nodata for ``predict_raster``.
+
+    An explicit ``no_data_val`` that equals an output label raises. Otherwise
+    integer outputs default to ``0`` unless ``0`` is an output label (e.g. the
+    absence class of a thresholded map), in which case the largest, then the
+    smallest, value of the output type that is not a label is used. Floating
+    outputs default to ``-9999``.
+    """
+    labels = _label_value_set(label_values) if label_values is not None else set()
+    if no_data_val is not None:
+        if float(no_data_val) in labels:
+            raise rsgispy.RSGISPyException(
+                f"no_data_val={no_data_val} is also an output class value, so "
+                "those pixels would be read as no data. Choose a no_data_val "
+                "that is not one of the output classes "
+                f"({sorted(labels)})."
+            )
+        return no_data_val
+    if not np.issubdtype(out_np_dt, np.integer):
+        return -9999.0
+    info = np.iinfo(out_np_dt)
+    for cand in (0, int(info.max), int(info.min)):
+        if float(cand) not in labels:
+            return cand
+    raise rsgispy.RSGISPyException(
+        "Could not find a no data value for the output type that is not an "
+        "output class value; pass no_data_val or a wider datatype."
+    )
+
+
 def _uint8_label_outputs(
     estimator: Any,
     threshold: Optional[float],
@@ -131,19 +212,10 @@ def _uint8_label_outputs(
     ``lut``, and ``fill_value``) is an integer in ``[0, 255]``, so the blocks
     can be ``uint8`` without changing any value.
     """
-    if threshold is not None:
-        values: List[Any] = [0, 1]
-    else:
-        classes = getattr(estimator, "classes_", None)
-        if classes is None:
-            return False
-        cls_arr = np.asarray(classes)
-        if cls_arr.ndim != 1 or cls_arr.size == 0:
-            return False
-        values = list(cls_arr.tolist())
-    if lut:
-        values = [lut.get(int(v) if isinstance(v, (int, np.integer)) else v, v) for v in values]
-    values.append(fill_value)
+    values = _known_label_values(estimator, threshold, lut)
+    if values is None:
+        return False
+    values = list(values) + [fill_value]
     for val in values:
         try:
             f_val = float(val)
@@ -275,6 +347,192 @@ def calc_proba_confidence(
     else:
         conf = 1.0 - _proba_entropy(p_arr, n_cls)
     return np.clip(conf, 0.0, 1.0)
+
+
+def check_uncert_method(uncert_method: str) -> str:
+    """Validate a regression uncertainty method name (one of :data:`UNCERT_METHODS`)."""
+    if not isinstance(uncert_method, str) or uncert_method not in UNCERT_METHODS:
+        raise rsgispy.RSGISPyException(
+            f"uncert_method must be one of {list(UNCERT_METHODS)}, got "
+            f"{uncert_method!r}."
+        )
+    return uncert_method
+
+
+def _is_boosted_ensemble(model: Any) -> bool:
+    """``True`` for sequential (boosted / stacked) ensembles, whose members are not exchangeable."""
+    return (
+        isinstance(getattr(model, "estimators_", None), np.ndarray)
+        or hasattr(model, "init_")
+        or hasattr(model, "learning_rate")
+        or hasattr(model, "estimator_weights_")
+        or hasattr(model, "final_estimator_")
+    )
+
+
+def _ensemble_parts(estimator: Any) -> Tuple[str, Any]:
+    """
+    Classify ``estimator`` for :func:`predict_ensemble_members`:
+    ``('pipeline', ...)``, ``('multioutput', ...)``, ``('transformed', ...)``
+    or ``('members', ...)``; raise when it has no independent members.
+    """
+    if hasattr(estimator, "steps") and getattr(estimator, "steps", None):
+        return "pipeline", estimator
+    if type(estimator).__name__ == "MultiOutputRegressor" and hasattr(
+        estimator, "estimators_"
+    ):
+        return "multioutput", estimator
+    if hasattr(estimator, "regressor_") and hasattr(estimator, "transformer_"):
+        return "transformed", estimator
+    members = getattr(estimator, "estimators_", None)
+    if (
+        isinstance(members, (list, tuple))
+        and len(members) >= 2
+        and all(hasattr(m, "predict") for m in members)
+        and not _is_boosted_ensemble(estimator)
+    ):
+        return "members", members
+    raise rsgispy.RSGISPyException(
+        "A per-pixel regression uncertainty needs an ensemble of independently "
+        "fitted members exposing estimators_ (e.g. RandomForestRegressor, "
+        "ExtraTreesRegressor, BaggingRegressor or VotingRegressor, optionally in "
+        f"a Pipeline or MultiOutputRegressor); {type(estimator).__name__} has "
+        "none. Boosted models (GradientBoosting, HistGradientBoosting, AdaBoost, "
+        "XGBoost, LightGBM, CatBoost) add members sequentially, so their spread "
+        "is not an uncertainty: use quantile models or conformal intervals "
+        "(rsgispy.ml.predict.predict_quantiles_raster) instead."
+    )
+
+
+def check_ensemble_regressor(estimator: Any) -> None:
+    """
+    Raise :class:`rsgispy.RSGISPyException` unless
+    :func:`predict_ensemble_members` supports ``estimator`` (checked without
+    predicting).
+    """
+    kind, obj = _ensemble_parts(estimator)
+    if kind == "pipeline":
+        check_ensemble_regressor(obj.steps[-1][1])
+    elif kind == "multioutput":
+        for sub in obj.estimators_:
+            check_ensemble_regressor(sub)
+    elif kind == "transformed":
+        check_ensemble_regressor(obj.regressor_)
+
+
+def predict_ensemble_members(estimator: Any, x: Any) -> np.ndarray:
+    """
+    Predictions of each member of a fitted regression ensemble, as averaged
+    by the ensemble itself (e.g. the trees of a random forest).
+
+    Supported: estimators with a list of independently fitted members in
+    ``estimators_`` (``RandomForestRegressor``, ``ExtraTreesRegressor``,
+    ``BaggingRegressor`` with its feature subsets, ``VotingRegressor``), a
+    ``Pipeline`` ending in one (the earlier steps transform ``x``), a
+    ``MultiOutputRegressor`` of them (one ensemble per target) and a
+    ``TransformedTargetRegressor`` of one (the member predictions are
+    back-transformed). Boosted and stacked ensembles raise
+    :class:`rsgispy.RSGISPyException`.
+
+    :param estimator: Fitted ensemble regressor.
+    :param x: Feature matrix ``(n_samples, n_features)`` (array or
+              DataFrame, as passed to ``estimator.predict``).
+    :return: ``float64`` array ``(n_members, n_samples, n_targets)``.
+    """
+    kind, obj = _ensemble_parts(estimator)
+    n_rows = int(x.shape[0])
+    if kind == "pipeline":
+        x_t = obj[:-1].transform(x) if len(obj.steps) > 1 else x
+        return predict_ensemble_members(obj.steps[-1][1], x_t)
+    if kind == "multioutput":
+        per_tgt = [predict_ensemble_members(sub, x) for sub in obj.estimators_]
+        n_mem = {p.shape[0] for p in per_tgt}
+        if len(n_mem) != 1:
+            raise rsgispy.RSGISPyException(
+                "The MultiOutputRegressor targets have ensembles of different sizes."
+            )
+        return np.concatenate(per_tgt, axis=2)
+    if kind == "transformed":
+        mem = predict_ensemble_members(obj.regressor_, x)
+        return np.stack(
+            [
+                np.asarray(
+                    obj.transformer_.inverse_transform(m_pred), dtype=np.float64
+                ).reshape(n_rows, -1)
+                for m_pred in mem
+            ]
+        )
+    feat_subsets = getattr(estimator, "estimators_features_", None)
+    x_arr = np.asarray(x)
+    out = []
+    for m_idx, member in enumerate(obj):
+        if feat_subsets is not None:
+            x_m = x_arr[:, feat_subsets[m_idx]]
+        elif hasattr(member, "feature_names_in_"):
+            x_m = x
+        else:
+            x_m = x_arr
+        out.append(np.asarray(member.predict(x_m), dtype=np.float64).reshape(n_rows, -1))
+    return np.stack(out)
+
+
+def calc_ensemble_uncertainty(
+    member_preds: np.ndarray, uncert_method: str = "std"
+) -> np.ndarray:
+    """
+    Per-sample regression uncertainty from the predictions of the members
+    of an ensemble (:func:`predict_ensemble_members`), as written to the
+    ``out_uncert_img`` output of
+    :func:`~rsgispy.regression.regsklearn.apply_sklearn_regressor`. Larger
+    values mean the members disagree more (less certain).
+
+    * ``'std'`` (default): the standard deviation of the member predictions
+      (in the target's units; the ensemble prediction is their mean);
+    * ``'iqr'``: the inter-quartile range (75th minus 25th percentile), less
+      affected by a few outlying members;
+    * ``'cv'``: the coefficient of variation, ``std / |mean|`` (unitless;
+      ``nan`` where the mean is ``0``).
+
+    The members are weighted equally (the weights of a ``VotingRegressor``
+    are not used).
+
+    The spread of the trees of a random forest reflects how much the
+    prediction depends on the bootstrap sample and the random splits. It is
+    not a calibrated prediction interval (it does not include the residual
+    noise and tends to be small far from the training data, where all the
+    trees extrapolate alike), so use it to rank pixels by reliability, and
+    use quantile models or conformal intervals
+    (:func:`predict_quantiles_raster`) for intervals with a stated coverage.
+
+    :param member_preds: Member predictions ``(n_members, n_samples)`` or
+                         ``(n_members, n_samples, n_targets)``.
+    :param uncert_method: ``'std'``, ``'iqr'`` or ``'cv'`` (Default =
+                          ``'std'``).
+    :return: ``float64`` array ``(n_samples,)`` or ``(n_samples, n_targets)``.
+
+    .. code:: python
+
+        import numpy as np
+        from rsgispy.ml.predict import calc_ensemble_uncertainty
+
+        calc_ensemble_uncertainty(np.array([[1.0, 2.0], [3.0, 2.0]]))  # [1., 0.]
+    """
+    check_uncert_method(uncert_method)
+    preds = np.asarray(member_preds, dtype=np.float64)
+    if preds.ndim not in (2, 3) or preds.shape[0] < 1:
+        raise rsgispy.RSGISPyException(
+            "member_preds must be (n_members, n_samples[, n_targets]): got "
+            f"shape {preds.shape}."
+        )
+    if uncert_method == "iqr":
+        q75, q25 = np.percentile(preds, [75.0, 25.0], axis=0)
+        return q75 - q25
+    std = np.std(preds, axis=0)
+    if uncert_method == "std":
+        return std
+    mean_abs = np.abs(np.mean(preds, axis=0))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(mean_abs > 0.0, std / mean_abs, np.nan)
 
 
 class _QuantilePredictor:
@@ -478,8 +736,15 @@ def predict_raster(
     :param datatype: Optional ``rsgispy.TYPE_*`` constant. Defaults to
                      :data:`rsgispy.TYPE_8UINT` when ``thematic=True`` or
                      ``threshold is not None``, else :data:`rsgispy.TYPE_32FLOAT`.
-    :param no_data_val: Optional output nodata fill value (defaults to ``0`` for
-                        integer outputs or ``-9999.0`` for floating outputs).
+    :param no_data_val: Optional output nodata fill value. The default is
+                        ``-9999.0`` for floating outputs and ``0`` for integer
+                        outputs, unless ``0`` is an output class (always for
+                        ``threshold``, where 0 is the absence class, and for a
+                        ``thematic`` classifier whose ``classes_``, after
+                        ``lut``, include 0): the largest value of the output
+                        type that is not a class is then used (e.g. ``255``
+                        for ``uint8``). A ``no_data_val`` that equals an output
+                        class raises :class:`rsgispy.RSGISPyException`.
     :param calc_stats: Populate raster statistics and pyramids (Default = ``True``).
     :param use_pbar: Display a tqdm progress bar (Default = ``True``).
     :param creation_opts: Optional GDAL/rasterio creation options mapping.
@@ -498,10 +763,10 @@ def predict_raster(
         out_dt = int(datatype)
     out_rio_dt = rsgispy.get_rasterio_datatype(out_dt)
     out_np_dt = np.dtype(rsgispy.get_numpy_datatype(out_dt))
-    eff_nd = (
-        no_data_val
-        if no_data_val is not None
-        else (0 if np.issubdtype(out_np_dt, np.integer) else -9999.0)
+    eff_nd = _resolve_label_nodata(
+        no_data_val,
+        out_np_dt,
+        _known_label_values(estimator, threshold, lut) if is_thematic else None,
     )
 
     use_df = _needs_dataframe_input(estimator)
@@ -681,7 +946,9 @@ def predict_proba_raster(
     :param img_msk_val: Mask value indicating ROI pixels (Default = ``1``).
     :param scaler: Optional :class:`~rsgispy.ml.scaling.FeatureScaler` override.
     :param class_names: Optional band names for each class probability band.
-    :param out_class_img: Optional path to also save argmax class raster.
+    :param out_class_img: Optional path to also save argmax class raster
+                          (``int32``; no data is ``0``, or the largest
+                          ``int32`` value when ``0`` is a class label).
     :param out_entropy_img: Optional path to also save Shannon entropy raster.
     :param lut: Optional mapping from estimator class labels to output IDs for
                 ``out_class_img``.
@@ -761,6 +1028,11 @@ def predict_proba_raster(
         )
         cls_out_dt = np.dtype(np.int32)
         cls_rio_dt = "int32"
+        cls_labels = _known_label_values(estimator, None, lut)
+        # Without classes_ the labels are argmax indices, which start at 0.
+        cls_nd = _resolve_label_nodata(
+            None, cls_out_dt, cls_labels if cls_labels is not None else [0]
+        )
 
         for out_win, grid, valid_idx, x_valid in stack_obj.iter_blocks(
             in_msk_img=in_msk_img,
@@ -803,7 +1075,7 @@ def predict_proba_raster(
                         count=1,
                         creation_opts=norm_opts,
                     )
-                    cls_dst.nodata = 0
+                    cls_dst.nodata = cls_nd
                 if ent_path is not None:
                     ent_dst = open_output_dataset(
                         stack=stack,
@@ -842,7 +1114,7 @@ def predict_proba_raster(
             prob_dst.write(prob_blk, window=out_win)
 
             if cls_dst is not None:
-                cls_flat = np.zeros(win_h * win_w, dtype=np.int64)
+                cls_flat = np.full(win_h * win_w, cls_nd, dtype=np.int64)
                 if probs is not None:
                     cls_flat[valid_idx] = _proba_class_labels(probs, est_classes, lut)
                 cls_dst.write(
@@ -895,7 +1167,7 @@ def predict_proba_raster(
         _finalise_raster_output(
             out_path=cls_path,
             out_rio_dt="int32",
-            nodata=0,
+            nodata=cls_nd,
             band_names=["predicted_class"],
             thematic=True,
             calc_stats=calc_stats,
@@ -1382,7 +1654,8 @@ def predict_raster_node(
     :param threshold: Optional probability threshold in ``(0, 1)``: output
                       ``predict_proba[:, -1] >= threshold`` (binary).
     :param thematic: The output is a class map: the default ``no_data_val``
-                     is ``0`` (Default = ``False``).
+                     is ``0``, or ``255`` when ``0`` is an output class
+                     (Default = ``False``).
     :param band_names: Optional output band names (Default = ``None``:
                        ``'class'`` for a thematic or thresholded output, or
                        ``'class_1'``, ``'class_2'``, ... for several outputs;
@@ -1392,9 +1665,12 @@ def predict_raster_node(
     :param img_msk_val: Mask value of the pixels to predict (Default = ``1``).
     :param n_outputs: Number of model outputs (Default = ``None``, see above).
     :param no_data_val: Output value of pixels not predicted (Default =
-                        ``0`` when ``thematic`` or ``threshold`` is set, else
-                        ``-9999.0``, as :func:`predict_raster` with its
-                        default data types).
+                        ``0`` when ``thematic`` or ``threshold`` is set, or
+                        ``255`` when ``0`` is an output class (always for
+                        ``threshold``), else ``-9999.0``, as
+                        :func:`predict_raster` with its default data types).
+                        A value equal to an output class raises
+                        :class:`rsgispy.RSGISPyException`.
     :param name: Optional node name (Default = ``'predict_raster'``).
     :return: Prediction :class:`~rsgispy.imageprocess.TileNode`.
 
@@ -1426,10 +1702,12 @@ def predict_raster_node(
             "Estimator must implement predict_proba() when threshold is given."
         )
     is_thematic = bool(thematic or threshold is not None)
-    eff_nd = (
-        float(no_data_val)
-        if no_data_val is not None
-        else (0.0 if is_thematic else -9999.0)
+    eff_nd = float(
+        _resolve_label_nodata(
+            no_data_val,
+            np.dtype(np.uint8) if is_thematic else np.dtype(np.float64),
+            _known_label_values(estimator, threshold, lut) if is_thematic else None,
+        )
     )
     n_out_attr = getattr(estimator, "n_outputs_", None)
     if n_outputs is not None:
@@ -1500,8 +1778,9 @@ def predict_proba_raster_node(
 
     The node has one band per class (``len(estimator.classes_)``, else
     ``n_classes``, else 2), named ``prob_<class>``; with ``with_class`` a
-    band with the most probable class (mapped through ``lut``; ``0`` where
-    not predicted) is appended, and with ``with_entropy`` a band with the
+    band with the most probable class (mapped through ``lut``; ``0``, or
+    the largest ``int32`` value when ``0`` is a class, where not predicted)
+    is appended, and with ``with_entropy`` a band with the
     normalised Shannon entropy (``-9999`` where not predicted), and with
     ``with_conf`` a band with the ``[0, 1]`` confidence
     (:func:`calc_proba_confidence` with ``conf_method``; ``-9999`` where not
@@ -1575,7 +1854,17 @@ def predict_proba_raster_node(
         names = [f"prob_{c}" for c in est_classes]
     fills = [eff_nd] * n_cls
     if with_class:
-        fills.append(0.0)
+        cls_labels = _known_label_values(estimator, None, lut)
+        # Without classes_ the labels are argmax indices, which start at 0.
+        fills.append(
+            float(
+                _resolve_label_nodata(
+                    None,
+                    np.dtype(np.int32),
+                    cls_labels if cls_labels is not None else [0],
+                )
+            )
+        )
     if with_entropy:
         fills.append(-9999.0)
     if with_conf:

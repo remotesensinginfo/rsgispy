@@ -25,6 +25,7 @@ from rsgispy.imageprocess import (
     iter_single_image_band_blocks,
     open_multi_image_datasets,
     open_output_dataset,
+    resolve_out_nodata,
     validate_band_index,
 )
 
@@ -65,6 +66,9 @@ def calc_basic_img_band_stats(
     :param use_no_data: Whether to exclude the no-data value from statistics (Default = True).
     :param use_pbar: Whether to display a tqdm progress bar (Default = True).
     :return: Tuple of ``(min_vals, max_vals, mean_vals, stddev_vals)`` NumPy arrays.
+             ``stddev_vals`` is the population standard deviation
+             (``ddof=0``, divided by ``n``), as numpy and GDAL give and the
+             per-pixel summaries use by default.
 
     .. code:: python
 
@@ -268,11 +272,24 @@ def _calc_mode_columns(sub_2d: np.ndarray) -> np.ndarray:
     return out
 
 
-def _calc_stack_stat(stack_arr: np.ndarray, stat_type: int) -> np.ndarray:
+def _check_ddof(ddof: int) -> int:
+    """Return ``ddof`` as an ``int``, raising if it is negative."""
+    if int(ddof) != ddof or ddof < 0:
+        raise rsgispy.RSGISPyException(
+            f"ddof must be a non-negative integer (got {ddof})."
+        )
+    return int(ddof)
+
+
+def _calc_stack_stat(
+    stack_arr: np.ndarray, stat_type: int, ddof: int = 0
+) -> np.ndarray:
     """
     Compute a summary statistic ``rsgispy.SUMTYPE_*`` along ``axis=0`` of a
     3D float64 array ``(n_samples, height, width)`` where invalid values are
-    ``np.nan`` or non-finite.
+    ``np.nan`` or non-finite. The standard deviation divides by
+    ``n - ddof`` (``ddof=0``: population, as numpy and GDAL; ``ddof=1``:
+    sample) and is ``0`` where ``n <= ddof``.
     """
     # pylint: disable=too-many-return-statements
     valid_mask = build_valid_mask(stack_arr)
@@ -303,7 +320,7 @@ def _calc_stack_stat(stack_arr: np.ndarray, stat_type: int) -> np.ndarray:
             axis=0
         )
         return np.where(
-            counts > 1, np.sqrt(sq_diff / np.maximum(counts - 1, 1)), 0.0
+            counts > ddof, np.sqrt(sq_diff / np.maximum(counts - ddof, 1)), 0.0
         )
     if stat_type == rsgispy.SUMTYPE_MEDIAN:
         out = np.zeros(out_shape, dtype=np.float64)
@@ -322,6 +339,42 @@ def _calc_stack_stat(stack_arr: np.ndarray, stat_type: int) -> np.ndarray:
 
     raise rsgispy.RSGISPyException(
         f"Summary statistic type '{stat_type}' is not recognised."
+    )
+
+
+def _resolve_stats_out_nd(
+    cand: Optional[float], out_np_dtype: np.dtype
+) -> Optional[float]:
+    """
+    Output no-data value for the per-pixel summary statistics: ``cand``, or
+    for an integer type that cannot hold it, the type's maximum (unsigned)
+    or minimum (signed); ``None`` when ``cand`` is ``None``.
+    """
+    if cand is None:
+        return None
+    return resolve_out_nodata(
+        out_np_dtype, cand, clamp_int=True, unsigned_clamp="max"
+    )
+
+
+def _stack_stat_block(
+    stack_arr: np.ndarray,
+    stat_type: int,
+    out_np_dtype: np.dtype,
+    out_nd: Optional[float],
+    ddof: int = 0,
+) -> np.ndarray:
+    """
+    :func:`_calc_stack_stat` cast to ``out_np_dtype``, with pixels that have
+    no valid input written as ``out_nd`` (counts are always written as is).
+    """
+    stat_arr = _calc_stack_stat(stack_arr, stat_type, ddof)
+    win_h, win_w = int(stack_arr.shape[1]), int(stack_arr.shape[2])
+    if out_nd is None or stat_type == rsgispy.SUMTYPE_COUNT:
+        return cast_result_block(stat_arr, win_h, win_w, out_np_dtype)
+    has_data = build_valid_mask(stack_arr).any(axis=0)
+    return cast_result_block(
+        stat_arr, win_h, win_w, out_np_dtype, nodata=out_nd, valid_mask=has_data
     )
 
 
@@ -344,9 +397,10 @@ def image_pixel_column_summary(
     *,
     gdalformat: str = "GTIFF",
     datatype: int = rsgispy.TYPE_32FLOAT,
-    no_data_val: float = 0.0,
+    no_data_val: Optional[float] = None,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
+    ddof: int = 0,
 ) -> None:
     """
     Calculate summary statistics across all bands (pixel column) for each
@@ -354,7 +408,14 @@ def image_pixel_column_summary(
 
     Output bands are written in the canonical order: ``Min``, ``Max``, ``Mean``,
     ``Median``, ``Mode``, ``Sum``, ``StdDev`` for whichever corresponding
-    ``calc_*`` flags are ``True`` on ``sum_stats``.
+    ``calc_*`` flags are ``True`` on ``sum_stats``. ``StdDev`` is the
+    population standard deviation by default (``ddof=0``), as
+    :func:`calc_basic_img_band_stats` gives.
+
+    .. versionchanged:: 0.5.0
+       ``StdDev`` defaults to the population standard deviation (it was the
+       sample one); pass ``ddof=1`` for the sample one. ``no_data_val``
+       defaults to the input header's no-data value (it was ``0.0``).
 
     :param input_img: Path to the input multi-band image file.
     :param output_img: Path to the output summary image file.
@@ -364,9 +425,18 @@ def image_pixel_column_summary(
                        (Default = ``'GTIFF'``).
     :param datatype: Output data type constant from ``rsgispy.TYPE_*``
                      (Default = ``rsgispy.TYPE_32FLOAT``).
-    :param no_data_val: Value treated as no-data when ``use_no_data`` is True.
+    :param no_data_val: Value treated as no-data when ``use_no_data`` is True
+                        (Default = ``None``: the input header's no-data
+                        value, if any).
+                        It is also the output no-data value, written where no
+                        band of a pixel is valid (for an integer ``datatype``
+                        that cannot hold it, the type's max/min is used).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+    :param ddof: Delta degrees of freedom of the standard deviation, which
+                 divides by ``n - ddof`` (Default = ``0``: the population
+                 standard deviation, as numpy and GDAL; ``1`` for the
+                 sample one). ``0`` is written where ``n <= ddof``.
 
     .. code:: python
 
@@ -384,6 +454,7 @@ def image_pixel_column_summary(
             datatype=rsgispy.TYPE_32FLOAT,
         )
     """
+    ddof = _check_ddof(ddof)
     # pylint: disable=too-many-arguments,too-many-locals
     if sum_stats is None:
         raise rsgispy.RSGISPyException("sum_stats must not be None.")
@@ -419,6 +490,8 @@ def image_pixel_column_summary(
                 f"Could not open input image '{input_img}': {err}"
             ) from err
 
+        if no_data_val is None:
+            no_data_val = src.nodata
         grid = compute_spatial_intersection({input_img: src})
         dst = open_output_dataset(
             stack=stack,
@@ -429,23 +502,21 @@ def image_pixel_column_summary(
             count=len(selected),
             creation_opts=creation_opts,
         )
+        out_nd = _resolve_stats_out_nd(
+            no_data_val if use_no_data else None, out_np_dtype
+        )
+        if out_nd is not None:
+            dst.nodata = out_nd
         for out_band_idx, (label, _) in enumerate(selected, start=1):
             dst.set_band_description(out_band_idx, label)
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
         ):
-            win_h = int(out_win.height)
-            win_w = int(out_win.width)
             in_block = src.read(window=out_win, out_dtype=np.float64)
             masked_block = _mask_nodata_nan(in_block, no_data_val, use_no_data)
             out_bands = [
-                cast_result_block(
-                    _calc_stack_stat(masked_block, stat_id),
-                    win_h,
-                    win_w,
-                    out_np_dtype,
-                )
+                _stack_stat_block(masked_block, stat_id, out_np_dtype, out_nd, ddof)
                 for _, stat_id in selected
             ]
             dst.write(np.stack(out_bands, axis=0), window=out_win)
@@ -462,10 +533,16 @@ def calc_multi_img_band_stats(
     no_data_val: Optional[float] = None,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
+    ddof: int = 0,
 ) -> None:
     """
     Calculate a summary statistic (``rsgispy.SUMTYPE_*``) across multiple
-    input images on a per-band basis.
+    input images on a per-band basis. ``SUMTYPE_STDDEV`` is the population
+    standard deviation by default (``ddof``).
+
+    .. versionchanged:: 0.5.0
+       ``SUMTYPE_STDDEV`` defaults to the population standard deviation (it
+       was the sample one); pass ``ddof=1`` for the sample one.
 
     All input images must have the same number of bands. The output image has
     the same band count over the spatial intersection of ``input_imgs``.
@@ -480,9 +557,16 @@ def calc_multi_img_band_stats(
                      (Default = ``rsgispy.TYPE_32FLOAT``).
     :param no_data_val: Optional no-data value across all input images. If
                         ``None`` and ``use_no_data`` is True, read from the
-                        first image header.
+                        first image header. It is also the output no-data
+                        value, written where no input is valid (for an
+                        integer ``datatype`` that cannot hold it, the type's
+                        max/min is used); counts are written as they are.
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+    :param ddof: Delta degrees of freedom of the standard deviation, which
+                 divides by ``n - ddof`` (Default = ``0``: the population
+                 standard deviation, as numpy and GDAL; ``1`` for the
+                 sample one). ``0`` is written where ``n <= ddof``.
 
     .. code:: python
 
@@ -497,6 +581,7 @@ def calc_multi_img_band_stats(
             datatype=rsgispy.TYPE_32FLOAT,
         )
     """
+    ddof = _check_ddof(ddof)
     # pylint: disable=too-many-arguments,too-many-locals
     valid_stats = (
         rsgispy.SUMTYPE_MIN,
@@ -544,6 +629,9 @@ def calc_multi_img_band_stats(
             count=n_bands,
             creation_opts=creation_opts,
         )
+        out_nd = _resolve_stats_out_nd(eff_nd, out_np_dtype)
+        if out_nd is not None:
+            dst.nodata = out_nd
 
         for out_win in iter_dataset_windows(
             grid.height, grid.width, use_pbar=use_pbar
@@ -566,9 +654,10 @@ def calc_multi_img_band_stats(
             for b_idx in range(n_bands):
                 band_stack = np.stack([blk[b_idx] for blk in img_blocks], axis=0)
                 masked_stack = _mask_nodata_nan(band_stack, eff_nd, use_no_data)
-                stat_arr = _calc_stack_stat(masked_stack, summary_stat)
                 out_bands.append(
-                    cast_result_block(stat_arr, win_h, win_w, out_np_dtype)
+                    _stack_stat_block(
+                        masked_stack, summary_stat, out_np_dtype, out_nd, ddof
+                    )
                 )
             dst.write(np.stack(out_bands, axis=0), window=out_win)
 
@@ -587,6 +676,7 @@ def get_img_sum_stats_in_pxl(
     datatype: int = rsgispy.TYPE_32FLOAT,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
+    ddof: int = 0,
 ) -> None:
     """
     Summarise high-resolution pixel values from ``in_stats_img`` within each
@@ -594,7 +684,12 @@ def get_img_sum_stats_in_pxl(
 
     The resolution of ``in_ref_img`` must be strictly coarser than and an integer
     multiple of ``in_stats_img`` along both axes. Each entry in ``sum_stats``
-    produces one output band.
+    produces one output band. ``SUMTYPE_STDDEV`` is the population standard
+    deviation by default (``ddof``).
+
+    .. versionchanged:: 0.5.0
+       ``SUMTYPE_STDDEV`` defaults to the population standard deviation (it
+       was the sample one); pass ``ddof=1`` for the sample one.
 
     :param in_ref_img: Path to the coarser-resolution reference image defining
                        output grid, extent, and resolution.
@@ -604,7 +699,9 @@ def get_img_sum_stats_in_pxl(
                       (one band per statistic).
     :param stats_img_band: 1-based band index in ``in_stats_img`` (Default = 1).
     :param use_no_data: If True, exclude the ``in_stats_img`` header no-data value
-                        (Default = True).
+                        (Default = True). That value is then also the output
+                        no-data value, written for reference pixels with no
+                        valid stats pixel.
     :param io_grid_x: Block width in reference pixels (Default = 16).
     :param io_grid_y: Block height in reference pixels (Default = 16).
     :param gdalformat: GDAL/rasterio driver format for the output file
@@ -613,6 +710,10 @@ def get_img_sum_stats_in_pxl(
                      (Default = ``rsgispy.TYPE_32FLOAT``).
     :param use_pbar: If True, display a tqdm progress bar (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
+    :param ddof: Delta degrees of freedom of the standard deviation, which
+                 divides by ``n - ddof`` (Default = ``0``: the population
+                 standard deviation, as numpy and GDAL; ``1`` for the
+                 sample one). ``0`` is written where ``n <= ddof``.
 
     .. code:: python
 
@@ -628,6 +729,7 @@ def get_img_sum_stats_in_pxl(
             datatype=rsgispy.TYPE_32FLOAT,
         )
     """
+    ddof = _check_ddof(ddof)
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     if not sum_stats:
         raise rsgispy.RSGISPyException(
@@ -686,6 +788,11 @@ def get_img_sum_stats_in_pxl(
             count=len(sum_stats),
             creation_opts=creation_opts,
         )
+        out_nd = _resolve_stats_out_nd(
+            stats_nd if use_no_data else None, out_np_dtype
+        )
+        if out_nd is not None:
+            dst.nodata = out_nd
 
         inv_stats_transform = ~stats_src.transform
 
@@ -723,12 +830,7 @@ def get_img_sum_stats_in_pxl(
                 .reshape(factor_y * factor_x, win_h, win_w)
             )
             out_bands = [
-                cast_result_block(
-                    _calc_stack_stat(sub_stack, stat_id),
-                    win_h,
-                    win_w,
-                    out_np_dtype,
-                )
+                _stack_stat_block(sub_stack, stat_id, out_np_dtype, out_nd, ddof)
                 for stat_id in sum_stats
             ]
             dst.write(np.stack(out_bands, axis=0), window=out_win)

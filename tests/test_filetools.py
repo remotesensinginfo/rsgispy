@@ -4,9 +4,11 @@ Tests for rsgispy.tools.files, rsgispy.tools.hashing, and rsgispy.tools.archives
 
 import datetime
 import hashlib
+import io
 import os
 import stat
 import tarfile
+import time
 import types
 import zipfile
 
@@ -80,11 +82,17 @@ def test_delete_and_find_files(tmp_path):
     with pytest.raises(rsgispy.RSGISPyException):
         rfiles.find_file(str(d1), "*missing*.tif")
 
-    ext_dict = rfiles.find_files_ext(str(d1), ".tif")
-    assert set(ext_dict.keys()) == {"scene_N15.tif", "tile_01.tif"}
+    ext_lst = rfiles.find_files_ext(str(d1), ".tif")
+    assert ext_lst == sorted(ext_lst)
+    assert {os.path.basename(f) for f in ext_lst} == {"scene_N15.tif", "tile_01.tif"}
+    assert all(os.path.isabs(f) or f.startswith(str(d1)) for f in ext_lst)
 
-    multi_dict = rfiles.find_files_mpaths_ext([str(d1), str(d2)], ".tif")
-    assert set(multi_dict.keys()) == {"scene_N15.tif", "tile_01.tif", "extra.tif"}
+    multi_lst = rfiles.find_files_mpaths_ext([str(d1), str(d2)], ".tif")
+    assert {os.path.basename(f) for f in multi_lst} == {
+        "scene_N15.tif", "tile_01.tif", "extra.tif"
+    }
+    # Searching the same folder twice does not duplicate paths.
+    assert rfiles.find_files_mpaths_ext([str(d1), str(d1)], ".tif") == ext_lst
 
     assert rfiles.find_first_file(str(d1), "tile_*.tif") == str(f2)
     assert rfiles.find_first_file(str(d1), "none_*.tif", rtn_except=False) is None
@@ -357,3 +365,125 @@ def test_file_is_hidden_windows_attributes(tmp_path, monkeypatch):
     assert rfiles.file_is_hidden(str(hidden_attr_dir))
     assert rfiles.file_is_hidden(str(system_attr_dir))
     assert not rfiles.file_is_hidden(str(normal_dir))
+
+
+def test_delete_file_with_basename_matches_only_base_and_sidecars(tmp_path):
+    """Only <base>.<ext> (and its .xml/.aux.xml sidecars) are deleted."""
+    import rsgispy.tools.files as rfiles  # pylint: disable=import-outside-toplevel
+
+    names = ["layer.shp", "layer.dbf", "layer.shp.xml", "layer.v2.tif",
+             "layer_other.shp", "scn[1].shp", "scn[1].dbf", "scn1.shp"]
+    for name in names:
+        (tmp_path / name).write_text("x")
+    rfiles.delete_file_with_basename(str(tmp_path / "layer.shp"), print_rms=False)
+    rfiles.delete_file_with_basename(str(tmp_path / "scn[1].shp"), print_rms=False)
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "layer.v2.tif", "layer_other.shp", "scn1.shp"
+    ]
+
+
+def test_file_lock_is_atomic_and_clean_tolerates_empty(tmp_path):
+    """A held lock cannot be taken twice; empty lock files are cleaned."""
+    import rsgispy.tools.files as rfiles  # pylint: disable=import-outside-toplevel
+
+    target = str(tmp_path / "out.tif")
+    assert rfiles.get_file_lock(target, sleep_period=0, wait_iters=0)
+    assert not rfiles.get_file_lock(target, sleep_period=0, wait_iters=0)
+    rfiles.release_file_lock(target)
+    assert rfiles.get_file_lock(target, sleep_period=0, wait_iters=0)
+    rfiles.release_file_lock(target)
+
+    empty_lock = tmp_path / ".old.tif.lok"
+    empty_lock.write_text("")
+    old = time.time() - 7200
+    os.utime(empty_lock, (old, old))
+    rfiles.clean_file_locks(str(tmp_path), timeout=3600)
+    assert not empty_lock.exists()
+
+
+def test_find_files_ext_keeps_same_named_files(tmp_path):
+    """Same-named files in different folders are all returned, sorted."""
+    import rsgispy.tools.files as rfiles  # pylint: disable=import-outside-toplevel
+
+    for sub in ("b", "a"):
+        (tmp_path / sub).mkdir()
+        (tmp_path / sub / "scene.tif").write_text("x")
+    (tmp_path / "a" / "other.tif").write_text("x")
+    found = rfiles.find_files_ext(str(tmp_path), ".tif")
+    assert found == [
+        os.path.join(str(tmp_path), "a", "other.tif"),
+        os.path.join(str(tmp_path), "a", "scene.tif"),
+        os.path.join(str(tmp_path), "b", "scene.tif"),
+    ]
+
+
+def test_safe_join_rejects_traversal(tmp_path):
+    """safe_join keeps names inside out_dir; '..' components raise."""
+    out_dir = str(tmp_path)
+    assert rfiles.safe_join(out_dir, "a.zip") == os.path.join(out_dir, "a.zip")
+    # By default only the base name is used.
+    assert rfiles.safe_join(out_dir, "../../etc/passwd") == os.path.join(out_dir, "passwd")
+    assert rfiles.safe_join(out_dir, "sub\\\\x.tif") == os.path.join(out_dir, "x.tif")
+    for bad in ("", ".", "..", "dir/.."):
+        with pytest.raises(rsgispy.RSGISPyException):
+            rfiles.safe_join(out_dir, bad)
+    # keep_subdirs keeps the folders but not '..' or an absolute root.
+    assert rfiles.safe_join(out_dir, "/pub/d/x.tif", keep_subdirs=True) == os.path.join(
+        out_dir, "pub", "d", "x.tif"
+    )
+    for bad in ("../x.tif", "pub/../../x.tif", "a/../.."):
+        with pytest.raises(rsgispy.RSGISPyException):
+            rfiles.safe_join(out_dir, bad, keep_subdirs=True)
+
+
+def test_archives_zip_and_tar_traversal_guards(tmp_path):
+    """Reject path traversal, absolute paths, and symlinks in zip/tar archives."""
+    for name in ("out_z1", "out_z2", "out_z3", "out_t1", "out_t2", "out_good"):
+        (tmp_path / name).mkdir()
+
+    bad_zip = tmp_path / "traversal.zip"
+    with zipfile.ZipFile(bad_zip, "w") as zf:
+        zf.writestr("../escape.txt", "nope")
+    with pytest.raises(rsgispy.RSGISPyException, match="Unsafe"):
+        archives.unzip_file(str(bad_zip), str(tmp_path / "out_z1"))
+
+    abs_zip = tmp_path / "abs.zip"
+    with zipfile.ZipFile(abs_zip, "w") as zf:
+        zf.writestr("/tmp/escape.txt", "nope")
+    with pytest.raises(rsgispy.RSGISPyException, match="Unsafe"):
+        archives.unzip_file(str(abs_zip), str(tmp_path / "out_z2"))
+
+    sym_zip = tmp_path / "symlink.zip"
+    with zipfile.ZipFile(sym_zip, "w") as zf:
+        zinfo = zipfile.ZipInfo("link.txt")
+        zinfo.external_attr = (stat.S_IFLNK | 0o777) << 16
+        zf.writestr(zinfo, "/etc/passwd")
+    with pytest.raises(rsgispy.RSGISPyException, match="symlink"):
+        archives.unzip_file(str(sym_zip), str(tmp_path / "out_z3"))
+
+    bad_tar = tmp_path / "traversal.tar.gz"
+    with tarfile.open(bad_tar, "w:gz") as tf:
+        tinfo = tarfile.TarInfo(name="../escape.txt")
+        payload = b"evil"
+        tinfo.size = len(payload)
+        tf.addfile(tinfo, io.BytesIO(payload))
+    with pytest.raises(rsgispy.RSGISPyException, match="Unsafe"):
+        archives.untar_gz_file(str(bad_tar), str(tmp_path / "out_t1"))
+
+    sym_tar = tmp_path / "symlink.tar.gz"
+    with tarfile.open(sym_tar, "w:gz") as tf:
+        tinfo = tarfile.TarInfo(name="bad_link")
+        tinfo.type = tarfile.SYMTYPE
+        tinfo.linkname = "../../outside"
+        tf.addfile(tinfo)
+    with pytest.raises(rsgispy.RSGISPyException, match="symlink"):
+        archives.untar_gz_file(str(sym_tar), str(tmp_path / "out_t2"))
+
+    good_zip = tmp_path / "good.zip"
+    with zipfile.ZipFile(good_zip, "w") as zf:
+        zf.writestr("sub/hello.txt", "world")
+    out_dir = archives.unzip_file(str(good_zip), str(tmp_path / "out_good"))
+    assert (tmp_path / "out_good" / "good" / "sub" / "hello.txt").read_text(
+        encoding="utf-8"
+    ) == "world"
+    assert os.path.isdir(out_dir)

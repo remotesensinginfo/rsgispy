@@ -11,7 +11,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from sklearn.multioutput import MultiOutputRegressor
 
 import rsgispy.regression.regcatboost as rcb
@@ -19,39 +18,7 @@ import rsgispy.regression.regdata as rrd
 import rsgispy.regression.reglightgbm as rlgb
 import rsgispy.regression.regxgboost as rxgb
 
-
-def _write_raster(
-    path: Path,
-    arr: np.ndarray,
-    origin_x: float = 500000.0,
-    origin_y: float = 5600000.0,
-    pxl_size: float = 10.0,
-    crs: str = "EPSG:32630",
-    nodata: float = -999.0,
-) -> str:
-    """Write a 2D or 3D GeoTIFF raster for testing."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[None, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-        nodata=nodata,
-    ) as dst:
-        dst.write(write_arr)
-    return str(path)
+from conftest import write_raster
 
 
 def _build_gbdt_fixture(tmp_path: Path):
@@ -65,8 +32,18 @@ def _build_gbdt_fixture(tmp_path: Path):
     mask = np.zeros((h, w), dtype=np.uint8)
     mask[1:h - 1, 1:w - 1] = 1
 
-    img_path = _write_raster(tmp_path / "scene.tif", np.stack([b1, b2]), nodata=-999.0)
-    msk_path = _write_raster(tmp_path / "mask.tif", mask, nodata=0.0)
+    img_path = write_raster(
+        tmp_path / "scene.tif",
+        np.stack([b1, b2]),
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
+    )
+    msk_path = write_raster(
+        tmp_path / "mask.tif",
+        mask,
+        origin=(500000.0, 5600000.0),
+        nodata=0.0,
+    )
 
     rng = np.random.default_rng(99)
     n_rows = 120

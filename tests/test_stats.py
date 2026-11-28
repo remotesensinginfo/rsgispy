@@ -18,6 +18,56 @@ import rsgispy.tools.stats as rstats
 import rsgispy.tools.thresholding as rthresh
 
 
+def test_cqv_threshold_handles_negative_features():
+    """CQV uses |Q3 + Q1| so negative-valued features (dB, NDVI) are not dropped."""
+    rng = np.random.default_rng(0)
+    pos = rng.uniform(10.0, 20.0, size=200)
+    df = pd.DataFrame({"pos": pos, "neg": -pos})
+    cols = rfeatsel.cqv_threshold(df, lowthreshold=0.1, highthreshold=0.9)
+    assert cols == ["pos", "neg"]
+
+
+@pytest.mark.skipif(not rfeatsel.HAVE_SKLEARN, reason="needs scikit-learn")
+def test_lassolars_selection_is_scale_invariant():
+    """Selection does not depend on the units of the features."""
+    rng = np.random.default_rng(1)
+    n = 200
+    x1 = rng.normal(size=n)
+    x2 = rng.normal(size=n)
+    x_noise = rng.normal(size=n)
+    y = 2.0 * x1 + 1.0 * x2 + rng.normal(0.0, 0.1, size=n)
+    df = pd.DataFrame({"y": y, "x1": x1, "x2": x2, "x_noise": x_noise})
+    cols = ["x1", "x2", "x_noise"]
+    scaled = df.copy()
+    scaled["x2"] = scaled["x2"] * 1e-3
+    for alpha in (None, 0.05):
+        base = rfeatsel.lassolars_feature_selection(df, ["y"], cols, alpha_val=alpha)
+        sel = rfeatsel.lassolars_feature_selection(scaled, ["y"], cols, alpha_val=alpha)
+        assert {"x1", "x2"} <= set(base)
+        assert sel == base
+
+
+@pytest.mark.skipif(not rfeatsel.HAVE_SKLEARN, reason="needs scikit-learn")
+def test_lassolars_selection_uses_every_target():
+    """Alpha is chosen per target, so a noisy last target cannot hide another's feature."""
+    rng = np.random.default_rng(2)
+    n = 200
+    x1 = rng.normal(size=n)
+    x_noise = rng.normal(size=n)
+    df = pd.DataFrame(
+        {
+            # y1 depends weakly on x1; y2 (the last target) is pure noise, so
+            # a BIC alpha chosen from y2 alone removes every predictor.
+            "y1": 0.3 * x1 + rng.normal(0.0, 0.1, size=n),
+            "y2": rng.normal(0.0, 5.0, size=n),
+            "x1": x1,
+            "x_noise": x_noise,
+        }
+    )
+    sel = rfeatsel.lassolars_feature_selection(df, ["y1", "y2"], ["x1", "x_noise"])
+    assert "x1" in sel
+
+
 def test_feature_selection_and_vif():
     """Test calc_pandas_vif, cqv_threshold, corr_feature_selection, and lassolars."""
     rng = np.random.default_rng(42)
@@ -433,3 +483,143 @@ def test_similarity_metrics_and_phase_corr():
     assert dy == pytest.approx(1.0, abs=0.25)
     assert peak > 0.1
     assert rstats.calc_similarity_metric(img1, img1, rsgispy.METRIC_PHASE_CORR) > 0.5
+
+
+def test_semivariogram_skgstat_guard_and_normalise_constant_band():
+    """calc_semivariogram guards missing skgstat; normalise_img_data avoids NaN."""
+    with patch.dict(sys.modules, {"skgstat": None}):
+        with pytest.raises(rsgispy.RSGISPyException, match="scikit-gstat"):
+            rstats.calc_semivariogram(np.array([[0.0, 0.0]]), np.array([1.0]))
+
+    img = np.array(
+        [
+            [[5.0, 5.0], [5.0, 5.0]],
+            [[10.0, 20.0], [30.0, 50.0]],
+        ],
+        dtype=np.float64,
+    )
+    norm = rstats.normalise_img_data(img)
+    assert norm.shape == img.shape
+    assert np.all(np.isfinite(norm))
+    np.testing.assert_allclose(norm[0], np.zeros((2, 2)))
+    np.testing.assert_allclose(norm[1], [[0.0, 0.25], [0.5, 1.0]])
+
+
+def test_thresholding_cross_entropy_and_li_edge_cases():
+    """Guard boundary cross-entropy splits, constant arrays, and invalid Li args."""
+    sample = np.array([1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 5.0])
+    # Boundary thresholds where one side is empty must not raise IndexError/ZeroDivisionError
+    for thres in (-10.0, 1.0, 5.0, 100.0):
+        val = rthresh.calc_hist_cross_entropy(sample, thres)
+        assert isinstance(val, float) and np.isfinite(val)
+
+    # Constant / single-unique array returns the constant value cleanly
+    assert rthresh.calc_li_threshold(np.full(50, 7.5)) == 7.5
+    assert rthresh.calc_li_threshold(np.array([-3.0, -3.0, np.nan])) == -3.0
+
+    with pytest.raises(rsgispy.RSGISPyException, match="tolerance"):
+        rthresh.calc_li_threshold(np.array([1.0, 2.0, 3.0]), tolerance=0.0)
+    with pytest.raises(rsgispy.RSGISPyException, match="max_iter"):
+        rthresh.calc_li_threshold(np.array([1.0, 2.0, 3.0]), max_iter=0)
+    with pytest.raises(rsgispy.RSGISPyException, match="finite"):
+        rthresh.calc_li_threshold(np.array([np.nan, np.inf]))
+
+    bimodal = np.concatenate([np.full(40, 10.0), np.full(40, 100.0)])
+    t_val = rthresh.calc_li_threshold(bimodal, max_iter=5)
+    assert 10.0 < t_val < 100.0
+
+
+def test_featureselection_degenerate_inputs():
+    """Handle zero denominators in CQV, constant predictors, and ss_tot == 0."""
+    df_cqv = pd.DataFrame(
+        {
+            "zero_sum": [-2.0, -1.0, 1.0, 2.0],
+            "all_zero": [0.0, 0.0, 0.0, 0.0],
+            "valid": [1.0, 2.0, 4.0, 8.0],
+        }
+    )
+    selected = rfeatsel.cqv_threshold(
+        df_cqv, lowthreshold=0.1, highthreshold=0.9
+    )
+    assert selected == ["valid"]
+
+    rng = np.random.default_rng(42)
+    n_rows = 30
+    x1 = np.linspace(0.0, 1.0, n_rows)
+    df_corr = pd.DataFrame(
+        {
+            "y": 2.0 * x1 + rng.normal(0, 0.05, n_rows),
+            "const_a": np.ones(n_rows),
+            "const_b": np.full(n_rows, 5.0),
+            "x1": x1,
+            "x2": x1 * 1.1 + 0.01,
+            "x3": rng.normal(0, 1, n_rows),
+            "x4": rng.normal(0, 1, n_rows),
+        }
+    )
+    sel_corr = rfeatsel.corr_feature_selection(
+        df_corr,
+        dep_vars=["y"],
+        ind_vars=["const_a", "const_b", "x1", "x2", "x3", "x4"],
+        n_min_clusters=2,
+        n_max_clusters=4,
+        use_pbar=False,
+    )
+    assert "const_a" not in sel_corr and "const_b" not in sel_corr
+    assert len(sel_corr) >= 2
+
+    df_all_const = pd.DataFrame(
+        {"y": [1, 2, 3, 4], "c1": [1, 1, 1, 1], "c2": [2, 2, 2, 2]}
+    )
+    assert (
+        rfeatsel.corr_feature_selection(
+            df_all_const, ["y"], ["c1", "c2"], use_pbar=False
+        )
+        == []
+    )
+
+    # Exact linear fit => constant residuals => ss_tot == 0 in breusch_pagan_test
+    x_mat = np.array([[1.0, 2.0], [2.0, 1.0], [3.0, 4.0], [4.0, 3.0], [5.0, 6.0]])
+    y_exact = 3.0 * x_mat[:, 0] - 2.0 * x_mat[:, 1] + 1.0
+    bp_stat, p_val, msg = rfeatsel.breusch_pagan_test(x_mat, y_exact)
+    assert bp_stat == 0.0
+    assert p_val == 1.0
+    assert "No significant" in msg
+
+
+def test_accuracy_binary_validation_and_constant_arrays():
+    """Validate binary values before uint8 cast and accept constant 0/1 arrays."""
+    with pytest.raises(rsgispy.RSGISPyException, match="binary"):
+        raccuracy.accuracy_scores_binary(np.array([0, 256, 257]), np.array([0, 1, 1]))
+    with pytest.raises(rsgispy.RSGISPyException, match="binary"):
+        raccuracy.accuracy_scores_binary(np.array([0.0, 0.5, 1.0]), np.array([0, 1, 1]))
+    with pytest.raises(rsgispy.RSGISPyException, match="binary"):
+        raccuracy.bin_accuracy_scores_prob(
+            np.array([0, 257, 256]), np.array([0.1, 0.8, 0.2])
+        )
+
+    metrics_z, vals_z = raccuracy.accuracy_scores_binary(
+        np.array([0, 0, 0, 0]), np.array([0, 0, 0, 0])
+    )
+    scores_all_zero = dict(zip(metrics_z, vals_z))
+    assert scores_all_zero["Accuracy"] == 1.0
+    assert scores_all_zero["Specificity"] == 1.0
+    assert np.all(np.isfinite(vals_z))
+
+    metrics_o, vals_o = raccuracy.accuracy_scores_binary(
+        np.array([1, 1, 1, 1]), np.array([1, 1, 1, 1])
+    )
+    scores_all_one = dict(zip(metrics_o, vals_o))
+    assert scores_all_one["Accuracy"] == 1.0
+    assert scores_all_one["F1 Score"] == 1.0
+    assert scores_all_one["Sensitivity"] == 1.0
+
+    y_true = np.array([1.0, 2.0, 3.0, 4.0])
+    y_pred = np.array([1.5, 1.5, 4.0, 3.0])
+    mse, bias_sq, var, noise = raccuracy.decompose_bias_variance(y_true, y_pred)
+    assert np.isclose(mse, bias_sq + var)
+    assert np.isclose(noise, 0.0)
+    with pytest.raises(rsgispy.RSGISPyException, match="dimensions"):
+        raccuracy.decompose_bias_variance(np.zeros((2, 2)), np.zeros((4,)))
+    with pytest.raises(rsgispy.RSGISPyException, match="size"):
+        raccuracy.decompose_bias_variance(np.zeros((2, 3)), np.zeros((3, 2)))

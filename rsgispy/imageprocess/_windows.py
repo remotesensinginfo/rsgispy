@@ -330,7 +330,11 @@ def process_blocks(
     ):
         res = block_func(block_vars)
         out_arr = cast_result_block(
-            res, int(out_win.height), int(out_win.width), out_np_dtype
+            res,
+            int(out_win.height),
+            int(out_win.width),
+            out_np_dtype,
+            nodata=dst.nodata,
         )
         if out_arr.ndim == 3:
             dst.write(out_arr, window=out_win)
@@ -353,7 +357,6 @@ def run_window_halo_blocks(
     pad_mode: str = "edge",
     fill_value: float = 0.0,
     out_no_data_val: Optional[float] = None,
-    clamp_int: bool = True,
     full_width_strips: bool = False,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
@@ -386,8 +389,6 @@ def run_window_halo_blocks(
     :param fill_value: Fill constant when ``pad_mode='constant'``
                        (Default = ``0.0``).
     :param out_no_data_val: Optional output no-data metadata value.
-    :param clamp_int: Clamp integer outputs to valid dtype bounds
-                      (Default = ``True``).
     :param full_width_strips: If ``True``, iterate in full-width horizontal strips
                               (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -456,7 +457,6 @@ def run_window_halo_blocks(
                     win_h,
                     win_w,
                     target_np_dtype,
-                    clamp_int=clamp_int,
                 )
                 if out_blk.ndim == 2:
                     dst.write(out_blk, 1, window=out_win)
@@ -480,7 +480,6 @@ def run_window_halo_blocks(
                             win_h,
                             win_w,
                             target_np_dtype,
-                            clamp_int=clamp_int,
                         ),
                         b_idx,
                         window=out_win,
@@ -501,7 +500,6 @@ def run_window_halo_blocks(
                     win_h,
                     win_w,
                     target_np_dtype,
-                    clamp_int=clamp_int,
                 )
                 if out_blk.ndim == 2:
                     dst.write(out_blk, 1, window=out_win)

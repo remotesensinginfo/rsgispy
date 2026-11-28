@@ -13,7 +13,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.classification.classcatboost as rccb
@@ -21,6 +20,8 @@ import rsgispy.classification.classdata as rcd
 import rsgispy.classification.classlightgbm as rclgb
 import rsgispy.classification.classxgboost as rcxgb
 import rsgispy.imageutils.colourtable as rct
+
+from conftest import write_raster
 
 _HAS_OPTUNA = importlib.util.find_spec("optuna") is not None
 
@@ -36,40 +37,6 @@ def _skip_if_gbdt_unavailable(pkg: str):
     if not _HAVE_CLS_GBDT.get(pkg, False):
         pytest.skip(f"{pkg} is not available or failed to load")
     return pytest.importorskip(pkg)
-
-
-def _write_raster(
-    path: Path,
-    arr: np.ndarray,
-    origin_x: float = 500000.0,
-    origin_y: float = 5600000.0,
-    pxl_size: float = 10.0,
-    crs: str = "EPSG:32630",
-    nodata: float = -999.0,
-) -> str:
-    """Write a 2D or 3D GeoTIFF raster for testing."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[None, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-        nodata=nodata,
-    ) as dst:
-        dst.write(write_arr)
-    return str(path)
 
 
 def _create_binary_fixture(tmp_path: Path):
@@ -92,10 +59,18 @@ def _create_binary_fixture(tmp_path: Path):
     w_end = w - 1
     mask[1:h_end, 1:w_end] = 1
 
-    feat_img = _write_raster(
-        tmp_path / "bin_feat.tif", np.stack([b1, b2]), nodata=-999.0
+    feat_img = write_raster(
+        tmp_path / "bin_feat.tif",
+        np.stack([b1, b2]),
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
     )
-    msk_img = _write_raster(tmp_path / "bin_mask.tif", mask, nodata=0.0)
+    msk_img = write_raster(
+        tmp_path / "bin_mask.tif",
+        mask,
+        origin=(500000.0, 5600000.0),
+        nodata=0.0,
+    )
 
     img_band_info = [
         rcd.ImageBandInfo(feat_img, name="S2", bands=[1, 2], band_names=["B1", "B2"])
@@ -152,10 +127,18 @@ def _create_multiclass_fixture(tmp_path: Path):
     w_end = w - 1
     mask[1:h_end, 1:w_end] = 1
 
-    feat_img = _write_raster(
-        tmp_path / "mc_feat.tif", np.stack([b1, b2]), nodata=-999.0
+    feat_img = write_raster(
+        tmp_path / "mc_feat.tif",
+        np.stack([b1, b2]),
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
     )
-    msk_img = _write_raster(tmp_path / "mc_mask.tif", mask, nodata=0.0)
+    msk_img = write_raster(
+        tmp_path / "mc_mask.tif",
+        mask,
+        origin=(500000.0, 5600000.0),
+        nodata=0.0,
+    )
 
     img_band_info = [
         rcd.ImageBandInfo(feat_img, name="S2", bands=[1, 2], band_names=["B1", "B2"])
@@ -816,8 +799,9 @@ def test_gbdt_gpu_fallback_and_validation(tmp_path: Path, monkeypatch, spec: dic
         assert saved_meta["gpu_used"] is False
 
 
-def test_gbdt_gpu_parameter_mapping_and_inference(tmp_path: Path, monkeypatch):
-    """Verify backend-specific GPU param mapping, prediction prep, and CV n_jobs=1."""
+def test_xgboost_gpu_param_mapping_and_predict_device_switching():
+    """XGBoost GPU params map to hist / cuda:N, and prediction switches the
+    estimator device and restores it afterwards."""
     # pylint: disable=protected-access
     # 1. XGBoost parameter mapping and inference device switching
     xgb_gpu_params = rcxgb._apply_xgb_gpu_params(
@@ -860,6 +844,10 @@ def test_gbdt_gpu_parameter_mapping_and_inference(tmp_path: Path, monkeypatch):
     cleanup_cpu()
     assert dummy_cuda_xgb.get_params()["device"] == "cuda:0"
 
+
+def test_lightgbm_gpu_param_mapping(monkeypatch):
+    """LightGBM GPU params map to the detected device; OpenCL clamps max_bin."""
+    # pylint: disable=protected-access
     # 2. LightGBM parameter mapping (OpenCL gpu clamps max_bin <= 255; cuda keeps 511)
     monkeypatch.setattr(rclgb, "_detect_lightgbm_gpu_device", lambda _dev=None: "gpu")
     lgb_opencl = rclgb._apply_lgb_gpu_params(
@@ -878,6 +866,10 @@ def test_gbdt_gpu_parameter_mapping_and_inference(tmp_path: Path, monkeypatch):
     assert lgb_cuda["gpu_device_id"] == 2
     assert lgb_cuda["max_bin"] == 511
 
+
+def test_catboost_gpu_param_mapping_and_predict_kwargs():
+    """CatBoost GPU params map to task_type GPU and prediction forwards task_type."""
+    # pylint: disable=protected-access
     # 3. CatBoost parameter mapping & predict_kwargs forwarding
     cb_gpu = rccb._apply_cb_gpu_params(
         {
@@ -905,86 +897,97 @@ def test_gbdt_gpu_parameter_mapping_and_inference(tmp_path: Path, monkeypatch):
     )
     assert cb_kw_off == {}
 
+
+@pytest.mark.skipif(
+    not (_HAS_OPTUNA and rcxgb.HAVE_XGBOOST), reason="optuna and xgboost required"
+)
+def test_xgboost_gpu_optuna_cv_uses_one_job(tmp_path: Path, monkeypatch):
+    """A mocked GPU Optuna search runs cross_val_score with n_jobs=1 on the GPU
+    device and records gpu_used=True."""
+    # pylint: disable=protected-access
     # 4. Verify mocked GPU Optuna CV uses n_jobs=1 on cross_val_score and records gpu_used=True
-    if _HAS_OPTUNA and rcxgb.HAVE_XGBOOST:
-        import rsgispy.classification._gbdt as _gbdt  # noqa: PLC0415
+    import rsgispy.classification._gbdt as _gbdt  # noqa: PLC0415
 
-        fix = _create_binary_fixture(tmp_path)
-        cv_n_jobs_seen = []
+    fix = _create_binary_fixture(tmp_path)
+    cv_n_jobs_seen = []
 
-        class _StubXGB:
-            def __init__(self, **params):
-                self.params = dict(params)
-                self._device = params.get("device", "cpu")
+    class _StubXGB:
+        def __init__(self, **params):
+            self.params = dict(params)
+            self._device = params.get("device", "cpu")
 
-            def get_params(self, deep=False):  # noqa: ARG002
-                return dict(self.params, device=self._device)
+        def get_params(self, deep=False):  # noqa: ARG002
+            return dict(self.params, device=self._device)
 
-            def set_params(self, **kwargs):
-                self.params.update(kwargs)
-                if "device" in kwargs:
-                    self._device = kwargs["device"]
-                return self
+        def set_params(self, **kwargs):
+            self.params.update(kwargs)
+            if "device" in kwargs:
+                self._device = kwargs["device"]
+            return self
 
-            def fit(self, x_arr, y_arr):  # noqa: ARG002
-                return self
+        def fit(self, x_arr, y_arr):  # noqa: ARG002
+            return self
 
-            def predict(self, x_arr):
-                return np.zeros(len(x_arr), dtype=np.int32)
+        def predict(self, x_arr):
+            return np.zeros(len(x_arr), dtype=np.int32)
 
-            def predict_proba(self, x_arr):
-                probs = np.full((len(x_arr), 2), 0.5, dtype=np.float32)
-                return probs
+        def predict_proba(self, x_arr):
+            probs = np.full((len(x_arr), 2), 0.5, dtype=np.float32)
+            return probs
 
-        def _fake_cv_score(est, x_arr, y_arr, cv=None, scoring=None, n_jobs=None):
-            # noqa: ARG001
-            cv_n_jobs_seen.append((n_jobs, est.get_params().get("device")))
-            return np.array([0.95, 0.95])
+    def _fake_cv_score(est, x_arr, y_arr, cv=None, scoring=None, n_jobs=None):
+        # noqa: ARG001
+        cv_n_jobs_seen.append((n_jobs, est.get_params().get("device")))
+        return np.array([0.95, 0.95])
 
-        mock_backend = GBDTBackendSpec = type(rcxgb._XGB_BACKEND)(
-            name=rcxgb._XGB_BACKEND.name,
-            package_name=rcxgb._XGB_BACKEND.package_name,
-            extra=rcxgb._XGB_BACKEND.extra,
-            is_available=lambda: True,
-            gpu_available=lambda _dev: True,
-            apply_gpu_params=rcxgb._apply_xgb_gpu_params,
-            seed_param=rcxgb._XGB_BACKEND.seed_param,
-            jobs_param=rcxgb._XGB_BACKEND.jobs_param,
-            default_binary_params=rcxgb._XGB_BACKEND.default_binary_params,
-            default_multiclass_params=rcxgb._XGB_BACKEND.default_multiclass_params,
-            default_binary_space=rcxgb._XGB_BACKEND.default_binary_space,
-            default_multiclass_space=rcxgb._XGB_BACKEND.default_multiclass_space,
-            extended_binary_space=rcxgb._XGB_BACKEND.extended_binary_space,
-            extended_multiclass_space=rcxgb._XGB_BACKEND.extended_multiclass_space,
-            build_estimator=lambda p, _base: _StubXGB(**p),
-            fit_estimator=lambda est, x_df, y_arr, *_rest: est.fit(x_df, y_arr),
-            load_model=rcxgb._XGB_BACKEND.load_model,
-            save_model=rcxgb._XGB_BACKEND.save_model,
-            prepare_predict_estimator=rcxgb._prepare_xgb_predict_estimator,
-            require_consecutive_zero_labels=True,
-        )
-        assert GBDTBackendSpec is not None
-        monkeypatch.setattr(rcxgb, "_XGB_BACKEND", mock_backend)
-        monkeypatch.setattr(
-            _gbdt.sklearn.model_selection, "cross_val_score", _fake_cv_score
-        )
-        _, opt_res = rcxgb.optimise_xgboost_binary_classifier(
-            cls_cfg=fix["cfg"],
-            train_data=fix["train_df"],
-            valid_data=None,
-            param_space=lambda _t: {"n_estimators": 5},
-            cv=2,
-            n_trials=2,
-            n_jobs=4,
-            rnd_seed=42,
-            use_gpu=True,
-            gpu_device_id=0,
-            return_results=True,
-        )
-        assert opt_res["use_gpu_requested"] is True
-        assert opt_res["gpu_used"] is True
-        assert cv_n_jobs_seen == [(1, "cuda:0"), (1, "cuda:0")]
+    mock_backend = GBDTBackendSpec = type(rcxgb._XGB_BACKEND)(
+        name=rcxgb._XGB_BACKEND.name,
+        package_name=rcxgb._XGB_BACKEND.package_name,
+        extra=rcxgb._XGB_BACKEND.extra,
+        is_available=lambda: True,
+        gpu_available=lambda _dev: True,
+        apply_gpu_params=rcxgb._apply_xgb_gpu_params,
+        seed_param=rcxgb._XGB_BACKEND.seed_param,
+        jobs_param=rcxgb._XGB_BACKEND.jobs_param,
+        default_binary_params=rcxgb._XGB_BACKEND.default_binary_params,
+        default_multiclass_params=rcxgb._XGB_BACKEND.default_multiclass_params,
+        default_binary_space=rcxgb._XGB_BACKEND.default_binary_space,
+        default_multiclass_space=rcxgb._XGB_BACKEND.default_multiclass_space,
+        extended_binary_space=rcxgb._XGB_BACKEND.extended_binary_space,
+        extended_multiclass_space=rcxgb._XGB_BACKEND.extended_multiclass_space,
+        build_estimator=lambda p, _base: _StubXGB(**p),
+        fit_estimator=lambda est, x_df, y_arr, *_rest: est.fit(x_df, y_arr),
+        load_model=rcxgb._XGB_BACKEND.load_model,
+        save_model=rcxgb._XGB_BACKEND.save_model,
+        prepare_predict_estimator=rcxgb._prepare_xgb_predict_estimator,
+        require_consecutive_zero_labels=True,
+    )
+    assert GBDTBackendSpec is not None
+    monkeypatch.setattr(rcxgb, "_XGB_BACKEND", mock_backend)
+    monkeypatch.setattr(
+        _gbdt.sklearn.model_selection, "cross_val_score", _fake_cv_score
+    )
+    _, opt_res = rcxgb.optimise_xgboost_binary_classifier(
+        cls_cfg=fix["cfg"],
+        train_data=fix["train_df"],
+        valid_data=None,
+        param_space=lambda _t: {"n_estimators": 5},
+        cv=2,
+        n_trials=2,
+        n_jobs=4,
+        rnd_seed=42,
+        use_gpu=True,
+        gpu_device_id=0,
+        return_results=True,
+    )
+    assert opt_res["use_gpu_requested"] is True
+    assert opt_res["gpu_used"] is True
+    assert cv_n_jobs_seen == [(1, "cuda:0"), (1, "cuda:0")]
 
+
+def test_cls_split_metrics_forwards_predict_kwargs(tmp_path: Path):
+    """calc_cls_split_metrics forwards predict_kwargs to predict and predict_proba."""
+    # pylint: disable=protected-access
     # 5. Verify CatBoost predict_kwargs forwarding in _cls_common and apply_gbdt_classifier
     import rsgispy.classification._cls_common as _cls_common  # noqa: PLC0415
 

@@ -16,7 +16,6 @@ import geopandas as gpd
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import Point
 
 import rsgispy
@@ -26,6 +25,8 @@ import rsgispy.classification.classsklearn as rcsk
 from rsgispy.imageprocess import MemorySink, RasterSource, SelectBands, TileGraph
 from rsgispy.ml import predict as mp
 from rsgispy.ml.stack import BandSpec, ImageFeatureStack
+
+from conftest import write_raster
 
 _ND = -9999.0
 
@@ -85,21 +86,7 @@ class _ProbaStub:
 
 
 def _write(path: Path, arr: np.ndarray, nodata=None, dtype=None) -> str:
-    arr = arr if arr.ndim == 3 else arr[np.newaxis]
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=arr.shape[2],
-        height=arr.shape[1],
-        count=arr.shape[0],
-        dtype=dtype or str(arr.dtype),
-        crs="EPSG:32630",
-        transform=from_origin(500000.0, 5600000.0, 10.0, 10.0),
-        nodata=nodata,
-    ) as dst:
-        dst.write(arr.astype(dtype or arr.dtype))
-    return str(path)
+    return write_raster(path, arr, dtype=dtype, nodata=nodata, origin=(500000.0, 5600000.0))
 
 
 def _read1(path):

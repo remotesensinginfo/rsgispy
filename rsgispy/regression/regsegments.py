@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 import rsgispy
+from rsgispy.tools._gbdt_common import get_gbdt_backend
 from rsgispy.ml.segments import (
     SegmentFeatureConfig,
     assign_vectors_to_segments,
@@ -354,7 +355,12 @@ def apply_sklearn_regressor_segments(
                           predictions of a univariate tree ensemble (e.g.
                           ``RandomForestRegressor``), written as
                           ``pred_<target>_q<quantile>`` columns.
-    :param kwargs: Further options: ``seg_info``, ``in_vec_file``,
+    :param kwargs: Further options: ``out_uncert_method`` (``'std'``,
+                   ``'iqr'`` or ``'cv'``: add ``pred_<target>_<method>``
+                   uncertainty columns from the spread of the ensemble
+                   members, as ``out_uncert_img`` of
+                   :func:`~rsgispy.regression.regsklearn.apply_sklearn_regressor`;
+                   Default = ``None``), ``seg_info``, ``in_vec_file``,
                    ``copy_cols`` (Default = all input columns; ``[]`` = ID
                    only), ``out_prefix`` (Default = ``'pred_'``),
                    ``out_no_data_val``, ``missing``, ``fill_value``,
@@ -396,16 +402,7 @@ def _make_gbdt_apply(backend_name: str, label: str) -> Any:
         gpu_device_id: Optional[int] = None,
         **kwargs: Any,
     ) -> None:
-        # pylint: disable=import-outside-toplevel,protected-access
-        import importlib
-
-        mod = importlib.import_module(f"rsgispy.regression.reg{backend_name}")
-        backend = getattr(
-            mod,
-            {"xgboost": "_XGB_REG_BACKEND", "lightgbm": "_LGB_REG_BACKEND"}.get(
-                backend_name, "_CB_REG_BACKEND"
-            ),
-        )
+        backend = get_gbdt_backend("regression", backend_name)
         apply_gbdt_regressor_segments(
             backend, func_name, reg_cfg, regressor, out_vec_file,
             use_gpu=use_gpu, gpu_device_id=gpu_device_id, **kwargs,

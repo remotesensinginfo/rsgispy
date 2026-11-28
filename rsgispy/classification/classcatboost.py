@@ -25,6 +25,8 @@ from rsgispy.classification._gbdt import (
 from rsgispy.classification._helpers import ClsConfigInput, SamplesInput
 from rsgispy.classification.classdata import ImageBandInfo
 from rsgispy.tools._gbdt_common import (
+    register_gbdt_backend,
+    forward_gbdt_call,
     apply_cb_gpu_params as _apply_cb_gpu_params,
     fit_cb_estimator as _fit_cb_estimator,
     get_catboost_optuna_param_space as _tools_get_catboost_optuna_param_space,
@@ -220,28 +222,32 @@ def load_catboost_classifier(
     )
 
 
-_CB_BACKEND = GBDTBackendSpec(
-    name="CatBoost",
-    package_name="catboost",
-    extra="catboost",
-    is_available=lambda: HAVE_CATBOOST,
-    gpu_available=is_catboost_gpu_available,
-    apply_gpu_params=_apply_cb_gpu_params,
-    seed_param="random_seed",
-    jobs_param="thread_count",
-    default_binary_params=_default_cb_binary_params,
-    default_multiclass_params=_default_cb_multiclass_params,
-    default_binary_space=lambda: get_catboost_optuna_param_space(extended=False),
-    default_multiclass_space=lambda: get_catboost_optuna_param_space(extended=False),
-    extended_binary_space=lambda: get_catboost_optuna_param_space(extended=True),
-    extended_multiclass_space=lambda: get_catboost_optuna_param_space(extended=True),
-    build_estimator=_build_cb_estimator,
-    fit_estimator=_fit_cb_estimator,
-    load_model=load_catboost_classifier,
-    save_model=save_catboost_classifier,
-    prepare_predict_estimator=_prepare_cb_predict_estimator,
-    require_consecutive_zero_labels=False,
-    get_error_detail=lambda: _CATBOOST_LOAD_ERROR,
+_CB_BACKEND = register_gbdt_backend(
+    "classification",
+    "catboost",
+    GBDTBackendSpec(
+        name="CatBoost",
+        package_name="catboost",
+        extra="catboost",
+        is_available=lambda: HAVE_CATBOOST,
+        gpu_available=is_catboost_gpu_available,
+        apply_gpu_params=_apply_cb_gpu_params,
+        seed_param="random_seed",
+        jobs_param="thread_count",
+        default_binary_params=_default_cb_binary_params,
+        default_multiclass_params=_default_cb_multiclass_params,
+        default_binary_space=lambda: get_catboost_optuna_param_space(extended=False),
+        default_multiclass_space=lambda: get_catboost_optuna_param_space(extended=False),
+        extended_binary_space=lambda: get_catboost_optuna_param_space(extended=True),
+        extended_multiclass_space=lambda: get_catboost_optuna_param_space(extended=True),
+        build_estimator=_build_cb_estimator,
+        fit_estimator=_fit_cb_estimator,
+        load_model=load_catboost_classifier,
+        save_model=save_catboost_classifier,
+        prepare_predict_estimator=_prepare_cb_predict_estimator,
+        require_consecutive_zero_labels=False,
+        get_error_detail=lambda: _CATBOOST_LOAD_ERROR,
+    ),
 )
 
 
@@ -310,6 +316,8 @@ def optimise_catboost_binary_classifier(
     :param n_trials: Number of Optuna trials (Default = ``50``).
     :param timeout: Optional Optuna time budget in seconds.
     :param direction: Optuna direction (``'maximize'`` or ``'minimize'``).
+                      Named scikit-learn scorers are greater-is-better, so
+                      ``'minimize'`` is only valid with a callable ``scoring``.
     :param early_stopping_rounds: Optional early stopping rounds on ``valid_data``.
     :param n_jobs: Number of parallel threads/workers (mapped to ``thread_count``).
     :param rnd_seed: Optional random seed.
@@ -348,38 +356,13 @@ def optimise_catboost_binary_classifier(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    return optimise_gbdt_classifier(
-        backend=_CB_BACKEND,
-        func_name="optimise_catboost_binary_classifier",
-        cls_cfg=cls_cfg,
-        train_data=train_data,
+    return forward_gbdt_call(
+        optimise_gbdt_classifier,
+        _CB_BACKEND,
+        "optimise_catboost_binary_classifier",
+        locals(),
+        rename={"cb_classifier": "classifier"},
         binary=True,
-        valid_data=valid_data,
-        param_space=param_space,
-        extended_param_space=extended_param_space,
-        fixed_params=fixed_params,
-        classifier=cb_classifier,
-        scoring=scoring,
-        cv=cv,
-        n_trials=n_trials,
-        timeout=timeout,
-        direction=direction,
-        early_stopping_rounds=early_stopping_rounds,
-        n_jobs=n_jobs,
-        rnd_seed=rnd_seed,
-        feature_cols=feature_cols,
-        use_internal_id=use_internal_id,
-        refit=refit,
-        out_id_col=out_id_col,
-        internal_id_col=internal_id_col,
-        out_results_file=out_results_file,
-        out_params_json=out_params_json,
-        out_model_file=out_model_file,
-        return_results=return_results,
-        verbose=verbose,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
-        use_pbar=use_pbar,
     )
 
 
@@ -440,6 +423,8 @@ def optimise_catboost_multiclass_classifier(
     :param n_trials: Number of Optuna trials (Default = ``50``).
     :param timeout: Optional Optuna time budget in seconds.
     :param direction: Optuna direction (``'maximize'`` or ``'minimize'``).
+                      Named scikit-learn scorers are greater-is-better, so
+                      ``'minimize'`` is only valid with a callable ``scoring``.
     :param early_stopping_rounds: Optional early stopping rounds on ``valid_data``.
     :param n_jobs: Number of parallel threads/workers (mapped to ``thread_count``).
     :param rnd_seed: Optional random seed.
@@ -476,38 +461,13 @@ def optimise_catboost_multiclass_classifier(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    return optimise_gbdt_classifier(
-        backend=_CB_BACKEND,
-        func_name="optimise_catboost_multiclass_classifier",
-        cls_cfg=cls_cfg,
-        train_data=train_data,
+    return forward_gbdt_call(
+        optimise_gbdt_classifier,
+        _CB_BACKEND,
+        "optimise_catboost_multiclass_classifier",
+        locals(),
+        rename={"cb_classifier": "classifier"},
         binary=False,
-        valid_data=valid_data,
-        param_space=param_space,
-        extended_param_space=extended_param_space,
-        fixed_params=fixed_params,
-        classifier=cb_classifier,
-        scoring=scoring,
-        cv=cv,
-        n_trials=n_trials,
-        timeout=timeout,
-        direction=direction,
-        early_stopping_rounds=early_stopping_rounds,
-        n_jobs=n_jobs,
-        rnd_seed=rnd_seed,
-        feature_cols=feature_cols,
-        use_internal_id=use_internal_id,
-        refit=refit,
-        out_id_col=out_id_col,
-        internal_id_col=internal_id_col,
-        out_results_file=out_results_file,
-        out_params_json=out_params_json,
-        out_model_file=out_model_file,
-        return_results=return_results,
-        verbose=verbose,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
-        use_pbar=use_pbar,
     )
 
 
@@ -574,29 +534,13 @@ def train_catboost_binary_classifier(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    return train_gbdt_classifier(
-        backend=_CB_BACKEND,
-        func_name="train_catboost_binary_classifier",
-        cls_cfg=cls_cfg,
-        train_data=train_data,
+    return forward_gbdt_call(
+        train_gbdt_classifier,
+        _CB_BACKEND,
+        "train_catboost_binary_classifier",
+        locals(),
+        rename={"cb_classifier": "classifier"},
         binary=True,
-        test_data=test_data,
-        valid_data=valid_data,
-        classifier=cb_classifier,
-        model_params=model_params,
-        early_stopping_rounds=early_stopping_rounds,
-        feature_cols=feature_cols,
-        use_internal_id=use_internal_id,
-        rnd_seed=rnd_seed,
-        n_jobs=n_jobs,
-        out_id_col=out_id_col,
-        internal_id_col=internal_id_col,
-        out_model_file=out_model_file,
-        out_metrics_file=out_metrics_file,
-        return_model=return_model,
-        verbose=verbose,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
     )
 
 
@@ -663,29 +607,13 @@ def train_catboost_multiclass_classifier(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    return train_gbdt_classifier(
-        backend=_CB_BACKEND,
-        func_name="train_catboost_multiclass_classifier",
-        cls_cfg=cls_cfg,
-        train_data=train_data,
+    return forward_gbdt_call(
+        train_gbdt_classifier,
+        _CB_BACKEND,
+        "train_catboost_multiclass_classifier",
+        locals(),
+        rename={"cb_classifier": "classifier"},
         binary=False,
-        test_data=test_data,
-        valid_data=valid_data,
-        classifier=cb_classifier,
-        model_params=model_params,
-        early_stopping_rounds=early_stopping_rounds,
-        feature_cols=feature_cols,
-        use_internal_id=use_internal_id,
-        rnd_seed=rnd_seed,
-        n_jobs=n_jobs,
-        out_id_col=out_id_col,
-        internal_id_col=internal_id_col,
-        out_model_file=out_model_file,
-        out_metrics_file=out_metrics_file,
-        return_model=return_model,
-        verbose=verbose,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
     )
 
 
@@ -783,36 +711,14 @@ def apply_catboost_binary_classifier(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    apply_gbdt_classifier(
-        backend=_CB_BACKEND,
-        func_name="apply_catboost_binary_classifier",
-        cls_cfg=cls_cfg,
-        classifier=cb_classifier,
-        in_msk_img=in_msk_img,
-        img_msk_val=img_msk_val,
+    forward_gbdt_call(
+        apply_gbdt_classifier,
+        _CB_BACKEND,
+        "apply_catboost_binary_classifier",
+        locals(),
+        rename={"cb_classifier": "classifier"},
         binary=True,
-        output_img=output_img,
-        out_score_img=out_score_img,
-        img_band_info=img_band_info,
-        gdalformat=gdalformat,
-        datatype=datatype,
-        out_no_data_val=out_no_data_val,
-        class_clr_names=class_clr_names,
-        use_internal_id=use_internal_id,
-        recode_to_out_ids=recode_to_out_ids,
         score_max_only=False,
-        score_no_data_val=score_no_data_val,
-        calc_stats=calc_stats,
-        block_size=block_size,
-        creation_opts=creation_opts,
-        use_pbar=use_pbar,
-        pos_class=pos_class,
-        pred_threshold=pred_threshold,
-        score_all_classes=score_all_classes,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
-        out_conf_img=out_conf_img,
-        conf_method=conf_method,
     )
 
 
@@ -902,31 +808,11 @@ def apply_catboost_multiclass_classifier(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    apply_gbdt_classifier(
-        backend=_CB_BACKEND,
-        func_name="apply_catboost_multiclass_classifier",
-        cls_cfg=cls_cfg,
-        classifier=cb_classifier,
-        in_msk_img=in_msk_img,
-        img_msk_val=img_msk_val,
+    forward_gbdt_call(
+        apply_gbdt_classifier,
+        _CB_BACKEND,
+        "apply_catboost_multiclass_classifier",
+        locals(),
+        rename={"cb_classifier": "classifier"},
         binary=False,
-        output_img=output_img,
-        out_score_img=out_score_img,
-        img_band_info=img_band_info,
-        gdalformat=gdalformat,
-        datatype=datatype,
-        out_no_data_val=out_no_data_val,
-        class_clr_names=class_clr_names,
-        use_internal_id=use_internal_id,
-        recode_to_out_ids=recode_to_out_ids,
-        score_max_only=score_max_only,
-        score_no_data_val=score_no_data_val,
-        calc_stats=calc_stats,
-        block_size=block_size,
-        creation_opts=creation_opts,
-        use_pbar=use_pbar,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
-        out_conf_img=out_conf_img,
-        conf_method=conf_method,
     )

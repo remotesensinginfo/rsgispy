@@ -9,7 +9,6 @@ validate their parameters like the file functions.
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imagefilter.chained as if_chained
@@ -25,24 +24,10 @@ from rsgispy.imageprocess import (
     TileGraph,
 )
 
+from conftest import write_raster
 
-def _write(path, arr, nodata=None, names=None):
-    profile = {
-        "driver": "GTiff",
-        "height": arr.shape[1],
-        "width": arr.shape[2],
-        "count": arr.shape[0],
-        "dtype": str(arr.dtype),
-        "crs": "EPSG:32630",
-        "transform": from_origin(500000.0, 5000000.0, 10.0, 10.0),
-        "nodata": nodata,
-    }
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(arr)
-        if names:
-            for idx, name in enumerate(names, start=1):
-                dst.set_band_description(idx, name)
-    return str(path)
+# Top-left corner of the synthetic inputs.
+ORIGIN = (500000.0, 5000000.0)
 
 
 def _read(path):
@@ -65,9 +50,9 @@ def inputs(tmp_path_factory):
     nan[0, 20, 0] = np.nan
     nan[0, 3:5, 30:33] = np.nan
     return {
-        "nodata": (_write(tmp / "nd.tif", nd, nodata=-9999.0, names=["vv", "vh"]),
-                   -9999.0),
-        "none": (_write(tmp / "nan.tif", nan), None),
+        "nodata": (write_raster(tmp / "nd.tif", nd, nodata=-9999.0, band_names=["vv", "vh"],
+                                origin=ORIGIN), -9999.0),
+        "none": (write_raster(tmp / "nan.tif", nan, origin=ORIGIN), None),
     }
 
 
@@ -265,3 +250,90 @@ def test_new_builders_validate_like_file_functions():
     assert if_tex.glcm_filter_node(src, min_val=0, max_val=1).name == "glcm_filter"
     assert if_stats.median_filter_node(src).halo_radius == (1, 1)
     assert if_sar.refined_lee_filter_node(src, 9).halo_radius == (4, 4)
+
+
+def test_kernel_filter_node_convolves_and_correlation_node_correlates():
+    """kernel_filter_node is a true convolution and
+    kernel_correlation_filter_node a correlation, as are their FilterStep
+    kinds ('kernel' and 'kernel_correlation')."""
+    import rsgispy.imagefilter.smooth as if_smooth  # pylint: disable=import-outside-toplevel
+
+    arr = np.arange(1, 64, dtype=np.float64).reshape(1, 7, 9)
+    shift = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    src = ArraySource(arr)
+    conv = if_smooth.kernel_filter_node(src, shift)
+    corr = if_smooth.kernel_correlation_filter_node(src, shift)
+    step_conv = if_chained.build_filter_chain_node(
+        src, [if_chained.FilterStep("kernel", params={"kernel": shift})]
+    )
+    step_corr = if_chained.build_filter_chain_node(
+        src, [if_chained.FilterStep("kernel_correlation", params={"kernel": shift})]
+    )
+    res = TileGraph(
+        [
+            MemorySink(conv, name="conv"),
+            MemorySink(corr, name="corr"),
+            MemorySink(step_conv, name="step_conv"),
+            MemorySink(step_corr, name="step_corr"),
+        ],
+        block_size=4,
+    ).run(use_pbar=False)
+    img = arr[0]
+    # Convolution: out[r, c] = in[r - 1, c - 1]; correlation: in[r + 1, c + 1].
+    np.testing.assert_array_equal(res["conv"][0, 1:, 1:], img[:-1, :-1])
+    np.testing.assert_array_equal(res["corr"][0, :-1, :-1], img[1:, 1:])
+    np.testing.assert_array_equal(res["step_conv"], res["conv"])
+    np.testing.assert_array_equal(res["step_corr"], res["corr"])
+
+
+@pytest.mark.parametrize("mode", ["edge", "reflect", "symmetric", "constant"])
+def test_filter_nodes_border_mode(mode, tmp_path):
+    """Node builders take border_mode / border_fill: the result does not
+    depend on the block size and equals the file-based function."""
+    from numpy.lib.stride_tricks import sliding_window_view  # pylint: disable=import-outside-toplevel
+
+    rng = np.random.default_rng(11)
+    arr = rng.normal(10.0, 2.0, size=(1, 11, 13))
+    fill = 4.0 if mode == "constant" else 0.0
+    kwargs = {"constant_values": fill} if mode == "constant" else {}
+    ref = np.median(
+        sliding_window_view(np.pad(arr[0], 2, mode=mode, **kwargs), (5, 5)),
+        axis=(-2, -1),
+    )
+    for block in (4, 16):
+        node = if_stats.median_filter_node(
+            ArraySource(arr), 5, border_mode=mode, border_fill=fill
+        )
+        res = TileGraph(MemorySink(node, name="m"), block_size=block).run(use_pbar=False)
+        np.testing.assert_allclose(res["m"][0], ref, rtol=1e-12)
+
+    # GLCM node == file function, and the border changes only the edge pixels.
+    in_p = write_raster(tmp_path / "glcm_in.tif", arr.astype(np.float32), origin=ORIGIN)
+    glcm_kw = {"properties": ["contrast"], "filter_size": 5, "min_val": 0.0,
+               "max_val": 20.0, "n_levels": 8}
+    if_tex.apply_glcm_filter(in_p, str(tmp_path / "g.tif"), **glcm_kw,
+                             border_mode=mode, border_fill=fill, use_pbar=False,
+                             datatype=rsgispy.TYPE_64FLOAT)
+    node = if_tex.glcm_filter_node(RasterSource(in_p), **glcm_kw,
+                                   border_mode=mode, border_fill=fill)
+    edge_node = if_tex.glcm_filter_node(RasterSource(in_p), **glcm_kw)
+    res = TileGraph(
+        [MemorySink(node, name="g"), MemorySink(edge_node, name="e")], block_size=5
+    ).run(use_pbar=False)
+    file_out, _, _ = _read(str(tmp_path / "g.tif"))
+    np.testing.assert_array_equal(res["g"], file_out)
+    np.testing.assert_array_equal(res["g"][:, 2:-2, 2:-2], res["e"][:, 2:-2, 2:-2])
+    if mode in ("reflect", "constant"):
+        assert not np.array_equal(res["g"], res["e"])
+
+
+def test_filter_nodes_border_mode_validation():
+    """An unsupported border_mode raises when the node is built."""
+    src = ArraySource(np.ones((1, 5, 5)))
+    with pytest.raises(rsgispy.RSGISPyException):
+        if_stats.mean_filter_node(src, border_mode="wrap")
+    with pytest.raises(rsgispy.RSGISPyException):
+        if_tex.glcm_filter_node(src, min_val=0, max_val=1, border_mode="nearest")
+    assert if_edge.sobel_filter_node(src, border_mode="reflect").border.mode == "reflect"
+    node = if_sar.lee_filter_node(src, border_mode="constant", border_fill=-1.0)
+    assert (node.border.mode, node.border.fill_value) == ("constant", -1.0)

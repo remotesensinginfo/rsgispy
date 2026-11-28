@@ -206,7 +206,8 @@ comes from :func:`~rsgispy.elevation.terrain.slope` on the resampled DEM.
 make sure they line up; check that the mangrove masks only contain 0 and 1
 (e.g. with :func:`~rsgispy.imagecalc.stats.get_unique_values`), and that the
 DEM values in the intertidal zone are plausible (a few metres either side of
-0 m). The index image has the no data value ``-999``.
+0 m). The index image has the no data value ``-9999`` (the ``calc_indices``
+default for ``float32``).
 
 Step 2 — Constraints
 --------------------
@@ -463,7 +464,8 @@ Decision makers usually need areas per administrative unit, estuary or
 catchment rather than a map.
 :func:`~rsgispy.zonalstats.polygon.calc_zonal_band_pxl_counts` counts the
 pixels of each class in each polygon (columns named after the
-``vals_lut`` values, plus the total ``n_pxls``), which are converted to
+``vals_lut`` values, plus the total of valid pixels ``n_pxls`` and the
+number of no-data pixels ``nodata_count``), which are converted to
 hectares with the pixel area. :func:`~rsgispy.zonalstats.polygon.calc_zonal_band_stats`
 adds the mean and maximum score of the non-excluded pixels in each unit;
 ``min_thres=1`` and ``max_thres=100`` leave out the excluded pixels (0) and
@@ -598,10 +600,12 @@ Other functions include ``abs``, ``sqrt``, ``exp``, ``rint`` (round to the
 nearest integer), ``sum(...)`` and ``avg(...)``, and the constants ``pi`` and
 ``e``.
 
-**Integer outputs.** Values are truncated (not rounded) when written to an
-integer data type, NaN becomes 0, and values outside the type's range are
-not clipped. Round and clamp explicitly, e.g.
-``min(100, max(0, rint(100 * s)))`` for an 8-bit percentage.
+**Integer outputs.** Values written to an integer data type are rounded to
+the nearest integer and clamped to the type's range (``300`` written as
+``uint8`` becomes ``255`` and ``-2`` becomes ``0``; nothing wraps around), and
+NaN becomes the output no-data value (``0`` when there is none). To clamp to a
+narrower range, do it in the expression, e.g.
+``min(100, max(0, 100 * s))`` for an 8-bit percentage.
 
 **Multiple outputs and intermediate variables.** Top-level commas separate
 output bands (commas inside function calls do not). An assignment at the top

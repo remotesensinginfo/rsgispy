@@ -1,10 +1,16 @@
 """
 The tools.thresholding module provides histogram- and distribution-based
 automatic thresholding utilities.
+
+.. versionchanged:: 0.5.0
+   :func:`calc_otsu_threshold`, :func:`calc_yen_threshold`,
+   :func:`calc_isodata_threshold` and :func:`calc_hist_cross_entropy` take a
+   ``bins`` argument and default to 256 histogram bins (previously the
+   Freedman-Diaconis rule, still available with ``bins='fd'``).
 """
 
 import sys
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Tuple, Union
 
 import numpy as np
 
@@ -31,11 +37,50 @@ __all__ = [
 ]
 
 
+def _finite_1d(data: np.ndarray) -> np.ndarray:
+    """
+    Flatten ``data`` to 1-D ``float64`` and drop non-finite values, raising
+    :class:`rsgispy.RSGISPyException` when none are left.
+    """
+    flat = np.asarray(data, dtype=np.float64).ravel()
+    flat = flat[np.isfinite(flat)]
+    if flat.size == 0:
+        raise rsgispy.RSGISPyException("Input data contains no finite values.")
+    return flat
+
+
+#: Default number of histogram bins for the histogram-based thresholds
+#: (as in scikit-image).
+DEFAULT_N_BINS = 256
+
+
+def _resolve_bins(data: np.ndarray, bins: Union[int, str]) -> int:
+    """
+    Return the number of histogram bins for ``data``: ``bins`` itself when it
+    is an integer ``>= 2``, or the Freedman-Diaconis count when it is
+    ``'fd'``.
+    """
+    if isinstance(bins, str):
+        if bins.lower() == "fd":
+            return get_nbins_histogram(data)[0]
+        raise rsgispy.RSGISPyException(
+            f"bins must be an integer >= 2 or 'fd' (got '{bins}')."
+        )
+    if isinstance(bins, (bool, np.bool_)) or not isinstance(bins, (int, np.integer)):
+        raise rsgispy.RSGISPyException(
+            f"bins must be an integer >= 2 or 'fd' (got {bins!r})."
+        )
+    if bins < 2:
+        raise rsgispy.RSGISPyException(f"bins must be >= 2 (got {bins}).")
+    return int(bins)
+
+
 def get_nbins_histogram(data: np.ndarray) -> Tuple[int, float]:
     """
     Calculate the Freedman-Diaconis number of histogram bins and bin width.
 
-    :param data: 1D numeric NumPy array.
+    :param data: Numeric NumPy array (flattened; non-finite values are
+                 ignored).
     :return: ``(n_bins, bin_width)`` tuple.
 
     .. code:: python
@@ -45,6 +90,7 @@ def get_nbins_histogram(data: np.ndarray) -> Tuple[int, float]:
         data = np.random.normal(0.0, 1.0, 500)
         n_bins, bin_width = rsgispy.tools.thresholding.get_nbins_histogram(data)
     """
+    data = _finite_1d(data)
     n_pts = data.shape[0]
     lower_q = np.percentile(data, 25)
     upper_q = np.percentile(data, 75)
@@ -84,11 +130,17 @@ def get_bin_centres(
     return (bin_edges[1:] + bin_edges[:-1]) / 2.0
 
 
-def calc_otsu_threshold(data: np.ndarray) -> float:
+def calc_otsu_threshold(
+    data: np.ndarray, bins: Union[int, str] = DEFAULT_N_BINS
+) -> float:
     """
     Calculate Otsu's threshold for a 1D numeric NumPy array.
 
-    :param data: 1D numeric NumPy array.
+    :param data: Numeric NumPy array (flattened; non-finite values are
+                 ignored).
+    :param bins: Number of histogram bins (an integer ``>= 2``), or
+                 ``'fd'`` for the Freedman-Diaconis rule
+                 (:func:`get_nbins_histogram`). Default = ``256``.
     :return: Computed Otsu threshold value.
 
     .. code:: python
@@ -98,7 +150,8 @@ def calc_otsu_threshold(data: np.ndarray) -> float:
         data = np.concatenate([np.random.normal(2, 0.5, 200), np.random.normal(6, 0.5, 200)])
         thres = rsgispy.tools.thresholding.calc_otsu_threshold(data)
     """
-    n_bins, _ = get_nbins_histogram(data)
+    data = _finite_1d(data)
+    n_bins = _resolve_bins(data, bins)
     hist, bin_edges = np.histogram(data, bins=n_bins)
     bin_centres = get_bin_centres(bin_edges)
 
@@ -117,11 +170,17 @@ def calc_otsu_threshold(data: np.ndarray) -> float:
     return float(bin_centres[int(np.argmax(variance12))])
 
 
-def calc_yen_threshold(data: np.ndarray) -> float:
+def calc_yen_threshold(
+    data: np.ndarray, bins: Union[int, str] = DEFAULT_N_BINS
+) -> float:
     """
     Calculate Yen's multilevel threshold for a 1D numeric NumPy array.
 
-    :param data: 1D numeric NumPy array.
+    :param data: Numeric NumPy array (flattened; non-finite values are
+                 ignored).
+    :param bins: Number of histogram bins (an integer ``>= 2``), or
+                 ``'fd'`` for the Freedman-Diaconis rule
+                 (:func:`get_nbins_histogram`). Default = ``256``.
     :return: Computed Yen threshold value.
 
     .. code:: python
@@ -131,7 +190,8 @@ def calc_yen_threshold(data: np.ndarray) -> float:
         data = np.concatenate([np.random.normal(2, 0.5, 200), np.random.normal(6, 0.5, 200)])
         thres = rsgispy.tools.thresholding.calc_yen_threshold(data)
     """
-    n_bins, _ = get_nbins_histogram(data)
+    data = _finite_1d(data)
+    n_bins = _resolve_bins(data, bins)
     hist, bin_edges = np.histogram(data, bins=n_bins)
     bin_centres = get_bin_centres(bin_edges)
 
@@ -146,12 +206,18 @@ def calc_yen_threshold(data: np.ndarray) -> float:
     return float(bin_centres[int(crit.argmax())])
 
 
-def calc_isodata_threshold(data: np.ndarray) -> float:
+def calc_isodata_threshold(
+    data: np.ndarray, bins: Union[int, str] = DEFAULT_N_BINS
+) -> float:
     """
     Calculate the ISODATA (Ridler-Calvard) inter-means threshold for a 1D
     numeric NumPy array.
 
-    :param data: 1D numeric NumPy array.
+    :param data: Numeric NumPy array (flattened; non-finite values are
+                 ignored).
+    :param bins: Number of histogram bins (an integer ``>= 2``), or
+                 ``'fd'`` for the Freedman-Diaconis rule
+                 (:func:`get_nbins_histogram`). Default = ``256``.
     :return: Computed ISODATA threshold value.
 
     .. code:: python
@@ -161,7 +227,8 @@ def calc_isodata_threshold(data: np.ndarray) -> float:
         data = np.concatenate([np.random.normal(2, 0.5, 200), np.random.normal(6, 0.5, 200)])
         thres = rsgispy.tools.thresholding.calc_isodata_threshold(data)
     """
-    n_bins, _ = get_nbins_histogram(data)
+    data = _finite_1d(data)
+    n_bins = _resolve_bins(data, bins)
     hist, bin_edges = np.histogram(data, bins=n_bins)
     bin_centres = get_bin_centres(bin_edges)
 
@@ -183,13 +250,21 @@ def calc_isodata_threshold(data: np.ndarray) -> float:
     return float(thresholds[0])
 
 
-def calc_hist_cross_entropy(data: np.ndarray, threshold: float) -> float:
+def calc_hist_cross_entropy(
+    data: np.ndarray,
+    threshold: float,
+    bins: Union[int, str] = DEFAULT_N_BINS,
+) -> float:
     """
     Compute cross-entropy between histogram distributions above and below
     ``threshold``.
 
-    :param data: 1D numeric NumPy array.
+    :param data: Numeric NumPy array (flattened; non-finite values are
+                 ignored).
     :param threshold: Threshold splitting the histogram into two classes.
+    :param bins: Number of histogram bins (an integer ``>= 2``), or
+                 ``'fd'`` for the Freedman-Diaconis rule
+                 (:func:`get_nbins_histogram`). Default = ``256``.
     :return: Cross-entropy objective value.
 
     .. code:: python
@@ -199,7 +274,8 @@ def calc_hist_cross_entropy(data: np.ndarray, threshold: float) -> float:
         data = np.concatenate([np.random.normal(2, 0.5, 200), np.random.normal(6, 0.5, 200)])
         ce = rsgispy.tools.thresholding.calc_hist_cross_entropy(data, threshold=4.0)
     """
-    n_bins, _ = get_nbins_histogram(data)
+    data = _finite_1d(data)
+    n_bins = _resolve_bins(data, bins)
     histogram, bin_edges = np.histogram(data, bins=n_bins, density=True)
     bin_centres = get_bin_centres(bin_edges)
 
@@ -236,7 +312,8 @@ def calc_li_threshold(
     """
     Calculate threshold using Li's iterative Minimum Cross Entropy method.
 
-    :param data: 1D numeric NumPy array.
+    :param data: Numeric NumPy array (flattened; non-finite values are
+                 ignored).
     :param tolerance: Convergence tolerance (defaults to half the smallest step
                       between unique sorted data values). Must be ``> 0`` if
                       provided.
@@ -260,10 +337,7 @@ def calc_li_threshold(
             f"max_iter must be a positive integer (got {max_iter})."
         )
 
-    finite_data = np.asarray(data, dtype=np.float64)
-    finite_data = finite_data[np.isfinite(finite_data)]
-    if finite_data.size == 0:
-        raise rsgispy.RSGISPyException("Input data contains no finite values.")
+    finite_data = _finite_1d(data)
 
     unique_vals = np.unique(finite_data)
     if unique_vals.size == 1:
@@ -320,7 +394,8 @@ def calc_kurt_skew_threshold(
     Optimise a distribution tail threshold by minimising kurtosis (and skewness)
     via dual annealing.
 
-    :param data: 1D numeric NumPy array.
+    :param data: Numeric NumPy array (flattened; non-finite values are
+                 ignored).
     :param max_val: Upper bound for the threshold search.
     :param min_val: Lower bound for the threshold search.
     :param init_thres: Initial threshold guess.

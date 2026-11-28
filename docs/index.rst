@@ -248,6 +248,12 @@ Package Overview
 * :doc:`rsgispy_zonalstats` — Polygon and point zonal statistics extraction.
 
 .. toctree::
+   :maxdepth: 1
+   :caption: Release Notes
+
+   release_notes
+
+.. toctree::
    :maxdepth: 2
    :caption: Tutorials
 

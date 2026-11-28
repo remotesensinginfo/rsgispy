@@ -1,6 +1,6 @@
 # Vector Operations & Zonal Statistics
 
-Covers `rsgispy.vectorprocess`, `rsgispy.vector.{io,create,geoms,attrs,stats,selection}`, and `rsgispy.zonalstats.{polygon,point,labels}` in `rsgispy` v0.4.1.
+Covers `rsgispy.vectorprocess`, `rsgispy.vector.{io,create,geoms,attrs,stats,selection}`, and `rsgispy.zonalstats.{polygon,point,labels}` in `rsgispy` v0.5.0.
 
 > **Dual Path / `GeoDataFrame` API**: Almost every vector and zonalstats function accepts `str | os.PathLike | geopandas.GeoDataFrame`. Pass `out_vec_file=None` to return an in-memory `GeoDataFrame` instead of writing to disk. GeoParquet (`.parquet` / `.geoparquet`) is supported directly via `out_compress` (`'snappy'`, `'gzip'`, `'zstd'`, etc.).
 
@@ -30,7 +30,7 @@ Covers `rsgispy.vectorprocess`, `rsgispy.vector.{io,create,geoms,attrs,stats,sel
 - **Spatial joins**: `annotate_vec_selection`, `perform_spatial_join(..., join_how='inner', join_op='within', vec_base_epsg=None, vec_join_epsg=None, out_compress=None)`.
 
 ### `rsgispy.vector.create` (Raster-to-Vector, Grids, BBoxes, Sampling Points)
-- `polygonise_raster_to_vec_lyr(out_vec_file, out_vec_lyr, out_format, input_img, img_band=1, mask_img=None, mask_band=1, *, replace_file=True, replace_lyr=True, pxl_val_fieldname='PXLVAL', use_8_conn=False, out_compress=None)` — whole band and all polygons in memory, one core; fine for small rasters.
+- `polygonise_raster_to_vec_lyr(input_img, out_vec_file=None, out_vec_lyr=None, img_band=1, mask_img=None, mask_band=1, no_data_val=None, pxl_val_fieldname='PXLVAL', use_8_conn=False, *, out_format=None, replace_file=True, replace_lyr=True, out_compress=None)` — whole band and all polygons in memory, one core; fine for small rasters.
 - `polygonise_raster_tiled(input_img, out_vec_file, out_vec_lyr=None, img_band=1, mask_img=None, mask_band=1, no_data_val=None, pxl_val_fieldname='PXLVAL', use_8_conn=False, dissolve_by_value=False, sort_by_value=False, inc_pxl_count=False, tile_size=2048, n_jobs=1, backend='auto', *, out_format=None, out_compress='snappy', chunk_size=100_000, pxl_count_fieldname='pxl_count', tmp_dir=None, overwrite=False, use_pbar=True) -> GeoDataFrame | None` — use for rasters with many polygons (segmentations, fine classifications): tiled, multi-core (`n_jobs`), streams GeoParquet/any OGR format to disk; same polygons as `polygonise_raster_to_vec_lyr` for any tile size/`n_jobs` (8-connected diagonal regions written as valid MultiPolygons). `backend`: `'numba'` (compiled kernel, fastest), `'rasterio'` (GDAL per tile) or `'auto'`. `dissolve_by_value=True` + `sort_by_value=True` → one feature per segment ID sorted by ID (out-of-core). `out_vec_file=None` returns a GeoDataFrame (all in memory). `no_data_val=None` polygonises every pixel (pass e.g. `0` for segment rasters).
 - `vectorise_pxls_to_pts(input_img, img_band, img_msk_val, out_vec_file=None, out_vec_lyr=None, *, ...)`
 - `extract_img_footprint(input_img, out_vec_file=None, out_vec_lyr=None, *, out_format='GPKG', no_data_val=None, tmp_dir=None, reproj_to=None, use_pbar=True, out_compress=None)`
@@ -53,19 +53,6 @@ Covers `rsgispy.vectorprocess`, `rsgispy.vector.{io,create,geoms,attrs,stats,sel
 
 ## 3. `rsgispy.zonalstats.*`
 
-### Constants (`rsgispy.zonalstats`)
-- Pixel-in-polygon methods (British spelling on `*CENTRE`):
-  - `METHOD_POLYCONTAINSPIXEL = 0`
-  - `METHOD_POLYCONTAINSPIXELCENTRE = 1`
-  - `METHOD_POLYOVERLAPSPIXEL = 2`
-  - `METHOD_POLYOVERLAPSORCONTAINSPIXEL = 3`
-  - `METHOD_PIXELCONTAINSPOLY = 4`
-  - `METHOD_PIXELCONTAINSPOLYCENTRE = 5`
-  - `METHOD_ADAPTIVE = 6`
-  - `METHOD_ENVELOPE = 7`
-  - `METHOD_PIXELAREAINPOLY = 8`
-  - `METHOD_POLYAREAINPIXEL = 9`
-
 ### Shared Helpers (`rsgispy.zonalstats`)
 - `open_validated_zonal_inputs`, `open_validated_zonal_multiband_inputs`, `sample_point_pixel(src, img_band, x_coord, y_coord, clamp=False)`.
 
@@ -74,7 +61,7 @@ Each operation provides a file/in-memory entrypoint (`*_file`, returning `GeoDat
 - `calc_zonal_band_stats_file(vec_file, vec_lyr, input_img, img_band, min_thres, max_thres, out_no_data_val, min_field=None, max_field=None, mean_field=None, stddev_field=None, sum_field=None, count_field=None, mode_field=None, median_field=None, vec_def_epsg=None, *, use_pbar=True, out_compress=None, out_vec_file=None, out_vec_lyr=None)` & `calc_zonal_band_stats(...)`
 - `calc_zonal_poly_pts_band_stats_file(vec_file, vec_lyr, input_img, img_band, out_field, vec_def_epsg=None, *, ...)` & `calc_zonal_poly_pts_band_stats(...)` (samples centroid / representative point per polygon)
 - `calc_zonal_band_stats_test_poly_pts_file(..., percentile=None, percentile_field=None, ...)` & `calc_zonal_band_stats_test_poly_pts(...)`
-- `calc_zonal_band_pxl_counts_file(vec_file, vec_lyr, input_img, img_band, vals_lut: Dict[int, str], total_field='pxl_count', vec_def_epsg=None, *, ...)` & `calc_zonal_band_pxl_counts(...)`
+- `calc_zonal_band_pxl_counts_file(vec_file, vec_lyr, input_img, img_band, vals_lut: Dict[int, str], total_field='pxl_count', vec_def_epsg=None, *, nodata_field='nodata_count', ...)` & `calc_zonal_band_pxl_counts(...)` — `total_field` counts valid (not nodata) pixels; `nodata_field` (or `None`) counts nodata pixels
 - `export_poly_pxls_to_df(vec_gdf, input_img, img_bands=None, out_file=None, out_format=None, out_compress=None, band_names=None, attr_cols=None, mask_nodata=True, all_touched=False, include_coords=False, reproj_vec=False, vec_def_epsg=None, *, vec_lyr=None, use_pbar=True) -> pd.DataFrame | None`
 
 ### Label Raster Zonal Stats (`rsgispy.zonalstats.labels`, also exported from `rsgispy.zonalstats`)

@@ -106,6 +106,21 @@ def test_train_apply_rasterise(reg):
     meta = json.loads(pq.ParquetFile(out).schema_arrow.metadata[b"rsgispy_provenance"])
     assert meta["task"] == "regression" and meta["targets"] == ["canopy_cover"]
 
+    # Per-segment uncertainty from the spread of the trees.
+    out_u = str(reg["dir"] / "pred_uncert.parquet")
+    rseg.apply_sklearn_regressor_segments(
+        reg["cfg_path"], model, out_u, out_uncert_method="std", chunk_size=29,
+        copy_cols=[], use_pbar=False,
+    )
+    res_u = gpd.read_parquet(out_u)
+    assert list(res_u.columns) == [
+        "seg_id", "geometry", "pred_canopy_cover", "pred_canopy_cover_std",
+    ]
+    ok = res_u["pred_canopy_cover"].notna()
+    assert res_u.loc[~ok, "pred_canopy_cover_std"].isna().all()
+    assert (res_u.loc[ok, "pred_canopy_cover_std"] >= 0).all()
+    assert res_u.loc[ok, "pred_canopy_cover_std"].max() > 0
+
     out_img = str(reg["dir"] / "pred.tif")
     rseg.rasterise_segment_regression(reg["cfg_path"], out, out_img, use_pbar=False)
     with rasterio.open(reg["scene"]["segs"]) as lsrc:
@@ -132,8 +147,14 @@ def test_multi_target_and_gbdt(reg):
     rseg.apply_sklearn_regressor_segments(cfg, model, out, copy_cols=[], use_pbar=False)
     res = gpd.read_file(out)
     ok = res["pred_canopy_cover"].notna()
+    # A multi-output random forest predicts both targets as means over the same
+    # leaves, and canopy_x2 == 2 * canopy_cover exactly in the training data,
+    # so the 2x relation holds to floating point rounding (the difference was
+    # exactly 0 for random_state 0-3). A loose tolerance would hide one target
+    # being fitted by a separate model or the targets being mixed up.
     np.testing.assert_allclose(
-        res.loc[ok, "pred_canopy_x2"], 2 * res.loc[ok, "pred_canopy_cover"], rtol=0.15, atol=2
+        res.loc[ok, "pred_canopy_x2"], 2 * res.loc[ok, "pred_canopy_cover"],
+        rtol=1e-9, atol=1e-9,
     )
     out_img = str(reg["dir"] / "multi.tif")
     rseg.rasterise_segment_regression(cfg, out, out_img, use_pbar=False)
@@ -169,6 +190,11 @@ def test_errors(reg):
         rseg.apply_sklearn_regressor_segments(
             reg["cfg_path"], lin, str(reg["dir"] / "q.parquet"), out_quantiles=[0.5],
             use_pbar=False,
+        )
+    with pytest.raises(rsgispy.RSGISPyException, match="ensemble"):
+        rseg.apply_sklearn_regressor_segments(
+            reg["cfg_path"], lin, str(reg["dir"] / "u.parquet"),
+            out_uncert_method="std", use_pbar=False,
         )
     del model
     assert isinstance(samples, pd.DataFrame)

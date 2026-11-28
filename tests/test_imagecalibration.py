@@ -7,12 +7,12 @@ import datetime
 import math
 import os
 import tarfile
+import warnings
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imagecalibration as imgcal
@@ -20,6 +20,8 @@ import rsgispy.imagecalibration.sensorlvl1data as l1
 import rsgispy.imagecalibration.sensorlvl2data as l2
 import rsgispy.imagecalibration.solarangles as solarangles
 import rsgispy.tools.sensors as sensors
+
+from conftest import write_raster
 
 
 def _write_gtiff(
@@ -34,27 +36,15 @@ def _write_gtiff(
     band_names=None,
 ) -> str:
     """Write a single- or multi-band GeoTIFF helper for tests."""
-    arr = np.asarray(data)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis, :, :]
-    count, height, width = arr.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(arr.dtype),
-        "crs": f"EPSG:{epsg}",
-        "transform": from_origin(x0, y0, res, res),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(arr)
-        if band_names is not None:
-            for bidx, name in enumerate(band_names, start=1):
-                dst.set_band_description(bidx, name)
-    return path
+    return write_raster(
+        path,
+        data,
+        nodata=nodata,
+        crs=f"EPSG:{epsg}",
+        origin=(x0, y0),
+        pixel_size=res,
+        band_names=band_names,
+    )
 
 
 def _build_synthetic_landsat_mtl(
@@ -346,7 +336,7 @@ def test_perform_dos_calc(tmp_path):
         non_negative=True,
         no_data_val=0.0,
         dark_obj_refl_val=0.02,
-        dark_obj_percentile=0.05,
+        dark_obj_percentile=5.0,
         copy_band_names=True,
         calc_stats=False,
         use_pbar=False,
@@ -366,13 +356,28 @@ def test_perform_dos_calc(tmp_path):
         non_negative=False,
         no_data_val=0.0,
         dark_obj_refl_val=0.0,
-        dark_obj_percentile=0.10,
+        dark_obj_percentile=10.0,
         calc_stats=False,
         use_pbar=False,
     )
     with rasterio.open(out_neg) as src:
         neg_arr = src.read(1)
     assert neg_arr[0, 1] < 0.0
+
+    # dark_obj_percentile is on the 0-100 scale: a value in (0, 1) runs
+    # without a warning, and values outside [0, 100] raise.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        imgcal.perform_dos_calc(
+            in_img, str(tmp_path / "dos_frac.tif"), no_data_val=0.0,
+            dark_obj_percentile=0.5, calc_stats=False, use_pbar=False,
+        )
+    for bad in (-1.0, 150.0):
+        with pytest.raises(rsgispy.RSGISPyException, match="dark_obj_percentile"):
+            imgcal.perform_dos_calc(
+                in_img, str(tmp_path / "dos_bad.tif"), no_data_val=0.0,
+                dark_obj_percentile=bad, calc_stats=False, use_pbar=False,
+            )
 
     # All-nodata band raises
     nd_only = os.path.join(tmp_path, "all_nd.tif")
@@ -672,15 +677,14 @@ def test_landsat_c2_stacked_workflows(tmp_path, is_l1, is_tm):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "out_res_10m, sharpen_10m",
-    [
-        (True, True),
-        (True, False),
-        (False, False),
-    ],
+@pytest.fixture(
+    params=[(True, True), (True, False), (False, False)],
+    ids=["True-True", "True-False", "False-False"],
 )
-def test_create_stacked_sen2_esa_l2a_img(tmp_path, out_res_10m, sharpen_10m):
+def sen2_l2a_outputs(request, tmp_path):
+    """Run create_stacked_sen2_esa_l2a_img on a synthetic L2A SAFE for each
+    (out_res_10m, sharpen_10m) combination and return the output paths."""
+    out_res_10m, sharpen_10m = request.param
     safe_dir = os.path.join(tmp_path, "S2A_MSIL2A_TEST.SAFE")
     r10_dir = os.path.join(safe_dir, "GRANULE", "GR1", "IMG_DATA", "R10m")
     r20_dir = os.path.join(safe_dir, "GRANULE", "GR1", "IMG_DATA", "R20m")
@@ -802,6 +806,33 @@ def test_create_stacked_sen2_esa_l2a_img(tmp_path, out_res_10m, sharpen_10m):
     clouds_path = os.path.join(out_dir, f"S2A_MSIL2A_TEST_{res_tag}_clouds.tif")
     vld_path = os.path.join(out_dir, f"S2A_MSIL2A_TEST_{res_tag}_vld.tif")
 
+    return {
+        "out_dir": out_dir,
+        "tmp_work": tmp_work,
+        "res_tag": res_tag,
+        "out_res_10m": out_res_10m,
+        "grid_10": grid_10,
+        "grid_20": grid_20,
+        "sref_path": sref_path,
+        "scl_path": scl_path,
+        "clouds_path": clouds_path,
+        "vld_path": vld_path,
+    }
+
+
+def _read_sen2_sref(sen2_l2a_outputs):
+    with rasterio.open(sen2_l2a_outputs["sref_path"]) as ssrc:
+        return ssrc.read()
+
+
+def test_create_stacked_sen2_esa_l2a_img_sref_stack(sen2_l2a_outputs):
+    """The 10-band SREF stack has the band names, grid and nodata, with the
+    BOA_ADD_OFFSET applied, and the temporary directory is cleaned up."""
+    tmp_work = sen2_l2a_outputs["tmp_work"]
+    sref_path = sen2_l2a_outputs["sref_path"]
+    out_res_10m = sen2_l2a_outputs["out_res_10m"]
+    grid_10 = sen2_l2a_outputs["grid_10"]
+    grid_20 = sen2_l2a_outputs["grid_20"]
     assert os.listdir(tmp_work) == []
     with rasterio.open(sref_path) as ssrc:
         assert ssrc.count == 10
@@ -829,6 +860,12 @@ def test_create_stacked_sen2_esa_l2a_img(tmp_path, out_res_10m, sharpen_10m):
     else:
         assert sarr[0, 2, 2] == int(grid_20[2, 2]) - 1000
 
+
+def test_create_stacked_sen2_esa_l2a_img_scl_cloud_and_valid_masks(sen2_l2a_outputs):
+    """The SCL keeps its categorical values and the cloud / valid masks are set."""
+    scl_path = sen2_l2a_outputs["scl_path"]
+    clouds_path = sen2_l2a_outputs["clouds_path"]
+    vld_path = sen2_l2a_outputs["vld_path"]
     with (
         rasterio.open(scl_path) as scl_src,
         rasterio.open(clouds_path) as cld_src,
@@ -840,7 +877,18 @@ def test_create_stacked_sen2_esa_l2a_img(tmp_path, out_res_10m, sharpen_10m):
 
     # Categorical SCL must NEVER be interpolated into non-source values
     assert set(np.unique(scl_arr).tolist()).issubset({0, 3, 4, 8})
+    assert cld_arr[0, 0] == 0
+    assert vld_arr[0, 0] == 0
+    assert vld_arr[-1, -1] == 1
+    assert 1 in cld_arr and 2 in cld_arr
 
+
+def test_create_stacked_sen2_esa_l2a_img_cloudsen12_stack(sen2_l2a_outputs):
+    """The 12-band CloudSEN12 stack matches the SREF stack, picks B01 at 20 m and
+    is accepted by the CloudSEN12 SREF cloud masking."""
+    out_dir = sen2_l2a_outputs["out_dir"]
+    res_tag = sen2_l2a_outputs["res_tag"]
+    sarr = _read_sen2_sref(sen2_l2a_outputs)
     # CloudSEN12 12-band stack for the cloud masking functions
     cld12_path = os.path.join(
         out_dir, f"S2A_MSIL2A_TEST_{res_tag}_cloudsen12_sref.tif"
@@ -900,7 +948,3 @@ def test_create_stacked_sen2_esa_l2a_img(tmp_path, out_res_10m, sharpen_10m):
         marr = msrc.read(1)
     assert marr[0, 0] == cldmsk.CLOUDSEN12_NO_DATA
     assert marr[centre] == cldmsk.CLOUDSEN12_CLEAR
-    assert cld_arr[0, 0] == 0
-    assert vld_arr[0, 0] == 0
-    assert vld_arr[-1, -1] == 1
-    assert 1 in cld_arr and 2 in cld_arr

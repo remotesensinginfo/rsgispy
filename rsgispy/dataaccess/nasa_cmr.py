@@ -8,7 +8,6 @@ installed.
 """
 
 import datetime
-import os
 import re
 from typing import Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
@@ -21,6 +20,7 @@ from rsgispy.tools._download_common import (
 )
 import rsgispy.tools.credentials
 import rsgispy.tools.dicts
+import rsgispy.tools.files
 import rsgispy.tools.http
 
 try:
@@ -544,7 +544,10 @@ def download_granules_use_dwnld_db(
     username, password = rsgispy.tools.credentials.get_username_password(user_pass_file)
 
     def _download_record(dwn_file: Dict) -> Tuple[bool, str]:
-        out_file_path = os.path.join(out_path, dwn_file["producer_granule_id"])
+        # The granule ID comes from the CMR response: keep it in out_path.
+        out_file_path = rsgispy.tools.files.safe_join(
+            out_path, dwn_file["producer_granule_id"]
+        )
         print(f"Downloading: {out_file_path}")
         if use_wget:
             dwn_success, _ = rsgispy.tools.http.wget_download_file(

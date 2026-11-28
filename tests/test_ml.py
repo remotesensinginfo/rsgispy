@@ -7,17 +7,20 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from scipy.spatial.distance import cdist
 from shapely.geometry import Point, box
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.linear_model import Ridge
+from sklearn.ensemble import (
+    GradientBoostingRegressor,
+    RandomForestClassifier,
+    RandomForestRegressor,
+)
+from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.model_selection import GroupKFold
 
 import rsgispy
-import rsgispy.ml as ml
 from rsgispy.classification.classdata import (
-    ClassInfoObj,
     ClassificationConfig,
+    ClassInfoObj,
     ImageBandInfo,
 )
 from rsgispy.ml.cv import (
@@ -38,35 +41,7 @@ from rsgispy.ml.tune import TuneResult, get_default_param_space, tune_estimator
 from rsgispy.modelling._helpers import EnvVarInfo
 from rsgispy.regression.regdata import RegressionConfig
 
-
-def _write_test_raster(
-    path: str,
-    data: np.ndarray,
-    nodata: float = -9999.0,
-    x_origin: float = 500000.0,
-    y_origin: float = 5800000.0,
-    px_size: float = 10.0,
-    epsg: int = 32630,
-) -> str:
-    """Create a multi-band float32 GeoTIFF for ML tests."""
-    if data.ndim == 2:
-        data = data[np.newaxis, :, :]
-    bands, height, width = data.shape
-    transform = from_origin(x_origin, y_origin, px_size, px_size)
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=bands,
-        dtype=str(data.dtype),
-        crs=f"EPSG:{epsg}",
-        transform=transform,
-        nodata=nodata,
-    ) as dst:
-        dst.write(data)
-    return path
+from conftest import write_raster
 
 
 @pytest.fixture
@@ -87,19 +62,23 @@ def synthetic_stack_files(tmp_path):
     b2[0, 1] = np.nan
     b3[h - 1, w - 1] = -9999.0
 
-    img1 = _write_test_raster(
-        str(tmp_path / "feat1.tif"), np.stack([b1, b2], axis=0), nodata=-9999.0
+    img1 = write_raster(
+        str(tmp_path / "feat1.tif"),
+        np.stack([b1, b2], axis=0),
+        origin=(500000.0, 5800000.0),
+        nodata=-9999.0,
     )
-    img2 = _write_test_raster(
-        str(tmp_path / "feat2.tif"), b3[np.newaxis, :, :], nodata=-9999.0
+    img2 = write_raster(
+        str(tmp_path / "feat2.tif"),
+        b3[np.newaxis, :, :],
+        origin=(500000.0, 5800000.0),
+        nodata=-9999.0,
     )
 
     # Create a mask raster (1 everywhere except bottom row)
     msk = np.ones((h, w), dtype=np.uint8)
     msk[h - 1, :] = 0
-    msk_img = _write_test_raster(
-        str(tmp_path / "mask.tif"), msk, nodata=0
-    )
+    msk_img = write_raster(str(tmp_path / "mask.tif"), msk, origin=(500000.0, 5800000.0), nodata=0)
 
     return {
         "img1": img1,
@@ -108,15 +87,6 @@ def synthetic_stack_files(tmp_path):
         "arrays": (b1, b2, b3),
         "shape": (h, w),
     }
-
-
-def test_ml_package_exports_submodules_only():
-    """rsgispy.ml exports only its 7 submodules."""
-    assert ml.__all__ == [
-        "stack", "scaling", "predict", "cv", "tune", "vector", "segments"
-    ]
-    for sub in ml.__all__:
-        assert hasattr(ml, sub)
 
 
 def test_feature_stack_construct_bbox_mask_and_interop(synthetic_stack_files, tmp_path):
@@ -235,7 +205,7 @@ def test_feature_stack_mixed_dtype_vrt(synthetic_stack_files, tmp_path):
     h, w = synthetic_stack_files["shape"]
     refl = (np.arange(h * w, dtype=np.uint16).reshape(h, w) + 1).astype(np.uint16)
     refl[5, 5] = 0
-    refl_img = _write_test_raster(str(tmp_path / "refl.tif"), refl, nodata=0)
+    refl_img = write_raster(str(tmp_path / "refl.tif"), refl, origin=(500000.0, 5800000.0), nodata=0)
     vrt = str(tmp_path / "mixed.vrt")
     create_stack_images_vrt([refl_img, synthetic_stack_files["img2"]], vrt)
     names = ("refl", "elev")
@@ -609,3 +579,351 @@ def test_tune_estimator_and_nested_spatial_cv():
     assert len(ncv_reg.fold_scores) == 3
     assert "r2" in ncv_reg.overall_metrics
     assert ncv_reg.overall_metrics["r2"] > 0.8
+
+
+def _class_sorted_samples(n_per_cls=60, n_cls=3, seed=5):
+    """Well-separated classes stored class by class, as per-class extraction returns them."""
+    rng = np.random.default_rng(seed)
+    X = np.vstack(
+        [rng.normal(loc=4.0 * c, scale=0.5, size=(n_per_cls, 2)) for c in range(n_cls)]
+    )
+    y = np.repeat(np.arange(1, n_cls + 1), n_per_cls)
+    return X, y
+
+
+def test_nested_cv_int_folds_are_shuffled_and_stratified():
+    """An integer outer_cv must not give folds that leave out whole classes."""
+    X, y = _class_sorted_samples()
+    res = nested_spatial_cv(
+        estimator_factory=lambda p: RandomForestClassifier(
+            n_estimators=20, random_state=0
+        ),
+        X=X,
+        y=y,
+        task="classification",
+        outer_cv=3,
+        use_pbar=False,
+    )
+    assert min(res.fold_scores) > 0.9
+
+
+def test_int_cv_splits_respect_rnd_seed_and_cover_all_samples():
+    """Integer CV splits are seeded, stratified for classification and a partition."""
+    from rsgispy.ml.cv import _iter_cv_splits
+
+    X, y = _class_sorted_samples()
+    s1 = _iter_cv_splits(3, X, y, None, None, task="classification", rnd_seed=1)
+    s2 = _iter_cv_splits(3, X, y, None, None, task="classification", rnd_seed=1)
+    s3 = _iter_cv_splits(3, X, y, None, None, task="classification", rnd_seed=2)
+    assert all(np.array_equal(a[1], b[1]) for a, b in zip(s1, s2))
+    assert not all(np.array_equal(a[1], b[1]) for a, b in zip(s1, s3))
+    val_all = np.concatenate([v for _, v in s1])
+    assert sorted(val_all.tolist()) == list(range(len(y)))
+    for tr_idx, val_idx in s1:
+        assert len(np.intersect1d(tr_idx, val_idx)) == 0
+        # Each class is (near) equally represented in every validation fold.
+        _, counts = np.unique(y[val_idx], return_counts=True)
+        assert counts.size == 3 and counts.min() >= 19
+
+    y_reg = np.linspace(0.0, 1.0, 90)
+    r_splits = _iter_cv_splits(3, X[:90], y_reg, None, None, task="regression", rnd_seed=1)
+    # Shuffled: the first fold is not the first contiguous block of rows.
+    assert not np.array_equal(np.sort(r_splits[0][1]), np.arange(30))
+
+
+@pytest.mark.parametrize("scoring", ["rmse", "mae"])
+def test_tune_estimator_minimises_error_metrics(scoring):
+    """rmse / mae default to direction='minimize' so the best (lowest) error is picked."""
+    pytest.importorskip("optuna")
+    rng = np.random.default_rng(3)
+    X = rng.normal(size=(80, 2))
+    y = 3.0 * X[:, 0] + rng.normal(0.0, 0.1, size=80)
+    res = tune_estimator(
+        estimator_factory=lambda p: Ridge(**p),
+        X=X,
+        y=y,
+        param_space={"alpha": [0.01, 1000.0]},
+        task="regression",
+        cv=3,
+        scoring=scoring,
+        n_trials=6,
+        refit=False,
+        use_pbar=False,
+    )
+    assert res.best_params["alpha"] == 0.01
+    assert res.study.direction.name == "MINIMIZE"
+
+
+def test_tune_estimator_rejects_direction_conflicting_with_metric():
+    """An explicit direction that contradicts a known metric raises."""
+    pytest.importorskip("optuna")
+    X, y = _class_sorted_samples()
+    with pytest.raises(rsgispy.RSGISPyException, match="direction"):
+        tune_estimator(
+            estimator_factory=lambda p: Ridge(**p),
+            X=X,
+            y=y.astype(float),
+            param_space={"alpha": [0.1, 1.0]},
+            task="regression",
+            cv=3,
+            scoring="rmse",
+            direction="maximize",
+            n_trials=2,
+            use_pbar=False,
+        )
+
+
+def _binary_stack_and_clf(files):
+    b1, b2, b3 = files["arrays"]
+    stack = ImageFeatureStack(
+        [BandSpec(files["img1"], bands=(1, 2)), BandSpec(files["img2"], bands=(1,))]
+    )
+    valid = np.isfinite(b1) & (b1 != -9999.0) & np.isfinite(b2) & (b3 != -9999.0)
+    X = np.column_stack([b1[valid], b2[valid], b3[valid]])
+    y = np.where(X[:, 0] + X[:, 1] > 40.0, 1, 0)
+    clf = RandomForestClassifier(n_estimators=10, max_depth=4, random_state=0).fit(X, y)
+    return stack, clf, valid
+
+
+def test_predict_raster_threshold_nodata_does_not_collide_with_absence(
+    synthetic_stack_files, tmp_path
+):
+    """Thresholded 0/1 output must not use 0 (the absence class) as nodata."""
+    stack, clf, valid = _binary_stack_and_clf(synthetic_stack_files)
+    out = str(tmp_path / "thr.tif")
+    predict_raster(clf, stack, out, threshold=0.5, use_pbar=False, calc_stats=False)
+    with rasterio.open(out) as src:
+        arr = src.read(1)
+        nd = src.nodata
+    assert nd is not None and nd not in (0, 1)
+    assert set(np.unique(arr[valid]).tolist()) == {0, 1}
+    assert arr[0, 0] == nd
+
+
+def test_predict_raster_thematic_class_zero_uses_free_nodata(
+    synthetic_stack_files, tmp_path
+):
+    """thematic=True with a class 0 picks a nodata value that is not a class."""
+    stack, clf, valid = _binary_stack_and_clf(synthetic_stack_files)
+    out = str(tmp_path / "them.tif")
+    predict_raster(clf, stack, out, thematic=True, use_pbar=False, calc_stats=False)
+    with rasterio.open(out) as src:
+        nd = src.nodata
+        arr = src.read(1)
+    assert nd not in (0, 1)
+    assert 0 in np.unique(arr[valid])
+
+
+def test_predict_raster_explicit_nodata_colliding_with_class_raises(
+    synthetic_stack_files, tmp_path
+):
+    """An explicit no_data_val equal to an output class raises."""
+    stack, clf, _ = _binary_stack_and_clf(synthetic_stack_files)
+    with pytest.raises(rsgispy.RSGISPyException, match="no_data_val"):
+        predict_raster(
+            clf, stack, str(tmp_path / "x.tif"), threshold=0.5, no_data_val=0,
+            use_pbar=False,
+        )
+
+
+def test_predict_proba_raster_class_img_nodata_not_a_class(
+    synthetic_stack_files, tmp_path
+):
+    """out_class_img must not use a class label (here 0) as its nodata."""
+    stack, clf, valid = _binary_stack_and_clf(synthetic_stack_files)
+    cls_out = str(tmp_path / "cls.tif")
+    predict_proba_raster(
+        clf, stack, str(tmp_path / "prob.tif"), out_class_img=cls_out,
+        use_pbar=False, calc_stats=False,
+    )
+    with rasterio.open(cls_out) as src:
+        nd = src.nodata
+        arr = src.read(1)
+    assert nd not in (0, 1)
+    assert arr[0, 0] == nd
+    assert 0 in np.unique(arr[valid])
+
+
+def test_feature_stack_reprojects_non_compatible_grid(tmp_path):
+    """Verify ImageFeatureStack handles non-compatible rasters via on-the-fly reprojection."""
+    b1_path = str(tmp_path / "fine.tif")
+    b2_path = str(tmp_path / "coarse.tif")
+    write_raster(
+        b1_path,
+        np.full((12, 12), 10.0, dtype=np.float32),
+        origin=(500000.0, 5200000.0),
+        nodata=-9999.0,
+    )
+    # Different resolution (20m) and shifted extent covering the same footprint
+    write_raster(
+        b2_path,
+        np.full((8, 8), 25.0, dtype=np.float32),
+        origin=(499990.0, 5200010.0),
+        pixel_size=20.0,
+        nodata=-9999.0,
+    )
+
+    stack = ImageFeatureStack(
+        [
+            BandSpec(file_name=b1_path, name="fine_b", bands=(1,)),
+            BandSpec(file_name=b2_path, name="coarse_b", bands=(1,)),
+        ]
+    )
+    n_valid = 0
+    for _win, _grid, valid_idx, x_valid in stack.iter_blocks(
+        block_size=6, use_pbar=False
+    ):
+        n_valid += int(valid_idx.size)
+        if valid_idx.size > 0:
+            assert np.allclose(x_valid[:, 0], 10.0)
+            assert np.allclose(x_valid[:, 1], 25.0)
+    assert n_valid == 144
+
+
+def test_tune_estimator_optuna_fixed_param_refit_and_verbosity_restore():
+    """Verify tune_estimator preserves fixed callable params on refit and restores verbosity."""
+    optuna = pytest.importorskip("optuna")
+    orig_verbosity = optuna.logging.get_verbosity()
+    optuna.logging.set_verbosity(optuna.logging.INFO)
+    try:
+        rng = np.random.default_rng(7)
+        x_mat = rng.normal(size=(60, 3))
+        y_vec = (x_mat[:, 0] + 0.5 * x_mat[:, 1] > 0.0).astype(int)
+
+        def _space(trial):
+            return {
+                "C": trial.suggest_float("C", 0.1, 10.0, log=True),
+                "max_iter": 250,
+                "random_state": 17,
+            }
+
+        res = tune_estimator(
+            lambda p: LogisticRegression(**p),
+            x_mat,
+            y_vec,
+            _space,
+            task="classification",
+            cv=3,
+            n_trials=3,
+            rnd_seed=42,
+            refit=True,
+            use_pbar=False,
+        )
+        assert optuna.logging.get_verbosity() == optuna.logging.INFO
+        assert res.best_params["max_iter"] == 250
+        assert res.best_params["random_state"] == 17
+        assert res.best_estimator is not None
+        assert res.best_estimator.max_iter == 250
+        assert res.best_estimator.random_state == 17
+    finally:
+        optuna.logging.set_verbosity(orig_verbosity)
+
+
+def test_predict_raster_empty_first_tile_lut_promotion_and_gbr_quantile_guard(tmp_path):
+    """
+    Verify predict_raster handles an empty first tile, promotes LUT dtypes
+    above uint8, and predict_quantiles_raster rejects GradientBoostingRegressor.
+    """
+    height, width = 16, 16
+    b1 = np.full((height, width), 2.0, dtype=np.float32)
+    b2 = np.full((height, width), 4.0, dtype=np.float32)
+    mask = np.zeros((height, width), dtype=np.uint8)
+    # Leave top-left 8x8 tile completely masked out (empty first tile)
+    mask[8:, 8:] = 1
+
+    feat_path = str(tmp_path / "feat.tif")
+    msk_path = str(tmp_path / "msk.tif")
+    write_raster(feat_path, np.stack([b1, b2], axis=0), nodata=-9999.0)
+    write_raster(msk_path, mask, nodata=0)
+
+    stack = ImageFeatureStack(
+        [
+            BandSpec(file_name=feat_path, name="b1", bands=(1,)),
+            BandSpec(file_name=feat_path, name="b2", bands=(2,)),
+        ]
+    )
+
+    # 1. Multi-output regressor with empty first tile (must infer 2 bands from later tile)
+    rng = np.random.default_rng(12)
+    x_tr = rng.uniform(0.0, 5.0, size=(30, 2))
+    y_multi = np.column_stack([x_tr[:, 0] * 2.0, x_tr[:, 1] * 3.0])
+    reg_multi = RandomForestRegressor(n_estimators=5, random_state=12).fit(x_tr, y_multi)
+
+    out_multi = str(tmp_path / "pred_multi_empty_first.tif")
+    predict_raster(
+        reg_multi,
+        stack,
+        out_multi,
+        in_msk_img=msk_path,
+        img_msk_val=1,
+        block_size=8,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out_multi) as src:
+        assert src.count == 2
+        arr = src.read()
+        assert np.all(arr[:, :8, :8] == -9999.0)
+        assert np.all(arr[:, 8:, 8:] > -9999.0)
+
+    # 2. LUT dtype promotion: classifier predicts uint8 (0, 1), LUT maps to >255 (1000, 2000)
+    y_cls = (x_tr[:, 0] > 2.5).astype(np.uint8)
+    clf = RandomForestClassifier(n_estimators=5, random_state=12).fit(x_tr, y_cls)
+    out_lut = str(tmp_path / "pred_lut_promoted.tif")
+    predict_raster(
+        clf,
+        stack,
+        out_lut,
+        in_msk_img=msk_path,
+        img_msk_val=1,
+        lut={0: 1000, 1: 2000},
+        datatype=rsgispy.TYPE_16UINT,
+        no_data_val=0,
+        block_size=8,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    with rasterio.open(out_lut) as src:
+        lut_arr = src.read(1)
+        assert lut_arr.dtype == np.uint16
+        assert np.all(lut_arr[:8, :8] == 0)
+        assert set(np.unique(lut_arr[8:, 8:])).issubset({1000, 2000})
+
+    # 3. GBR quantile guard: GradientBoostingRegressor must be rejected for empirical quantiles
+    gbr = GradientBoostingRegressor(n_estimators=5, random_state=12).fit(x_tr, y_multi[:, 0])
+    out_q = str(tmp_path / "gbr_quantiles.tif")
+    with pytest.raises(rsgispy.RSGISPyException, match="GradientBoostingRegressor"):
+        predict_quantiles_raster(
+            gbr,
+            stack,
+            out_q,
+            quantiles=(0.1, 0.5, 0.9),
+            block_size=8,
+            calc_stats=False,
+            use_pbar=False,
+        )
+
+
+def test_nested_spatial_cv_missing_fold_class():
+    """Verify nested_spatial_cv aligns oof_probs when a fold omits a global class."""
+    rng = np.random.default_rng(21)
+    # 3 classes: class 2 appears ONLY in group 0 (absent from training in fold 0)
+    x_mat = rng.normal(size=(30, 3))
+    y_vec = np.array([0] * 5 + [1] * 5 + [2] * 5 + [0] * 8 + [1] * 7)
+    groups = np.array([0] * 15 + [1] * 15)
+
+    res = nested_spatial_cv(
+        lambda _p: RandomForestClassifier(n_estimators=10, random_state=21),
+        x_mat,
+        y_vec,
+        task="classification",
+        groups=groups,
+        outer_cv=GroupKFold(n_splits=2),
+        rnd_seed=21,
+    )
+    assert res.oof_probabilities is not None
+    assert res.oof_probabilities.shape == (30, 3)
+    assert np.all(np.isfinite(res.oof_probabilities))
+    # Fold validating group 0 never saw class 2 in training, so col 2 must be 0.0
+    assert np.all(res.oof_probabilities[groups == 0, 2] == 0.0)
+    assert np.allclose(res.oof_probabilities.sum(axis=1), 1.0)

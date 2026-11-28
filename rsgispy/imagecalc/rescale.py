@@ -5,7 +5,6 @@ pixel rescaling utilities using ``rasterio``.
 """
 
 from contextlib import ExitStack
-import math
 import os
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
@@ -38,7 +37,9 @@ from rsgispy._tilegraph._wrap import (
     WrapperDiskSink,
     run_wrapper_graph,
 )
+from rsgispy.imageprocess._dtype_nodata import _same_nodata
 from rsgispy.imageprocess import (
+    validate_out_nodata,
     NodeMeta,
     PointwiseOp,
     RasterSource,
@@ -48,15 +49,15 @@ from rsgispy.imageprocess import (
     TileNode,
     TileTensor,
     build_valid_mask,
+    default_out_nodata,
+    infer_node_meta,
     cast_result_block,
     compute_spatial_intersection,
     ensure_file_exists,
-    fits_dtype_range,
     iter_dataset_windows,
     open_multi_image_datasets,
     validate_band_index,
 )
-from rsgispy.imageprocess import resolve_out_nodata as _ip_resolve_out_nodata
 from rsgispy.imageutils.metadata import get_band_names
 from rsgispy.tools.files import ensure_parent_dir
 from rsgispy.tools.jsonio import read_json_to_dict, write_dict_to_json
@@ -94,9 +95,9 @@ class ImageBandRescale:
     :param out_max: Output image band maximum value after rescaling.
     :param out_no_data: Value written to the output for masked pixels and
                         recorded as the output band's no-data value. If
-                        ``None`` (the default), ``-9999`` is used, or for
-                        integer outputs that cannot hold it, the data type's
-                        maximum (unsigned) or minimum (signed) value. Choose a
+                        ``None`` (the default), ``-9999`` is used for float
+                        outputs and the data type's maximum (unsigned) or
+                        minimum (signed) value for integer outputs. Choose a
                         value outside ``[out_min, out_max]``.
     """
 
@@ -133,33 +134,15 @@ def _resolve_rescale_out_nodata(
     out_no_data: Optional[float], out_np_dtype: np.dtype, band: int
 ) -> float:
     """
-    Resolve the output no-data value of one band for :func:`rescale_img_pxl_vals`.
-
-    ``None`` gives ``-9999`` (or, for integer data types that cannot hold it,
-    the type's maximum for unsigned and minimum for signed types). An explicit
-    value must be representable by ``out_np_dtype``.
+    Resolve the output no-data value of one band for :func:`rescale_img_pxl_vals`
+    (:func:`rsgispy.imageprocess.validate_out_nodata`: ``None`` gives
+    ``-9999`` or the integer type's limit).
     """
-    out_np_dtype = np.dtype(out_np_dtype)
-    if out_no_data is None:
-        # -9999, clamped to the max (unsigned) or min (signed) integer value.
-        dflt_nd = _ip_resolve_out_nodata(
-            out_np_dtype, -9999.0, clamp_int=True, unsigned_clamp="max"
+    return float(
+        validate_out_nodata(
+            out_no_data, out_np_dtype, label=f"out_no_data for band {band}"
         )
-        return float(dflt_nd)
-    nd_val = float(out_no_data)
-    if math.isnan(nd_val) and np.issubdtype(out_np_dtype, np.floating):
-        return nd_val
-    if not fits_dtype_range(nd_val, out_np_dtype):
-        raise rsgispy.RSGISPyException(
-            f"out_no_data ({out_no_data}) for band {band} cannot be represented "
-            f"by the output data type '{out_np_dtype.name}'."
-        )
-    return nd_val
-
-
-def _same_nodata(val_a: float, val_b: float) -> bool:
-    """Return ``True`` if two no-data values are equal (``NaN`` equals ``NaN``)."""
-    return val_a == val_b or (math.isnan(val_a) and math.isnan(val_b))
+    )
 
 
 def _check_rescale_objs(
@@ -286,8 +269,16 @@ class _RescalePxlNode(TileNode):
                 low = min(cfg.out_min, cfg.out_max)
                 high = max(cfg.out_min, cfg.out_max)
                 scaled = np.clip(scaled, low, high)
-            res = np.where(nodata_mask, self._band_out_nds[b_idx], scaled)
-            out_bands.append(cast_result_block(res, win_h, win_w, self.out_np_dtype))
+            out_bands.append(
+                cast_result_block(
+                    scaled,
+                    win_h,
+                    win_w,
+                    self.out_np_dtype,
+                    nodata=self._band_out_nds[b_idx],
+                    valid_mask=~nodata_mask,
+                )
+            )
         return aligned.with_data(np.stack(out_bands, axis=0))
 
 
@@ -354,7 +345,7 @@ def rescale_img_pxl_vals_node(
 
 def _calc_img_rescale_block(
     in_block: np.ndarray,
-    params: Tuple[float, float, float, float, float],
+    params: Tuple[Optional[float], float, float, float, float],
     out_np_dtype: np.dtype,
 ) -> np.ndarray:
     """
@@ -368,19 +359,29 @@ def _calc_img_rescale_block(
     out_bands = []
     for b_idx in range(in_block.shape[0]):
         band_arr = in_block[b_idx]
-        nodata_mask = ~build_valid_mask(band_arr, no_data_val=float(c_nd))
+        nodata_mask = ~build_valid_mask(
+            band_arr, no_data_val=None if c_nd is None else float(c_nd)
+        )
         rescaled = ((band_arr - c_off) * scale) + n_off
-        res = np.where(nodata_mask, n_nd, rescaled)
-        out_bands.append(cast_result_block(res, win_h, win_w, out_np_dtype))
+        out_bands.append(
+            cast_result_block(
+                rescaled,
+                win_h,
+                win_w,
+                out_np_dtype,
+                nodata=n_nd,
+                valid_mask=~nodata_mask,
+            )
+        )
     return np.stack(out_bands, axis=0)
 
 
 def calc_img_rescale_node(
     source: TileNode,
-    c_no_data_val: float = 0.0,
+    c_no_data_val: Optional[float] = None,
     c_offset: float = 0.0,
     c_gain: float = 1.0,
-    n_no_data_val: float = 0.0,
+    n_no_data_val: Optional[float] = None,
     n_offset: float = 0.0,
     n_gain: float = 1.0,
     *,
@@ -395,10 +396,14 @@ def calc_img_rescale_node(
     several images with :class:`~rsgispy.imageprocess.StackBands` first.
 
     :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
-    :param c_no_data_val: Current no-data value.
+    :param c_no_data_val: Current no-data value (Default = ``None``: the
+                          ``source`` node's no-data value, if any).
     :param c_offset: Current offset.
     :param c_gain: Current gain (must be non-zero).
-    :param n_no_data_val: New no-data value (the node's no-data value).
+    :param n_no_data_val: New no-data value, the node's no-data value
+                          (Default = ``None``:
+                          :func:`~rsgispy.imageprocess.default_out_nodata` of
+                          ``out_dtype``, e.g. ``-9999`` for floats).
     :param n_offset: New offset.
     :param n_gain: New gain.
     :param out_dtype: NumPy dtype of the output blocks
@@ -419,8 +424,12 @@ def calc_img_rescale_node(
     if c_gain == 0.0:
         raise rsgispy.RSGISPyException("c_gain must not be zero.")
     out_np_dtype = np.dtype(out_dtype)
+    if c_no_data_val is None:
+        c_no_data_val = infer_node_meta(source).nodata
+    if n_no_data_val is None:
+        n_no_data_val = default_out_nodata(out_np_dtype)
     params = (
-        float(c_no_data_val),
+        None if c_no_data_val is None else float(c_no_data_val),
         float(c_offset),
         float(n_gain) / float(c_gain),
         float(n_offset),
@@ -441,10 +450,10 @@ def calc_img_rescale_node(
 def calc_img_rescale(
     input_imgs: Union[str, Sequence[str]],
     output_img: str,
-    c_no_data_val: float = 0.0,
+    c_no_data_val: Optional[float] = None,
     c_offset: float = 0.0,
     c_gain: float = 1.0,
-    n_no_data_val: float = 0.0,
+    n_no_data_val: Optional[float] = None,
     n_offset: float = 0.0,
     n_gain: float = 1.0,
     *,
@@ -463,10 +472,15 @@ def calc_img_rescale(
 
     :param input_imgs: Single input image path or sequence of image paths to stack.
     :param output_img: Path to the output stacked image file.
-    :param c_no_data_val: Current no-data value in the input imagery.
+    :param c_no_data_val: Current no-data value in the input imagery
+                          (Default = ``None``: the first input's header
+                          value, if any).
     :param c_offset: Current offset value.
     :param c_gain: Current gain value (must be non-zero).
-    :param n_no_data_val: New no-data value written to the output image.
+    :param n_no_data_val: New no-data value written to the output image
+                          (Default = ``None``:
+                          :func:`~rsgispy.imageprocess.default_out_nodata` of
+                          ``datatype``, e.g. ``-9999`` for floats).
     :param n_offset: New offset value.
     :param n_gain: New gain value.
     :param gdalformat: GDAL/rasterio driver format for the output file
@@ -501,9 +515,13 @@ def calc_img_rescale(
     img_list = [input_imgs] if isinstance(input_imgs, str) else list(input_imgs)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
 
+    if n_no_data_val is None:
+        n_no_data_val = default_out_nodata(out_np_dtype)
     with ExitStack() as stack:
         datasets, img_paths = open_multi_image_datasets(stack, img_list)
         grid = compute_spatial_intersection(datasets)
+        if c_no_data_val is None:
+            c_no_data_val = datasets[img_paths[0]].nodata
 
     sources = [GridRasterSource(path, grid, grid.offsets[path]) for path in img_paths]
     if len(sources) > 1:
@@ -1181,9 +1199,16 @@ def _apply_norm_block(
         )
         for idx in range(len(band_specs)):
             band_res = vec_out[idx]
-            if eff_out_nd is not None:
-                band_res = np.where(np.isfinite(band_res), band_res, eff_out_nd)
-            out_bands.append(cast_result_block(band_res, win_h, win_w, out_np_dtype))
+            out_bands.append(
+                cast_result_block(
+                    band_res,
+                    win_h,
+                    win_w,
+                    out_np_dtype,
+                    nodata=eff_out_nd,
+                    valid_mask=None if eff_out_nd is None else np.isfinite(band_res),
+                )
+            )
     else:
         for idx, b_spec in enumerate(band_specs):
             arr = in_block[idx]
@@ -1202,7 +1227,16 @@ def _apply_norm_block(
                     eff_out_max=norm.eff_out_max,
                     trim_to_limits=norm.eff_trim,
                 )
-            out_bands.append(cast_result_block(res, win_h, win_w, out_np_dtype))
+            out_bands.append(
+                cast_result_block(
+                    res,
+                    win_h,
+                    win_w,
+                    out_np_dtype,
+                    nodata=eff_out_nd,
+                    valid_mask=None if eff_out_nd is None else valid,
+                )
+            )
     return np.stack(out_bands, axis=0)
 
 

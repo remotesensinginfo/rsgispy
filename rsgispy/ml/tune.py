@@ -25,6 +25,7 @@ from rsgispy.ml.cv import (
     _evaluate_score,
     _index_rows,
     _iter_cv_splits,
+    _resolve_direction,
     _validate_coords,
 )
 from rsgispy.ml.scaling import FeatureScaler
@@ -142,7 +143,7 @@ def tune_estimator(
     scoring: Optional[Union[str, Callable[[np.ndarray, np.ndarray], float]]] = None,
     n_trials: int = 30,
     timeout: Optional[float] = None,
-    direction: str = "maximize",
+    direction: Optional[str] = None,
     pruner: Optional[Any] = None,
     sampler: Optional[Any] = None,
     refit: bool = True,
@@ -162,16 +163,25 @@ def tune_estimator(
     :param cv: Cross-validation splitter (integer, sklearn CV, or
                :class:`~rsgispy.ml.cv.SpatialBlockKFold` /
                :class:`~rsgispy.ml.cv.SpatialBufferCV` /
-               :class:`~rsgispy.ml.cv.PolygonGroupKFold`).
+               :class:`~rsgispy.ml.cv.PolygonGroupKFold`). An integer gives
+               spatial block folds when ``coords`` are given, polygon group
+               folds when ``groups`` are given, and otherwise shuffled K-fold
+               splits (stratified for classification) seeded with
+               ``rnd_seed`` (Default = ``5``).
     :param coords: Optional ``(n_samples, 2)`` spatial coordinates for spatial CV.
     :param groups: Optional 1D polygon/group IDs for group CV.
     :param scaler: Optional :class:`~rsgispy.ml.scaling.FeatureScaler` cloned
                    and fitted strictly inside each CV training fold.
     :param scoring: Scoring name (``'accuracy'``, ``'macro_f1'``, ``'r2'``,
-                    ``'neg_rmse'``, ``'neg_mae'``) or callable ``(y_true, y_pred) -> float``.
+                    ``'rmse'``, ``'mae'``, ``'neg_rmse'``, ``'neg_mae'``) or
+                    callable ``(y_true, y_pred) -> float``.
     :param n_trials: Number of Optuna trials (Default = ``30``).
     :param timeout: Optional time limit in seconds.
-    :param direction: ``'maximize'`` (Default) or ``'minimize'``.
+    :param direction: ``'maximize'`` or ``'minimize'``. The default (``None``)
+                      derives it from ``scoring``: error metrics (``'rmse'``,
+                      ``'mae'``) are minimised and all others maximised. A
+                      direction that contradicts a named metric raises
+                      :class:`rsgispy.RSGISPyException`.
     :param pruner: Optional Optuna pruner instance.
     :param sampler: Optional Optuna sampler instance (defaults to seeded TPESampler).
     :param refit: Refit best estimator (and ``best_scaler`` if ``scaler`` is
@@ -194,7 +204,10 @@ def tune_estimator(
     n_samples = y_arr.shape[0]
     c_arr = _validate_coords(coords, n_samples) if coords is not None else None
     g_arr = np.asarray(groups) if groups is not None else None
-    splits = _iter_cv_splits(cv, X, y_arr, c_arr, g_arr)
+    eff_direction = _resolve_direction(direction, scoring)
+    splits = _iter_cv_splits(
+        cv, X, y_arr, c_arr, g_arr, task=task_norm, rnd_seed=rnd_seed
+    )
     if not splits:
         raise rsgispy.RSGISPyException("cv produced zero valid splits.")
 
@@ -226,7 +239,7 @@ def tune_estimator(
         objective=_objective,
         n_trials=int(n_trials),
         timeout=timeout,
-        direction=direction,
+        direction=eff_direction,
         rnd_seed=rnd_seed,
         verbose=0,
         func_name="tune_estimator",

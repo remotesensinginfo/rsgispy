@@ -807,7 +807,7 @@ class CompositeNode(SelectBands):
         arr = out.data
         return out.with_data(
             cast_result_block(
-                arr, int(arr.shape[1]), int(arr.shape[2]), self.out_dtype, clamp_int=True
+                arr, int(arr.shape[1]), int(arr.shape[2]), self.out_dtype
             )
         )
 
@@ -845,13 +845,13 @@ def _resolve_nodata(in_nd: Optional[float], np_dtype: Optional[np.dtype]) -> flo
     """
     dt = np.dtype(np.float64 if np_dtype is None else np_dtype)
     is_int = np.issubdtype(dt, np.integer)
-    if in_nd is not None:
-        val = float(in_nd)
-        if math.isnan(val):
-            if not is_int:
-                return val
-        elif fits_dtype_range(val, dt) and (not is_int or val.is_integer()):
-            return val
+    # NaN (but not an infinity) is kept as a float no-data value.
+    if (
+        in_nd is not None
+        and not math.isinf(float(in_nd))
+        and fits_dtype_range(in_nd, dt, allow_nonfinite_float=True)
+    ):
+        return float(in_nd)
     return 0.0 if is_int else float("nan")
 
 
@@ -1678,7 +1678,6 @@ def _continuous_sink(
         datatype=datatype,
         nodata=nodata,
         band_names=None if band_names is None else list(band_names),
-        clamp_int=True,
         calc_stats=calc_stats,
         creation_opts=normalise_creation_options(creation_opts),
     )
@@ -1729,7 +1728,6 @@ def _thematic_sink(
         datatype=datatype,
         nodata=0.0,
         band_names=[band_name],
-        clamp_int=True,
         calc_stats=False,
         thematic=True,
         close_actions=[_finish],

@@ -151,6 +151,50 @@ or customised via
      - ``n_estimators`` (50..400), ``learning_rate`` (0.01..2.0 log)
      - Widens ``n_estimators`` (50..800) and ``learning_rate`` (0.005..2.0 log)
 
+Repeated k-fold and Jackknife Assessment
+----------------------------------------
+
+As for regression (:func:`~rsgispy.regression.regsklearn.perform_kfold_fit`),
+:func:`~rsgispy.classification.classsklearn.perform_kfold_fit` fits the
+classifier to every fold of a repeated (by default stratified) k-fold and
+returns the accuracy, balanced accuracy, macro F1 and Cohen's kappa of each
+fold with the out-of-fold predictions;
+:func:`~rsgispy.classification.classsklearn.summarise_kfold_metrics`
+summarises them. With ``groups`` (for example the polygon each pixel sample
+came from) a group is never split across the train and test folds.
+:func:`~rsgispy.classification.classsklearn.perform_jackknife_fit` leaves out
+one sample (or group) at a time, giving the pooled leave-one-out metrics, the
+influence of each sample (``delta_cv_accuracy``, ``delta_fit_accuracy``,
+``pred_change_frac``) and, for linear classifiers, jackknife standard errors
+of the coefficients of each class.
+
+.. code-block:: python
+
+    import pandas
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.linear_model import LogisticRegression
+    import rsgispy.classification.classsklearn as csk
+
+    df = pandas.read_parquet("train.parquet")
+    x = df[["blue", "green", "red", "nir"]]
+    y = df["class_name"]
+
+    # 5 folds repeated 10 times; writes kfold_rf_metrics.csv and kfold_rf_predictions.csv.
+    metrics, preds = csk.perform_kfold_fit(
+        RandomForestClassifier(n_estimators=200, random_state=0),
+        x,
+        y,
+        n_repeats=10,
+        groups=df["poly_id"],
+        out_dir="kfold_outputs",
+        out_prefix="kfold_rf",
+    )
+    print(csk.summarise_kfold_metrics(metrics))
+
+    jk = csk.perform_jackknife_fit(LogisticRegression(max_iter=1000), x, y)
+    print(jk["metrics"]["accuracy"])
+    print(jk["influence"].nlargest(5, "delta_cv_accuracy"))  # likely label errors
+
 API Reference
 -------------
 

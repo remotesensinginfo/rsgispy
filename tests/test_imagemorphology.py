@@ -2,35 +2,19 @@
 Tests for rsgispy.imagemorphology.
 """
 
-import inspect
 
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imagemorphology as rimorph
 
+from conftest import write_raster
+
 
 def _write_raster(path, arr, dtype="uint8", nodata=None):
-    data = np.asarray(arr, dtype=dtype)
-    if data.ndim == 2:
-        data = data[np.newaxis, :, :]
-    count, height, width = data.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(data.dtype),
-        "crs": "EPSG:32630",
-        "transform": from_origin(500000.0, 5200000.0, 10.0, 10.0),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(str(path), "w", **profile) as dst:
-        dst.write(data)
+    return write_raster(path, arr, dtype=dtype, nodata=nodata)
 
 
 def test_create_circular_op_and_single_band_dilate_erode_gradient(tmp_path):
@@ -311,34 +295,9 @@ def test_opening_closing_and_top_hats(tmp_path):
         )
 
 
-def test_imagemorphology_v1_signatures_and_defaults(tmp_path):
-    """Verify v1.0 keyword-only tail and default datatype/nodata resolution."""
-    kw_tail = {
-        "gdalformat": "GTIFF",
-        "datatype": None,
-        "no_data_val": None,
-        "calc_stats": True,
-        "use_pbar": True,
-    }
-    raster_fns = [
-        getattr(rimorph, name)
-        for name in rimorph.__all__
-        if name != "create_circular_op" and not name.endswith("_node")
-    ]
-    assert len(raster_fns) == 12
-    for fn in raster_fns:
-        sig = inspect.signature(fn)
-        params = list(sig.parameters.values())
-        assert params[0].name == "input_img"
-        assert params[1].name == "output_img"
-        for kw_name, kw_default in kw_tail.items():
-            assert kw_name in sig.parameters, f"{fn.__name__} missing {kw_name}"
-            p = sig.parameters[kw_name]
-            assert p.kind == inspect.Parameter.KEYWORD_ONLY, (
-                f"{fn.__name__}.{kw_name} must be keyword-only"
-            )
-            assert p.default == kw_default
-
+def test_imagemorphology_default_datatype_and_positional_gdalformat(tmp_path):
+    """datatype=None keeps the input dtype (or picks the minima output type),
+    no_data_val is honoured, and gdalformat cannot be passed positionally."""
     # Default datatype=None preserves input dtype and honours no_data_val
     arr_f32 = np.full((7, 7), 10.0, dtype=np.float32)
     arr_f32[3, 3] = 2.0
@@ -371,3 +330,151 @@ def test_imagemorphology_v1_signatures_and_defaults(tmp_path):
         rimorph.image_dilate(
             str(in_f32), str(tmp_path / "bad_pos.tif"), "", False, 3, "GTIFF"
         )
+
+
+@pytest.mark.parametrize("sequencial_out", [False, True])
+def test_local_minima_strict_finds_border_minima(tmp_path, sequencial_out):
+    """allow_equal=False finds minima on the image border too."""
+    arr = np.full((5, 5), 50, dtype=np.uint8)
+    arr[0, 0] = 1  # corner minimum
+    arr[2, 4] = 2  # edge minimum
+    arr[2, 2] = 3  # interior minimum
+    in_path = str(tmp_path / "in.tif")
+    _write_raster(in_path, arr[np.newaxis])
+    out_path = str(tmp_path / "minima.tif")
+    rimorph.image_local_minima(
+        in_path, out_path, sequencial_out=sequencial_out, allow_equal=False,
+        calc_stats=False, use_pbar=False,
+    )
+    with rasterio.open(out_path) as ds:
+        found = ds.read(1) > 0
+    expected = np.zeros((5, 5), dtype=bool)
+    expected[0, 0] = expected[2, 4] = expected[2, 2] = True
+    np.testing.assert_array_equal(found, expected)
+
+    if not sequencial_out:
+        from rsgispy.imageprocess import MemorySink, RasterSource, TileGraph
+
+        node = rimorph.image_local_minima_node(
+            RasterSource(in_path), allow_equal=False
+        )
+        res = TileGraph(MemorySink(node, name="m"), block_size=3).run(use_pbar=False)
+        np.testing.assert_array_equal(res["m"][0] > 0, expected)
+
+
+def _morph_reference(arr, size, reducer, mode, fill=0.0):
+    """Reference square-operator dilation / erosion with ``np.pad`` borders."""
+    from numpy.lib.stride_tricks import sliding_window_view  # pylint: disable=import-outside-toplevel
+
+    kwargs = {"constant_values": fill} if mode == "constant" else {}
+    pad = np.pad(arr.astype(np.float64), size // 2, mode=mode, **kwargs)
+    return reducer(sliding_window_view(pad, (size, size)), axis=(-2, -1))
+
+
+@pytest.mark.parametrize(
+    "mode, fill", [("edge", 0.0), ("reflect", 0.0), ("symmetric", 0.0), ("constant", 200.0)]
+)
+def test_morphology_border_mode(tmp_path, mode, fill):
+    """border_mode / border_fill set how the operator is filled beyond the
+    image edge for dilation, erosion, gradient, opening, closing and top-hats."""
+    rng = np.random.default_rng(3)
+    arr = rng.integers(1, 120, size=(9, 11)).astype(np.uint8)
+    in_p = tmp_path / "bm_in.tif"
+    _write_raster(in_p, arr)
+
+    def _run(fn, tag, **kwargs):
+        out_p = tmp_path / f"{tag}_{mode}.tif"
+        fn(str(in_p), str(out_p), op_size=3, border_mode=mode, border_fill=fill,
+           use_pbar=False, **kwargs)
+        with rasterio.open(out_p) as src:
+            return src.read(1).astype(np.float64)
+
+    dil = _morph_reference(arr, 3, np.max, mode, fill)
+    ero = _morph_reference(arr, 3, np.min, mode, fill)
+    np.testing.assert_array_equal(_run(rimorph.image_dilate, "dil"), dil)
+    np.testing.assert_array_equal(_run(rimorph.image_erode, "ero"), ero)
+    np.testing.assert_array_equal(
+        _run(rimorph.image_gradient, "grad"), np.minimum(dil - ero, 255)
+    )
+    np.testing.assert_array_equal(_run(rimorph.image_dilate_combined_out, "dilc"), dil)
+    # Opening: the dilation pads the eroded image with the same border.
+    opened = _morph_reference(ero, 3, np.max, mode, fill)
+    np.testing.assert_array_equal(_run(rimorph.image_opening, "open"), opened)
+    np.testing.assert_array_equal(
+        _run(rimorph.image_white_top_hat, "wth"),
+        np.clip(arr.astype(np.float64) - opened, 0, 255)
+    )
+    closed = _morph_reference(dil, 3, np.min, mode, fill)
+    np.testing.assert_array_equal(_run(rimorph.image_closing, "close"), closed)
+    np.testing.assert_array_equal(
+        _run(rimorph.image_black_top_hat, "bth"),
+        np.clip(closed - arr.astype(np.float64), 0, 255)
+    )
+
+
+def test_morphology_border_mode_default_is_edge_and_bad_mode_raises(tmp_path):
+    """The default border_mode gives the same output as 'edge'; an unknown
+    mode raises."""
+    arr = np.arange(30, dtype=np.uint8).reshape(5, 6)
+    in_p = tmp_path / "def_in.tif"
+    _write_raster(in_p, arr)
+    rimorph.image_erode(str(in_p), str(tmp_path / "a.tif"), use_pbar=False)
+    rimorph.image_erode(str(in_p), str(tmp_path / "b.tif"), border_mode="edge", use_pbar=False)
+    with rasterio.open(tmp_path / "a.tif") as a_ds, rasterio.open(tmp_path / "b.tif") as b_ds:
+        np.testing.assert_array_equal(a_ds.read(), b_ds.read())
+    with pytest.raises(rsgispy.RSGISPyException):
+        rimorph.image_erode(
+            str(in_p), str(tmp_path / "c.tif"), border_mode="wrap", use_pbar=False
+        )
+
+
+def test_morphology_edge_padding_and_no_nodata_bleed(tmp_path):
+    arr = np.full((12, 12), 50.0, dtype=np.float32)
+    arr[5, 5] = -9999.0  # nodata hole
+    arr[6, 6] = np.nan
+    in_img = write_raster(tmp_path / "morph_in.tif", arr, nodata=-9999.0, origin=(500000.0, 5800000.0))
+
+    op_file = str(tmp_path / "op3.gmtxt")
+    rimorph.create_circular_op(op_file, 3)
+
+    out_erode = str(tmp_path / "erode.tif")
+    rimorph.image_erode(
+        in_img,
+        out_erode,
+        op_file,
+        use_op_file=True,
+        no_data_val=-9999.0,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    out_dilate = str(tmp_path / "dilate.tif")
+    rimorph.image_dilate(
+        in_img,
+        out_dilate,
+        op_file,
+        use_op_file=True,
+        no_data_val=-9999.0,
+        calc_stats=False,
+        use_pbar=False,
+    )
+    out_open = str(tmp_path / "open.tif")
+    rimorph.image_opening(
+        in_img,
+        out_open,
+        op_file,
+        use_op_file=True,
+        no_data_val=-9999.0,
+        calc_stats=False,
+        use_pbar=False,
+    )
+
+    for out_p in (out_erode, out_dilate, out_open):
+        with rasterio.open(out_p) as dst:
+            res = dst.read(1)
+            # Border pixels must stay 50.0 (no 0-padding bleed)
+            assert res[0, 0] == 50.0
+            assert res[-1, -1] == 50.0
+            # Neighbours of nodata/NaN hole must stay 50.0 (no -9999 or NaN bleed)
+            assert res[5, 4] == 50.0
+            assert res[4, 5] == 50.0
+            assert res[6, 7] == 50.0

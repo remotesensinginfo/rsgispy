@@ -244,7 +244,8 @@ def calc_sar_indices_node(
     :param no_data_val: Optional input no-data value (Default = ``None``: the
                         no-data value of ``source``).
     :param out_no_data_val: Optional output no-data value (Default = ``None``:
-                            ``-999``, or the type's limit for narrow integers).
+                            ``-9999`` for float types, the type's minimum
+                            (signed) or maximum (unsigned) for integers).
     :param name: Optional node name (Default = ``'calc_sar_indices'``).
     :return: :class:`~rsgispy.imageprocess.TileNode`.
 
@@ -386,8 +387,10 @@ def calc_sar_indices(
     :param no_data_val: Optional input no-data value. If ``None``, reads the
                         no-data value(s) from the input image header.
     :param out_no_data_val: Optional output no-data value. If ``None``, uses
-                            ``-999.0`` for signed/floating-point types (or
-                            ``0`` / type minimum for narrow integer types).
+                            ``-9999`` for floating-point types and the type's
+                            minimum (signed) or maximum (unsigned) for integer
+                            types (:func:`rsgispy.imageprocess.default_out_nodata`;
+                            before 0.5.0 the default was ``-999``).
     :param calc_stats: If ``True``, populate band statistics, histograms, and
                        overview pyramids on ``output_img`` (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing

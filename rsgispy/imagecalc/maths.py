@@ -15,11 +15,11 @@ from rasterio.windows import Window
 import rsgispy
 import rsgispy.tools.maths
 from rsgispy.imageprocess import (
+    validate_out_nodata,
     BandDefn,
     cast_result_block,
     compute_spatial_intersection,
     ensure_file_exists,
-    fits_dtype_range,
     iter_dataset_windows,
     iter_image_blocks,
     normalise_band_defs,
@@ -112,23 +112,13 @@ def _check_out_no_data_val(
     no_data_val: Optional[float], out_np_dtype: np.dtype
 ) -> Optional[float]:
     """
-    Validate an optional output no-data value against the output data type.
-
-    :param no_data_val: Requested output no-data value (or ``None``).
-    :param out_np_dtype: NumPy dtype of the output raster.
-    :return: ``no_data_val`` as a float, or ``None``.
+    Validate an optional output no-data value against the output data type
+    (:func:`rsgispy.imageprocess.validate_out_nodata`; ``None`` stays
+    ``None``).
     """
-    if no_data_val is None:
-        return None
-    nd_val = float(no_data_val)
-    if math.isnan(nd_val) and np.issubdtype(out_np_dtype, np.floating):
-        return nd_val
-    if not fits_dtype_range(nd_val, out_np_dtype):
-        raise rsgispy.RSGISPyException(
-            f"no_data_val ({no_data_val}) cannot be represented by the output "
-            f"data type '{np.dtype(out_np_dtype).name}'."
-        )
-    return nd_val
+    return validate_out_nodata(
+        no_data_val, out_np_dtype, default_to_type=False, label="no_data_val"
+    )
 
 
 def _set_out_no_data_val(dst: Any, no_data_val: Optional[float]) -> None:
@@ -239,7 +229,9 @@ def band_maths(
     :param gdalformat: GDAL/rasterio driver format for the output file
                        (Default = ``'GTIFF'``).
     :param datatype: Output data type constant from ``rsgispy.TYPE_*``
-                     (Default = ``rsgispy.TYPE_32FLOAT``).
+                     (Default = ``rsgispy.TYPE_32FLOAT``). Integer outputs
+                     are rounded to the nearest integer and clamped to the
+                     type's range; NaN becomes the output no-data value.
     :param use_pbar: Optional bool specifying whether to display a tqdm progress bar
                      during processing (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options (e.g.,
@@ -426,7 +418,9 @@ def image_math(
     :param output_exists: If True and ``output_img`` exists, update it in place (Default = False).
     :param gdalformat: GDAL/rasterio driver format for the output file (Default = ``'GTIFF'``).
     :param datatype: Output data type constant from ``rsgispy.TYPE_*``
-                     (Default = ``rsgispy.TYPE_32FLOAT``).
+                     (Default = ``rsgispy.TYPE_32FLOAT``). Integer outputs
+                     are rounded to the nearest integer and clamped to the
+                     type's range; NaN becomes the output no-data value.
     :param use_pbar: If True, display a tqdm progress bar during processing (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
     :param no_data_val: Optional no-data value written to every output band
@@ -499,6 +493,7 @@ def image_math(
                     win_h,
                     win_w,
                     out_np_dtype,
+                    nodata=out_no_data_val,
                 )
                 for band_idx in range(n_bands)
             ]
@@ -543,7 +538,9 @@ def image_band_math(
     :param output_exists: If True and ``output_img`` exists, update it in place (Default = False).
     :param gdalformat: GDAL/rasterio driver format for the output file (Default = ``'GTIFF'``).
     :param datatype: Output data type constant from ``rsgispy.TYPE_*``
-                     (Default = ``rsgispy.TYPE_32FLOAT``).
+                     (Default = ``rsgispy.TYPE_32FLOAT``). Integer outputs
+                     are rounded to the nearest integer and clamped to the
+                     type's range; NaN becomes the output no-data value.
     :param use_pbar: If True, display a tqdm progress bar during processing (Default = True).
     :param creation_opts: Optional mapping of GDAL creation options.
     :param band_names: Optional sequence of output band description names matching

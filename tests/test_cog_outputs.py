@@ -37,6 +37,8 @@ import rsgispy.imageutils.rasterise
 import rsgispy.imageutils.stats
 import rsgispy.imageutils.warp
 
+from conftest import write_raster
+
 try:
     from osgeo_utils.samples.validate_cloud_optimized_geotiff import (
         validate as _gdal_validate_cog,
@@ -88,22 +90,7 @@ def fixture_clean_crt_env(monkeypatch):
 
 
 def _write_raster(path, data, dtype="float32", nodata=None, x0=500000.0):
-    if data.ndim == 2:
-        data = data[np.newaxis]
-    count, height, width = data.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=dtype,
-        crs="EPSG:32630",
-        transform=from_origin(x0, 5200000.0, 10.0, 10.0),
-        nodata=nodata,
-    ) as dst:
-        dst.write(data.astype(dtype))
+    write_raster(path, data, dtype=dtype, nodata=nodata, origin=(x0, 5200000.0))
 
 
 def _ramp(n_bands=1, height=HEIGHT, width=WIDTH):
@@ -940,3 +927,21 @@ def test_cog_output_to_gdal_virtual_path(tmp_path, clean_crt_env):
         for path in (out_cog, direct_cog):
             if rasterio.shutil.exists(path):
                 rasterio.shutil.delete(path)
+
+
+def test_set_img_pxl_values_keeps_cog_layout(tmp_path, clean_crt_env):
+    """set_img_pxl_values on a COG rebuilds it instead of breaking the layout."""
+    import rsgispy.imageutils.arrays  # pylint: disable=import-outside-toplevel
+
+    src = tmp_path / "ramp.tif"
+    _write_raster(src, _ramp())
+    cog = str(tmp_path / "ramp_cog.tif")
+    rsgispy.imagecalc.maths.band_maths(
+        cog, "b1", [rsgispy.imagecalc.maths.BandDefn("b1", str(src), 1)],
+        gdalformat="COG", calc_stats=True, use_pbar=False,
+    )
+    rsgispy.imageutils.arrays.set_img_pxl_values(cog, 1, [3, 7], [2, 5], pxl_value=-5)
+    _assert_valid_cog(cog, stats=False)
+    with rasterio.open(cog) as ds:
+        arr = ds.read(1)
+    assert arr[2, 3] == -5 and arr[5, 7] == -5

@@ -2,16 +2,27 @@
 Tests for rsgispy and rsgispy.imagecalc.maths.band_maths.
 """
 
+import importlib
+import sys
+import warnings
+
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
+import rsgispy.imagecalc._norm_helpers as norm_helpers
+import rsgispy.imagecalc.comparison as ic_cmp
+import rsgispy.imagecalc.distance as ic_dist
+import rsgispy.imagecalc.fill as ic_fill
 import rsgispy.imagecalc.maths
 import rsgispy.imagecalc.percentiles
 import rsgispy.imagecalc.stats
+import rsgispy.imagecalc.stats as ic_stats
 import rsgispy.imageprocess
+import rsgispy.imageprocess as imgproc
+
+from conftest import write_raster
 
 
 def _create_test_raster(
@@ -23,21 +34,9 @@ def _create_test_raster(
     dtype="float32",
 ):
     """Helper to write a multi-band test GeoTIFF."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    count, height, width = bands_data.shape
-    transform = from_origin(origin[0], origin[1], pixel_size[0], pixel_size[1])
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=dtype,
-        crs=crs,
-        transform=transform,
-    ) as dst:
-        dst.write(bands_data.astype(dtype))
+    return write_raster(
+        path, bands_data, dtype=dtype, crs=crs, origin=origin, pixel_size=pixel_size
+    )
 
 
 def test_datatype_helpers():
@@ -437,17 +436,23 @@ def test_band_percentiles(tmp_path):
 
     # Band 1 without 0.0: [10, 20, 30, 40, 50] -> median 30.0
     # Band 2 without 0.0: [100, 200, 300, 400, 500] -> median 300.0
-    pcts = rsgispy.imagecalc.percentiles.calc_band_percentile(str(in_img), 0.5, no_data_val=0.0)
+    # Percentiles are in [0, 100] (as calc_band_percentile_msk and
+    # calc_imgs_pxl_percentiles), computed block by block.
+    pcts = rsgispy.imagecalc.percentiles.calc_band_percentile(str(in_img), 50.0, no_data_val=0.0)
     assert pcts == pytest.approx([30.0, 300.0])
 
     # All values without no_data_val
     pcts_all = rsgispy.imagecalc.percentiles.calc_band_percentile(
-        str(in_img), 0.5, no_data_val=None
+        str(in_img), 50.0, no_data_val=None
     )
     assert pcts_all == pytest.approx([25.0, 250.0])
 
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.percentiles.calc_band_percentile(str(in_img), 1.5, no_data_val=None)
+        rsgispy.imagecalc.percentiles.calc_band_percentile(str(in_img), 150.0, no_data_val=None)
+    # A value in (0, 1) is a percentile below 1, with no warning.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        rsgispy.imagecalc.percentiles.calc_band_percentile(str(in_img), 0.5, no_data_val=None)
 
     # Masked pixels where msk == 1 and neither band == 0.0:
     # (0,1)->(10,200), (0,2)->(20,300), (1,1)->(40,500)
@@ -941,3 +946,123 @@ def test_band_maths_no_data_val_and_calc_stats(tmp_path):
             no_data_val=0.5,
             use_pbar=False,
         )
+
+
+def test_calc_band_percentile_block_by_block(tmp_path, monkeypatch):
+    """calc_band_percentile reads windows, with the same values as a full read."""
+    in_img = tmp_path / "big.tif"
+    rng = np.random.default_rng(4)
+    arr = rng.normal(100.0, 20.0, size=(2, 40, 37)).astype(np.float32)
+    arr[0, :3, :] = -1.0
+    _create_test_raster(in_img, arr)
+    monkeypatch.setenv("RSGISPY_BLOCK_SIZE", "8")
+    full_reads = []
+    real_read = rasterio.io.DatasetReader.read
+
+    def _spy(self, *args, **kwargs):
+        if kwargs.get("window") is None:
+            full_reads.append(args)
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(rasterio.io.DatasetReader, "read", _spy)
+    pcts = rsgispy.imagecalc.percentiles.calc_band_percentile(
+        str(in_img), 90.0, no_data_val=-1.0
+    )
+    assert not full_reads
+    b0 = arr[0][arr[0] != -1.0].astype(np.float64)
+    assert pcts == pytest.approx([np.percentile(b0, 90.0),
+                                  np.percentile(arr[1].astype(np.float64), 90.0)])
+
+
+def test_subsample_band_values_tiled_reservoir(tmp_path, monkeypatch):
+    monkeypatch.setenv(imgproc.ENV_VAR_BLOCK_SIZE, "8")
+    arr = np.arange(1, 20 * 20 + 1, dtype=np.float32).reshape(20, 20)
+    arr[0, 0] = -999.0
+    arr[1, 1] = np.nan
+    in_img = write_raster(tmp_path / "res.tif", arr, nodata=-999.0, origin=(500000.0, 5800000.0))
+
+    with rasterio.open(in_img) as src:
+        s1 = norm_helpers.subsample_band_values(
+            src, band_idx=1, eff_nd=-999.0, max_samples=50, rnd_seed=42
+        )
+        s2 = norm_helpers.subsample_band_values(
+            src, band_idx=1, eff_nd=-999.0, max_samples=50, rnd_seed=42
+        )
+        assert s1.shape == (50,)
+        np.testing.assert_array_equal(s1, s2)
+        assert np.all(np.isfinite(s1))
+        assert not np.any(s1 == -999.0)
+        # Samples should span across multiple tiles (not just first 50 pixels)
+        assert float(np.max(s1)) > 100.0
+
+
+def test_optional_scipy_sklearn_guards(monkeypatch):
+    """Verify optional scipy/sklearn dependencies guard functions cleanly."""
+    # Test stats pure-numpy mode fallback when HAVE_SCIPY is False
+    monkeypatch.setattr(ic_stats, "HAVE_SCIPY", False)
+    col_data = np.array([[1.0, 5.0], [2.0, 5.0], [2.0, np.nan]])
+    modes = ic_stats._calc_mode_columns(col_data)  # pylint: disable=protected-access
+    np.testing.assert_allclose(modes, np.array([2.0, 5.0]))
+
+    # Simulate missing scipy and sklearn during fresh module import
+    with monkeypatch.context() as ctx:
+        for mod_name in (
+            "scipy",
+            "scipy.stats",
+            "scipy.ndimage",
+            "scipy.spatial",
+            "sklearn",
+            "sklearn.metrics",
+        ):
+            ctx.setitem(sys.modules, mod_name, None)
+
+        ctx.setattr(rsgispy.imagecalc, "comparison", ic_cmp)
+        ctx.setattr(rsgispy.imagecalc, "distance", ic_dist)
+        ctx.setattr(rsgispy.imagecalc, "fill", ic_fill)
+
+        for mod_name in (
+            "rsgispy.imagecalc.comparison",
+            "rsgispy.imagecalc.distance",
+            "rsgispy.imagecalc.fill",
+        ):
+            ctx.delitem(sys.modules, mod_name, raising=False)
+
+        cmp_fresh = importlib.import_module("rsgispy.imagecalc.comparison")
+        dist_fresh = importlib.import_module("rsgispy.imagecalc.distance")
+        fill_fresh = importlib.import_module("rsgispy.imagecalc.fill")
+
+        assert cmp_fresh.HAVE_SCIPY is False
+        assert cmp_fresh.HAVE_SKLEARN is False
+        for fn_name in (
+            "calc_img_correlation",
+            "calc_img_earth_move_dist",
+            "calc_img_mutual_info",
+            "calc_img_difference",
+        ):
+            assert hasattr(cmp_fresh, fn_name)
+            assert fn_name in cmp_fresh.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            cmp_fresh.calc_img_correlation("a.tif", "b.tif", 1, 1)
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            cmp_fresh.calc_img_earth_move_dist("a.tif", "b.tif", 1, 1)
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            cmp_fresh.calc_img_mutual_info("a.tif", "b.tif", 1, 1)
+
+        assert dist_fresh.HAVE_SCIPY is False
+        for fn_name in ("calc_dist_to_img_vals", "buffer_img_pxl_vals"):
+            assert hasattr(dist_fresh, fn_name)
+            assert fn_name in dist_fresh.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            dist_fresh.calc_dist_to_img_vals("in.tif", "out.tif", [1])
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            dist_fresh.buffer_img_pxl_vals("in.tif", "out.tif", [1], 10.0)
+
+        assert fill_fresh.HAVE_SCIPY is False
+        assert hasattr(fill_fresh, "calc_fill_regions_knn")
+        assert hasattr(fill_fresh, "region_growing_fill")
+        assert hasattr(fill_fresh, "region_growing_fill_tiled")
+        assert "calc_fill_regions_knn" in fill_fresh.__all__
+        assert "region_growing_fill" in fill_fresh.__all__
+        assert "region_growing_fill_tiled" in fill_fresh.__all__
+        with pytest.raises(rsgispy.RSGISPyException, match="pip install"):
+            fill_fresh.calc_fill_regions_knn("in.tif", "fill.tif", "out.tif", 0, 1)

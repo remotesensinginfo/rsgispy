@@ -164,7 +164,9 @@ def make_cases():
     """Return the list of ``(case_id, func_name, args, kwargs)``."""
     t32 = rsgispy.TYPE_32FLOAT
     cases = []
-    for dem in ("dem_a", "dem_b", "dem_c", "dem_d"):
+    # dem_d is in EPSG:4326: the functions without a pixel-resolution image
+    # reject it (pixel sizes in degrees), so it is only used with res_d.
+    for dem in ("dem_a", "dem_b", "dem_c"):
         cases += [
             (f"slope_deg_{dem}", "slope", [dem], {"unit": "degrees"}),
             (f"slope_rad_{dem}", "slope", [dem], {"unit": "radians"}),

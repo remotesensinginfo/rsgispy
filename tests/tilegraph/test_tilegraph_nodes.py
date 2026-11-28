@@ -10,7 +10,6 @@ import os
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imagefilter.chained as if_chained
@@ -36,26 +35,14 @@ from rsgispy.imageprocess import (
     same_bands_meta,
 )
 
+from conftest import write_raster
+
 
 def _write(path, arr, nodata=None, crs="EPSG:32630", origin=(500000.0, 5000000.0),
            res=10.0, names=None):
-    arr3 = arr[np.newaxis] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": arr3.shape[1],
-        "width": arr3.shape[2],
-        "count": arr3.shape[0],
-        "dtype": str(arr3.dtype),
-        "crs": crs,
-        "transform": from_origin(origin[0], origin[1], res, res),
-        "nodata": nodata,
-    }
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(arr3)
-        if names:
-            for idx, name in enumerate(names, start=1):
-                dst.set_band_description(idx, name)
-    return str(path)
+    return write_raster(
+        path, arr, nodata=nodata, crs=crs, origin=origin, pixel_size=res, band_names=names or None
+    )
 
 
 def _read(path):
@@ -188,11 +175,12 @@ def test_metadata_propagates_to_disk_sink(tmp_path):
     )
     assert _read(tmp_path / "out3.tif")[1:] == (None, (None, None))
 
-    # A no-data value the output type cannot store is not inherited.
+    # A no-data value the output type cannot store becomes the type's default
+    # (255 for uint8), as in the file functions.
     TileGraph(
         DiskSink(med, tmp_path / "out4.tif", datatype=rsgispy.TYPE_8UINT)
     ).run(use_pbar=False)
-    assert _read(tmp_path / "out4.tif")[1] is None
+    assert _read(tmp_path / "out4.tif")[1] == 255.0
 
 
 def test_metadata_of_band_math_and_unknown_nodes():
@@ -369,7 +357,7 @@ def test_select_stack_cast_nodes():
     np.testing.assert_array_equal(res["stack"][4], arr[0])
     assert res["cast"].dtype == np.uint8
     np.testing.assert_array_equal(
-        res["cast"], np.clip(res["stack"], 0, 255).astype(np.uint8)
+        res["cast"], np.clip(np.rint(res["stack"]), 0, 255).astype(np.uint8)
     )
     with pytest.raises(rsgispy.RSGISPyException):
         StackBands([])
@@ -604,3 +592,22 @@ def test_raster_source_read_dtype_matches_numpy_cast(tmp_path, file_dtype, node_
         np.testing.assert_array_equal(out, expected)
     safe = np.can_cast(file_dtype, node_dtype, casting="safe")
     assert (gdal_read_dtype(file_dtype, node_dtype) is not None) == bool(safe)
+
+
+def test_cast_remaps_unrepresentable_nodata():
+    """H13: -9999 cast to uint8 becomes 255, in the pixels and the metadata."""
+    arr = np.array([[[-9999.0, 10.4, 300.0], [-3.0, 254.6, 255.0]]])
+    src = ArraySource(arr, nodata=-9999.0)
+    cast = Cast(src, np.uint8)
+    graph = TileGraph(MemorySink(cast, name="cast"), block_size=6)
+    assert graph.node_meta[cast].nodata == 255.0
+    out = graph.run(use_pbar=False)["cast"]
+    # nodata -> 255; valid values round and clamp, and never become 255.
+    np.testing.assert_array_equal(out[0], [[255, 10, 254], [0, 254, 254]])
+
+    keep = Cast(ArraySource(arr, nodata=-9999.0), np.int16)
+    g2 = TileGraph(MemorySink(keep, name="c"), block_size=6)
+    assert g2.node_meta[keep].nodata == -9999.0
+    np.testing.assert_array_equal(
+        g2.run(use_pbar=False)["c"][0], [[-9999, 10, 300], [-3, 255, 255]]
+    )

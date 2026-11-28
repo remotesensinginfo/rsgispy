@@ -5,6 +5,8 @@ Tests for rsgispy.tools utility modules split from utils
 
 import datetime
 import json
+import os
+import stat
 
 import numpy as np
 import pytest
@@ -203,6 +205,13 @@ def test_combinatorics_dates_dict_struct_and_encoding(tmp_path):
     ]
     assert rdates.is_summer_winter(52.0, datetime.date(2020, 7, 1)) == 1
     assert rdates.is_summer_winter(-30.0, datetime.date(2020, 7, 1)) == 2
+    # The hemispheres mirror each other: April-September is the northern
+    # summer and the southern winter.
+    for month in range(1, 13):
+        north = rdates.is_summer_winter(52.0, datetime.date(2020, month, 15))
+        south = rdates.is_summer_winter(-30.0, datetime.date(2020, month, 15))
+        assert north == (1 if 4 <= month <= 9 else 2)
+        assert south == (2 if 4 <= month <= 9 else 1)
 
     incs = rdates.get_datetime_increment_lst(
         datetime.datetime(2020, 1, 1),
@@ -247,3 +256,12 @@ def test_combinatorics_dates_dict_struct_and_encoding(tmp_path):
     raw_xml.write_text("<root><child>1</child></root>", encoding="utf-8")
     rtextio.prettify_xml_file(str(raw_xml), str(pretty_xml))
     assert "\n  <child>1</child>\n" in pretty_xml.read_text(encoding="utf-8")
+
+
+def test_credentials_file_permissions_and_roundtrip(tmp_path):
+    """Credential files are created with 0o600 permissions and roundtrip cleanly."""
+    cred_file = str(tmp_path / "creds.txt")
+    rcreds.create_username_password_file("alice", "s3cr3t!", cred_file)
+    if os.name != "nt":
+        assert stat.S_IMODE(os.stat(cred_file).st_mode) == 0o600
+    assert rcreds.get_username_password(cred_file) == ("alice", "s3cr3t!")

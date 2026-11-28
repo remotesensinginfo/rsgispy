@@ -31,6 +31,8 @@ from rsgispy.imageprocess import (
     TileGraph,
 )
 
+from conftest import write_raster
+
 GOLDEN_NPZ = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "data", "golden", "terrain_golden.npz"
 )
@@ -60,20 +62,13 @@ _CASES = {case["id"]: case for case in _MANIFEST["cases"]}
 
 
 def _write(path, arr, crs, transform, nodata):
-    arr3 = arr[np.newaxis] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": arr3.shape[1],
-        "width": arr3.shape[2],
-        "count": arr3.shape[0],
-        "dtype": str(arr3.dtype),
-        "crs": crs,
-        "transform": Affine(*transform) if not isinstance(transform, Affine) else transform,
-        "nodata": nodata,
-    }
-    with rasterio.open(str(path), "w", **profile) as dst:
-        dst.write(arr3)
-    return str(path)
+    return write_raster(
+        path,
+        arr,
+        crs=crs,
+        transform=transform if isinstance(transform, Affine) else Affine(*transform),
+        nodata=nodata,
+    )
 
 
 def _input_path(tmp_path, name):
@@ -300,7 +295,7 @@ def _graph_to_file(node, out_path, case, block_size):
 
 
 @pytest.mark.parametrize("block_size", [7, 32, 256])
-@pytest.mark.parametrize("dem", ["dem_a", "dem_b", "dem_c", "dem_d"])
+@pytest.mark.parametrize("dem", ["dem_a", "dem_b", "dem_c"])
 @pytest.mark.parametrize("kind", sorted(_NODE_CASES))
 def test_node_builders_equal_golden(tmp_path, kind, dem, block_size):
     """RasterSource -> builder -> DiskSink equals the file function's output."""
@@ -523,3 +518,33 @@ def test_terrain_node_followed_by_window_equals_file_sequence(tmp_path, block_si
     assert_matches_golden(out[0].astype(np.float32), _GOLDEN["out_slope_deg_dem_a"])
     assert_matches_golden(out[1].astype(np.float32), _GOLDEN["out_aspect_dem_a"])
     np.testing.assert_array_equal(out[2], _GOLDEN["out_hillshade_dem_a"])
+
+
+_GEOGRAPHIC_FILE_CALLS = {
+    "slope": lambda d, o: elev_terr.slope(d, o, use_pbar=False),
+    "aspect": lambda d, o: elev_terr.aspect(d, o, use_pbar=False),
+    "hillshade": lambda d, o: elev_illum.hillshade(d, o, 315.0, 45.0, use_pbar=False),
+    "local_incidence_angle": lambda d, o: elev_illum.local_incidence_angle(
+        d, o, 135.0, 35.0, use_pbar=False),
+    "local_exitance_angle": lambda d, o: elev_illum.local_exitance_angle(
+        d, o, 200.0, 15.0, use_pbar=False),
+    "shadow_mask": lambda d, o: elev_illum.shadow_mask(
+        d, o, 315.0, 45.0, 3000.0, use_pbar=False),
+}
+
+
+@pytest.mark.parametrize("func", sorted(_GEOGRAPHIC_FILE_CALLS))
+def test_terrain_rejects_geographic_crs(tmp_path, func):
+    """H12: a DEM in a geographic CRS raises, pointing to *_pxl_res_img."""
+    dem = _input_path(tmp_path, "dem_d")  # EPSG:4326
+    with pytest.raises(rsgispy.RSGISPyException, match="pxl_res_img"):
+        _GEOGRAPHIC_FILE_CALLS[func](dem, str(tmp_path / "out.tif"))
+
+
+@pytest.mark.parametrize("kind", sorted(_NODE_CASES))
+def test_terrain_nodes_reject_geographic_crs(tmp_path, kind):
+    """H12: the node builders without a pixel-resolution input raise too."""
+    builder, _ = _NODE_CASES[kind]
+    node = builder(RasterSource(_input_path(tmp_path, "dem_d"), bands=1))
+    with pytest.raises(rsgispy.RSGISPyException, match="geographic"):
+        TileGraph(MemorySink(node, name="out")).run(use_pbar=False)

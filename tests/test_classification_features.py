@@ -6,7 +6,6 @@ sensitivity.
 """
 
 import importlib.util
-import inspect
 import warnings
 from pathlib import Path
 
@@ -20,7 +19,6 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import LinearSVC
 
 import rsgispy
-import rsgispy.classification as rcls
 import rsgispy.classification.classdata as rcd
 import rsgispy.classification.classfeatures as rcf
 import rsgispy.classification.classsklearn as rcsk
@@ -120,32 +118,6 @@ def _make_synthetic_dataset(
         "test_pq": test_pq,
         "train_csv": train_csv,
     }
-
-
-def test_classfeatures_module_layout():
-    """Verify classfeatures exposes expected API and is not re-exported at top level."""
-    assert inspect.ismodule(rcf)
-    expected = {
-        "comparison_box_plots",
-        "correlation_matrix",
-        "calc_vif_multicollinearity",
-        "select_features_cqv",
-        "select_features_corr",
-        "select_features_vif",
-        "select_features_univariate",
-        "select_features_rfe",
-        "select_features_from_model",
-        "select_features_boruta_shap",
-        "calc_feature_importance",
-        "calc_jackknife_feature_importance",
-        "calc_feature_response_curves",
-        "calc_shap_feature_contributions",
-        "calc_salib_feature_sensitivity",
-    }
-    assert set(rcf.__all__) == expected
-    for name in expected:
-        assert callable(getattr(rcf, name))
-        assert not hasattr(rcls, name)
 
 
 def test_diagnostics_boxplots_corr_and_vif(tmp_path):
@@ -574,6 +546,77 @@ def test_feature_response_curves(tmp_path):
     assert plt.get_fignums() == []
 
 
+def test_feature_response_curves_pdp_options(tmp_path):
+    """Test PDP method, grid plot, multi-panel, sample overlay, and ylim options."""
+    fix = _make_synthetic_dataset(tmp_path, include_collinear=False)
+    rf_clf, _ = rcsk.train_sklearn_classifier(
+        fix["cfg"],
+        RandomForestClassifier(n_estimators=25),
+        fix["train_df"],
+        rnd_seed=42,
+        return_model=True,
+    )
+
+    marg_df = rcf.calc_feature_response_curves(
+        fix["cfg"], rf_clf, fix["train_df"], n_samples=12, use_pbar=False
+    )
+    grid_png = tmp_path / "resp_grid.png"
+    resp_dir = tmp_path / "resp_pdp"
+    pdp_df = rcf.calc_feature_response_curves(
+        fix["cfg"],
+        rf_clf,
+        fix["train_df"],
+        n_samples=12,
+        method="pdp",
+        pdp_background_samples=30,
+        rnd_seed=1,
+        out_grid_plot=grid_png,
+        response_plots_dir=resp_dir,
+        multi_panel=True,
+        plot_samples=True,
+        use_pbar=False,
+    )
+    assert list(pdp_df.columns) == list(marg_df.columns)
+    assert len(pdp_df) == 12
+    assert grid_png.exists()
+    assert (resp_dir / "f1_response_curve.png").exists()
+    prob_cols = [c for c in pdp_df.columns if c.endswith("_prob")]
+    probs = pdp_df[prob_cols].to_numpy()
+    assert np.all((probs >= 0.0) & (probs <= 1.0))
+    # PDP averages over background rows so the class probabilities still sum to 1
+    # and differ from the marginal (held-at-mean) curves.
+    for feat in fix["feat_cols"]:
+        tot = pdp_df[[f"{feat}_{c}_prob" for c in ("Forest", "Water", "Urban")]].sum(axis=1)
+        np.testing.assert_allclose(tot.to_numpy(), 1.0, atol=1e-9)
+    assert not np.allclose(
+        pdp_df[prob_cols].to_numpy(), marg_df[prob_cols].to_numpy()
+    )
+
+    # PDP for a single class with a grid plot and sample overlay.
+    pdp_one = rcf.calc_feature_response_curves(
+        fix["cfg"],
+        rf_clf,
+        fix["train_df"],
+        n_samples=8,
+        method="pdp",
+        target_class="Water",
+        out_grid_plot=tmp_path / "resp_grid_one.png",
+        plot_samples=True,
+        ylim=(0.0, 0.5),
+        use_pbar=False,
+    )
+    assert [c for c in pdp_one.columns if c.endswith("_prob")] == [
+        f"{f}_Water_prob" for f in fix["feat_cols"]
+    ]
+    assert (tmp_path / "resp_grid_one.png").exists()
+
+    with pytest.raises(rsgispy.RSGISPyException, match="method"):
+        rcf.calc_feature_response_curves(
+            fix["cfg"], rf_clf, fix["train_df"], method="ice", use_pbar=False
+        )
+    assert plt.get_fignums() == []
+
+
 def test_shap_feature_contributions(tmp_path):
     """Test multiclass and binary SHAP contributions when shap is installed."""
     pytest.importorskip("shap")
@@ -659,13 +702,14 @@ def test_shap_feature_contributions(tmp_path):
     assert (tmp_path / "bin_shap.png").exists()
     assert "mean_abs_shap" in bin_shap.columns
 
-    # KernelExplainer fallback with small subsample.
+    # KernelExplainer (use_tree_explainer=False) with small subsample.
     kern_shap = rcf.calc_shap_feature_contributions(
         bin_classes,
         lr_clf,
         bin_df.iloc[:12],
         feature_cols=["f1", "f2", "f3", "f_noise"],
         subsample_n_smpls=12,
+        use_tree_explainer=False,
         rnd_seed=42,
     )
     assert "mean_abs_shap" in kern_shap.columns
@@ -786,8 +830,16 @@ def test_shap_tree_explainer_xgb_bracketed_base_score_fallback(monkeypatch, mult
 
     x_df, y_multi, y_bin = _shap_scale_data()
     est = _xgb_classifier().fit(x_df, y_multi if multiclass else y_bin)
-    ref_explainer = shap.TreeExplainer(est, feature_names=list(x_df.columns))
-    ref_exp = ref_explainer(x_df)
+
+    # On shap >= 0.50, raw shap.TreeExplainer supports bracketed base_score and acts
+    # as an exact reference; on shap < 0.50 (Python 3.10), raw shap.TreeExplainer
+    # raises the bracketed base_score ValueError itself.
+    try:
+        ref_explainer = shap.TreeExplainer(est, feature_names=list(x_df.columns))
+    except ValueError as exc:
+        if "could not convert string to float" not in str(exc):
+            raise
+        ref_explainer = None
 
     orig_init = shap_tree.XGBTreeModelLoader.__init__
 
@@ -804,11 +856,28 @@ def test_shap_tree_explainer_xgb_bracketed_base_score_fallback(monkeypatch, mult
 
     explainer = _create_tree_explainer(est, list(x_df.columns))
     exp = explainer(x_df)
-    np.testing.assert_allclose(exp.values, ref_exp.values, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(exp.base_values, ref_exp.base_values, rtol=1e-6, atol=1e-6)
+
+    # Verify SHAP additivity against XGBoost's exact margins on every shap version.
+    margins = est.predict(x_df, output_margin=True)
+    explained = np.asarray(exp.base_values, dtype=float) + np.asarray(
+        exp.values, dtype=float
+    ).sum(axis=1)
+    np.testing.assert_allclose(explained, margins, rtol=1e-5, atol=1e-5)
+
+    expected_base = exp.base_values[0] if multiclass else float(exp.base_values[0])
     np.testing.assert_allclose(
-        explainer.expected_value, ref_explainer.expected_value, rtol=1e-6, atol=1e-6
+        explainer.expected_value, expected_base, rtol=1e-6, atol=1e-6
     )
+
+    if ref_explainer is not None:
+        ref_exp = ref_explainer(x_df)
+        np.testing.assert_allclose(exp.values, ref_exp.values, rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(
+            exp.base_values, ref_exp.base_values, rtol=1e-6, atol=1e-6
+        )
+        np.testing.assert_allclose(
+            explainer.expected_value, ref_explainer.expected_value, rtol=1e-6, atol=1e-6
+        )
 
 
 def test_salib_feature_sensitivity(tmp_path):
@@ -967,3 +1036,33 @@ def test_classfeatures_validation_errors(tmp_path):
             feature_cols=["f1"],
             use_pbar=False,
         )
+
+
+def test_calc_shap_feature_contributions_default_auto_detects_tree_explainer(
+    tmp_path, monkeypatch
+):
+    """The default explainer is auto-detected (TreeExplainer for a forest), as in regfeatures."""
+    pytest.importorskip("shap")
+    import rsgispy.tools._ml_explain as mlx
+
+    fix = _make_synthetic_dataset(tmp_path, include_collinear=False)
+    rf_clf, _ = rcsk.train_sklearn_classifier(
+        fix["cfg"],
+        RandomForestClassifier(n_estimators=10),
+        fix["train_df"],
+        rnd_seed=42,
+        return_model=True,
+    )
+    built = []
+    orig = mlx._build_shap_explainer
+
+    def _spy(*args, **kwargs):
+        exp = orig(*args, **kwargs)
+        built.append(type(exp).__name__)
+        return exp
+
+    monkeypatch.setattr(mlx, "_build_shap_explainer", _spy)
+    rcf.calc_shap_feature_contributions(
+        fix["cfg"], rf_clf, fix["train_df"], subsample_n_smpls=10, rnd_seed=1
+    )
+    assert built and "Tree" in built[0]

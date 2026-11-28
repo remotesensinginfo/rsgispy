@@ -1,6 +1,9 @@
 """Tests for rsgispy.dataaccess modules."""
 
+import asyncio
 import datetime
+import hashlib
+import os
 import types
 
 import geopandas as gpd
@@ -15,6 +18,7 @@ import rsgispy.dataaccess.planet_data_api as planet_data_api
 import rsgispy.dataaccess.usgs_m2m as usgs_m2m
 import rsgispy.tools.hashing
 import rsgispy.tools.http
+import rsgispy.tools.http as http_tools
 
 
 class _FakeHTTPResponse:
@@ -505,6 +509,7 @@ def test_optional_requests_missing_dataaccess(tmp_path):
     import importlib
     import sys
     from unittest.mock import patch
+
     import rsgispy.dataaccess as rdataaccess
 
     orig_odata = copernicus_odata
@@ -583,6 +588,7 @@ def test_optional_pysondb_missing_dataaccess():
     import importlib
     import sys
     from unittest.mock import patch
+
     import rsgispy.dataaccess as rdataaccess
 
     orig_cmr = nasa_cmr
@@ -604,3 +610,501 @@ def test_optional_pysondb_missing_dataaccess():
     finally:
         sys.modules["rsgispy.dataaccess.nasa_cmr"] = orig_cmr
         rdataaccess.nasa_cmr = orig_cmr
+
+
+def test_copernicus_download_scns_network_errors_and_token_refresh(tmp_path, monkeypatch):
+    """no_except also catches network errors; tokens are refreshed when old."""
+    pytest.importorskip("requests")
+    import requests  # pylint: disable=import-outside-toplevel
+
+    tokens_used = []
+
+    def _fake_download(token, scn_info, out_path, use_pbar=True):
+        tokens_used.append(token)
+        if scn_info["Name"] == "bad":
+            raise requests.exceptions.ConnectionError("network down")
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(copernicus_odata, "download_scn", _fake_download)
+    monkeypatch.setattr(copernicus_odata.time, "monotonic", lambda: clock["now"])
+    scns = [{"Name": "a"}, {"Name": "bad"}, {"Name": "b"}]
+
+    # A network error is reported and the batch continues.
+    copernicus_odata.download_scns("tok0", scns, str(tmp_path), use_pbar=False)
+    assert tokens_used == ["tok0", "tok0", "tok0"]
+    with pytest.raises(requests.exceptions.ConnectionError):
+        copernicus_odata.download_scns("tok0", scns, str(tmp_path), no_except=False,
+                                       use_pbar=False)
+
+    # The token is refreshed once it is older than token_max_age.
+    tokens_used.clear()
+    issued = iter(["tok1", "tok2", "tok3"])
+
+    def _advance_download(token, scn_info, out_path, use_pbar=True):
+        tokens_used.append(token)
+        clock["now"] += 300.0
+
+    monkeypatch.setattr(copernicus_odata, "download_scn", _advance_download)
+    copernicus_odata.download_scns(
+        "tok0", [{"Name": n} for n in "abcd"], str(tmp_path), use_pbar=False,
+        refresh_token_fn=lambda: next(issued), token_max_age=480.0,
+    )
+    assert tokens_used == ["tok0", "tok0", "tok1", "tok1"]
+
+
+def test_nasa_cmr_redirect_auth_find_granules_and_versions(monkeypatch):
+    """Check strict HTTPS host auth forwarding, +start_date, time-of-day, and versions."""
+    if nasa_cmr.HAVE_REQUESTS:
+        sess = nasa_cmr.SessionWithHeaderNASARedirection("u", "p")
+    else:
+        with pytest.raises(rsgispy.RSGISPyException, match="requests"):
+            nasa_cmr.SessionWithHeaderNASARedirection("u", "p")
+        sess = types.SimpleNamespace(
+            AUTH_HOST=nasa_cmr.SessionWithHeaderNASARedirection.AUTH_HOST
+        )
+        sess.rebuild_auth = (
+            nasa_cmr.SessionWithHeaderNASARedirection.rebuild_auth.__get__(
+                sess, type(sess)
+            )
+        )
+
+    orig_req = types.SimpleNamespace(url="https://urs.earthdata.nasa.gov/orig")
+    resp = types.SimpleNamespace(request=orig_req)
+
+    req_ok = types.SimpleNamespace(
+        url="https://urs.earthdata.nasa.gov/next",
+        headers={"Authorization": "Basic abc"},
+    )
+    sess.rebuild_auth(req_ok, resp)
+    assert "Authorization" in req_ok.headers
+
+    for bad_url in (
+        "http://urs.earthdata.nasa.gov/downgrade",
+        "https://evil.example.com/steal",
+        "https://urs.earthdata.nasa.gov.evil.com/steal",
+    ):
+        req_bad = types.SimpleNamespace(
+            url=bad_url, headers={"Authorization": "Basic abc"}
+        )
+        sess.rebuild_auth(req_bad, resp)
+        assert "Authorization" not in req_bad.headers
+
+    captured_params = {}
+
+    def _fake_send(url, data=None, **_kwargs):
+        if "collections" in url:
+            return {
+                "feed": {
+                    "entry": [
+                        {"version_id": "6.1"},
+                        {"version_id": "6.10"},
+                        {"version_id": "6.2"},
+                    ]
+                }
+            }
+        captured_params.update(data or {})
+        return {"feed": {"entry": []}}
+
+    monkeypatch.setattr(nasa_cmr, "HAVE_REQUESTS", True)
+    monkeypatch.setattr(rsgispy.tools.http, "send_http_json_request", _fake_send)
+
+    nasa_cmr.find_granules(
+        "MOD09GA",
+        "6.10",
+        start_date=datetime.datetime(2024, 6, 1, 8, 15, 30),
+        end_date=datetime.datetime(2024, 6, 2, 16, 45, 5),
+        sort_desc=False,
+    )
+    assert captured_params["sort_key"] == "+start_date"
+    assert (
+        captured_params["temporal"]
+        == "2024-06-01T08:15:30Z,2024-06-02T16:45:05Z"
+    )
+
+    assert nasa_cmr.get_max_prod_version("MOD09GA") == "6.10"
+
+    v_entries = [
+        {"version_id": "V001"},
+        {"version_id": "V010"},
+        {"version_id": "V002"},
+    ]
+    monkeypatch.setattr(
+        rsgispy.tools.http,
+        "send_http_json_request",
+        lambda *_a, **_k: {"feed": {"entry": v_entries}},
+    )
+    assert nasa_cmr.get_max_prod_version("PROD") == "V010"
+
+
+def test_openstreetmap_preserves_all_tags_and_optional_regex(monkeypatch):
+    """get_osm_gdf preserves all columns by default and supports col_filter_regex."""
+    poly = shapely.geometry.box(-4.09, 52.41, -4.08, 52.42)
+    sample_gdf = gpd.GeoDataFrame(
+        {
+            "addr:street": ["High St"],
+            "building": ["yes"],
+            "name": ["Town Hall"],
+            "geometry": [poly],
+        },
+        crs="EPSG:4326",
+    )
+    monkeypatch.setattr(openstreetmap, "OSMNX_AVAIL", True)
+    monkeypatch.setattr(
+        openstreetmap,
+        "osmnx",
+        types.SimpleNamespace(
+            features=types.SimpleNamespace(
+                features_from_bbox=lambda bbox, tags: sample_gdf
+            )
+        ),
+        raising=False,
+    )
+
+    gdf_all = openstreetmap.get_osm_gdf(
+        bbox=(-4.1, -4.07, 52.4, 52.43),
+        osm_tags={"building": True},
+        rsgis_geom_type=rsgispy.GEOM_POLY,
+    )
+    assert list(gdf_all.columns) == ["addr:street", "building", "name", "geometry"]
+
+    gdf_filtered = openstreetmap.get_osm_gdf(
+        bbox=(-4.1, -4.07, 52.4, 52.43),
+        osm_tags={"building": True},
+        rsgis_geom_type=rsgispy.GEOM_POLY,
+        col_filter_regex="addr:|geometry",
+    )
+    assert list(gdf_filtered.columns) == ["addr:street", "geometry"]
+
+
+def test_copernicus_odata_escaping_and_download_hardening(tmp_path, monkeypatch):
+    """Escape OData quotes, sanitize filenames, compare MD5 case-insensitively, clean up."""
+    captured_urls = []
+
+    class _FakeResp:
+        def __init__(self, json_data=None, content=b""):
+            self.status_code = 200
+            self._json = json_data
+            self._content = content
+            self.exited = False
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._json
+
+        def iter_content(self, chunk_size=8192):
+            yield self._content
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.exited = True
+            return False
+
+    def _fake_get(url, timeout=60):
+        captured_urls.append(url)
+        return _FakeResp(json_data={"value": [{"Name": "O'Scene"}]})
+
+    if not http_tools.HAVE_REQUESTS:
+        monkeypatch.setattr(http_tools, "HAVE_REQUESTS", True)
+        monkeypatch.setattr(
+            http_tools,
+            "requests",
+            types.SimpleNamespace(HTTPError=OSError),
+            raising=False,
+        )
+    monkeypatch.setattr(copernicus_odata, "HAVE_REQUESTS", True)
+    monkeypatch.setattr(
+        copernicus_odata,
+        "requests",
+        types.SimpleNamespace(get=_fake_get),
+        raising=False,
+    )
+    scn = copernicus_odata.query_scn("S2_O'Brien.SAFE")
+    assert scn == {"Name": "O'Scene"}
+    assert "Name eq 'S2_O''Brien.SAFE'" in captured_urls[0]
+
+    payload = b"copernicus-scene-bytes"
+    upper_md5 = hashlib.md5(payload).hexdigest().upper()
+
+    lifecycle = {"ses_entered": False, "ses_exited": False, "resps": []}
+
+    class _FakeSession:
+        def __init__(self, body):
+            self.headers = {}
+            self._body = body
+
+        def __enter__(self):
+            lifecycle["ses_entered"] = True
+            return self
+
+        def __exit__(self, *_args):
+            lifecycle["ses_exited"] = True
+            return False
+
+        def get(self, _url, **_kwargs):
+            resp = _FakeResp(content=self._body)
+            lifecycle["resps"].append(resp)
+            return resp
+
+    out_dir = tmp_path / "nested" / "downloads"
+    scn_info = {
+        "Name": "../../evil/SAFE_SCENE",
+        "Locations": [
+            {
+                "FormatType": "Extracted",
+                "DownloadLink": "https://catalogue.dataspace.copernicus.eu/d/1",
+                "ContentLength": len(payload),
+                "Checksum": [{"Algorithm": "MD5", "Value": upper_md5}],
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        copernicus_odata,
+        "requests",
+        types.SimpleNamespace(
+            get=_fake_get, Session=lambda: _FakeSession(payload)
+        ),
+        raising=False,
+    )
+    copernicus_odata.download_scn("tok", scn_info, str(out_dir), use_pbar=False)
+    assert lifecycle["ses_entered"] is True
+    assert lifecycle["ses_exited"] is True
+    assert len(lifecycle["resps"]) == 1
+    assert lifecycle["resps"][0].exited is True
+    assert (out_dir / "SAFE_SCENE.zip").read_bytes() == payload
+    assert not (tmp_path / "SAFE_SCENE.zip").exists()
+
+    bad_out_dir = tmp_path / "bad_dl"
+    scn_bad = {
+        "Name": "CORRUPT_SCENE",
+        "Locations": [
+            {
+                "FormatType": "Extracted",
+                "DownloadLink": "https://download.dataspace.copernicus.eu/d/2",
+                "ContentLength": len(payload),
+                "Checksum": [{"Algorithm": "MD5", "Value": "0" * 32}],
+            }
+        ],
+    }
+    with pytest.raises(rsgispy.RSGISPyException, match="checksum"):
+        copernicus_odata.download_scn("tok", scn_bad, str(bad_out_dir), use_pbar=False)
+    assert not (bad_out_dir / "CORRUPT_SCENE.incomplete").exists()
+    assert not (bad_out_dir / "CORRUPT_SCENE.zip").exists()
+
+
+def test_usgs_m2m_login_validation_pagination_and_secondary_downloads(monkeypatch):
+    """Guard empty creds, validate dataset once across pages, check secondaryDownloads."""
+    monkeypatch.delenv("RSGIS_USGS_USER", raising=False)
+    monkeypatch.delenv("RSGIS_USGS_PASS", raising=False)
+    with pytest.raises(rsgispy.RSGISPyException, match="username"):
+        usgs_m2m.usgs_login(None, "pw")
+    with pytest.raises(rsgispy.RSGISPyException, match="username"):
+        usgs_m2m.usgs_login("   ", "pw")
+    with pytest.raises(rsgispy.RSGISPyException, match="password"):
+        usgs_m2m.usgs_login("user", "")
+
+    calls = {"dataset-categories": 0, "scene-search": 0}
+
+    def _fake_usgs(url, data=None, api_key=None):
+        if url.endswith("dataset-categories"):
+            calls["dataset-categories"] += 1
+            return {
+                "errorCode": None,
+                "data": [
+                    {
+                        "categoryName": "Custom",
+                        "datasets": [{"datasetAlias": "custom_ds"}],
+                    }
+                ],
+            }
+        if url.endswith("scene-search"):
+            calls["scene-search"] += 1
+            start_n = data.get("startingNumber", 1)
+            if start_n == 1:
+                return {
+                    "errorCode": None,
+                    "data": {
+                        "totalHits": 150,
+                        "startingNumber": 1,
+                        "nextRecord": 101,
+                        "recordsReturned": 100,
+                        "results": [{"entityId": f"E{i}"} for i in range(100)],
+                    },
+                }
+            return {
+                "errorCode": None,
+                "data": {
+                    "totalHits": 150,
+                    "startingNumber": 101,
+                    "nextRecord": None,
+                    "recordsReturned": 50,
+                    "results": [{"entityId": f"E{i}"} for i in range(100, 150)],
+                },
+            }
+        if url.endswith("permissions"):
+            return {"errorCode": None, "data": ["download"]}
+        if url.endswith("download-options"):
+            return {
+                "errorCode": None,
+                "data": [
+                    {
+                        "entityId": "E1",
+                        "id": "BUNDLE_1",
+                        "bulkAvailable": False,
+                        "secondaryDownloads": [
+                            {
+                                "entityId": "E1",
+                                "id": "BAND_1",
+                                "bulkAvailable": True,
+                            },
+                            {
+                                "entityId": "E1",
+                                "id": "BAND_2",
+                                "bulkAvailable": False,
+                            },
+                        ],
+                    }
+                ],
+            }
+        if url.endswith("scene-list-remove"):
+            return {"errorCode": None, "data": None}
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr(rsgispy.tools.http, "send_http_json_request", _fake_usgs)
+
+    scns = usgs_m2m.get_all_usgs_search("custom_ds", "api-key", max_n_rslts=200)
+    assert len(scns) == 150
+    assert calls["scene-search"] == 2
+    assert calls["dataset-categories"] == 1
+
+    opts = usgs_m2m.check_dwnld_opts(
+        "api-key", "lst", "custom_ds", dwnld_filetype="all", rm_lst=True
+    )
+    assert opts == [{"entityId": "E1", "productId": "BAND_1"}]
+
+
+def test_planet_data_api_wait_bounds_timeout_and_running_loop(tmp_path, monkeypatch):
+    """Test max_attempts forwarding, wait_timeout timeout, and running-loop error."""
+    wait_calls = []
+    validated = []
+
+    class _FakeStateBar:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def update(self, **_kwargs):
+            pass
+
+        def update_state(self, *_args, **_kwargs):
+            pass
+
+    class _FakeDataClient:
+        def __init__(self, delay=0.0):
+            self._delay = delay
+
+        async def get_asset(self, item_type, item_id, asset_type):
+            return {"id": item_id, "type": asset_type, "item_type": item_type}
+
+        async def activate_asset(self, _asset):
+            return None
+
+        async def wait_asset(self, asset, callback=None, max_attempts=None):
+            wait_calls.append({"max_attempts": max_attempts, "callback": callback})
+            if self._delay > 0:
+                await asyncio.sleep(self._delay)
+            return asset
+
+        async def download_asset(self, asset, directory, overwrite=False, progress_bar=True):
+            return os.path.join(directory, f"{asset['id']}.tif")
+
+        def validate_checksum(self, asset, path):
+            validated.append((asset["id"], path))
+
+    def _make_fake_planet(delay=0.0):
+        class _FakeSession:
+            def __init__(self, auth=None):
+                self.auth = auth
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            def client(self, _name):
+                return _FakeDataClient(delay=delay)
+
+        return types.SimpleNamespace(
+            Session=_FakeSession,
+            reporting=types.SimpleNamespace(StateBar=_FakeStateBar),
+        )
+
+    monkeypatch.setattr(planet_data_api, "PLANET_AVAIL", True)
+    monkeypatch.setattr(
+        planet_data_api, "planet", _make_fake_planet(delay=0.0), raising=False
+    )
+
+    planet_data_api.run_download_and_validate_item(
+        auth_obj="auth",
+        item_type=planet_data_api.RSGIS_PLANET_ITEM_PSScene,
+        item_id="ITEM_1",
+        asset_type=planet_data_api.RSGIS_PLANET_ASSET_ortho_visual,
+        out_file_path=str(tmp_path),
+        max_attempts=25,
+        wait_timeout=5.0,
+    )
+    assert wait_calls[-1]["max_attempts"] == 25
+    assert validated[-1][0] == "ITEM_1"
+
+    with pytest.raises(rsgispy.RSGISPyException, match="max_attempts"):
+        planet_data_api.run_download_and_validate_item(
+            "auth",
+            planet_data_api.RSGIS_PLANET_ITEM_PSScene,
+            "ITEM_1",
+            planet_data_api.RSGIS_PLANET_ASSET_ortho_visual,
+            str(tmp_path),
+            max_attempts=0,
+        )
+    with pytest.raises(rsgispy.RSGISPyException, match="wait_timeout"):
+        planet_data_api.run_download_and_validate_item(
+            "auth",
+            planet_data_api.RSGIS_PLANET_ITEM_PSScene,
+            "ITEM_1",
+            planet_data_api.RSGIS_PLANET_ASSET_ortho_visual,
+            str(tmp_path),
+            wait_timeout=0.0,
+        )
+
+    monkeypatch.setattr(
+        planet_data_api, "planet", _make_fake_planet(delay=0.2), raising=False
+    )
+    with pytest.raises(rsgispy.RSGISPyException, match="Timed out"):
+        planet_data_api.run_download_and_validate_item(
+            "auth",
+            planet_data_api.RSGIS_PLANET_ITEM_PSScene,
+            "ITEM_SLOW",
+            planet_data_api.RSGIS_PLANET_ASSET_ortho_visual,
+            str(tmp_path),
+            wait_timeout=0.02,
+        )
+
+    async def _call_inside_loop():
+        with pytest.raises(rsgispy.RSGISPyException, match="already running"):
+            planet_data_api.run_download_and_validate_item(
+                "auth",
+                planet_data_api.RSGIS_PLANET_ITEM_PSScene,
+                "ITEM_LOOP",
+                planet_data_api.RSGIS_PLANET_ASSET_ortho_visual,
+                str(tmp_path),
+            )
+
+    asyncio.run(_call_inside_loop())

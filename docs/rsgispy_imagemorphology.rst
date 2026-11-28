@@ -25,6 +25,19 @@ Creating a circular structuring element and dilating a raster image:
        datatype=rsgispy.TYPE_8UINT,
    )
 
+Image borders
+-------------
+
+The keyword-only ``border_mode`` option of the dilation, erosion, gradient,
+opening, closing and top-hat functions (and of their node builders) sets how
+the structuring element is filled beyond the image edge: ``'edge'`` (the
+default, repeat the edge pixels), ``'reflect'``, ``'symmetric'`` or
+``'constant'`` with ``border_fill`` (e.g. ``border_fill=0`` to treat the
+area beyond the edge as background, so that an erosion or opening shrinks
+objects that touch the edge). See
+:ref:`filter-border-mode`. The local minima always leave out-of-image
+neighbours out and have no ``border_mode``.
+
 Chaining
 --------
 

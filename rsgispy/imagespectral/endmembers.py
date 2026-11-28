@@ -693,7 +693,9 @@ def extract_avg_endmembers(
     class_col: Optional[str] = None,
     endmember_names: Optional[Sequence[str]] = None,
     file_format: Optional[str] = None,
-    pxl_in_poly_method: int = 1,
+    *,
+    all_touched: bool = False,
+    small_poly_fallback: bool = True,
 ) -> pd.DataFrame:
     """
     Extract the mean spectral signature per class/polygon in ``vec_file`` and
@@ -716,15 +718,20 @@ def extract_avg_endmembers(
                             the polygon count (used when ``class_col`` is
                             ``None``).
     :param file_format: Optional format override when ``out_file`` is provided.
-    :param pxl_in_poly_method: Pixel-in-polygon selection constant from
-                               :mod:`rsgispy.zonalstats` (``METHOD_*``).
-                               Default = ``1`` (pixel centre within polygon).
+    :param all_touched: If ``True``, use every pixel the polygon touches;
+                        if ``False``, the pixels whose centre is inside the
+                        polygon (Default = ``False``).
+    :param small_poly_fallback: If ``True`` and a polygon has no valid pixel
+                                (e.g. it is smaller than a pixel), use the
+                                pixels it touches, or failing that the pixel
+                                under its ``representative_point()``
+                                (Default = ``True``). If ``False``, such a
+                                polygon raises an exception.
     :return: :class:`pandas.DataFrame` of shape ``(n_bands, n_classes)``.
 
     .. code:: python
 
         import rsgispy.imagespectral.endmembers as em
-        import rsgispy.zonalstats as zs
 
         em_df = em.extract_avg_endmembers(
             "image.tif",
@@ -732,8 +739,12 @@ def extract_avg_endmembers(
             "rois",
             out_file="endmembers.csv",
             class_col="landcover",
-            pxl_in_poly_method=zs.METHOD_POLYCONTAINSPIXELCENTRE,
         )
+
+    .. versionchanged:: 0.5.0
+       ``pxl_in_poly_method`` (RSGISLib codes 0-9, which only selected
+       between these behaviours) is replaced by ``all_touched`` and
+       ``small_poly_fallback``.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
@@ -768,8 +779,6 @@ def extract_avg_endmembers(
         poly_labels = [str(name) for name in endmember_names]
     else:
         poly_labels = [f"endmember_{i + 1}" for i in range(len(gdf))]
-
-    all_touched = pxl_in_poly_method in (2, 3, 7, 8, 9)
 
     with rasterio.open(input_img, "r") as src:
         img_crs = (
@@ -837,7 +846,7 @@ def extract_avg_endmembers(
                 all_touched=all_touched,
             )
             mask = rv == 1
-            if not np.any(mask) and pxl_in_poly_method == 6:
+            if not np.any(mask) and small_poly_fallback and not all_touched:
                 rv = rasterize(
                     [(geom, 1)],
                     out_shape=(int(win.height), int(win.width)),
@@ -856,9 +865,10 @@ def extract_avg_endmembers(
                 vld &= np.all(pxls != nodata_val, axis=1)
             pxls = pxls[vld]
 
-            if pxls.shape[0] == 0 and pxl_in_poly_method in (1, 5, 6):
-                centroid = geom.centroid
-                row, col = src.index(centroid.x, centroid.y)
+            if pxls.shape[0] == 0 and small_poly_fallback:
+                # Unlike the centroid, this point is always in the polygon.
+                rep_pt = geom.representative_point()
+                row, col = src.index(rep_pt.x, rep_pt.y)
                 if 0 <= row < src.height and 0 <= col < src.width:
                     cent_win = Window(int(col), int(row), 1, 1)
                     c_arr = (

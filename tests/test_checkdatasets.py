@@ -8,13 +8,13 @@ from unittest.mock import patch
 import geopandas as gpd
 import numpy as np
 import pytest
-import rasterio
-from rasterio.transform import from_origin
 import shapely.geometry
 
 import rsgispy
 import rsgispy.tools as rtools
 from rsgispy.tools import checkdatasets
+
+from conftest import write_raster
 
 try:
     import h5py  # pylint: disable=import-error
@@ -28,18 +28,7 @@ def _write_test_tif(path, width=16, height=16, count=2, epsg=32630, origin=(5000
     data = np.arange(count * height * width, dtype="uint8").reshape(
         count, height, width
     )
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype="uint8",
-        crs=crs,
-        transform=from_origin(origin[0], origin[1], 10.0, 10.0),
-    ) as dst:
-        dst.write(data)
+    write_raster(path, data, crs=crs, origin=origin)
 
 
 def test_check_gdal_image_file_valid_and_invalid(tmp_path):
@@ -142,6 +131,7 @@ def test_check_hdf5_file(tmp_path):
     assert err != ""
 
 
+@pytest.mark.slow
 def test_multiprocessing_runners_and_rm_err(tmp_path):
     """Test subprocess pool validation runners and error file removal."""
     good_tif = tmp_path / "good.tif"

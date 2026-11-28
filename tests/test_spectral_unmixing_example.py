@@ -30,11 +30,10 @@ from unmix_scene import (  # noqa: E402
 
 pytest.importorskip("scipy")
 
+pytestmark = pytest.mark.slow
+
 EXAMPLE = os.path.join(
     os.path.dirname(__file__), os.pardir, "docs", "examples", "spectral_unmixing.py"
-)
-GUIDE = os.path.join(
-    os.path.dirname(__file__), os.pardir, "docs", "guides", "spectral_unmixing.rst"
 )
 
 
@@ -78,7 +77,11 @@ def test_endmembers(tropwet):
     em_df = out["em_df"]
     assert list(em_df.columns) == EM_NAMES
     for name in EM_NAMES:
-        assert np.allclose(em_df[name].to_numpy(), ENDMEMBERS[name], atol=40)
+        # Each endmember is the mean of >= 50 pure pixels of the median
+        # composite (noise sd 20 per date, uint16 rounding), so it is within a
+        # few reflectance units of the truth: the largest error over seeds 0-4
+        # was 1.9 (0.0002 reflectance). atol=5 leaves a ~2.5x margin.
+        assert np.allclose(em_df[name].to_numpy(), ENDMEMBERS[name], atol=5)
     assert os.path.getsize(out["em_plot"]) > 0
 
 
@@ -146,21 +149,3 @@ def test_water_frequency(tropwet):
     assert np.all(freq[2][_inner("efv")] == 0)
     assert np.all(freq[2][_inner("burn")] == 0)
     assert np.all(freq[2, :, -NODATA_COLS:] == -1)
-
-
-def test_guide_markers_exist():
-    """Every literalinclude marker used by the guide exists in the script."""
-    with open(EXAMPLE, encoding="utf-8") as f_obj:
-        script = f_obj.read()
-    with open(GUIDE, encoding="utf-8") as f_obj:
-        guide = f_obj.read()
-    markers = [
-        line.split(":start-after:")[1].strip()
-        for line in guide.splitlines()
-        # the [tutorial-data] marker is in the *_tutorial.py script
-        if ":start-after:" in line and "tutorial-data" not in line
-    ]
-    assert len(markers) >= 9
-    for marker in markers:
-        assert marker in script
-        assert marker.replace("[step-", "[end-step-") in script

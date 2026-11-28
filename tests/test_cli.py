@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
+import sys
+import warnings
+from types import SimpleNamespace
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
+import pyproj
 import pytest
 import rasterio
-from rasterio.transform import from_origin
-from shapely.geometry import Polygon
+from shapely.geometry import Point, Polygon
 
 from rsgispy import RSGISPyException
 from rsgispy.cli import (
@@ -35,6 +40,8 @@ from rsgispy.cli._common import (
 from rsgispy.imageutils.metadata import get_band_names, set_band_names
 from rsgispy.tools.credentials import get_username_password
 
+from conftest import write_raster, write_vector
+
 
 def _make_geotiff(
     path,
@@ -52,7 +59,6 @@ def _make_geotiff(
     thematic: bool = False,
 ):
     """Create a small synthetic GeoTIFF for testing."""
-    transform = from_origin(origin[0], origin[1], res[0], res[1])
     if data is None:
         arr = np.arange(count * width * height, dtype=dtype).reshape(
             (count, height, width)
@@ -61,48 +67,35 @@ def _make_geotiff(
             arr = (arr % 5).astype(dtype) + 1
     else:
         arr = data
-
-    with rasterio.open(
-        str(path),
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
+    band_tags = None
+    if thematic:
+        band_tags = {idx: {"LAYER_TYPE": "thematic"} for idx in range(1, count + 1)}
+    return write_raster(
+        path,
+        arr,
         dtype=dtype,
-        crs=crs,
-        transform=transform,
         nodata=nodata,
-    ) as dst:
-        dst.write(arr)
-        if descriptions:
-            for idx, name in enumerate(descriptions, start=1):
-                dst.set_band_description(idx, name)
-        if thematic:
-            for idx in range(1, count + 1):
-                dst.update_tags(idx, LAYER_TYPE="thematic")
-    return str(path)
+        crs=crs,
+        origin=origin,
+        pixel_size=res,
+        band_names=descriptions or None,
+        band_tags=band_tags,
+    )
 
 
 def _make_vector(path, *, layer: str = "polys", driver: str = "GPKG"):
     """Create a small synthetic polygon vector file (GPKG or GeoParquet)."""
-    gdf = gpd.GeoDataFrame(
-        {
-            "id": [1, 2, 3],
-            "cls": ["forest", "water", "forest"],
-        },
-        geometry=[
-            Polygon([(0, 0), (1, 0), (1, 1), (0, 1)]),
-            Polygon([(1, 0), (2, 0), (2, 1), (1, 1)]),
-            Polygon([(2, 0), (3, 0), (3, 1), (2, 1)]),
-        ],
-        crs="EPSG:4326",
-    )
+    data = {"id": [1, 2, 3], "cls": ["forest", "water", "forest"]}
+    geometry = [
+        Polygon([(0, 0), (1, 0), (1, 1), (0, 1)]),
+        Polygon([(1, 0), (2, 0), (2, 1), (1, 1)]),
+        Polygon([(2, 0), (3, 0), (3, 1), (2, 1)]),
+    ]
     if str(path).lower().endswith(".parquet"):
-        gdf.to_parquet(str(path))
-    else:
-        gdf.to_file(str(path), layer=layer, driver=driver)
-    return str(path)
+        return write_vector(path, data, geometry=geometry, crs="EPSG:4326")
+    return write_vector(
+        path, data, geometry=geometry, crs="EPSG:4326", layer=layer, driver=driver
+    )
 
 
 class TestCommonHelpers:
@@ -523,3 +516,129 @@ class TestCopyBandNamesCLI:
         mismatch = _make_geotiff(tmp_path / "oneband.tif", count=1)
         with pytest.raises(RSGISPyException):
             copybandnames.main(["-r", ref, "-i", mismatch])
+
+
+def test_cli_main_reads_sys_argv(monkeypatch, capsys):
+    """cli_main parses sys.argv and returns the exit code."""
+    # Exercise cli_main end-to-end via sys.argv on proj
+    monkeypatch.setattr(sys, "argv", ["rsgisproj", "--epsg", "4326", "-f", "epsg"])
+    assert proj.cli_main() == 0
+    assert capsys.readouterr().out.strip() == "EPSG:4326"
+
+
+def test_batchconvert2cog_rejects_inplace_and_duplicate_names(tmp_path):
+    """batchconvert2cog rejects in-place overwrite and duplicate output basenames."""
+    dir1 = tmp_path / "d1"
+    dir2 = tmp_path / "d2"
+    out_dir = tmp_path / "out"
+    dir1.mkdir()
+    dir2.mkdir()
+    img1 = write_raster(str(dir1 / "same.tif"), np.ones((8, 8), dtype=np.uint8))
+    img2 = write_raster(str(dir2 / "same.tif"), np.ones((8, 8), dtype=np.uint8))
+
+    # In-place overwrite rejected
+    with pytest.raises(RSGISPyException, match="in-place"):
+        batchconvert2cog.main(["-i", img1, "-o", str(dir1), "--no-pbar"])
+
+    # Duplicate output filename across dirs rejected
+    with pytest.raises(RSGISPyException, match="Duplicate output filename"):
+        batchconvert2cog.main(
+            ["-i", img1, img2, "-o", str(out_dir), "--no-pbar"]
+        )
+
+
+def test_vectools_empty_bbox_and_json_default_str(tmp_path, capsys):
+    """vectools handles empty layers cleanly and serialises dates in --json."""
+    empty_gpkg = str(tmp_path / "empty.gpkg")
+    empty_gdf = gpd.GeoDataFrame(
+        {"id": pd.Series(dtype="int64")},
+        geometry=gpd.GeoSeries([], crs="EPSG:4326"),
+        crs="EPSG:4326",
+    )
+    empty_gdf.to_file(empty_gpkg, layer="empty", driver="GPKG")
+
+    assert vectools.main(["-i", empty_gpkg]) == 0
+    txt = capsys.readouterr().out
+    assert "Extent    : -" in txt
+
+    assert vectools.main(["-i", empty_gpkg, "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["bbox"] is None
+    assert payload["n_features"] == 0
+
+    # Non-JSON-native date column serialises cleanly via default=str
+    date_gpkg = str(tmp_path / "dates.gpkg")
+    date_gdf = gpd.GeoDataFrame(
+        {"obs_date": [datetime.date(2025, 1, 15)]},
+        geometry=[Point(0.0, 0.0)],
+        crs="EPSG:4326",
+    )
+    date_gdf.to_file(date_gpkg, layer="dates", driver="GPKG")
+    assert (
+        vectools.main(
+            ["-i", date_gpkg, "-c", "obs_date", "--unique-vals", "--json"]
+        )
+        == 0
+    )
+    d_payload = json.loads(capsys.readouterr().out)
+    assert "2025-01-15" in str(d_payload["unique_values"][0])
+
+
+def test_proj_format_crs_error_handling():
+    """_format_crs wraps CRSError and raises RSGISPyException if to_proj4() returns None."""
+    fake_none = SimpleNamespace(name="NoProj4", to_proj4=lambda: None)
+    with pytest.raises(RSGISPyException, match="PROJ4"):
+        proj._format_crs(fake_none, "proj4")
+
+    def _raise_crs_err(**_kwargs):
+        raise pyproj.exceptions.CRSError("unsupported wkt1")
+
+    fake_err = SimpleNamespace(name="BadWKT", to_wkt=_raise_crs_err)
+    with pytest.raises(RSGISPyException, match="Could not format CRS"):
+        proj._format_crs(fake_err, "wkt")
+
+
+def test_imginfo_densified_bounds_streaming_stats_and_tiled_detection(
+    tmp_path
+):
+    """Verify densified WGS84 bounds, streaming Welford stats, and tiled detection."""
+    rng = np.random.default_rng(123)
+    arr = rng.normal(loc=50.0, scale=12.5, size=(64, 64)).astype(np.float32)
+    arr[0:5, 0:5] = -9999.0
+    tiled_tif = write_raster(
+        str(tmp_path / "tiled_stats.tif"),
+        arr,
+        crs="EPSG:32630",
+        nodata=-9999.0,
+        tiled=True,
+        blockxsize=16,
+        blockysize=16,
+    )
+    valid = arr[arr != -9999.0].astype(np.float64)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        info = imginfo.collect_img_info(tiled_tif, calc_stats=True)
+    assert not any("is_tiled" in str(w.message) for w in caught)
+    assert info["is_tiled"] is True
+    assert info["wgs84_bbox"] is not None
+    st = info["bands"][0]["stats"]
+    assert st["min"] == pytest.approx(float(np.min(valid)), rel=1e-6)
+    assert st["max"] == pytest.approx(float(np.max(valid)), rel=1e-6)
+    assert st["mean"] == pytest.approx(float(np.mean(valid)), rel=1e-6)
+    assert st["std"] == pytest.approx(float(np.std(valid)), rel=1e-6)
+    assert st["valid_percent"] == pytest.approx(
+        100.0 * valid.size / arr.size, rel=1e-6
+    )
+
+    # 256x256 tiled GTiff (blk_w == width) detected as tiled; stripped 256x256 as False
+    t256 = write_raster(
+        str(tmp_path / "t256.tif"),
+        np.ones((256, 256), dtype=np.uint8),
+        tiled=True,
+        blockxsize=256,
+        blockysize=256,
+    )
+    s256 = write_raster(str(tmp_path / "s256.tif"), np.ones((256, 256), dtype=np.uint8))
+    assert imginfo.collect_img_info(t256)["is_tiled"] is True
+    assert imginfo.collect_img_info(s256)["is_tiled"] is False

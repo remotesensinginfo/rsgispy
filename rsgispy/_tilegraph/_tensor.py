@@ -40,6 +40,31 @@ class HaloBorder:
             )
 
 
+def halo_border_from_mode(border_mode: str = "edge", border_fill: float = 0.0) -> HaloBorder:
+    """
+    Validate the ``border_mode`` / ``border_fill`` options of the window
+    filter, texture and morphology functions and build their
+    :class:`HaloBorder`.
+
+    :param border_mode: ``'edge'``, ``'reflect'``, ``'symmetric'`` or
+                        ``'constant'`` (Default = ``'edge'``).
+    :param border_fill: Fill value for ``'constant'`` (Default = ``0.0``;
+                        ignored by the other modes). NaN is allowed.
+    :return: The :class:`HaloBorder`.
+    """
+    if not isinstance(border_mode, str) or border_mode not in _VALID_BORDER_MODES:
+        raise rsgispy.RSGISPyException(
+            f"Unsupported border_mode {border_mode!r}. Choose from {_VALID_BORDER_MODES}."
+        )
+    try:
+        fill = float(border_fill)
+    except (TypeError, ValueError) as err:
+        raise rsgispy.RSGISPyException(
+            f"border_fill must be a number, got {border_fill!r}."
+        ) from err
+    return HaloBorder(mode=border_mode, fill_value=fill)
+
+
 @dataclass(frozen=True)
 class TileContext:
     """
@@ -256,12 +281,12 @@ def _normalise_radius(
 
 
 def _fits_int(value: float, np_dtype: np.dtype) -> bool:
-    """``True`` if ``value`` is an integer that ``np_dtype`` can store."""
-    val = float(value)
-    if not np.isfinite(val) or not val.is_integer():
-        return False
-    info = np.iinfo(np_dtype)
-    return info.min <= val <= info.max
+    """``True`` if ``value`` is an integer that ``np_dtype`` can store:
+    :func:`rsgispy.imageprocess.fits_dtype_range`."""
+    # pylint: disable=import-outside-toplevel
+    from rsgispy.imageprocess import fits_dtype_range
+
+    return fits_dtype_range(value, np_dtype)
 
 
 def _pad_3d(

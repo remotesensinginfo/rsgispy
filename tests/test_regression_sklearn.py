@@ -12,7 +12,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from sklearn.ensemble import (
     ExtraTreesRegressor,
     GradientBoostingRegressor,
@@ -28,40 +27,9 @@ import rsgispy
 import rsgispy.imageutils.colourtable as rct
 import rsgispy.regression.regdata as rrd
 import rsgispy.regression.regsklearn as rsk
+from rsgispy.regression.regsklearn import load_sklearn_regressor, save_sklearn_regressor
 
-
-def _write_raster(
-    path: Path,
-    arr: np.ndarray,
-    origin_x: float = 500000.0,
-    origin_y: float = 5600000.0,
-    pxl_size: float = 10.0,
-    crs: str = "EPSG:32630",
-    nodata: float = -999.0,
-) -> str:
-    """Write a 2D or 3D GeoTIFF raster for testing."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[None, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-        nodata=nodata,
-    ) as dst:
-        dst.write(write_arr)
-    return str(path)
+from conftest import write_raster
 
 
 def _build_reg_scene(tmp_path: Path):
@@ -78,11 +46,25 @@ def _build_reg_scene(tmp_path: Path):
 
     coarse = 5.0 + 2.0 * np.mgrid[0:8, 0:8][0].astype(np.float32)
 
-    s2_img = _write_raster(tmp_path / "s2.tif", np.stack([b1, b2]), nodata=-999.0)
-    coarse_img = _write_raster(
-        tmp_path / "coarse.tif", coarse, pxl_size=20.0, nodata=-999.0
+    s2_img = write_raster(
+        tmp_path / "s2.tif",
+        np.stack([b1, b2]),
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
     )
-    msk_img = _write_raster(tmp_path / "mask.tif", mask, nodata=0.0)
+    coarse_img = write_raster(
+        tmp_path / "coarse.tif",
+        coarse,
+        origin=(500000.0, 5600000.0),
+        pixel_size=20.0,
+        nodata=-999.0,
+    )
+    msk_img = write_raster(
+        tmp_path / "mask.tif",
+        mask,
+        origin=(500000.0, 5600000.0),
+        nodata=0.0,
+    )
 
     rng = np.random.default_rng(123)
     n_tot = 120
@@ -306,6 +288,126 @@ def test_sklearn_multivariate_native_and_autowrap(tmp_path: Path):
     assert isinstance(searched_svr, MultiOutputRegressor)
 
 
+def _pixel_member_preds(model, x_row):
+    """Per-member predictions (members, targets) of one feature row."""
+    return np.stack(
+        [np.asarray(t.predict(x_row), dtype=np.float64).reshape(-1) for t in model.estimators_]
+    )
+
+
+def test_sklearn_regressor_apply_uncertainty(tmp_path: Path):
+    """out_uncert_img writes the spread of ensemble member predictions."""
+    from rsgispy.ml.predict import UNCERT_METHODS, calc_ensemble_uncertainty
+
+    uni_cfg, mv_cfg, train_df, _, _, msk_img = _build_reg_scene(tmp_path)
+    feats = ["B1", "B2", "C1"]
+    rf = RandomForestRegressor(n_estimators=15, random_state=1).fit(
+        train_df[feats], train_df["canopy_cover"]
+    )
+    # Pixel (5, 5): B1 = 10 + 3 * 5, B2 = 20 + 4 * 5, C1 (20 m pixel row 2) = 5 + 2 * 2.
+    x_px = np.array([[25.0, 40.0, 9.0]])
+    members = _pixel_member_preds(rf, x_px)[:, 0]
+
+    assert UNCERT_METHODS == ("std", "iqr", "cv")
+    expected = {
+        "std": np.std(members),
+        "iqr": np.subtract(*np.percentile(members, [75, 25])),
+        "cv": np.std(members) / abs(np.mean(members)),
+    }
+    for method, exp_val in expected.items():
+        out_tif = tmp_path / f"pred_{method}.tif"
+        unc_tif = tmp_path / f"uncert_{method}.tif"
+        rsk.apply_sklearn_regressor(
+            reg_cfg=uni_cfg,
+            sk_regressor=rf,
+            in_msk_img=msk_img,
+            img_msk_val=1,
+            output_img=out_tif,
+            block_size=8,
+            use_pbar=False,
+            out_uncert_img=unc_tif,
+            uncert_method=method,
+        )
+        with rasterio.open(unc_tif) as src:
+            assert src.count == 1
+            assert src.dtypes[0] == "float32"
+            assert src.nodata == pytest.approx(-9999.0)
+            assert src.descriptions == (f"canopy_cover_{method}",)
+            arr = src.read(1)
+        assert arr[0, 0] == pytest.approx(-9999.0)
+        assert arr[2, 2] == pytest.approx(-9999.0)
+        assert arr[5, 5] == pytest.approx(exp_val, rel=1e-5)
+        valid = arr != -9999.0
+        assert np.all(arr[valid] >= 0.0)
+        with rasterio.open(out_tif) as src:
+            pred = src.read(1)
+        assert pred[5, 5] == pytest.approx(np.mean(members), rel=1e-5)
+
+    # The public helper on a (members, samples, targets) array.
+    mem = np.array([[[1.0]], [[3.0]]])
+    np.testing.assert_allclose(calc_ensemble_uncertainty(mem, "std"), [[1.0]])
+    np.testing.assert_allclose(calc_ensemble_uncertainty(mem, "cv"), [[0.5]])
+
+    # Multi-target: native multi-output forest, MultiOutputRegressor and pipeline.
+    mv_et = ExtraTreesRegressor(n_estimators=10, random_state=0).fit(
+        train_df[feats], train_df[["canopy_cover", "canopy_height"]]
+    )
+    mo_rf = MultiOutputRegressor(RandomForestRegressor(n_estimators=8, random_state=0)).fit(
+        train_df[feats], train_df[["canopy_cover", "canopy_height"]]
+    )
+    for name, model in (("et", mv_et), ("mo", mo_rf)):
+        unc_tif = tmp_path / f"mv_uncert_{name}.tif"
+        rsk.apply_sklearn_regressor(
+            reg_cfg=mv_cfg, sk_regressor=model, in_msk_img=msk_img, img_msk_val=1,
+            output_img=tmp_path / f"mv_pred_{name}.tif", use_pbar=False,
+            out_uncert_img=unc_tif,
+        )
+        with rasterio.open(unc_tif) as src:
+            assert src.count == 2
+            assert src.descriptions == ("canopy_cover_std", "canopy_height_std")
+            px = src.read()[:, 5, 5]
+        if name == "et":
+            exp = np.std(_pixel_member_preds(mv_et, x_px), axis=0)
+        else:
+            exp = [np.std(_pixel_member_preds(sub, x_px)) for sub in mo_rf.estimators_]
+        np.testing.assert_allclose(px, exp, rtol=1e-5)
+
+    pipe = Pipeline(
+        [("scale", StandardScaler()), ("rf", RandomForestRegressor(n_estimators=8, random_state=0))]
+    ).fit(train_df[feats], train_df["canopy_cover"])
+    rsk.apply_sklearn_regressor(
+        reg_cfg=uni_cfg, sk_regressor=pipe, in_msk_img=msk_img, img_msk_val=1,
+        output_img=tmp_path / "pipe_pred.tif", use_pbar=False,
+        out_uncert_img=tmp_path / "pipe_uncert.tif",
+    )
+    x_scaled = pipe[:-1].transform(pd.DataFrame(x_px, columns=feats))
+    with rasterio.open(tmp_path / "pipe_uncert.tif") as src:
+        assert src.read(1)[5, 5] == pytest.approx(
+            np.std(_pixel_member_preds(pipe[-1], x_scaled)), rel=1e-5
+        )
+
+    # Models without independent members fail before any output is written.
+    ridge = Ridge().fit(train_df[feats], train_df["canopy_cover"])
+    gbr = GradientBoostingRegressor(n_estimators=5).fit(
+        train_df[feats], train_df["canopy_cover"]
+    )
+    for model in (ridge, gbr):
+        bad_out = tmp_path / f"bad_{type(model).__name__}.tif"
+        with pytest.raises(rsgispy.RSGISPyException, match="ensemble"):
+            rsk.apply_sklearn_regressor(
+                reg_cfg=uni_cfg, sk_regressor=model, in_msk_img=msk_img,
+                img_msk_val=1, output_img=bad_out, use_pbar=False,
+                out_uncert_img=tmp_path / "bad_uncert.tif",
+            )
+        assert not bad_out.exists()
+    with pytest.raises(rsgispy.RSGISPyException, match="uncert_method"):
+        rsk.apply_sklearn_regressor(
+            reg_cfg=uni_cfg, sk_regressor=rf, in_msk_img=msk_img, img_msk_val=1,
+            output_img=tmp_path / "x.tif", use_pbar=False,
+            out_uncert_img=tmp_path / "x_unc.tif", uncert_method="var",
+        )
+
+
 def test_regressor_param_search_with_spatial_and_group_splitters():
     """rsgispy.ml.cv splitters are passed directly with coords= and groups=."""
     from rsgispy.ml.cv import PolygonGroupKFold, SpatialBlockKFold
@@ -373,3 +475,21 @@ def test_regressor_param_search_with_spatial_and_group_splitters():
     assert isinstance(best, RandomForestRegressor)
     with pytest.raises(rsgispy.RSGISPyException, match="coords"):
         rsk.perform_sklearn_regressor_param_search(cv=spatial_cv, **common)
+
+
+def test_regression_model_save_load_roundtrip(tmp_path):
+    """Verify sklearn regression models round-trip cleanly via save/load_sklearn_regressor."""
+    rng = np.random.default_rng(99)
+    x_tr = rng.normal(size=(40, 3))
+    y_tr = 2.0 * x_tr[:, 0] - 0.5 * x_tr[:, 1] + 1.5
+    reg = Ridge(alpha=0.5).fit(x_tr, y_tr)
+
+    model_path = tmp_path / "subdir" / "ridge_reg.joblib"
+    save_sklearn_regressor(reg, model_path)
+    assert model_path.is_file()
+
+    loaded = load_sklearn_regressor(model_path)
+    assert np.allclose(loaded.predict(x_tr), reg.predict(x_tr))
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        load_sklearn_regressor(tmp_path / "does_not_exist.joblib")

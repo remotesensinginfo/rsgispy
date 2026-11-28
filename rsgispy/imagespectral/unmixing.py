@@ -34,6 +34,7 @@ from rsgispy._tilegraph._wrap import (
     run_wrapper_graph,
 )
 from rsgispy.imageprocess import (
+    validate_out_nodata,
     NodeMeta,
     RasterSource,
     TileContext,
@@ -43,11 +44,9 @@ from rsgispy.imageprocess import (
     compute_spatial_intersection,
     create_output_from_dataset,
     ensure_file_exists,
-    fits_dtype_range,
     iter_dataset_windows,
     open_multi_image_datasets,
     open_output_dataset,
-    resolve_out_nodata,
 )
 from rsgispy.imagespectral.endmembers import (
     EndmemberInput,
@@ -122,35 +121,11 @@ def _check_out_no_data_val(
     out_no_data_val: Optional[float], out_np_dtype: np.dtype = np.dtype("float32")
 ) -> float:
     """
-    Resolve and validate the output no-data value of an unmixing output.
-
-    ``None`` gives ``-9999`` (or, for integer data types that cannot hold it,
-    the type's maximum for unsigned and minimum for signed types). An explicit
-    value must be representable by ``out_np_dtype`` (``NaN`` is allowed for
-    floating-point outputs).
+    Resolve and validate the output no-data value of an unmixing output
+    (:func:`rsgispy.imageprocess.validate_out_nodata`: ``None`` gives
+    ``-9999`` or the integer type's limit).
     """
-    out_np_dtype = np.dtype(out_np_dtype)
-    if out_no_data_val is None:
-        return float(
-            resolve_out_nodata(
-                out_np_dtype,
-                None,
-                None,
-                default_float=-9999.0,
-                default_int=-9999.0,
-                clamp_int=True,
-                unsigned_clamp="max",
-            )
-        )
-    nd_val = float(out_no_data_val)
-    if math.isnan(nd_val) and np.issubdtype(out_np_dtype, np.floating):
-        return nd_val
-    if not fits_dtype_range(nd_val, out_np_dtype):
-        raise rsgispy.RSGISPyException(
-            f"out_no_data_val ({out_no_data_val}) cannot be represented by the "
-            f"output data type '{out_np_dtype.name}'."
-        )
-    return nd_val
+    return float(validate_out_nodata(out_no_data_val, out_np_dtype))
 
 
 def _valid_pxls(flat: np.ndarray, nodatavals: Sequence[Optional[float]]) -> np.ndarray:
@@ -254,10 +229,10 @@ def exhcon_linear_spec_unmix(
     :param datatype: ``rsgispy.TYPE_*`` output data type constant
                      (Default = ``rsgispy.TYPE_32FLOAT``).
     :param out_no_data_val: Output no-data value for pixels that are not
-                            unmixed (Default = ``None``: ``-9999``, or for
-                            integer data types that cannot hold it the type's
-                            maximum (unsigned) or minimum (signed) value). It
-                            must be representable by ``datatype``.
+                            unmixed (Default = ``None``: ``-9999`` for float
+                            types, the type's maximum (unsigned) or minimum
+                            (signed) value for integer types). It must be
+                            representable by ``datatype``.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
 
@@ -367,7 +342,7 @@ def exhcon_linear_spec_unmix(
             )
             dst.write(
                 cast_result_block(
-                    out_blk, win_h, win_w, out_np_dtype, clamp_int=False
+                    out_blk, win_h, win_w, out_np_dtype
                 ),
                 window=win,
             )

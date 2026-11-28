@@ -17,6 +17,8 @@ from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imageprocess import (
+    is_cog_layout,
+    update_cog,
     IntersectionGrid,
     ensure_file_exists,
     open_output_dataset,
@@ -250,6 +252,35 @@ def create_img_from_array_ref_img(
         dst.write(arr.astype(out_np_dtype, copy=False))
 
 
+def _read_band_pxls(
+    src: Any, img_band: int, rows: np.ndarray, cols: np.ndarray
+) -> np.ndarray:
+    """
+    Values of ``img_band`` at pixel ``(rows, cols)`` (already range-checked),
+    read block by block: only the blocks that contain a point are read, so
+    sampling a few points does not read the whole band.
+    """
+    out = np.empty(rows.shape, dtype=src.dtypes[img_band - 1])
+    if rows.size == 0:
+        return out
+    blk_h, blk_w = src.block_shapes[img_band - 1]
+    blk_r = rows // blk_h
+    blk_c = cols // blk_w
+    blk_ids = blk_r * (src.width // blk_w + 1) + blk_c
+    uniq, inv = np.unique(blk_ids, return_inverse=True)
+    if uniq.size * blk_h * blk_w >= src.width * src.height:
+        return src.read(img_band)[rows, cols]
+    inv = inv.ravel()
+    for u_idx in range(uniq.size):
+        sel = inv == u_idx
+        r0 = int(blk_r.ravel()[sel][0]) * blk_h
+        c0 = int(blk_c.ravel()[sel][0]) * blk_w
+        win = Window(c0, r0, min(blk_w, src.width - c0), min(blk_h, src.height - r0))
+        blk = src.read(img_band, window=win)
+        out.ravel()[sel] = blk[rows.ravel()[sel] - r0, cols.ravel()[sel] - c0]
+    return out
+
+
 def get_img_coords_pxl_values(
     input_img: str,
     img_band: int,
@@ -293,9 +324,9 @@ def get_img_coords_pxl_values(
             raise rsgispy.RSGISPyException(
                 "Pixel coordinates are outside the image dimensions."
             )
-        img_data = src.read(img_band)
+        vals = _read_band_pxls(src, img_band, y_pxl_locs, x_pxl_locs)
 
-    return img_data[y_pxl_locs, x_pxl_locs].astype(float)
+    return vals.astype(float)
 
 
 def get_img_pxl_values(
@@ -338,9 +369,9 @@ def get_img_pxl_values(
             raise rsgispy.RSGISPyException(
                 "Pixel coordinates are outside the image dimensions."
             )
-        img_data = src.read(img_band)
+        vals = _read_band_pxls(src, img_band, y_arr, x_arr)
 
-    return img_data[y_arr, x_arr].astype(float)
+    return vals.astype(float)
 
 
 def set_img_pxl_values(
@@ -353,6 +384,9 @@ def set_img_pxl_values(
     """
     Set defined pixel coordinates ``(x_coords, y_coords)`` in ``img_band`` of
     ``input_img`` to ``pxl_value`` in place.
+
+    A Cloud Optimised GeoTIFF is not edited in place (which would break its
+    layout): it is rebuilt with :func:`rsgispy.imageprocess.update_cog`.
 
     :param input_img: Path to the input image file.
     :param img_band: 1-based band index.
@@ -375,6 +409,15 @@ def set_img_pxl_values(
         raise rsgispy.RSGISPyException(
             "The X and Y image coordinates are not the same."
         )
+
+    if is_cog_layout(input_img):
+        update_cog(
+            input_img,
+            lambda tmp_img: set_img_pxl_values(
+                tmp_img, img_band, x_arr, y_arr, pxl_value=pxl_value
+            ),
+        )
+        return
 
     with rasterio.open(input_img, "r+") as dst:
         validate_band_index(img_band, dst.count, input_img)

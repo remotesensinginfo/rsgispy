@@ -43,6 +43,7 @@ import numpy as np
 import pandas as pd
 
 import rsgispy
+from rsgispy.tools._gbdt_common import get_gbdt_backend
 from rsgispy.classification._cls_common import (
     apply_classifier_vector,
     resolve_ordered_classes,
@@ -536,19 +537,8 @@ def apply_sklearn_classifier_segments(
 
 
 def _gbdt_backend(name: str) -> Any:
-    """Return the GBDT backend spec for ``name``."""
-    # pylint: disable=import-outside-toplevel,protected-access
-    if name == "xgboost":
-        from rsgispy.classification import classxgboost as mod
-
-        return mod._XGB_BACKEND
-    if name == "lightgbm":
-        from rsgispy.classification import classlightgbm as mod
-
-        return mod._LGB_BACKEND
-    from rsgispy.classification import classcatboost as mod
-
-    return mod._CB_BACKEND
+    """Return the GBDT classification backend spec for ``name``."""
+    return get_gbdt_backend("classification", name)
 
 
 def _make_gbdt_apply(backend_name: str, binary: bool, label: str) -> Any:

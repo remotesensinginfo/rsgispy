@@ -36,24 +36,7 @@ from rsgispy.tools._ml_data import (
     resolve_feature_cols as _tools_resolve_feature_cols,
     seg_model_features,
 )
-from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
-    seg_allows_nan,
-)
-from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
-    load_samples_df,
-)
-from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
-    read_feature_block,
-)
-from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
-    resolve_rng,
-)
-from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
-    resolve_bootstrap_sample_size,
-)
-from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
-    summarise_bootstrap_interval,
-)
+from rsgispy.tools._ml_data import summarise_bootstrap_interval
 from rsgispy.tools._ml_tune import resolve_cv_splitter as _tools_resolve_cv_splitter
 from rsgispy.tools._sklearn import (
     check_sklearn_available as _check_sklearn_available,
@@ -278,7 +261,12 @@ def calc_class_pt_accuracy_metrics(
     pred_samples: np.ndarray,
     cls_names: Sequence[str],
 ) -> Dict[str, Any]:
-    """Compute point-only classification accuracy metrics dictionary."""
+    """
+    Compute point-only classification accuracy metrics dictionary.
+
+    ``commission`` and ``omission`` are percentage error rates of each class
+    (100 minus the user's / producer's accuracy).
+    """
     cls_list = sorted(str(name) for name in cls_names)
     acc_metrics, _ = _calc_base_pt_metrics(ref_samples, pred_samples, cls_list)
     acc_metrics["omission"] = [
@@ -296,7 +284,16 @@ def calc_class_area_accuracy_metrics(
     cls_area: np.ndarray,
     cls_names: Sequence[str],
 ) -> Dict[str, Any]:
-    """Compute area-weighted classification accuracy metrics dictionary."""
+    """
+    Compute area-weighted classification accuracy metrics dictionary.
+
+    ``commission`` and ``omission`` are percentage error rates of each class
+    (100 minus the user's / producer's accuracy of the area-normalised
+    confusion matrix, as in Olofsson et al. 2014), on the same scale as
+    :func:`calc_class_pt_accuracy_metrics`. ``commission_area_prop`` and
+    ``omission_area_prop`` give the same errors as proportions (0-1) of the
+    total mapped area.
+    """
     # pylint: disable=too-many-locals
     cls_list = sorted(str(name) for name in cls_names)
     acc_metrics, cm = _calc_base_pt_metrics(ref_samples, pred_samples, cls_list)
@@ -332,14 +329,28 @@ def calc_class_area_accuracy_metrics(
     )
     norm_cm = row_props * prop_area
 
+    map_total = norm_cm.sum(axis=1)
     ref_total = norm_cm.sum(axis=0)
-    commission = [float(row.sum() - row[idx]) for idx, row in enumerate(norm_cm)]
-    omission = (ref_total - np.diag(norm_cm)).tolist()
-    cls_area_prop = np.sum(norm_cm, axis=0)
+    diag = np.diag(norm_cm)
+    commission_prop = map_total - diag
+    omission_prop = ref_total - diag
+    cls_area_prop = ref_total
 
     acc_metrics["norm_confusion_matrix"] = norm_cm.tolist()
-    acc_metrics["commission"] = commission
-    acc_metrics["omission"] = [float(val) for val in omission]
+    # Commission / omission are percentage error rates (100 - user's /
+    # producer's accuracy of the area-normalised matrix), on the same scale
+    # as calc_class_pt_accuracy_metrics. The error as a proportion of the
+    # total mapped area is in the '*_area_prop' keys.
+    acc_metrics["commission"] = [
+        _safe_divide_scalar(float(err), float(tot)) * 100.0
+        for err, tot in zip(commission_prop, map_total, strict=True)
+    ]
+    acc_metrics["omission"] = [
+        _safe_divide_scalar(float(err), float(tot)) * 100.0
+        for err, tot in zip(omission_prop, ref_total, strict=True)
+    ]
+    acc_metrics["commission_area_prop"] = [float(val) for val in commission_prop]
+    acc_metrics["omission_area_prop"] = [float(val) for val in omission_prop]
     acc_metrics["est_prop_cls_area"] = [float(val) for val in cls_area_prop]
 
     labels = np.arange(len(cls_list), dtype=int)
@@ -420,18 +431,28 @@ def compute_cls_areas_from_img(
     )
     pxl_area = float(pxl_size_x * pxl_size_y)
 
-    cls_area_dict: Dict[str, float] = {}
-    for cls_id, pxl_ct in zip(pxl_vals, n_pxls):
-        cls_name_str = rsgispy.tools.strings.check_str(
-            class_names_lut[cls_id], rm_non_ascii=True
-        )
-        cls_area_dict[cls_name_str] = float(pxl_ct) * pxl_area
+    def _norm_name(name: Any) -> str:
+        # LUT and sample names are compared after the same cleaning, so
+        # names with non-ASCII characters (e.g. 'Wald-Fläche') still match.
+        return rsgispy.tools.strings.check_str(str(name), rm_non_ascii=True)
 
-    missing = [name for name in unq_cls_names if name not in cls_area_dict]
+    area_by_norm: Dict[str, float] = {}
+    for cls_id, pxl_ct in zip(pxl_vals, n_pxls):
+        norm_key = _norm_name(class_names_lut[cls_id])
+        area_by_norm[norm_key] = area_by_norm.get(norm_key, 0.0) + (
+            float(pxl_ct) * pxl_area
+        )
+
+    missing = [
+        name for name in unq_cls_names if _norm_name(name) not in area_by_norm
+    ]
     if missing:
         raise rsgispy.RSGISPyException(
             f"Did not calculate the class areas for: {', '.join(missing)}"
         )
+    cls_area_dict: Dict[str, float] = {
+        name: area_by_norm[_norm_name(name)] for name in unq_cls_names
+    }
 
     cls_id_areas = np.array(
         [cls_area_dict[cls_name] for cls_name in unq_cls_names],
@@ -643,13 +664,23 @@ def write_acc_stats_img_csv(
             writer.writerow([cls_name, *cm_row])
 
         writer.writerow([""])
-        writer.writerow(["class", "commission", "omission"])
+        writer.writerow(
+            [
+                "class",
+                "commission (%)",
+                "omission (%)",
+                "commission (prop. area)",
+                "omission (prop. area)",
+            ]
+        )
         for idx, cls_name in enumerate(unq_cls_names):
             writer.writerow(
                 [
                     cls_name,
                     acc_metrics["commission"][idx],
                     acc_metrics["omission"][idx],
+                    acc_metrics["commission_area_prop"][idx],
+                    acc_metrics["omission_area_prop"][idx],
                 ]
             )
 
@@ -876,6 +907,18 @@ def calc_split_metrics(
     preds = np.asarray(
         fitted_est.predict(x_df, **p_kwargs) if p_kwargs else fitted_est.predict(x_df)
     ).ravel()
+    return {
+        f"{prefix}_{key}": val
+        for key, val in calc_label_metrics(y_true, preds).items()
+    }
+
+
+def calc_label_metrics(y_true: np.ndarray, preds: np.ndarray) -> Dict[str, float]:
+    """
+    Accuracy, balanced accuracy, macro F1, and Cohen's kappa of predicted
+    class labels (keys ``accuracy``, ``bal_accuracy``, ``f1_macro`` and
+    ``cohen_kappa``).
+    """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         acc = float(sklearn.metrics.accuracy_score(y_true, preds))
@@ -889,10 +932,10 @@ def calc_split_metrics(
     if np.isnan(kappa):
         kappa = 1.0 if np.array_equal(y_true, preds) else 0.0
     return {
-        f"{prefix}_accuracy": acc,
-        f"{prefix}_bal_accuracy": bal_acc,
-        f"{prefix}_f1_macro": f1_mac,
-        f"{prefix}_cohen_kappa": kappa,
+        "accuracy": acc,
+        "bal_accuracy": bal_acc,
+        "f1_macro": f1_mac,
+        "cohen_kappa": kappa,
     }
 
 

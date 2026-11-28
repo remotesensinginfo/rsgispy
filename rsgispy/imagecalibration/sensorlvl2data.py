@@ -552,7 +552,6 @@ def _finalise_sen2_sref_output(
                     int(win.height),
                     int(win.width),
                     out_np_dtype,
-                    clamp_int=True,
                 ),
                 window=win,
             )

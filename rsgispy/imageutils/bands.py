@@ -18,6 +18,7 @@ from rsgispy.imageprocess import (
     compute_spatial_intersection,
     create_output_from_dataset,
     ensure_file_exists,
+    fits_dtype_range,
     iter_dataset_windows,
     normalise_creation_options,
     open_multi_image_datasets,
@@ -186,15 +187,22 @@ def stack_img_bands(
 
     :param input_imgs: Sequence of input image file paths.
     :param output_img: Path to the output stacked image file.
-    :param band_names: Optional sequence of output band names (Default = ``None``).
+    :param band_names: Optional sequence of output band names (Default =
+                       ``None``: the input band descriptions, as
+                       :func:`select_img_bands` does).
     :param skip_value: Optional pixel value treated as invalid across inputs
                        (Default = ``None``).
     :param gdalformat: Output GDAL format name (e.g., ``'KEA'``, ``'GTIFF'``;
                        Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
-                     (defaults to matching the first input image).
+                     (Default = ``None``: the smallest type that holds every
+                     input band, ``numpy.result_type`` of their dtypes, e.g.
+                     ``uint8`` and ``float32`` inputs give ``float32``). A
+                     narrower integer type rounds and clamps the values.
     :param no_data_val: Optional no-data value written where pixels are skipped
-                        and set on the output dataset (Default = ``None``).
+                        and set on the output dataset (Default = ``None``: the
+                        inputs' no-data value when they all share one that the
+                        output type can hold, otherwise no no-data value).
     :param calc_stats: If ``True``, compute image statistics and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -227,15 +235,39 @@ def stack_img_bands(
         validate_crs_and_res(datasets, first_ds)
         grid = compute_spatial_intersection(datasets)
 
-        eff_dtype = (
-            rsgis_dtype_from_np_dtype(first_ds.dtypes[0])
-            if datatype is None
-            else datatype
-        )
+        if datatype is None:
+            common_np_dtype = np.result_type(
+                *[np.dtype(dt) for p in paths for dt in datasets[p].dtypes]
+            )
+            eff_dtype = rsgis_dtype_from_np_dtype(
+                common_np_dtype, fallback=rsgispy.TYPE_64FLOAT
+            )
+        else:
+            eff_dtype = datatype
         out_rio_dtype = rsgispy.get_rasterio_datatype(eff_dtype)
         out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(eff_dtype))
 
+        if no_data_val is None:
+            in_nds = [datasets[p].nodata for p in paths]
+            first_nd = in_nds[0]
+            same_nd = first_nd is not None and all(
+                nd is not None
+                and (nd == first_nd or (math.isnan(nd) and math.isnan(first_nd)))
+                for nd in in_nds
+            )
+            if same_nd and (
+                np.issubdtype(out_np_dtype, np.floating)
+                or fits_dtype_range(first_nd, out_np_dtype)
+            ):
+                no_data_val = float(first_nd)
+
         total_bands = sum(int(datasets[p].count) for p in paths)
+        if band_names is None:
+            in_descs = [
+                desc for p in paths for desc in datasets[p].descriptions
+            ]
+            if any(in_descs):
+                band_names = [desc or "" for desc in in_descs]
         if band_names is not None and len(band_names) != total_bands:
             raise rsgispy.RSGISPyException(
                 f"Length of band_names ({len(band_names)}) must match total "
@@ -287,7 +319,9 @@ def stack_img_bands(
                     stacked[:, skip_mask] = fill_val
 
             dst.write(
-                cast_result_block(stacked, win_h, win_w, out_np_dtype),
+                cast_result_block(
+                    stacked, win_h, win_w, out_np_dtype, nodata=no_data_val
+                ),
                 window=dst_win,
             )
 

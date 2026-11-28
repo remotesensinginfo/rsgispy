@@ -385,7 +385,7 @@ def run_workflow(
 
     # High potential areas as polygons, keeping those >= min_area_ha.
     cls_polys = rsgispy.vector.create.polygonise_raster_to_vec_lyr(
-        None, None, "GPKG", potential_img, img_band=1, use_8_conn=True,
+        potential_img, img_band=1, use_8_conn=True,
     )
     high_polys = rsgispy.vector.geoms.rm_polys_area(
         cls_polys[cls_polys["PXLVAL"] == 4], None, min_area_ha * 10000.0,

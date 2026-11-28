@@ -24,6 +24,8 @@ import rsgispy.imageutils.envopts
 import rsgispy.imageutils.stats
 import rsgispy.imageutils.warp
 
+from conftest import write_raster
+
 _GTIFF_DEFAULTS = {
     "TILED": "YES",
     "COMPRESS": "DEFLATE",
@@ -44,26 +46,6 @@ def fixture_clean_crt_env(monkeypatch):
             monkeypatch.setenv(name, "")
             monkeypatch.delenv(name)
     yield monkeypatch
-
-
-def _write_raster(path, data, dtype="float32", **extra):
-    """Write a small striped, uncompressed GeoTIFF."""
-    if data.ndim == 2:
-        data = data[np.newaxis]
-    count, height, width = data.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=dtype,
-        crs="EPSG:32630",
-        transform=from_origin(500000.0, 5200000.0, 10.0, 10.0),
-        **extra,
-    ) as dst:
-        dst.write(data.astype(dtype))
 
 
 def _band_maths(in_img, out_img, **kwargs):
@@ -183,7 +165,10 @@ def test_band_maths_gtiff_default_is_tiled_deflate(tmp_path, clean_crt_env):
     _ = clean_crt_env
     in_img = tmp_path / "in.tif"
     out_img = tmp_path / "out.tif"
-    _write_raster(in_img, np.arange(2 * 300 * 300, dtype=np.float32).reshape(2, 300, 300))
+    write_raster(
+        in_img,
+        np.arange(2 * 300 * 300, dtype=np.float32).reshape(2, 300, 300),
+    )
     _band_maths(in_img, out_img)
     with rasterio.open(out_img) as src:
         assert src.profile["tiled"] is True
@@ -198,7 +183,7 @@ def test_explicit_creation_opts_and_opt_out(tmp_path, clean_crt_env):
     """Explicit creation_opts are merged on top; an empty env var gives a plain GeoTIFF."""
     monkeypatch = clean_crt_env
     in_img = tmp_path / "in.tif"
-    _write_raster(in_img, np.ones((64, 64), dtype=np.float32))
+    write_raster(in_img, np.ones((64, 64), dtype=np.float32))
 
     out_lzw = tmp_path / "out_lzw.tif"
     _band_maths(in_img, out_lzw, creation_opts={"COMPRESS": "LZW"})
@@ -226,7 +211,7 @@ def test_default_opts_with_kea_and_output_exists(tmp_path, clean_crt_env):
     """The GTIFF defaults do not break KEA output or output_exists=True updates."""
     _ = clean_crt_env
     in_img = tmp_path / "in.tif"
-    _write_raster(in_img, np.full((40, 50), 3.0, dtype=np.float32))
+    write_raster(in_img, np.full((40, 50), 3.0, dtype=np.float32))
 
     out_tif = tmp_path / "out.tif"
     _band_maths(in_img, out_tif)
@@ -258,7 +243,10 @@ def test_gdal_translate_uses_creation_opts_resolver(tmp_path, clean_crt_env):
     """gdal_translate GeoTIFF output follows the resolver (defaults and env vars)."""
     monkeypatch = clean_crt_env
     in_img = tmp_path / "in.tif"
-    _write_raster(in_img, np.arange(300 * 300, dtype=np.float32).reshape(300, 300))
+    write_raster(
+        in_img,
+        np.arange(300 * 300, dtype=np.float32).reshape(300, 300),
+    )
 
     out_default = tmp_path / "out_default.tif"
     rsgispy.imageutils.warp.gdal_translate(
@@ -292,7 +280,10 @@ def test_multi_core_internal_overviews_use_default_opts(tmp_path, clean_crt_env)
     """Rewriting an image with internal overviews keeps it tiled and DEFLATE-compressed."""
     _ = clean_crt_env
     in_img = tmp_path / "in.tif"
-    _write_raster(in_img, np.random.default_rng(0).random((300, 300)).astype("float32"))
+    write_raster(
+        in_img,
+        np.random.default_rng(0).random((300, 300)).astype("float32"),
+    )
     rsgispy.imageutils.stats.build_img_pyramids_multi_core(
         str(in_img), levels=[2, 4], external=False, use_pbar=False
     )
@@ -310,8 +301,8 @@ def test_cog_staging_ignores_gtiff_creation_opts(tmp_path, clean_crt_env):
     )
     ref_img = tmp_path / "ref.tif"
     proc_img = tmp_path / "proc.tif"
-    _write_raster(ref_img, np.zeros((520, 600), dtype=np.float32))
-    _write_raster(proc_img, np.full((260, 300), 42.0, dtype=np.float32))
+    write_raster(ref_img, np.zeros((520, 600), dtype=np.float32))
+    write_raster(proc_img, np.full((260, 300), 42.0, dtype=np.float32))
     with rasterio.open(proc_img, "r+") as dst:
         dst.transform = from_origin(500000.0, 5200000.0, 20.0, 20.0)
 
@@ -367,7 +358,7 @@ def test_blockysize_without_tiled_gives_striped_gtiff(tmp_path, clean_crt_env):
     """creation_opts with BLOCKYSIZE but no TILED/BLOCKXSIZE give a striped GeoTIFF."""
     monkeypatch = clean_crt_env
     in_img = tmp_path / "in.tif"
-    _write_raster(in_img, np.ones((64, 300), dtype=np.float32))
+    write_raster(in_img, np.ones((64, 300), dtype=np.float32))
 
     out_rows1 = tmp_path / "rows1.tif"
     _band_maths(in_img, out_rows1, creation_opts={"BLOCKYSIZE": "1"})

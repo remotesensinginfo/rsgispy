@@ -37,11 +37,13 @@ import rsgispy
 from rsgispy.classification._helpers import (
     check_sklearn_available,
     finalise_thematic_output_img,
-    read_feature_block,
     resolve_apply_band_specs,
     resolve_out_nodata,
-    resolve_rng,
     select_out_int_dtype,
+)
+from rsgispy.tools._ml_data import (
+    read_feature_block,
+    resolve_rng,
 )
 from rsgispy.classification.classdata import (
     ClassificationConfig,

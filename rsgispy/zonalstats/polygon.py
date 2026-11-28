@@ -11,13 +11,18 @@ zonal statistics functions using ``rasterio`` and ``geopandas``.
 * If polygon sizes vary relative to pixel size, use
   :func:`calc_zonal_band_stats_test_poly_pts` or
   :func:`calc_zonal_band_stats_test_poly_pts_file`, which computes polygon
-  statistics where pixels fall inside the polygon and falls back to the polygon
-  centroid otherwise.
+  statistics where pixels fall inside the polygon and otherwise falls back to
+  a point inside the polygon (its ``representative_point()``, not the
+  centroid, which can lie outside a concave polygon).
 * For categorical integer rasters, use :func:`calc_zonal_band_pxl_counts` or
   :func:`calc_zonal_band_pxl_counts_file`.
 * To export all individual pixels within polygons across selected bands to a
   :class:`pandas.DataFrame` or tabular file (including compressed Parquet), use
   :func:`export_poly_pxls_to_df`.
+
+.. versionchanged:: 0.5.0
+   Output column names are written as given (e.g. ``mean_field="B1_Mean"``
+   creates ``B1_Mean``). They were lowercased, as in RSGISLib.
 """
 
 # pylint: disable=too-many-lines
@@ -173,20 +178,25 @@ def _validate_percentile(
         rsgispy.tools.stats.validate_percentiles_0_100(percentile)
 
 
-def _centroid_fallback_stats(
+def _interior_pt_fallback_stats(
     src: rasterio.DatasetReader,
     img_band: int,
     geom: Any,
     thresholds: Tuple[float, float],
     out_no_data_val: float,
 ) -> Tuple[bool, float]:
-    """Sample a polygon's centroid and return ``(is_valid, value_or_nodata)``."""
+    """
+    Sample a point guaranteed to lie inside the polygon
+    (:meth:`~shapely.geometry.base.BaseGeometry.representative_point`) and
+    return ``(is_valid, value_or_nodata)``. The centroid is not used because
+    it can fall outside a concave polygon.
+    """
     img_nodata = src.nodatavals[img_band - 1]
     sampled: Optional[float] = None
     if geom is not None and not geom.is_empty:
-        centroid = geom.centroid
+        rep_pt = geom.representative_point()
         sampled = _sample_point_pixel(
-            src, img_band, centroid.x, centroid.y, clamp=False
+            src, img_band, rep_pt.x, rep_pt.y, clamp=False
         )
 
     if _is_valid_pixel_value(sampled, img_nodata, thresholds[0], thresholds[1]):
@@ -204,8 +214,9 @@ def _calc_zonal_stats_core(
     field_map: Dict[str, Optional[str]],
     vec_def_epsg: Optional[int] = None,
     percentile: Optional[float] = None,
-    allow_centroid_fallback: bool = False,
+    allow_point_fallback: bool = False,
     use_pbar: bool = True,
+    reproj_vec: bool = False,
 ) -> gpd.GeoDataFrame:
     """Shared implementation for polygon zonal statistics with optional centroid fallback."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -214,11 +225,12 @@ def _calc_zonal_stats_core(
             "At least one field needs to be specified for there to be an output."
         )
 
-    if allow_centroid_fallback:
+    if allow_point_fallback:
         _validate_percentile(percentile, field_map.get("percentile"))
 
     with _open_validated_zonal_inputs(
-        vec_gdf, input_img, img_band, vec_def_epsg=vec_def_epsg
+        vec_gdf, input_img, img_band, vec_def_epsg=vec_def_epsg,
+        reproj_vec=reproj_vec,
     ) as (src, img_nodata, geom_series):
         results: Dict[str, List[float]] = {
             key: [] for key, name in field_map.items() if name is not None
@@ -238,8 +250,8 @@ def _calc_zonal_stats_core(
                 feat_stats = _compute_stats_dict(
                     vals, field_map, percentile=percentile
                 )
-            elif allow_centroid_fallback:
-                is_valid, c_val = _centroid_fallback_stats(
+            elif allow_point_fallback:
+                is_valid, c_val = _interior_pt_fallback_stats(
                     src,
                     img_band,
                     geom,
@@ -271,7 +283,7 @@ def _calc_zonal_stats_core(
     for key, stat_vals in results.items():
         col_name = field_map[key]
         if col_name is not None:
-            vec_gdf[col_name.lower()] = stat_vals
+            vec_gdf[col_name] = stat_vals
 
     return vec_gdf
 
@@ -295,6 +307,7 @@ def calc_zonal_band_stats_file(
     vec_def_epsg: Optional[int] = None,
     *,
     use_pbar: bool = True,
+    reproj_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
@@ -327,6 +340,9 @@ def calc_zonal_band_stats_file(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param reproj_vec: If ``True``, reproject the polygons to the raster CRS
+                       on the fly when they differ (Default = ``False``:
+                       raise an exception).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
                          infer from extension or write uncompressed, ``True``
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
@@ -377,6 +393,7 @@ def calc_zonal_band_stats_file(
             median_field=median_field,
             vec_def_epsg=vec_def_epsg,
             use_pbar=use_pbar,
+            reproj_vec=reproj_vec,
         ),
         out_vec_file=out_vec_file,
         out_vec_lyr=out_vec_lyr,
@@ -402,6 +419,7 @@ def calc_zonal_band_stats(
     vec_def_epsg: Optional[int] = None,
     *,
     use_pbar: bool = True,
+    reproj_vec: bool = False,
     vec_lyr: Optional[str] = None,
 ) -> gpd.GeoDataFrame:
     """
@@ -430,6 +448,9 @@ def calc_zonal_band_stats(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param reproj_vec: If ``True``, reproject the polygons to the raster CRS
+                       on the fly when they differ (Default = ``False``:
+                       raise an exception).
     :param vec_lyr: Optional layer name when ``vec_gdf`` is a file path.
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
@@ -471,8 +492,9 @@ def calc_zonal_band_stats(
         out_no_data_val=out_no_data_val,
         field_map=field_map,
         vec_def_epsg=vec_def_epsg,
-        allow_centroid_fallback=False,
+        allow_point_fallback=False,
         use_pbar=use_pbar,
+        reproj_vec=reproj_vec,
     )
 
 
@@ -485,6 +507,7 @@ def calc_zonal_poly_pts_band_stats_file(
     vec_def_epsg: Optional[int] = None,
     *,
     use_pbar: bool = True,
+    reproj_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
@@ -506,6 +529,9 @@ def calc_zonal_poly_pts_band_stats_file(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param reproj_vec: If ``True``, reproject the polygons to the raster CRS
+                       on the fly when they differ (Default = ``False``:
+                       raise an exception).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
                          infer from extension or write uncompressed, ``True``
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
@@ -541,6 +567,7 @@ def calc_zonal_poly_pts_band_stats_file(
             out_field,
             vec_def_epsg=vec_def_epsg,
             use_pbar=use_pbar,
+            reproj_vec=reproj_vec,
         ),
         out_vec_file=out_vec_file,
         out_vec_lyr=out_vec_lyr,
@@ -556,6 +583,7 @@ def calc_zonal_poly_pts_band_stats(
     vec_def_epsg: Optional[int] = None,
     *,
     use_pbar: bool = True,
+    reproj_vec: bool = False,
     vec_lyr: Optional[str] = None,
 ) -> gpd.GeoDataFrame:
     """
@@ -574,6 +602,9 @@ def calc_zonal_poly_pts_band_stats(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param reproj_vec: If ``True``, reproject the polygons to the raster CRS
+                       on the fly when they differ (Default = ``False``:
+                       raise an exception).
     :param vec_lyr: Optional layer name when ``vec_gdf`` is a file path.
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
@@ -599,7 +630,8 @@ def calc_zonal_poly_pts_band_stats(
         )
 
     with _open_validated_zonal_inputs(
-        vec_gdf, input_img, img_band, vec_def_epsg=vec_def_epsg
+        vec_gdf, input_img, img_band, vec_def_epsg=vec_def_epsg,
+        reproj_vec=reproj_vec,
     ) as (src, _, geom_series):
         out_vals: List[float] = []
         tqdm_cls = rsgispy.get_tqdm()
@@ -617,7 +649,7 @@ def calc_zonal_poly_pts_band_stats(
                     float(sampled) if sampled is not None else float("nan")
                 )
 
-    vec_gdf[out_field.lower()] = out_vals
+    vec_gdf[out_field] = out_vals
     return vec_gdf
 
 
@@ -642,14 +674,17 @@ def calc_zonal_band_stats_test_poly_pts_file(
     vec_def_epsg: Optional[int] = None,
     *,
     use_pbar: bool = True,
+    reproj_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
 ) -> Optional[gpd.GeoDataFrame]:
     """
     Calculate zonal statistics for polygons in ``vec_file`` (a vector file
-    path or an in-memory :class:`geopandas.GeoDataFrame`), falling back to the
-    polygon centroid if no valid pixels fall within the polygon.
+    path or an in-memory :class:`geopandas.GeoDataFrame`), falling back to a
+    point inside the polygon (its ``representative_point()``) if no valid
+    pixels fall within the polygon. The centroid is not used because it can
+    lie outside a concave polygon.
 
     :param vec_file: Input vector file path (updated in-place on disk unless
                      ``out_vec_file`` is given) or
@@ -660,8 +695,8 @@ def calc_zonal_band_stats_test_poly_pts_file(
     :param img_band: 1-based band index within ``input_img``.
     :param min_thres: Lower inclusive threshold for pixels included in stats.
     :param max_thres: Upper inclusive threshold for pixels included in stats.
-    :param out_no_data_val: Output fill value when neither polygon nor centroid
-                            yields a valid pixel.
+    :param out_no_data_val: Output fill value when neither the polygon nor its
+                            interior fallback point yields a valid pixel.
     :param percentile: Percentile in ``[0, 100]`` when ``percentile_field`` is set.
     :param percentile_field: Output column name for percentile value (or ``None``).
     :param min_field: Output column name for minimum value (or ``None``).
@@ -675,6 +710,9 @@ def calc_zonal_band_stats_test_poly_pts_file(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param reproj_vec: If ``True``, reproject the polygons to the raster CRS
+                       on the fly when they differ (Default = ``False``:
+                       raise an exception).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
                          infer from extension or write uncompressed, ``True``
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
@@ -727,6 +765,7 @@ def calc_zonal_band_stats_test_poly_pts_file(
             median_field=median_field,
             vec_def_epsg=vec_def_epsg,
             use_pbar=use_pbar,
+            reproj_vec=reproj_vec,
         ),
         out_vec_file=out_vec_file,
         out_vec_lyr=out_vec_lyr,
@@ -754,12 +793,14 @@ def calc_zonal_band_stats_test_poly_pts(
     vec_def_epsg: Optional[int] = None,
     *,
     use_pbar: bool = True,
+    reproj_vec: bool = False,
     vec_lyr: Optional[str] = None,
 ) -> gpd.GeoDataFrame:
     """
     Calculate zonal statistics for polygons in a :class:`geopandas.GeoDataFrame`
-    or vector file path, falling back to the polygon centroid if no valid pixels
-    fall inside.
+    or vector file path, falling back to a point inside the polygon (its
+    ``representative_point()``) if no valid pixels fall inside. The centroid
+    is not used because it can lie outside a concave polygon.
 
     When given a :class:`geopandas.GeoDataFrame`, it is updated in-place and
     returned. When given a file path, the layer is loaded into a new
@@ -771,8 +812,8 @@ def calc_zonal_band_stats_test_poly_pts(
     :param img_band: 1-based band index within ``input_img``.
     :param min_thres: Lower inclusive threshold for pixels included in stats.
     :param max_thres: Upper inclusive threshold for pixels included in stats.
-    :param out_no_data_val: Output fill value when neither polygon nor centroid
-                            yields a valid pixel.
+    :param out_no_data_val: Output fill value when neither the polygon nor its
+                            interior fallback point yields a valid pixel.
     :param percentile: Percentile in ``[0, 100]`` when ``percentile_field`` is set.
     :param percentile_field: Output column name for percentile value (or ``None``).
     :param min_field: Output column name for minimum value (or ``None``).
@@ -786,6 +827,9 @@ def calc_zonal_band_stats_test_poly_pts(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param reproj_vec: If ``True``, reproject the polygons to the raster CRS
+                       on the fly when they differ (Default = ``False``:
+                       raise an exception).
     :param vec_lyr: Optional layer name when ``vec_gdf`` is a file path.
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
@@ -829,8 +873,9 @@ def calc_zonal_band_stats_test_poly_pts(
         field_map=field_map,
         vec_def_epsg=vec_def_epsg,
         percentile=percentile,
-        allow_centroid_fallback=True,
+        allow_point_fallback=True,
         use_pbar=use_pbar,
+        reproj_vec=reproj_vec,
     )
 
 
@@ -843,7 +888,9 @@ def calc_zonal_band_pxl_counts_file(
     total_field: str = "pxl_count",
     vec_def_epsg: Optional[int] = None,
     *,
+    nodata_field: Optional[str] = "nodata_count",
     use_pbar: bool = True,
+    reproj_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
@@ -861,10 +908,19 @@ def calc_zonal_band_pxl_counts_file(
     :param input_img: Path to the input integer/categorical raster image.
     :param img_band: 1-based band index within ``input_img``.
     :param vals_lut: Mapping ``{pixel_value: output_field_name}``.
-    :param total_field: Output column name for total pixels inside each polygon.
+    :param total_field: Output column name for the number of valid
+                        (not nodata) pixels inside each polygon, so
+                        ``count / total`` is the share of the valid pixels.
+    :param nodata_field: Output column name for the number of nodata pixels
+                         inside each polygon (Default = ``'nodata_count'``;
+                         ``None`` to skip it). The polygon's whole pixel
+                         footprint is ``total + nodata``.
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param reproj_vec: If ``True``, reproject the polygons to the raster CRS
+                       on the fly when they differ (Default = ``False``:
+                       raise an exception).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
                          infer from extension or write uncompressed, ``True``
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
@@ -901,7 +957,9 @@ def calc_zonal_band_pxl_counts_file(
             vals_lut,
             total_field=total_field,
             vec_def_epsg=vec_def_epsg,
+            nodata_field=nodata_field,
             use_pbar=use_pbar,
+            reproj_vec=reproj_vec,
         ),
         out_vec_file=out_vec_file,
         out_vec_lyr=out_vec_lyr,
@@ -917,7 +975,9 @@ def calc_zonal_band_pxl_counts(
     total_field: str = "pxl_count",
     vec_def_epsg: Optional[int] = None,
     *,
+    nodata_field: Optional[str] = "nodata_count",
     use_pbar: bool = True,
+    reproj_vec: bool = False,
     vec_lyr: Optional[str] = None,
 ) -> gpd.GeoDataFrame:
     """
@@ -933,10 +993,19 @@ def calc_zonal_band_pxl_counts(
     :param input_img: Path to the input integer/categorical raster image.
     :param img_band: 1-based band index within ``input_img``.
     :param vals_lut: Mapping ``{pixel_value: output_field_name}``.
-    :param total_field: Output column name for total pixels inside each polygon.
+    :param total_field: Output column name for the number of valid
+                        (not nodata) pixels inside each polygon, so
+                        ``count / total`` is the share of the valid pixels.
+    :param nodata_field: Output column name for the number of nodata pixels
+                         inside each polygon (Default = ``'nodata_count'``;
+                         ``None`` to skip it). The polygon's whole pixel
+                         footprint is ``total + nodata``.
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param reproj_vec: If ``True``, reproject the polygons to the raster CRS
+                       on the fly when they differ (Default = ``False``:
+                       raise an exception).
     :param vec_lyr: Optional layer name when ``vec_gdf`` is a file path.
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
@@ -963,11 +1032,13 @@ def calc_zonal_band_pxl_counts(
         )
 
     with _open_validated_zonal_inputs(
-        vec_gdf, input_img, img_band, vec_def_epsg=vec_def_epsg
+        vec_gdf, input_img, img_band, vec_def_epsg=vec_def_epsg,
+        reproj_vec=reproj_vec,
     ) as (src, img_nodata, geom_series):
-        total_col = total_field.lower()
-        lut_cols = {pxl_val: name.lower() for pxl_val, name in vals_lut.items()}
+        total_col = total_field
+        lut_cols = dict(vals_lut)
         totals: List[float] = []
+        nodata_counts: List[float] = []
         counts_by_val: Dict[int, List[float]] = {
             pxl_val: [] for pxl_val in vals_lut
         }
@@ -977,7 +1048,16 @@ def calc_zonal_band_pxl_counts(
             geom_series, total=len(vec_gdf), disable=not use_pbar
         ):
             vals = _read_polygon_pixels(src, img_band, geom, img_nodata=None)
-            totals.append(float(vals.shape[0]))
+            if img_nodata is not None and vals.shape[0] > 0:
+                if np.isnan(img_nodata):
+                    is_nd = np.isnan(vals)
+                else:
+                    is_nd = vals == img_nodata
+                n_nd = float(np.count_nonzero(is_nd))
+            else:
+                n_nd = 0.0
+            totals.append(float(vals.shape[0]) - n_nd)
+            nodata_counts.append(n_nd)
             for pxl_val, count_list in counts_by_val.items():
                 if vals.shape[0] > 0:
                     count_list.append(float(np.sum(vals == pxl_val)))
@@ -985,6 +1065,8 @@ def calc_zonal_band_pxl_counts(
                     count_list.append(0.0)
 
     vec_gdf[total_col] = totals
+    if nodata_field is not None:
+        vec_gdf[nodata_field] = nodata_counts
     for pxl_val, col_name in lut_cols.items():
         vec_gdf[col_name] = counts_by_val[pxl_val]
 

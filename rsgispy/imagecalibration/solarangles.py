@@ -258,7 +258,6 @@ def calc_solar_azimuth_zenith(
                     int(win.height),
                     int(win.width),
                     out_np_dtype,
-                    clamp_int=True,
                 ),
                 window=win,
             )

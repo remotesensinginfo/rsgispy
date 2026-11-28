@@ -21,6 +21,7 @@ from rsgispy.vectorprocess import (
     get_gdf_bbox,
     read_vec_gdf as read_vec_file,
     resolve_vector_crs,
+    write_back_vec_gdf,
     write_vec_gdf as write_vec_file,
 )
 
@@ -70,28 +71,16 @@ def run_zonal_file_op(
     to disk (to ``out_vec_file`` or in-place onto ``vec_file``) or return the
     in-memory :class:`geopandas.GeoDataFrame`.
     """
-    is_gdf_input = isinstance(vec_file, gpd.GeoDataFrame)
     vec_gdf = read_vec_file(vec_file, vec_lyr)
     vec_gdf = compute_fn(vec_gdf)
-    target_lyr = out_vec_lyr if out_vec_lyr is not None else vec_lyr
-    if out_vec_file is not None:
-        write_vec_file(
-            vec_gdf,
-            out_vec_file,
-            target_lyr,
-            out_compress=out_compress,
-        )
-        return None
-    if is_gdf_input:
-        return vec_gdf
-    write_vec_file(
+    return write_back_vec_gdf(
         vec_gdf,
-        vec_file,  # type: ignore[arg-type]
-        target_lyr,
-        replace_layer=True,
+        vec_file,
+        vec_lyr,
+        out_vec_file=out_vec_file,
+        out_vec_lyr=out_vec_lyr,
         out_compress=out_compress,
     )
-    return None
 
 
 def normalise_band_list(
@@ -178,10 +167,20 @@ def open_validated_zonal_multiband_inputs(
     """
     Validate vector/raster inputs for one or more bands, check CRS and spatial
     overlap, optionally reproject geometries to match ``input_img``, and yield
-    ``(src_dataset, band_nodatavals, bands_list, geom_series)``.
+    ``(src_dataset, band_nodatavals, bands_list, geom_series)``. An empty
+    vector layer yields an empty ``geom_series`` (so the zonal functions
+    return an empty result) without the CRS and overlap checks.
     """
     if vec_gdf is None:
         raise rsgispy.RSGISPyException("The inputted vector layer was None")
+
+    if len(vec_gdf) == 0:
+        # An empty layer gives an empty result: no CRS or overlap to check.
+        with rasterio.open(input_img, "r") as src:
+            bands_list = normalise_band_list(img_bands, src.count, input_img)
+            nodata_vals = [src.nodatavals[b - 1] for b in bands_list]
+            yield src, nodata_vals, bands_list, vec_gdf.geometry
+        return
 
     vec_crs = resolve_vector_crs(vec_gdf, vec_def_epsg)
     vec_bbox = get_gdf_bbox(vec_gdf)

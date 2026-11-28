@@ -27,6 +27,8 @@ from rsgispy.regression._reg_common import (
     train_gbdt_regressor,
 )
 from rsgispy.tools._gbdt_common import (
+    register_gbdt_backend,
+    forward_gbdt_call,
     apply_xgb_gpu_params as _apply_xgb_gpu_params,
     fit_xgb_estimator as _fit_xgb_estimator,
     get_xgboost_optuna_param_space as _tools_get_xgboost_optuna_param_space,
@@ -171,24 +173,28 @@ def load_xgboost_regressor(
     )
 
 
-_XGB_REG_BACKEND = GBDTRegBackendSpec(
-    name="XGBoost",
-    package_name="xgboost",
-    extra="xgboost",
-    is_available=lambda: HAVE_XGBOOST,
-    gpu_available=is_xgboost_gpu_available,
-    apply_gpu_params=_apply_xgb_gpu_params,
-    seed_param="random_state",
-    jobs_param="n_jobs",
-    default_params=_default_xgb_reg_params,
-    default_space=lambda: get_xgboost_optuna_param_space(extended=False),
-    extended_space=lambda: get_xgboost_optuna_param_space(extended=True),
-    build_estimator=_build_xgb_reg_estimator,
-    fit_estimator=_fit_xgb_estimator,
-    load_model=load_xgboost_regressor,
-    save_model=save_xgboost_regressor,
-    prepare_predict_estimator=_prepare_xgb_predict_estimator,
-    get_error_detail=lambda: _XGBOOST_LOAD_ERROR,
+_XGB_REG_BACKEND = register_gbdt_backend(
+    "regression",
+    "xgboost",
+    GBDTRegBackendSpec(
+        name="XGBoost",
+        package_name="xgboost",
+        extra="xgboost",
+        is_available=lambda: HAVE_XGBOOST,
+        gpu_available=is_xgboost_gpu_available,
+        apply_gpu_params=_apply_xgb_gpu_params,
+        seed_param="random_state",
+        jobs_param="n_jobs",
+        default_params=_default_xgb_reg_params,
+        default_space=lambda: get_xgboost_optuna_param_space(extended=False),
+        extended_space=lambda: get_xgboost_optuna_param_space(extended=True),
+        build_estimator=_build_xgb_reg_estimator,
+        fit_estimator=_fit_xgb_estimator,
+        load_model=load_xgboost_regressor,
+        save_model=save_xgboost_regressor,
+        prepare_predict_estimator=_prepare_xgb_predict_estimator,
+        get_error_detail=lambda: _XGBOOST_LOAD_ERROR,
+    ),
 )
 
 
@@ -242,6 +248,8 @@ def optimise_xgboost_regressor(
     :param n_trials: Number of Optuna trials (Default = ``50``).
     :param timeout: Optional Optuna study timeout in seconds.
     :param direction: Optimisation direction (Default = ``'maximize'``).
+                      Named scikit-learn scorers are greater-is-better, so
+                      ``'minimize'`` is only valid with a callable ``scoring``.
     :param early_stopping_rounds: Early stopping rounds when ``valid_data`` is
                                   provided.
     :param n_jobs: Number of parallel threads/jobs.
@@ -268,35 +276,12 @@ def optimise_xgboost_regressor(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    return optimise_gbdt_regressor(
-        backend=_XGB_REG_BACKEND,
-        func_name="optimise_xgboost_regressor",
-        reg_cfg=reg_cfg,
-        train_data=train_data,
-        valid_data=valid_data,
-        target_cols=target_cols,
-        param_space=param_space,
-        extended_param_space=extended_param_space,
-        fixed_params=fixed_params,
-        regressor=xgb_regressor,
-        scoring=scoring,
-        cv=cv,
-        n_trials=n_trials,
-        timeout=timeout,
-        direction=direction,
-        early_stopping_rounds=early_stopping_rounds,
-        n_jobs=n_jobs,
-        rnd_seed=rnd_seed,
-        feature_cols=feature_cols,
-        refit=refit,
-        out_results_file=out_results_file,
-        out_params_json=out_params_json,
-        out_model_file=out_model_file,
-        return_results=return_results,
-        verbose=verbose,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
-        use_pbar=use_pbar,
+    return forward_gbdt_call(
+        optimise_gbdt_regressor,
+        _XGB_REG_BACKEND,
+        "optimise_xgboost_regressor",
+        locals(),
+        rename={"xgb_regressor": "regressor"},
     )
 
 
@@ -351,26 +336,12 @@ def train_xgboost_regressor(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    return train_gbdt_regressor(
-        backend=_XGB_REG_BACKEND,
-        func_name="train_xgboost_regressor",
-        reg_cfg=reg_cfg,
-        train_data=train_data,
-        test_data=test_data,
-        valid_data=valid_data,
-        target_cols=target_cols,
-        regressor=xgb_regressor,
-        model_params=model_params,
-        early_stopping_rounds=early_stopping_rounds,
-        feature_cols=feature_cols,
-        rnd_seed=rnd_seed,
-        n_jobs=n_jobs,
-        out_model_file=out_model_file,
-        out_metrics_file=out_metrics_file,
-        return_model=return_model,
-        verbose=verbose,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
+    return forward_gbdt_call(
+        train_gbdt_regressor,
+        _XGB_REG_BACKEND,
+        "train_xgboost_regressor",
+        locals(),
+        rename={"xgb_regressor": "regressor"},
     )
 
 
@@ -422,23 +393,10 @@ def apply_xgboost_regressor(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    apply_gbdt_regressor(
-        backend=_XGB_REG_BACKEND,
-        func_name="apply_xgboost_regressor",
-        reg_cfg=reg_cfg,
-        regressor=xgb_regressor,
-        in_msk_img=in_msk_img,
-        img_msk_val=img_msk_val,
-        output_img=output_img,
-        img_band_info=img_band_info,
-        target_cols=target_cols,
-        gdalformat=gdalformat,
-        datatype=datatype,
-        out_no_data_val=out_no_data_val,
-        calc_stats=calc_stats,
-        block_size=block_size,
-        creation_opts=creation_opts,
-        use_pbar=use_pbar,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
+    forward_gbdt_call(
+        apply_gbdt_regressor,
+        _XGB_REG_BACKEND,
+        "apply_xgboost_regressor",
+        locals(),
+        rename={"xgb_regressor": "regressor"},
     )

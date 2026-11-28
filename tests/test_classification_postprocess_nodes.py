@@ -7,7 +7,6 @@ pass after another.
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.classification.classpostprocess as cp
@@ -16,23 +15,7 @@ from rsgispy.imagemorphology import image_closing_node
 import rsgispy.imagemorphology as rm
 from rsgispy.imageprocess import DiskSink, MemorySink, RasterSource, SelectBands, TileGraph
 
-
-def _write(path, data, nodata=None):
-    arr = data if data.ndim == 3 else data[np.newaxis]
-    profile = {
-        "driver": "GTiff",
-        "height": arr.shape[1],
-        "width": arr.shape[2],
-        "count": arr.shape[0],
-        "dtype": str(arr.dtype),
-        "crs": "EPSG:32630",
-        "transform": from_origin(500000.0, 6000000.0, 10.0, 10.0),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(arr)
-    return str(path)
+from conftest import write_raster
 
 
 def _read(path, band=1):
@@ -48,7 +31,9 @@ def fixture_cls_img(tmp_path):
     noise = rng.random(cls.shape) < 0.2
     cls[noise] = rng.integers(0, 6, size=int(noise.sum()))
     other = rng.integers(1, 4, size=cls.shape).astype(np.uint8)
-    return _write(tmp_path / "cls.tif", np.stack([other, cls]), nodata=0)
+    return write_raster(
+        tmp_path / "cls.tif", np.stack([other, cls]), nodata=0, origin=(500000.0, 6000000.0)
+    )
 
 
 @pytest.mark.parametrize("block_size", [16, 256])

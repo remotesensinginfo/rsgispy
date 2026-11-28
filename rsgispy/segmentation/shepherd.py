@@ -20,6 +20,7 @@ from rsgispy.segmentation._helpers import label_4connected
 from rsgispy.segmentation.tiling import (
     TileWindow,
     crop_halo_labels,
+    split_core_components,
     run_tiled_array_pipeline,
     run_tiled_raster_pipeline,
 )
@@ -30,7 +31,6 @@ from rsgispy.segmentation.utils import (
     make_njit,
     normalise_array_input,
     normalise_band_selection,
-    relabel_segments_array,
     standardise_bands,
 )
 
@@ -335,9 +335,7 @@ def _shepherd_tile_worker(
                     lut[r_i] = root
             halo_clumps = lut[halo_clumps]
 
-    core_labels = relabel_segments_array(
-        crop_halo_labels(halo_clumps, tile), no_data_val=0, contiguous=True
-    )
+    core_labels = split_core_components(crop_halo_labels(halo_clumps, tile))
     core_clusters = crop_halo_labels(cluster_map, tile)
     core_clusters = np.where(core_labels > 0, core_clusters, 0)
     return core_labels, core_clusters

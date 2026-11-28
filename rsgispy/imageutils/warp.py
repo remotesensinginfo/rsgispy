@@ -7,10 +7,13 @@ functions using ``rasterio.warp.reproject``.
 from contextlib import ExitStack
 import math
 import os
+from xml.sax.saxutils import escape as _xml_escape
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+import warnings
 
 import numpy as np
 import rasterio
+import rasterio.dtypes
 from rasterio.control import GroundControlPoint
 from rasterio.enums import ColorInterp, Resampling
 from rasterio.warp import reproject as rio_reproject
@@ -51,6 +54,7 @@ from rsgispy.imageutils._warp_opts import (
 )
 from rsgispy.imageutils.blank import create_blank_img, create_copy_img
 from rsgispy.imageutils.stats import pop_img_stats
+from rsgispy.tools.geometry import degrees_to_metres
 
 __all__ = [
     "resample_img_to_match",
@@ -87,7 +91,9 @@ def resample_img_to_match(
     :param gdalformat: Output GDAL format name (Default = ``'GTIFF'``).
     :param datatype: Optional ``rsgispy.TYPE_*`` constant for the output image
                      (defaults to the data type of ``in_process_img``).
-    :param no_data_val: Optional no-data value (defaults to ``in_process_img`` nodata).
+    :param no_data_val: Optional output no-data value (defaults to the
+                        ``in_process_img`` nodata). Source pixels are masked
+                        with the ``in_process_img`` header nodata only.
     :param calc_stats: Populate image statistics and pyramids (Default = ``True``).
     :param use_pbar: Reserved progress-bar flag for uniform API (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
@@ -111,8 +117,11 @@ def resample_img_to_match(
 
     with rasterio.open(in_process_img, "r") as src_proc:
         num_bands = src_proc.count
+        # The source no-data value always comes from the input header (as in
+        # reproject_image); no_data_val only sets the output no-data value.
+        src_nd = src_proc.nodata
         if no_data_val is None:
-            no_data_val = src_proc.nodata
+            no_data_val = src_nd
         if datatype is None:
             datatype = rsgispy.get_rsgis_datatype(src_proc.dtypes[0])
 
@@ -145,7 +154,7 @@ def resample_img_to_match(
                 source=rasterio.band(src_proc, band_indices),
                 destination=rasterio.band(dst, band_indices),
                 resampling=resampling_alg,
-                src_nodata=no_data_val,
+                src_nodata=src_nd,
                 dst_nodata=no_data_val,
                 num_threads=num_threads,
             )
@@ -191,6 +200,88 @@ def _resolve_reproject_res(
     )
 
 
+def _crs_res_in_metres(
+    crs: Any,
+    res_x: float,
+    res_y: float,
+    bounds: Tuple[float, float, float, float],
+) -> Optional[float]:
+    """
+    Convert pixel resolution ``(res_x, res_y)`` in ``crs`` units to metres.
+    Returns the smaller axis resolution in metres, or ``None`` if unknown.
+    """
+    if crs is None:
+        return None
+    if getattr(crs, "is_projected", False):
+        try:
+            factor = float(crs.linear_units_factor[1])
+            return min(abs(res_x), abs(res_y)) * factor
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
+    if getattr(crs, "is_geographic", False):
+        try:
+            _, b_min_y, _, b_max_y = rio_transform_bounds(
+                crs,
+                "EPSG:4326",
+                float(bounds[0]),
+                float(bounds[1]),
+                float(bounds[2]),
+                float(bounds[3]),
+                densify_pts=2,
+            )
+            centre_lat = 0.5 * (float(b_min_y) + float(b_max_y))
+            x_m, y_m = degrees_to_metres(centre_lat, abs(res_x), abs(res_y))
+            pos = [float(val) for val in (x_m, y_m) if val > 0]
+            return min(pos) if pos else None
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
+    return None
+
+
+def _warn_if_fine_out_res(
+    in_crs: Any,
+    out_crs: Any,
+    in_res_x: float,
+    in_res_y: float,
+    in_bounds: Tuple[float, float, float, float],
+    out_res: float,
+    out_bounds: Tuple[float, float, float, float],
+    out_pxl_res: Union[float, int, str],
+) -> None:
+    """
+    Warn if ``out_res`` is less than half of the input resolution (both in m).
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    in_res_m = _crs_res_in_metres(in_crs, in_res_x, in_res_y, in_bounds)
+    out_res_m = _crs_res_in_metres(out_crs, out_res, out_res, out_bounds)
+    if in_res_m is None or out_res_m is None or in_res_m <= 0:
+        return
+    if out_res_m < 0.5 * in_res_m:
+        res_mode = str(out_pxl_res).strip()
+        msg = (
+            f"Requested output pixel resolution ({out_res_m:.4g} m) is less "
+            f"than half the input image resolution ({in_res_m:.4g} m)."
+        )
+        if (
+            res_mode == "image"
+            and getattr(in_crs, "is_geographic", False)
+            and getattr(out_crs, "is_projected", False)
+        ):
+            msg += (
+                " The input CRS is geographic (degrees) while the output CRS "
+                "uses projected units (e.g. metres), so out_pxl_res='image' "
+                "reuses the degree pixel size in output units and can cause "
+                "excessive memory usage; specify out_pxl_res in output CRS "
+                "units or use out_pxl_res='auto'."
+            )
+        else:
+            msg += (
+                " Resampling to a much finer resolution can greatly increase "
+                "output dimensions and memory usage."
+            )
+        warnings.warn(msg, UserWarning, stacklevel=3)
+
+
 def reproject_image(
     input_img: str,
     output_img: str,
@@ -229,6 +320,8 @@ def reproject_image(
                      (defaults to input image data type).
     :param no_data_val: Optional no-data value for the reprojected image
                         (defaults to ``input_img`` nodata when set, else ``0.0``).
+                        Source pixels are masked only with the ``input_img``
+                        header nodata; without one, no pixels are masked.
     :param calc_stats: Populate image statistics and pyramids (Default = ``True``).
     :param use_pbar: Reserved progress-bar flag for uniform API (Default = ``True``).
     :param creation_opts: Optional GDAL creation options mapping or list.
@@ -270,9 +363,9 @@ def reproject_image(
                 float(src_nodata_hdr) if src_nodata_hdr is not None else 0.0
             )
         )
-        src_nd = (
-            float(src_nodata_hdr) if src_nodata_hdr is not None else eff_nd
-        )
+        # Without a header no-data value no source pixels are masked (real
+        # zeros stay data); eff_nd is only the output no-data/fill value.
+        src_nd = float(src_nodata_hdr) if src_nodata_hdr is not None else None
 
         x_pxl_res = abs(src.transform.a)
         y_pxl_res = abs(src.transform.e)
@@ -309,6 +402,17 @@ def reproject_image(
         tl_y_out=y_max,
         br_x_out=x_max,
         br_y_out=y_min,
+    )
+
+    _warn_if_fine_out_res(
+        in_crs=in_crs,
+        out_crs=out_crs,
+        in_res_x=x_pxl_res,
+        in_res_y=y_pxl_res,
+        in_bounds=(float(left), float(bottom), float(right), float(top)),
+        out_res=out_res,
+        out_bounds=(x_min, y_min, x_max, y_max),
+        out_pxl_res=out_pxl_res,
     )
 
     out_tl_x, out_tl_y = x_min, y_max
@@ -499,6 +603,65 @@ def _resolve_band_nodata(
     ]
 
 
+def _nodata_free_vrt(src: rasterio.io.DatasetReader) -> Optional[str]:
+    """
+    Return VRT XML exposing every band of ``src`` without a no-data value, so
+    ``rasterio.warp.reproject`` can read it band by band (no full read into
+    memory) without masking the header no-data value. Returns ``None`` when
+    ``src`` is not a plain file on disk.
+    """
+    src_path = src.name
+    if not isinstance(src_path, str) or not os.path.isfile(src_path):
+        return None
+    parts = [f'<VRTDataset rasterXSize="{src.width}" rasterYSize="{src.height}">']
+    if src.crs is not None:
+        parts.append(f"<SRS>{_xml_escape(src.crs.to_wkt())}</SRS>")
+    if not src.transform.is_identity:
+        gt = ", ".join(repr(float(v)) for v in src.transform.to_gdal())
+        parts.append(f"<GeoTransform>{gt}</GeoTransform>")
+    fname = _xml_escape(os.path.abspath(src_path))
+    for bidx in range(1, src.count + 1):
+        gdal_dt = rasterio.dtypes._gdal_typename(  # pylint: disable=protected-access
+            src.dtypes[bidx - 1]
+        )
+        parts.append(
+            f'<VRTRasterBand dataType="{gdal_dt}" band="{bidx}"><SimpleSource>'
+            f'<SourceFilename relativeToVRT="0">{fname}</SourceFilename>'
+            f"<SourceBand>{bidx}</SourceBand></SimpleSource></VRTRasterBand>"
+        )
+    parts.append("</VRTDataset>")
+    return "".join(parts)
+
+
+def _write_union_alpha(
+    dst: rasterio.io.DatasetWriter,
+    dst_data_bands: Sequence[int],
+    dst_nd_list: Sequence[Optional[float]],
+    dst_alpha_band: int,
+) -> None:
+    """
+    Set ``dst_alpha_band`` opaque wherever any data band differs from its
+    no-data value (bands without one count as data everywhere), after a
+    band-by-band warp in which only band 1 set the alpha.
+    """
+    alpha_dt = np.dtype(dst.dtypes[dst_alpha_band - 1])
+    # The opaque value the warper used for band 1 (255 when it set none).
+    opaque = max(
+        (float(dst.read(dst_alpha_band, window=win).max()) for _, win in dst.block_windows(1)),
+        default=0.0,
+    ) or 255.0
+    for _, win in dst.block_windows(1):
+        alpha = dst.read(dst_alpha_band, window=win)
+        valid = alpha > 0
+        for db, d_nd in zip(dst_data_bands, dst_nd_list, strict=True):
+            if d_nd is None:
+                continue
+            arr = dst.read(db, window=win)
+            valid |= ~np.isnan(arr) if math.isnan(d_nd) else (arr != d_nd)
+        new_alpha = np.where(valid, np.where(alpha > 0, alpha, opaque), 0)
+        dst.write(new_alpha.astype(alpha_dt), dst_alpha_band, window=win)
+
+
 def _reproject_single_source(
     src: rasterio.io.DatasetReader,
     dst: rasterio.io.DatasetWriter,
@@ -547,7 +710,32 @@ def _reproject_single_source(
     ignore_src_nd = cfg.has_src_nodata and cfg.src_nodata == "none"
     uniform_nd = (len(set(src_nd_list)) <= 1) and (len(set(dst_nd_list)) <= 1)
 
+    vrt_xml = _nodata_free_vrt(src) if ignore_src_nd else None
+    if ignore_src_nd and vrt_xml is not None:
+        # Read through a VRT without a no-data value: rasterio would otherwise
+        # fall back to the header no-data value of a band source.
+        b_kw = dict(reproj_kw)
+        if src_alpha_band > 0:
+            b_kw["src_alpha"] = src_alpha_band
+        if dst_alpha_band > 0:
+            b_kw["dst_alpha"] = dst_alpha_band
+        with rasterio.open(vrt_xml) as vrt_src:
+            rio_reproject(
+                source=rasterio.band(vrt_src, list(src_data_bands)),
+                destination=rasterio.band(dst, list(dst_data_bands)),
+                src_nodata=None,
+                dst_nodata=dst_nd_list[0],
+                resampling=cfg.resampling,
+                num_threads=cfg.num_threads,
+                init_dest_nodata=init_dest,
+                tolerance=cfg.err_threshold,
+                warp_mem_limit=cfg.warp_mem_limit,
+                **b_kw,
+            )
+        return
+
     if ignore_src_nd:
+        # Not a plain file (e.g. an overview level): read it into memory.
         src_arr = src.read(list(src_data_bands))
         arr_kw = dict(reproj_kw)
         if "gcps" not in arr_kw and "rpcs" not in arr_kw:
@@ -609,6 +797,19 @@ def _reproject_single_source(
             warp_mem_limit=cfg.warp_mem_limit,
             **b_kw,
         )
+    if dst_alpha_band > 0 and len(dst_data_bands) > 1:
+        # Only band 1 set the alpha band; make it cover every band. A new
+        # output is write-only, so this runs once it has closed.
+        alpha_args = (list(dst_data_bands), list(dst_nd_list), dst_alpha_band)
+        if dst.mode == "r+":
+            _write_union_alpha(dst, *alpha_args)
+        else:
+
+            def _fix_alpha(img_path: str) -> None:
+                with rasterio.open(img_path, "r+") as out_ds:
+                    _write_union_alpha(out_ds, *alpha_args)
+
+            on_output_close(dst, _fix_alpha)
 
 
 def gdal_warp(

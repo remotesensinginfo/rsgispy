@@ -9,14 +9,14 @@ import json
 import geopandas as gpd
 import numpy as np
 import pytest
-import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import Point
 
 import rsgispy
 import rsgispy.classification as rcls
 import rsgispy.classification.classaccuracymetrics as rcam
 import rsgispy.classification.classrefpts as rcrp
+
+from conftest import write_raster
 
 
 def _write_raster(
@@ -29,27 +29,9 @@ def _write_raster(
     nodata: float = 0.0,
 ) -> None:
     """Write a 2D or 3D GeoTIFF classification raster for testing."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[None, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-        nodata=nodata,
-    ) as dst:
-        dst.write(write_arr)
+    write_raster(
+        path, arr, origin=(origin_x, origin_y), pixel_size=pxl_size, crs=crs, nodata=nodata
+    )
 
 
 def test_package_layout():
@@ -556,3 +538,50 @@ def test_calc_acc_stats_bootstrap_conf(tmp_path):
         rcam.calc_acc_stats_ptonly_bootstrap_conf(
             pts_gdf, None, "ref", "cls", sample_frac=1.5, use_pbar=False
         )
+
+
+def test_calc_acc_stats_img_non_ascii_class_names(tmp_path):
+    """Class names with non-ASCII characters are matched between the LUT and points."""
+    cls_arr = np.ones((10, 10), dtype=np.uint8)
+    cls_arr[:, 6:] = 2
+    img_path = str(tmp_path / "map.tif")
+    _write_raster(img_path, cls_arr, pxl_size=10.0, nodata=0.0)
+    lut = {1: "Wald-Fläche", 2: "Wasser"}
+    ref_list = ["Wald-Fläche"] * 4 + ["Wasser"] + ["Wald-Fläche"] + ["Wasser"] * 4
+    cls_list = ["Wald-Fläche"] * 5 + ["Wasser"] * 5
+    pts_gdf = gpd.GeoDataFrame(
+        {"ref": ref_list, "cls": cls_list},
+        geometry=[Point(500005.0, 5599995.0)] * 10,
+        crs="EPSG:32630",
+    )
+    stats = rcam.calc_acc_stats_img(
+        pts_gdf, None, "ref", "cls", img_path, lut,
+        out_csv_file=str(tmp_path / "acc.csv"), use_pbar=False,
+    )
+    assert stats["class_area"] == {"Wald-Fläche": 6000.0, "Wasser": 4000.0}
+
+
+def test_area_accuracy_commission_omission_are_percentage_rates(tmp_path):
+    """Area-weighted commission/omission are % error rates, like the point-only metrics."""
+    cls_arr = np.ones((10, 10), dtype=np.uint8)
+    cls_arr[:, 6:] = 2
+    img_path = str(tmp_path / "map.tif")
+    _write_raster(img_path, cls_arr, pxl_size=10.0, nodata=0.0)
+    ref_list = ["Forest"] * 4 + ["Water"] + ["Forest"] + ["Water"] * 4
+    cls_list = ["Forest"] * 5 + ["Water"] * 5
+    pts_gdf = gpd.GeoDataFrame(
+        {"ref": ref_list, "cls": cls_list},
+        geometry=[Point(500005.0, 5599995.0)] * 10,
+        crs="EPSG:32630",
+    )
+    stats = rcam.calc_acc_stats_img(
+        pts_gdf, None, "ref", "cls", img_path, {1: "Forest", 2: "Water"},
+        use_pbar=False,
+    )
+    # norm_cm = [[0.48, 0.12], [0.08, 0.32]] (rows = map classes).
+    # Commission = 100 * row off-diagonal / row total; omission = by column.
+    assert stats["commission"] == pytest.approx([20.0, 20.0])
+    assert stats["omission"] == pytest.approx([100 * 0.08 / 0.56, 100 * 0.12 / 0.44])
+    # The previous proportions of total area are kept under explicit keys.
+    assert stats["commission_area_prop"] == pytest.approx([0.12, 0.08])
+    assert stats["omission_area_prop"] == pytest.approx([0.08, 0.12])

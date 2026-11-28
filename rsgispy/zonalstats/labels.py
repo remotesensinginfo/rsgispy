@@ -14,7 +14,7 @@ making it suitable for segmentations with millions of segments.
 
 The statistics are identical to polygon zonal statistics computed on the
 polygonised labels with pixel-centre-in-polygon semantics
-(:data:`rsgispy.zonalstats.METHOD_POLYCONTAINSPIXELCENTRE`).
+(the pixel centre within the polygon).
 
 The module also provides :func:`join_label_stats_to_vec` to join a label
 statistics table onto a vector layer (e.g., the output of
@@ -39,6 +39,7 @@ from rasterio.io import DatasetReader
 
 import rsgispy
 from rsgispy.imageprocess import (
+    same_pixel_grid,
     create_output_from_dataset,
     ensure_file_exists,
     iter_dataset_windows,
@@ -248,20 +249,13 @@ def _resolve_label_nodata(
 def _check_same_grid(
     lab_src: DatasetReader, src: DatasetReader, label_img: str, img_path: str
 ) -> None:
-    """Raise if ``src`` is not on exactly the same pixel grid as ``lab_src``."""
-    same_size = (lab_src.width == src.width) and (lab_src.height == src.height)
-    same_trans = bool(
-        np.allclose(
-            np.asarray(lab_src.transform)[:6],
-            np.asarray(src.transform)[:6],
-            rtol=0.0,
-            atol=1e-6 * max(abs(lab_src.transform.a), 1e-12),
-        )
-    )
-    same_crs = (lab_src.crs is None and src.crs is None) or (
-        lab_src.crs is not None and src.crs is not None and lab_src.crs == src.crs
-    )
-    if not (same_size and same_trans and same_crs):
+    """
+    Raise if ``src`` is not on the same pixel grid as ``lab_src``
+    (:func:`rsgispy.imageprocess.same_pixel_grid`: same size, transforms
+    within 1e-6 of a pixel, and the same CRS, where a missing CRS matches
+    only another missing CRS).
+    """
+    if not same_pixel_grid(lab_src, src):
         raise rsgispy.RSGISPyException(
             f"Image '{img_path}' is not on the same pixel grid (size, transform, "
             f"CRS) as the label image '{label_img}'. Resample it onto the label "
@@ -761,7 +755,7 @@ def calc_label_zonal_stats(
     not allocate memory proportional to the largest ID.
 
     Compared with :func:`rsgispy.zonalstats.polygon.calc_zonal_band_stats`
-    on the polygonised labels (``METHOD_POLYCONTAINSPIXELCENTRE`` semantics,
+    on the polygonised labels (pixel-centre-in-polygon semantics,
     which this function reproduces exactly), it reads each pixel once rather
     than once per polygon and band. In a benchmark with a 2000 x 2000 pixel
     image, 40,000 labels and 4 bands (mean, stddev, min, max, count), it took

@@ -305,6 +305,14 @@ def filter_file_listings_db(
         write_download_queue_db(pysondb, out_db_file, out_db_data)
 
 
+def _remove_partial(tmp_file: str) -> None:
+    """Delete a partly downloaded ``.incomplete`` file, if any."""
+    try:
+        os.remove(tmp_file)
+    except OSError:
+        pass
+
+
 def download_ftp_file(
     ftp_url: str,
     remote_file: str,
@@ -324,7 +332,9 @@ def download_ftp_file(
     :param ftp_user: Optional FTP username.
     :param ftp_pass: Optional FTP password.
     :param print_info: Print progress messages when ``True``.
-    :return: ``True`` on success, ``False`` on failure.
+    :return: ``True`` on success, ``False`` on failure. The file is written
+             as ``<local_file>.incomplete`` and renamed on success, so a
+             failed download leaves no partial ``local_file``.
 
     .. code:: python
 
@@ -334,18 +344,21 @@ def download_ftp_file(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
+    tmp_file = f"{local_file}.incomplete"
     try:
         ftp_conn = ftplib.FTP(ftp_url, timeout=ftp_timeout)
         ftp_conn.login(user=ftp_user or "", passwd=ftp_pass or "")
         try:
             if print_info:
                 print(f"Downloading: {remote_file}")
-            with open(local_file, "wb") as out_fp:
+            with open(tmp_file, "wb") as out_fp:
                 ftp_conn.retrbinary(f"RETR {remote_file}", out_fp.write)
         finally:
             ftp_conn.quit()
+        os.replace(tmp_file, local_file)
         return True
     except Exception as err:  # pylint: disable=broad-exception-caught
+        _remove_partial(tmp_file)
         if print_info:
             print(f"An error occurred when downloading {remote_file}: {err}")
         return False
@@ -370,7 +383,9 @@ def download_curl_ftp_file(
     :param ftp_user: Optional FTP username.
     :param ftp_pass: Optional FTP password.
     :param print_info: Print progress info when ``True``.
-    :return: ``True`` on success, ``False`` on failure.
+    :return: ``True`` on success, ``False`` on failure. The file is written
+             as ``<local_file>.incomplete`` and renamed on success, so a
+             failed download leaves no partial ``local_file``.
 
     .. code:: python
 
@@ -384,8 +399,10 @@ def download_curl_ftp_file(
     import pycurl
 
     full_path_url = ftp_url + remote_file
+    tmp_file = f"{local_file}.incomplete"
+    curl = None
     try:
-        with open(local_file, "wb") as out_fp:
+        with open(tmp_file, "wb") as out_fp:
             curl = pycurl.Curl()
             curl.setopt(pycurl.URL, full_path_url)
             curl.setopt(pycurl.FOLLOWLOCATION, 1)
@@ -407,13 +424,18 @@ def download_curl_ftp_file(
                     f"Finished download in {curl.getinfo(curl.TOTAL_TIME)} of "
                     f"{curl.getinfo(curl.SIZE_DOWNLOAD)} bytes for {full_path_url}"
                 )
+        os.replace(tmp_file, local_file)
         return True
     except pycurl.error as err:
+        _remove_partial(tmp_file)
         print(
             f"An error occurred when downloading {posixpath.join(ftp_url, remote_file)}."
         )
         print(err)
         return False
+    finally:
+        if curl is not None:
+            curl.close()
 
 
 def download_files_use_lst_db(
@@ -452,14 +474,11 @@ def download_files_use_lst_db(
     )
 
     def _download_record(dwn_file: Dict[str, Any]) -> Tuple[bool, str]:
-        basename = os.path.basename(dwn_file["rmt_path"])
-        if create_dir_struct:
-            dir_path = os.path.dirname(dwn_file["rmt_path"]).lstrip("/")
-            local_dir_path = os.path.join(out_dir_path, dir_path)
-            os.makedirs(local_dir_path, exist_ok=True)
-            local_path = os.path.join(local_dir_path, basename)
-        else:
-            local_path = os.path.join(out_dir_path, basename)
+        # The remote path comes from the server: keep it inside out_dir_path.
+        local_path = rsgispy.tools.files.safe_join(
+            out_dir_path, dwn_file["rmt_path"], keep_subdirs=create_dir_struct
+        )
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
 
         dl_fn = download_curl_ftp_file if use_curl else download_ftp_file
         dwnlded = dl_fn(
@@ -498,7 +517,9 @@ def upload_ftp_file(
     :param ftp_user: Optional FTP username.
     :param ftp_pass: Optional FTP password.
     :param print_info: Print progress messages when ``True``.
-    :return: ``True`` on success, ``False`` on failure.
+    :return: ``True`` on success, ``False`` on failure. The file is written
+             as ``<local_file>.incomplete`` and renamed on success, so a
+             failed download leaves no partial ``local_file``.
 
     .. code:: python
 

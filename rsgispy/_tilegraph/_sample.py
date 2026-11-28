@@ -6,7 +6,7 @@ collected tile by tile while a :class:`~rsgispy.imageprocess.TileGraph` runs.
 from __future__ import annotations
 
 from contextlib import ExitStack
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
 from rasterio.windows import Window
@@ -363,9 +363,3 @@ class SampleSink(TileSink):
             f"max_per_class={self.max_per_class!r} no_data_val={nd} "
             f"label_no_data_val={lnd} rnd_seed={self.rnd_seed}"
         )
-
-
-def sample_columns(feature_names: Sequence[str], include_xy: bool = True) -> List[str]:
-    """Column names of a :class:`SampleSink` result for ``feature_names``."""
-    meta = [CLASS_NAME_COL, OUT_ID_COL, INTERNAL_ID_COL]
-    return meta + (list(COORD_COLS) if include_xy else []) + list(feature_names)
