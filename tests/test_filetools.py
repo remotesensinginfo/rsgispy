@@ -82,11 +82,17 @@ def test_delete_and_find_files(tmp_path):
     with pytest.raises(rsgispy.RSGISPyException):
         rfiles.find_file(str(d1), "*missing*.tif")
 
-    ext_dict = rfiles.find_files_ext(str(d1), ".tif")
-    assert set(ext_dict.keys()) == {"scene_N15.tif", "tile_01.tif"}
+    ext_lst = rfiles.find_files_ext(str(d1), ".tif")
+    assert ext_lst == sorted(ext_lst)
+    assert {os.path.basename(f) for f in ext_lst} == {"scene_N15.tif", "tile_01.tif"}
+    assert all(os.path.isabs(f) or f.startswith(str(d1)) for f in ext_lst)
 
-    multi_dict = rfiles.find_files_mpaths_ext([str(d1), str(d2)], ".tif")
-    assert set(multi_dict.keys()) == {"scene_N15.tif", "tile_01.tif", "extra.tif"}
+    multi_lst = rfiles.find_files_mpaths_ext([str(d1), str(d2)], ".tif")
+    assert {os.path.basename(f) for f in multi_lst} == {
+        "scene_N15.tif", "tile_01.tif", "extra.tif"
+    }
+    # Searching the same folder twice does not duplicate paths.
+    assert rfiles.find_files_mpaths_ext([str(d1), str(d1)], ".tif") == ext_lst
 
     assert rfiles.find_first_file(str(d1), "tile_*.tif") == str(f2)
     assert rfiles.find_first_file(str(d1), "none_*.tif", rtn_except=False) is None
@@ -395,17 +401,20 @@ def test_file_lock_is_atomic_and_clean_tolerates_empty(tmp_path):
     assert not empty_lock.exists()
 
 
-def test_find_files_ext_warns_on_name_collisions(tmp_path):
-    """Same-named files in different folders are reported, not lost silently."""
+def test_find_files_ext_keeps_same_named_files(tmp_path):
+    """Same-named files in different folders are all returned, sorted."""
     import rsgispy.tools.files as rfiles  # pylint: disable=import-outside-toplevel
 
-    for sub in ("a", "b"):
+    for sub in ("b", "a"):
         (tmp_path / sub).mkdir()
         (tmp_path / sub / "scene.tif").write_text("x")
     (tmp_path / "a" / "other.tif").write_text("x")
-    with pytest.warns(UserWarning, match="scene.tif"):
-        found = rfiles.find_files_ext(str(tmp_path), ".tif")
-    assert set(found) == {"scene.tif", "other.tif"}
+    found = rfiles.find_files_ext(str(tmp_path), ".tif")
+    assert found == [
+        os.path.join(str(tmp_path), "a", "other.tif"),
+        os.path.join(str(tmp_path), "a", "scene.tif"),
+        os.path.join(str(tmp_path), "b", "scene.tif"),
+    ]
 
 
 def test_safe_join_rejects_traversal(tmp_path):

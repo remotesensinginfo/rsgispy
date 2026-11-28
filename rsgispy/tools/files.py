@@ -17,8 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
-import warnings
-from typing import Dict, Iterator, List, Optional, Sequence, Tuple, Union
+from typing import Iterator, List, Optional, Sequence, Tuple, Union
 
 import pyproj
 import rasterio
@@ -431,56 +430,49 @@ def find_file_none(dir_path: str, file_search: str) -> Optional[str]:
     return files[0]
 
 
-def find_files_ext(dir_path: str, ending: str) -> Dict[str, str]:
+def find_files_ext(dir_path: str, ending: str) -> List[str]:
     """
     Recursively find all files under ``dir_path`` ending with ``ending``.
 
+    .. versionchanged:: 0.5.0
+       Returns a sorted list of paths. It previously returned a dictionary
+       keyed by file name, which lost files with the same name in different
+       folders.
+
     :param dir_path: Base directory path to search.
     :param ending: Filename suffix/extension (e.g., ``'.tif'``).
-    :return: Dictionary mapping filename to full file path. When files with
-             the same name are found in different folders only the last one
-             is kept, and a :class:`UserWarning` lists the duplicates.
+    :return: Sorted list of file paths (``dir_path`` joined with the path
+             below it).
 
     .. code:: python
 
         import rsgispy.tools.files
         tifs = rsgispy.tools.files.find_files_ext("/data/scenes", ".tif")
     """
-    out_file_dict: Dict[str, str] = {}
-    dup_names: Dict[str, List[str]] = {}
+    found: List[str] = []
     for root, _, files in os.walk(dir_path):
         for file_name in files:
             if file_name.endswith(ending):
                 file_found = os.path.join(root, file_name)
                 if os.path.isfile(file_found):
-                    if file_name in out_file_dict:
-                        dup_names.setdefault(
-                            file_name, [out_file_dict[file_name]]
-                        ).append(file_found)
-                    out_file_dict[file_name] = file_found
-    if dup_names:
-        dup_txt = "; ".join(
-            f"{name}: {', '.join(paths)}" for name, paths in sorted(dup_names.items())
-        )
-        warnings.warn(
-            "find_files_ext found files with the same name in different "
-            f"folders; only the last of each is returned ({dup_txt}).",
-            UserWarning,
-            stacklevel=2,
-        )
-    return out_file_dict
+                    found.append(file_found)
+    return sorted(found)
 
 
 def find_files_mpaths_ext(
     dir_paths: Sequence[str], ending: str
-) -> Dict[str, str]:
+) -> List[str]:
     """
     Recursively find all files ending with ``ending`` across multiple base
     directories.
 
+    .. versionchanged:: 0.5.0
+       Returns a sorted list of unique paths (previously a dictionary keyed
+       by file name).
+
     :param dir_paths: Sequence of base directory paths to search.
     :param ending: Filename suffix/extension (e.g., ``'.tif'``).
-    :return: Dictionary mapping filename to full file path.
+    :return: Sorted list of unique file paths.
 
     .. code:: python
 
@@ -489,10 +481,10 @@ def find_files_mpaths_ext(
             ["/data/dir1", "/data/dir2"], ".tif"
         )
     """
-    out_file_dict: Dict[str, str] = {}
+    found: set = set()
     for dir_path in dir_paths:
-        out_file_dict.update(find_files_ext(dir_path, ending))
-    return out_file_dict
+        found.update(find_files_ext(dir_path, ending))
+    return sorted(found)
 
 
 def find_first_file(
