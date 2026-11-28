@@ -881,3 +881,31 @@ def test_zonalstats_constants_helpers_and_kwonly(tmp_path):
             None,
             None,
         )
+
+
+def test_zonal_file_op_in_place_keeps_layer_name(tmp_path):
+    """H7: in-place update with vec_lyr=None writes back to the real layer."""
+    arr = np.arange(36, dtype=np.float32).reshape(6, 6)
+    tif_path = str(tmp_path / "vals.tif")
+    _write_test_raster(tif_path, arr)
+    vec_path = str(tmp_path / "zones.gpkg")
+    gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[box(500000.0, 5199960.0, 500040.0, 5200000.0)],
+        crs="EPSG:32630",
+    ).to_file(vec_path, layer="polys", driver="GPKG")
+
+    zs_poly.calc_zonal_band_stats_file(
+        vec_path,
+        None,
+        tif_path,
+        img_band=1,
+        min_thres=-1.0,
+        max_thres=1000.0,
+        out_no_data_val=-1.0,
+        mean_field="b1_mean",
+        use_pbar=False,
+    )
+    assert rsgispy.vectorprocess.list_vec_layers(vec_path) == ["polys"]
+    out_gdf = gpd.read_file(vec_path, layer="polys")
+    assert "b1_mean" in out_gdf.columns

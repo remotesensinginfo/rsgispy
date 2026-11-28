@@ -15,6 +15,7 @@ from rsgispy.vectorprocess import (
     VectorInput,
     ensure_matching_crs,
     read_vec_gdf,
+    write_back_vec_gdf,
     write_vec_gdf,
 )
 
@@ -65,7 +66,8 @@ def pop_bbox_cols(
     :param vec_file: Path to the vector file to update (in-place unless
                      ``out_vec_file`` is given) or
                      :class:`geopandas.GeoDataFrame`.
-    :param vec_lyr: Layer name within ``vec_file`` (or ``None``).
+    :param vec_lyr: Layer name within ``vec_file`` (or ``None`` for the first
+                    layer, which is then the layer updated in place).
     :param x_min_col: Output MinX column name (Default = ``'xmin'``).
     :param x_max_col: Output MaxX column name (Default = ``'xmax'``).
     :param y_min_col: Output MinY column name (Default = ``'ymin'``).
@@ -94,31 +96,19 @@ def pop_bbox_cols(
         rsgispy.vector.attrs.pop_bbox_cols("polys.gpkg", "polys")
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    is_gdf_input = isinstance(vec_file, gpd.GeoDataFrame)
     gdf = read_vec_gdf(vec_file, vec_lyr)
     _populate_bbox_columns(
         gdf, x_min_col, x_max_col, y_min_col, y_max_col, fill_empty_zero=True
     )
-    if out_vec_file is not None:
-        write_vec_gdf(
-            gdf,
-            out_vec_file,
-            out_vec_lyr if out_vec_lyr is not None else vec_lyr,
-            out_format=out_format,
-            out_compress=out_compress,
-        )
-        return None
-    if is_gdf_input:
-        return gdf
-    write_vec_gdf(
+    return write_back_vec_gdf(
         gdf,
-        vec_file,  # type: ignore[arg-type]
-        out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+        vec_file,
+        vec_lyr,
+        out_vec_file=out_vec_file,
+        out_vec_lyr=out_vec_lyr,
         out_format=out_format,
-        replace_layer=True,
         out_compress=out_compress,
     )
-    return None
 
 
 def add_geom_bbox_cols(

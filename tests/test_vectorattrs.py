@@ -937,3 +937,21 @@ def test_vector_joins_and_counts_align_crs():
     )
     # Distance from x=500500 to the second polygon's edge at x=502000, in metres.
     assert near_gdf["dist"].iloc[0] == pytest.approx(1500.0, abs=1.0)
+
+
+def test_in_place_column_writes_keep_layer_name(tmp_path):
+    """H7: in-place writes with vec_lyr=None update the existing layer."""
+    vec_path = str(tmp_path / "data.gpkg")
+    _make_polys_gpkg(vec_path, layer="polys")
+    n_feats = len(gpd.read_file(vec_path, layer="polys"))
+
+    va_spatial.pop_bbox_cols(vec_path, None)
+    va_io.write_vec_column(vec_path, None, "newcol", int, list(range(n_feats)))
+    va_io.write_vec_column_to_layer(
+        vec_path, "other", float, [1.5] * n_feats
+    )
+
+    assert rsgispy.vectorprocess.list_vec_layers(vec_path) == ["polys"]
+    out_gdf = gpd.read_file(vec_path, layer="polys")
+    for col in ("xmin", "newcol", "other"):
+        assert col in out_gdf.columns

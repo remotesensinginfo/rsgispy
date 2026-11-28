@@ -685,6 +685,76 @@ def finish_vec_output(  # pylint: disable=too-many-arguments,too-many-positional
     return None
 
 
+def write_back_vec_gdf(  # pylint: disable=too-many-arguments
+    gdf: gpd.GeoDataFrame,
+    vec_file: VectorInput,
+    vec_lyr: Optional[str] = None,
+    *,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[str] = None,
+    out_format: Optional[str] = None,
+    out_compress: Optional[Union[str, bool]] = None,
+) -> Optional[gpd.GeoDataFrame]:
+    """
+    Finish a read-modify-write update of the vector layer ``vec_lyr`` in
+    ``vec_file``, once ``gdf`` (read from that layer) has been modified:
+
+    * if ``out_vec_file`` is given, write ``gdf`` to it (layer
+      ``out_vec_lyr``, falling back to ``vec_lyr``) and return ``None``;
+    * otherwise, if ``vec_file`` is a :class:`geopandas.GeoDataFrame`,
+      return ``gdf``;
+    * otherwise, replace the layer in ``vec_file`` in place and return
+      ``None``. The layer is ``out_vec_lyr`` if given, else ``vec_lyr``;
+      when ``vec_lyr`` is ``None`` the real name of the layer that was read
+      (the first layer) is resolved with :func:`resolve_vec_layer`, so the
+      update does not add a new layer named after the file.
+
+    :param gdf: Updated GeoDataFrame.
+    :param vec_file: The vector file path or GeoDataFrame ``gdf`` was read
+                     from.
+    :param vec_lyr: The layer name ``gdf`` was read from (or ``None``).
+    :param out_vec_file: Optional separate output vector file path.
+    :param out_vec_lyr: Optional output layer name.
+    :param out_format: Optional vector driver name.
+    :param out_compress: Optional GeoParquet compression setting.
+    :return: ``gdf`` when ``vec_file`` is a GeoDataFrame and ``out_vec_file``
+             is ``None``, otherwise ``None``.
+
+    .. code:: python
+
+        import rsgispy.vectorprocess
+
+        gdf = rsgispy.vectorprocess.read_vec_gdf("polys.gpkg")
+        gdf["area"] = gdf.area
+        rsgispy.vectorprocess.write_back_vec_gdf(gdf, "polys.gpkg")
+    """
+    if out_vec_file is not None:
+        write_vec_gdf(
+            gdf,
+            out_vec_file,
+            out_vec_lyr if out_vec_lyr is not None else vec_lyr,
+            out_format=out_format,
+            out_compress=out_compress,
+        )
+        return None
+    if isinstance(vec_file, gpd.GeoDataFrame):
+        return gdf
+    target_lyr = (
+        out_vec_lyr
+        if out_vec_lyr is not None
+        else resolve_vec_layer(vec_file, vec_lyr)
+    )
+    write_vec_gdf(
+        gdf,
+        vec_file,
+        target_lyr,
+        out_format=out_format,
+        replace_layer=True,
+        out_compress=out_compress,
+    )
+    return None
+
+
 def validate_columns_exist(
     gdf: gpd.GeoDataFrame,
     columns: Sequence[str],
@@ -1240,6 +1310,7 @@ __all__ = [
     "is_multi_layer_driver",
     "write_vec_gdf",
     "finish_vec_output",
+    "write_back_vec_gdf",
     "validate_columns_exist",
     "bbox_to_rsgis",
     "get_gdf_bbox",
