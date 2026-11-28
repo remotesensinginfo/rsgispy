@@ -703,3 +703,29 @@ def test_thresholds_ignore_nonfinite_and_flatten(func):
     with pytest.raises(rsgispy.RSGISPyException):
         thres_fn(np.array([np.nan, np.nan]))
     assert thr.get_nbins_histogram(data.reshape(20, 30)) == thr.get_nbins_histogram(data)
+
+
+def test_date_helpers_reject_bad_input():
+    """Non-positive intervals and dates before the base date raise."""
+    import datetime  # pylint: disable=import-outside-toplevel
+
+    import rsgispy.tools.dates as rdates  # pylint: disable=import-outside-toplevel
+
+    start = datetime.datetime(2020, 1, 1)
+    end = datetime.datetime(2020, 1, 4)
+    assert len(rdates.get_datetime_increment_lst(start, end, datetime.timedelta(days=1))) == 3
+    for bad in (datetime.timedelta(0), datetime.timedelta(days=-1)):
+        with pytest.raises(ValueError):
+            rdates.get_datetime_increment_lst(start, end, bad)
+
+    base = datetime.date(2020, 3, 1)
+    assert rdates.get_days_since(2020, 61, base) == 0
+    assert rdates.get_days_since_date(2020, 3, 2, base) == 1
+    for call in (
+        lambda: rdates.get_days_since(2020, 10, base),  # same year, before
+        lambda: rdates.get_days_since(2019, 100, base),  # earlier year
+        lambda: rdates.get_days_since_date(2020, 2, 1, base),
+        lambda: rdates.get_days_since_date(2019, 6, 1, base),
+    ):
+        with pytest.raises(rsgispy.RSGISPyException):
+            call()
