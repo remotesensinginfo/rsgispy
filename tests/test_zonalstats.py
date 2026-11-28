@@ -207,7 +207,9 @@ def test_calc_zonal_band_pxl_counts_and_ext_point_band_values(tmp_path):
         total_field="TotalPxls",
     )
     cat_res = gpd.read_file(poly_gpkg, layer="cats")
-    assert cat_res.loc[0, "totalpxls"] == pytest.approx(16.0)
+    # 16 pixels, one of them nodata (9): the total counts the 15 valid ones.
+    assert cat_res.loc[0, "totalpxls"] == pytest.approx(15.0)
+    assert cat_res.loc[0, "nodata_count"] == pytest.approx(1.0)
     assert cat_res.loc[0, "c1"] == pytest.approx(5.0)
     assert cat_res.loc[0, "c2"] == pytest.approx(5.0)
     assert cat_res.loc[0, "c3"] == pytest.approx(5.0)
@@ -955,8 +957,8 @@ def test_test_poly_pts_fallback_samples_point_inside_concave_polygon(tmp_path):
     assert out_gdf["b1_mean"].iloc[0] == pytest.approx(1.0)
 
 
-def test_calc_zonal_band_pxl_counts_total_includes_nodata(tmp_path):
-    """The documented total is the polygon's pixel footprint, nodata included."""
+def test_calc_zonal_band_pxl_counts_total_is_valid_pixels(tmp_path):
+    """The total counts valid pixels only; nodata pixels get their own column."""
     arr = np.array([[1, 1], [2, 0]], dtype=np.uint8)
     tif_path = str(tmp_path / "cls.tif")
     write_raster(tif_path, arr, nodata=0)
@@ -966,15 +968,33 @@ def test_calc_zonal_band_pxl_counts_total_includes_nodata(tmp_path):
         crs="EPSG:32630",
     )
     out_gdf = zs_poly.calc_zonal_band_pxl_counts(
-        gdf,
+        gdf.copy(),
         tif_path,
         img_band=1,
-        vals_lut={0: "nodata_pxls", 1: "c1", 2: "c2"},
+        vals_lut={1: "c1", 2: "c2"},
         total_field="total",
         use_pbar=False,
     )
     row = out_gdf.iloc[0]
-    assert (row["total"], row["c1"], row["c2"], row["nodata_pxls"]) == (4, 2, 1, 1)
+    assert (row["total"], row["c1"], row["c2"], row["nodata_count"]) == (3, 2, 1, 1)
+    assert row["c1"] / row["total"] == pytest.approx(2.0 / 3.0)
+
+    # A custom name, or None to skip the nodata column.
+    named = zs_poly.calc_zonal_band_pxl_counts(
+        gdf.copy(), tif_path, 1, {1: "c1"}, nodata_field="ND", use_pbar=False
+    )
+    assert named["nd"].iloc[0] == 1
+    skipped = zs_poly.calc_zonal_band_pxl_counts(
+        gdf.copy(), tif_path, 1, {1: "c1"}, nodata_field=None, use_pbar=False
+    )
+    assert "nodata_count" not in skipped.columns
+
+    # Without a nodata value every pixel is valid.
+    write_raster(str(tmp_path / "cls_nond.tif"), arr)
+    no_nd = zs_poly.calc_zonal_band_pxl_counts(
+        gdf.copy(), str(tmp_path / "cls_nond.tif"), 1, {1: "c1"}, use_pbar=False
+    )
+    assert (no_nd["pxl_count"].iloc[0], no_nd["nodata_count"].iloc[0]) == (4, 0)
 
 
 def test_polygon_zonal_stats_reproj_vec_and_empty_layers(tmp_path):

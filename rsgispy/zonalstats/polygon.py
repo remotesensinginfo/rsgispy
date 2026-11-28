@@ -892,6 +892,7 @@ def calc_zonal_band_pxl_counts_file(
     total_field: str = "pxl_count",
     vec_def_epsg: Optional[int] = None,
     *,
+    nodata_field: Optional[str] = "nodata_count",
     use_pbar: bool = True,
     reproj_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
@@ -911,13 +912,13 @@ def calc_zonal_band_pxl_counts_file(
     :param input_img: Path to the input integer/categorical raster image.
     :param img_band: 1-based band index within ``input_img``.
     :param vals_lut: Mapping ``{pixel_value: output_field_name}``.
-    :param total_field: Output column name for the total number of pixels
-                        inside each polygon. The total includes nodata
-                        pixels (it is the polygon's pixel footprint, as in
-                        RSGISLib), so ``count / total`` is the share of the
-                        whole polygon, not of its valid pixels. Add a
-                        ``vals_lut`` entry for the nodata value to count
-                        nodata pixels separately.
+    :param total_field: Output column name for the number of valid
+                        (not nodata) pixels inside each polygon, so
+                        ``count / total`` is the share of the valid pixels.
+    :param nodata_field: Output column name for the number of nodata pixels
+                         inside each polygon (Default = ``'nodata_count'``;
+                         ``None`` to skip it). The polygon's whole pixel
+                         footprint is ``total + nodata``.
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
@@ -960,6 +961,7 @@ def calc_zonal_band_pxl_counts_file(
             vals_lut,
             total_field=total_field,
             vec_def_epsg=vec_def_epsg,
+            nodata_field=nodata_field,
             use_pbar=use_pbar,
             reproj_vec=reproj_vec,
         ),
@@ -977,6 +979,7 @@ def calc_zonal_band_pxl_counts(
     total_field: str = "pxl_count",
     vec_def_epsg: Optional[int] = None,
     *,
+    nodata_field: Optional[str] = "nodata_count",
     use_pbar: bool = True,
     reproj_vec: bool = False,
     vec_lyr: Optional[str] = None,
@@ -994,13 +997,13 @@ def calc_zonal_band_pxl_counts(
     :param input_img: Path to the input integer/categorical raster image.
     :param img_band: 1-based band index within ``input_img``.
     :param vals_lut: Mapping ``{pixel_value: output_field_name}``.
-    :param total_field: Output column name for the total number of pixels
-                        inside each polygon. The total includes nodata
-                        pixels (it is the polygon's pixel footprint, as in
-                        RSGISLib), so ``count / total`` is the share of the
-                        whole polygon, not of its valid pixels. Add a
-                        ``vals_lut`` entry for the nodata value to count
-                        nodata pixels separately.
+    :param total_field: Output column name for the number of valid
+                        (not nodata) pixels inside each polygon, so
+                        ``count / total`` is the share of the valid pixels.
+    :param nodata_field: Output column name for the number of nodata pixels
+                         inside each polygon (Default = ``'nodata_count'``;
+                         ``None`` to skip it). The polygon's whole pixel
+                         footprint is ``total + nodata``.
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
@@ -1039,6 +1042,7 @@ def calc_zonal_band_pxl_counts(
         total_col = total_field.lower()
         lut_cols = {pxl_val: name.lower() for pxl_val, name in vals_lut.items()}
         totals: List[float] = []
+        nodata_counts: List[float] = []
         counts_by_val: Dict[int, List[float]] = {
             pxl_val: [] for pxl_val in vals_lut
         }
@@ -1048,7 +1052,16 @@ def calc_zonal_band_pxl_counts(
             geom_series, total=len(vec_gdf), disable=not use_pbar
         ):
             vals = _read_polygon_pixels(src, img_band, geom, img_nodata=None)
-            totals.append(float(vals.shape[0]))
+            if img_nodata is not None and vals.shape[0] > 0:
+                if np.isnan(img_nodata):
+                    is_nd = np.isnan(vals)
+                else:
+                    is_nd = vals == img_nodata
+                n_nd = float(np.count_nonzero(is_nd))
+            else:
+                n_nd = 0.0
+            totals.append(float(vals.shape[0]) - n_nd)
+            nodata_counts.append(n_nd)
             for pxl_val, count_list in counts_by_val.items():
                 if vals.shape[0] > 0:
                     count_list.append(float(np.sum(vals == pxl_val)))
@@ -1056,6 +1069,8 @@ def calc_zonal_band_pxl_counts(
                     count_list.append(0.0)
 
     vec_gdf[total_col] = totals
+    if nodata_field is not None:
+        vec_gdf[nodata_field.lower()] = nodata_counts
     for pxl_val, col_name in lut_cols.items():
         vec_gdf[col_name] = counts_by_val[pxl_val]
 

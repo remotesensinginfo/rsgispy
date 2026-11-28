@@ -61,7 +61,7 @@ Each operation provides a file/in-memory entrypoint (`*_file`, returning `GeoDat
 - `calc_zonal_band_stats_file(vec_file, vec_lyr, input_img, img_band, min_thres, max_thres, out_no_data_val, min_field=None, max_field=None, mean_field=None, stddev_field=None, sum_field=None, count_field=None, mode_field=None, median_field=None, vec_def_epsg=None, *, use_pbar=True, out_compress=None, out_vec_file=None, out_vec_lyr=None)` & `calc_zonal_band_stats(...)`
 - `calc_zonal_poly_pts_band_stats_file(vec_file, vec_lyr, input_img, img_band, out_field, vec_def_epsg=None, *, ...)` & `calc_zonal_poly_pts_band_stats(...)` (samples centroid / representative point per polygon)
 - `calc_zonal_band_stats_test_poly_pts_file(..., percentile=None, percentile_field=None, ...)` & `calc_zonal_band_stats_test_poly_pts(...)`
-- `calc_zonal_band_pxl_counts_file(vec_file, vec_lyr, input_img, img_band, vals_lut: Dict[int, str], total_field='pxl_count', vec_def_epsg=None, *, ...)` & `calc_zonal_band_pxl_counts(...)`
+- `calc_zonal_band_pxl_counts_file(vec_file, vec_lyr, input_img, img_band, vals_lut: Dict[int, str], total_field='pxl_count', vec_def_epsg=None, *, nodata_field='nodata_count', ...)` & `calc_zonal_band_pxl_counts(...)` — `total_field` counts valid (not nodata) pixels; `nodata_field` (or `None`) counts nodata pixels
 - `export_poly_pxls_to_df(vec_gdf, input_img, img_bands=None, out_file=None, out_format=None, out_compress=None, band_names=None, attr_cols=None, mask_nodata=True, all_touched=False, include_coords=False, reproj_vec=False, vec_def_epsg=None, *, vec_lyr=None, use_pbar=True) -> pd.DataFrame | None`
 
 ### Label Raster Zonal Stats (`rsgispy.zonalstats.labels`, also exported from `rsgispy.zonalstats`)

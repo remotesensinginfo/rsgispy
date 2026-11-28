@@ -464,7 +464,8 @@ Decision makers usually need areas per administrative unit, estuary or
 catchment rather than a map.
 :func:`~rsgispy.zonalstats.polygon.calc_zonal_band_pxl_counts` counts the
 pixels of each class in each polygon (columns named after the
-``vals_lut`` values, plus the total ``n_pxls``), which are converted to
+``vals_lut`` values, plus the total of valid pixels ``n_pxls`` and the
+number of no-data pixels ``nodata_count``), which are converted to
 hectares with the pixel area. :func:`~rsgispy.zonalstats.polygon.calc_zonal_band_stats`
 adds the mean and maximum score of the non-excluded pixels in each unit;
 ``min_thres=1`` and ``max_thres=100`` leave out the excluded pixels (0) and
