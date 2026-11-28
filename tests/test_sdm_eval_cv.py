@@ -2,9 +2,12 @@
 Tests for SDM evaluation metrics (``calc_boyce_index``,
 ``calc_boyce_index_from_raster``, ``calc_sdm_eval_metrics``) and spatial
 cross-validation in ``fit_kfold_sklearn_mdls`` /
-``fit_kfold_sklearn_sgl_cls_mdls``.
+``fit_kfold_sklearn_sgl_cls_mdls``, stratified spatial block CV with rare
+classes, and the SHAP linear explainer perturbation option / linear-model
+detection.
 """
 
+import os
 import warnings
 
 import geopandas as gpd
@@ -292,3 +295,148 @@ def test_kfold_sgl_cls_spatial_cv():
         assert n_tr == int(np.sum(y_arr[tr_idx] == 1))
     assert scores["val_auc"].notna().all()
     assert isinstance(scores, pd.DataFrame)
+
+
+def _find_tutorial_train():
+    """Find the case-study training set in a sibling rsgispy-tutorials checkout."""
+    rel = os.path.join(
+        "rsgispy-tutorials", "11_case_study_species_distribution", "outputs",
+        "sdm_LogReg_outs", "sdm_train.gpkg",
+    )
+    cur = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(6):
+        cur = os.path.dirname(cur)
+        cand = os.path.join(cur, rel)
+        if os.path.exists(cand):
+            return cand
+    return ""
+
+
+TUTORIAL_TRAIN = _find_tutorial_train()
+
+
+def _imbalanced_coords():
+    """7000 background points over 10 x 10 km and 23 presences in 10 blocks
+    (one block holding 9), as in the Snowdon beetle case study."""
+    rng = np.random.default_rng(3)
+    bg = rng.uniform(0.0, 10000.0, size=(7000, 2))
+    pres_counts = [9, 3, 2, 2, 1, 1, 1, 1, 1, 2]
+    pres = []
+    for i, n_p in enumerate(pres_counts):
+        cx, cy = (i % 5) * 2000.0 + 500.0, (i // 5) * 4000.0 + 500.0
+        pres.append(rng.uniform(-400.0, 400.0, size=(n_p, 2)) + [cx, cy])
+    pres = np.vstack(pres)
+    coords = np.vstack([bg, pres])
+    y = np.r_[np.zeros(len(bg), dtype=int), np.ones(len(pres), dtype=int)]
+    return coords, y
+
+
+def _correlated_logreg():
+    rng = np.random.default_rng(0)
+    a = rng.normal(size=300)
+    b = a + 0.1 * rng.normal(size=300)
+    x_df = pd.DataFrame({"a": a, "b": b})
+    y = (a + 0.3 * rng.normal(size=300) > 0).astype(int)
+    mdl = LogisticRegression().fit(x_df, y)
+    mdl.coef_[0, 1] = 0.0  # b has no effect on the model
+    return mdl, x_df, y
+
+
+@pytest.mark.parametrize("n_splits", [3, 5, 10])
+def test_stratified_block_cv_spreads_rare_class(n_splits):
+    coords, y = _imbalanced_coords()
+    cv = SpatialBlockKFold(
+        n_splits=n_splits, block_size=1000.0, stratify=True, rnd_seed=42
+    )
+    folds = list(cv.split(coords, y, coords=coords))
+    assert len(folds) == n_splits
+    pres_per_fold = [int((y[val] == 1).sum()) for _, val in folds]
+    assert all(n_p > 0 for n_p in pres_per_fold), pres_per_fold
+    assert sum(pres_per_fold) == int(y.sum())
+    # The majority class stays balanced across folds
+    bg_per_fold = np.array([int((y[val] == 0).sum()) for _, val in folds])
+    assert bg_per_fold.max() - bg_per_fold.min() < 0.1 * bg_per_fold.mean()
+
+
+def test_stratified_block_cv_fewer_rare_blocks_than_folds():
+    # Only 2 blocks hold presences: 2 folds get them, the rest none, no error.
+    coords, y = _imbalanced_coords()
+    keep = (y == 0) | (np.arange(len(y)) < 7000 + 12)
+    coords, y = coords[keep], y[keep]
+    cv = SpatialBlockKFold(n_splits=5, block_size=1000.0, stratify=True, rnd_seed=1)
+    pres_per_fold = [int((y[val] == 1).sum()) for _, val in cv.split(coords, y, coords=coords)]
+    assert sum(pres_per_fold) == int(y.sum())
+    assert sum(n_p > 0 for n_p in pres_per_fold) == 2
+
+
+@pytest.mark.skipif(
+    not os.path.exists(TUTORIAL_TRAIN), reason="rsgispy-tutorials not available"
+)
+def test_stratified_block_cv_tutorial_training_set():
+    gpd = pytest.importorskip("geopandas")
+    gdf = gpd.read_file(TUTORIAL_TRAIN, layer="train")
+    y = gdf["clsid"].to_numpy()
+    coords = np.c_[gdf.geometry.x, gdf.geometry.y]
+    cv = SpatialBlockKFold(n_splits=5, block_size=1000.0, stratify=True, rnd_seed=42)
+    pres_per_fold = [int((y[val] == 1).sum()) for _, val in cv.split(coords, y, coords=coords)]
+    assert all(n_p > 0 for n_p in pres_per_fold), pres_per_fold
+
+
+def test_shap_linear_perturbation_option():
+    pytest.importorskip("shap")
+    from rsgispy.tools._ml_explain import run_shap_explainer
+
+    mdl, x_df, _ = _correlated_logreg()
+    kw = dict(
+        est_cls_obj=mdl, train_x=x_df, analysis_vars=["a", "b"],
+        feature_name="test", extra="modelling", use_linear_explainer=True,
+    )
+    interv = run_shap_explainer(**kw)
+    corr = run_shap_explainer(**kw, linear_perturbation="correlation_dependent")
+    interv_b = float(interv.set_index(interv.columns[0]).iloc[:, 0]["b"])
+    corr_b = float(corr.set_index(corr.columns[0]).iloc[:, 0]["b"])
+    assert interv_b == pytest.approx(0.0, abs=1e-10)
+    assert corr_b > 0.1
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        run_shap_explainer(**kw, linear_perturbation="bad")
+
+
+def test_shap_default_is_interventional_in_public_api(tmp_path):
+    pytest.importorskip("shap")
+    import geopandas as gpd
+
+    import rsgispy.modelling.species_distribution as sdm
+
+    mdl, x_df, _ = _correlated_logreg()
+    gdf = gpd.GeoDataFrame(
+        x_df, geometry=gpd.points_from_xy(x_df["a"], x_df["b"]), crs="EPSG:27700"
+    )
+    out_plot = tmp_path / "shap_summary.png"
+    sdm.shap_sklearn_mdl_explainer(
+        mdl, gdf, None, ["a", "b"], shap_summary_plot=str(out_plot),
+        use_linear_explainer=True, linear_perturbation="interventional",
+    )
+    assert out_plot.exists()
+
+
+def test_shap_auto_explainer_linear_detection():
+    shap = pytest.importorskip("shap")
+    from rsgispy.modelling.species_distribution import MaxentClassifier
+    from rsgispy.tools._ml_explain import _build_shap_explainer, _is_linear_in_inputs
+
+    mdl, x_df, y = _correlated_logreg()
+    assert _is_linear_in_inputs(mdl, x_df, "classification")
+    expl = _build_shap_explainer(mdl, x_df, ["a", "b"], use_tree_explainer=None)
+    assert isinstance(expl, shap.LinearExplainer)
+
+    # MaxentClassifier has coef_ but for the derived features, not the inputs:
+    # it must fall back to the model-agnostic explainer.
+    mx = MaxentClassifier().fit(x_df, y)
+    assert hasattr(mx, "coef_")
+    assert not _is_linear_in_inputs(mx, x_df, "classification")
+    expl = _build_shap_explainer(
+        mx, x_df.iloc[:20], ["a", "b"], use_tree_explainer=None
+    )
+    assert not isinstance(expl, shap.LinearExplainer)
+    assert isinstance(expl, shap.KernelExplainer)
