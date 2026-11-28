@@ -208,8 +208,16 @@ def resolve_cv_splitter(
     rnd_seed: Optional[int],
     stratified: bool = True,
 ) -> Any:
-    """Resolve an integer or sklearn CV splitter for classification or regression."""
+    """
+    Resolve an integer or sklearn CV splitter for classification or
+    regression. An integer gives a :class:`rsgispy.ml.cv.ShuffledKFold`
+    (stratified when ``stratified=True``), the K-fold implementation shared
+    with :mod:`rsgispy.ml.cv`.
+    """
     if isinstance(cv, (int, np.integer)) and not isinstance(cv, bool):
+        # pylint: disable=import-outside-toplevel
+        from rsgispy.ml.cv import ShuffledKFold  # rsgispy.ml imports this module
+
         n_splits = int(cv)
         if n_splits < 2:
             raise rsgispy.RSGISPyException(
@@ -223,21 +231,13 @@ def resolve_cv_splitter(
                     f"cv={n_splits} exceeds minimum class sample count "
                     f"({min_count}) in train_data."
                 )
-            return sklearn.model_selection.StratifiedKFold(
-                n_splits=n_splits,
-                shuffle=True,
-                random_state=rnd_seed,
-            )
+            return ShuffledKFold(n_splits, stratified=True, rnd_seed=rnd_seed)
         n_samples = int(train_y.shape[0])
         if n_samples < n_splits:
             raise rsgispy.RSGISPyException(
                 f"cv={n_splits} exceeds sample count ({n_samples}) in train_data."
             )
-        return sklearn.model_selection.KFold(
-            n_splits=n_splits,
-            shuffle=True,
-            random_state=rnd_seed,
-        )
+        return ShuffledKFold(n_splits, stratified=False, rnd_seed=rnd_seed)
     return cv
 
 

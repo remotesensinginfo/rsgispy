@@ -25,6 +25,7 @@ import rsgispy
 from rsgispy.ml.scaling import FeatureScaler
 
 __all__ = [
+    "ShuffledKFold",
     "SpatialBlockKFold",
     "SpatialBufferCV",
     "PolygonGroupKFold",
@@ -638,43 +639,94 @@ def _resolve_direction(
     return expected
 
 
+class ShuffledKFold:
+    """
+    Shuffled K-fold cross-validation splitter, stratified by class when
+    ``stratified=True`` (NumPy only; follows the scikit-learn splitter API,
+    so it can be passed as ``cv`` to scikit-learn functions).
+
+    Rows are shuffled with ``rnd_seed`` so the folds do not depend on the row
+    order (sample tables are usually stored class by class). Stratified
+    folds deal the shuffled rows of each class to the folds in turn, so every
+    class is represented in every fold as evenly as its sample count allows.
+    This is the single K-fold implementation used by :mod:`rsgispy.ml.cv`
+    (an integer ``cv`` without coordinates or groups) and the classification
+    and regression parameter searches.
+
+    :param n_splits: Number of folds (at least 2).
+    :param stratified: Stratify the folds by the class labels ``y``
+                       (Default = ``False``).
+    :param rnd_seed: Random seed (Default = ``None``).
+
+    .. code:: python
+
+        import numpy as np
+        from rsgispy.ml.cv import ShuffledKFold
+
+        y = np.repeat([0, 1], 50)
+        for train_idx, test_idx in ShuffledKFold(5, stratified=True, rnd_seed=1).split(None, y):
+            pass
+    """
+
+    def __init__(
+        self, n_splits: int = 5, stratified: bool = False, rnd_seed: Optional[int] = None
+    ) -> None:
+        if int(n_splits) < 2:
+            raise rsgispy.RSGISPyException(
+                f"cv must be at least 2 folds, got {n_splits}."
+            )
+        self.n_splits = int(n_splits)
+        self.stratified = bool(stratified)
+        self.rnd_seed = rnd_seed
+
+    def get_n_splits(self, x_data: Any = None, y: Any = None, groups: Any = None) -> int:
+        """Return the number of folds."""
+        del x_data, y, groups
+        return self.n_splits
+
+    def split(
+        self, x_data: Any = None, y: Any = None, groups: Any = None
+    ) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
+        """Yield ``(train_idx, test_idx)`` index arrays for each fold."""
+        del groups
+        if y is not None:
+            y_arr = np.asarray(y)
+        elif x_data is not None:
+            y_arr = np.zeros(len(x_data))
+        else:
+            raise rsgispy.RSGISPyException("ShuffledKFold.split needs x_data or y.")
+        n_s = int(y_arr.shape[0])
+        if n_s < self.n_splits:
+            raise rsgispy.RSGISPyException(
+                f"cv={self.n_splits} exceeds the number of samples ({n_s})."
+            )
+        rng = np.random.default_rng(self.rnd_seed)
+        fold_of = np.empty(n_s, dtype=np.intp)
+        if self.stratified:
+            offset = 0
+            for cls_val in np.unique(y_arr):
+                cls_idx = rng.permutation(np.flatnonzero(y_arr == cls_val))
+                fold_of[cls_idx] = (offset + np.arange(cls_idx.size)) % self.n_splits
+                offset += cls_idx.size
+        else:
+            perm = rng.permutation(n_s)
+            fold_of[perm] = np.arange(n_s) % self.n_splits
+        for i in range(self.n_splits):
+            yield np.flatnonzero(fold_of != i), np.flatnonzero(fold_of == i)
+
+
 def _int_kfold_splits(
     n_splits: int,
     y_arr: np.ndarray,
     task: str,
     rnd_seed: Optional[int],
 ) -> List[Tuple[np.ndarray, np.ndarray]]:
-    """
-    Shuffled K-fold splits for an integer ``cv`` without coordinates or groups.
-
-    Rows are shuffled with ``rnd_seed`` so the folds do not depend on the row
-    order (sample tables are usually stored class by class). Classification
-    folds are stratified: the shuffled rows of each class are dealt to the
-    folds in turn, so every class is represented in every fold as evenly as
-    its sample count allows.
-    """
-    n_s = int(y_arr.shape[0])
-    if n_splits < 2:
-        raise rsgispy.RSGISPyException(f"cv must be at least 2 folds, got {n_splits}.")
-    if n_s < n_splits:
-        raise rsgispy.RSGISPyException(
-            f"cv={n_splits} exceeds the number of samples ({n_s})."
-        )
-    rng = np.random.default_rng(rnd_seed)
-    fold_of = np.empty(n_s, dtype=np.intp)
-    if task == "classification":
-        offset = 0
-        for cls_val in np.unique(y_arr):
-            cls_idx = rng.permutation(np.flatnonzero(y_arr == cls_val))
-            fold_of[cls_idx] = (offset + np.arange(cls_idx.size)) % n_splits
-            offset += cls_idx.size
-    else:
-        perm = rng.permutation(n_s)
-        fold_of[perm] = np.arange(n_s) % n_splits
-    out: List[Tuple[np.ndarray, np.ndarray]] = []
-    for i in range(n_splits):
-        out.append((np.flatnonzero(fold_of != i), np.flatnonzero(fold_of == i)))
-    return out
+    """:class:`ShuffledKFold` folds (stratified for classification)."""
+    return list(
+        ShuffledKFold(
+            n_splits, stratified=task == "classification", rnd_seed=rnd_seed
+        ).split(None, y_arr)
+    )
 
 
 def _iter_cv_splits(
