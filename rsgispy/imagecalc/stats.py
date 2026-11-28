@@ -66,6 +66,9 @@ def calc_basic_img_band_stats(
     :param use_no_data: Whether to exclude the no-data value from statistics (Default = True).
     :param use_pbar: Whether to display a tqdm progress bar (Default = True).
     :return: Tuple of ``(min_vals, max_vals, mean_vals, stddev_vals)`` NumPy arrays.
+             ``stddev_vals`` is the population standard deviation
+             (``ddof=0``, divided by ``n``), as in RSGISLib's image band
+             statistics and GDAL.
 
     .. code:: python
 
@@ -273,7 +276,10 @@ def _calc_stack_stat(stack_arr: np.ndarray, stat_type: int) -> np.ndarray:
     """
     Compute a summary statistic ``rsgispy.SUMTYPE_*`` along ``axis=0`` of a
     3D float64 array ``(n_samples, height, width)`` where invalid values are
-    ``np.nan`` or non-finite.
+    ``np.nan`` or non-finite. The standard deviation is the sample one
+    (``ddof=1``), matching RSGISLib's pixel summaries (GSL ``gsl_stats_sd``);
+    :func:`calc_basic_img_band_stats` uses the population one (``ddof=0``),
+    matching RSGISLib's image band statistics.
     """
     # pylint: disable=too-many-return-statements
     valid_mask = build_valid_mask(stack_arr)
@@ -390,7 +396,10 @@ def image_pixel_column_summary(
 
     Output bands are written in the canonical order: ``Min``, ``Max``, ``Mean``,
     ``Median``, ``Mode``, ``Sum``, ``StdDev`` for whichever corresponding
-    ``calc_*`` flags are ``True`` on ``sum_stats``.
+    ``calc_*`` flags are ``True`` on ``sum_stats``. ``StdDev`` is the sample
+    standard deviation (``ddof=1``, divided by ``n - 1``; ``0`` for a single
+    valid value), as in RSGISLib's pixel summaries, unlike
+    :func:`calc_basic_img_band_stats`, which gives the population one.
 
     :param input_img: Path to the input multi-band image file.
     :param output_img: Path to the output summary image file.
@@ -502,7 +511,8 @@ def calc_multi_img_band_stats(
 ) -> None:
     """
     Calculate a summary statistic (``rsgispy.SUMTYPE_*``) across multiple
-    input images on a per-band basis.
+    input images on a per-band basis. ``SUMTYPE_STDDEV`` is the sample
+    standard deviation (``ddof=1``), as in RSGISLib's pixel summaries.
 
     All input images must have the same number of bands. The output image has
     the same band count over the spatial intersection of ``input_imgs``.
@@ -638,7 +648,8 @@ def get_img_sum_stats_in_pxl(
 
     The resolution of ``in_ref_img`` must be strictly coarser than and an integer
     multiple of ``in_stats_img`` along both axes. Each entry in ``sum_stats``
-    produces one output band.
+    produces one output band. ``SUMTYPE_STDDEV`` is the sample standard
+    deviation (``ddof=1``), as in RSGISLib's pixel summaries.
 
     :param in_ref_img: Path to the coarser-resolution reference image defining
                        output grid, extent, and resolution.
