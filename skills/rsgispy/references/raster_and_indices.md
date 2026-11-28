@@ -1,6 +1,6 @@
 # Raster Processing, Band Maths, Spectral Indices & Image Utilities
 
-Covers top-level `BBox` & `imageprocess` (including `TileGraph`), `imagecalc.*`, and all `imageutils.*` submodules in `rsgispy` v0.4.1.
+Covers top-level `BBox` & `imageprocess` (including `TileGraph`), `imagecalc.*`, and all `imageutils.*` submodules in `rsgispy` v0.5.0.
 
 ---
 
@@ -221,8 +221,8 @@ run_tile_graph(DiskSink(smooth, "ndvi_smooth.tif", datatype=rsgispy.TYPE_32FLOAT
 | `CSI` | `power` | `hh, vv` | `vv / (vv + hh)` |
 | `DPSVI` | `power` | `vv, vh` | `(((vv_max - vv) + vh) / sqrt(2)) * ((vv + vh) / vv) * vh` |
 | `DPSVIm` | `power` | `vv, vh` | `(vv^2 + vv * vh) / sqrt(2)` |
-| `DpRVI_HH` | `power` | `hh, hv` | `(4 * hv) / (hh + hv)` |
-| `DpRVI_VV` | `power` | `vv, vh` | `(4 * vh) / (vv + vh)` |
+| `DpRVI_HH` | `power` | `hh, hv` | `1 - m * beta, m = \|hh - hv\| / (hh + hv), beta = max(hh, hv) / (hh + hv)` |
+| `DpRVI_VV` | `power` | `vv, vh` | `1 - m * beta, m = \|vv - vh\| / (vv + vh), beta = max(vv, vh) / (vv + vh)` |
 | `DpRVIc` | `power` | `vv, vh` | `(q * (q + 3)) / (q + 1)^2, q = vh / vv` |
 | `DpRVIc_HH_HV` | `power` | `hh, hv` | `(q * (q + 3)) / (q + 1)^2, q = hv / hh` |
 | `DpRVIc_VV_VH` | `power` | `vv, vh` | `(q * (q + 3)) / (q + 1)^2, q = vh / vv` |
@@ -257,7 +257,7 @@ run_tile_graph(DiskSink(smooth, "ndvi_smooth.tif", datatype=rsgispy.TYPE_32FLOAT
 | `RFDI_HH_HV` | `power` | `hh, hv` | `(hh - hv) / (hh + hv)` |
 | `RFDI_VV_VH` | `power` | `vv, vh` | `(vv - vh) / (vv + vh)` |
 | `RVI` | `power` | `hh, vv, hv` | `(8 * hv) / (hh + vv + 2 * hv)` |
-| `RVI4S1` | `power` | `vv, vh` | `(4 * vh) / (vv + vh)` |
+| `RVI4S1` | `power` | `vv, vh` | same as `DpRVI_VV` |
 | `RVI_HH_HV` | `power` | `hh, hv` | `(4 * hv) / (hh + hv)` |
 | `RVI_Quad` | `power` | `hh, vv, hv` | `(8 * hv) / (hh + vv + 2 * hv)` |
 | `RVI_VV_VH` | `power` | `vv, vh` | `(4 * vh) / (vv + vh)` |
@@ -289,7 +289,7 @@ run_tile_graph(DiskSink(smooth, "ndvi_smooth.tif", datatype=rsgispy.TYPE_32FLOAT
   - `get_img_histogram(input_img, img_band=1, n_bins=None, bin_size=None, integer_bins=False, val_range=None, no_data_val=None, use_no_data=True, in_msk_img=None, img_msk_val=1, use_pbar=True)` -> `Dict[str, Any]`
   - `get_img_2d_histogram(input_img, x_band, y_band, *, y_img=None, bins=256, x_range=None, y_range=None, no_data_val=None, in_msk_img=None, img_msk_val=1, density=False, block_size=None, use_pbar=True)` -> `(hist, x_edges, y_edges)` — feature space of two bands (`y_band` of `y_img` when given, same grid), block by block, identical to `numpy.histogram2d` on the valid pixels; `hist` is float64 indexed `[x, y]` (plot `hist.T` with `origin='lower'`); a `None` range = the valid min/max (extra pass). Replaces RSGISLib `get_2d_img_histogram` (which wrote an image). Plot it with `tools.plotting.plot_2d_img_histogram` (and one band with `plot_img_histogram`).
 - **`percentiles`**:
-  - `calc_band_percentile(input_img, percentile, no_data_val=None)` -> `List[float]`
+  - `calc_band_percentile(input_img, percentile, no_data_val=None)` -> `List[float]` (`percentile` in `[0, 100]`; a value in (0, 1) warns)
   - `calc_band_percentile_msk(input_img, in_msk_img, msk_val, percentiles, no_data_val=None, use_pbar=True)` -> `np.ndarray`
   - `calc_imgs_pxl_percentiles(input_imgs, output_img, percentiles, *, gdalformat='GTIFF', no_data_val=0.0, calc_stats=True, use_pbar=True, creation_opts=None)` — bands named `p10`, `p50`, ...; no-data value written.
   - `calc_img_band_pxl_percentiles(input_imgs, output_img, percentiles, *, ...)` — bands named `<input band>_p50`, ...; same options.

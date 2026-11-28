@@ -6,6 +6,10 @@ Run the full suite from the repository root:
 MPLBACKEND=Agg python -m pytest -n 8 -q -p no:cacheprovider
 ```
 
+The tile graph tests (`rsgispy/_tilegraph`) are in `tests/tilegraph/`. Like
+the other test files, they import the shared helpers with
+`from conftest import ...`.
+
 ## Golden reference files
 
 `tests/data/golden/*.npz` holds reference outputs for the file-based raster
