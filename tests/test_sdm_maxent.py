@@ -107,10 +107,15 @@ def test_recovers_known_response():
     mdl = sdm.MaxentClassifier(feature_types="lq").fit(x_df, y_arr)
     grid = pd.DataFrame({"x1": np.linspace(0, 10, 201), "x2": 5.0})
     peak = grid["x1"].iloc[int(np.argmax(mdl.predict_raw(grid)))]
-    assert peak == pytest.approx(1.5 / (2 * 0.15), abs=0.5)
+    # The true peak is at x1 = 5. Over data seeds 0-7 the fitted peak (on a
+    # 0.05 grid) was within 0.15 of it (0.05 for seed 0), so abs=0.25 allows
+    # sampling noise but fails for a peak shifted by more than 5 grid steps.
+    assert peak == pytest.approx(1.5 / (2 * 0.15), abs=0.25)
     coefs = dict(zip(mdl.selected_features_["feature"], mdl.selected_features_["coef"]))
-    assert abs(coefs.get("x2", 0.0)) < 0.2 * abs(coefs["x1"])
-    assert abs(coefs.get("x2^2", 0.0)) < 0.2 * abs(coefs["x1^2"])
+    # x2 is irrelevant: its coefficients were at most 9.5 % of the x1 ones
+    # over seeds 0-7 (2.6 % for seed 0), so 15 % leaves a margin.
+    assert abs(coefs.get("x2", 0.0)) < 0.15 * abs(coefs["x1"])
+    assert abs(coefs.get("x2^2", 0.0)) < 0.15 * abs(coefs["x1^2"])
     assert roc_auc_score(y_arr, mdl.predict_proba(x_df)[:, 1]) > 0.7
 
 

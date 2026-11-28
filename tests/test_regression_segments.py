@@ -147,8 +147,14 @@ def test_multi_target_and_gbdt(reg):
     rseg.apply_sklearn_regressor_segments(cfg, model, out, copy_cols=[], use_pbar=False)
     res = gpd.read_file(out)
     ok = res["pred_canopy_cover"].notna()
+    # A multi-output random forest predicts both targets as means over the same
+    # leaves, and canopy_x2 == 2 * canopy_cover exactly in the training data,
+    # so the 2x relation holds to floating point rounding (the difference was
+    # exactly 0 for random_state 0-3). A loose tolerance would hide one target
+    # being fitted by a separate model or the targets being mixed up.
     np.testing.assert_allclose(
-        res.loc[ok, "pred_canopy_x2"], 2 * res.loc[ok, "pred_canopy_cover"], rtol=0.15, atol=2
+        res.loc[ok, "pred_canopy_x2"], 2 * res.loc[ok, "pred_canopy_cover"],
+        rtol=1e-9, atol=1e-9,
     )
     out_img = str(reg["dir"] / "multi.tif")
     rseg.rasterise_segment_regression(cfg, out, out_img, use_pbar=False)
