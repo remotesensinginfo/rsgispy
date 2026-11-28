@@ -7,6 +7,15 @@ Each function also has a tile-graph node builder (:func:`slope_node`,
 :func:`aspect_pxl_res_img_node`, :func:`categorise_aspect_node`) for chaining
 it with other operations in a :class:`~rsgispy.imageprocess.TileGraph`
 without intermediate files.
+
+.. note::
+
+   The functions without a pixel-resolution image (``slope``, ``aspect``,
+   ``hillshade``, ``local_incidence_angle``, ``local_exitance_angle``,
+   ``shadow_mask`` and their nodes) take the pixel size from the DEM's
+   transform, in metres, and raise :class:`rsgispy.RSGISPyException` for a
+   DEM in a geographic CRS. Reproject such a DEM, or use the
+   ``*_pxl_res_img`` variants with per-pixel sizes in metres.
 """
 
 import math
