@@ -4,6 +4,7 @@ Tests for rsgispy and rsgispy.imagecalc.maths.band_maths.
 
 import importlib
 import sys
+import warnings
 
 import numpy as np
 import pytest
@@ -448,8 +449,9 @@ def test_band_percentiles(tmp_path):
 
     with pytest.raises(rsgispy.RSGISPyException):
         rsgispy.imagecalc.percentiles.calc_band_percentile(str(in_img), 150.0, no_data_val=None)
-    # A value in (0, 1) now means a percentile below 1: warn about the units.
-    with pytest.warns(UserWarning, match="0-100"):
+    # A value in (0, 1) is a percentile below 1, with no warning.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         rsgispy.imagecalc.percentiles.calc_band_percentile(str(in_img), 0.5, no_data_val=None)
 
     # Masked pixels where msk == 1 and neither band == 0.0:

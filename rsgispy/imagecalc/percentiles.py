@@ -5,7 +5,6 @@ percentile calculation functions using ``rasterio``.
 
 from contextlib import ExitStack
 import math
-import warnings
 from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -97,8 +96,7 @@ def calc_band_percentile(
     .. versionchanged:: 0.5.0
        ``percentile`` is in ``[0, 100]``, as in
        :func:`calc_band_percentile_msk` and :func:`calc_imgs_pxl_percentiles`
-       (it was a fraction in ``[0, 1]``). A value strictly between 0 and 1
-       issues a :class:`UserWarning` about the change.
+       (it was a fraction in ``[0, 1]``).
 
     :param input_img: Path to the input image file.
     :param percentile: Percentile between ``0`` and ``100`` inclusive.
@@ -121,14 +119,6 @@ def calc_band_percentile(
     if percentile < 0.0 or percentile > 100.0:
         raise rsgispy.RSGISPyException(
             "Percentile value must be between 0 - 100."
-        )
-    if 0.0 < percentile < 1.0:
-        warnings.warn(
-            f"calc_band_percentile percentile={percentile} is on the 0-100 scale "
-            "since rsgispy 0.5.0 (it was a 0-1 fraction); pass e.g. 95.0 for the "
-            "95th percentile.",
-            UserWarning,
-            stacklevel=2,
         )
     ensure_file_exists(input_img)
 

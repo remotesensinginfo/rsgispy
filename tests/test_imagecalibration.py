@@ -7,6 +7,7 @@ import datetime
 import math
 import os
 import tarfile
+import warnings
 from types import SimpleNamespace
 
 import numpy as np
@@ -363,9 +364,10 @@ def test_perform_dos_calc(tmp_path):
         neg_arr = src.read(1)
     assert neg_arr[0, 1] < 0.0
 
-    # dark_obj_percentile is on the 0-100 scale: a value in (0, 1) warns
-    # (it was a fraction before 0.5.0) and values outside [0, 100] raise.
-    with pytest.warns(UserWarning, match="0-100 scale"):
+    # dark_obj_percentile is on the 0-100 scale: a value in (0, 1) runs
+    # without a warning, and values outside [0, 100] raise.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         imgcal.perform_dos_calc(
             in_img, str(tmp_path / "dos_frac.tif"), no_data_val=0.0,
             dark_obj_percentile=0.5, calc_stats=False, use_pbar=False,

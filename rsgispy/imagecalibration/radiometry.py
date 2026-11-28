@@ -8,7 +8,6 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 import datetime
 import math
-import warnings
 from typing import Any, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -570,7 +569,7 @@ def perform_dos_calc(
     .. versionchanged:: 0.5.0
        ``dark_obj_percentile`` is on the 0-100 scale, as for
        :func:`rsgispy.imagecalc.percentiles.calc_band_percentile` (it was a
-       0-1 fraction); a value between 0 and 1 issues a warning.
+       0-1 fraction).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
@@ -585,14 +584,6 @@ def perform_dos_calc(
         raise rsgispy.RSGISPyException(
             f"dark_obj_percentile must be in [0, 100], got {dark_obj_percentile!r}."
         )
-    if 0.0 < dark_pct < 1.0:
-        warnings.warn(
-            f"perform_dos_calc dark_obj_percentile={dark_pct} is on the 0-100 "
-            "scale since rsgispy 0.5.0 (it was a 0-1 fraction); pass e.g. 1.0 "
-            "for the 1st percentile.",
-            UserWarning,
-            stacklevel=2,
-        )
     norm_opts = normalise_creation_options(creation_opts)
 
     with ExitStack() as stack:
@@ -604,14 +595,11 @@ def perform_dos_calc(
         dst_nodata, fill_val = resolve_nodata_and_fill(eff_in_nd, out_np_dtype)
         n_bands = src.count
 
-    with warnings.catch_warnings():
-        # The 0-1 scale warning has been given above, for this function.
-        warnings.filterwarnings("ignore", message="calc_band_percentile percentile=")
-        percent_vals = calc_band_percentile(
-            input_img=input_img,
-            percentile=dark_pct,
-            no_data_val=eff_in_nd,
-        )
+    percent_vals = calc_band_percentile(
+        input_img=input_img,
+        percentile=dark_pct,
+        no_data_val=eff_in_nd,
+    )
     if len(percent_vals) != n_bands:
         raise rsgispy.RSGISPyException(
             f"Expected {n_bands} band percentiles, got {len(percent_vals)}."

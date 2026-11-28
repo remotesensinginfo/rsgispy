@@ -90,8 +90,7 @@ API changes
 ~~~~~~~~~~~
 
 * ``calc_band_percentile`` and ``perform_dos_calc(dark_obj_percentile=...)``
-  take percentiles in ``[0, 100]`` (they took 0-1); a value between 0 and 1
-  gives a warning.
+  take percentiles in ``[0, 100]`` (they took 0-1).
 * ``polygonise_raster_to_vec_lyr`` uses the argument order of
   ``polygonise_raster_tiled`` (``input_img`` first, ``out_format``
   keyword-only) and takes ``no_data_val``. The old RSGISLib order is no
