@@ -777,3 +777,66 @@ def save_search_outputs(
         if extra_meta:
             payload.update(extra_meta)
         write_dict_to_json(payload, out_json_path)
+
+
+def run_param_search(
+    method: str,
+    sk_estimator: Any,
+    param_space: Mapping[str, Any],
+    train_x: Any,
+    train_y: Any,
+    valid_x: Any,
+    valid_y: Any,
+    *,
+    scoring: Any,
+    cv: Any,
+    n_trials: int,
+    timeout: Optional[float],
+    direction: Optional[str],
+    n_iter: int,
+    n_jobs: Optional[int],
+    rnd_seed: Optional[int],
+    refit: bool,
+    verbose: int,
+    stratified: bool,
+    func_name: str,
+    extra: str,
+    use_pbar: bool,
+    groups: Any = None,
+    coords: Any = None,
+) -> Tuple[Any, Dict[str, Any], float, pd.DataFrame, Any]:
+    """
+    Run a parameter search for the classification and regression scikit-learn
+    wrappers: :func:`run_optuna_search` for ``method='optuna'``, otherwise
+    :func:`run_sklearn_search_cv` (grid or random search). Returns
+    ``(best_estimator, best_params, best_score, results_df, search_obj)``.
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    common = dict(
+        sk_estimator=sk_estimator,
+        param_space=param_space,
+        train_x=train_x,
+        train_y=train_y,
+        valid_x=valid_x,
+        valid_y=valid_y,
+        scoring=scoring,
+        cv=cv,
+        n_jobs=n_jobs,
+        rnd_seed=rnd_seed,
+        refit=refit,
+        verbose=verbose,
+        stratified=stratified,
+        extra=extra,
+        groups=groups,
+        coords=coords,
+    )
+    if method == "optuna":
+        return run_optuna_search(
+            n_trials=n_trials,
+            timeout=timeout,
+            direction=direction,
+            func_name=func_name,
+            use_pbar=use_pbar,
+            **common,
+        )
+    return run_sklearn_search_cv(method=method, n_iter=n_iter, **common)

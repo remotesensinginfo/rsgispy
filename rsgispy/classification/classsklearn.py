@@ -40,8 +40,7 @@ from rsgispy.tools._ml_tune import (
     normalise_search_method as _normalise_search_method,
     resolve_cv_groups_coords as _resolve_cv_groups_coords,
     resolve_sklearn_param_space as _tools_resolve_sklearn_param_space,
-    run_optuna_search as _tools_run_optuna_search,
-    run_sklearn_search_cv as _tools_run_sklearn_search_cv,
+    run_param_search as _tools_run_param_search,
     save_search_outputs as _save_search_outputs,
 )
 from rsgispy.tools._sklearn import (
@@ -384,55 +383,33 @@ def perform_sklearn_classifier_param_search(
             allow_nan=seg_allows_nan(cfg),
         )
 
-    if method == "optuna":
-        best_est, best_params, best_score, results_df, search_obj = (
-            _tools_run_optuna_search(
-                sk_estimator=sk_classifier,
-                param_space=eff_param_space,
-                train_x=train_x,
-                train_y=train_y,
-                valid_x=valid_x,
-                valid_y=valid_y,
-                scoring=scoring,
-                cv=cv,
-                n_trials=n_trials,
-                timeout=timeout,
-                direction=direction,
-                n_jobs=n_jobs,
-                rnd_seed=rnd_seed,
-                refit=refit,
-                verbose=verbose,
-                stratified=True,
-                func_name="perform_sklearn_classifier_param_search",
-                extra="classification",
-                use_pbar=use_pbar,
-                groups=cv_groups,
-                coords=cv_coords,
-            )
+    best_est, best_params, best_score, results_df, search_obj = (
+        _tools_run_param_search(
+            method,
+            sk_classifier,
+            eff_param_space,
+            train_x,
+            train_y,
+            valid_x,
+            valid_y,
+            scoring=scoring,
+            cv=cv,
+            n_trials=n_trials,
+            timeout=timeout,
+            direction=direction,
+            n_iter=n_iter,
+            n_jobs=n_jobs,
+            rnd_seed=rnd_seed,
+            refit=refit,
+            verbose=verbose,
+            stratified=True,
+            func_name="perform_sklearn_classifier_param_search",
+            extra="classification",
+            use_pbar=use_pbar,
+            groups=cv_groups,
+            coords=cv_coords,
         )
-    else:
-        best_est, best_params, best_score, results_df, search_obj = (
-            _tools_run_sklearn_search_cv(
-                method=method,
-                sk_estimator=sk_classifier,
-                param_space=eff_param_space,
-                train_x=train_x,
-                train_y=train_y,
-                valid_x=valid_x,
-                valid_y=valid_y,
-                scoring=scoring,
-                cv=cv,
-                n_iter=n_iter,
-                n_jobs=n_jobs,
-                rnd_seed=rnd_seed,
-                refit=refit,
-                verbose=verbose,
-                stratified=True,
-                extra="classification",
-                groups=cv_groups,
-                coords=cv_coords,
-            )
-        )
+    )
 
     _save_search_outputs(
         results_df=results_df,
