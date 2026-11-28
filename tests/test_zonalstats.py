@@ -939,3 +939,37 @@ def test_vec_def_epsg_only_applies_when_crs_undefined(tmp_path):
         use_pbar=False,
     )
     assert out_gdf["n"].iloc[0] == 16
+
+
+def test_test_poly_pts_fallback_samples_point_inside_concave_polygon(tmp_path):
+    """The fallback samples a point inside the polygon, not its centroid."""
+    from shapely.ops import unary_union
+
+    # Pixel centres are at x = 500005, 500015, ... and y = 5199995, 5199985, ...
+    # The thin C-shaped polygon below contains no pixel centre, and its
+    # centroid lies in the hollow (value 99) rather than on the polygon (1).
+    arr = np.ones((6, 6), dtype=np.float32)
+    arr[1:5, 1:6] = 99.0
+    tif_path = str(tmp_path / "vals.tif")
+    _write_test_raster(tif_path, arr)
+    c_shape = unary_union(
+        [
+            box(500001.0, 5199941.0, 500003.0, 5199999.0),
+            box(500001.0, 5199997.0, 500059.0, 5199999.0),
+            box(500001.0, 5199941.0, 500059.0, 5199943.0),
+        ]
+    )
+    assert not c_shape.contains(c_shape.centroid)
+    gdf = gpd.GeoDataFrame({"id": [1]}, geometry=[c_shape], crs="EPSG:32630")
+
+    out_gdf = zs_poly.calc_zonal_band_stats_test_poly_pts(
+        gdf,
+        tif_path,
+        img_band=1,
+        min_thres=-1.0,
+        max_thres=1000.0,
+        out_no_data_val=-1.0,
+        mean_field="b1_mean",
+        use_pbar=False,
+    )
+    assert out_gdf["b1_mean"].iloc[0] == pytest.approx(1.0)

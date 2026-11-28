@@ -158,7 +158,9 @@ the image edge) and its statistics are less reliable.
 example field plots on a 30 m image), some contain no pixel centre and get
 ``out_no_data_val``. Use
 :func:`~rsgispy.zonalstats.polygon.calc_zonal_band_stats_test_poly_pts_file`,
-which falls back to the pixel under the polygon centroid, or
+which falls back to the pixel under a point inside the polygon (its
+``representative_point()``; unlike the centroid, this cannot fall outside a
+concave polygon), or
 :func:`~rsgispy.zonalstats.polygon.calc_zonal_poly_pts_band_stats_file`,
 which uses the centroid value only. For per-class pixel counts in each
 polygon (e.g. the land cover composition of a district), use

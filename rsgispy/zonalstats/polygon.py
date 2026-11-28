@@ -11,8 +11,9 @@ zonal statistics functions using ``rasterio`` and ``geopandas``.
 * If polygon sizes vary relative to pixel size, use
   :func:`calc_zonal_band_stats_test_poly_pts` or
   :func:`calc_zonal_band_stats_test_poly_pts_file`, which computes polygon
-  statistics where pixels fall inside the polygon and falls back to the polygon
-  centroid otherwise.
+  statistics where pixels fall inside the polygon and otherwise falls back to
+  a point inside the polygon (its ``representative_point()``, not the
+  centroid, which can lie outside a concave polygon).
 * For categorical integer rasters, use :func:`calc_zonal_band_pxl_counts` or
   :func:`calc_zonal_band_pxl_counts_file`.
 * To export all individual pixels within polygons across selected bands to a
@@ -173,20 +174,25 @@ def _validate_percentile(
         rsgispy.tools.stats.validate_percentiles_0_100(percentile)
 
 
-def _centroid_fallback_stats(
+def _interior_pt_fallback_stats(
     src: rasterio.DatasetReader,
     img_band: int,
     geom: Any,
     thresholds: Tuple[float, float],
     out_no_data_val: float,
 ) -> Tuple[bool, float]:
-    """Sample a polygon's centroid and return ``(is_valid, value_or_nodata)``."""
+    """
+    Sample a point guaranteed to lie inside the polygon
+    (:meth:`~shapely.geometry.base.BaseGeometry.representative_point`) and
+    return ``(is_valid, value_or_nodata)``. The centroid is not used because
+    it can fall outside a concave polygon.
+    """
     img_nodata = src.nodatavals[img_band - 1]
     sampled: Optional[float] = None
     if geom is not None and not geom.is_empty:
-        centroid = geom.centroid
+        rep_pt = geom.representative_point()
         sampled = _sample_point_pixel(
-            src, img_band, centroid.x, centroid.y, clamp=False
+            src, img_band, rep_pt.x, rep_pt.y, clamp=False
         )
 
     if _is_valid_pixel_value(sampled, img_nodata, thresholds[0], thresholds[1]):
@@ -204,7 +210,7 @@ def _calc_zonal_stats_core(
     field_map: Dict[str, Optional[str]],
     vec_def_epsg: Optional[int] = None,
     percentile: Optional[float] = None,
-    allow_centroid_fallback: bool = False,
+    allow_point_fallback: bool = False,
     use_pbar: bool = True,
 ) -> gpd.GeoDataFrame:
     """Shared implementation for polygon zonal statistics with optional centroid fallback."""
@@ -214,7 +220,7 @@ def _calc_zonal_stats_core(
             "At least one field needs to be specified for there to be an output."
         )
 
-    if allow_centroid_fallback:
+    if allow_point_fallback:
         _validate_percentile(percentile, field_map.get("percentile"))
 
     with _open_validated_zonal_inputs(
@@ -238,8 +244,8 @@ def _calc_zonal_stats_core(
                 feat_stats = _compute_stats_dict(
                     vals, field_map, percentile=percentile
                 )
-            elif allow_centroid_fallback:
-                is_valid, c_val = _centroid_fallback_stats(
+            elif allow_point_fallback:
+                is_valid, c_val = _interior_pt_fallback_stats(
                     src,
                     img_band,
                     geom,
@@ -471,7 +477,7 @@ def calc_zonal_band_stats(
         out_no_data_val=out_no_data_val,
         field_map=field_map,
         vec_def_epsg=vec_def_epsg,
-        allow_centroid_fallback=False,
+        allow_point_fallback=False,
         use_pbar=use_pbar,
     )
 
@@ -648,8 +654,10 @@ def calc_zonal_band_stats_test_poly_pts_file(
 ) -> Optional[gpd.GeoDataFrame]:
     """
     Calculate zonal statistics for polygons in ``vec_file`` (a vector file
-    path or an in-memory :class:`geopandas.GeoDataFrame`), falling back to the
-    polygon centroid if no valid pixels fall within the polygon.
+    path or an in-memory :class:`geopandas.GeoDataFrame`), falling back to a
+    point inside the polygon (its ``representative_point()``) if no valid
+    pixels fall within the polygon. The centroid is not used because it can
+    lie outside a concave polygon.
 
     :param vec_file: Input vector file path (updated in-place on disk unless
                      ``out_vec_file`` is given) or
@@ -660,8 +668,8 @@ def calc_zonal_band_stats_test_poly_pts_file(
     :param img_band: 1-based band index within ``input_img``.
     :param min_thres: Lower inclusive threshold for pixels included in stats.
     :param max_thres: Upper inclusive threshold for pixels included in stats.
-    :param out_no_data_val: Output fill value when neither polygon nor centroid
-                            yields a valid pixel.
+    :param out_no_data_val: Output fill value when neither the polygon nor its
+                            interior fallback point yields a valid pixel.
     :param percentile: Percentile in ``[0, 100]`` when ``percentile_field`` is set.
     :param percentile_field: Output column name for percentile value (or ``None``).
     :param min_field: Output column name for minimum value (or ``None``).
@@ -758,8 +766,9 @@ def calc_zonal_band_stats_test_poly_pts(
 ) -> gpd.GeoDataFrame:
     """
     Calculate zonal statistics for polygons in a :class:`geopandas.GeoDataFrame`
-    or vector file path, falling back to the polygon centroid if no valid pixels
-    fall inside.
+    or vector file path, falling back to a point inside the polygon (its
+    ``representative_point()``) if no valid pixels fall inside. The centroid
+    is not used because it can lie outside a concave polygon.
 
     When given a :class:`geopandas.GeoDataFrame`, it is updated in-place and
     returned. When given a file path, the layer is loaded into a new
@@ -771,8 +780,8 @@ def calc_zonal_band_stats_test_poly_pts(
     :param img_band: 1-based band index within ``input_img``.
     :param min_thres: Lower inclusive threshold for pixels included in stats.
     :param max_thres: Upper inclusive threshold for pixels included in stats.
-    :param out_no_data_val: Output fill value when neither polygon nor centroid
-                            yields a valid pixel.
+    :param out_no_data_val: Output fill value when neither the polygon nor its
+                            interior fallback point yields a valid pixel.
     :param percentile: Percentile in ``[0, 100]`` when ``percentile_field`` is set.
     :param percentile_field: Output column name for percentile value (or ``None``).
     :param min_field: Output column name for minimum value (or ``None``).
@@ -829,7 +838,7 @@ def calc_zonal_band_stats_test_poly_pts(
         field_map=field_map,
         vec_def_epsg=vec_def_epsg,
         percentile=percentile,
-        allow_centroid_fallback=True,
+        allow_point_fallback=True,
         use_pbar=use_pbar,
     )
 
