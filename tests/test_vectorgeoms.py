@@ -915,3 +915,30 @@ def test_vectorgeoms_raster_to_gdf_in_memory(tmp_path):
     )
     assert isinstance(trans_gdf, gpd.GeoDataFrame)
     assert len(trans_gdf) == 3
+
+
+def test_spatial_predicates_align_comparison_crs():
+    """H4: the comparison layer is reprojected onto the base layer's CRS."""
+    base_gdf = gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[box(500000.0, 5800000.0, 510000.0, 5810000.0)],
+        crs="EPSG:32630",
+    )
+    # Same small square inside the base polygon, expressed in WGS84.
+    comp_utm = gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[box(504000.0, 5804000.0, 506000.0, 5806000.0)],
+        crs="EPSG:32630",
+    )
+    comp_wgs = comp_utm.to_crs("EPSG:4326")
+    assert vg_spatial.vec_intersects_vec(
+        base_gdf, None, comp_wgs, None, use_pbar=False
+    )
+    assert vg_spatial.vec_within_vec(base_gdf, None, comp_wgs, None, use_pbar=False)
+    assert vg_spatial.vec_contains_vec(
+        base_gdf, None, comp_wgs, None, use_pbar=False
+    )
+    # The base layer's CRS wins: a WGS84 base with a UTM comparison also works.
+    assert vg_spatial.vec_intersects_vec(
+        comp_wgs, None, base_gdf, None, use_pbar=False
+    )
