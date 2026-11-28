@@ -600,6 +600,8 @@ def apply_sklearn_regressor(
     block_size: Optional[int] = None,
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
+    out_uncert_img: Optional[Union[str, os.PathLike]] = None,
+    uncert_method: str = "std",
 ) -> None:
     """
     Apply a trained univariate or multivariate ``scikit-learn`` regressor
@@ -631,6 +633,26 @@ def apply_sklearn_regressor(
     :param creation_opts: Optional GDAL creation options mapping.
     :param use_pbar: Display a tqdm progress bar during prediction
                      (Default = ``True``).
+    :param out_uncert_img: Optional output ``float32`` per-pixel uncertainty
+                           raster, one band per target (named
+                           ``<target>_<uncert_method>``, ``-9999`` outside
+                           the mask), from the spread of the predictions of
+                           the ensemble members (e.g. the trees of a
+                           ``RandomForestRegressor`` or
+                           ``ExtraTreesRegressor``, the members of a
+                           ``BaggingRegressor`` or ``VotingRegressor``, also
+                           inside a ``Pipeline`` or ``MultiOutputRegressor``).
+                           Larger values are less certain. Models without
+                           independent members (linear models, SVR, boosted
+                           trees) raise :class:`rsgispy.RSGISPyException`
+                           before anything is written (Default = ``None``).
+    :param uncert_method: Uncertainty for ``out_uncert_img``: ``'std'``
+                          (standard deviation of the member predictions, in
+                          the target's units), ``'iqr'`` (inter-quartile
+                          range) or ``'cv'`` (``std / |mean|``)
+                          (Default = ``'std'``). The member spread is not a
+                          calibrated prediction interval; see
+                          :func:`~rsgispy.ml.predict.calc_ensemble_uncertainty`.
 
     .. code:: python
 
@@ -642,6 +664,7 @@ def apply_sklearn_regressor(
             in_msk_img="landsat_valid_mask.tif",
             img_msk_val=1,
             output_img="canopy_cover_pred.tif",
+            out_uncert_img="canopy_cover_std.tif",
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -666,6 +689,8 @@ def apply_sklearn_regressor(
         block_size=block_size,
         creation_opts=creation_opts,
         use_pbar=use_pbar,
+        out_uncert_img=out_uncert_img,
+        uncert_method=uncert_method,
     )
 
 

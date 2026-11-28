@@ -35,6 +35,12 @@ from rsgispy.imageprocess import normalise_creation_options
 from rsgispy.imageutils.colourtable import set_img_not_thematic
 from rsgispy.imageutils.masking import ImageBandInfo
 from rsgispy.imageutils.stats import pop_img_stats
+from rsgispy.ml.predict import (
+    calc_ensemble_uncertainty,
+    check_ensemble_regressor,
+    check_uncert_method,
+    predict_ensemble_members,
+)
 from rsgispy.regression.regdata import (
     RegressionConfig,
     normalise_target_cols,
@@ -509,6 +515,10 @@ def calc_reg_split_metrics(
     )
 
 
+_UNCERT_NODATA = -9999.0
+"""No-data value of the ``out_uncert_img`` uncertainty rasters."""
+
+
 def apply_regressor_raster(
     reg_cfg: Optional[RegConfigInput],
     estimator: Any,
@@ -526,16 +536,23 @@ def apply_regressor_raster(
     creation_opts: Optional[Mapping[str, Any]] = None,
     use_pbar: bool = True,
     predict_kwargs: Optional[Mapping[str, Any]] = None,
+    out_uncert_img: Optional[Union[str, os.PathLike]] = None,
+    uncert_method: str = "std",
 ) -> None:
     """
     Apply a fitted univariate or multivariate regressor block-by-block over
     image pixels where ``in_msk_img == img_msk_val`` and write continuous
-    predicted raster band(s).
+    predicted raster band(s). ``out_uncert_img`` optionally writes a
+    ``float32`` per-pixel uncertainty band per target from the spread of the
+    ensemble members (:func:`~rsgispy.ml.predict.calc_ensemble_uncertainty`).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-locals,too-many-statements
     p_kwargs = dict(predict_kwargs) if predict_kwargs else {}
     check_sklearn_estimator_fitted(estimator, label="regressor")
+    if out_uncert_img is not None:
+        check_uncert_method(uncert_method)
+        check_ensemble_regressor(estimator)
 
     cfg, cfg_targets = coerce_reg_config(
         reg_cfg, target_cols=target_cols, allow_none=True
@@ -561,6 +578,9 @@ def apply_regressor_raster(
         estimator, band_specs
     )
     out_path = ensure_parent_dir(output_img)
+    unc_path = (
+        ensure_parent_dir(out_uncert_img) if out_uncert_img is not None else None
+    )
 
     with ExitStack() as stack:
         msk_ds, datasets, grid, all_compatible = _open_apply_datasets(
@@ -578,6 +598,20 @@ def apply_regressor_raster(
         dst.nodata = float(out_no_data_val)
         for b_idx, t_name in enumerate(eff_targets, start=1):
             dst.set_band_description(b_idx, str(t_name))
+        unc_dst = None
+        if unc_path is not None:
+            unc_dst = open_output_dataset(
+                stack=stack,
+                output_img=unc_path,
+                gdalformat=gdalformat,
+                out_rio_dtype="float32",
+                grid=grid,
+                count=n_targets,
+                creation_opts=c_opts,
+            )
+            unc_dst.nodata = _UNCERT_NODATA
+            for b_idx, t_name in enumerate(eff_targets, start=1):
+                unc_dst.set_band_description(b_idx, f"{t_name}_{uncert_method}")
 
         base_msk_col, base_msk_row = grid.offsets[msk_path]
         total_valid_pxls = 0
@@ -629,6 +663,26 @@ def apply_regressor_raster(
                 out_flat.reshape((n_targets, win_h, win_w)),
                 window=out_win,
             )
+            if unc_dst is not None:
+                unc_flat = np.full(
+                    (n_targets, win_h * win_w), _UNCERT_NODATA, dtype=np.float32
+                )
+                if valid_idx.size > 0 and x_valid is not None:
+                    unc_vals = calc_ensemble_uncertainty(
+                        predict_ensemble_members(estimator, x_valid), uncert_method
+                    )
+                    if unc_vals.shape[1] != n_targets:
+                        raise rsgispy.RSGISPyException(
+                            f"The ensemble members returned {unc_vals.shape[1]} "
+                            f"target column(s), expected {n_targets}."
+                        )
+                    unc_vals = np.where(
+                        np.isfinite(unc_vals), unc_vals, _UNCERT_NODATA
+                    )
+                    unc_flat[:, valid_idx] = unc_vals.T
+                unc_dst.write(
+                    unc_flat.reshape((n_targets, win_h, win_w)), window=out_win
+                )
 
         if total_valid_pxls == 0:
             warnings.warn(
@@ -649,6 +703,15 @@ def apply_regressor_raster(
             calc_pyramids=True,
             use_pbar=use_pbar,
         )
+    if unc_path is not None:
+        set_img_not_thematic(unc_path)
+        if calc_stats:
+            pop_img_stats(
+                unc_path,
+                no_data_val=_UNCERT_NODATA,
+                calc_pyramids=True,
+                use_pbar=use_pbar,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1094,6 +1157,7 @@ def apply_regressor_vector(
     copy_cols: Optional[Sequence[str]] = None,
     out_prefix: str = "pred_",
     out_quantiles: Optional[Sequence[float]] = None,
+    out_uncert_method: Optional[str] = None,
     out_no_data_val: float = np.nan,
     missing: Optional[str] = None,
     fill_value: Optional[float] = None,
@@ -1109,8 +1173,11 @@ def apply_regressor_vector(
     regressor to a segment feature layer (or attribute table) and writing a
     vector layer with one ``<prefix><target>`` column per target, plus
     optional ``<prefix><target>_q<quantile>`` columns from the per-tree
-    predictions of tree ensembles (e.g. random forests). Only the ID, valid
-    flag and model feature columns are read for prediction.
+    predictions of tree ensembles (e.g. random forests) and optional
+    ``<prefix><target>_<out_uncert_method>`` uncertainty columns from the
+    spread of the ensemble members
+    (:func:`~rsgispy.ml.predict.calc_ensemble_uncertainty`). Only the ID,
+    valid flag and model feature columns are read for prediction.
     """
     # pylint: disable=too-many-arguments,too-many-locals,too-many-statements
     # pylint: disable=import-outside-toplevel
@@ -1138,6 +1205,9 @@ def apply_regressor_vector(
                 "out_quantiles requires a univariate tree ensemble exposing "
                 "estimators_ (e.g. RandomForestRegressor, ExtraTreesRegressor)."
             )
+    if out_uncert_method is not None:
+        check_uncert_method(out_uncert_method)
+        check_ensemble_regressor(estimator)
     est_names = getattr(estimator, "feature_names_in_", None)
     feat_cols = (
         [str(c) for c in est_names] if est_names is not None else seg.model_features
@@ -1152,6 +1222,11 @@ def apply_regressor_vector(
         in_path, in_lyr = os.fspath(in_vec_file), in_vec_lyr
     out_names = [f"{out_prefix}{t}" for t in targets]
     q_names = [f"{out_prefix}{targets[0]}_q{q:g}" for q in q_list]
+    u_names = (
+        [f"{name}_{out_uncert_method}" for name in out_names]
+        if out_uncert_method is not None
+        else []
+    )
 
     def _chunk(df: pd.DataFrame) -> pd.DataFrame:
         x_df, row_ok = prepare_feature_matrix(
@@ -1160,6 +1235,7 @@ def apply_regressor_vector(
         )
         out = np.full((len(df), len(out_names)), out_no_data_val, dtype=np.float64)
         q_out = np.full((len(df), len(q_names)), out_no_data_val, dtype=np.float64)
+        u_out = np.full((len(df), len(u_names)), out_no_data_val, dtype=np.float64)
         if np.any(row_ok):
             x_in = model_input(estimator, x_df)
             pred = np.asarray(estimator.predict(x_in, **p_kwargs), dtype=np.float64)
@@ -1176,9 +1252,16 @@ def apply_regressor_vector(
                     [np.asarray(t.predict(x_arr)).ravel() for t in estimator.estimators_]
                 )
                 q_out[row_ok] = np.quantile(tree_preds, q_list, axis=0).T
+            if u_names:
+                u_vals = calc_ensemble_uncertainty(
+                    predict_ensemble_members(estimator, x_in), out_uncert_method
+                )
+                u_out[row_ok] = np.where(np.isfinite(u_vals), u_vals, out_no_data_val)
         res = pd.DataFrame(out, columns=out_names)
         for q_idx, q_name in enumerate(q_names):
             res[q_name] = q_out[:, q_idx]
+        for u_idx, u_name in enumerate(u_names):
+            res[u_name] = u_out[:, u_idx]
         return res
 
     meta = build_provenance(

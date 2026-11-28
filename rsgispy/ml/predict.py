@@ -73,10 +73,16 @@ __all__ = [
     "predict_quantiles_raster_node",
     "calc_proba_confidence",
     "CONF_METHODS",
+    "predict_ensemble_members",
+    "calc_ensemble_uncertainty",
+    "UNCERT_METHODS",
 ]
 
 CONF_METHODS: Tuple[str, ...] = ("margin", "max_prob", "entropy")
 """Per-pixel classification confidence methods (see :func:`calc_proba_confidence`)."""
+
+UNCERT_METHODS: Tuple[str, ...] = ("std", "iqr", "cv")
+"""Per-pixel regression uncertainty methods (see :func:`calc_ensemble_uncertainty`)."""
 
 
 def _coerce_feature_stack(
@@ -341,6 +347,192 @@ def calc_proba_confidence(
     else:
         conf = 1.0 - _proba_entropy(p_arr, n_cls)
     return np.clip(conf, 0.0, 1.0)
+
+
+def check_uncert_method(uncert_method: str) -> str:
+    """Validate a regression uncertainty method name (one of :data:`UNCERT_METHODS`)."""
+    if not isinstance(uncert_method, str) or uncert_method not in UNCERT_METHODS:
+        raise rsgispy.RSGISPyException(
+            f"uncert_method must be one of {list(UNCERT_METHODS)}, got "
+            f"{uncert_method!r}."
+        )
+    return uncert_method
+
+
+def _is_boosted_ensemble(model: Any) -> bool:
+    """``True`` for sequential (boosted / stacked) ensembles, whose members are not exchangeable."""
+    return (
+        isinstance(getattr(model, "estimators_", None), np.ndarray)
+        or hasattr(model, "init_")
+        or hasattr(model, "learning_rate")
+        or hasattr(model, "estimator_weights_")
+        or hasattr(model, "final_estimator_")
+    )
+
+
+def _ensemble_parts(estimator: Any) -> Tuple[str, Any]:
+    """
+    Classify ``estimator`` for :func:`predict_ensemble_members`:
+    ``('pipeline', ...)``, ``('multioutput', ...)``, ``('transformed', ...)``
+    or ``('members', ...)``; raise when it has no independent members.
+    """
+    if hasattr(estimator, "steps") and getattr(estimator, "steps", None):
+        return "pipeline", estimator
+    if type(estimator).__name__ == "MultiOutputRegressor" and hasattr(
+        estimator, "estimators_"
+    ):
+        return "multioutput", estimator
+    if hasattr(estimator, "regressor_") and hasattr(estimator, "transformer_"):
+        return "transformed", estimator
+    members = getattr(estimator, "estimators_", None)
+    if (
+        isinstance(members, (list, tuple))
+        and len(members) >= 2
+        and all(hasattr(m, "predict") for m in members)
+        and not _is_boosted_ensemble(estimator)
+    ):
+        return "members", members
+    raise rsgispy.RSGISPyException(
+        "A per-pixel regression uncertainty needs an ensemble of independently "
+        "fitted members exposing estimators_ (e.g. RandomForestRegressor, "
+        "ExtraTreesRegressor, BaggingRegressor or VotingRegressor, optionally in "
+        f"a Pipeline or MultiOutputRegressor); {type(estimator).__name__} has "
+        "none. Boosted models (GradientBoosting, HistGradientBoosting, AdaBoost, "
+        "XGBoost, LightGBM, CatBoost) add members sequentially, so their spread "
+        "is not an uncertainty: use quantile models or conformal intervals "
+        "(rsgispy.ml.predict.predict_quantiles_raster) instead."
+    )
+
+
+def check_ensemble_regressor(estimator: Any) -> None:
+    """
+    Raise :class:`rsgispy.RSGISPyException` unless
+    :func:`predict_ensemble_members` supports ``estimator`` (checked without
+    predicting).
+    """
+    kind, obj = _ensemble_parts(estimator)
+    if kind == "pipeline":
+        check_ensemble_regressor(obj.steps[-1][1])
+    elif kind == "multioutput":
+        for sub in obj.estimators_:
+            check_ensemble_regressor(sub)
+    elif kind == "transformed":
+        check_ensemble_regressor(obj.regressor_)
+
+
+def predict_ensemble_members(estimator: Any, x: Any) -> np.ndarray:
+    """
+    Predictions of each member of a fitted regression ensemble, as averaged
+    by the ensemble itself (e.g. the trees of a random forest).
+
+    Supported: estimators with a list of independently fitted members in
+    ``estimators_`` (``RandomForestRegressor``, ``ExtraTreesRegressor``,
+    ``BaggingRegressor`` with its feature subsets, ``VotingRegressor``), a
+    ``Pipeline`` ending in one (the earlier steps transform ``x``), a
+    ``MultiOutputRegressor`` of them (one ensemble per target) and a
+    ``TransformedTargetRegressor`` of one (the member predictions are
+    back-transformed). Boosted and stacked ensembles raise
+    :class:`rsgispy.RSGISPyException`.
+
+    :param estimator: Fitted ensemble regressor.
+    :param x: Feature matrix ``(n_samples, n_features)`` (array or
+              DataFrame, as passed to ``estimator.predict``).
+    :return: ``float64`` array ``(n_members, n_samples, n_targets)``.
+    """
+    kind, obj = _ensemble_parts(estimator)
+    n_rows = int(x.shape[0])
+    if kind == "pipeline":
+        x_t = obj[:-1].transform(x) if len(obj.steps) > 1 else x
+        return predict_ensemble_members(obj.steps[-1][1], x_t)
+    if kind == "multioutput":
+        per_tgt = [predict_ensemble_members(sub, x) for sub in obj.estimators_]
+        n_mem = {p.shape[0] for p in per_tgt}
+        if len(n_mem) != 1:
+            raise rsgispy.RSGISPyException(
+                "The MultiOutputRegressor targets have ensembles of different sizes."
+            )
+        return np.concatenate(per_tgt, axis=2)
+    if kind == "transformed":
+        mem = predict_ensemble_members(obj.regressor_, x)
+        return np.stack(
+            [
+                np.asarray(
+                    obj.transformer_.inverse_transform(m_pred), dtype=np.float64
+                ).reshape(n_rows, -1)
+                for m_pred in mem
+            ]
+        )
+    feat_subsets = getattr(estimator, "estimators_features_", None)
+    x_arr = np.asarray(x)
+    out = []
+    for m_idx, member in enumerate(obj):
+        if feat_subsets is not None:
+            x_m = x_arr[:, feat_subsets[m_idx]]
+        elif hasattr(member, "feature_names_in_"):
+            x_m = x
+        else:
+            x_m = x_arr
+        out.append(np.asarray(member.predict(x_m), dtype=np.float64).reshape(n_rows, -1))
+    return np.stack(out)
+
+
+def calc_ensemble_uncertainty(
+    member_preds: np.ndarray, uncert_method: str = "std"
+) -> np.ndarray:
+    """
+    Per-sample regression uncertainty from the predictions of the members
+    of an ensemble (:func:`predict_ensemble_members`), as written to the
+    ``out_uncert_img`` output of
+    :func:`~rsgispy.regression.regsklearn.apply_sklearn_regressor`. Larger
+    values mean the members disagree more (less certain).
+
+    * ``'std'`` (default): the standard deviation of the member predictions
+      (in the target's units; the ensemble prediction is their mean);
+    * ``'iqr'``: the inter-quartile range (75th minus 25th percentile), less
+      affected by a few outlying members;
+    * ``'cv'``: the coefficient of variation, ``std / |mean|`` (unitless;
+      ``nan`` where the mean is ``0``).
+
+    The members are weighted equally (the weights of a ``VotingRegressor``
+    are not used).
+
+    The spread of the trees of a random forest reflects how much the
+    prediction depends on the bootstrap sample and the random splits. It is
+    not a calibrated prediction interval (it does not include the residual
+    noise and tends to be small far from the training data, where all the
+    trees extrapolate alike), so use it to rank pixels by reliability, and
+    use quantile models or conformal intervals
+    (:func:`predict_quantiles_raster`) for intervals with a stated coverage.
+
+    :param member_preds: Member predictions ``(n_members, n_samples)`` or
+                         ``(n_members, n_samples, n_targets)``.
+    :param uncert_method: ``'std'``, ``'iqr'`` or ``'cv'`` (Default =
+                          ``'std'``).
+    :return: ``float64`` array ``(n_samples,)`` or ``(n_samples, n_targets)``.
+
+    .. code:: python
+
+        import numpy as np
+        from rsgispy.ml.predict import calc_ensemble_uncertainty
+
+        calc_ensemble_uncertainty(np.array([[1.0, 2.0], [3.0, 2.0]]))  # [1., 0.]
+    """
+    check_uncert_method(uncert_method)
+    preds = np.asarray(member_preds, dtype=np.float64)
+    if preds.ndim not in (2, 3) or preds.shape[0] < 1:
+        raise rsgispy.RSGISPyException(
+            "member_preds must be (n_members, n_samples[, n_targets]): got "
+            f"shape {preds.shape}."
+        )
+    if uncert_method == "iqr":
+        q75, q25 = np.percentile(preds, [75.0, 25.0], axis=0)
+        return q75 - q25
+    std = np.std(preds, axis=0)
+    if uncert_method == "std":
+        return std
+    mean_abs = np.abs(np.mean(preds, axis=0))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(mean_abs > 0.0, std / mean_abs, np.nan)
 
 
 class _QuantilePredictor:
