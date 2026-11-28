@@ -36,24 +36,7 @@ from rsgispy.tools._ml_data import (
     resolve_feature_cols as _tools_resolve_feature_cols,
     seg_model_features,
 )
-from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
-    seg_allows_nan,
-)
-from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
-    load_samples_df,
-)
-from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
-    read_feature_block,
-)
-from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
-    resolve_rng,
-)
-from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
-    resolve_bootstrap_sample_size,
-)
-from rsgispy.tools._ml_data import (  # noqa: F401  # pylint: disable=unused-import
-    summarise_bootstrap_interval,
-)
+from rsgispy.tools._ml_data import summarise_bootstrap_interval
 from rsgispy.tools._ml_tune import resolve_cv_splitter as _tools_resolve_cv_splitter
 from rsgispy.tools._sklearn import (
     check_sklearn_available as _check_sklearn_available,

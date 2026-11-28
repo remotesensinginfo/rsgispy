@@ -19,15 +19,17 @@ import pandas as pd
 
 import rsgispy
 from rsgispy.classification._helpers import (
-    seg_allows_nan,
     ClsConfigInput,
     SamplesInput,
     calc_split_metrics,
     check_sklearn_available,
     coerce_cls_config,
     extract_xy,
-    load_samples_df,
     resolve_feature_cols,
+)
+from rsgispy.tools._ml_data import (
+    seg_allows_nan,
+    load_samples_df,
 )
 from rsgispy.classification.classdata import ClassInfoObj
 from rsgispy.tools._ml_explain import (

@@ -18,10 +18,12 @@ from rsgispy.classification._helpers import (
     check_sklearn_available,
     compute_cls_areas_from_img,
     load_ref_cls_samples,
-    resolve_bootstrap_sample_size,
-    resolve_rng,
     write_acc_stats_img_csv,
     write_acc_stats_ptonly_csv,
+)
+from rsgispy.tools._ml_data import (
+    resolve_bootstrap_sample_size,
+    resolve_rng,
 )
 import rsgispy.tools.jsonio
 from rsgispy.tools.files import ensure_parent_dir

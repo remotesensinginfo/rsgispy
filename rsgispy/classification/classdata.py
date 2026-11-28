@@ -24,7 +24,12 @@ import pandas as pd
 import rasterio
 
 import rsgispy
-from rsgispy.classification._helpers import resolve_rng, select_out_int_dtype
+from rsgispy.classification._helpers import (
+    select_out_int_dtype,
+)
+from rsgispy.tools._ml_data import (
+    resolve_rng,
+)
 from rsgispy.imagecalc.encoding import recode_int_raster
 from rsgispy.imageprocess import ensure_file_exists
 from rsgispy.imageutils.colourtable import (

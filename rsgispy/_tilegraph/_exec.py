@@ -28,7 +28,6 @@ if TYPE_CHECKING:  # pragma: no cover
         ArraySource,
         BandMathOp,
         PointwiseOp,
-        RasterSource,
         WindowOp,
     )
 
@@ -209,25 +208,6 @@ class SharedRasterReader:
             self._cache = None
             self._cache_key = None
         return _finish_read(raw, dtype, border, hy, hx, bounds[4:])
-
-
-def read_raster_source(
-    node: "RasterSource",
-    ds: rasterio.io.DatasetReader,
-    win: Window,
-    hy: int,
-    hx: int,
-) -> TileTensor:
-    """Read a halo-padded block from ``ds`` tracking exact OOB overhangs."""
-    bounds = halo_read_bounds(win, int(ds.height), int(ds.width), hy, hx)
-    read_win = Window(
-        bounds[1], bounds[0], bounds[3] - bounds[1], bounds[2] - bounds[0]
-    )
-    if node.bands is None:
-        raw = ds.read(window=read_win)
-    else:
-        raw = ds.read(node.bands, window=read_win)
-    return _finish_read(raw, node.dtype, node.border, hy, hx, bounds[4:])
 
 
 def read_array_source(

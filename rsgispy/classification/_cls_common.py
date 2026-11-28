@@ -23,18 +23,20 @@ import pandas as pd
 
 import rsgispy
 from rsgispy.classification._helpers import (
-    seg_allows_nan,
     ClsConfigInput,
     SamplesInput,
     calc_split_metrics,
     coerce_cls_config,
     extract_xy,
     finalise_thematic_output_img,
-    load_samples_df,
     resolve_apply_band_specs,
     resolve_feature_cols,
     resolve_out_nodata,
     select_out_int_dtype,
+)
+from rsgispy.tools._ml_data import (
+    seg_allows_nan,
+    load_samples_df,
 )
 from rsgispy.classification.classdata import (
     ClassificationConfig,

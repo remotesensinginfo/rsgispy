@@ -23,15 +23,17 @@ from rsgispy.classification._cls_common import (
     apply_classifier_raster as _apply_classifier_raster,
 )
 from rsgispy.classification._helpers import (
-    seg_allows_nan,
     ClsConfigInput,
     SamplesInput,
     calc_split_metrics as _calc_split_metrics,
     check_sklearn_available,
     coerce_cls_config as _coerce_cls_config,
     extract_xy as _extract_xy,
-    load_samples_df as _load_samples_df,
     resolve_feature_cols as _resolve_feature_cols,
+)
+from rsgispy.tools._ml_data import (
+    seg_allows_nan,
+    load_samples_df as _load_samples_df,
 )
 from rsgispy.classification.classdata import ImageBandInfo
 from rsgispy.imageprocess import ensure_file_exists
