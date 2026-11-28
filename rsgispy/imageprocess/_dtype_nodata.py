@@ -251,14 +251,35 @@ def fits_dtype_range(
     value: float,
     out_np_dtype: np.dtype,
     allow_round_int: bool = False,
+    allow_nonfinite_float: bool = False,
 ) -> bool:
     """
-    Return ``True`` if finite scalar ``value`` is representable in ``out_np_dtype``.
+    Return ``True`` if scalar ``value`` (e.g. a no-data value) can be stored
+    in ``out_np_dtype``. This is the single range check used across rsgispy
+    (including the tile-graph nodes and composites). The rules are:
+
+    * integer types: ``value`` must be finite, an integer (or, with
+      ``allow_round_int``, round to one) and within the type's range. NaN
+      and infinities never fit.
+    * float types: finite values must be within ``+/-finfo.max``; NaN and
+      infinities fit only when ``allow_nonfinite_float`` is ``True`` (they
+      are valid no-data values for float rasters).
+    * any other type: ``False``.
+
+    :param value: Scalar value to test.
+    :param out_np_dtype: Target NumPy dtype.
+    :param allow_round_int: For integer types, accept a non-integer value that
+                            rounds into range (Default = ``False``).
+    :param allow_nonfinite_float: For float types, accept NaN and infinities
+                                  (Default = ``False``).
+    :return: ``True`` if ``value`` fits.
     """
     out_np_dtype = np.dtype(out_np_dtype)
     f_val = float(value)
     if not math.isfinite(f_val):
-        return False
+        return bool(allow_nonfinite_float) and np.issubdtype(
+            out_np_dtype, np.floating
+        )
     if np.issubdtype(out_np_dtype, np.floating):
         info = np.finfo(out_np_dtype)
         return float(info.min) <= f_val <= float(info.max)  # pylint: disable=no-member

@@ -256,12 +256,12 @@ def _normalise_radius(
 
 
 def _fits_int(value: float, np_dtype: np.dtype) -> bool:
-    """``True`` if ``value`` is an integer that ``np_dtype`` can store."""
-    val = float(value)
-    if not np.isfinite(val) or not val.is_integer():
-        return False
-    info = np.iinfo(np_dtype)
-    return info.min <= val <= info.max
+    """``True`` if ``value`` is an integer that ``np_dtype`` can store:
+    :func:`rsgispy.imageprocess.fits_dtype_range`."""
+    # pylint: disable=import-outside-toplevel
+    from rsgispy.imageprocess import fits_dtype_range
+
+    return fits_dtype_range(value, np_dtype)
 
 
 def _pad_3d(

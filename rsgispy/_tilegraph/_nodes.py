@@ -1299,16 +1299,12 @@ def datatype_from_meta(meta: NodeMeta) -> int:
 
 
 def _nodata_fits(nodata: float, np_dtype: np.dtype) -> bool:
-    """``True`` if ``nodata`` can be stored in rasters of ``np_dtype``."""
-    val = float(nodata)
-    if np.issubdtype(np_dtype, np.integer):
-        if not math.isfinite(val) or not val.is_integer():
-            return False
-        info = np.iinfo(np_dtype)
-        return info.min <= val <= info.max
-    if math.isnan(val) or math.isinf(val):
-        return True
-    return abs(val) <= float(np.finfo(np_dtype).max)  # pylint: disable=no-member
+    """``True`` if ``nodata`` can be stored in rasters of ``np_dtype`` (NaN and
+    infinities fit float types): :func:`rsgispy.imageprocess.fits_dtype_range`."""
+    # pylint: disable=import-outside-toplevel
+    from rsgispy.imageprocess import fits_dtype_range
+
+    return fits_dtype_range(nodata, np_dtype, allow_nonfinite_float=True)
 
 
 def _parse_sink_classes(
