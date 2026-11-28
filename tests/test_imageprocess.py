@@ -743,7 +743,9 @@ def _h2_cases():
             comparison.calc_img_difference(inp, zero, out, datatype=dt, use_pbar=False)
         ),
         "calc_area_under_curve": lambda inp, zero, out, dt: (
-            indices.calc_area_under_curve(inp, out, [1.0], datatype=dt, use_pbar=False)
+            indices.calc_area_under_curve(
+                inp, out, [1.0], method="rectangle", datatype=dt, use_pbar=False
+            )
         ),
         "stack_img_bands": lambda inp, zero, out, dt: bands.stack_img_bands(
             [inp], out, datatype=dt, calc_stats=False, use_pbar=False
