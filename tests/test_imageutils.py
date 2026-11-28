@@ -1812,3 +1812,15 @@ def test_thematic_colour_table_covers_every_value():
     assert clr_tab[0] == (0, 0, 0, 0)
     small = rsgispy.imageutils.stats._thematic_colour_table(300, True)
     assert all(clr_tab[k] == small[k] for k in small)  # same colours as before
+
+
+def test_interp_constants_match_rsgislib():
+    """rsgispy.INTERP_* use RSGISLib's numbering (drop-in replacement)."""
+    rsgislib_numbering = {
+        "INTERP_NEAREST_NEIGHBOUR": 0, "INTERP_BILINEAR": 1, "INTERP_CUBIC": 2,
+        "INTERP_CUBICSPLINE": 3, "INTERP_LANCZOS": 4, "INTERP_AVERAGE": 5,
+        "INTERP_MODE": 6, "INTERP_MIN": 7, "INTERP_MAX": 8, "INTERP_MEDIAN": 9,
+        "INTERP_Q1": 10, "INTERP_Q3": 11, "INTERP_SUM": 12,
+    }
+    for name, val in rsgislib_numbering.items():
+        assert getattr(rsgispy, name) == val, name
