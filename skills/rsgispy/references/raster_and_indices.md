@@ -297,7 +297,7 @@ run_tile_graph(DiskSink(smooth, "ndvi_smooth.tif", datatype=rsgispy.TYPE_32FLOAT
 - **`rescale`**:
   - `ALL_NORM_METHODS` (23 methods): `('none', 'linear', 'stdev', 'cumulative', 'user', 'zscore', 'robust_zscore', 'decimal_scaling', 'log', 'log1p', 'sigmoid', 'tanh', 'softmax', 'l1', 'l2', 'max_norm', 'standard_scaler', 'minmax_scaler', 'maxabs_scaler', 'robust_scaler', 'power_transformer', 'quantile_transformer', 'normalizer')`
   - `ImageBandRescale(band=0, in_min=0.0, in_max=0.0, no_data_val=None, out_min=0.0, out_max=0.0, out_no_data=None)` — `no_data_val=None` uses the input band's no-data value (none: mask nothing); `out_no_data` is written to the output (`None`: -9999 for float types, the type's max/min for integers).
-  - `calc_img_rescale(input_imgs, output_img, c_no_data_val=0.0, c_offset=0.0, c_gain=1.0, n_no_data_val=0.0, n_offset=0.0, n_gain=1.0, *, ...)`
+  - `calc_img_rescale(input_imgs, output_img, c_no_data_val=None, c_offset=0.0, c_gain=1.0, n_no_data_val=None, n_offset=0.0, n_gain=1.0, *, ...)` (`c_no_data_val=None` = first input header value; `n_no_data_val=None` = `default_out_nodata(datatype)`)
   - `rescale_img_pxl_vals(input_img, output_img, band_rescale_objs=(), trim_to_limits=True, *, ...)`
   - `calc_img_norm_params(input_img, method='linear', no_data_val=None, out_stats_file=None, out_min=None, out_max=None, bands=None, lower=2.0, upper=98.0, n_stdevs=2.0, in_min_max=None, method_kwargs=None, max_samples=None, rnd_seed=None, use_pbar=True)` -> `Dict[str, Any]`
   - `apply_img_norm_params(input_img, output_img, norm_params=None, stats_file=None, out_min=None, out_max=None, trim_to_limits=None, *, gdalformat='GTIFF', datatype=9, out_no_data_val=None, use_pbar=True, creation_opts=None)`

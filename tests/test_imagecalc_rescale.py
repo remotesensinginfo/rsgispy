@@ -73,6 +73,29 @@ def test_rescale_functions(tmp_path):
             rtol=1e-5,
         )
 
+    # Defaults: the input header's no-data value is read, and the output
+    # no-data value is the float default (-9999); a real 0 is rescaled.
+    p0 = tmp_path / "r0.tif"
+    _write_raster(
+        p0, np.array([[[0.0, 2.0], [5.0, -9999.0]]], dtype=np.float32), nodata=-9999.0
+    )
+    out_def = tmp_path / "out_def.tif"
+    ic_resc.calc_img_rescale(str(p0), str(out_def), c_gain=10.0, use_pbar=False)
+    with rasterio.open(out_def) as src:
+        assert src.nodata == -9999.0
+        np.testing.assert_allclose(
+            src.read(1), np.array([[0.0, 0.2], [0.5, -9999.0]], dtype=np.float32),
+            rtol=1e-6,
+        )
+    # Integer output: the type's default no-data value (minimum for int16).
+    out_int = tmp_path / "out_int.tif"
+    ic_resc.calc_img_rescale(
+        str(p0), str(out_int), n_gain=10.0, datatype=rsgispy.TYPE_16INT, use_pbar=False
+    )
+    with rasterio.open(out_int) as src:
+        assert src.nodata == np.iinfo(np.int16).min
+        np.testing.assert_array_equal(src.read(1), [[0, 20], [50, -32768]])
+
     cfg = ic_resc.ImageBandRescale(
         band=1,
         in_min=0.0,

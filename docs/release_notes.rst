@@ -21,7 +21,11 @@ Integer outputs, clamping and no data
 * **One default output no-data value.** ``-9999`` for floating-point outputs,
   the type's minimum (signed) or maximum (unsigned) for integer outputs, and
   ``0`` for thematic class maps (:func:`rsgispy.imageprocess.default_out_nodata`).
-  The optical and SAR indices previously used ``-999``.
+  The optical and SAR indices previously used ``-999``. ``calc_img_rescale``
+  (and its node) now take the current no-data value from the input header
+  and default the new one to this value (both were ``0``), and
+  ``get_linear_model_band_maths_exp`` writes ``-9999`` outside the valid
+  mask (it wrote ``0``).
 * ``Cast`` and ``DiskSink`` remap a no-data value that the output type cannot
   hold (e.g. ``-9999`` to ``uint8``) to the type's default and record it.
 * Per-pixel statistics (``calc_multi_img_band_stats``,

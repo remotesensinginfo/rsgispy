@@ -1456,7 +1456,7 @@ def get_linear_model_band_maths_exp(
     model: Any,
     feat_names: Optional[Sequence[str]] = None,
     valid_msk_name: Optional[str] = None,
-    out_no_data_val: float = 0.0,
+    out_no_data_val: float = -9999.0,
 ) -> Union[str, List[str]]:
     """
     Write a fitted linear regressor (or a pipeline that is linear overall,
@@ -1474,7 +1474,8 @@ def get_linear_model_band_maths_exp(
                            is applied where it is 1 and ``out_no_data_val``
                            is written elsewhere (Default = None).
     :param out_no_data_val: Output value outside the valid mask (Default =
-                            0).
+                            ``-9999.0``, the float output default, so a
+                            prediction of 0 is not mistaken for no data).
     :return: The expression, or a list of expressions (one per target) for a
              multi-target model.
 
@@ -1491,7 +1492,7 @@ def get_linear_model_band_maths_exp(
             vol_mdl, ind_vars, valid_msk_name="vld_msk"
         )
         band_maths("volume.tif", exp, band_defns, datatype=rsgispy.TYPE_32FLOAT,
-                   no_data_val=0)
+                   no_data_val=-9999)
     """
     coefs_df = get_linear_model_coefs(model, feat_names)
     exps = []

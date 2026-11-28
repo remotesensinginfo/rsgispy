@@ -94,7 +94,7 @@ def test_linear_model_band_maths_exp(tmp_path):
     x_df, y_arr = _data()
     pipe = make_pipeline(StandardScaler(), LinearRegression()).fit(x_df, y_arr)
     exp = regsk.get_linear_model_band_maths_exp(pipe, valid_msk_name="vld")
-    assert exp.startswith("vld==1?") and exp.endswith(":0.0")
+    assert exp.startswith("vld==1?") and exp.endswith(":-9999.0")
 
     # Apply the expression to an image of the features.
     rng = np.random.default_rng(5)
@@ -113,14 +113,14 @@ def test_linear_model_band_maths_exp(tmp_path):
         BandDefn(name, feat_img, i + 1) for i, name in enumerate(x_df.columns)
     ]
     out_img = os.path.join(tmp_path, "pred.tif")
-    band_maths(out_img, exp, band_defns, datatype=rsgispy.TYPE_64FLOAT, no_data_val=0,
+    band_maths(out_img, exp, band_defns, datatype=rsgispy.TYPE_64FLOAT, no_data_val=-9999,
                use_pbar=False)
     with rasterio.open(out_img) as src:
         pred = src.read(1)
     f_32 = feats.astype(np.float32).astype(np.float64)
     expected = pipe.predict(pd.DataFrame(f_32.reshape(3, -1).T, columns=x_df.columns))
     expected = expected.reshape(6, 5)
-    expected[0, :] = 0.0
+    expected[0, :] = -9999.0
     assert pred == pytest.approx(expected, rel=1e-6, abs=1e-6)
 
     no_msk = regsk.get_linear_model_band_maths_exp(LinearRegression().fit(x_df, y_arr))

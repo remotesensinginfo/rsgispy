@@ -49,6 +49,8 @@ from rsgispy.imageprocess import (
     TileNode,
     TileTensor,
     build_valid_mask,
+    default_out_nodata,
+    infer_node_meta,
     cast_result_block,
     compute_spatial_intersection,
     ensure_file_exists,
@@ -343,7 +345,7 @@ def rescale_img_pxl_vals_node(
 
 def _calc_img_rescale_block(
     in_block: np.ndarray,
-    params: Tuple[float, float, float, float, float],
+    params: Tuple[Optional[float], float, float, float, float],
     out_np_dtype: np.dtype,
 ) -> np.ndarray:
     """
@@ -357,7 +359,9 @@ def _calc_img_rescale_block(
     out_bands = []
     for b_idx in range(in_block.shape[0]):
         band_arr = in_block[b_idx]
-        nodata_mask = ~build_valid_mask(band_arr, no_data_val=float(c_nd))
+        nodata_mask = ~build_valid_mask(
+            band_arr, no_data_val=None if c_nd is None else float(c_nd)
+        )
         rescaled = ((band_arr - c_off) * scale) + n_off
         out_bands.append(
             cast_result_block(
@@ -374,10 +378,10 @@ def _calc_img_rescale_block(
 
 def calc_img_rescale_node(
     source: TileNode,
-    c_no_data_val: float = 0.0,
+    c_no_data_val: Optional[float] = None,
     c_offset: float = 0.0,
     c_gain: float = 1.0,
-    n_no_data_val: float = 0.0,
+    n_no_data_val: Optional[float] = None,
     n_offset: float = 0.0,
     n_gain: float = 1.0,
     *,
@@ -392,10 +396,14 @@ def calc_img_rescale_node(
     several images with :class:`~rsgispy.imageprocess.StackBands` first.
 
     :param source: Upstream :class:`~rsgispy.imageprocess.TileNode`.
-    :param c_no_data_val: Current no-data value.
+    :param c_no_data_val: Current no-data value (Default = ``None``: the
+                          ``source`` node's no-data value, if any).
     :param c_offset: Current offset.
     :param c_gain: Current gain (must be non-zero).
-    :param n_no_data_val: New no-data value (the node's no-data value).
+    :param n_no_data_val: New no-data value, the node's no-data value
+                          (Default = ``None``:
+                          :func:`~rsgispy.imageprocess.default_out_nodata` of
+                          ``out_dtype``, e.g. ``-9999`` for floats).
     :param n_offset: New offset.
     :param n_gain: New gain.
     :param out_dtype: NumPy dtype of the output blocks
@@ -416,8 +424,12 @@ def calc_img_rescale_node(
     if c_gain == 0.0:
         raise rsgispy.RSGISPyException("c_gain must not be zero.")
     out_np_dtype = np.dtype(out_dtype)
+    if c_no_data_val is None:
+        c_no_data_val = infer_node_meta(source).nodata
+    if n_no_data_val is None:
+        n_no_data_val = default_out_nodata(out_np_dtype)
     params = (
-        float(c_no_data_val),
+        None if c_no_data_val is None else float(c_no_data_val),
         float(c_offset),
         float(n_gain) / float(c_gain),
         float(n_offset),
@@ -438,10 +450,10 @@ def calc_img_rescale_node(
 def calc_img_rescale(
     input_imgs: Union[str, Sequence[str]],
     output_img: str,
-    c_no_data_val: float = 0.0,
+    c_no_data_val: Optional[float] = None,
     c_offset: float = 0.0,
     c_gain: float = 1.0,
-    n_no_data_val: float = 0.0,
+    n_no_data_val: Optional[float] = None,
     n_offset: float = 0.0,
     n_gain: float = 1.0,
     *,
@@ -460,10 +472,15 @@ def calc_img_rescale(
 
     :param input_imgs: Single input image path or sequence of image paths to stack.
     :param output_img: Path to the output stacked image file.
-    :param c_no_data_val: Current no-data value in the input imagery.
+    :param c_no_data_val: Current no-data value in the input imagery
+                          (Default = ``None``: the first input's header
+                          value, if any).
     :param c_offset: Current offset value.
     :param c_gain: Current gain value (must be non-zero).
-    :param n_no_data_val: New no-data value written to the output image.
+    :param n_no_data_val: New no-data value written to the output image
+                          (Default = ``None``:
+                          :func:`~rsgispy.imageprocess.default_out_nodata` of
+                          ``datatype``, e.g. ``-9999`` for floats).
     :param n_offset: New offset value.
     :param n_gain: New gain value.
     :param gdalformat: GDAL/rasterio driver format for the output file
@@ -498,9 +515,13 @@ def calc_img_rescale(
     img_list = [input_imgs] if isinstance(input_imgs, str) else list(input_imgs)
     out_np_dtype = np.dtype(rsgispy.get_numpy_datatype(datatype))
 
+    if n_no_data_val is None:
+        n_no_data_val = default_out_nodata(out_np_dtype)
     with ExitStack() as stack:
         datasets, img_paths = open_multi_image_datasets(stack, img_list)
         grid = compute_spatial_intersection(datasets)
+        if c_no_data_val is None:
+            c_no_data_val = datasets[img_paths[0]].nodata
 
     sources = [GridRasterSource(path, grid, grid.offsets[path]) for path in img_paths]
     if len(sources) > 1:
