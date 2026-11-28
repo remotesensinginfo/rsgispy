@@ -167,10 +167,20 @@ def open_validated_zonal_multiband_inputs(
     """
     Validate vector/raster inputs for one or more bands, check CRS and spatial
     overlap, optionally reproject geometries to match ``input_img``, and yield
-    ``(src_dataset, band_nodatavals, bands_list, geom_series)``.
+    ``(src_dataset, band_nodatavals, bands_list, geom_series)``. An empty
+    vector layer yields an empty ``geom_series`` (so the zonal functions
+    return an empty result) without the CRS and overlap checks.
     """
     if vec_gdf is None:
         raise rsgispy.RSGISPyException("The inputted vector layer was None")
+
+    if len(vec_gdf) == 0:
+        # An empty layer gives an empty result: no CRS or overlap to check.
+        with rasterio.open(input_img, "r") as src:
+            bands_list = normalise_band_list(img_bands, src.count, input_img)
+            nodata_vals = [src.nodatavals[b - 1] for b in bands_list]
+            yield src, nodata_vals, bands_list, vec_gdf.geometry
+        return
 
     vec_crs = resolve_vector_crs(vec_gdf, vec_def_epsg)
     vec_bbox = get_gdf_bbox(vec_gdf)

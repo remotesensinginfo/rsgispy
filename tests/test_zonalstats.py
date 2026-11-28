@@ -998,3 +998,45 @@ def test_calc_zonal_band_pxl_counts_total_includes_nodata(tmp_path):
     )
     row = out_gdf.iloc[0]
     assert (row["total"], row["c1"], row["c2"], row["nodata_pxls"]) == (4, 2, 1, 1)
+
+
+def test_polygon_zonal_stats_reproj_vec_and_empty_layers(tmp_path):
+    """Polygon stats take reproj_vec, and an empty layer gives an empty result."""
+    arr = np.arange(36, dtype=np.float32).reshape(6, 6)
+    tif_path = str(tmp_path / "vals.tif")
+    _write_test_raster(tif_path, arr)
+    utm_gdf = gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[box(500000.0, 5199960.0, 500040.0, 5200000.0)],
+        crs="EPSG:32630",
+    )
+    wgs_gdf = utm_gdf.to_crs("EPSG:4326")
+    kw = dict(min_thres=-1.0, max_thres=1000.0, out_no_data_val=-1.0, use_pbar=False)
+
+    ref = zs_poly.calc_zonal_band_stats(utm_gdf.copy(), tif_path, 1, mean_field="m", **kw)
+    with pytest.raises(rsgispy.RSGISPyException):
+        zs_poly.calc_zonal_band_stats(wgs_gdf.copy(), tif_path, 1, mean_field="m", **kw)
+    rep = zs_poly.calc_zonal_band_stats(wgs_gdf.copy(), tif_path, 1, mean_field="m",
+                                        reproj_vec=True, **kw)
+    assert rep["m"].iloc[0] == pytest.approx(ref["m"].iloc[0], rel=1e-3)
+
+    for func, args in (
+        (zs_poly.calc_zonal_band_stats_test_poly_pts, {"mean_field": "m"}),
+        (zs_poly.calc_zonal_poly_pts_band_stats, {"out_field": "m"}),
+    ):
+        call_kw = {k: v for k, v in kw.items() if func is not zs_poly.calc_zonal_poly_pts_band_stats
+                   or k in ("use_pbar",)}
+        out = func(wgs_gdf.copy(), tif_path, 1, reproj_vec=True, **args, **call_kw)
+        assert np.isfinite(out["m"].iloc[0])
+
+    cnt = zs_poly.calc_zonal_band_pxl_counts(
+        wgs_gdf.copy(), tif_path, 1, {0: "c0"}, "total", reproj_vec=True, use_pbar=False
+    )
+    assert cnt["total"].iloc[0] == 16
+
+    empty = utm_gdf.iloc[0:0].copy()
+    out_e = zs_poly.calc_zonal_band_stats(empty, tif_path, 1, mean_field="m", **kw)
+    assert len(out_e) == 0 and "m" in out_e.columns
+    out_c = zs_poly.calc_zonal_band_pxl_counts(empty.copy(), tif_path, 1, {1: "c1"},
+                                               "total", use_pbar=False)
+    assert len(out_c) == 0 and {"c1", "total"} <= set(out_c.columns)

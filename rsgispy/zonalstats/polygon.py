@@ -220,6 +220,7 @@ def _calc_zonal_stats_core(
     percentile: Optional[float] = None,
     allow_point_fallback: bool = False,
     use_pbar: bool = True,
+    reproj_vec: bool = False,
 ) -> gpd.GeoDataFrame:
     """Shared implementation for polygon zonal statistics with optional centroid fallback."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -232,7 +233,8 @@ def _calc_zonal_stats_core(
         _validate_percentile(percentile, field_map.get("percentile"))
 
     with _open_validated_zonal_inputs(
-        vec_gdf, input_img, img_band, vec_def_epsg=vec_def_epsg
+        vec_gdf, input_img, img_band, vec_def_epsg=vec_def_epsg,
+        reproj_vec=reproj_vec,
     ) as (src, img_nodata, geom_series):
         results: Dict[str, List[float]] = {
             key: [] for key, name in field_map.items() if name is not None
@@ -309,6 +311,7 @@ def calc_zonal_band_stats_file(
     vec_def_epsg: Optional[int] = None,
     *,
     use_pbar: bool = True,
+    reproj_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
@@ -341,6 +344,9 @@ def calc_zonal_band_stats_file(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param reproj_vec: If ``True``, reproject the polygons to the raster CRS
+                       on the fly when they differ (Default = ``False``:
+                       raise an exception).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
                          infer from extension or write uncompressed, ``True``
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
@@ -391,6 +397,7 @@ def calc_zonal_band_stats_file(
             median_field=median_field,
             vec_def_epsg=vec_def_epsg,
             use_pbar=use_pbar,
+            reproj_vec=reproj_vec,
         ),
         out_vec_file=out_vec_file,
         out_vec_lyr=out_vec_lyr,
@@ -416,6 +423,7 @@ def calc_zonal_band_stats(
     vec_def_epsg: Optional[int] = None,
     *,
     use_pbar: bool = True,
+    reproj_vec: bool = False,
     vec_lyr: Optional[str] = None,
 ) -> gpd.GeoDataFrame:
     """
@@ -444,6 +452,9 @@ def calc_zonal_band_stats(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param reproj_vec: If ``True``, reproject the polygons to the raster CRS
+                       on the fly when they differ (Default = ``False``:
+                       raise an exception).
     :param vec_lyr: Optional layer name when ``vec_gdf`` is a file path.
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
@@ -487,6 +498,7 @@ def calc_zonal_band_stats(
         vec_def_epsg=vec_def_epsg,
         allow_point_fallback=False,
         use_pbar=use_pbar,
+        reproj_vec=reproj_vec,
     )
 
 
@@ -499,6 +511,7 @@ def calc_zonal_poly_pts_band_stats_file(
     vec_def_epsg: Optional[int] = None,
     *,
     use_pbar: bool = True,
+    reproj_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
@@ -520,6 +533,9 @@ def calc_zonal_poly_pts_band_stats_file(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param reproj_vec: If ``True``, reproject the polygons to the raster CRS
+                       on the fly when they differ (Default = ``False``:
+                       raise an exception).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
                          infer from extension or write uncompressed, ``True``
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
@@ -555,6 +571,7 @@ def calc_zonal_poly_pts_band_stats_file(
             out_field,
             vec_def_epsg=vec_def_epsg,
             use_pbar=use_pbar,
+            reproj_vec=reproj_vec,
         ),
         out_vec_file=out_vec_file,
         out_vec_lyr=out_vec_lyr,
@@ -570,6 +587,7 @@ def calc_zonal_poly_pts_band_stats(
     vec_def_epsg: Optional[int] = None,
     *,
     use_pbar: bool = True,
+    reproj_vec: bool = False,
     vec_lyr: Optional[str] = None,
 ) -> gpd.GeoDataFrame:
     """
@@ -588,6 +606,9 @@ def calc_zonal_poly_pts_band_stats(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param reproj_vec: If ``True``, reproject the polygons to the raster CRS
+                       on the fly when they differ (Default = ``False``:
+                       raise an exception).
     :param vec_lyr: Optional layer name when ``vec_gdf`` is a file path.
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
@@ -613,7 +634,8 @@ def calc_zonal_poly_pts_band_stats(
         )
 
     with _open_validated_zonal_inputs(
-        vec_gdf, input_img, img_band, vec_def_epsg=vec_def_epsg
+        vec_gdf, input_img, img_band, vec_def_epsg=vec_def_epsg,
+        reproj_vec=reproj_vec,
     ) as (src, _, geom_series):
         out_vals: List[float] = []
         tqdm_cls = rsgispy.get_tqdm()
@@ -656,6 +678,7 @@ def calc_zonal_band_stats_test_poly_pts_file(
     vec_def_epsg: Optional[int] = None,
     *,
     use_pbar: bool = True,
+    reproj_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
@@ -691,6 +714,9 @@ def calc_zonal_band_stats_test_poly_pts_file(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param reproj_vec: If ``True``, reproject the polygons to the raster CRS
+                       on the fly when they differ (Default = ``False``:
+                       raise an exception).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
                          infer from extension or write uncompressed, ``True``
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
@@ -743,6 +769,7 @@ def calc_zonal_band_stats_test_poly_pts_file(
             median_field=median_field,
             vec_def_epsg=vec_def_epsg,
             use_pbar=use_pbar,
+            reproj_vec=reproj_vec,
         ),
         out_vec_file=out_vec_file,
         out_vec_lyr=out_vec_lyr,
@@ -770,6 +797,7 @@ def calc_zonal_band_stats_test_poly_pts(
     vec_def_epsg: Optional[int] = None,
     *,
     use_pbar: bool = True,
+    reproj_vec: bool = False,
     vec_lyr: Optional[str] = None,
 ) -> gpd.GeoDataFrame:
     """
@@ -803,6 +831,9 @@ def calc_zonal_band_stats_test_poly_pts(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param reproj_vec: If ``True``, reproject the polygons to the raster CRS
+                       on the fly when they differ (Default = ``False``:
+                       raise an exception).
     :param vec_lyr: Optional layer name when ``vec_gdf`` is a file path.
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
@@ -848,6 +879,7 @@ def calc_zonal_band_stats_test_poly_pts(
         percentile=percentile,
         allow_point_fallback=True,
         use_pbar=use_pbar,
+        reproj_vec=reproj_vec,
     )
 
 
@@ -861,6 +893,7 @@ def calc_zonal_band_pxl_counts_file(
     vec_def_epsg: Optional[int] = None,
     *,
     use_pbar: bool = True,
+    reproj_vec: bool = False,
     out_compress: Optional[Union[str, bool]] = None,
     out_vec_file: Optional[Union[str, os.PathLike]] = None,
     out_vec_lyr: Optional[str] = None,
@@ -888,6 +921,9 @@ def calc_zonal_band_pxl_counts_file(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param reproj_vec: If ``True``, reproject the polygons to the raster CRS
+                       on the fly when they differ (Default = ``False``:
+                       raise an exception).
     :param out_compress: Optional GeoParquet compression setting (``None`` to
                          infer from extension or write uncompressed, ``True``
                          for ``'snappy'``, ``False``/``'none'`` for uncompressed,
@@ -925,6 +961,7 @@ def calc_zonal_band_pxl_counts_file(
             total_field=total_field,
             vec_def_epsg=vec_def_epsg,
             use_pbar=use_pbar,
+            reproj_vec=reproj_vec,
         ),
         out_vec_file=out_vec_file,
         out_vec_lyr=out_vec_lyr,
@@ -941,6 +978,7 @@ def calc_zonal_band_pxl_counts(
     vec_def_epsg: Optional[int] = None,
     *,
     use_pbar: bool = True,
+    reproj_vec: bool = False,
     vec_lyr: Optional[str] = None,
 ) -> gpd.GeoDataFrame:
     """
@@ -966,6 +1004,9 @@ def calc_zonal_band_pxl_counts(
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
+    :param reproj_vec: If ``True``, reproject the polygons to the raster CRS
+                       on the fly when they differ (Default = ``False``:
+                       raise an exception).
     :param vec_lyr: Optional layer name when ``vec_gdf`` is a file path.
     :return: Updated :class:`geopandas.GeoDataFrame`.
 
@@ -992,7 +1033,8 @@ def calc_zonal_band_pxl_counts(
         )
 
     with _open_validated_zonal_inputs(
-        vec_gdf, input_img, img_band, vec_def_epsg=vec_def_epsg
+        vec_gdf, input_img, img_band, vec_def_epsg=vec_def_epsg,
+        reproj_vec=reproj_vec,
     ) as (src, img_nodata, geom_series):
         total_col = total_field.lower()
         lut_cols = {pxl_val: name.lower() for pxl_val, name in vals_lut.items()}
