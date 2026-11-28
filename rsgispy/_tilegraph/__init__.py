@@ -33,9 +33,11 @@ from rsgispy._tilegraph._nodes import (
 )
 from rsgispy._tilegraph._sample import SampleSink
 from rsgispy._tilegraph._stats import RasterStats, StatsSink, ZonalStatsSink
+from rsgispy._tilegraph._tensor import halo_border_from_mode
 
 __all__ = [
     "HaloBorder",
+    "halo_border_from_mode",
     "TileContext",
     "TileNode",
     "TileSink",

@@ -51,6 +51,7 @@ from rsgispy._tilegraph import (
     WindowOp,
     ZonalStatsSink,
     datatype_from_meta,
+    halo_border_from_mode,
     infer_node_meta,
     resolve_input_nodata,
     run_tile_graph,
@@ -59,6 +60,7 @@ from rsgispy._tilegraph import (
 
 __all__ = [
     "HaloBorder",
+    "halo_border_from_mode",
     "TileContext",
     "TileNode",
     "RasterSource",

@@ -47,6 +47,45 @@ texture extraction:
        filter_size=5,
    )
 
+.. _filter-border-mode:
+
+Image borders
+-------------
+
+Near the edge of the image part of each window falls outside it. The window
+filters, kernel and edge filters, SAR speckle filters, GLCM texture and the
+morphology operations (:mod:`rsgispy.imagemorphology`) fill those pixels as
+set by the keyword-only ``border_mode`` option of each file-based function
+and node builder:
+
+* ``'edge'`` (the default): repeat the nearest edge pixel
+  (``a b c | c c``);
+* ``'reflect'``: mirror without repeating the edge pixel (``a b c | b a``);
+* ``'symmetric'``: mirror repeating the edge pixel (``a b c | c b``);
+* ``'constant'``: use ``border_fill`` (``0.0`` by default). With
+  ``border_fill=numpy.nan`` the outside pixels are left out of the window,
+  like no-data pixels, so near the edge a filter uses the in-image pixels
+  only.
+
+These are the :func:`numpy.pad` modes, applied per tile with the same result
+as padding the whole image, so the output does not depend on the block size.
+The local minima of :mod:`rsgispy.imagemorphology` have no ``border_mode``:
+they always leave out-of-image neighbours out of the comparison.
+
+.. code-block:: python
+
+   import numpy as np
+   import rsgispy.imagefilter.stats
+
+   rsgispy.imagefilter.stats.apply_mean_filter(
+       "in.tif", "mean5_reflect.tif", filter_size=5, border_mode="reflect"
+   )
+   # Mean of the in-image pixels only near the edge.
+   rsgispy.imagefilter.stats.apply_mean_filter(
+       "in.tif", "mean5_inside.tif", filter_size=5,
+       border_mode="constant", border_fill=np.nan,
+   )
+
 Convolution and correlation
 ---------------------------
 
@@ -80,7 +119,7 @@ Every filter in this package can also be used as a node of an in-memory
 maths and indices in one pass without intermediate files. Each has a node
 builder next to its file-based function, named without ``apply_`` and with
 ``_node``, taking ``(source, <the function's processing parameters>, *,
-no_data_val=None, name=None)``; the file options (``gdalformat``,
+no_data_val=None, border_mode='edge', border_fill=0.0, name=None)``; the file options (``gdalformat``,
 ``datatype``, ``calc_stats``) belong to the
 :class:`~rsgispy.imageprocess.DiskSink`. ``no_data_val`` defaults to the
 no-data value of the source node (see :ref:`tilegraph-nodata`; use

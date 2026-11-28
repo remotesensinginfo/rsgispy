@@ -243,7 +243,7 @@ def _morph_reduce_block(
     in_nd: Optional[float],
     fill_nd: float,
 ) -> np.ndarray:
-    """Compute nodata-aware dilate/erode/gradient over an edge-padded block."""
+    """Compute nodata-aware dilate/erode/gradient over a padded block."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     win_size = int(op_mask.shape[0])
     half = win_size // 2
@@ -423,13 +423,15 @@ def morph_reduce_node(
     combined: bool = False,
     in_nd: Optional[float] = None,
     round_int: bool = False,
+    border: Optional[HaloBorder] = None,
     name: Optional[str] = None,
 ) -> WindowOp:
     """
     :class:`WindowOp` computing a dilation, erosion or morphological gradient
     over the structuring element ``op_mask``; with ``round_int``, results are
     rounded to ``nodata.np_dtype`` (as for the intermediate steps of an
-    opening or closing written to an integer raster).
+    opening or closing written to an integer raster). ``border`` sets the
+    padding beyond the image edge (Default = ``HaloBorder('edge')``).
     """
     # pylint: disable=too-many-arguments
     if op_kind not in ("dilate", "erode", "gradient"):
@@ -456,7 +458,7 @@ def morph_reduce_node(
         source=source,
         radius=(half, half),
         func=_reduce,
-        border=HaloBorder(mode="edge"),
+        border=border if border is not None else HaloBorder(mode="edge"),
         name=name,
         meta_fn=_morph_meta(combined, nodata.out_nd),
     )
@@ -507,13 +509,15 @@ def morph_two_step_nodes(
     niters: int,
     nodata: MorphNodeNodata,
     name: str,
+    *,
+    border: Optional[HaloBorder] = None,
 ) -> Tuple[TileNode, TileNode]:
     """
     ``niters`` steps of ``first_op`` followed by ``niters`` steps of
     ``second_op`` (an opening or a closing). Steps after the first are
     rounded to ``nodata.np_dtype`` when it is an integer type, as if each
-    step had been written to the output raster. Returns
-    ``(after_first_op, result)``.
+    step had been written to the output raster; every step pads with
+    ``border``. Returns ``(after_first_op, result)``.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     if isinstance(niters, bool) or int(niters) < 1:
@@ -527,6 +531,7 @@ def morph_two_step_nodes(
             nodata,
             in_nd=nodata.in_nd if idx == 0 else nodata.out_nd,
             round_int=True,
+            border=border,
             name=f"{name}_{first_op}_{idx}",
         )
     mid = cur
@@ -538,6 +543,7 @@ def morph_two_step_nodes(
             nodata,
             in_nd=nodata.out_nd,
             round_int=True,
+            border=border,
             name=f"{name}_{second_op}_{idx}",
         )
     return mid, cur
@@ -549,14 +555,17 @@ def morph_top_hat_nodes(
     black: bool,
     nodata: MorphNodeNodata,
     name: str,
+    *,
+    border: Optional[HaloBorder] = None,
 ) -> Tuple[TileNode, TileNode]:
     """
     Black (``closing - input``) or white (``input - opening``) top-hat.
     Returns ``(closing_or_opening, top_hat)``.
     """
+    # pylint: disable=too-many-arguments
     first_op, second_op = ("dilate", "erode") if black else ("erode", "dilate")
     _, step2 = morph_two_step_nodes(
-        source, op_mask, first_op, second_op, 1, nodata, name
+        source, op_mask, first_op, second_op, 1, nodata, name, border=border
     )
     in_nd = nodata.in_nd
     out_nd = nodata.out_nd
@@ -650,10 +659,13 @@ def _run_window_morphology(
     calc_stats: bool = True,
     use_pbar: bool = True,
     default_dtype: Optional[int] = None,
+    border: Optional[HaloBorder] = None,
 ) -> None:
     """
     Run a dilation, erosion, gradient or local-minima file function through
     its tile-graph node (sequentially numbered local minima excepted).
+    ``border`` is the padding of the dilation, erosion and gradient (local
+    minima always leave out-of-image neighbours out).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     if op_kind not in ("dilate", "erode", "gradient", "local_minima"):
@@ -691,7 +703,7 @@ def _run_window_morphology(
             nodata = MorphNodeNodata(in_nd, np_dtype)
             node = morph_reduce_node(
                 src, op_mask, op_kind, nodata, combined=combined,
-                in_nd=nodata.in_nd, name=op_kind,
+                in_nd=nodata.in_nd, border=border, name=op_kind,
             )
         return node, None
 
@@ -721,6 +733,7 @@ def _run_two_step_seq(
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
+    border: Optional[HaloBorder] = None,
 ) -> None:
     """
     Run an opening (``first_op='erode'``) or closing (``first_op='dilate'``)
@@ -743,6 +756,7 @@ def _run_two_step_seq(
             niters,
             MorphNodeNodata(in_nd, np_dtype),
             "opening" if first_op == "erode" else "closing",
+            border=border,
         )
         return result, mid
 
@@ -770,6 +784,7 @@ def _run_top_hat(
     no_data_val: Optional[float] = None,
     calc_stats: bool = True,
     use_pbar: bool = True,
+    border: Optional[HaloBorder] = None,
 ) -> None:
     """
     Run a black or white top-hat file function through its tile-graph nodes;
@@ -786,6 +801,7 @@ def _run_top_hat(
             black,
             MorphNodeNodata(in_nd, np_dtype),
             "black_top_hat" if black else "white_top_hat",
+            border=border,
         )
         return result, mid
 

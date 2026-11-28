@@ -12,7 +12,7 @@ from typing import Any, Optional, Tuple
 import numpy as np
 
 import rsgispy
-from rsgispy._io import TileNode, resolve_input_nodata
+from rsgispy._io import HaloBorder, TileNode, halo_border_from_mode, resolve_input_nodata
 from rsgispy.imagemorphology._helpers import (
     MorphNodeNodata,
     _load_morph_operator,
@@ -73,6 +73,8 @@ def image_dilate(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -93,6 +95,13 @@ def image_dilate(
                      ``input_img`` data type).
     :param no_data_val: Optional output no-data value (Default = ``None``,
                         inherits ``input_img`` header no-data when representable).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -121,6 +130,7 @@ def image_dilate(
         no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        border=halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -134,6 +144,8 @@ def image_erode(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -154,6 +166,13 @@ def image_erode(
                      ``input_img`` data type).
     :param no_data_val: Optional output no-data value (Default = ``None``,
                         inherits ``input_img`` header no-data when representable).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -182,6 +201,7 @@ def image_erode(
         no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        border=halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -195,6 +215,8 @@ def image_gradient(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -216,6 +238,13 @@ def image_gradient(
                      ``input_img`` data type).
     :param no_data_val: Optional output no-data value (Default = ``None``,
                         inherits ``input_img`` header no-data when representable).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -246,6 +275,7 @@ def image_gradient(
         no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        border=halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -259,6 +289,8 @@ def image_dilate_combined_out(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -280,6 +312,13 @@ def image_dilate_combined_out(
                      ``input_img`` data type).
     :param no_data_val: Optional output no-data value (Default = ``None``,
                         inherits ``input_img`` header no-data when representable).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -308,6 +347,7 @@ def image_dilate_combined_out(
         no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        border=halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -321,6 +361,8 @@ def image_erode_combined_out(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -342,6 +384,13 @@ def image_erode_combined_out(
                      ``input_img`` data type).
     :param no_data_val: Optional output no-data value (Default = ``None``,
                         inherits ``input_img`` header no-data when representable).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -370,6 +419,7 @@ def image_erode_combined_out(
         no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        border=halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -383,6 +433,8 @@ def image_gradient_combined_out(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -404,6 +456,13 @@ def image_gradient_combined_out(
                      ``input_img`` data type).
     :param no_data_val: Optional output no-data value (Default = ``None``,
                         inherits ``input_img`` header no-data when representable).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -434,6 +493,7 @@ def image_gradient_combined_out(
         no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        border=halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -602,6 +662,8 @@ def image_opening(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -629,6 +691,13 @@ def image_opening(
                      ``input_img`` data type).
     :param no_data_val: Optional output no-data value (Default = ``None``,
                         inherits ``input_img`` header no-data when representable).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -660,6 +729,7 @@ def image_opening(
         no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        border=halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -675,6 +745,8 @@ def image_closing(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -702,6 +774,13 @@ def image_closing(
                      ``input_img`` data type).
     :param no_data_val: Optional output no-data value (Default = ``None``,
                         inherits ``input_img`` header no-data when representable).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -733,6 +812,7 @@ def image_closing(
         no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        border=halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -747,6 +827,8 @@ def image_black_top_hat(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -773,6 +855,13 @@ def image_black_top_hat(
                      ``input_img`` data type).
     :param no_data_val: Optional output no-data value (Default = ``None``,
                         inherits ``input_img`` header no-data when representable).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -803,6 +892,7 @@ def image_black_top_hat(
         no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        border=halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -817,6 +907,8 @@ def image_white_top_hat(
     gdalformat: str = "GTIFF",
     datatype: Optional[int] = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     calc_stats: bool = True,
     use_pbar: bool = True,
 ) -> None:
@@ -843,6 +935,13 @@ def image_white_top_hat(
                      ``input_img`` data type).
     :param no_data_val: Optional output no-data value (Default = ``None``,
                         inherits ``input_img`` header no-data when representable).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param calc_stats: If ``True``, compute output stats and pyramids
                        (Default = ``True``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -873,6 +972,7 @@ def image_white_top_hat(
         no_data_val=no_data_val,
         calc_stats=calc_stats,
         use_pbar=use_pbar,
+        border=halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -889,6 +989,8 @@ def _reduce_node(
     dtype: Any,
     no_data_val: Optional[float],
     name: Optional[str],
+    *,
+    border: HaloBorder,
 ) -> TileNode:
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(*op_args)
@@ -900,6 +1002,7 @@ def _reduce_node(
         nodata,
         combined=combined,
         in_nd=nodata.in_nd,
+        border=border,
         name=name or f"image_{op_kind}",
     )
 
@@ -913,6 +1016,8 @@ def image_dilate_node(
     combined: bool = False,
     dtype: Any = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -942,6 +1047,13 @@ def image_dilate_node(
                   (Default = ``None``, ``float64``).
     :param no_data_val: Input no-data value (Default = ``None``: that of
                         ``source``'s metadata).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'image_dilate'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -960,6 +1072,7 @@ def image_dilate_node(
     return _reduce_node(
         "dilate", source, (morph_op_file, use_op_file, op_size), combined,
         dtype, no_data_val, name,
+        border=halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -972,6 +1085,8 @@ def image_erode_node(
     combined: bool = False,
     dtype: Any = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -996,6 +1111,13 @@ def image_erode_node(
                   (Default = ``None``, ``float64``).
     :param no_data_val: Input no-data value (Default = ``None``: that of
                         ``source``'s metadata).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'image_erode'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1014,6 +1136,7 @@ def image_erode_node(
     return _reduce_node(
         "erode", source, (morph_op_file, use_op_file, op_size), combined,
         dtype, no_data_val, name,
+        border=halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -1026,6 +1149,8 @@ def image_gradient_node(
     combined: bool = False,
     dtype: Any = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1051,6 +1176,13 @@ def image_gradient_node(
                   (Default = ``None``, ``float64``).
     :param no_data_val: Input no-data value (Default = ``None``: that of
                         ``source``'s metadata).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'image_gradient'``).
     :return: :class:`~rsgispy.imageprocess.WindowOp` node.
 
@@ -1068,6 +1200,7 @@ def image_gradient_node(
     return _reduce_node(
         "gradient", source, (morph_op_file, use_op_file, op_size), combined,
         dtype, no_data_val, name,
+        border=halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -1151,6 +1284,8 @@ def _two_step_node(
     dtype: Any,
     no_data_val: Optional[float],
     name: str,
+    *,
+    border: HaloBorder,
 ) -> TileNode:
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(*op_args)
@@ -1158,6 +1293,7 @@ def _two_step_node(
     _, result = morph_two_step_nodes(
         source, op_mask, first_op, second_op, niters,
         MorphNodeNodata(resolve_input_nodata(source, no_data_val), dtype), name,
+        border=border,
     )
     return result
 
@@ -1171,6 +1307,8 @@ def image_opening_node(
     *,
     dtype: Any = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1195,6 +1333,13 @@ def image_opening_node(
                   (Default = ``None``, ``float64``).
     :param no_data_val: Input no-data value (Default = ``None``: that of
                         ``source``'s metadata).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name prefix (Default = ``'image_opening'``).
     :return: Last node of the opening.
 
@@ -1220,6 +1365,7 @@ def image_opening_node(
     return _two_step_node(
         source, (morph_op_file, use_op_file, op_size), "erode", niters,
         dtype, no_data_val, name or "image_opening",
+        border=halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -1232,6 +1378,8 @@ def image_closing_node(
     *,
     dtype: Any = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1252,6 +1400,13 @@ def image_closing_node(
                   (Default = ``None``, ``float64``).
     :param no_data_val: Input no-data value (Default = ``None``: that of
                         ``source``'s metadata).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name prefix (Default = ``'image_closing'``).
     :return: Last node of the closing.
 
@@ -1270,6 +1425,7 @@ def image_closing_node(
     return _two_step_node(
         source, (morph_op_file, use_op_file, op_size), "dilate", niters,
         dtype, no_data_val, name or "image_closing",
+        border=halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -1280,6 +1436,8 @@ def _top_hat_node(
     dtype: Any,
     no_data_val: Optional[float],
     name: str,
+    *,
+    border: HaloBorder,
 ) -> TileNode:
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     op_mask = _load_morph_operator(*op_args)
@@ -1289,6 +1447,7 @@ def _top_hat_node(
         black,
         MorphNodeNodata(resolve_input_nodata(source, no_data_val), dtype),
         name,
+        border=border,
     )
     return result
 
@@ -1301,6 +1460,8 @@ def image_white_top_hat_node(
     *,
     dtype: Any = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1320,6 +1481,13 @@ def image_white_top_hat_node(
                   (Default = ``None``, ``float64``).
     :param no_data_val: Input no-data value (Default = ``None``: that of
                         ``source``'s metadata).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'image_white_top_hat'``).
     :return: :class:`~rsgispy.imageprocess.PointwiseOp` node.
 
@@ -1338,6 +1506,7 @@ def image_white_top_hat_node(
     return _top_hat_node(
         source, (morph_op_file, use_op_file, op_size), False, dtype,
         no_data_val, name or "image_white_top_hat",
+        border=halo_border_from_mode(border_mode, border_fill),
     )
 
 
@@ -1349,6 +1518,8 @@ def image_black_top_hat_node(
     *,
     dtype: Any = None,
     no_data_val: Optional[float] = None,
+    border_mode: str = "edge",
+    border_fill: float = 0.0,
     name: Optional[str] = None,
 ) -> TileNode:
     """
@@ -1367,6 +1538,13 @@ def image_black_top_hat_node(
                   (Default = ``None``, ``float64``).
     :param no_data_val: Input no-data value (Default = ``None``: that of
                         ``source``'s metadata).
+    :param border_mode: How windows are filled beyond the image edge:
+                        ``'edge'`` (repeat the edge pixels; default),
+                        ``'reflect'``, ``'symmetric'`` or ``'constant'``
+                        (``border_fill``); see :ref:`filter-border-mode`.
+    :param border_fill: Value beyond the image edge when ``border_mode``
+                        is ``'constant'`` (Default = ``0.0``; NaN leaves
+                        those pixels out, like no data).
     :param name: Optional node name (Default = ``'image_black_top_hat'``).
     :return: :class:`~rsgispy.imageprocess.PointwiseOp` node.
 
@@ -1383,4 +1561,5 @@ def image_black_top_hat_node(
     return _top_hat_node(
         source, (morph_op_file, use_op_file, op_size), True, dtype,
         no_data_val, name or "image_black_top_hat",
+        border=halo_border_from_mode(border_mode, border_fill),
     )

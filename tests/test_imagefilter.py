@@ -525,3 +525,115 @@ def test_kernel_filter_convolves_and_correlation_filter_correlates(tmp_path):
         _run(imf.smooth.apply_kernel_filter, sharpen, "conv_sharp"),
         _run(imf.smooth.apply_kernel_correlation_filter, sharpen, "corr_sharp"),
     )
+
+
+def _window_reference(arr, size, reducer, mode, fill=0.0):
+    """Reference moving-window ``reducer`` of ``arr`` with ``np.pad`` borders."""
+    from numpy.lib.stride_tricks import sliding_window_view  # pylint: disable=import-outside-toplevel
+
+    half = size // 2
+    kwargs = {"constant_values": fill} if mode == "constant" else {}
+    pad = np.pad(arr.astype(np.float64), half, mode=mode, **kwargs)
+    return reducer(sliding_window_view(pad, (size, size)), axis=(-2, -1))
+
+
+@pytest.mark.parametrize(
+    "mode, fill", [("edge", 0.0), ("reflect", 0.0), ("symmetric", 0.0), ("constant", -3.5)]
+)
+def test_window_filters_border_mode(tmp_path, mode, fill):
+    """border_mode / border_fill set how windows are filled beyond the image
+    edge for window filters, kernels and edge filters."""
+    arr = (np.arange(42, dtype=np.float32).reshape(6, 7) ** 1.3).astype(np.float32)
+    in_p = tmp_path / "bm_in.tif"
+    _write_raster(in_p, arr)
+    img_proc.set_default_block_size(4)
+    try:
+        def _run(fn, tag, *args, **kwargs):
+            out_p = tmp_path / f"{tag}_{mode}.tif"
+            fn(str(in_p), str(out_p), *args, border_mode=mode, border_fill=fill,
+               use_pbar=False, datatype=rsgispy.TYPE_64FLOAT, **kwargs)
+            with rasterio.open(out_p) as src:
+                return src.read(1)
+
+        np.testing.assert_allclose(
+            _run(imf.stats.apply_mean_filter, "mean", 3),
+            _window_reference(arr, 3, np.mean, mode, fill), rtol=1e-12,
+        )
+        np.testing.assert_allclose(
+            _run(imf.stats.apply_max_filter, "max", 5),
+            _window_reference(arr, 5, np.max, mode, fill), rtol=1e-12,
+        )
+        asym = [[1.0, 2.0, 0.0], [0.0, 0.0, 3.0], [0.0, -1.0, 0.5]]
+        kwargs = {"constant_values": fill} if mode == "constant" else {}
+        pad = np.pad(arr.astype(np.float64), 1, mode=mode, **kwargs)
+        corr_ref = sum(
+            asym[i][j] * pad[i:i + 6, j:j + 7] for i in range(3) for j in range(3)
+        )
+        np.testing.assert_allclose(
+            _run(imf.smooth.apply_kernel_correlation_filter, "kcorr", asym),
+            corr_ref, rtol=1e-12, atol=1e-9,
+        )
+        sobel_x = _run(imf.edge.apply_sobel_x_filter, "sobx")
+        kx = [[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]]
+        sob_ref = sum(kx[i][j] * pad[i:i + 6, j:j + 7] for i in range(3) for j in range(3))
+        np.testing.assert_allclose(sobel_x, sob_ref, rtol=1e-12, atol=1e-9)
+    finally:
+        img_proc.reset_default_block_size()
+
+
+def test_window_filters_border_mode_default_nan_fill_and_errors(tmp_path):
+    """The default border_mode is 'edge'; a NaN fill leaves out-of-image
+    neighbours out; bad modes raise."""
+    arr = np.arange(1, 31, dtype=np.float32).reshape(5, 6)
+    in_p = tmp_path / "bm2_in.tif"
+    _write_raster(in_p, arr)
+
+    def _read(path):
+        with rasterio.open(path) as src:
+            return src.read(1)
+
+    imf.stats.apply_mean_filter(str(in_p), str(tmp_path / "d.tif"), use_pbar=False)
+    imf.stats.apply_mean_filter(
+        str(in_p), str(tmp_path / "e.tif"), border_mode="edge", use_pbar=False
+    )
+    np.testing.assert_array_equal(_read(tmp_path / "d.tif"), _read(tmp_path / "e.tif"))
+
+    imf.stats.apply_mean_filter(
+        str(in_p), str(tmp_path / "n.tif"), border_mode="constant",
+        border_fill=np.nan, use_pbar=False,
+    )
+    out = _read(tmp_path / "n.tif")
+    assert out[0, 0] == pytest.approx(np.mean(arr[:2, :2]))
+    assert out[2, 2] == pytest.approx(np.mean(arr[1:4, 1:4]))
+
+    with pytest.raises(rsgispy.RSGISPyException):
+        imf.stats.apply_mean_filter(
+            str(in_p), str(tmp_path / "bad.tif"), border_mode="wrap", use_pbar=False
+        )
+    with pytest.raises(rsgispy.RSGISPyException):
+        imf.smooth.apply_kernel_filter(
+            str(in_p), str(tmp_path / "bad2.tif"), [[1, 1, 1]] * 3,
+            border_mode="constant", border_fill="x", use_pbar=False,
+        )
+    with pytest.raises(TypeError):
+        # Keyword-only.
+        imf.stats.apply_mean_filter(str(in_p), str(tmp_path / "b3.tif"), 3, "GTIFF",
+                                    None, None, "reflect")
+
+
+def test_imagefilter_border_mode_signatures():
+    """Every window filter, kernel, edge, SAR and GLCM function and node
+    builder takes keyword-only border_mode='edge' and border_fill=0.0."""
+    checked = 0
+    for mod in [imf.stats, imf.smooth, imf.edge, imf.sar, imf.texture]:
+        for name in mod.__all__:
+            if not (name.startswith("apply_") or name.endswith("_node")):
+                continue
+            sig = inspect.signature(getattr(mod, name))
+            for kw_name, default in (("border_mode", "edge"), ("border_fill", 0.0)):
+                assert kw_name in sig.parameters, f"{mod.__name__}.{name} missing {kw_name}"
+                par = sig.parameters[kw_name]
+                assert par.kind == inspect.Parameter.KEYWORD_ONLY
+                assert par.default == default
+            checked += 1
+    assert checked == 76

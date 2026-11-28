@@ -707,6 +707,7 @@ class GlcmWindowOp(WindowOp):
     :param band_bounds: Grey-level range: one ``(min, max)`` for all bands or
                         one per input band.
     :param no_data_val: Optional input no-data value.
+    :param border: Padding outside the image (Default = ``HaloBorder('edge')``).
     :param name: Optional node name.
     """
 
@@ -724,6 +725,7 @@ class GlcmWindowOp(WindowOp):
         band_bounds: Union[Tuple[float, float], Sequence[Tuple[float, float]]],
         *,
         no_data_val: Optional[float] = None,
+        border: Optional[HaloBorder] = None,
         name: Optional[str] = None,
     ) -> None:
         # pylint: disable=too-many-positional-arguments
@@ -745,7 +747,7 @@ class GlcmWindowOp(WindowOp):
             source=source,
             radius=(self.size // 2, self.size // 2),
             func=self._glcm_block,
-            border=HaloBorder("edge"),
+            border=border if border is not None else HaloBorder("edge"),
             name=name,
             meta_fn=self._glcm_meta,
         )

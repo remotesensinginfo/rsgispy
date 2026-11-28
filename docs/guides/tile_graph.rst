@@ -501,9 +501,10 @@ filter (3 x 3) need 1 + 2 + 1 = 4 pixels around each tile of the source.
 When branches meet, the larger halo wins. The graph computes this for you,
 reads each source tile with its halo once, and crops each node's result to
 what the next node needs. Pixels outside the image are filled with the
-source's ``border`` mode (``'edge'`` by default), the same padding the
-file-based functions use, so **the result does not depend on the block
-size**:
+``border`` mode of the window node that reads them (``'edge'`` by default;
+set with the ``border_mode`` option of the filter, texture and morphology
+builders, see :ref:`filter-border-mode`), the same padding the file-based
+functions use, so **the result does not depend on the block size**:
 
 .. literalinclude:: ../examples/tile_graph.py
    :language: python
