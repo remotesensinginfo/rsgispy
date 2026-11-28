@@ -78,7 +78,11 @@ def test_endmembers(tropwet):
     em_df = out["em_df"]
     assert list(em_df.columns) == EM_NAMES
     for name in EM_NAMES:
-        assert np.allclose(em_df[name].to_numpy(), ENDMEMBERS[name], atol=40)
+        # Each endmember is the mean of >= 50 pure pixels of the median
+        # composite (noise sd 20 per date, uint16 rounding), so it is within a
+        # few reflectance units of the truth: the largest error over seeds 0-4
+        # was 1.9 (0.0002 reflectance). atol=5 leaves a ~2.5x margin.
+        assert np.allclose(em_df[name].to_numpy(), ENDMEMBERS[name], atol=5)
     assert os.path.getsize(out["em_plot"]) > 0
 
 

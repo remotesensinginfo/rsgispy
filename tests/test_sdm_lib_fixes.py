@@ -125,11 +125,24 @@ def test_shap_linear_perturbation_option():
         run_shap_explainer(**kw, linear_perturbation="bad")
 
 
-def test_shap_default_is_interventional_in_public_api(tmp_path):
+def test_shap_default_is_interventional_in_public_api(tmp_path, monkeypatch):
     pytest.importorskip("shap")
     import geopandas as gpd
 
     import rsgispy.modelling.species_distribution as sdm
+    import rsgispy.tools._ml_explain as ml_explain
+
+    # shap_sklearn_mdl_explainer returns None, so capture the SHAP values it
+    # computes (the same object the summary plot is drawn from).
+    captured = {}
+    orig_mean_abs = ml_explain._compute_shap_mean_abs_df
+
+    def _spy(raw_shap, feature_names, class_labels=None):
+        captured["raw"] = raw_shap
+        captured["summary"] = orig_mean_abs(raw_shap, feature_names, class_labels)
+        return captured["summary"]
+
+    monkeypatch.setattr(ml_explain, "_compute_shap_mean_abs_df", _spy)
 
     mdl, x_df, _ = _correlated_logreg()
     gdf = gpd.GeoDataFrame(
@@ -140,7 +153,29 @@ def test_shap_default_is_interventional_in_public_api(tmp_path):
         mdl, gdf, None, ["a", "b"], shap_summary_plot=str(out_plot),
         use_linear_explainer=True, linear_perturbation="interventional",
     )
-    assert out_plot.exists()
+    assert out_plot.exists() and out_plot.stat().st_size > 0
+
+    raw = captured["raw"]
+    vals = np.asarray(raw.values, dtype=float)
+    assert vals.shape == (len(x_df), 2)  # one value per sample and variable
+    assert np.all(np.isfinite(vals))
+    assert list(raw.feature_names) == ["a", "b"]
+    # Interventional linear SHAP: value = coef * (x - mean(x)), so "b"
+    # (coefficient forced to 0) gets exactly 0 and "a" is coef_a * (a - mean).
+    np.testing.assert_allclose(vals[:, 1], 0.0, atol=1e-10)
+    np.testing.assert_allclose(
+        vals[:, 0], mdl.coef_[0, 0] * (x_df["a"] - x_df["a"].mean()), rtol=1e-6,
+        atol=1e-10,
+    )
+    # Additivity: base value + sum of SHAP values = the explained log-odds.
+    base = np.broadcast_to(np.asarray(raw.base_values, dtype=float), (len(x_df),))
+    np.testing.assert_allclose(
+        base + vals.sum(axis=1), mdl.decision_function(x_df), rtol=1e-6, atol=1e-8
+    )
+    summary = captured["summary"]
+    assert list(summary["feature"]) == ["a", "b"]  # sorted by importance
+    assert summary["mean_abs_shap"].iloc[0] > 0.1
+    assert summary["mean_abs_shap"].iloc[1] == pytest.approx(0.0, abs=1e-10)
 
 
 def test_shap_auto_explainer_linear_detection():
