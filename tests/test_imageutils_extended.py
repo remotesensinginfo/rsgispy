@@ -1500,3 +1500,40 @@ def test_reproject_image_without_nodata_keeps_zeros(tmp_path, monkeypatch):
     iu_warp.reproject_image(src, str(tmp_path / "out.tif"), 32630,
                             calc_stats=False, use_pbar=False)
     assert seen["src_nodata"] is None
+
+
+def test_gdal_warp_src_nodata_none_keeps_alpha_and_zeros(tmp_path):
+    """src_nodata='none' keeps header-nodata pixels as data and honours src_alpha."""
+    src = str(tmp_path / "src.tif")
+    data = np.array([[0, 1, 2, 3], [4, 0, 6, 7], [8, 9, 0, 1], [2, 3, 4, 0]],
+                    dtype=np.uint8)
+    alpha = np.full((4, 4), 255, dtype=np.uint8)
+    alpha[0, 3] = 0
+    _write_test_tif(src, np.stack([data, alpha]), nodata=0)
+    out = str(tmp_path / "out.tif")
+    iu_warp.gdal_warp(src, out, src_nodata="none", dst_nodata=99, src_alpha=True)
+    with rasterio.open(out) as ds:
+        arr = ds.read(1)
+    expected = data.copy()
+    expected[0, 3] = 99  # masked by the alpha band
+    np.testing.assert_array_equal(arr, expected)
+
+
+def test_gdal_warp_per_band_nodata_alpha_covers_all_bands(tmp_path):
+    """With per-band nodata, dst_alpha is opaque wherever any band has data."""
+    src = str(tmp_path / "src.tif")
+    b1 = np.array([[1, 1], [1, 1]], dtype=np.int16)
+    b2 = np.array([[2, 2], [2, 2]], dtype=np.int16)
+    b1[0, 0] = -1  # band 1 nodata only
+    b2[1, 1] = -2  # band 2 nodata only
+    b1[0, 1] = -1
+    b2[0, 1] = -2  # both bands nodata
+    _write_test_tif(src, np.stack([b1, b2]))
+    out = str(tmp_path / "out.tif")
+    iu_warp.gdal_warp(src, out, src_nodata=[-1, -2], dst_nodata=[-1, -2],
+                      dst_alpha=True)
+    with rasterio.open(out) as ds:
+        assert ds.count == 3
+        alpha = ds.read(3)
+    assert alpha[0, 1] == 0
+    assert alpha[0, 0] > 0 and alpha[1, 1] > 0 and alpha[1, 0] > 0

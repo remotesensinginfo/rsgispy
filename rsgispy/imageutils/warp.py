@@ -7,10 +7,12 @@ functions using ``rasterio.warp.reproject``.
 from contextlib import ExitStack
 import math
 import os
+from xml.sax.saxutils import escape as _xml_escape
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import rasterio
+import rasterio.dtypes
 from rasterio.control import GroundControlPoint
 from rasterio.enums import ColorInterp, Resampling
 from rasterio.warp import reproject as rio_reproject
@@ -506,6 +508,65 @@ def _resolve_band_nodata(
     ]
 
 
+def _nodata_free_vrt(src: rasterio.io.DatasetReader) -> Optional[str]:
+    """
+    Return VRT XML exposing every band of ``src`` without a no-data value, so
+    ``rasterio.warp.reproject`` can read it band by band (no full read into
+    memory) without masking the header no-data value. Returns ``None`` when
+    ``src`` is not a plain file on disk.
+    """
+    src_path = src.name
+    if not isinstance(src_path, str) or not os.path.isfile(src_path):
+        return None
+    parts = [f'<VRTDataset rasterXSize="{src.width}" rasterYSize="{src.height}">']
+    if src.crs is not None:
+        parts.append(f"<SRS>{_xml_escape(src.crs.to_wkt())}</SRS>")
+    if not src.transform.is_identity:
+        gt = ", ".join(repr(float(v)) for v in src.transform.to_gdal())
+        parts.append(f"<GeoTransform>{gt}</GeoTransform>")
+    fname = _xml_escape(os.path.abspath(src_path))
+    for bidx in range(1, src.count + 1):
+        gdal_dt = rasterio.dtypes._gdal_typename(  # pylint: disable=protected-access
+            src.dtypes[bidx - 1]
+        )
+        parts.append(
+            f'<VRTRasterBand dataType="{gdal_dt}" band="{bidx}"><SimpleSource>'
+            f'<SourceFilename relativeToVRT="0">{fname}</SourceFilename>'
+            f"<SourceBand>{bidx}</SourceBand></SimpleSource></VRTRasterBand>"
+        )
+    parts.append("</VRTDataset>")
+    return "".join(parts)
+
+
+def _write_union_alpha(
+    dst: rasterio.io.DatasetWriter,
+    dst_data_bands: Sequence[int],
+    dst_nd_list: Sequence[Optional[float]],
+    dst_alpha_band: int,
+) -> None:
+    """
+    Set ``dst_alpha_band`` opaque wherever any data band differs from its
+    no-data value (bands without one count as data everywhere), after a
+    band-by-band warp in which only band 1 set the alpha.
+    """
+    alpha_dt = np.dtype(dst.dtypes[dst_alpha_band - 1])
+    # The opaque value the warper used for band 1 (255 when it set none).
+    opaque = max(
+        (float(dst.read(dst_alpha_band, window=win).max()) for _, win in dst.block_windows(1)),
+        default=0.0,
+    ) or 255.0
+    for _, win in dst.block_windows(1):
+        alpha = dst.read(dst_alpha_band, window=win)
+        valid = alpha > 0
+        for db, d_nd in zip(dst_data_bands, dst_nd_list):
+            if d_nd is None:
+                continue
+            arr = dst.read(db, window=win)
+            valid |= ~np.isnan(arr) if math.isnan(d_nd) else (arr != d_nd)
+        new_alpha = np.where(valid, np.where(alpha > 0, alpha, opaque), 0)
+        dst.write(new_alpha.astype(alpha_dt), dst_alpha_band, window=win)
+
+
 def _reproject_single_source(
     src: rasterio.io.DatasetReader,
     dst: rasterio.io.DatasetWriter,
@@ -554,7 +615,32 @@ def _reproject_single_source(
     ignore_src_nd = cfg.has_src_nodata and cfg.src_nodata == "none"
     uniform_nd = (len(set(src_nd_list)) <= 1) and (len(set(dst_nd_list)) <= 1)
 
+    vrt_xml = _nodata_free_vrt(src) if ignore_src_nd else None
+    if ignore_src_nd and vrt_xml is not None:
+        # Read through a VRT without a no-data value: rasterio would otherwise
+        # fall back to the header no-data value of a band source.
+        b_kw = dict(reproj_kw)
+        if src_alpha_band > 0:
+            b_kw["src_alpha"] = src_alpha_band
+        if dst_alpha_band > 0:
+            b_kw["dst_alpha"] = dst_alpha_band
+        with rasterio.open(vrt_xml) as vrt_src:
+            rio_reproject(
+                source=rasterio.band(vrt_src, list(src_data_bands)),
+                destination=rasterio.band(dst, list(dst_data_bands)),
+                src_nodata=None,
+                dst_nodata=dst_nd_list[0],
+                resampling=cfg.resampling,
+                num_threads=cfg.num_threads,
+                init_dest_nodata=init_dest,
+                tolerance=cfg.err_threshold,
+                warp_mem_limit=cfg.warp_mem_limit,
+                **b_kw,
+            )
+        return
+
     if ignore_src_nd:
+        # Not a plain file (e.g. an overview level): read it into memory.
         src_arr = src.read(list(src_data_bands))
         arr_kw = dict(reproj_kw)
         if "gcps" not in arr_kw and "rpcs" not in arr_kw:
@@ -616,6 +702,19 @@ def _reproject_single_source(
             warp_mem_limit=cfg.warp_mem_limit,
             **b_kw,
         )
+    if dst_alpha_band > 0 and len(dst_data_bands) > 1:
+        # Only band 1 set the alpha band; make it cover every band. A new
+        # output is write-only, so this runs once it has closed.
+        alpha_args = (list(dst_data_bands), list(dst_nd_list), dst_alpha_band)
+        if dst.mode == "r+":
+            _write_union_alpha(dst, *alpha_args)
+        else:
+
+            def _fix_alpha(img_path: str) -> None:
+                with rasterio.open(img_path, "r+") as out_ds:
+                    _write_union_alpha(out_ds, *alpha_args)
+
+            on_output_close(dst, _fix_alpha)
 
 
 def gdal_warp(
