@@ -126,8 +126,9 @@ def test_image_pixel_column_summary(tmp_path):
         np.testing.assert_allclose(
             out[6, 0, 0], np.std([1.0, 2.0, 10.0], ddof=1), rtol=1e-5
         )
-        # Pixel (0, 1): all nodata -> 0.0
-        np.testing.assert_allclose(out[:, 0, 1], np.zeros(7))
+        # Pixel (0, 1): all nodata -> the output nodata, set on the output
+        assert src.nodata == -9999.0
+        np.testing.assert_allclose(out[:, 0, 1], np.full(7, -9999.0))
 
     with pytest.raises(rsgispy.RSGISPyException):
         ic_stats.image_pixel_column_summary(
@@ -1909,3 +1910,42 @@ def test_get_img_histogram_integer_bins_and_errors(tmp_path):
         ic_stats.get_img_histogram(cat_img, bin_size=-1.0)
     with pytest.raises(rsgispy.RSGISPyException):
         ic_stats.get_img_histogram(cat_img, val_range=(5.0, 1.0))
+
+
+def test_stack_stats_write_nodata_where_no_input_is_valid(tmp_path):
+    """H14: pixels with no valid input get the output nodata, which is set."""
+    nd = -99.0
+    p1 = tmp_path / "n1.tif"
+    p2 = tmp_path / "n2.tif"
+    _write_raster(p1, np.array([[[nd, 2.0], [0.0, 4.0]]]), nodata=nd)
+    _write_raster(p2, np.array([[[nd, 6.0], [0.0, nd]]]), nodata=nd)
+
+    out_p = tmp_path / "mean.tif"
+    ic_stats.calc_multi_img_band_stats(
+        [str(p1), str(p2)], str(out_p), rsgispy.SUMTYPE_MEAN,
+        use_no_data=True, use_pbar=False,
+    )
+    with rasterio.open(out_p) as src:
+        assert src.nodata == nd
+        np.testing.assert_allclose(src.read(1), [[nd, 4.0], [0.0, 4.0]])
+
+    # An integer output that cannot hold -99 uses the type's maximum.
+    out_u8 = tmp_path / "max_u8.tif"
+    ic_stats.calc_multi_img_band_stats(
+        [str(p1), str(p2)], str(out_u8), rsgispy.SUMTYPE_MAX,
+        use_no_data=True, datatype=rsgispy.TYPE_8UINT, use_pbar=False,
+    )
+    with rasterio.open(out_u8) as src:
+        assert src.nodata == 255
+        np.testing.assert_array_equal(src.read(1), [[255, 6], [0, 4]])
+
+    stack_p = tmp_path / "stack.tif"
+    _write_raster(stack_p, np.array([[[nd, 1.0]], [[nd, 3.0]]]), nodata=nd)
+    col_p = tmp_path / "col.tif"
+    ic_stats.image_pixel_column_summary(
+        str(stack_p), str(col_p), ic_stats.StatsSummary(calc_mean=True),
+        no_data_val=nd, use_pbar=False,
+    )
+    with rasterio.open(col_p) as src:
+        assert src.nodata == nd
+        np.testing.assert_allclose(src.read(1), [[nd, 2.0]])

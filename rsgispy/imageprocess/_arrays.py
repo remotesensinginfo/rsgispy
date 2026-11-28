@@ -213,11 +213,45 @@ def validate_crs_and_res(
             )
 
 
+#: Largest allowed grid-origin offset, as a fraction of a pixel, between
+#: inputs combined pixel by pixel.
+GRID_ALIGN_TOL = 1e-6
+
+
+def _check_grid_alignment(datasets: Dict[str, Any], first_ds: Any) -> None:
+    """
+    Raise :class:`rsgispy.RSGISPyException` when the pixel grid of any dataset
+    is offset from that of ``first_ds`` by a fraction of a pixel (more than
+    :data:`GRID_ALIGN_TOL` of the pixel size): the inputs would otherwise be
+    combined with a silent sub-pixel shift.
+    """
+    ref = first_ds.transform
+    res_x, res_y = abs(ref.a), abs(ref.e)
+    for path, ds in datasets.items():
+        dx = (ds.transform.c - ref.c) / res_x
+        dy = (ds.transform.f - ref.f) / res_y
+        off_x = abs(dx - round(dx))
+        off_y = abs(dy - round(dy))
+        if off_x > GRID_ALIGN_TOL or off_y > GRID_ALIGN_TOL:
+            raise rsgispy.RSGISPyException(
+                f"The pixel grid of '{path}' is not aligned with that of the "
+                f"first input (offset by {off_x:.6g} x {off_y:.6g} pixels). "
+                "Resample it onto the same grid first, e.g. with "
+                "rsgispy.imageutils.warp.resample_img_to_match."
+            )
+
+
 def compute_spatial_intersection(
     datasets: Dict[str, DatasetReader]
 ) -> IntersectionGrid:
     """
     Compute the spatial intersection grid and per-dataset pixel offsets.
+
+    The inputs must share a CRS, a pixel size and a pixel grid: an
+    :class:`rsgispy.RSGISPyException` is raised when their grid origins are
+    offset by a fraction of a pixel (more than ``1e-6`` of the pixel size);
+    resample them onto one grid first (e.g. with
+    :func:`rsgispy.imageutils.warp.resample_img_to_match`).
 
     :param datasets: Mapping of file path to opened rasterio DatasetReader.
     :return: IntersectionGrid describing the output extent and input pixel offsets.
@@ -256,6 +290,7 @@ def compute_spatial_intersection(
         )
 
     validate_crs_and_res(datasets, first_ds)
+    _check_grid_alignment(datasets, first_ds)
 
     bounds = (
         max(ds.bounds.left for ds in ds_list),

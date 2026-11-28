@@ -1774,3 +1774,41 @@ def test_subset_functions(tmp_path):
     with rasterio.open(out_vec) as src:
         assert (src.width, src.height) == (5, 4)
         np.testing.assert_allclose(src.read(1), arr[1:5, 1:6])
+
+
+
+def test_pop_thmt_img_stats_wide_integer_range(tmp_path):
+    """H3: a uint32 image with IDs 1..100000 gets exact statistics."""
+    ids = np.arange(1, 100001, dtype=np.uint32).reshape(250, 400)
+    ids[0, :10] = 0  # some zeros, excluded by ignore_zero
+    path = str(tmp_path / "ids.tif")
+    with rasterio.open(path, "w", driver="GTiff", width=400, height=250, count=1,
+                       dtype="uint32", crs="EPSG:32630",
+                       transform=from_origin(0.0, 2500.0, 10.0, 10.0)) as dst:
+        dst.write(ids, 1)
+    # GeoTIFF cannot store a colour table for uint32: warn, keep the stats.
+    with pytest.warns(UserWarning, match="colour table"):
+        rsgispy.imageutils.stats.pop_thmt_img_stats(
+            path, calc_pyramids=False, use_pbar=False
+        )
+    valid = ids[ids != 0].astype(np.float64)
+    with rasterio.open(path) as ds:
+        tags = ds.tags(1)
+    assert int(tags["STATISTICS_MINIMUM"]) == 11
+    assert int(tags["STATISTICS_MAXIMUM"]) == 100000
+    assert float(tags["STATISTICS_MEAN"]) == pytest.approx(valid.mean())
+    assert float(tags["STATISTICS_STDDEV"]) == pytest.approx(valid.std())
+    assert int(tags["STATISTICS_MEDIAN"]) == int(np.median(valid))
+    assert tags["STATISTICS_HISTOBINFUNCTION"] == "linear"
+    counts = [int(v) for v in tags["STATISTICS_HISTOBINVALUES"].strip("|").split("|")]
+    assert sum(counts) == ids.size
+
+
+def test_thematic_colour_table_covers_every_value():
+    """H3: the colour table has an entry for every value up to the maximum."""
+    # pylint: disable=protected-access
+    clr_tab = rsgispy.imageutils.stats._thematic_colour_table(100001, True)
+    assert len(clr_tab) == 100001 and max(clr_tab) == 100000
+    assert clr_tab[0] == (0, 0, 0, 0)
+    small = rsgispy.imageutils.stats._thematic_colour_table(300, True)
+    assert all(clr_tab[k] == small[k] for k in small)  # same colours as before

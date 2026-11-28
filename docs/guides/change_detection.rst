@@ -561,8 +561,9 @@ Common problems
   size, extent or CRS. Resample one to the other with
   :func:`rsgispy.imageutils.warp.resample_img_to_match`.
 * **Huge change values in cloud or no data areas** — without a valid mask, a
-  pixel is processed only where both dates have data, but "data" is judged
-  with ``base_img_no_data`` / ``chng_img_no_data`` (default ``0``): set them to
+  pixel is processed only where every band of both dates has data, but
+  "data" is judged with ``base_img_no_data`` / ``chng_img_no_data`` (default
+  ``0``): set them to
   the images' real no data values, and pass a valid mask (``vld_msk_img``)
   that includes the cloud and shadow masks, since clouds that still have
   reflectance values give large false changes.

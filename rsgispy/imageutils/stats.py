@@ -9,10 +9,12 @@ import math
 import multiprocessing
 import os
 import tempfile
+import warnings
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import rasterio
+import rasterio.errors
 from rasterio.enums import ColorInterp, Resampling
 from rasterio.transform import Affine
 
@@ -410,113 +412,135 @@ def build_img_pyramids_multi_core(
             )
 
 
-def _calc_int_band_hists(
+#: Widest value range stored as a direct (one bin per value) histogram;
+#: wider ranges get a linear histogram with this many bins.
+MAX_DIRECT_HIST_BINS = 65536
+
+
+def _merge_value_counts(
+    acc: Optional[Tuple[np.ndarray, np.ndarray]],
+    vals: np.ndarray,
+    counts: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Merge sorted ``(values, counts)`` into the accumulator ``acc``."""
+    if acc is None:
+        return vals, counts.astype(np.int64)
+    all_v = np.concatenate([acc[0], vals])
+    all_c = np.concatenate([acc[1], counts.astype(np.int64)])
+    uniq, inv = np.unique(all_v, return_inverse=True)
+    return uniq, np.bincount(inv.ravel(), weights=all_c).astype(np.int64)
+
+
+def _calc_int_band_value_counts(
     input_img: str, dtype_str: str, use_pbar: bool = True
-) -> List[Tuple[np.ndarray, int, int]]:
+) -> List[Tuple[np.ndarray, np.ndarray]]:
     """
-    Accumulate direct integer histograms ``(hist, hist_min, hist_max)`` across
-    blocks for an integer image (``uint8``, ``uint16``, ``int16``, ``int64``,
-    ``uint64``, etc.).
+    Exact sorted ``(values, counts)`` of every value in each band of an
+    integer image, accumulated block by block (memory scales with the number
+    of distinct values, not the value range).
     """
-    # pylint: disable=too-many-locals
     with rasterio.open(input_img, "r") as src:
         n_bands = src.count
-
     read_np_dtype = np.uint64 if dtype_str == "uint64" else np.int64
-
-    if dtype_str == "uint8":
-        bounds = [(0, 255) for _ in range(n_bands)]
-    else:
-        band_mins = [0 for _ in range(n_bands)]
-        band_maxs = [0 for _ in range(n_bands)]
-        first_seen = [True for _ in range(n_bands)]
-        for _, block_arrays in iter_single_image_band_blocks(
-            input_img=input_img,
-            read_dtype=read_np_dtype,
-            use_pbar=use_pbar,
-        ):
-            for idx, band_arr in enumerate(block_arrays):
-                if band_arr.size == 0:
-                    continue
-                b_min = int(band_arr.min())
-                b_max = int(band_arr.max())
-                if first_seen[idx]:
-                    band_mins[idx] = min(0, b_min)
-                    band_maxs[idx] = max(0, b_max)
-                    first_seen[idx] = False
-                else:
-                    band_mins[idx] = min(band_mins[idx], b_min)
-                    band_maxs[idx] = max(band_maxs[idx], b_max)
-        bounds = [
-            (
-                band_mins[idx],
-                min(band_maxs[idx], band_mins[idx] + 65535),
-            )
-            for idx in range(n_bands)
-        ]
-
-    hists = [
-        np.zeros((h_max - h_min) + 1, dtype=np.int64)
-        for h_min, h_max in bounds
-    ]
+    accs: List[Optional[Tuple[np.ndarray, np.ndarray]]] = [None] * n_bands
     for _, block_arrays in iter_single_image_band_blocks(
         input_img=input_img,
         read_dtype=read_np_dtype,
         use_pbar=use_pbar,
     ):
         for idx, band_arr in enumerate(block_arrays):
-            h_min, h_max = bounds[idx]
-            n_bins = (h_max - h_min) + 1
-            flat = band_arr.ravel()
-            in_range = (flat >= h_min) & (flat <= h_max)
-            if np.any(in_range):
-                shifted = (flat[in_range] - h_min).astype(np.intp, copy=False)
-                hists[idx] += np.bincount(shifted, minlength=n_bins)
-
-    return [
-        (hists[idx], bounds[idx][0], bounds[idx][1]) for idx in range(n_bands)
-    ]
+            if band_arr.size == 0:
+                continue
+            vals, counts = np.unique(band_arr.ravel(), return_counts=True)
+            accs[idx] = _merge_value_counts(accs[idx], vals, counts)
+    empty = (np.zeros(0, dtype=read_np_dtype), np.zeros(0, dtype=np.int64))
+    return [acc if acc is not None else empty for acc in accs]
 
 
-def _stats_from_int_hist(
-    hist: np.ndarray, hist_min: int, hist_max: int, ignore_zero: bool
+def _hist_from_value_counts(
+    vals: np.ndarray, counts: np.ndarray, dtype_str: str
+) -> Tuple[np.ndarray, Any, Any, str]:
+    """
+    Histogram ``(hist, hist_min, hist_max, bin_function)`` of a band. The
+    range always includes 0 (and is ``0..255`` for ``uint8``). Ranges of up
+    to :data:`MAX_DIRECT_HIST_BINS` values give a ``'direct'`` histogram (one
+    bin per value); wider ranges a ``'linear'`` one with that many bins.
+    """
+    if dtype_str == "uint8":
+        h_min, h_max = 0, 255
+    elif vals.size == 0:
+        h_min, h_max = 0, 0
+    else:
+        h_min, h_max = min(0, int(vals[0])), max(0, int(vals[-1]))
+    n_vals = (h_max - h_min) + 1
+    if n_vals <= MAX_DIRECT_HIST_BINS:
+        hist = np.zeros(n_vals, dtype=np.int64)
+        if vals.size:
+            idx = (vals.astype(np.float64) - h_min).astype(np.intp)
+            np.add.at(hist, idx, counts)
+        return hist, h_min, h_max, "direct"
+    n_bins = MAX_DIRECT_HIST_BINS
+    width = (float(h_max) - float(h_min) + 1.0) / n_bins
+    idx = np.minimum(
+        ((vals.astype(np.float64) - h_min) / width).astype(np.intp), n_bins - 1
+    )
+    hist = np.bincount(idx, weights=counts, minlength=n_bins).astype(np.int64)
+    return hist, h_min, h_max, "linear"
+
+
+def _stats_from_value_counts(
+    vals: np.ndarray, counts: np.ndarray, ignore_zero: bool
 ) -> Tuple[int, int, float, float, int, int]:
     """
-    Compute ``(min, max, mean, stddev, mode, median)`` from a direct integer
-    histogram covering ``[hist_min, hist_max]``.
+    Exact ``(min, max, mean, stddev, mode, median)`` of a band from its
+    sorted ``(values, counts)``; the standard deviation is the population
+    one (``ddof=0``), as in RSGISLib.
     """
-    # pylint: disable=too-many-locals
-    vals = np.arange(hist_min, hist_max + 1, dtype=np.float64)
-    stat_counts = hist.copy()
-    if ignore_zero and hist_min <= 0 <= hist_max:
-        stat_counts[0 - hist_min] = 0
-
+    stat_counts = counts.copy()
+    if ignore_zero:
+        stat_counts[vals == 0] = 0
     total_valid = int(stat_counts.sum())
+    vals_f = vals.astype(np.float64)
     if total_valid == 0:
-        min_val = 0
-        max_val = 0
-        mean_val = 0.0
-        stddev_val = 0.0
+        min_val, max_val, mean_val, stddev_val = 0, 0, 0.0, 0.0
     else:
-        nz_indices = np.nonzero(stat_counts)[0]
-        min_val = int(vals[nz_indices[0]])
-        max_val = int(vals[nz_indices[-1]])
-        mean_val = float(np.sum(vals * stat_counts) / total_valid)
-        variance = float(
-            np.sum(((vals - mean_val) ** 2) * stat_counts) / total_valid
-        )
+        nz = np.nonzero(stat_counts)[0]
+        min_val = int(vals[nz[0]])
+        max_val = int(vals[nz[-1]])
+        mean_val = float(np.sum(vals_f * stat_counts) / total_valid)
+        variance = float(np.sum(((vals_f - mean_val) ** 2) * stat_counts) / total_valid)
         stddev_val = float(np.sqrt(variance))
+    active = stat_counts if total_valid > 0 else counts
+    if active.size == 0 or int(active.sum()) == 0:
+        return min_val, max_val, mean_val, stddev_val, 0, 0
+    mode_val = int(vals[int(np.argmax(active))])
+    median_idx = int(np.nonzero(active.cumsum() >= active.sum() / 2.0)[0][0])
+    return min_val, max_val, mean_val, stddev_val, mode_val, int(vals[median_idx])
 
-    active_hist = stat_counts if total_valid > 0 else hist
-    mode_val = int(vals[int(np.argmax(active_hist))])
-    if int(active_hist.sum()) > 0:
-        mid_num = active_hist.sum() / 2.0
-        median_idx = int(np.nonzero(active_hist.cumsum() >= mid_num)[0][0])
-        median_val = int(vals[median_idx])
-    else:
-        median_val = 0
 
-    return min_val, max_val, mean_val, stddev_val, mode_val, median_val
+def _thematic_colour_table(
+    n_entries: int, ignore_zero: bool
+) -> Dict[int, Tuple[int, int, int, int]]:
+    """
+    Random colour table for values ``0..n_entries-1`` with a fixed seed, so a
+    value gets the same colour every run (and in every image). Values below
+    65536 keep the colours of earlier rsgispy versions; the rest are drawn
+    in one call.
+    """
+    clr_rng = np.random.default_rng(42)
+    clr_tab: Dict[int, Tuple[int, int, int, int]] = {}
+    n_loop = min(n_entries, 65536)
+    for val_i in range(n_loop):
+        rnd_rgb = clr_rng.integers(1, 255, 3, dtype=np.uint8)
+        if val_i == 0 and ignore_zero:
+            clr_tab[0] = (0, 0, 0, 0)
+        else:
+            clr_tab[val_i] = (int(rnd_rgb[0]), int(rnd_rgb[1]), int(rnd_rgb[2]), 255)
+    if n_entries > n_loop:
+        extra = clr_rng.integers(1, 255, (n_entries - n_loop, 3), dtype=np.uint8)
+        for off, (red, grn, blu) in enumerate(extra.tolist()):
+            clr_tab[n_loop + off] = (red, grn, blu, 255)
+    return clr_tab
 
 
 def pop_thmt_img_stats(
@@ -631,18 +655,20 @@ def pop_thmt_img_stats(
         open_opts["IGNORE_COG_LAYOUT_BREAK"] = "YES"
 
     if add_clr_tab:
-        hist_info = _calc_int_band_hists(
+        val_counts = _calc_int_band_value_counts(
             input_img, dtype_str=dtype_str, use_pbar=use_pbar
         )
         with rasterio.open(input_img, "r+", **open_opts) as dst:
             if ignore_zero:
                 set_dataset_nodata(dst, 0)
 
-            for idx, (hist, h_min, h_max) in enumerate(hist_info):
+            for idx, (vals, counts) in enumerate(val_counts):
                 bidx = idx + 1
-                n_bins = (h_max - h_min) + 1
+                hist, h_min, h_max, bin_fn = _hist_from_value_counts(
+                    vals, counts, dtype_str
+                )
                 min_v, max_v, mean_v, std_v, mode_v, med_v = (
-                    _stats_from_int_hist(hist, h_min, h_max, ignore_zero)
+                    _stats_from_value_counts(vals, counts, ignore_zero)
                 )
                 tags: Dict[str, str] = {
                     "STATISTICS_MINIMUM": f"{min_v}",
@@ -651,7 +677,7 @@ def pop_thmt_img_stats(
                     "STATISTICS_STDDEV": f"{std_v}",
                     "STATISTICS_SKIPFACTORX": "1",
                     "STATISTICS_SKIPFACTORY": "1",
-                    "STATISTICS_HISTOBINFUNCTION": "direct",
+                    "STATISTICS_HISTOBINFUNCTION": bin_fn,
                     "STATISTICS_MODE": f"{mode_v}",
                     "STATISTICS_MEDIAN": f"{med_v}",
                     "STATISTICS_HISTOBINVALUES": (
@@ -659,33 +685,30 @@ def pop_thmt_img_stats(
                     ),
                     "STATISTICS_HISTOMIN": f"{h_min}",
                     "STATISTICS_HISTOMAX": f"{h_max}",
-                    "STATISTICS_HISTONUMBINS": f"{n_bins}",
+                    "STATISTICS_HISTONUMBINS": f"{hist.size}",
                 }
                 if ignore_zero:
                     tags["STATISTICS_EXCLUDEDVALUES"] = "0"
                 dst.update_tags(bidx, **tags)
 
-                n_clr_entries = (
-                    256
-                    if dtype_str == "uint8"
-                    else min(max(h_max, 0) + 1, 65536)
-                )
-                clr_tab: Dict[int, Tuple[int, int, int, int]] = {}
-                # A fixed seed, so a value gets the same colour every run (and
-                # two images with the same classes get the same colours).
-                clr_rng = np.random.default_rng(42)
-                for val_i in range(n_clr_entries):
-                    rnd_rgb = clr_rng.integers(1, 255, 3, dtype=np.uint8)
-                    if val_i == 0 and ignore_zero:
-                        clr_tab[0] = (0, 0, 0, 0)
-                    else:
-                        clr_tab[val_i] = (
-                            int(rnd_rgb[0]),
-                            int(rnd_rgb[1]),
-                            int(rnd_rgb[2]),
-                            255,
-                        )
-                dst.write_colormap(bidx, clr_tab)
+                # One entry for every value up to the band maximum.
+                n_clr_entries = 256 if dtype_str == "uint8" else max(h_max, 0) + 1
+                try:
+                    dst.write_colormap(
+                        bidx, _thematic_colour_table(n_clr_entries, ignore_zero)
+                    )
+                    # Some drivers (e.g. GeoTIFF for 32-bit types) silently
+                    # store no colour table; reading it back raises.
+                    dst.colormap(bidx)
+                except (ValueError, rasterio.errors.RasterioError) as err:
+                    warnings.warn(
+                        f"Could not write a colour table for band {bidx} of "
+                        f"'{input_img}' ({dtype_str}, {n_clr_entries} entries): "
+                        f"{err}. The statistics were written; use KEA (or a "
+                        "uint8/uint16 GeoTIFF) for a colour table.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
 
             dst.colorinterp = [ColorInterp.palette] * dst.count
 

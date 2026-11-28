@@ -1508,3 +1508,105 @@ def test_stack_img_bands_common_dtype_and_inherited_metadata(tmp_path):
     with rasterio.open(out_mixed) as ds:
         assert ds.nodata is None
         assert ds.dtypes == ("uint8", "uint8")
+
+
+def test_resample_img_to_match_uses_header_source_nodata(tmp_path):
+    """H8: the source nodata comes from the input header, not no_data_val."""
+    ref = str(tmp_path / "ref.tif")
+    src = str(tmp_path / "src.tif")
+    _write_test_tif(ref, np.zeros((4, 4), dtype=np.float32))
+    arr = np.array([[5, 1, 2, 3], [4, 5, 6, 7], [8, 9, 5, 1], [2, 3, 4, 5]],
+                   dtype=np.float32)
+    _write_test_tif(src, arr, nodata=5)
+    out = str(tmp_path / "out.tif")
+    iu_warp.resample_img_to_match(ref, src, out, no_data_val=-1.0,
+                                  calc_stats=False, use_pbar=False)
+    with rasterio.open(out) as ds:
+        assert ds.nodata == -1.0
+        np.testing.assert_array_equal(ds.read(1), np.where(arr == 5, -1.0, arr))
+
+
+def test_reproject_image_without_nodata_keeps_zeros(tmp_path, monkeypatch):
+    """Without a header nodata or no_data_val, no source pixels are masked."""
+    src = str(tmp_path / "src.tif")
+    _write_test_tif(src, np.zeros((4, 4), dtype=np.float32))
+    seen = {}
+    real = iu_warp.rio_reproject
+
+    def _spy(*args, **kwargs):
+        seen["src_nodata"] = kwargs.get("src_nodata")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(iu_warp, "rio_reproject", _spy)
+    iu_warp.reproject_image(src, str(tmp_path / "out.tif"), 32630,
+                            calc_stats=False, use_pbar=False)
+    assert seen["src_nodata"] is None
+
+
+def test_gdal_warp_src_nodata_none_keeps_alpha_and_zeros(tmp_path):
+    """src_nodata='none' keeps header-nodata pixels as data and honours src_alpha."""
+    src = str(tmp_path / "src.tif")
+    data = np.array([[0, 1, 2, 3], [4, 0, 6, 7], [8, 9, 0, 1], [2, 3, 4, 0]],
+                    dtype=np.uint8)
+    alpha = np.full((4, 4), 255, dtype=np.uint8)
+    alpha[0, 3] = 0
+    _write_test_tif(src, np.stack([data, alpha]), nodata=0)
+    out = str(tmp_path / "out.tif")
+    iu_warp.gdal_warp(src, out, src_nodata="none", dst_nodata=99, src_alpha=True)
+    with rasterio.open(out) as ds:
+        arr = ds.read(1)
+    expected = data.copy()
+    expected[0, 3] = 99  # masked by the alpha band
+    np.testing.assert_array_equal(arr, expected)
+
+
+def test_gdal_warp_per_band_nodata_alpha_covers_all_bands(tmp_path):
+    """With per-band nodata, dst_alpha is opaque wherever any band has data."""
+    src = str(tmp_path / "src.tif")
+    b1 = np.array([[1, 1], [1, 1]], dtype=np.int16)
+    b2 = np.array([[2, 2], [2, 2]], dtype=np.int16)
+    b1[0, 0] = -1  # band 1 nodata only
+    b2[1, 1] = -2  # band 2 nodata only
+    b1[0, 1] = -1
+    b2[0, 1] = -2  # both bands nodata
+    _write_test_tif(src, np.stack([b1, b2]))
+    out = str(tmp_path / "out.tif")
+    iu_warp.gdal_warp(src, out, src_nodata=[-1, -2], dst_nodata=[-1, -2],
+                      dst_alpha=True)
+    with rasterio.open(out) as ds:
+        assert ds.count == 3
+        alpha = ds.read(3)
+    assert alpha[0, 1] == 0
+    assert alpha[0, 0] > 0 and alpha[1, 1] > 0 and alpha[1, 0] > 0
+
+
+def test_point_sampling_reads_blocks_only(tmp_path, monkeypatch):
+    """Sampling reads only the blocks that hold points, with the same values."""
+    path = str(tmp_path / "tiled.tif")
+    arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
+    with rasterio.open(path, "w", driver="GTiff", width=64, height=64, count=1,
+                       dtype="float32", crs="EPSG:32630", tiled=True,
+                       blockxsize=16, blockysize=16,
+                       transform=from_origin(500000.0, 5200000.0, 10.0, 10.0)) as dst:
+        dst.write(arr, 1)
+    cols = np.array([0, 5, 17, 63, 40])
+    rows = np.array([0, 3, 2, 63, 33])
+    win_sizes = []
+    real_read = rasterio.io.DatasetReader.read
+
+    def _spy(self, *args, **kwargs):
+        win = kwargs.get("window")
+        win_sizes.append(None if win is None else (int(win.height), int(win.width)))
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(rasterio.io.DatasetReader, "read", _spy)
+    vals = iu_arr.get_img_pxl_values(path, 1, cols, rows)
+    np.testing.assert_array_equal(vals, arr[rows, cols])
+    assert win_sizes and all(w == (16, 16) for w in win_sizes)
+
+    win_sizes.clear()
+    x_coords = 500000.0 + (cols + 0.5) * 10.0
+    y_coords = 5200000.0 - (rows + 0.5) * 10.0
+    vals = iu_arr.get_img_coords_pxl_values(path, 1, x_coords, y_coords)
+    np.testing.assert_array_equal(vals, arr[rows, cols])
+    assert all(w == (16, 16) for w in win_sizes)
