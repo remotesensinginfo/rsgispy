@@ -7,7 +7,6 @@ resolution, no-data handling, and result-block casting for
 import math
 import os
 import sys
-import warnings
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
