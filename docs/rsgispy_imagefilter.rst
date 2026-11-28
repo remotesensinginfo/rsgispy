@@ -47,6 +47,26 @@ texture extraction:
        filter_size=5,
    )
 
+Convolution and correlation
+---------------------------
+
+:func:`~rsgispy.imagefilter.smooth.apply_kernel_filter` is a true 2D
+convolution: the kernel is flipped in both axes before it is laid over each
+window, as in signal processing (``scipy.ndimage.convolve``).
+:func:`~rsgispy.imagefilter.smooth.apply_kernel_correlation_filter` lays the
+kernel over the window as written (a correlation, as
+``scipy.ndimage.correlate``; this is what ``apply_kernel_filter`` did up to
+rsgispy 0.4.1). The two are the same for kernels symmetric under a 180
+degree rotation (smoothing, sharpening, Laplacian kernels); an asymmetric
+kernel gives mirrored results. For example ``[[0, 0, 0], [0, 0, 1], [0, 0,
+0]]`` moves the image one pixel to the right under convolution and one pixel
+to the left under correlation.
+
+The directional edge filters (Sobel and Prewitt X / Y, Gaussian first
+derivative) use correlation with their kernels, so an X derivative is
+positive where values increase to the right and a Y derivative positive
+where they increase downwards.
+
 Chaining
 --------
 
@@ -142,6 +162,9 @@ nodes pass ``float64`` blocks on).
    * - :func:`~rsgispy.imagefilter.smooth.apply_kernel_filter`
      - :func:`~rsgispy.imagefilter.smooth.kernel_filter_node`
      - ``'kernel'``
+   * - :func:`~rsgispy.imagefilter.smooth.apply_kernel_correlation_filter`
+     - :func:`~rsgispy.imagefilter.smooth.kernel_correlation_filter_node`
+     - ``'kernel_correlation'``
    * - :func:`~rsgispy.imagefilter.edge.apply_sobel_filter`
      - :func:`~rsgispy.imagefilter.edge.sobel_filter_node`
      - ``'sobel'``

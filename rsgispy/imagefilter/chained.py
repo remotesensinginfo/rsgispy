@@ -131,8 +131,10 @@ class FilterStep:
       parameter defaults to ``1.0``.
     * Convolution / smoothing: ``'gaussian'`` (``filter_size``,
       ``params={'stddev': 1.0}`` or ``'stddev_x'``/``'stddev_y'``, and
-      ``'filter_angle'``), ``'kernel'`` (``params={'kernel': arr,
-      'zero_dc': False}``).
+      ``'filter_angle'``), ``'kernel'`` (true convolution,
+      ``params={'kernel': arr, 'zero_dc': False}``) and
+      ``'kernel_correlation'`` (the same parameters, kernel applied
+      without flipping).
     * Edges and derivatives: ``'sobel'``, ``'prewitt'`` (magnitudes),
       ``'sobel_x'``, ``'sobel_y'``, ``'prewitt_x'``, ``'prewitt_y'``
       (no parameters), ``'gaussian_1st_deriv'``, ``'gaussian_2nd_deriv'``
@@ -155,6 +157,8 @@ class FilterStep:
     :func:`~rsgispy.imagefilter.smooth.kuwahara_filter_node`, ``'gaussian'``
     :func:`~rsgispy.imagefilter.smooth.gaussian_smooth_filter_node`,
     ``'kernel'`` :func:`~rsgispy.imagefilter.smooth.kernel_filter_node`,
+    ``'kernel_correlation'``
+    :func:`~rsgispy.imagefilter.smooth.kernel_correlation_filter_node`,
     ``'sobel_x'`` :func:`~rsgispy.imagefilter.edge.sobel_x_filter_node`,
     ``'refined_lee'`` :func:`~rsgispy.imagefilter.sar.refined_lee_filter_node`
     and ``'glcm'`` :func:`~rsgispy.imagefilter.texture.glcm_filter_node`), so
@@ -283,12 +287,17 @@ def build_filter_chain_node(
                 no_data_val=no_data_val,
                 name=step_name,
             )
-        elif kind == "kernel":
+        elif kind in ("kernel", "kernel_correlation"):
             if "kernel" not in step.params:
                 raise rsgispy.RSGISPyException(
-                    "FilterStep(kind='kernel') requires params['kernel']."
+                    f"FilterStep(kind='{kind}') requires params['kernel']."
                 )
-            current = _smooth.kernel_filter_node(
+            kernel_builder = (
+                _smooth.kernel_filter_node
+                if kind == "kernel"
+                else _smooth.kernel_correlation_filter_node
+            )
+            current = kernel_builder(
                 current,
                 np.asarray(step.params["kernel"], dtype=np.float64),
                 zero_dc=bool(step.params.get("zero_dc", False)),

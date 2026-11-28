@@ -265,3 +265,37 @@ def test_new_builders_validate_like_file_functions():
     assert if_tex.glcm_filter_node(src, min_val=0, max_val=1).name == "glcm_filter"
     assert if_stats.median_filter_node(src).halo_radius == (1, 1)
     assert if_sar.refined_lee_filter_node(src, 9).halo_radius == (4, 4)
+
+
+def test_kernel_filter_node_convolves_and_correlation_node_correlates():
+    """kernel_filter_node is a true convolution and
+    kernel_correlation_filter_node a correlation, as are their FilterStep
+    kinds ('kernel' and 'kernel_correlation')."""
+    import rsgispy.imagefilter.smooth as if_smooth  # pylint: disable=import-outside-toplevel
+
+    arr = np.arange(1, 64, dtype=np.float64).reshape(1, 7, 9)
+    shift = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    src = ArraySource(arr)
+    conv = if_smooth.kernel_filter_node(src, shift)
+    corr = if_smooth.kernel_correlation_filter_node(src, shift)
+    step_conv = if_chained.build_filter_chain_node(
+        src, [if_chained.FilterStep("kernel", params={"kernel": shift})]
+    )
+    step_corr = if_chained.build_filter_chain_node(
+        src, [if_chained.FilterStep("kernel_correlation", params={"kernel": shift})]
+    )
+    res = TileGraph(
+        [
+            MemorySink(conv, name="conv"),
+            MemorySink(corr, name="corr"),
+            MemorySink(step_conv, name="step_conv"),
+            MemorySink(step_corr, name="step_corr"),
+        ],
+        block_size=4,
+    ).run(use_pbar=False)
+    img = arr[0]
+    # Convolution: out[r, c] = in[r - 1, c - 1]; correlation: in[r + 1, c + 1].
+    np.testing.assert_array_equal(res["conv"][0, 1:, 1:], img[:-1, :-1])
+    np.testing.assert_array_equal(res["corr"][0, :-1, :-1], img[1:, 1:])
+    np.testing.assert_array_equal(res["step_conv"], res["conv"])
+    np.testing.assert_array_equal(res["step_corr"], res["corr"])

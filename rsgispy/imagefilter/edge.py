@@ -1,5 +1,14 @@
 """
 Edge-detection and spatial derivative convolution filters for raster images.
+
+The directional filters (Sobel / Prewitt X and Y, Gaussian derivatives) lay
+their kernel over each window as written (a correlation, see
+:func:`rsgispy.imagefilter.smooth.apply_kernel_correlation_filter`), so the
+Sobel / Prewitt X derivatives (and the Gaussian first derivative with
+``filter_angle=0``) are positive where values increase to the right (east)
+and the Y derivatives positive where they increase downwards (south). The
+symmetric kernels (Laplacian, Gaussian second derivative) and the edge
+magnitudes give the same result as a true convolution.
 """
 
 from typing import List, Optional
@@ -11,6 +20,7 @@ from rsgispy.imagefilter._helpers import (
     gaussian_kernel,
     gradient_magnitude_node,
     kernel_conv_node,
+    kernel_correlate_node,
     laplacian_kernel,
     prewitt_kernels,
     run_filter_node,
@@ -598,8 +608,11 @@ def _directional_node(
     no_data_val: Optional[float],
     name: str,
 ) -> TileNode:
-    """Zero-sum directional convolution node (Sobel/Prewitt/Gaussian derivative)."""
-    return kernel_conv_node(
+    """
+    Zero-sum directional node (Sobel/Prewitt/Gaussian derivative): the
+    kernel is correlated (not flipped), keeping the documented sign.
+    """
+    return kernel_correlate_node(
         source, kernel, zero_dc=True, no_data_val=no_data_val, name=name
     )
 

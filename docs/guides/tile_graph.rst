@@ -436,7 +436,8 @@ The kinds are:
 * edges: ``sobel``, ``sobel_x``, ``sobel_y``, ``prewitt``, ``prewitt_x``,
   ``prewitt_y``, ``laplacian``, ``gaussian_1st_deriv``,
   ``gaussian_2nd_deriv``;
-* smoothing, texture and kernels: ``gaussian``, ``glcm``, ``kernel``;
+* smoothing, texture and kernels: ``gaussian``, ``glcm``, ``kernel``,
+  ``kernel_correlation``;
 * other: ``band_math``, ``pointwise``.
 
 The parameters of each kind are listed in

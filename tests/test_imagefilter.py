@@ -462,8 +462,8 @@ def test_imagefilter_v1_signatures(tmp_path):
                 assert p.default == kw_default
             checked += 1
 
-    # 17 stats + 3 smooth + 9 edge + 7 sar + 1 texture + 1 chained = 38 functions
-    assert checked == 38
+    # 17 stats + 4 smooth + 9 edge + 7 sar + 1 texture + 1 chained = 39 functions
+    assert checked == 39
 
     # Passing gdalformat positionally must raise TypeError
     in_p = tmp_path / "sig_in.tif"
@@ -472,3 +472,56 @@ def test_imagefilter_v1_signatures(tmp_path):
         imf.stats.apply_mean_filter(str(in_p), str(tmp_path / "sig_out.tif"), 3, "GTIFF")
     with pytest.raises(TypeError):
         imf.edge.apply_sobel_filter(str(in_p), str(tmp_path / "sig_sob.tif"), "GTIFF")
+
+
+def _edge_conv_reference(arr, kernel, flip):
+    """Reference 2D convolution (``flip=True``) or correlation of ``arr``
+    with an edge-padded border."""
+    k = np.asarray(kernel, dtype=np.float64)
+    if flip:
+        k = k[::-1, ::-1]
+    kh, kw = k.shape
+    pad = np.pad(arr.astype(np.float64), ((kh // 2, kh // 2), (kw // 2, kw // 2)), mode="edge")
+    out = np.zeros(arr.shape, dtype=np.float64)
+    for i in range(kh):
+        for j in range(kw):
+            out += k[i, j] * pad[i:i + arr.shape[0], j:j + arr.shape[1]]
+    return out
+
+
+def test_kernel_filter_convolves_and_correlation_filter_correlates(tmp_path):
+    """apply_kernel_filter is a true convolution (kernel flipped in both
+    axes); apply_kernel_correlation_filter applies the kernel unflipped."""
+    arr = np.arange(1, 36, dtype=np.float32).reshape(5, 7)
+    in_p = tmp_path / "shift_in.tif"
+    _write_raster(in_p, arr)
+
+    def _run(fn, kernel, tag):
+        out_p = tmp_path / f"{tag}.tif"
+        fn(str(in_p), str(out_p), kernel, use_pbar=False)
+        with rasterio.open(out_p) as src:
+            return src.read(1).astype(np.float64)
+
+    shift = [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]
+    conv = _run(imf.smooth.apply_kernel_filter, shift, "conv_shift")
+    corr = _run(imf.smooth.apply_kernel_correlation_filter, shift, "corr_shift")
+    # Convolution moves the image one column right: out[r, c] = in[r, c - 1].
+    np.testing.assert_array_equal(conv[:, 1:], arr[:, :-1])
+    np.testing.assert_array_equal(conv[:, 0], arr[:, 0])
+    # Correlation moves it one column left: out[r, c] = in[r, c + 1].
+    np.testing.assert_array_equal(corr[:, :-1], arr[:, 1:])
+    np.testing.assert_array_equal(corr[:, -1], arr[:, -1])
+
+    # A kernel asymmetric in both axes, with mixed weights.
+    asym = [[1.0, 2.0, 0.0], [0.0, 0.0, 3.0], [0.0, -1.0, 0.5]]
+    conv = _run(imf.smooth.apply_kernel_filter, asym, "conv_asym")
+    corr = _run(imf.smooth.apply_kernel_correlation_filter, asym, "corr_asym")
+    np.testing.assert_allclose(conv, _edge_conv_reference(arr, asym, True), rtol=1e-6)
+    np.testing.assert_allclose(corr, _edge_conv_reference(arr, asym, False), rtol=1e-6)
+
+    # A symmetric kernel gives the same result either way.
+    sharpen = [[0.0, -1.0, 0.0], [-1.0, 5.0, -1.0], [0.0, -1.0, 0.0]]
+    np.testing.assert_array_equal(
+        _run(imf.smooth.apply_kernel_filter, sharpen, "conv_sharp"),
+        _run(imf.smooth.apply_kernel_correlation_filter, sharpen, "corr_sharp"),
+    )
