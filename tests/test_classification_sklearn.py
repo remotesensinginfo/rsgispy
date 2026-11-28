@@ -958,3 +958,184 @@ def test_check_sklearn_scorer_direction():
     check_sklearn_scorer_direction(lambda est, x, y: 0.0, "minimize")
     with pytest.raises(rsgispy.RSGISPyException, match="neg_"):
         check_sklearn_scorer_direction("neg_mean_absolute_error", "minimize")
+
+
+# ---------------------------------------------------------------------------
+# Repeated k-fold and jackknife (leave-one-out) assessment of a classifier
+# ---------------------------------------------------------------------------
+
+_CLS_FOLD_METRICS = ("accuracy", "bal_accuracy", "f1_macro", "cohen_kappa")
+
+
+def _make_cls_xy(n_per_class=12, seed=3):
+    """Three Gaussian classes in two predictors, with string labels."""
+    rng = np.random.default_rng(seed)
+    centres = {"Forest": (0.0, 0.0), "Water": (3.0, 0.0), "Urban": (0.0, 3.0)}
+    x_parts, y_parts = [], []
+    for name, (cx, cy) in centres.items():
+        x_parts.append(rng.normal((cx, cy), 0.8, size=(n_per_class, 2)))
+        y_parts += [name] * n_per_class
+    x = pd.DataFrame(np.vstack(x_parts), columns=["b1", "b2"])
+    return x, pd.Series(y_parts, name="class_name")
+
+
+def test_classifier_kfold_fit(tmp_path):
+    """Repeated (stratified / grouped) k-fold of a classifier and its summary."""
+    assert "perform_kfold_fit" in rcsk.__all__
+    assert "summarise_kfold_metrics" in rcsk.__all__
+    x, y = _make_cls_xy()
+    n_smpls = len(y)
+    metrics, preds = rcsk.perform_kfold_fit(
+        LogisticRegression(max_iter=500),
+        x,
+        y,
+        n_splits=4,
+        n_repeats=3,
+        rnd_seed=1,
+        out_dir=tmp_path / "kf",
+        out_prefix="kf_lr",
+        use_pbar=False,
+    )
+    assert len(metrics) == 12
+    assert list(metrics[["repeat", "fold"]].iloc[4]) == [1, 0]
+    assert set(_CLS_FOLD_METRICS).issubset(metrics.columns)
+    assert metrics["n_samples"].sum() == 3 * n_smpls
+    assert (metrics["accuracy"] > 0.7).all()
+    # Stratified: every test fold holds each class 3 times (12 / 4).
+    assert (metrics["n_samples"] == 9).all()
+    assert list(preds.columns) == ["repeat", "fold", "sample_idx", "y_true", "y_pred"]
+    assert len(preds) == 3 * n_smpls
+    for _, rep_df in preds.groupby("repeat"):
+        assert sorted(rep_df["sample_idx"]) == list(range(n_smpls))
+    np.testing.assert_array_equal(
+        preds["y_true"].to_numpy(), y.to_numpy()[preds["sample_idx"].to_numpy()]
+    )
+    fold0 = preds[(preds["repeat"] == 0) & (preds["fold"] == 0)]
+    np.testing.assert_allclose(
+        metrics["accuracy"].iloc[0], np.mean(fold0["y_true"] == fold0["y_pred"])
+    )
+    assert (tmp_path / "kf" / "kf_lr_metrics.csv").is_file()
+    assert (tmp_path / "kf" / "kf_lr_predictions.csv").is_file()
+
+    summ = rcsk.summarise_kfold_metrics(metrics)
+    assert list(summ.columns) == ["mean", "median", "std", "p05", "p95"]
+    assert set(_CLS_FOLD_METRICS).issubset(summ.index)
+    assert "repeat" not in summ.index
+    np.testing.assert_allclose(summ.loc["accuracy", "mean"], metrics["accuracy"].mean())
+
+    # Same seed, same result.
+    again, _ = rcsk.perform_kfold_fit(
+        LogisticRegression(max_iter=500), x, y, n_splits=4, n_repeats=3,
+        rnd_seed=1, use_pbar=False,
+    )
+    pd.testing.assert_frame_equal(again, metrics)
+
+    # Groups are never split across train / test; numpy inputs work too.
+    groups = np.repeat(np.arange(12), 3)
+    _, g_preds = rcsk.perform_kfold_fit(
+        RandomForestClassifier(n_estimators=10, random_state=0),
+        x.to_numpy(),
+        y.to_numpy(),
+        n_splits=3,
+        n_repeats=2,
+        groups=groups,
+        use_pbar=False,
+    )
+    for _, fold_df in g_preds.groupby(["repeat", "fold"]):
+        test_grps = set(groups[fold_df["sample_idx"]])
+        train_grps = set(groups) - test_grps
+        assert not test_grps & train_grps
+        assert len(test_grps) == 4
+
+    # Unstratified splits are the plain RepeatedKFold.
+    m_plain, _ = rcsk.perform_kfold_fit(
+        LogisticRegression(max_iter=500), x, y, n_splits=4, n_repeats=1,
+        stratify=False, rnd_seed=0, use_pbar=False,
+    )
+    assert len(m_plain) == 4
+
+    with pytest.raises(rsgispy.RSGISPyException, match="n_splits"):
+        rcsk.perform_kfold_fit(LogisticRegression(), x, y, n_splits=1)
+    with pytest.raises(rsgispy.RSGISPyException, match="n_repeats"):
+        rcsk.perform_kfold_fit(LogisticRegression(), x, y, n_repeats=0)
+    with pytest.raises(rsgispy.RSGISPyException, match="samples"):
+        rcsk.perform_kfold_fit(LogisticRegression(), x, y[:-1])
+
+
+def test_classifier_jackknife_fit(tmp_path):
+    """Leave-one-out (and leave-one-group-out) jackknife of a classifier."""
+    assert "perform_jackknife_fit" in rcsk.__all__
+    x, y = _make_cls_xy(n_per_class=8)
+    n_smpls = len(y)
+    # A sample of Urban placed in the Water cluster is predicted badly.
+    x.loc[n_smpls - 1, ["b1", "b2"]] = [3.0, 0.0]
+    jk = rcsk.perform_jackknife_fit(
+        LogisticRegression(max_iter=500),
+        x,
+        y,
+        out_dir=tmp_path / "jk",
+        use_pbar=False,
+    )
+    assert set(jk) == {"metrics", "predictions", "influence", "coef_stats"}
+    assert set(_CLS_FOLD_METRICS).issubset(jk["metrics"])
+    assert jk["metrics"]["n_samples"] == n_smpls
+    preds = jk["predictions"]
+    assert list(preds.columns) == ["sample_idx", "y_true", "y_pred"]
+    np.testing.assert_allclose(
+        jk["metrics"]["accuracy"], np.mean(preds["y_true"] == preds["y_pred"])
+    )
+    assert preds["y_pred"].iloc[-1] != "Urban"
+
+    # The LOO predictions match a hand-rolled leave-one-out.
+    loo = []
+    for i in range(n_smpls):
+        keep = np.arange(n_smpls) != i
+        mdl = LogisticRegression(max_iter=500).fit(x[keep], y[keep])
+        loo.append(mdl.predict(x.iloc[[i]])[0])
+    assert list(preds["y_pred"]) == loo
+
+    infl = jk["influence"]
+    assert list(infl.columns) == [
+        "sample_idx", "y_true", "y_pred",
+        "delta_cv_accuracy", "delta_fit_accuracy", "pred_change_frac",
+    ]
+    assert len(infl) == n_smpls
+    # Leaving out the misclassified sample raises the pooled LOO accuracy.
+    assert infl["delta_cv_accuracy"].iloc[-1] > 0
+    assert ((infl["pred_change_frac"] >= 0) & (infl["pred_change_frac"] <= 1)).all()
+
+    coefs = jk["coef_stats"]
+    assert set(coefs) == {"Forest", "Urban", "Water"}
+    assert list(coefs["Water"].index) == ["intercept", "b1", "b2"]
+    assert {"estimate", "bias", "std_err", "ci_lower", "ci_upper"}.issubset(
+        coefs["Water"].columns
+    )
+    full = LogisticRegression(max_iter=500).fit(x, y)
+    w_row = list(full.classes_).index("Water")
+    np.testing.assert_allclose(coefs["Water"]["estimate"].iloc[1:], full.coef_[w_row])
+    assert coefs["Water"].loc["b1", "estimate"] > 0
+    for kind in ("metrics", "predictions", "influence"):
+        assert (tmp_path / "jk" / f"jackknife_{kind}.csv").is_file()
+    assert (tmp_path / "jk" / "jackknife_coef_stats_water.csv").is_file()
+
+    # Groups: one group left out at a time; non-linear models give no coef stats.
+    groups = np.repeat(np.arange(8), 3)
+    jk_g = rcsk.perform_jackknife_fit(
+        KNeighborsClassifier(n_neighbors=3), x, y, groups=groups, use_pbar=False
+    )
+    assert jk_g["coef_stats"] is None
+    assert list(jk_g["predictions"].columns) == ["sample_idx", "group", "y_true", "y_pred"]
+    assert list(jk_g["influence"].columns[:2]) == ["group", "n_samples"]
+    assert len(jk_g["influence"]) == 8
+
+    # Binary: one coefficient row, labelled with the positive class.
+    bin_mask = (y != "Urban").to_numpy()
+    jk_b = rcsk.perform_jackknife_fit(
+        LogisticRegression(max_iter=500), x[bin_mask], y[bin_mask], use_pbar=False
+    )
+    assert list(jk_b["coef_stats"]) == ["Water"]
+
+    with pytest.raises(rsgispy.RSGISPyException, match="at least 3"):
+        rcsk.perform_jackknife_fit(
+            LogisticRegression(), x, y, groups=np.repeat([0, 1], 12), use_pbar=False
+        )

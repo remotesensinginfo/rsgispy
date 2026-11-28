@@ -36,6 +36,19 @@ from rsgispy.regression._reg_common import (
     prepare_reg_splits,
 )
 from rsgispy.tools._gbdt_common import load_joblib_model, save_joblib_model
+from rsgispy.tools._ml_assess import (
+    coef_names,
+    file_stems,
+    final_estimator,
+    jackknife_coef_stats,
+    jackknife_splits,
+    prep_assess_groups,
+    prep_assess_x,
+    repeated_kfold_splits,
+    summarise_fold_metrics,
+    take_rows,
+    write_named_csvs,
+)
 from rsgispy.tools._ml_tune import (
     normalise_search_method as _normalise_search_method,
     resolve_cv_groups_coords as _resolve_cv_groups_coords,
@@ -53,7 +66,6 @@ from rsgispy.tools._sklearn_spaces import (
 )
 from rsgispy.tools.files import ensure_parent_dir
 from rsgispy.tools.jsonio import write_dict_to_json
-from rsgispy.tools.strings import check_str
 
 _NATIVE_MULTIOUTPUT_REGRESSORS = {
     "LinearRegression",
@@ -661,9 +673,6 @@ def apply_sklearn_regressor(
 # Repeated k-fold and jackknife (leave-one-out) assessment of a regressor
 # ---------------------------------------------------------------------------
 
-_FOLD_ID_COLS = ("repeat", "fold", "n_samples")
-
-
 def _prep_assess_xy(
     x: Any,
     y: Any,
@@ -677,16 +686,7 @@ def _prep_assess_xy(
     and ``groups`` as a 1D array (or ``None``).
     """
     # pylint: disable=too-many-branches
-    if isinstance(x, pd.Series):
-        x = x.to_frame()
-    if not isinstance(x, pd.DataFrame):
-        x = np.asarray(x)
-        if x.ndim == 1:
-            x = x.reshape(-1, 1)
-        if x.ndim != 2:
-            raise rsgispy.RSGISPyException(
-                f"x must be 1D or 2D: got an array with {x.ndim} dimensions."
-            )
+    x = prep_assess_x(x)
 
     if isinstance(y, pd.Series):
         def_names = [str(y.name) if y.name is not None else "target"]
@@ -733,22 +733,7 @@ def _prep_assess_xy(
             f"The target names must be unique: got {names}."
         )
 
-    grp_arr = None
-    if groups is not None:
-        grp_arr = np.asarray(groups)
-        if grp_arr.ndim != 1 or grp_arr.shape[0] != y_arr.shape[0]:
-            raise rsgispy.RSGISPyException(
-                "groups must be 1D with one value per sample "
-                f"({y_arr.shape[0]}): got shape {grp_arr.shape}."
-            )
-    return x, y_arr, names, grp_arr
-
-
-def _take_rows(x: Any, idx: np.ndarray) -> Any:
-    """Select rows of a NumPy array or DataFrame by position."""
-    if isinstance(x, pd.DataFrame):
-        return x.iloc[idx]
-    return x[idx]
+    return x, y_arr, names, prep_assess_groups(groups, y_arr.shape[0])
 
 
 def _fit_predict_rows(
@@ -770,52 +755,10 @@ def _fit_predict_rows(
     y_fit = y_arr[train_idx]
     if n_targets == 1:
         y_fit = y_fit[:, 0]
-    mdl.fit(_take_rows(x, train_idx), y_fit)
+    mdl.fit(take_rows(x, train_idx), y_fit)
     n_pred = pred_x.shape[0]
     y_hat = np.asarray(mdl.predict(pred_x), dtype=np.float64)
     return mdl, y_hat.reshape(n_pred, -1)
-
-
-def _target_file_stems(target_names: Sequence[str]) -> List[str]:
-    """File-name safe, unique versions of the target names."""
-    stems = [
-        check_str(
-            str(name),
-            rm_non_ascii=True,
-            rm_dashs=True,
-            rm_spaces=True,
-            rm_punc=True,
-        ).lower()
-        or "target"
-        for name in target_names
-    ]
-    if len(set(stems)) != len(stems):
-        raise rsgispy.RSGISPyException(
-            f"The target names {list(target_names)} give the same file name "
-            f"({stems}): give distinct target_names."
-        )
-    return stems
-
-
-def _write_target_csvs(
-    out_dir: Union[str, os.PathLike],
-    out_prefix: str,
-    tables: Mapping[str, Mapping[str, pd.DataFrame]],
-    target_names: Sequence[str],
-    index_tables: Sequence[str] = (),
-) -> None:
-    """
-    Write ``tables[kind][target]`` to
-    ``<out_dir>/<out_prefix>_<kind>_<target>.csv``. The tables named in
-    ``index_tables`` are written with their index.
-    """
-    out_dir = os.fspath(out_dir)
-    os.makedirs(out_dir, exist_ok=True)
-    stems = _target_file_stems(target_names)
-    for kind, per_target in tables.items():
-        for name, stem in zip(target_names, stems):
-            out_file = os.path.join(out_dir, f"{out_prefix}_{kind}_{stem}.csv")
-            per_target[name].to_csv(out_file, index=kind in index_tables)
 
 
 def _pooled_metrics(y_t: np.ndarray, y_p: np.ndarray) -> Dict[str, Any]:
@@ -835,42 +778,6 @@ def _rmse(y_t: np.ndarray, y_p: np.ndarray) -> float:
     if not np.any(valid):
         return float("nan")
     return float(np.sqrt(np.mean((y_p[valid] - y_t[valid]) ** 2)))
-
-
-def _group_kfold_splits(
-    groups: np.ndarray,
-    n_splits: int,
-    n_repeats: int,
-    rnd_seed: Optional[int],
-):
-    """
-    Yield ``(repeat, fold, train_idx, test_idx)`` for a k-fold over groups,
-    repeated with a new random order of the groups each time. The shuffled
-    groups are split into ``n_splits`` folds with (nearly) the same number of
-    groups, so a group is never in both the train and test samples.
-    """
-    uniq_grps, grp_codes = np.unique(groups, return_inverse=True)
-    grp_codes = grp_codes.reshape(-1)
-    n_grps = uniq_grps.shape[0]
-    if n_grps < n_splits:
-        raise rsgispy.RSGISPyException(
-            f"There are {n_grps} groups, fewer than n_splits ({n_splits})."
-        )
-    rng = np.random.default_rng(rnd_seed)
-    for i_rep in range(n_repeats):
-        grp_fold = np.empty(n_grps, dtype=np.int64)
-        for i_fold, fold_grps in enumerate(
-            np.array_split(rng.permutation(n_grps), n_splits)
-        ):
-            grp_fold[fold_grps] = i_fold
-        smpl_fold = grp_fold[grp_codes]
-        for i_fold in range(n_splits):
-            yield (
-                i_rep,
-                i_fold,
-                np.flatnonzero(smpl_fold != i_fold),
-                np.flatnonzero(smpl_fold == i_fold),
-            )
 
 
 def perform_kfold_fit(
@@ -973,26 +880,12 @@ def perform_kfold_fit(
     check_sklearn_available("perform_kfold_fit")
     if int(n_splits) < 2:
         raise rsgispy.RSGISPyException(f"n_splits must be >= 2: got {n_splits}.")
-    if int(n_repeats) < 1:
-        raise rsgispy.RSGISPyException(
-            f"n_repeats must be >= 1: got {n_repeats}."
-        )
-    n_splits = int(n_splits)
-    n_repeats = int(n_repeats)
     x, y_arr, names, grp_arr = _prep_assess_xy(x, y, target_names, groups)
     if out_dir is not None:
-        _target_file_stems(names)
-
-    if grp_arr is None:
-        rkf = sklearn.model_selection.RepeatedKFold(
-            n_splits=n_splits, n_repeats=n_repeats, random_state=rnd_seed
-        )
-        splits = (
-            (i_split // n_splits, i_split % n_splits, train_idx, test_idx)
-            for i_split, (train_idx, test_idx) in enumerate(rkf.split(y_arr))
-        )
-    else:
-        splits = _group_kfold_splits(grp_arr, n_splits, n_repeats, rnd_seed)
+        file_stems(names)
+    splits, n_splits, n_repeats = repeated_kfold_splits(
+        y_arr.shape[0], n_splits, n_repeats, groups=grp_arr, rnd_seed=rnd_seed
+    )
 
     fold_rows: Dict[str, List[Dict[str, Any]]] = {n: [] for n in names}
     resid_parts: List[pd.DataFrame] = []
@@ -1001,7 +894,7 @@ def perform_kfold_fit(
         splits, total=n_splits * n_repeats, disable=not use_pbar
     ):
         _, y_hat = _fit_predict_rows(
-            regrs_obj, x, y_arr, train_idx, _take_rows(x, test_idx)
+            regrs_obj, x, y_arr, train_idx, take_rows(x, test_idx)
         )
         y_test = y_arr[test_idx]
         part = {
@@ -1038,7 +931,7 @@ def perform_kfold_fit(
         )
 
     if out_dir is not None:
-        _write_target_csvs(
+        write_named_csvs(
             out_dir,
             out_prefix,
             {"metrics": metrics, "residuals": residuals},
@@ -1074,18 +967,7 @@ def summarise_kfold_metrics(
     """
     parts = []
     for name, m_df in metrics.items():
-        vals = m_df.drop(
-            columns=[c for c in _FOLD_ID_COLS if c in m_df.columns]
-        ).apply(pd.to_numeric, errors="coerce")
-        summ = pd.DataFrame(
-            {
-                "mean": vals.mean(),
-                "median": vals.median(),
-                "std": vals.std(),
-                "p05": vals.quantile(0.05),
-                "p95": vals.quantile(0.95),
-            }
-        )
+        summ = summarise_fold_metrics(m_df)
         summ.index = pd.MultiIndex.from_product(
             [[name], summ.index], names=["target", "metric"]
         )
@@ -1095,27 +977,12 @@ def summarise_kfold_metrics(
     return pd.concat(parts)
 
 
-def _final_estimator(fitted: Any) -> Any:
-    """
-    The last fitted step of a pipeline (or the target regressor of a
-    ``TransformedTargetRegressor``), or the estimator itself.
-    """
-    est = fitted
-    while True:
-        if hasattr(est, "steps") and est.steps:
-            est = est.steps[-1][1]
-        elif hasattr(est, "regressor_"):
-            est = est.regressor_
-        else:
-            return est
-
-
 def _linear_coefs(fitted: Any, n_targets: int) -> Optional[np.ndarray]:
     """
     The fitted intercept and coefficients as an array (targets, 1 + features)
     with the intercept first, or ``None`` if the estimator has no ``coef_``.
     """
-    est = _final_estimator(fitted)
+    est = final_estimator(fitted)
     if isinstance(est, sklearn.multioutput.MultiOutputRegressor):
         per_tgt = [_linear_coefs(sub, 1) for sub in est.estimators_]
         if any(c is None for c in per_tgt):
@@ -1135,61 +1002,6 @@ def _linear_coefs(fitted: Any, n_targets: int) -> Optional[np.ndarray]:
         (n_targets,),
     )
     return np.column_stack([intercept, coef])
-
-
-def _coef_names(fitted: Any, x: Any, n_coefs: int) -> List[str]:
-    """Names of the coefficients (intercept first)."""
-    feat_names = None
-    if isinstance(x, pd.DataFrame) and x.shape[1] == n_coefs:
-        feat_names = [str(c) for c in x.columns]
-    elif hasattr(fitted, "steps") and len(fitted.steps) > 1:
-        try:
-            out_names = list(fitted[:-1].get_feature_names_out())
-            if len(out_names) == n_coefs:
-                feat_names = [str(c) for c in out_names]
-        except (AttributeError, ValueError, TypeError):
-            feat_names = None
-    if feat_names is None:
-        feat_names = [f"x{i}" for i in range(n_coefs)]
-    return ["intercept", *feat_names]
-
-
-def _jackknife_coef_stats(
-    full_coefs: np.ndarray,
-    loo_coefs: np.ndarray,
-    coef_names: Sequence[str],
-    target_names: Sequence[str],
-) -> Dict[str, pd.DataFrame]:
-    """
-    Jackknife bias, standard error and 95% interval of each coefficient
-    (Efron and Tibshirani, 1993). ``full_coefs`` is (targets, coefs) and
-    ``loo_coefs`` is (left-out units, targets, coefs).
-    """
-    import scipy.stats  # pylint: disable=import-outside-toplevel
-
-    n_units = loo_coefs.shape[0]
-    jack_mean = loo_coefs.mean(axis=0)
-    bias = (n_units - 1) * (jack_mean - full_coefs)
-    std_err = np.sqrt(
-        (n_units - 1) / n_units * ((loo_coefs - jack_mean) ** 2).sum(axis=0)
-    )
-    jack_est = full_coefs - bias
-    t_crit = float(scipy.stats.t.ppf(0.975, n_units - 1))
-    out = {}
-    for i_tgt, name in enumerate(target_names):
-        out[name] = pd.DataFrame(
-            {
-                "estimate": full_coefs[i_tgt],
-                "jack_mean": jack_mean[i_tgt],
-                "bias": bias[i_tgt],
-                "jack_estimate": jack_est[i_tgt],
-                "std_err": std_err[i_tgt],
-                "ci_lower": jack_est[i_tgt] - t_crit * std_err[i_tgt],
-                "ci_upper": jack_est[i_tgt] + t_crit * std_err[i_tgt],
-            },
-            index=pd.Index(list(coef_names), name="coef"),
-        )
-    return out
 
 
 def _jackknife_influence(
@@ -1359,19 +1171,9 @@ def perform_jackknife_fit(
     check_sklearn_available("perform_jackknife_fit")
     x, y_arr, names, grp_arr = _prep_assess_xy(x, y, target_names, groups)
     if out_dir is not None:
-        _target_file_stems(names)
+        file_stems(names)
     n_smpls, n_targets = y_arr.shape
-
-    if grp_arr is None:
-        splitter = sklearn.model_selection.LeaveOneOut()
-        n_units = n_smpls
-    else:
-        splitter = sklearn.model_selection.LeaveOneGroupOut()
-        n_units = int(np.unique(grp_arr).shape[0])
-    if n_units < 3:
-        raise rsgispy.RSGISPyException(
-            f"The jackknife needs at least 3 samples (or groups): got {n_units}."
-        )
+    jk_splits, n_units = jackknife_splits(n_smpls, grp_arr)
 
     all_idx = np.arange(n_smpls)
     full_mdl, full_pred = _fit_predict_rows(regrs_obj, x, y_arr, all_idx, x)
@@ -1385,7 +1187,7 @@ def perform_jackknife_fit(
     tqdm_cls = rsgispy.get_tqdm()
     for i_unit, (train_idx, test_idx) in enumerate(
         tqdm_cls(
-            splitter.split(y_arr, groups=grp_arr),
+            jk_splits,
             total=n_units,
             disable=not use_pbar,
         )
@@ -1430,10 +1232,10 @@ def perform_jackknife_fit(
 
     coef_stats = None
     if full_coefs is not None and len(loo_coefs) == n_units:
-        coef_stats = _jackknife_coef_stats(
+        coef_stats = jackknife_coef_stats(
             full_coefs,
             np.stack(loo_coefs),
-            _coef_names(full_mdl, x, full_coefs.shape[1] - 1),
+            coef_names(full_mdl, x, full_coefs.shape[1] - 1),
             names,
         )
 
@@ -1445,7 +1247,7 @@ def perform_jackknife_fit(
         }
         if coef_stats is not None:
             tables["coef_stats"] = coef_stats
-        _write_target_csvs(
+        write_named_csvs(
             out_dir, out_prefix, tables, names, index_tables=("coef_stats",)
         )
 
@@ -1507,7 +1309,7 @@ def get_linear_model_coefs(
     """
     names = _model_feature_names(model, feat_names)
     n_feats = len(names)
-    est = _final_estimator(model)
+    est = final_estimator(model)
     is_plain = est is model and hasattr(model, "coef_")
     if is_plain:
         coef = np.atleast_2d(np.asarray(model.coef_, dtype=np.float64))

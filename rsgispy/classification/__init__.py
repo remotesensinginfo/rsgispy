@@ -31,7 +31,11 @@ Submodules:
   :func:`~rsgispy.classification.classsklearn.train_sklearn_classifier`,
   :func:`~rsgispy.classification.classsklearn.apply_sklearn_classifier`,
   :func:`~rsgispy.classification.classsklearn.save_sklearn_classifier`,
-  :func:`~rsgispy.classification.classsklearn.load_sklearn_classifier`).
+  :func:`~rsgispy.classification.classsklearn.load_sklearn_classifier`), and
+  repeated k-fold and jackknife (leave-one-out) assessment
+  (:func:`~rsgispy.classification.classsklearn.perform_kfold_fit`,
+  :func:`~rsgispy.classification.classsklearn.summarise_kfold_metrics`,
+  :func:`~rsgispy.classification.classsklearn.perform_jackknife_fit`).
 * :mod:`rsgispy.classification.classxgboost` — XGBoost binary and multi-class
   classification with Optuna Bayesian hyperparameter optimisation, early
   stopping, optional CUDA GPU acceleration with CPU fallback, model persistence,
