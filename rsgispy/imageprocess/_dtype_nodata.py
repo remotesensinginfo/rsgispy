@@ -7,6 +7,7 @@ resolution, no-data handling, and result-block casting for
 import math
 import os
 import sys
+import warnings
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -513,23 +514,111 @@ def parse_epsg_crs(epsg_code: Optional[int]) -> Optional[Any]:
         ) from err
 
 
+def warn_if_clamp_int_disabled(clamp_int: Optional[bool], where: str) -> None:
+    """
+    Issue a :class:`DeprecationWarning` when ``clamp_int=False`` is passed to
+    ``where``: integer outputs are now always rounded and clamped (see
+    :func:`round_clamp_to_dtype`), so the argument is ignored.
+    """
+    if clamp_int is False:
+        warnings.warn(
+            f"{where}(clamp_int=False) is deprecated and ignored: integer "
+            "outputs are always rounded to the nearest integer and clamped "
+            "to the data type range.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
+
+def round_clamp_to_dtype(
+    arr: Union[np.ndarray, float, int],
+    out_np_dtype: Any,
+    nodata: Optional[float] = None,
+    valid_mask: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """
+    Convert ``arr`` to ``out_np_dtype`` with the package's integer casting
+    policy:
+
+    * integer outputs are rounded to the nearest integer (``numpy.rint``),
+      then clamped to the data type's range, so values never wrap or
+      truncate (e.g. ``[200.4, 400, -2]`` to uint8 gives ``[200, 255, 0]``);
+    * non-finite values, and pixels where ``valid_mask`` is ``False``, are
+      set to ``nodata`` (``0`` for integer outputs when ``nodata`` is
+      ``None``);
+    * when ``valid_mask`` and ``nodata`` are both given, a valid pixel whose
+      rounded, clamped value equals ``nodata`` is moved one step away from it
+      (``nodata + 1``, or ``nodata - 1`` at the top of the range), so valid
+      data never becomes nodata.
+
+    Float outputs are cast directly, with masked pixels set to ``nodata``
+    when it is given.
+
+    :param arr: Input array (or scalar).
+    :param out_np_dtype: Target NumPy dtype.
+    :param nodata: Output no-data value (or ``None``).
+    :param valid_mask: Optional boolean mask of valid pixels, broadcastable
+                       to ``arr``.
+    :return: Array of dtype ``out_np_dtype``.
+
+    .. code:: python
+
+        import numpy as np
+        import rsgispy.imageprocess
+
+        out = rsgispy.imageprocess.round_clamp_to_dtype(
+            np.array([200.4, 400.0, -2.0]), np.uint8
+        )  # [200, 255, 0]
+    """
+    out_np_dtype = np.dtype(out_np_dtype)
+    arr = np.asarray(arr, dtype=np.float64)
+    finite = np.isfinite(arr)
+    good = finite if valid_mask is None else (finite & np.asarray(valid_mask, bool))
+    if not np.issubdtype(out_np_dtype, np.integer):
+        if nodata is None:
+            return arr.astype(out_np_dtype, copy=False)
+        return np.where(good, arr, nodata).astype(out_np_dtype, copy=False)
+
+    info = np.iinfo(out_np_dtype)
+    nd_ok = nodata is not None and fits_dtype_range(nodata, out_np_dtype)
+    fill = float(nodata) if nd_ok else 0.0
+    with np.errstate(invalid="ignore"):
+        vals = np.clip(np.rint(np.where(finite, arr, fill)), info.min, info.max)
+    if nd_ok and valid_mask is not None:
+        bump = fill + 1.0 if fill < info.max else fill - 1.0
+        vals = np.where(good & (vals == fill), bump, vals)
+    vals = np.where(good, vals, fill)
+    return vals.astype(out_np_dtype)
+
+
 def cast_result_block(
     res: Union[np.ndarray, float, int],
     win_h: int,
     win_w: int,
     out_np_dtype: np.dtype,
-    clamp_int: bool = False,
+    clamp_int: Optional[bool] = None,
+    *,
+    nodata: Optional[float] = None,
+    valid_mask: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
-    Convert a block calculation result to an array of the target NumPy dtype.
+    Convert a block calculation result to an array of the target NumPy dtype
+    using :func:`round_clamp_to_dtype`: integer outputs are rounded to the
+    nearest integer and clamped to the dtype range (they never wrap or
+    truncate), and non-finite values become ``nodata`` (``0`` when it is
+    ``None``).
 
     :param res: Result array or scalar from block calculation.
     :param win_h: Height of the current window in pixels.
     :param win_w: Width of the current window in pixels.
     :param out_np_dtype: Target NumPy dtype for the output raster.
-    :param clamp_int: If ``True`` and ``out_np_dtype`` is an integer dtype,
-                      clamp values to the dtype's valid range before casting
-                      (Default = ``False``).
+    :param clamp_int: Deprecated and ignored: integer outputs are always
+                      rounded and clamped. Passing ``False`` issues a
+                      :class:`DeprecationWarning`.
+    :param nodata: Optional output no-data value.
+    :param valid_mask: Optional boolean mask of valid pixels; invalid pixels
+                       are set to ``nodata``, and valid pixels never take the
+                       ``nodata`` value (see :func:`round_clamp_to_dtype`).
     :return: NumPy array of shape ``(win_h, win_w)`` or ``(bands, win_h, win_w)``.
 
     .. code:: python
@@ -542,16 +631,16 @@ def cast_result_block(
             arr, 256, 256, np.dtype(np.float32)
         )
     """
-    out_np_dtype = np.dtype(out_np_dtype)
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    warn_if_clamp_int_disabled(clamp_int, "cast_result_block")
     if np.ndim(res) == 0:
-        arr = np.full((win_h, win_w), res, dtype=np.float64)
-    else:
-        arr = np.asarray(res)
-
-    with np.errstate(invalid="ignore"):
-        if np.issubdtype(out_np_dtype, np.integer):
-            arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
-            if clamp_int:
-                info = np.iinfo(out_np_dtype)
-                arr = np.clip(arr, info.min, info.max)
-        return arr.astype(out_np_dtype, copy=False)
+        res = np.full((win_h, win_w), res, dtype=np.float64)
+    out_np_dtype = np.dtype(out_np_dtype)
+    arr = np.asarray(res)
+    if (
+        np.issubdtype(out_np_dtype, np.integer)
+        and arr.dtype == out_np_dtype
+        and valid_mask is None
+    ):
+        return arr
+    return round_clamp_to_dtype(arr, out_np_dtype, nodata, valid_mask)

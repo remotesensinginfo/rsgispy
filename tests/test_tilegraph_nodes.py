@@ -369,7 +369,7 @@ def test_select_stack_cast_nodes():
     np.testing.assert_array_equal(res["stack"][4], arr[0])
     assert res["cast"].dtype == np.uint8
     np.testing.assert_array_equal(
-        res["cast"], np.clip(res["stack"], 0, 255).astype(np.uint8)
+        res["cast"], np.clip(np.rint(res["stack"]), 0, 255).astype(np.uint8)
     )
     with pytest.raises(rsgispy.RSGISPyException):
         StackBands([])
@@ -604,3 +604,22 @@ def test_raster_source_read_dtype_matches_numpy_cast(tmp_path, file_dtype, node_
         np.testing.assert_array_equal(out, expected)
     safe = np.can_cast(file_dtype, node_dtype, casting="safe")
     assert (gdal_read_dtype(file_dtype, node_dtype) is not None) == bool(safe)
+
+
+def test_cast_remaps_unrepresentable_nodata():
+    """H13: -9999 cast to uint8 becomes 255, in the pixels and the metadata."""
+    arr = np.array([[[-9999.0, 10.4, 300.0], [-3.0, 254.6, 255.0]]])
+    src = ArraySource(arr, nodata=-9999.0)
+    cast = Cast(src, np.uint8)
+    graph = TileGraph(MemorySink(cast, name="cast"), block_size=6)
+    assert graph.node_meta[cast].nodata == 255.0
+    out = graph.run(use_pbar=False)["cast"]
+    # nodata -> 255; valid values round and clamp, and never become 255.
+    np.testing.assert_array_equal(out[0], [[255, 10, 254], [0, 254, 254]])
+
+    keep = Cast(ArraySource(arr, nodata=-9999.0), np.int16)
+    g2 = TileGraph(MemorySink(keep, name="c"), block_size=6)
+    assert g2.node_meta[keep].nodata == -9999.0
+    np.testing.assert_array_equal(
+        g2.run(use_pbar=False)["c"][0], [[-9999, 10, 300], [-3, 255, 255]]
+    )

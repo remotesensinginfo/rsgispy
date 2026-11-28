@@ -286,8 +286,16 @@ class _RescalePxlNode(TileNode):
                 low = min(cfg.out_min, cfg.out_max)
                 high = max(cfg.out_min, cfg.out_max)
                 scaled = np.clip(scaled, low, high)
-            res = np.where(nodata_mask, self._band_out_nds[b_idx], scaled)
-            out_bands.append(cast_result_block(res, win_h, win_w, self.out_np_dtype))
+            out_bands.append(
+                cast_result_block(
+                    scaled,
+                    win_h,
+                    win_w,
+                    self.out_np_dtype,
+                    nodata=self._band_out_nds[b_idx],
+                    valid_mask=~nodata_mask,
+                )
+            )
         return aligned.with_data(np.stack(out_bands, axis=0))
 
 
@@ -370,8 +378,16 @@ def _calc_img_rescale_block(
         band_arr = in_block[b_idx]
         nodata_mask = ~build_valid_mask(band_arr, no_data_val=float(c_nd))
         rescaled = ((band_arr - c_off) * scale) + n_off
-        res = np.where(nodata_mask, n_nd, rescaled)
-        out_bands.append(cast_result_block(res, win_h, win_w, out_np_dtype))
+        out_bands.append(
+            cast_result_block(
+                rescaled,
+                win_h,
+                win_w,
+                out_np_dtype,
+                nodata=n_nd,
+                valid_mask=~nodata_mask,
+            )
+        )
     return np.stack(out_bands, axis=0)
 
 
@@ -1181,9 +1197,16 @@ def _apply_norm_block(
         )
         for idx in range(len(band_specs)):
             band_res = vec_out[idx]
-            if eff_out_nd is not None:
-                band_res = np.where(np.isfinite(band_res), band_res, eff_out_nd)
-            out_bands.append(cast_result_block(band_res, win_h, win_w, out_np_dtype))
+            out_bands.append(
+                cast_result_block(
+                    band_res,
+                    win_h,
+                    win_w,
+                    out_np_dtype,
+                    nodata=eff_out_nd,
+                    valid_mask=None if eff_out_nd is None else np.isfinite(band_res),
+                )
+            )
     else:
         for idx, b_spec in enumerate(band_specs):
             arr = in_block[idx]
@@ -1202,7 +1225,16 @@ def _apply_norm_block(
                     eff_out_max=norm.eff_out_max,
                     trim_to_limits=norm.eff_trim,
                 )
-            out_bands.append(cast_result_block(res, win_h, win_w, out_np_dtype))
+            out_bands.append(
+                cast_result_block(
+                    res,
+                    win_h,
+                    win_w,
+                    out_np_dtype,
+                    nodata=eff_out_nd,
+                    valid_mask=None if eff_out_nd is None else valid,
+                )
+            )
     return np.stack(out_bands, axis=0)
 
 

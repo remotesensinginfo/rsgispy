@@ -1467,3 +1467,44 @@ def test_imageutils_gdf_in_memory(tmp_path):
     )
     with rasterio.open(dist_zones) as src:
         assert set(np.unique(src.read(1))) == {0, 1, 2}
+
+
+def test_stack_img_bands_common_dtype_and_inherited_metadata(tmp_path):
+    """The output dtype holds every input; nodata and band names are inherited."""
+    a_path = str(tmp_path / "a.tif")
+    b_path = str(tmp_path / "b.tif")
+    _write_test_tif(a_path, np.full((2, 3), 7, dtype=np.uint8), nodata=0)
+    _write_test_tif(b_path, np.array([[1.5, -2.25, 1000.0], [0.0, 3.0, 4.0]],
+                                     dtype=np.float32), nodata=0)
+    with rasterio.open(a_path, "r+") as ds:
+        ds.set_band_description(1, "alpha")
+    with rasterio.open(b_path, "r+") as ds:
+        ds.set_band_description(1, "beta")
+
+    out_path = str(tmp_path / "stack.tif")
+    iu_bands.stack_img_bands([a_path, b_path], out_path, calc_stats=False,
+                             use_pbar=False)
+    with rasterio.open(out_path) as ds:
+        assert ds.dtypes == ("float32", "float32")
+        assert ds.nodata == 0.0
+        assert ds.descriptions == ("alpha", "beta")
+        np.testing.assert_array_equal(
+            ds.read(2), [[1.5, -2.25, 1000.0], [0.0, 3.0, 4.0]]
+        )
+
+    # An explicit narrower datatype rounds and clamps rather than wrapping.
+    out_u8 = str(tmp_path / "stack_u8.tif")
+    iu_bands.stack_img_bands([a_path, b_path], out_u8, datatype=rsgispy.TYPE_8UINT,
+                             calc_stats=False, use_pbar=False)
+    with rasterio.open(out_u8) as ds:
+        np.testing.assert_array_equal(ds.read(2), [[2, 0, 255], [0, 3, 4]])
+
+    # Inputs that disagree on nodata give no output nodata.
+    c_path = str(tmp_path / "c.tif")
+    _write_test_tif(c_path, np.full((2, 3), 5, dtype=np.uint8), nodata=255)
+    out_mixed = str(tmp_path / "stack_mixed.tif")
+    iu_bands.stack_img_bands([a_path, c_path], out_mixed, calc_stats=False,
+                             use_pbar=False)
+    with rasterio.open(out_mixed) as ds:
+        assert ds.nodata is None
+        assert ds.dtypes == ("uint8", "uint8")
