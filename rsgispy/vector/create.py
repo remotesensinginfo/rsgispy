@@ -5,7 +5,6 @@ utilities for :mod:`rsgispy.vector.create` using ``geopandas``,
 """
 
 import os
-import warnings
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
