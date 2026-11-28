@@ -1342,7 +1342,10 @@ class DiskSink(TileSink):
 
     When ``nodata`` or ``band_names`` are not given (and ``inherit_meta`` is
     ``True``), the no-data value and band names of the input node's metadata
-    are used (the no-data value only when the output data type can store it).
+    are used. When the output data type cannot store the input no-data value
+    (e.g. ``-9999`` written as ``uint8``), those pixels are written as
+    :func:`rsgispy.imageprocess.default_out_nodata` (``255`` for ``uint8``),
+    which is recorded as the output no-data value, as the file functions do.
 
     When ``datatype`` is ``None`` (the default) the data type comes from the
     input node's metadata (see :func:`datatype_from_meta`): integer and
@@ -1556,13 +1559,19 @@ class DiskSink(TileSink):
             self._resolved_datatype = datatype_from_meta(meta)
         out_np_dt = np.dtype(rsgispy.get_numpy_datatype(self.out_datatype))
         nodata = self.nodata
-        if (
-            nodata is None
-            and self.inherit_meta
-            and meta.nodata is not None
-            and _nodata_fits(meta.nodata, out_np_dt)
-        ):
-            nodata = float(meta.nodata)
+        self._remap_nodata_from = None
+        if nodata is None and self.inherit_meta and meta.nodata is not None:
+            if _nodata_fits(meta.nodata, out_np_dt):
+                nodata = float(meta.nodata)
+            else:
+                # The output type cannot hold the input no-data value (e.g.
+                # -9999 written as uint8): write those pixels as the default
+                # output no-data value instead, as the file functions do.
+                # pylint: disable=import-outside-toplevel
+                from rsgispy.imageprocess import default_out_nodata
+
+                nodata = default_out_nodata(out_np_dt)
+                self._remap_nodata_from = float(meta.nodata)
         names = self.band_names
         if names is None and self.inherit_meta and meta.band_names is not None:
             names = list(meta.band_names)
@@ -1654,12 +1663,22 @@ class DiskSink(TileSink):
         dst = run["dst"]
         if dst is None:
             dst = self._open_dataset(int(block.shape[0]))
-        cast_blk = cast_result_block(
-            block,
-            int(window.height),
-            int(window.width),
-            run["np_dtype"],
-        )
+        remap_from = getattr(self, "_remap_nodata_from", None)
+        if remap_from is None:
+            cast_blk = cast_result_block(
+                block, int(window.height), int(window.width), run["np_dtype"]
+            )
+        else:
+            blk_f = np.asarray(block, dtype=np.float64)
+            is_nd = np.isnan(blk_f) if math.isnan(remap_from) else blk_f == remap_from
+            cast_blk = cast_result_block(
+                blk_f,
+                int(window.height),
+                int(window.width),
+                run["np_dtype"],
+                nodata=run["nodata"],
+                valid_mask=~is_nd,
+            )
         dst.write(cast_blk, window=window)
 
     def close(self) -> None:

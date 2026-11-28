@@ -188,11 +188,12 @@ def test_metadata_propagates_to_disk_sink(tmp_path):
     )
     assert _read(tmp_path / "out3.tif")[1:] == (None, (None, None))
 
-    # A no-data value the output type cannot store is not inherited.
+    # A no-data value the output type cannot store becomes the type's default
+    # (255 for uint8), as in the file functions.
     TileGraph(
         DiskSink(med, tmp_path / "out4.tif", datatype=rsgispy.TYPE_8UINT)
     ).run(use_pbar=False)
-    assert _read(tmp_path / "out4.tif")[1] is None
+    assert _read(tmp_path / "out4.tif")[1] == 255.0
 
 
 def test_metadata_of_band_math_and_unknown_nodes():
