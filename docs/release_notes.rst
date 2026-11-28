@@ -34,6 +34,10 @@ Integer outputs, clamping and no data
 * Change detection (CVA, SFA, IR-MAD, difference, ratio) compares a pixel only
   when every band is valid on both dates.
 * Thematic statistics are exact for integer ranges wider than 65536 values.
+* The per-pixel standard deviation (``image_pixel_column_summary``,
+  ``calc_multi_img_band_stats``, ``get_img_sum_stats_in_pxl``) is the
+  population one by default, as for ``calc_basic_img_band_stats``; pass
+  ``ddof=1`` for the sample one (the previous behaviour).
 
 Grids, CRSs and vectors
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -48,6 +52,9 @@ Grids, CRSs and vectors
 * In-place ``*_file`` updates write back to the layer that was read.
 * Empty vector results are written as empty layers (with a warning); empty
   zonal statistics inputs give empty results.
+* ``calc_zonal_band_pxl_counts`` counts only valid pixels in its total and
+  writes the number of no-data pixels to ``nodata_field``
+  (``'nodata_count'``).
 * The polygon zonal statistics take ``reproj_vec``.
 * ``merge_utm_vecs_wgs84`` splits features at WGS84 zone boundaries and keeps
   point and line layers.
@@ -85,6 +92,14 @@ API changes
 * ``DpRVI_VV``, ``DpRVI_HH`` and ``RVI4S1`` compute the published DpRVI
   (Mandal et al. 2020) instead of the simple dual-pol RVI.
 * The ``rsgispy.zonalstats.METHOD_*`` constants were removed.
+* Otsu, Yen, ISODATA and the histogram cross-entropy use 256 histogram bins
+  by default (``bins='fd'`` gives the previous Freedman-Diaconis rule), so
+  thresholds can shift slightly.
+* ``find_files_ext`` and ``find_files_mpaths_ext`` return a sorted list of
+  paths (previously a dictionary keyed by file name, which lost same-named
+  files in different folders).
+* ``is_summer_winter`` treats the hemispheres as mirror images (April to
+  September is the southern winter; it was May to October).
 * New: ``extract_segment_stats(seg_no_data_val=...)``, a COG guard in
   ``set_img_pxl_values``, ``rsgispy.tools.files.safe_join``.
 
