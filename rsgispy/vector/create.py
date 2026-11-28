@@ -5,6 +5,7 @@ utilities for :mod:`rsgispy.vector.create` using ``geopandas``,
 """
 
 import os
+import warnings
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
@@ -93,23 +94,36 @@ def _get_h3() -> Any:
 
 
 def polygonise_raster_to_vec_lyr(
-    out_vec_file: Optional[Union[str, os.PathLike]],
-    out_vec_lyr: Optional[str],
-    out_format: str,
-    input_img: str,
-    img_band: int = 1,
-    mask_img: Optional[str] = None,
-    mask_band: int = 1,
-    *,
-    replace_file: bool = True,
-    replace_lyr: bool = True,
+    input_img: Any,
+    out_vec_file: Optional[Union[str, os.PathLike]] = None,
+    out_vec_lyr: Optional[Any] = None,
+    img_band: Any = 1,
+    mask_img: Optional[Any] = None,
+    mask_band: Any = 1,
+    no_data_val: Optional[float] = None,
     pxl_val_fieldname: str = "PXLVAL",
     use_8_conn: bool = False,
+    *,
+    out_format: Optional[str] = None,
+    replace_file: bool = True,
+    replace_lyr: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
 ) -> Optional[gpd.GeoDataFrame]:
     """
     Polygonise connected pixel regions in ``input_img`` into a vector layer
     using ``rasterio.features.shapes``.
+
+    .. versionchanged:: 0.5.0
+       The arguments follow :func:`polygonise_raster_tiled`:
+       ``(input_img, out_vec_file, out_vec_lyr, img_band, mask_img,
+       mask_band, no_data_val, ...)`` with ``out_format`` keyword-only
+       (default: from the file extension). The old RSGISLib order
+       ``(out_vec_file, out_vec_lyr, out_format, input_img, img_band,
+       mask_img, mask_band)`` is still accepted when passed positionally (or
+       with ``mask_img`` / ``mask_band`` keywords), with a
+       :class:`DeprecationWarning`; a legacy call that also passes
+       ``img_band=`` by keyword raises a :class:`TypeError` and must be
+       updated. ``no_data_val`` is new.
 
     The whole band, every polygon and the output GeoDataFrame are held in
     memory and a single core is used. For rasters producing many polygons
@@ -117,16 +131,19 @@ def polygonise_raster_to_vec_lyr(
     :func:`polygonise_raster_tiled`, which processes the raster in tiles on
     several cores, streams the output to disk and is much faster.
 
+    :param input_img: Path to input raster file.
     :param out_vec_file: Output vector file path, or ``None`` to return an
                          in-memory :class:`geopandas.GeoDataFrame`.
     :param out_vec_lyr: Output vector layer name (or ``None``).
-    :param out_format: Output vector format driver (e.g., ``'GPKG'``).
-    :param input_img: Path to input raster file.
     :param img_band: 1-based band index in ``input_img`` to polygonise
                      (Default = ``1``).
     :param mask_img: Optional path to mask raster where non-zero pixels are
                      polygonised (Default = ``None``).
     :param mask_band: 1-based band index in ``mask_img`` (Default = ``1``).
+    :param no_data_val: Optional pixel value not polygonised (Default =
+                        ``None``: every pixel is polygonised).
+    :param out_format: Output vector format driver (e.g., ``'GPKG'``;
+                       Default = inferred from the file extension).
     :param replace_file: If ``True``, delete an existing ``out_vec_file``
                          before writing (Default = ``True``).
     :param replace_lyr: If ``True``, allow overwriting an existing layer of the
@@ -148,10 +165,42 @@ def polygonise_raster_to_vec_lyr(
         import rsgispy.vector.create
 
         rsgispy.vector.create.polygonise_raster_to_vec_lyr(
-            "classes.gpkg", "classes", "GPKG", "classes.tif", img_band=1
+            "classes.tif", "classes.gpkg", "classes", img_band=1, no_data_val=0
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    # pylint: disable=too-many-branches,too-many-statements
+    if isinstance(img_band, (str, os.PathLike)):
+        # Old RSGISLib order: (out_vec_file, out_vec_lyr, out_format,
+        # input_img, img_band, mask_img, mask_band); img_band must be an int.
+        warnings.warn(
+            "polygonise_raster_to_vec_lyr(out_vec_file, out_vec_lyr, out_format, "
+            "input_img, ...) is deprecated; use polygonise_raster_to_vec_lyr("
+            "input_img, out_vec_file, out_vec_lyr, img_band, ..., "
+            "out_format=...), as polygonise_raster_tiled.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        # Positional legacy values land one slot later; keyword ones
+        # (mask_img=..., mask_band=...) keep their names: tell them apart
+        # by type (band numbers are ints, images are paths).
+        legacy_band, legacy_msk, legacy_msk_band = 1, None, 1
+        for val in (mask_img, mask_band):
+            if isinstance(val, (str, os.PathLike)):
+                legacy_msk = val
+        if isinstance(mask_img, (int, np.integer)):
+            legacy_band = int(mask_img)
+        if isinstance(mask_band, (int, np.integer)):
+            legacy_msk_band = int(mask_band)
+        if no_data_val is not None:
+            legacy_msk_band = int(no_data_val)
+        (input_img, out_vec_file, out_vec_lyr, out_format, img_band, mask_img,
+         mask_band, no_data_val) = (
+            img_band, input_img, out_vec_file, out_vec_lyr, legacy_band,
+            legacy_msk, legacy_msk_band, None,
+        )
+    img_band = int(img_band)
+    mask_band = int(mask_band)
     ensure_file_exists(input_img)
     target_lyr = (
         resolve_out_lyr_name(out_vec_file, out_vec_lyr)
@@ -164,7 +213,7 @@ def polygonise_raster_to_vec_lyr(
         and (not replace_lyr)
         and os.path.exists(out_vec_file)
     ):
-        fmt = check_format_name(out_format)
+        fmt = check_format_name(out_format) if out_format else None
         if is_geoparquet_format(fmt) or is_geoparquet_file(out_vec_file):
             raise rsgispy.RSGISPyException(
                 f"Output GeoParquet file '{out_vec_file}' already exists and "
@@ -198,6 +247,13 @@ def polygonise_raster_to_vec_lyr(
         with rasterio.open(mask_img, "r") as msk_src:
             validate_band_index(mask_band, msk_src.count, mask_img)
             mask_arr = msk_src.read(mask_band).astype(bool)
+    if no_data_val is not None:
+        nd_mask = (
+            ~np.isnan(band_arr)
+            if np.issubdtype(band_arr.dtype, np.floating) and np.isnan(no_data_val)
+            else band_arr != no_data_val
+        )
+        mask_arr = nd_mask if mask_arr is None else (mask_arr & nd_mask)
 
     connectivity = 8 if use_8_conn else 4
     # rasterio < 1.4 rejects uint32 / int64 / uint64 in rasterio.features.shapes

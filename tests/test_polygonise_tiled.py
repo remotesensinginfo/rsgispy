@@ -583,3 +583,25 @@ def test_remove_collinear_keeps_corners():
     out = ptile.remove_collinear(np.array([poly], dtype=object))[0]
     assert shapely.equals(out, poly)
     assert shapely.get_num_coordinates(out) == 5
+
+
+def test_polygonise_raster_to_vec_lyr_new_order_and_no_data(tmp_path):
+    """Same argument order as polygonise_raster_tiled, with no_data_val."""
+    arr = np.zeros((6, 6), dtype=np.uint8)
+    arr[1:3, 1:3] = 1
+    arr[4:6, 3:6] = 2
+    img = _write(tmp_path / "cls.tif", arr)
+    every = vec_create.polygonise_raster_to_vec_lyr(img)
+    assert sorted(every["PXLVAL"].unique().tolist()) == [0, 1, 2]
+    no_zero = vec_create.polygonise_raster_to_vec_lyr(img, None, None, 1, no_data_val=0)
+    assert sorted(no_zero["PXLVAL"].tolist()) == [1, 2]
+    tiled = vec_create.polygonise_raster_tiled(img, None, no_data_val=0, use_pbar=False)
+    assert sorted(tiled["PXLVAL"].tolist()) == [1, 2]
+
+    out_gpkg = str(tmp_path / "out.gpkg")
+    vec_create.polygonise_raster_to_vec_lyr(img, out_gpkg, "polys", no_data_val=0)
+    assert len(gpd.read_file(out_gpkg, layer="polys")) == 2
+    # The old RSGISLib order still works, with a DeprecationWarning.
+    with pytest.warns(DeprecationWarning, match="deprecated"):
+        legacy = vec_create.polygonise_raster_to_vec_lyr(None, None, "GPKG", img)
+    assert len(legacy) == len(every)
