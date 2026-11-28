@@ -11,7 +11,12 @@ import geopandas as gpd
 import numpy as np
 
 import rsgispy
-from rsgispy.vectorprocess import VectorInput, read_vec_gdf, write_vec_gdf
+from rsgispy.vectorprocess import (
+    VectorInput,
+    ensure_matching_crs,
+    read_vec_gdf,
+    write_vec_gdf,
+)
 
 __all__ = [
     "pop_bbox_cols",
@@ -194,7 +199,8 @@ def annotate_vec_selection(
 ) -> Optional[gpd.GeoDataFrame]:
     """
     Annotate features in ``vec_in_file`` with a boolean column indicating
-    whether each feature intersects any feature in ``vec_sel_file``.
+    whether each feature intersects any feature in ``vec_sel_file``. The
+    selection layer is reprojected onto the input layer's CRS if they differ.
 
     :param vec_in_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_in_lyr: Input vector layer name (or ``None``).
@@ -228,7 +234,9 @@ def annotate_vec_selection(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     in_gdf = read_vec_gdf(vec_in_file, vec_in_lyr, epsg=vec_in_epsg)
-    sel_gdf = read_vec_gdf(vec_sel_file, vec_sel_lyr, epsg=vec_sel_epsg)
+    sel_gdf = ensure_matching_crs(
+        in_gdf, read_vec_gdf(vec_sel_file, vec_sel_lyr, epsg=vec_sel_epsg)
+    )
 
     in_gdf[tmp_col_name] = np.arange(1, len(in_gdf) + 1, 1, dtype=int)
     in_sel_gdf = gpd.sjoin(
@@ -266,7 +274,8 @@ def perform_spatial_join(
 ) -> Optional[gpd.GeoDataFrame]:
     """
     Perform a spatial attribute join between two vector layers using
-    :func:`geopandas.sjoin`.
+    :func:`geopandas.sjoin`. The join layer is reprojected onto the base
+    layer's CRS if they differ.
 
     :param vec_base_file: Base vector file or :class:`geopandas.GeoDataFrame`
                           providing output geometries.
@@ -311,7 +320,9 @@ def perform_spatial_join(
         )
 
     base_gdf = read_vec_gdf(vec_base_file, vec_base_lyr, epsg=vec_base_epsg)
-    join_gdf = read_vec_gdf(vec_join_file, vec_join_lyr, epsg=vec_join_epsg)
+    join_gdf = ensure_matching_crs(
+        base_gdf, read_vec_gdf(vec_join_file, vec_join_lyr, epsg=vec_join_epsg)
+    )
 
     joined_gdf = gpd.sjoin(
         base_gdf, join_gdf, how=join_how, predicate=join_op

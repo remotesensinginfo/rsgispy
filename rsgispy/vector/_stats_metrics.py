@@ -22,6 +22,7 @@ except ImportError:
 import rsgispy
 from rsgispy.vectorprocess import (
     VectorInput,
+    ensure_matching_crs,
     finish_vec_output,
     get_gdf_geom_type,
     read_vec_gdf,
@@ -297,6 +298,8 @@ def calc_near_dist_to_feats(
     """
     Compute nearest-feature distance from each feature in ``vec_file`` to
     features in ``vec_dist_file`` using :func:`geopandas.sjoin_nearest`.
+    ``vec_dist_file`` is reprojected onto the CRS of ``vec_file`` if they
+    differ, so distances are in the units of ``vec_file``.
 
     :param vec_file: Input vector file path or :class:`geopandas.GeoDataFrame`.
     :param vec_lyr: Input vector layer name (or ``None``).
@@ -327,7 +330,9 @@ def calc_near_dist_to_feats(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     data_gdf = read_vec_gdf(vec_file, vec_lyr)
-    dist_gdf = read_vec_gdf(vec_dist_file, vec_dist_lyr, copy=False)
+    dist_gdf = ensure_matching_crs(
+        data_gdf, read_vec_gdf(vec_dist_file, vec_dist_lyr, copy=False)
+    )
 
     orig_index = data_gdf.index
     work_gdf = data_gdf.reset_index(drop=True)
@@ -376,6 +381,8 @@ def count_pt_intersects(
     in ``vec_in_file``.
 
     Specifying EPSG codes overrides CRS definitions without reprojecting.
+    After any override, the points are reprojected onto the polygon layer's
+    CRS if they differ.
 
     :param vec_in_file: Input polygon vector file path or
                         :class:`geopandas.GeoDataFrame`.
@@ -409,8 +416,9 @@ def count_pt_intersects(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     in_gdf = read_vec_gdf(vec_in_file, vec_in_lyr, epsg=vec_in_epsg)
-    pts_gdf = read_vec_gdf(
-        vec_pts_file, vec_pts_lyr, epsg=vec_pts_epsg, copy=False
+    pts_gdf = ensure_matching_crs(
+        in_gdf,
+        read_vec_gdf(vec_pts_file, vec_pts_lyr, epsg=vec_pts_epsg, copy=False),
     )
 
     drop_cols = [c for c in ("index_left", "index_right") if c in in_gdf.columns]
