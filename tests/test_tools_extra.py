@@ -842,3 +842,24 @@ def test_ftp_downloads_write_incomplete_then_rename(tmp_path, monkeypatch):
     assert ftp_mod.download_curl_ftp_file("ftp://h", "/g.bin", str(out2), print_info=False)
     assert out2.read_bytes() == b"x"
     assert closed == [True, True]
+
+
+def test_tile_for_point_clamps_latitude():
+    """Latitudes beyond +/-85.0511 map to the edge tiles instead of failing."""
+    import rsgispy.tools.tilecache as tc  # pylint: disable=import-outside-toplevel
+
+    for tms in (True, False):
+        n_max = 2**5 - 1
+        top = tc.get_tile_for_point(10.0, 90.0, 5, tms=tms)
+        bottom = tc.get_tile_for_point(10.0, -90.0, 5, tms=tms)
+        assert top == tc.get_tile_for_point(10.0, 85.0511, 5, tms=tms)
+        assert bottom == tc.get_tile_for_point(10.0, -85.0511, 5, tms=tms)
+        assert {top[1], bottom[1]} == {0, n_max}
+    # The shared formula gives the same tiles as before for normal latitudes.
+    mx, my = tc.get_web_mercator_xy(-4.08, 52.41)
+    assert (mx, my) == pytest.approx((-454183.52243655623, 6874600.935967932))
+    assert tc.get_tile_for_point(-4.08, 52.41, 12, tms=False)[:2] == (2001, 1345)
+    # pylint: disable=protected-access
+    assert tc._lonlat_to_frac_xyz(-4.08, 52.41, 12) == pytest.approx(
+        (2001.5786666666665, 1345.3586098628425), abs=1e-9
+    )
