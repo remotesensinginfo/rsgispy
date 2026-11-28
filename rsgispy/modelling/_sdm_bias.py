@@ -8,7 +8,7 @@ raster, and inverse-bias sample weights.
 import os
 import tempfile
 from contextlib import ExitStack
-from typing import Iterator, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
@@ -18,8 +18,9 @@ from rasterio.windows import Window
 import rsgispy
 from rsgispy.imagecalc.distance import calc_dist_to_img_vals
 from rsgispy.imageprocess import (
+    iter_dataset_windows,
+    same_pixel_grid,
     IntersectionGrid,
-    get_default_block_size,
     open_output_dataset,
 )
 from rsgispy.imageutils.rasterise import rasterise_vec_lyr
@@ -36,23 +37,6 @@ __all__ = [
 
 _BIAS_METHODS = ("kde", "count", "distance")
 _BIAS_NO_DATA = 0.0
-
-
-def _iter_windows(
-    n_rows: int, n_cols: int, block_size: Optional[int]
-) -> Iterator[Window]:
-    """Yield row-major processing windows covering an ``n_rows`` × ``n_cols`` grid."""
-    blk = int(block_size) if block_size is not None else get_default_block_size()
-    if blk < 1:
-        raise rsgispy.RSGISPyException(f"block_size must be >= 1, got {block_size!r}.")
-    for row_off in range(0, n_rows, blk):
-        for col_off in range(0, n_cols, blk):
-            yield Window(
-                col_off,
-                row_off,
-                min(blk, n_cols - col_off),
-                min(blk, n_rows - row_off),
-            )
 
 
 def _check_north_up(transform: rasterio.Affine, img: str) -> None:
@@ -339,7 +323,7 @@ def create_bias_grid(
         )
         dst.nodata = _BIAS_NO_DATA
 
-        windows = list(_iter_windows(n_rows, n_cols, block_size))
+        windows = list(iter_dataset_windows(n_rows, n_cols, block_size=block_size, use_pbar=False))
         raw_max = 0.0
         any_valid = False
         pbar = rsgispy.get_tqdm()
@@ -375,7 +359,7 @@ def create_bias_grid(
     with rasterio.open(in_msk_img) as msk_src, rasterio.open(
         os.fspath(output_img), "r+"
     ) as dst:
-        for win in _iter_windows(n_rows, n_cols, block_size):
+        for win in iter_dataset_windows(n_rows, n_cols, block_size=block_size, use_pbar=False):
             valid = msk_src.read(1, window=win) == img_msk_val
             vals = dst.read(1, window=win).astype(np.float64)
             out = np.full(vals.shape, _BIAS_NO_DATA, dtype=np.float64)
@@ -392,13 +376,12 @@ def create_bias_grid(
 
 
 def _check_same_grid(bias_img: str, in_msk_img: str) -> None:
+    """
+    Raise unless the bias image and mask share a pixel grid
+    (:func:`rsgispy.imageprocess.same_pixel_grid`; a missing CRS matches).
+    """
     with rasterio.open(bias_img) as b_src, rasterio.open(in_msk_img) as m_src:
-        same = (
-            b_src.width == m_src.width
-            and b_src.height == m_src.height
-            and b_src.transform.almost_equals(m_src.transform)
-            and (b_src.crs == m_src.crs or b_src.crs is None or m_src.crs is None)
-        )
+        same = same_pixel_grid(b_src, m_src, missing_crs_matches=True)
     if not same:
         raise rsgispy.RSGISPyException(
             f"The bias image '{bias_img}' is not on the same grid (size, transform "
@@ -469,7 +452,9 @@ def sample_bias_weighted_pts(
                 f"bias_img_band {bias_img_band} is outside 1..{bias_src.count}."
             )
         transform = msk_src.transform
-        windows = list(_iter_windows(msk_src.height, msk_src.width, block_size))
+        windows = list(iter_dataset_windows(
+                msk_src.height, msk_src.width, block_size=block_size, use_pbar=False
+            ))
         pbar = rsgispy.get_tqdm()
         block_sums = np.array(
             [

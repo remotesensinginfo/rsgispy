@@ -35,6 +35,7 @@ from rsgispy._io import (
     same_bands_meta,
 )
 from rsgispy.imageprocess._arrays import (
+    same_pixel_grid,
     BandDefn,
     IntersectionGrid,
     bbox_from_dataset,
@@ -150,6 +151,7 @@ __all__ = [
     "normalise_band_defs",
     "validate_crs_and_res",
     "compute_spatial_intersection",
+    "same_pixel_grid",
     "cast_result_block",
     "round_clamp_to_dtype",
     "validate_out_nodata",

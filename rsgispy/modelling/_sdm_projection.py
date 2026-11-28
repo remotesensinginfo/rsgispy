@@ -8,17 +8,17 @@ comparing two presence/absence maps.
 import copy
 import os
 from contextlib import ExitStack
-from typing import Any, Dict, Mapping, Optional, Tuple, Union
+from typing import Dict, Mapping, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 import rasterio
-from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imageprocess import (
+    iter_dataset_windows,
+    same_pixel_grid,
     IntersectionGrid,
-    get_default_block_size,
     open_output_dataset,
 )
 from rsgispy.imageutils.colourtable import set_thematic_classes
@@ -104,27 +104,6 @@ def copy_env_vars_for_scenario(
     return out
 
 
-def _iter_windows(n_rows: int, n_cols: int, block_size: Optional[int]):
-    blk = int(block_size) if block_size is not None else get_default_block_size()
-    for row_off in range(0, n_rows, blk):
-        for col_off in range(0, n_cols, blk):
-            yield Window(
-                col_off,
-                row_off,
-                min(blk, n_cols - col_off),
-                min(blk, n_rows - row_off),
-            )
-
-
-def _same_grid(src_a: Any, src_b: Any) -> bool:
-    return (
-        src_a.width == src_b.width
-        and src_a.height == src_b.height
-        and src_a.transform.almost_equals(src_b.transform)
-        and (src_a.crs == src_b.crs or src_a.crs is None or src_b.crs is None)
-    )
-
-
 # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
 def calc_range_change(
     current_bin_img: str,
@@ -202,7 +181,7 @@ def calc_range_change(
         msk_src = rasterio.open(in_msk_img) if in_msk_img is not None else None
         try:
             for other in (fut_src, msk_src):
-                if other is not None and not _same_grid(cur_src, other):
+                if other is not None and not same_pixel_grid(cur_src, other, missing_crs_matches=True):
                     raise rsgispy.RSGISPyException(
                         f"'{other.name}' is not on the same grid as "
                         f"'{current_bin_img}'; resample it first (e.g. with "
@@ -220,7 +199,10 @@ def calc_range_change(
                     count=1,
                 )
                 dst.nodata = _RANGE_NO_DATA
-                windows = list(_iter_windows(cur_src.height, cur_src.width, block_size))
+                windows = list(iter_dataset_windows(
+                        cur_src.height, cur_src.width, block_size=block_size,
+                        use_pbar=False,
+                    ))
                 pbar = rsgispy.get_tqdm()
                 for win in pbar(windows, disable=not use_pbar, desc="Range change"):
                     cur = cur_src.read(1, window=win)

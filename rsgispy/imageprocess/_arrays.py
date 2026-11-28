@@ -241,6 +241,38 @@ def _check_grid_alignment(datasets: Dict[str, Any], first_ds: Any) -> None:
             )
 
 
+def same_pixel_grid(
+    ds_a: Any, ds_b: Any, *, missing_crs_matches: bool = False
+) -> bool:
+    """
+    Return ``True`` when two open rasters are on the same pixel grid: the
+    same width and height, transforms equal to within ``1e-6`` of the pixel
+    size (:data:`GRID_ALIGN_TOL`), and the same CRS.
+
+    The CRS rule: two defined CRSs must be equal. When one or both are
+    ``None``, the grids match only if both are ``None``, unless
+    ``missing_crs_matches=True``, in which case a missing CRS matches any CRS
+    (for inputs that are known to share a CRS but may not record it).
+
+    :param ds_a: First open raster (``rasterio`` dataset).
+    :param ds_b: Second open raster.
+    :param missing_crs_matches: Treat a missing CRS as matching any CRS
+                                (Default = ``False``).
+    :return: ``True`` if the grids match.
+    """
+    if ds_a.width != ds_b.width or ds_a.height != ds_b.height:
+        return False
+    tol = GRID_ALIGN_TOL * max(abs(ds_a.transform.a), 1e-12)
+    if not np.allclose(
+        np.asarray(ds_a.transform)[:6], np.asarray(ds_b.transform)[:6],
+        rtol=0.0, atol=tol,
+    ):
+        return False
+    if ds_a.crs is None or ds_b.crs is None:
+        return missing_crs_matches or (ds_a.crs is None and ds_b.crs is None)
+    return ds_a.crs == ds_b.crs
+
+
 def compute_spatial_intersection(
     datasets: Dict[str, DatasetReader]
 ) -> IntersectionGrid:
