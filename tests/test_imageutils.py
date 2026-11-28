@@ -1774,3 +1774,106 @@ def test_subset_functions(tmp_path):
     with rasterio.open(out_vec) as src:
         assert (src.width, src.height) == (5, 4)
         np.testing.assert_allclose(src.read(1), arr[1:5, 1:6])
+
+
+def test_reproject_image_warns_when_out_res_less_than_half_input(tmp_path, monkeypatch):
+    """reproject_image warns before allocation when out_pxl_res < 0.5 * input res (in m)."""
+    import warnings
+
+    geo_img = tmp_path / "geo_4326.tif"
+    proj_img = tmp_path / "proj_32630.tif"
+
+    # 1. EPSG:4326 input (~0.0001 deg ~ 11 m) -> EPSG:32630 with out_pxl_res="image"
+    # This would try to allocate pixels at 0.0001 m (~100,000x finer). Verify the
+    # warning is emitted BEFORE create_blank_img is called.
+    with rasterio.open(
+        geo_img,
+        "w",
+        driver="GTiff",
+        width=10,
+        height=10,
+        count=1,
+        dtype="float32",
+        crs="EPSG:4326",
+        transform=from_origin(-3.0, 52.001, 0.0001, 0.0001),
+    ) as dst:
+        dst.write(np.ones((1, 10, 10), dtype=np.float32))
+
+    class _AbortAfterWarning(RuntimeError):
+        pass
+
+    def _stop_before_alloc(*args, **kwargs):
+        raise _AbortAfterWarning("stopped before allocating huge output")
+
+    monkeypatch.setattr(rsgispy.imageutils.warp, "create_blank_img", _stop_before_alloc)
+
+    with pytest.warns(UserWarning) as caught:
+        with pytest.raises(_AbortAfterWarning):
+            rsgispy.imageutils.warp.reproject_image(
+                input_img=str(geo_img),
+                output_img=str(tmp_path / "geo_to_utm_image.tif"),
+                out_epsg=32630,
+                out_pxl_res="image",
+            )
+
+    warn_msg = str(caught[0].message)
+    assert "0.0001 m" in warn_msg
+    assert "less than half the input image resolution" in warn_msg
+    assert "6.8" in warn_msg or "6.9" in warn_msg or "m)" in warn_msg
+    assert "out_pxl_res='image'" in warn_msg
+
+    monkeypatch.undo()
+
+    # 1b. EPSG:4326 -> EPSG:32630 with out_pxl_res="auto" should NOT emit this warning
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        rsgispy.imageutils.warp.reproject_image(
+            input_img=str(geo_img),
+            output_img=str(tmp_path / "geo_to_utm_auto.tif"),
+            out_epsg=32630,
+            out_pxl_res="auto",
+            calc_stats=False,
+        )
+    assert not [
+        w for w in rec if "less than half the input image resolution" in str(w.message)
+    ]
+
+    # 2. Projected 10 m input -> out_pxl_res=2.0 m (< 5 m) emits warning and runs
+    with rasterio.open(
+        proj_img,
+        "w",
+        driver="GTiff",
+        width=4,
+        height=4,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32630",
+        transform=from_origin(500000.0, 5200040.0, 10.0, 10.0),
+    ) as dst:
+        dst.write(np.ones((1, 4, 4), dtype=np.float32))
+
+    with pytest.warns(UserWarning, match=r"\(2 m\).*\(10 m\)"):
+        rsgispy.imageutils.warp.reproject_image(
+            input_img=str(proj_img),
+            output_img=str(tmp_path / "proj_2m.tif"),
+            out_epsg=32630,
+            out_pxl_res=2.0,
+            calc_stats=False,
+        )
+
+    # 3. Exactly half (5.0 m) should NOT emit the warning
+    with warnings.catch_warnings(record=True) as rec_half:
+        warnings.simplefilter("always")
+        rsgispy.imageutils.warp.reproject_image(
+            input_img=str(proj_img),
+            output_img=str(tmp_path / "proj_5m.tif"),
+            out_epsg=32630,
+            out_pxl_res=5.0,
+            calc_stats=False,
+        )
+    assert not [
+        w
+        for w in rec_half
+        if "less than half the input image resolution" in str(w.message)
+    ]
+

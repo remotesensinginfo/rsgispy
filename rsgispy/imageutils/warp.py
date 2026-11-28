@@ -8,6 +8,7 @@ from contextlib import ExitStack
 import math
 import os
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+import warnings
 
 import numpy as np
 import rasterio
@@ -51,6 +52,7 @@ from rsgispy.imageutils._warp_opts import (
 )
 from rsgispy.imageutils.blank import create_blank_img, create_copy_img
 from rsgispy.imageutils.stats import pop_img_stats
+from rsgispy.tools.geometry import degrees_to_metres
 
 __all__ = [
     "resample_img_to_match",
@@ -191,6 +193,88 @@ def _resolve_reproject_res(
     )
 
 
+def _crs_res_in_metres(
+    crs: Any,
+    res_x: float,
+    res_y: float,
+    bounds: Tuple[float, float, float, float],
+) -> Optional[float]:
+    """
+    Convert pixel resolution ``(res_x, res_y)`` in ``crs`` units to metres.
+    Returns the smaller axis resolution in metres, or ``None`` if unknown.
+    """
+    if crs is None:
+        return None
+    if getattr(crs, "is_projected", False):
+        try:
+            factor = float(crs.linear_units_factor[1])
+            return min(abs(res_x), abs(res_y)) * factor
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
+    if getattr(crs, "is_geographic", False):
+        try:
+            _, b_min_y, _, b_max_y = rio_transform_bounds(
+                crs,
+                "EPSG:4326",
+                float(bounds[0]),
+                float(bounds[1]),
+                float(bounds[2]),
+                float(bounds[3]),
+                densify_pts=2,
+            )
+            centre_lat = 0.5 * (float(b_min_y) + float(b_max_y))
+            x_m, y_m = degrees_to_metres(centre_lat, abs(res_x), abs(res_y))
+            pos = [float(val) for val in (x_m, y_m) if val > 0]
+            return min(pos) if pos else None
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
+    return None
+
+
+def _warn_if_fine_out_res(
+    in_crs: Any,
+    out_crs: Any,
+    in_res_x: float,
+    in_res_y: float,
+    in_bounds: Tuple[float, float, float, float],
+    out_res: float,
+    out_bounds: Tuple[float, float, float, float],
+    out_pxl_res: Union[float, int, str],
+) -> None:
+    """
+    Warn if ``out_res`` is less than half of the input resolution (both in m).
+    """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    in_res_m = _crs_res_in_metres(in_crs, in_res_x, in_res_y, in_bounds)
+    out_res_m = _crs_res_in_metres(out_crs, out_res, out_res, out_bounds)
+    if in_res_m is None or out_res_m is None or in_res_m <= 0:
+        return
+    if out_res_m < 0.5 * in_res_m:
+        res_mode = str(out_pxl_res).strip()
+        msg = (
+            f"Requested output pixel resolution ({out_res_m:.4g} m) is less "
+            f"than half the input image resolution ({in_res_m:.4g} m)."
+        )
+        if (
+            res_mode == "image"
+            and getattr(in_crs, "is_geographic", False)
+            and getattr(out_crs, "is_projected", False)
+        ):
+            msg += (
+                " The input CRS is geographic (degrees) while the output CRS "
+                "uses projected units (e.g. metres), so out_pxl_res='image' "
+                "reuses the degree pixel size in output units and can cause "
+                "excessive memory usage; specify out_pxl_res in output CRS "
+                "units or use out_pxl_res='auto'."
+            )
+        else:
+            msg += (
+                " Resampling to a much finer resolution can greatly increase "
+                "output dimensions and memory usage."
+            )
+        warnings.warn(msg, UserWarning, stacklevel=3)
+
+
 def reproject_image(
     input_img: str,
     output_img: str,
@@ -309,6 +393,17 @@ def reproject_image(
         tl_y_out=y_max,
         br_x_out=x_max,
         br_y_out=y_min,
+    )
+
+    _warn_if_fine_out_res(
+        in_crs=in_crs,
+        out_crs=out_crs,
+        in_res_x=x_pxl_res,
+        in_res_y=y_pxl_res,
+        in_bounds=(float(left), float(bottom), float(right), float(top)),
+        out_res=out_res,
+        out_bounds=(x_min, y_min, x_max, y_max),
+        out_pxl_res=out_pxl_res,
     )
 
     out_tl_x, out_tl_y = x_min, y_max
