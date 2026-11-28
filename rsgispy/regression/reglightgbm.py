@@ -31,6 +31,8 @@ from rsgispy.regression._reg_common import (
     train_gbdt_regressor,
 )
 from rsgispy.tools._gbdt_common import (
+    register_gbdt_backend,
+    forward_gbdt_call,
     apply_lgb_gpu_params as _apply_lgb_gpu_params,
     fit_lgb_estimator as _fit_lgb_estimator,
     get_lightgbm_optuna_param_space as _tools_get_lightgbm_optuna_param_space,
@@ -223,23 +225,27 @@ def load_lightgbm_regressor(
     )
 
 
-_LGB_REG_BACKEND = GBDTRegBackendSpec(
-    name="LightGBM",
-    package_name="lightgbm",
-    extra="lightgbm",
-    is_available=lambda: HAVE_LIGHTGBM,
-    gpu_available=is_lightgbm_gpu_available,
-    apply_gpu_params=_apply_lgb_gpu_params,
-    seed_param="random_state",
-    jobs_param="n_jobs",
-    default_params=_default_lgb_reg_params,
-    default_space=lambda: get_lightgbm_optuna_param_space(extended=False),
-    extended_space=lambda: get_lightgbm_optuna_param_space(extended=True),
-    build_estimator=_build_lgb_reg_estimator,
-    fit_estimator=_fit_lgb_reg_estimator,
-    load_model=load_lightgbm_regressor,
-    save_model=save_lightgbm_regressor,
-    get_error_detail=lambda: _LIGHTGBM_LOAD_ERROR,
+_LGB_REG_BACKEND = register_gbdt_backend(
+    "regression",
+    "lightgbm",
+    GBDTRegBackendSpec(
+        name="LightGBM",
+        package_name="lightgbm",
+        extra="lightgbm",
+        is_available=lambda: HAVE_LIGHTGBM,
+        gpu_available=is_lightgbm_gpu_available,
+        apply_gpu_params=_apply_lgb_gpu_params,
+        seed_param="random_state",
+        jobs_param="n_jobs",
+        default_params=_default_lgb_reg_params,
+        default_space=lambda: get_lightgbm_optuna_param_space(extended=False),
+        extended_space=lambda: get_lightgbm_optuna_param_space(extended=True),
+        build_estimator=_build_lgb_reg_estimator,
+        fit_estimator=_fit_lgb_reg_estimator,
+        load_model=load_lightgbm_regressor,
+        save_model=save_lightgbm_regressor,
+        get_error_detail=lambda: _LIGHTGBM_LOAD_ERROR,
+    ),
 )
 
 
@@ -321,35 +327,12 @@ def optimise_lightgbm_regressor(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    return optimise_gbdt_regressor(
-        backend=_LGB_REG_BACKEND,
-        func_name="optimise_lightgbm_regressor",
-        reg_cfg=reg_cfg,
-        train_data=train_data,
-        valid_data=valid_data,
-        target_cols=target_cols,
-        param_space=param_space,
-        extended_param_space=extended_param_space,
-        fixed_params=fixed_params,
-        regressor=lgb_regressor,
-        scoring=scoring,
-        cv=cv,
-        n_trials=n_trials,
-        timeout=timeout,
-        direction=direction,
-        early_stopping_rounds=early_stopping_rounds,
-        n_jobs=n_jobs,
-        rnd_seed=rnd_seed,
-        feature_cols=feature_cols,
-        refit=refit,
-        out_results_file=out_results_file,
-        out_params_json=out_params_json,
-        out_model_file=out_model_file,
-        return_results=return_results,
-        verbose=verbose,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
-        use_pbar=use_pbar,
+    return forward_gbdt_call(
+        optimise_gbdt_regressor,
+        _LGB_REG_BACKEND,
+        "optimise_lightgbm_regressor",
+        locals(),
+        rename={"lgb_regressor": "regressor"},
     )
 
 
@@ -404,26 +387,12 @@ def train_lightgbm_regressor(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    return train_gbdt_regressor(
-        backend=_LGB_REG_BACKEND,
-        func_name="train_lightgbm_regressor",
-        reg_cfg=reg_cfg,
-        train_data=train_data,
-        test_data=test_data,
-        valid_data=valid_data,
-        target_cols=target_cols,
-        regressor=lgb_regressor,
-        model_params=model_params,
-        early_stopping_rounds=early_stopping_rounds,
-        feature_cols=feature_cols,
-        rnd_seed=rnd_seed,
-        n_jobs=n_jobs,
-        out_model_file=out_model_file,
-        out_metrics_file=out_metrics_file,
-        return_model=return_model,
-        verbose=verbose,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
+    return forward_gbdt_call(
+        train_gbdt_regressor,
+        _LGB_REG_BACKEND,
+        "train_lightgbm_regressor",
+        locals(),
+        rename={"lgb_regressor": "regressor"},
     )
 
 
@@ -476,23 +445,10 @@ def apply_lightgbm_regressor(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    apply_gbdt_regressor(
-        backend=_LGB_REG_BACKEND,
-        func_name="apply_lightgbm_regressor",
-        reg_cfg=reg_cfg,
-        regressor=lgb_regressor,
-        in_msk_img=in_msk_img,
-        img_msk_val=img_msk_val,
-        output_img=output_img,
-        img_band_info=img_band_info,
-        target_cols=target_cols,
-        gdalformat=gdalformat,
-        datatype=datatype,
-        out_no_data_val=out_no_data_val,
-        calc_stats=calc_stats,
-        block_size=block_size,
-        creation_opts=creation_opts,
-        use_pbar=use_pbar,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
+    forward_gbdt_call(
+        apply_gbdt_regressor,
+        _LGB_REG_BACKEND,
+        "apply_lightgbm_regressor",
+        locals(),
+        rename={"lgb_regressor": "regressor"},
     )

@@ -25,6 +25,8 @@ from rsgispy.classification._gbdt import (
 from rsgispy.classification._helpers import ClsConfigInput, SamplesInput
 from rsgispy.classification.classdata import ImageBandInfo
 from rsgispy.tools._gbdt_common import (
+    register_gbdt_backend,
+    forward_gbdt_call,
     apply_xgb_gpu_params as _apply_xgb_gpu_params,
     fit_xgb_estimator as _fit_xgb_estimator,
     get_xgboost_optuna_param_space as _tools_get_xgboost_optuna_param_space,
@@ -202,36 +204,40 @@ def load_xgboost_classifier(
     )
 
 
-_XGB_BACKEND = GBDTBackendSpec(
-    name="XGBoost",
-    package_name="xgboost",
-    extra="xgboost",
-    is_available=lambda: HAVE_XGBOOST,
-    gpu_available=is_xgboost_gpu_available,
-    apply_gpu_params=_apply_xgb_gpu_params,
-    seed_param="random_state",
-    jobs_param="n_jobs",
-    default_binary_params=_default_xgb_binary_params,
-    default_multiclass_params=_default_xgb_multiclass_params,
-    default_binary_space=lambda: get_xgboost_optuna_param_space(
-        extended=False, binary=True
+_XGB_BACKEND = register_gbdt_backend(
+    "classification",
+    "xgboost",
+    GBDTBackendSpec(
+        name="XGBoost",
+        package_name="xgboost",
+        extra="xgboost",
+        is_available=lambda: HAVE_XGBOOST,
+        gpu_available=is_xgboost_gpu_available,
+        apply_gpu_params=_apply_xgb_gpu_params,
+        seed_param="random_state",
+        jobs_param="n_jobs",
+        default_binary_params=_default_xgb_binary_params,
+        default_multiclass_params=_default_xgb_multiclass_params,
+        default_binary_space=lambda: get_xgboost_optuna_param_space(
+            extended=False, binary=True
+        ),
+        default_multiclass_space=lambda: get_xgboost_optuna_param_space(
+            extended=False, binary=False
+        ),
+        extended_binary_space=lambda: get_xgboost_optuna_param_space(
+            extended=True, binary=True
+        ),
+        extended_multiclass_space=lambda: get_xgboost_optuna_param_space(
+            extended=True, binary=False
+        ),
+        build_estimator=_build_xgb_estimator,
+        fit_estimator=_fit_xgb_estimator,
+        load_model=load_xgboost_classifier,
+        save_model=save_xgboost_classifier,
+        prepare_predict_estimator=_prepare_xgb_predict_estimator,
+        require_consecutive_zero_labels=True,
+        get_error_detail=lambda: _XGBOOST_LOAD_ERROR,
     ),
-    default_multiclass_space=lambda: get_xgboost_optuna_param_space(
-        extended=False, binary=False
-    ),
-    extended_binary_space=lambda: get_xgboost_optuna_param_space(
-        extended=True, binary=True
-    ),
-    extended_multiclass_space=lambda: get_xgboost_optuna_param_space(
-        extended=True, binary=False
-    ),
-    build_estimator=_build_xgb_estimator,
-    fit_estimator=_fit_xgb_estimator,
-    load_model=load_xgboost_classifier,
-    save_model=save_xgboost_classifier,
-    prepare_predict_estimator=_prepare_xgb_predict_estimator,
-    require_consecutive_zero_labels=True,
-    get_error_detail=lambda: _XGBOOST_LOAD_ERROR,
 )
 
 
@@ -342,38 +348,13 @@ def optimise_xgboost_binary_classifier(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    return optimise_gbdt_classifier(
-        backend=_XGB_BACKEND,
-        func_name="optimise_xgboost_binary_classifier",
-        cls_cfg=cls_cfg,
-        train_data=train_data,
+    return forward_gbdt_call(
+        optimise_gbdt_classifier,
+        _XGB_BACKEND,
+        "optimise_xgboost_binary_classifier",
+        locals(),
+        rename={"xgb_classifier": "classifier"},
         binary=True,
-        valid_data=valid_data,
-        param_space=param_space,
-        extended_param_space=extended_param_space,
-        fixed_params=fixed_params,
-        classifier=xgb_classifier,
-        scoring=scoring,
-        cv=cv,
-        n_trials=n_trials,
-        timeout=timeout,
-        direction=direction,
-        early_stopping_rounds=early_stopping_rounds,
-        n_jobs=n_jobs,
-        rnd_seed=rnd_seed,
-        feature_cols=feature_cols,
-        use_internal_id=use_internal_id,
-        refit=refit,
-        out_id_col=out_id_col,
-        internal_id_col=internal_id_col,
-        out_results_file=out_results_file,
-        out_params_json=out_params_json,
-        out_model_file=out_model_file,
-        return_results=return_results,
-        verbose=verbose,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
-        use_pbar=use_pbar,
     )
 
 
@@ -476,38 +457,13 @@ def optimise_xgboost_multiclass_classifier(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    return optimise_gbdt_classifier(
-        backend=_XGB_BACKEND,
-        func_name="optimise_xgboost_multiclass_classifier",
-        cls_cfg=cls_cfg,
-        train_data=train_data,
+    return forward_gbdt_call(
+        optimise_gbdt_classifier,
+        _XGB_BACKEND,
+        "optimise_xgboost_multiclass_classifier",
+        locals(),
+        rename={"xgb_classifier": "classifier"},
         binary=False,
-        valid_data=valid_data,
-        param_space=param_space,
-        extended_param_space=extended_param_space,
-        fixed_params=fixed_params,
-        classifier=xgb_classifier,
-        scoring=scoring,
-        cv=cv,
-        n_trials=n_trials,
-        timeout=timeout,
-        direction=direction,
-        early_stopping_rounds=early_stopping_rounds,
-        n_jobs=n_jobs,
-        rnd_seed=rnd_seed,
-        feature_cols=feature_cols,
-        use_internal_id=use_internal_id,
-        refit=refit,
-        out_id_col=out_id_col,
-        internal_id_col=internal_id_col,
-        out_results_file=out_results_file,
-        out_params_json=out_params_json,
-        out_model_file=out_model_file,
-        return_results=return_results,
-        verbose=verbose,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
-        use_pbar=use_pbar,
     )
 
 
@@ -579,29 +535,13 @@ def train_xgboost_binary_classifier(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    return train_gbdt_classifier(
-        backend=_XGB_BACKEND,
-        func_name="train_xgboost_binary_classifier",
-        cls_cfg=cls_cfg,
-        train_data=train_data,
+    return forward_gbdt_call(
+        train_gbdt_classifier,
+        _XGB_BACKEND,
+        "train_xgboost_binary_classifier",
+        locals(),
+        rename={"xgb_classifier": "classifier"},
         binary=True,
-        test_data=test_data,
-        valid_data=valid_data,
-        classifier=xgb_classifier,
-        model_params=model_params,
-        early_stopping_rounds=early_stopping_rounds,
-        feature_cols=feature_cols,
-        use_internal_id=use_internal_id,
-        rnd_seed=rnd_seed,
-        n_jobs=n_jobs,
-        out_id_col=out_id_col,
-        internal_id_col=internal_id_col,
-        out_model_file=out_model_file,
-        out_metrics_file=out_metrics_file,
-        return_model=return_model,
-        verbose=verbose,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
     )
 
 
@@ -668,29 +608,13 @@ def train_xgboost_multiclass_classifier(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    return train_gbdt_classifier(
-        backend=_XGB_BACKEND,
-        func_name="train_xgboost_multiclass_classifier",
-        cls_cfg=cls_cfg,
-        train_data=train_data,
+    return forward_gbdt_call(
+        train_gbdt_classifier,
+        _XGB_BACKEND,
+        "train_xgboost_multiclass_classifier",
+        locals(),
+        rename={"xgb_classifier": "classifier"},
         binary=False,
-        test_data=test_data,
-        valid_data=valid_data,
-        classifier=xgb_classifier,
-        model_params=model_params,
-        early_stopping_rounds=early_stopping_rounds,
-        feature_cols=feature_cols,
-        use_internal_id=use_internal_id,
-        rnd_seed=rnd_seed,
-        n_jobs=n_jobs,
-        out_id_col=out_id_col,
-        internal_id_col=internal_id_col,
-        out_model_file=out_model_file,
-        out_metrics_file=out_metrics_file,
-        return_model=return_model,
-        verbose=verbose,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
     )
 
 
@@ -792,36 +716,14 @@ def apply_xgboost_binary_classifier(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    apply_gbdt_classifier(
-        backend=_XGB_BACKEND,
-        func_name="apply_xgboost_binary_classifier",
-        cls_cfg=cls_cfg,
-        classifier=xgb_classifier,
-        in_msk_img=in_msk_img,
-        img_msk_val=img_msk_val,
+    forward_gbdt_call(
+        apply_gbdt_classifier,
+        _XGB_BACKEND,
+        "apply_xgboost_binary_classifier",
+        locals(),
+        rename={"xgb_classifier": "classifier"},
         binary=True,
-        output_img=output_img,
-        out_score_img=out_score_img,
-        img_band_info=img_band_info,
-        gdalformat=gdalformat,
-        datatype=datatype,
-        out_no_data_val=out_no_data_val,
-        class_clr_names=class_clr_names,
-        use_internal_id=use_internal_id,
-        recode_to_out_ids=recode_to_out_ids,
         score_max_only=False,
-        score_no_data_val=score_no_data_val,
-        calc_stats=calc_stats,
-        block_size=block_size,
-        creation_opts=creation_opts,
-        use_pbar=use_pbar,
-        pos_class=pos_class,
-        pred_threshold=pred_threshold,
-        score_all_classes=score_all_classes,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
-        out_conf_img=out_conf_img,
-        conf_method=conf_method,
     )
 
 
@@ -911,31 +813,11 @@ def apply_xgboost_multiclass_classifier(
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # pylint: disable=too-many-locals
-    apply_gbdt_classifier(
-        backend=_XGB_BACKEND,
-        func_name="apply_xgboost_multiclass_classifier",
-        cls_cfg=cls_cfg,
-        classifier=xgb_classifier,
-        in_msk_img=in_msk_img,
-        img_msk_val=img_msk_val,
+    forward_gbdt_call(
+        apply_gbdt_classifier,
+        _XGB_BACKEND,
+        "apply_xgboost_multiclass_classifier",
+        locals(),
+        rename={"xgb_classifier": "classifier"},
         binary=False,
-        output_img=output_img,
-        out_score_img=out_score_img,
-        img_band_info=img_band_info,
-        gdalformat=gdalformat,
-        datatype=datatype,
-        out_no_data_val=out_no_data_val,
-        class_clr_names=class_clr_names,
-        use_internal_id=use_internal_id,
-        recode_to_out_ids=recode_to_out_ids,
-        score_max_only=score_max_only,
-        score_no_data_val=score_no_data_val,
-        calc_stats=calc_stats,
-        block_size=block_size,
-        creation_opts=creation_opts,
-        use_pbar=use_pbar,
-        use_gpu=use_gpu,
-        gpu_device_id=gpu_device_id,
-        out_conf_img=out_conf_img,
-        conf_method=conf_method,
     )
