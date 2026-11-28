@@ -78,11 +78,13 @@ if ``requests`` is not installed.
 
 import datetime
 import os
-from typing import Dict, List, Optional, Tuple, Union
+import time
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import rsgispy
 from rsgispy.tools._download_common import stream_http_download
 import rsgispy.tools.credentials
+import rsgispy.tools.files
 import rsgispy.tools.geometry
 import rsgispy.tools.http
 
@@ -571,15 +573,16 @@ def download_scn(
         HAVE_REQUESTS, "download_scn", "requests", "dataaccess"
     )
     raw_name = str(scn_info["Name"]).strip()
-    scn_name = os.path.basename(raw_name.replace("\\", "/"))
-    if not scn_name or scn_name in (".", ".."):
+    try:
+        scn_name = os.path.basename(rsgispy.tools.files.safe_join(".", raw_name))
+    except rsgispy.RSGISPyException as err:
         raise rsgispy.RSGISPyException(
             f"Invalid scene name for download: {scn_info['Name']!r}"
-        )
+        ) from err
     print(f"Downloading {scn_name}")
 
     os.makedirs(out_path, exist_ok=True)
-    out_file_path = os.path.join(out_path, f"{scn_name}.zip")
+    out_file_path = rsgispy.tools.files.safe_join(out_path, f"{scn_name}.zip")
     if os.path.exists(out_file_path):
         print(f"File already exists: {out_file_path}")
         return
@@ -627,42 +630,79 @@ def download_scn(
     )
 
 
+#: Default age in seconds after which :func:`download_scns` refreshes the
+#: access token (CDSE tokens are valid for about 10 minutes).
+TOKEN_MAX_AGE_SECS = 480.0
+
+
 def download_scns(
-    access_token: str,
+    access_token: Optional[str],
     scns_info: List[Dict],
     out_path: str,
     no_except: bool = True,
     use_pbar: bool = True,
+    *,
+    refresh_token_fn: Optional[Callable[[], Optional[str]]] = None,
+    token_max_age: float = TOKEN_MAX_AGE_SECS,
 ) -> None:
     """
     Download a list of scenes using :func:`download_scn`.
 
-    :param access_token: OAuth2 bearer token from :func:`get_access_token`.
+    CDSE access tokens expire after about 10 minutes, so for a long batch the
+    token is replaced before each scene once it is older than
+    ``token_max_age`` seconds, by calling ``refresh_token_fn``. When
+    ``access_token`` is ``None``, tokens are obtained (and refreshed) with
+    :func:`get_access_token` from the ``RSGIS_COP_USER`` / ``RSGIS_COP_PASS``
+    environment variables.
+
+    :param access_token: OAuth2 bearer token from :func:`get_access_token`,
+                         or ``None`` to obtain one from the environment.
     :param scns_info: List of scene dictionaries from :func:`query_scn_lst`.
     :param out_path: Output directory where scenes will be saved.
-    :param no_except: If ``True`` (default), print exceptions and continue.
+    :param no_except: If ``True`` (default), print the error for a scene that
+                      fails (an rsgispy error or a ``requests`` network error)
+                      and continue with the next one.
     :param use_pbar: If ``True``, display a tqdm progress bar during downloads
                      (Default = ``True``).
+    :param refresh_token_fn: Optional callable returning a new access token
+                             (Default = ``None``: :func:`get_access_token`
+                             when ``access_token`` is ``None``, otherwise no
+                             refresh).
+    :param token_max_age: Token age in seconds after which it is refreshed
+                          (Default = ``480``).
 
     .. code:: python
 
         import rsgispy.dataaccess.copernicus_odata as cdse
 
-        token = cdse.get_access_token()
         scns = cdse.query_scn_lst(
             cdse.RSGIS_ODATA_SEN2, (-5.0, -3.0, 52.0, 53.0)
         )
-        cdse.download_scns(token, scns, "./downloads")
+        # Tokens from RSGIS_COP_USER / RSGIS_COP_PASS, refreshed as needed.
+        cdse.download_scns(None, scns, "./downloads")
     """
+    # pylint: disable=too-many-arguments
     rsgispy.check_optional_dep(
         HAVE_REQUESTS, "download_scns", "requests", "dataaccess"
     )
+    if access_token is None:
+        if refresh_token_fn is None:
+            refresh_token_fn = get_access_token
+        access_token = refresh_token_fn()
+    token_time = time.monotonic()
+    catch_errs = (rsgispy.RSGISPyException, requests.exceptions.RequestException)
     tqdm_cls = rsgispy.get_tqdm()
     for scn_info in tqdm_cls(scns_info, disable=not use_pbar):
         try:
+            if (
+                refresh_token_fn is not None
+                and (time.monotonic() - token_time) > token_max_age
+            ):
+                access_token = refresh_token_fn()
+                token_time = time.monotonic()
             download_scn(access_token, scn_info, out_path, use_pbar=use_pbar)
-        except rsgispy.RSGISPyException as exc:
+        except catch_errs as exc:
             if no_except:
-                print(exc)
+                print(f"Failed to download {scn_info.get('Name', scn_info)}: {exc}")
             else:
                 raise

@@ -170,56 +170,95 @@ def utm_from_epsg(epsg_code: int) -> Tuple[int, str]:
 
     :param epsg_code: EPSG integer code for the UTM projection.
     :return: Tuple ``(zone, hemisphere)``.
+    :raises rsgispy.RSGISPyException: if ``epsg_code`` is not 32601-32660 or
+                                      32701-32760.
 
     .. code:: python
 
         import rsgispy.tools.utm
         zone, hemi = rsgispy.tools.utm.utm_from_epsg(32630)
     """
-    h_zone = int(epsg_code) - 32000
+    code = int(epsg_code)
+    if 32601 <= code <= 32660:
+        return code - 32600, "N"
+    if 32701 <= code <= 32760:
+        return code - 32700, "S"
+    raise rsgispy.RSGISPyException(
+        f"EPSG:{code} is not a WGS84 UTM zone (32601-32660 for the north, "
+        "32701-32760 for the south)."
+    )
 
-    if h_zone < 700:
-        hemisphere = "N"
-        zone = h_zone - 600
-    else:
-        hemisphere = "S"
-        zone = h_zone - 700
 
-    return zone, hemisphere
+#: Latitude bands where UTM zones depart from the regular 6 degree grid:
+#: ``(lat_min, lat_max, [(zone, lon_min, lon_max), ...])``. Longitudes
+#: outside the listed ranges use the regular zones.
+_UTM_ZONE_EXCEPTIONS = (
+    (56.0, 64.0, [(31, 0.0, 3.0), (32, 3.0, 12.0)]),  # Norway
+    (72.0, 84.0, [(31, 0.0, 9.0), (33, 9.0, 21.0), (35, 21.0, 33.0),
+                  (37, 33.0, 42.0)]),  # Svalbard
+)
+
+
+def _utm_zone_intervals(lat_min: float, lat_max: float) -> List[Tuple[int, float, float]]:
+    """``(zone, lon_min, lon_max)`` of every zone in a latitude band that
+    lies entirely inside, or entirely outside, the exception bands."""
+    intervals = [
+        (zone, ((zone * 6.0) - 6.0) - 180.0, (zone * 6.0) - 180.0)
+        for zone in range(1, 61)
+    ]
+    for ex_min, ex_max, ex_zones in _UTM_ZONE_EXCEPTIONS:
+        if lat_min >= ex_min and lat_max <= ex_max:
+            ex_lo = min(z[1] for z in ex_zones)
+            ex_hi = max(z[2] for z in ex_zones)
+            intervals = [iv for iv in intervals if iv[2] <= ex_lo or iv[1] >= ex_hi]
+            intervals += list(ex_zones)
+    return sorted(intervals, key=lambda iv: iv[1])
 
 
 def split_wgs84_bbox_utm_zones(
     wgs84_bbox: Sequence[float],
 ) -> List[List]:
     """
-    Split a WGS84 bounding box ``(MinX, MaxX, MinY, MaxY)`` at UTM zone boundaries.
+    Split a WGS84 bounding box ``(MinX, MaxX, MinY, MaxY)`` at UTM zone
+    boundaries, including the Norway (zone 32 widened to 3-12 E between 56
+    and 64 N) and Svalbard (zones 31, 33, 35 and 37 between 72 and 84 N)
+    exceptions, so a bbox is also split at those latitudes when it crosses
+    them.
+
+    A bbox with ``MinX > MaxX`` crosses the antimeridian: it is split into
+    ``[MinX, 180]`` and ``[-180, MaxX]`` (zones 60 and 1 meet at 180).
 
     :param wgs84_bbox: Bounding box in WGS84 lon/lat ``(MinX, MaxX, MinY, MaxY)``.
-    :return: List of ``[utm_zone, [x_min, x_max, y_min, y_max]]`` entries.
+    :return: List of ``[utm_zone, [x_min, x_max, y_min, y_max]]`` entries,
+             ordered by latitude band, then west to east.
 
     .. code:: python
 
         import rsgispy.tools.utm
         zone_bboxes = rsgispy.tools.utm.split_wgs84_bbox_utm_zones((-8.0, 2.0, 50.0, 55.0))
     """
-    utm_tl = from_latlon(wgs84_bbox[3], wgs84_bbox[0])
-    utm_tr = from_latlon(wgs84_bbox[3], wgs84_bbox[1])
-    utm_br = from_latlon(wgs84_bbox[2], wgs84_bbox[1])
-    utm_bl = from_latlon(wgs84_bbox[2], wgs84_bbox[0])
+    x_min, x_max, y_min, y_max = (float(v) for v in wgs84_bbox[:4])
+    if x_min > x_max:
+        return split_wgs84_bbox_utm_zones(
+            (x_min, 180.0, y_min, y_max)
+        ) + split_wgs84_bbox_utm_zones((-180.0, x_max, y_min, y_max))
 
-    utm_zones = [utm_coord[2] for utm_coord in (utm_tl, utm_tr, utm_br, utm_bl)]
-    min_zone = int(np.min(utm_zones))
-    max_zone = int(np.max(utm_zones))
-
+    breaks = sorted(
+        {y_min, y_max}
+        | {
+            lat
+            for ex_min, ex_max, _ in _UTM_ZONE_EXCEPTIONS
+            for lat in (ex_min, ex_max)
+            if y_min < lat < y_max
+        }
+    )
     out_bboxes: List[List] = []
-    for zone in range(min_zone, max_zone + 1):
-        zone_min = ((zone * 6.0) - 6.0) - 180.0
-        zone_max = (zone * 6.0) - 180.0
-
-        x_min = wgs84_bbox[0] if wgs84_bbox[0] > zone_min else zone_min
-        x_max = wgs84_bbox[1] if wgs84_bbox[1] < zone_max else zone_max
-        out_bboxes.append([zone, [x_min, x_max, wgs84_bbox[2], wgs84_bbox[3]]])
-
+    for b_min, b_max in zip(breaks[:-1], breaks[1:]):
+        for zone, z_min, z_max in _utm_zone_intervals(b_min, b_max):
+            lo = max(x_min, z_min)
+            hi = min(x_max, z_max)
+            if hi > lo or (x_min == x_max and z_min <= x_min < z_max):
+                out_bboxes.append([zone, [lo, hi, b_min, b_max]])
     return out_bboxes
 
 
@@ -521,6 +560,8 @@ def latlon_to_zone_number(
         latitude = float(latitude.flat[0])
     if isinstance(longitude, np.ndarray):
         longitude = float(longitude.flat[0])
+    # Longitude 180 is the antimeridian, i.e. -180 (zone 1).
+    longitude = ((float(longitude) + 180.0) % 360.0) - 180.0
 
     if 56 <= latitude < 64 and 3 <= longitude < 12:
         return 32
@@ -558,6 +599,9 @@ def latlon_arr_to_utm_zone_number(
         lons = np.array([-4.08, -3.18])
         zones = rsgispy.tools.utm.latlon_arr_to_utm_zone_number(lats, lons)
     """
+    latitude = np.asarray(latitude)
+    # Longitude 180 is the antimeridian, i.e. -180 (zone 1).
+    longitude = np.mod(np.asarray(longitude, dtype=np.float64) + 180.0, 360.0) - 180.0
     utm_zones = np.floor((longitude + 180) / 6).astype(int) + 1
 
     utm_zones[

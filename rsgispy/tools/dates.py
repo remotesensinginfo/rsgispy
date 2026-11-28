@@ -29,6 +29,8 @@ def get_days_since(year: int, day_of_year: int, base_date: datetime.date) -> int
     :param day_of_year: Day within the year (1..366).
     :param base_date: Reference ``datetime.date``.
     :return: Number of days elapsed since ``base_date``.
+    :raises rsgispy.RSGISPyException: if the date is before ``base_date``
+                                      (in the same or an earlier year).
 
     .. code:: python
 
@@ -37,13 +39,13 @@ def get_days_since(year: int, day_of_year: int, base_date: datetime.date) -> int
 
         days = rsgispy.tools.dates.get_days_since(2020, 45, datetime.date(2020, 1, 1))
     """
-    if year < base_date.year:
-        raise rsgispy.RSGISPyException(
-            "The year specified is before the base date."
-        )
     date_val = datetime.date(year=int(year), month=1, day=1) + datetime.timedelta(
         days=int(day_of_year - 1)
     )
+    if date_val < base_date:
+        raise rsgispy.RSGISPyException(
+            f"The date specified ({date_val}) is before the base date ({base_date})."
+        )
     return (date_val - base_date).days
 
 
@@ -61,6 +63,8 @@ def get_days_since_date(
     :param day: Target day of month (1..31).
     :param base_date: Reference ``datetime.date``.
     :return: Number of days elapsed since ``base_date``.
+    :raises rsgispy.RSGISPyException: if the date is before ``base_date``
+                                      (in the same or an earlier year).
 
     .. code:: python
 
@@ -71,11 +75,11 @@ def get_days_since_date(
             2020, 2, 14, datetime.date(2020, 1, 1)
         )
     """
-    if year < base_date.year:
-        raise rsgispy.RSGISPyException(
-            "The year specified is before the base date."
-        )
     date_val = datetime.date(year=int(year), month=int(month), day=int(day))
+    if date_val < base_date:
+        raise rsgispy.RSGISPyException(
+            f"The date specified ({date_val}) is before the base date ({base_date})."
+        )
     return (date_val - base_date).days
 
 
@@ -169,6 +173,10 @@ def is_summer_winter(lat: float, date: datetime.date) -> int:
     Southern Hemisphere Winter (``lat < 0``): May - October (months 5..10).
     Northern Hemisphere Summer (``lat >= 0``): April - September (months 4..9).
 
+    The two hemispheres are deliberately not mirror images (the southern
+    winter is shifted one month later than the northern summer); this
+    matches RSGISLib's ``is_summer_winter``, so results are the same in both.
+
     :param lat: Latitude in decimal degrees.
     :param date: ``datetime.date`` (or ``datetime.datetime``) object.
     :return: ``1`` for summer, ``2`` for winter.
@@ -200,8 +208,9 @@ def get_datetime_increment_lst(
 
     :param start_date: Start datetime of the sequence.
     :param end_date: End datetime of the sequence.
-    :param interval: Step ``datetime.timedelta``.
+    :param interval: Step ``datetime.timedelta`` (must be positive).
     :return: List of ``datetime.datetime`` objects.
+    :raises ValueError: if ``interval`` is zero or negative.
 
     .. code:: python
 
@@ -214,6 +223,8 @@ def get_datetime_increment_lst(
             datetime.timedelta(days=1),
         )
     """
+    if interval <= datetime.timedelta(0):
+        raise ValueError(f"interval must be a positive timedelta, got {interval}.")
     date_lst: List[datetime.datetime] = []
     c_date = start_date
     while c_date < end_date:

@@ -1,6 +1,17 @@
 """
 The tools.credentials module provides base64 text encoding/decoding and simple
 username/password credential file utilities.
+
+.. warning::
+
+   Base64 is an encoding, not encryption: anyone who can read a credentials
+   file written by :func:`create_username_password_file` can decode the
+   username and password with :func:`decode_base64_text` (or any base64
+   tool). It only keeps them from being read at a glance. Protect the file
+   with its permissions (it is created readable by its owner only), keep it
+   out of version control and shared folders, and prefer the environment
+   variables read by :func:`resolve_env_user_pass` or a secrets manager for
+   anything sensitive.
 """
 
 import base64
@@ -23,7 +34,8 @@ __all__ = [
 
 def encode_base64_text(input_txt: str) -> str:
     """
-    Encode ``input_txt`` as a base64 ASCII string.
+    Encode ``input_txt`` as a base64 ASCII string. This is not encryption:
+    the text can be recovered by anyone with :func:`decode_base64_text`.
 
     :param input_txt: Plain text string to encode.
     :return: Base64-encoded string.
@@ -59,6 +71,9 @@ def create_username_password_file(
     """
     Write a two-line base64-obfuscated username/password file with restrictive
     owner-only permissions (``0o600``).
+
+    The credentials are **not encrypted**: base64 only obfuscates them and is
+    trivially reversed, so the file permissions are the only protection.
 
     :param username: Username string.
     :param password: Password string.

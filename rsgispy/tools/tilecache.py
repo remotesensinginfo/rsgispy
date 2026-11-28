@@ -71,6 +71,27 @@ def truncate_lng_lat(lon_deg: float, lat_deg: float) -> Tuple[float, float]:
     return lon_deg, lat_deg
 
 
+#: Latitude limit of the Web Mercator square (``atan(sinh(pi))`` in degrees).
+MAX_MERCATOR_LAT = 85.0511287798066
+
+
+def _lonlat_to_mercator_m(
+    lon_deg: float, lat_deg: float, clamp_lat: bool = False
+) -> Tuple[float, float]:
+    """
+    Web Mercator ``(metre_x, metre_y)`` of WGS84 ``(lon_deg, lat_deg)`` (the
+    single implementation used by this module). With ``clamp_lat``, the
+    latitude is first clamped to +/-:data:`MAX_MERCATOR_LAT`.
+    """
+    if clamp_lat:
+        lat_deg = max(-MAX_MERCATOR_LAT, min(MAX_MERCATOR_LAT, lat_deg))
+    metre_x = lon_deg * ORIGIN_SHIFT / 180.0
+    metre_y = math.log(math.tan((90.0 + lat_deg) * math.pi / 360.0)) / (
+        math.pi / 180.0
+    )
+    return metre_x, metre_y * ORIGIN_SHIFT / 180.0
+
+
 def get_tile_for_point(
     lon_deg: float,
     lat_deg: float,
@@ -86,18 +107,15 @@ def get_tile_for_point(
     :param zoom: Zoom level.
     :param tms: If ``True``, use TMS origin (bottom-left); if ``False``, XYZ (top-left).
     :param tile_size: Tile size in pixels (Default = ``256``).
-    :return: ``(tile_x, tile_y, zoom)``.
+    :return: ``(tile_x, tile_y, zoom)``. Latitudes beyond +/-85.0511 (the
+             Web Mercator limit) are clamped, giving the edge tiles.
 
     .. code:: python
 
         import rsgispy.tools.tilecache
         tx, ty, z = rsgispy.tools.tilecache.get_tile_for_point(-4.08, 52.41, zoom=12)
     """
-    metre_x = lon_deg * ORIGIN_SHIFT / 180.0
-    metre_y = math.log(math.tan((90.0 + lat_deg) * math.pi / 360.0)) / (
-        math.pi / 180.0
-    )
-    metre_y = metre_y * ORIGIN_SHIFT / 180.0
+    metre_x, metre_y = _lonlat_to_mercator_m(lon_deg, lat_deg, clamp_lat=True)
 
     res = resolution(zoom, tile_size=tile_size)
     pixel_x = max(0.0, (metre_x + ORIGIN_SHIFT) / res)
@@ -209,12 +227,7 @@ def get_web_mercator_xy(
     if truncate:
         lon_deg, lat_deg = truncate_lng_lat(lon_deg, lat_deg)
 
-    metre_x = lon_deg * ORIGIN_SHIFT / 180.0
-    metre_y = math.log(math.tan((90.0 + lat_deg) * math.pi / 360.0)) / (
-        math.pi / 180.0
-    )
-    metre_y = metre_y * ORIGIN_SHIFT / 180.0
-    return metre_x, metre_y
+    return _lonlat_to_mercator_m(lon_deg, lat_deg)
 
 
 def get_xy_mercator_lonlat(
@@ -351,12 +364,8 @@ def _lonlat_to_frac_xyz(
     """Convert WGS84 ``(lon_deg, lat_deg)`` to fractional XYZ tile coordinates."""
     n_tiles = 2.0**zoom
     x_f = (lon_deg + 180.0) / 360.0 * n_tiles
-    lat_rad = math.radians(lat_deg)
-    y_f = (
-        (1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi)
-        / 2.0
-        * n_tiles
-    )
+    _, metre_y = _lonlat_to_mercator_m(lon_deg, lat_deg, clamp_lat=True)
+    y_f = (ORIGIN_SHIFT - metre_y) / (2.0 * ORIGIN_SHIFT) * n_tiles
     return x_f, y_f
 
 
