@@ -7,6 +7,7 @@ import hashlib
 import os
 import stat
 import tarfile
+import time
 import types
 import zipfile
 
@@ -357,3 +358,50 @@ def test_file_is_hidden_windows_attributes(tmp_path, monkeypatch):
     assert rfiles.file_is_hidden(str(hidden_attr_dir))
     assert rfiles.file_is_hidden(str(system_attr_dir))
     assert not rfiles.file_is_hidden(str(normal_dir))
+
+
+def test_delete_file_with_basename_matches_only_base_and_sidecars(tmp_path):
+    """Only <base>.<ext> (and its .xml/.aux.xml sidecars) are deleted."""
+    import rsgispy.tools.files as rfiles  # pylint: disable=import-outside-toplevel
+
+    names = ["layer.shp", "layer.dbf", "layer.shp.xml", "layer.v2.tif",
+             "layer_other.shp", "scn[1].shp", "scn[1].dbf", "scn1.shp"]
+    for name in names:
+        (tmp_path / name).write_text("x")
+    rfiles.delete_file_with_basename(str(tmp_path / "layer.shp"), print_rms=False)
+    rfiles.delete_file_with_basename(str(tmp_path / "scn[1].shp"), print_rms=False)
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "layer.v2.tif", "layer_other.shp", "scn1.shp"
+    ]
+
+
+def test_file_lock_is_atomic_and_clean_tolerates_empty(tmp_path):
+    """A held lock cannot be taken twice; empty lock files are cleaned."""
+    import rsgispy.tools.files as rfiles  # pylint: disable=import-outside-toplevel
+
+    target = str(tmp_path / "out.tif")
+    assert rfiles.get_file_lock(target, sleep_period=0, wait_iters=0)
+    assert not rfiles.get_file_lock(target, sleep_period=0, wait_iters=0)
+    rfiles.release_file_lock(target)
+    assert rfiles.get_file_lock(target, sleep_period=0, wait_iters=0)
+    rfiles.release_file_lock(target)
+
+    empty_lock = tmp_path / ".old.tif.lok"
+    empty_lock.write_text("")
+    old = time.time() - 7200
+    os.utime(empty_lock, (old, old))
+    rfiles.clean_file_locks(str(tmp_path), timeout=3600)
+    assert not empty_lock.exists()
+
+
+def test_find_files_ext_warns_on_name_collisions(tmp_path):
+    """Same-named files in different folders are reported, not lost silently."""
+    import rsgispy.tools.files as rfiles  # pylint: disable=import-outside-toplevel
+
+    for sub in ("a", "b"):
+        (tmp_path / sub).mkdir()
+        (tmp_path / sub / "scene.tif").write_text("x")
+    (tmp_path / "a" / "other.tif").write_text("x")
+    with pytest.warns(UserWarning, match="scene.tif"):
+        found = rfiles.find_files_ext(str(tmp_path), ".tif")
+    assert set(found) == {"scene.tif", "other.tif"}

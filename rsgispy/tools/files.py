@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import warnings
 from typing import Dict, Iterator, List, Optional, Sequence, Tuple, Union
 
 import pyproj
@@ -283,7 +284,10 @@ def delete_file_silent(input_file: str) -> bool:
 def delete_file_with_basename(input_file: str, print_rms: bool = True) -> None:
     """
     Delete all files sharing the same path and base name as ``input_file``
-    (e.g., sidecar files with different extensions).
+    (e.g., sidecar files with different extensions): ``<base>.<ext>`` with a
+    single extension, and its ``<base>.<ext>.xml`` / ``<base>.<ext>.aux.xml``
+    metadata sidecars. Names with further dots (``<base>.v2.tif``) and glob
+    characters in the base name (``scn[1].shp``) are matched literally.
 
     :param input_file: Input file path whose basename defines files to delete.
     :param print_rms: If True, print each deleted file path (Default = True).
@@ -294,7 +298,16 @@ def delete_file_with_basename(input_file: str, print_rms: bool = True) -> None:
         rsgispy.tools.files.delete_file_with_basename("layer.shp")
     """
     base_name = os.path.splitext(input_file)[0]
-    for file_path in glob.glob(f"{base_name}.*"):
+    base_file = os.path.basename(base_name)
+    for file_path in glob.glob(f"{glob.escape(base_name)}.*"):
+        ext_part = os.path.basename(file_path)[len(base_file) + 1:]
+        main_ext = ext_part
+        for sidecar in (".aux.xml", ".xml"):
+            if ext_part.endswith(sidecar) and len(ext_part) > len(sidecar):
+                main_ext = ext_part[: -len(sidecar)]
+                break
+        if not main_ext or "." in main_ext:
+            continue
         if print_rms:
             print(f"Deleting file: {file_path}")
         delete_file_silent(file_path)
@@ -382,7 +395,9 @@ def find_files_ext(dir_path: str, ending: str) -> Dict[str, str]:
 
     :param dir_path: Base directory path to search.
     :param ending: Filename suffix/extension (e.g., ``'.tif'``).
-    :return: Dictionary mapping filename to full file path.
+    :return: Dictionary mapping filename to full file path. When files with
+             the same name are found in different folders only the last one
+             is kept, and a :class:`UserWarning` lists the duplicates.
 
     .. code:: python
 
@@ -390,12 +405,27 @@ def find_files_ext(dir_path: str, ending: str) -> Dict[str, str]:
         tifs = rsgispy.tools.files.find_files_ext("/data/scenes", ".tif")
     """
     out_file_dict: Dict[str, str] = {}
+    dup_names: Dict[str, List[str]] = {}
     for root, _, files in os.walk(dir_path):
         for file_name in files:
             if file_name.endswith(ending):
                 file_found = os.path.join(root, file_name)
                 if os.path.isfile(file_found):
+                    if file_name in out_file_dict:
+                        dup_names.setdefault(
+                            file_name, [out_file_dict[file_name]]
+                        ).append(file_found)
                     out_file_dict[file_name] = file_found
+    if dup_names:
+        dup_txt = "; ".join(
+            f"{name}: {', '.join(paths)}" for name, paths in sorted(dup_names.items())
+        )
+        warnings.warn(
+            "find_files_ext found files with the same name in different "
+            f"folders; only the last of each is returned ({dup_txt}).",
+            UserWarning,
+            stacklevel=2,
+        )
     return out_file_dict
 
 
@@ -726,6 +756,8 @@ def get_file_lock(
 ) -> bool:
     """
     Acquire a hidden ``.<filename>.lok`` lock file alongside ``input_file``.
+    The lock file is created atomically (``os.open`` with
+    ``O_CREAT | O_EXCL``), so two processes cannot both acquire it.
 
     :param input_file: Target file path for which the lock is created.
     :param sleep_period: Seconds to wait between retries (Default = 1).
@@ -743,18 +775,23 @@ def get_file_lock(
     lock_file_path = os.path.join(file_path, f".{file_name}.lok")
 
     got_lock = False
-    for _ in range(wait_iters + 1):
-        if not os.path.exists(lock_file_path):
-            got_lock = True
-            break
-        time.sleep(sleep_period)
-
-    if got_lock:
-        c_datetime = datetime.datetime.now()
-        with open(lock_file_path, "w", encoding="utf-8") as fobj:
-            fobj.write(f"{c_datetime.isoformat()}\n")
+    for attempt in range(wait_iters + 1):
+        try:
+            # O_CREAT | O_EXCL: creating the lock file is the atomic test.
+            lock_fd = os.open(
+                lock_file_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644
+            )
+        except FileExistsError:
+            if attempt < wait_iters:
+                time.sleep(sleep_period)
+            continue
+        with os.fdopen(lock_fd, "w", encoding="utf-8") as fobj:
+            fobj.write(f"{datetime.datetime.now().isoformat()}\n")
             fobj.flush()
-    elif use_except:
+        got_lock = True
+        break
+
+    if not got_lock and use_except:
         raise rsgispy.RSGISPyException(
             f"Lock could not be gained for file: {input_file}"
         )
@@ -785,7 +822,8 @@ def release_file_lock(input_file: str) -> None:
 def clean_file_locks(dir_path: str, timeout: int = 3600) -> None:
     """
     Remove stale ``.*.lok`` lock files in ``dir_path`` older than ``timeout``
-    seconds.
+    seconds. The age comes from the timestamp written in the lock file, or
+    from its modification time when the file is empty or unreadable.
 
     :param dir_path: Directory containing lock files.
     :param timeout: Lock expiry threshold in seconds (Default = 3600).
@@ -796,10 +834,16 @@ def clean_file_locks(dir_path: str, timeout: int = 3600) -> None:
         rsgispy.tools.files.clean_file_locks("/data", timeout=3600)
     """
     c_datetime = datetime.datetime.now()
-    for lock_file_path in glob.glob(os.path.join(dir_path, ".*.lok")):
+    for lock_file_path in glob.glob(os.path.join(glob.escape(dir_path), ".*.lok")):
         with open(lock_file_path, "r", encoding="utf-8") as fobj:
             create_date_str = fobj.read().replace("\r", "").replace("\n", "").strip()
-        create_date = datetime.datetime.fromisoformat(create_date_str)
+        try:
+            create_date = datetime.datetime.fromisoformat(create_date_str)
+        except ValueError:
+            # Empty or partly written lock file: use its modification time.
+            create_date = datetime.datetime.fromtimestamp(
+                os.path.getmtime(lock_file_path)
+            )
         time_since_create = (c_datetime - create_date).total_seconds()
         if time_since_create > timeout:
             if not delete_file_silent(lock_file_path):
