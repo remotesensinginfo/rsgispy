@@ -1877,3 +1877,44 @@ def test_reproject_image_warns_when_out_res_less_than_half_input(tmp_path, monke
         if "less than half the input image resolution" in str(w.message)
     ]
 
+
+
+def _have_kea():
+    with rasterio.Env() as env:
+        return "KEA" in env.drivers()
+
+
+@pytest.mark.parametrize("fmt", ["KEA", "GTiff"])
+def test_pop_thmt_img_stats_wide_integer_range(tmp_path, fmt):
+    """H3: ranges wider than 65536 values give exact statistics."""
+    if fmt == "KEA" and not _have_kea():
+        pytest.skip("KEA driver not available")
+    ids = np.arange(1, 100001, dtype=np.uint32).reshape(250, 400)
+    ids[0, :10] = 0  # some zeros, excluded by ignore_zero
+    path = str(tmp_path / ("ids.kea" if fmt == "KEA" else "ids.tif"))
+    with rasterio.open(path, "w", driver=fmt, width=400, height=250, count=1,
+                       dtype="uint32", crs="EPSG:32630",
+                       transform=from_origin(0.0, 2500.0, 10.0, 10.0)) as dst:
+        dst.write(ids, 1)
+    if fmt == "GTiff":
+        # GeoTIFF cannot store a colour table for uint32: warn, keep the stats.
+        with pytest.warns(UserWarning, match="colour table"):
+            rsgispy.imageutils.stats.pop_thmt_img_stats(
+                path, calc_pyramids=False, use_pbar=False
+            )
+    else:
+        rsgispy.imageutils.stats.pop_thmt_img_stats(
+            path, calc_pyramids=False, use_pbar=False
+        )
+    valid = ids[ids != 0].astype(np.float64)
+    with rasterio.open(path) as ds:
+        tags = ds.tags(1)
+        assert int(tags["STATISTICS_MINIMUM"]) == 11
+        assert int(tags["STATISTICS_MAXIMUM"]) == 100000
+        assert float(tags["STATISTICS_MEAN"]) == pytest.approx(valid.mean())
+        assert float(tags["STATISTICS_STDDEV"]) == pytest.approx(valid.std())
+        assert int(tags["STATISTICS_MEDIAN"]) == int(np.median(valid))
+        counts = [int(v) for v in tags["STATISTICS_HISTOBINVALUES"].strip("|").split("|")]
+        assert sum(counts) == ids.size
+        if fmt == "KEA":
+            assert max(ds.colormap(1)) == 100000
