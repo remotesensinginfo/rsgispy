@@ -378,3 +378,38 @@ def test_segmentation_validation_and_performance(tmp_path):
     assert elapsed < 2.0
     with rasterio.open(out_big) as src:
         assert src.read(1).max() > 1000
+
+
+def test_eliminate_small_segments_masks_reference_nodata(tmp_path):
+    """The reference-image nodata is excluded from the merge statistics."""
+    from rsgispy.segmentation.utils import (  # pylint: disable=import-outside-toplevel
+        eliminate_small_segments_array,
+    )
+
+    # Segment 2 (one pixel, value 10) touches segment 1 (mean 10 over its
+    # valid pixels, but half of it is nodata -9999) and segment 3 (mean 50).
+    labels = np.array([[1, 1, 2, 3, 3], [1, 1, 3, 3, 3]], dtype=np.int32)
+    ref = np.array([[-9999.0, -9999.0, 10.0, 50.0, 50.0],
+                    [10.0, 10.0, 50.0, 50.0, 50.0]])
+    out = eliminate_small_segments_array(labels, ref, min_pixels=2,
+                                         data_no_data_val=-9999.0)
+    assert out[0, 2] == out[0, 0]  # merged with segment 1, the closer mean
+    # Without masking, segment 1's mean is about -4995 and it merges into 3.
+    out_raw = eliminate_small_segments_array(labels, ref, min_pixels=2)
+    assert out_raw[0, 2] == out_raw[0, 3]
+
+    # The file function takes the reference nodata from its header.
+    lbl_path = str(tmp_path / "lbl.tif")
+    ref_path = str(tmp_path / "ref.tif")
+    for path, arr, dtype, nd in ((lbl_path, labels, "uint32", 0),
+                                 (ref_path, ref, "float32", -9999.0)):
+        with rasterio.open(path, "w", driver="GTiff", width=5, height=2, count=1,
+                           dtype=dtype, crs="EPSG:32630", nodata=nd,
+                           transform=from_origin(0.0, 20.0, 10.0, 10.0)) as dst:
+            dst.write(arr.astype(dtype), 1)
+    out_path = str(tmp_path / "out.tif")
+    rseg_pkg.eliminate_small_segments(lbl_path, out_path, ref_path, 2,
+                                      calc_stats=False, use_pbar=False)
+    with rasterio.open(out_path) as ds:
+        res = ds.read(1)
+    assert res[0, 2] == res[0, 0]

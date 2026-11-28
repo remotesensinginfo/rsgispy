@@ -244,10 +244,9 @@ def test_dijkstra_kernel_matches_python():
 
 @needs_numba
 def test_priority_flood_kernel_matches_python():
-    from rsgispy.elevation.filtering import (
-        _priority_flood_fill_kernel,
-        _priority_flood_fill_py,
-    )
+    """The shared hydrology priority-flood equals the Soille & Gratin fallback."""
+    from rsgispy.elevation._hydro_kernels import priority_flood_kernel
+    from rsgispy.elevation.filtering import _priority_flood_fill_py
 
     rng = np.random.default_rng(1)
     for _ in range(20):
@@ -258,12 +257,11 @@ def test_priority_flood_kernel_matches_python():
         seed = vld & np.any(~sliding_window_view(vld_pad, (3, 3)), axis=(2, 3))
         out_a = np.zeros((h, w), dtype=np.int64)
         out_b = out_a.copy()
-        vis_a = ~vld
-        vis_b = vis_a.copy()
-        _priority_flood_fill_kernel(dem.astype(np.int64), seed, vis_a, out_a)
+        vis_b = ~vld
+        filled = priority_flood_kernel(dem.astype(np.float64), vld)
+        out_a[vld] = np.rint(filled[vld]).astype(np.int64)
         _priority_flood_fill_py(dem, seed, vis_b, out_b)
-        np.testing.assert_array_equal(out_a, out_b)
-        np.testing.assert_array_equal(vis_a, vis_b)
+        np.testing.assert_array_equal(out_a[vld], out_b[vld])
 
 
 def _write_raster(path, arr, nodata=None, res=10.0):

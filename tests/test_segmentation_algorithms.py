@@ -696,3 +696,38 @@ assert cleaned.shape == relab.shape
         check=False,
     )
     assert res.returncode == 0, f"Subprocess failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}"
+
+
+def _n_disconnected_labels(labels):
+    """Number of labels made of more than one 4-connected component."""
+    import scipy.ndimage as ndi  # pylint: disable=import-outside-toplevel
+
+    struct = ndi.generate_binary_structure(2, 1)
+    n_bad = 0
+    for lbl, slc in enumerate(ndi.find_objects(labels), start=1):
+        if slc is not None and ndi.label(labels[slc] == lbl, structure=struct)[1] > 1:
+            n_bad += 1
+    return n_bad
+
+
+@pytest.mark.parametrize(
+    "func, kwargs",
+    [
+        (rseg.slic_segmentation_array, {"n_segments": 40}),
+        (rseg.graph_segmentation_array, {"scale": 50.0, "min_pixels": 10}),
+        (rseg.shepherd_segmentation_array, {"n_clusters": 8, "min_pixels": 10}),
+        (rseg.region_merge_segmentation_array, {"scale": 10.0}),
+        (rseg.watershed_segmentation_array, {"min_distance": 5}),
+    ],
+    ids=["slic", "graph", "shepherd", "region_merge", "watershed"],
+)
+def test_tiled_segmentation_gives_connected_segments(func, kwargs):
+    """H15: with tile_size=64 and the default overlap every segment is connected."""
+    pytest.importorskip("scipy")
+    import scipy.ndimage as ndi  # pylint: disable=import-outside-toplevel
+
+    rng = np.random.default_rng(0)
+    data = ndi.gaussian_filter(rng.normal(size=(3, 192, 192)), (0, 3, 3))
+    labels = func(data, tile_size=64, **kwargs)
+    assert labels.max() > 1
+    assert _n_disconnected_labels(labels) == 0

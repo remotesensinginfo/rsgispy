@@ -371,3 +371,33 @@ def test_imagemorphology_v1_signatures_and_defaults(tmp_path):
         rimorph.image_dilate(
             str(in_f32), str(tmp_path / "bad_pos.tif"), "", False, 3, "GTIFF"
         )
+
+
+@pytest.mark.parametrize("sequencial_out", [False, True])
+def test_local_minima_strict_finds_border_minima(tmp_path, sequencial_out):
+    """allow_equal=False finds minima on the image border too."""
+    arr = np.full((5, 5), 50, dtype=np.uint8)
+    arr[0, 0] = 1  # corner minimum
+    arr[2, 4] = 2  # edge minimum
+    arr[2, 2] = 3  # interior minimum
+    in_path = str(tmp_path / "in.tif")
+    _write_raster(in_path, arr[np.newaxis])
+    out_path = str(tmp_path / "minima.tif")
+    rimorph.image_local_minima(
+        in_path, out_path, sequencial_out=sequencial_out, allow_equal=False,
+        calc_stats=False, use_pbar=False,
+    )
+    with rasterio.open(out_path) as ds:
+        found = ds.read(1) > 0
+    expected = np.zeros((5, 5), dtype=bool)
+    expected[0, 0] = expected[2, 4] = expected[2, 2] = True
+    np.testing.assert_array_equal(found, expected)
+
+    if not sequencial_out:
+        from rsgispy.imageprocess import MemorySink, RasterSource, TileGraph
+
+        node = rimorph.image_local_minima_node(
+            RasterSource(in_path), allow_equal=False
+        )
+        res = TileGraph(MemorySink(node, name="m"), block_size=3).run(use_pbar=False)
+        np.testing.assert_array_equal(res["m"][0] > 0, expected)

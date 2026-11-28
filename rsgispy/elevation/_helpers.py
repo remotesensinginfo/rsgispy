@@ -7,6 +7,7 @@ import math
 from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 import numpy as np
+import pyproj
 import rasterio
 
 import rsgispy
@@ -131,12 +132,32 @@ def calc_slope_aspect_from_diffs(
     return slope_rad, aspect_deg, flat_mask
 
 
+def reject_geographic_crs(crs: Any, label: str) -> None:
+    """
+    Raise :class:`rsgispy.RSGISPyException` when ``crs`` is geographic: the
+    terrain functions would treat its pixel size in degrees as metres. A
+    ``None`` CRS is accepted (the pixel size is then taken as metres).
+    """
+    if crs is None:
+        return
+    crs_obj = pyproj.CRS.from_user_input(crs)
+    if crs_obj.is_geographic:
+        raise rsgispy.RSGISPyException(
+            f"{label}: the DEM uses a geographic CRS ({crs_obj.name}), so its "
+            "pixel size is in degrees, not metres. Reproject the DEM to a "
+            "projected CRS in metres, or use the *_pxl_res_img variant (e.g. "
+            "slope_pxl_res_img, with per-pixel sizes in metres from "
+            "rsgispy.imageutils.spatial.calc_wgs84_pixel_size)."
+        )
+
+
 def pixel_size_from_ctx(ctx: TileContext, label: str) -> Tuple[float, float]:
     """
     Return the ``(ew_res, ns_res)`` pixel size of the graph grid (the
     absolute values of the transform's ``a`` and ``e`` terms, as the
     file-based functions use), raising if the grid has no valid pixel size.
     """
+    reject_geographic_crs(ctx.crs, label)
     if ctx.transform is None:
         raise rsgispy.RSGISPyException(
             f"{label} needs the pixel size of the DEM, but the graph grid has "

@@ -14,6 +14,7 @@ import rsgispy
 from rsgispy.segmentation.tiling import (
     TileWindow,
     crop_halo_labels,
+    split_core_components,
     extract_halo_tile,
     run_tiled_array_pipeline,
     run_tiled_raster_pipeline,
@@ -26,7 +27,6 @@ from rsgispy.segmentation.utils import (
     make_njit,
     normalise_array_input,
     normalise_band_selection,
-    relabel_segments_array,
     standardise_bands,
 )
 
@@ -419,14 +419,10 @@ def _watershed_tile_worker(
     cropped = crop_halo_labels(halo_labels, tile)
     if has_user_markers:
         aux_core = np.where(cropped > 0, cropped, 0).astype(np.int64)
-        core_labels = relabel_segments_array(
-            cropped, no_data_val=0, contiguous=True
-        )
+        core_labels = split_core_components(cropped)
         return core_labels, aux_core
 
-    core_labels = relabel_segments_array(
-        cropped, no_data_val=0, contiguous=True
-    )
+    core_labels = split_core_components(cropped)
     return core_labels, None
 
 

@@ -334,7 +334,11 @@ def _run_sequential_local_minima(
         out_count=out_count,
         per_band=False,
         read_dtype=np.float64,
-        pad_mode="edge",
+        # NaN padding marks out-of-image neighbours as invalid: an edge copy
+        # equals the border pixel and would hide border minima when
+        # allow_equal=False.
+        pad_mode="constant",
+        fill_value=np.nan,
         out_no_data_val=out_nd,
         clamp_int=True,
         full_width_strips=True,
@@ -487,7 +491,9 @@ def local_minima_node(
         source=source,
         radius=(half, half),
         func=_minima,
-        border=HaloBorder(mode="edge"),
+        # NaN padding: out-of-image neighbours are not compared (see
+        # _run_sequential_local_minima).
+        border=HaloBorder(mode="constant", fill_value=np.nan),
         name=name,
         meta_fn=_morph_meta(combined, None),
     )

@@ -11,6 +11,15 @@ chaining them with other operations in a
 its solar rays are traced across the whole DEM (a cast shadow can come from
 terrain any distance away), so it cannot be computed tile by tile with a
 fixed halo.
+
+.. note::
+
+   The functions without a pixel-resolution image (``slope``, ``aspect``,
+   ``hillshade``, ``local_incidence_angle``, ``local_exitance_angle``,
+   ``shadow_mask`` and their nodes) take the pixel size from the DEM's
+   transform, in metres, and raise :class:`rsgispy.RSGISPyException` for a
+   DEM in a geographic CRS. Reproject such a DEM, or use the
+   ``*_pxl_res_img`` variants with per-pixel sizes in metres.
 """
 
 from contextlib import ExitStack
@@ -25,6 +34,7 @@ from rsgispy._io import TileNode
 from rsgispy._numba import optional_njit, prange, use_compiled
 from rsgispy.elevation._helpers import (
     Horn3x3Node as _Horn3x3Node,
+    reject_geographic_crs as _reject_geographic_crs,
     HornBlockFunc as _HornBlockFunc,
     calc_slope_aspect_from_diffs as _calc_slope_aspect_from_diffs,
     prepare_3x3_horn_diffs as _prepare_3x3_horn_diffs,
@@ -512,6 +522,7 @@ def shadow_mask(
 
     with ExitStack() as stack:
         src = stack.enter_context(rasterio.open(input_img, "r"))
+        _reject_geographic_crs(src.crs, "shadow_mask")
         grid = IntersectionGrid.from_dataset(src)
         ew_res = abs(float(src.transform.a))
         ns_res = abs(float(src.transform.e))
