@@ -830,8 +830,16 @@ def test_shap_tree_explainer_xgb_bracketed_base_score_fallback(monkeypatch, mult
 
     x_df, y_multi, y_bin = _shap_scale_data()
     est = _xgb_classifier().fit(x_df, y_multi if multiclass else y_bin)
-    ref_explainer = shap.TreeExplainer(est, feature_names=list(x_df.columns))
-    ref_exp = ref_explainer(x_df)
+
+    # On shap >= 0.50, raw shap.TreeExplainer supports bracketed base_score and acts
+    # as an exact reference; on shap < 0.50 (Python 3.10), raw shap.TreeExplainer
+    # raises the bracketed base_score ValueError itself.
+    try:
+        ref_explainer = shap.TreeExplainer(est, feature_names=list(x_df.columns))
+    except ValueError as exc:
+        if "could not convert string to float" not in str(exc):
+            raise
+        ref_explainer = None
 
     orig_init = shap_tree.XGBTreeModelLoader.__init__
 
@@ -848,11 +856,28 @@ def test_shap_tree_explainer_xgb_bracketed_base_score_fallback(monkeypatch, mult
 
     explainer = _create_tree_explainer(est, list(x_df.columns))
     exp = explainer(x_df)
-    np.testing.assert_allclose(exp.values, ref_exp.values, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(exp.base_values, ref_exp.base_values, rtol=1e-6, atol=1e-6)
+
+    # Verify SHAP additivity against XGBoost's exact margins on every shap version.
+    margins = est.predict(x_df, output_margin=True)
+    explained = np.asarray(exp.base_values, dtype=float) + np.asarray(
+        exp.values, dtype=float
+    ).sum(axis=1)
+    np.testing.assert_allclose(explained, margins, rtol=1e-5, atol=1e-5)
+
+    expected_base = exp.base_values[0] if multiclass else float(exp.base_values[0])
     np.testing.assert_allclose(
-        explainer.expected_value, ref_explainer.expected_value, rtol=1e-6, atol=1e-6
+        explainer.expected_value, expected_base, rtol=1e-6, atol=1e-6
     )
+
+    if ref_explainer is not None:
+        ref_exp = ref_explainer(x_df)
+        np.testing.assert_allclose(exp.values, ref_exp.values, rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(
+            exp.base_values, ref_exp.base_values, rtol=1e-6, atol=1e-6
+        )
+        np.testing.assert_allclose(
+            explainer.expected_value, ref_explainer.expected_value, rtol=1e-6, atol=1e-6
+        )
 
 
 def test_salib_feature_sensitivity(tmp_path):
