@@ -18,6 +18,7 @@ import rsgispy.tools.files
 from rsgispy.vectorprocess import (
     VectorInput,
     ensure_matching_crs,
+    finish_vec_output,
     is_geoparquet_file,
     is_geoparquet_format,
     list_vec_layers,
@@ -215,17 +216,13 @@ def explode_vec_lyr(
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     data_gdf = read_vec_gdf(vec_file, vec_lyr, copy=False)
     data_explode_gdf = data_gdf.explode(index_parts=False)
-    if out_vec_file is None:
-        return data_explode_gdf
-    if len(data_explode_gdf) > 0:
-        write_vec_gdf(
-            data_explode_gdf,
-            out_vec_file,
-            out_vec_lyr,
-            out_format=out_format,
-            out_compress=out_compress,
-        )
-    return None
+    return finish_vec_output(
+        data_explode_gdf,
+        out_vec_file,
+        out_vec_lyr=out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def explode_vec_files(
@@ -694,17 +691,13 @@ def rm_polys_area(
         area_msk = in_vec_gdf.area > area_thres
     vec_sel_gdf = in_vec_gdf.loc[area_msk].copy()
 
-    if out_vec_file is None:
-        return vec_sel_gdf
-    if len(vec_sel_gdf) > 0:
-        write_vec_gdf(
-            vec_sel_gdf,
-            out_vec_file,
-            out_vec_lyr,
-            out_format=out_format,
-            out_compress=out_compress,
-        )
-    return None
+    return finish_vec_output(
+        vec_sel_gdf,
+        out_vec_file,
+        out_vec_lyr=out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def vec_lyr_dissolve(
@@ -840,17 +833,13 @@ def thin_vector_geoms(
         kept_pos = np.sort(kept_pos.to_numpy())
     pts_thin_gdf = pts_gdf.iloc[kept_pos].copy()
 
-    if out_vec_file is None:
-        return pts_thin_gdf
-    if len(pts_thin_gdf) > 0:
-        write_vec_gdf(
-            pts_thin_gdf,
-            out_vec_file,
-            out_vec_lyr,
-            out_format=out_format,
-            out_compress=out_compress,
-        )
-    return None
+    return finish_vec_output(
+        pts_thin_gdf,
+        out_vec_file,
+        out_vec_lyr=out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )
 
 
 def shiftxy_vec_lyr(

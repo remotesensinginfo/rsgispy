@@ -942,3 +942,38 @@ def test_spatial_predicates_align_comparison_crs():
     assert vg_spatial.vec_intersects_vec(
         comp_wgs, None, base_gdf, None, use_pbar=False
     )
+
+
+def test_empty_results_write_empty_layer_with_warning(tmp_path):
+    """Empty results are written as an empty layer (same schema) with a warning."""
+    import rsgispy.vector.attrs as va_spatial
+
+    polys = gpd.GeoDataFrame(
+        {"cls": ["A"]}, geometry=[box(0.0, 0.0, 10.0, 10.0)], crs="EPSG:32630"
+    )
+    far = gpd.GeoDataFrame(
+        {"roi": ["R"]}, geometry=[box(100.0, 100.0, 110.0, 110.0)], crs="EPSG:32630"
+    )
+    no_pts = gpd.GeoDataFrame(
+        {"pid": []}, geometry=gpd.GeoSeries([], crs="EPSG:32630"), crs="EPSG:32630"
+    )
+    calls = {
+        "overlay": lambda out: vg_overlay.vec_lyr_intersection_gp(
+            polys, None, far, None, out, "lyr"
+        ),
+        "explode": lambda out: vg_polys.explode_vec_lyr(polys.iloc[0:0], None, out, "lyr"),
+        "rm_area": lambda out: vg_polys.rm_polys_area(polys, None, 1.0, out, "lyr"),
+        "thin": lambda out: vg_polys.thin_vector_geoms(no_pts, None, polys, None, out, "lyr"),
+        "sjoin": lambda out: va_spatial.perform_spatial_join(
+            polys, None, far, None, out, "lyr", join_op="intersects"
+        ),
+    }
+    for name, call in calls.items():
+        out_path = str(tmp_path / f"{name}.gpkg")
+        with pytest.warns(UserWarning, match="empty"):
+            assert call(out_path) is None
+        assert os.path.exists(out_path), name
+        out_gdf = gpd.read_file(out_path, layer="lyr")
+        assert len(out_gdf) == 0, name
+        assert out_gdf.crs == polys.crs, name
+    assert "cls" in gpd.read_file(str(tmp_path / "rm_area.gpkg"), layer="lyr").columns

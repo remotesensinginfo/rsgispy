@@ -14,6 +14,7 @@ import rsgispy
 from rsgispy.vectorprocess import (
     VectorInput,
     ensure_matching_crs,
+    finish_vec_output,
     read_vec_gdf,
     write_back_vec_gdf,
     write_vec_gdf,
@@ -317,14 +318,10 @@ def perform_spatial_join(
     joined_gdf = gpd.sjoin(
         base_gdf, join_gdf, how=join_how, predicate=join_op
     )
-    if out_vec_file is None:
-        return joined_gdf
-    if len(joined_gdf) > 0:
-        write_vec_gdf(
-            joined_gdf,
-            out_vec_file,
-            out_vec_lyr,
-            out_format=out_format,
-            out_compress=out_compress,
-        )
-    return None
+    return finish_vec_output(
+        joined_gdf,
+        out_vec_file,
+        out_vec_lyr=out_vec_lyr,
+        out_format=out_format,
+        out_compress=out_compress,
+    )

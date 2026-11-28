@@ -5,6 +5,7 @@ Shared low-level vector processing helpers for :mod:`rsgispy` using
 
 import math
 import os
+import warnings
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import geopandas as gpd
@@ -666,6 +667,9 @@ def finish_vec_output(  # pylint: disable=too-many-arguments,too-many-positional
     :param out_compress: Optional GeoParquet compression setting.
     :return: ``gdf`` when ``out_vec_file`` is ``None``, otherwise ``None``.
 
+    An empty ``gdf`` is still written (an empty layer with the same columns
+    and CRS), and a :class:`UserWarning` is issued.
+
     .. code:: python
 
         import rsgispy.vectorprocess
@@ -674,6 +678,13 @@ def finish_vec_output(  # pylint: disable=too-many-arguments,too-many-positional
     """
     if out_vec_file is None:
         return gdf
+    if len(gdf) == 0:
+        warnings.warn(
+            f"The result is empty; writing an empty layer to "
+            f"'{os.fspath(out_vec_file)}'.",
+            UserWarning,
+            stacklevel=2,
+        )
     write_vec_gdf(
         gdf,
         out_vec_file,
