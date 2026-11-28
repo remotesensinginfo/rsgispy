@@ -729,3 +729,47 @@ def test_date_helpers_reject_bad_input():
     ):
         with pytest.raises(rsgispy.RSGISPyException):
             call()
+
+
+def test_ftp_and_cmr_downloads_stay_in_out_dir(tmp_path, monkeypatch):
+    """Remote names with '../' cannot write outside the output folder."""
+    import rsgispy.dataaccess.nasa_cmr as cmr_mod  # pylint: disable=import-outside-toplevel
+    import rsgispy.tools.ftp as ftp_mod  # pylint: disable=import-outside-toplevel
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    written = []
+
+    def _fake_dl(**kwargs):
+        written.append(kwargs.get("local_file") or kwargs.get("out_file_path"))
+        return True
+
+    def _run_queue(records):
+        def _proc(_mod, _db, record_fn, use_pbar=True):
+            for rec in records:
+                try:
+                    record_fn(rec)
+                except rsgispy.RSGISPyException:
+                    written.append("rejected")
+        return _proc
+
+    monkeypatch.setattr(ftp_mod, "HAVE_PYSONDB", True)
+    monkeypatch.setattr(ftp_mod, "download_ftp_file", _fake_dl)
+    monkeypatch.setattr(ftp_mod, "process_download_queue_db", _run_queue([
+        {"ftp_url": "h", "rmt_path": "/pub/../../evil.txt"},
+        {"ftp_url": "h", "rmt_path": "/pub/data/ok.txt"},
+    ]))
+    ftp_mod.download_files_use_lst_db("db.json", str(out_dir), create_dir_struct=True)
+    assert written == ["rejected", str(out_dir / "pub" / "data" / "ok.txt")]
+
+    written.clear()
+    monkeypatch.setattr(cmr_mod, "HAVE_PYSONDB", True)
+    monkeypatch.setattr(cmr_mod, "HAVE_REQUESTS", True)
+    monkeypatch.setattr(cmr_mod.rsgispy.tools.credentials, "get_username_password",
+                        lambda _f: ("u", "p"))
+    monkeypatch.setattr(cmr_mod, "cmr_download_file_http", _fake_dl)
+    monkeypatch.setattr(cmr_mod, "process_download_queue_db", _run_queue([
+        {"producer_granule_id": "../../evil.h5", "granule_url": "https://x/a"},
+    ]))
+    cmr_mod.download_granules_use_dwnld_db("db.json", str(out_dir), "creds.txt")
+    assert written == [str(out_dir / "evil.h5")]

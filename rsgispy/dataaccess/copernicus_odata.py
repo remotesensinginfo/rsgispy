@@ -84,6 +84,7 @@ from typing import Callable, Dict, List, Optional, Tuple, Union
 import rsgispy
 from rsgispy.tools._download_common import stream_http_download
 import rsgispy.tools.credentials
+import rsgispy.tools.files
 import rsgispy.tools.geometry
 import rsgispy.tools.http
 
@@ -572,15 +573,16 @@ def download_scn(
         HAVE_REQUESTS, "download_scn", "requests", "dataaccess"
     )
     raw_name = str(scn_info["Name"]).strip()
-    scn_name = os.path.basename(raw_name.replace("\\", "/"))
-    if not scn_name or scn_name in (".", ".."):
+    try:
+        scn_name = os.path.basename(rsgispy.tools.files.safe_join(".", raw_name))
+    except rsgispy.RSGISPyException as err:
         raise rsgispy.RSGISPyException(
             f"Invalid scene name for download: {scn_info['Name']!r}"
-        )
+        ) from err
     print(f"Downloading {scn_name}")
 
     os.makedirs(out_path, exist_ok=True)
-    out_file_path = os.path.join(out_path, f"{scn_name}.zip")
+    out_file_path = rsgispy.tools.files.safe_join(out_path, f"{scn_name}.zip")
     if os.path.exists(out_file_path):
         print(f"File already exists: {out_file_path}")
         return

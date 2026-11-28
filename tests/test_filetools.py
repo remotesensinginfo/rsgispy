@@ -405,3 +405,22 @@ def test_find_files_ext_warns_on_name_collisions(tmp_path):
     with pytest.warns(UserWarning, match="scene.tif"):
         found = rfiles.find_files_ext(str(tmp_path), ".tif")
     assert set(found) == {"scene.tif", "other.tif"}
+
+
+def test_safe_join_rejects_traversal(tmp_path):
+    """safe_join keeps names inside out_dir; '..' components raise."""
+    out_dir = str(tmp_path)
+    assert rfiles.safe_join(out_dir, "a.zip") == os.path.join(out_dir, "a.zip")
+    # By default only the base name is used.
+    assert rfiles.safe_join(out_dir, "../../etc/passwd") == os.path.join(out_dir, "passwd")
+    assert rfiles.safe_join(out_dir, "sub\\\\x.tif") == os.path.join(out_dir, "x.tif")
+    for bad in ("", ".", "..", "dir/.."):
+        with pytest.raises(rsgispy.RSGISPyException):
+            rfiles.safe_join(out_dir, bad)
+    # keep_subdirs keeps the folders but not '..' or an absolute root.
+    assert rfiles.safe_join(out_dir, "/pub/d/x.tif", keep_subdirs=True) == os.path.join(
+        out_dir, "pub", "d", "x.tif"
+    )
+    for bad in ("../x.tif", "pub/../../x.tif", "a/../.."):
+        with pytest.raises(rsgispy.RSGISPyException):
+            rfiles.safe_join(out_dir, bad, keep_subdirs=True)

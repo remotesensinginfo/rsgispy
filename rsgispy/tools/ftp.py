@@ -452,14 +452,11 @@ def download_files_use_lst_db(
     )
 
     def _download_record(dwn_file: Dict[str, Any]) -> Tuple[bool, str]:
-        basename = os.path.basename(dwn_file["rmt_path"])
-        if create_dir_struct:
-            dir_path = os.path.dirname(dwn_file["rmt_path"]).lstrip("/")
-            local_dir_path = os.path.join(out_dir_path, dir_path)
-            os.makedirs(local_dir_path, exist_ok=True)
-            local_path = os.path.join(local_dir_path, basename)
-        else:
-            local_path = os.path.join(out_dir_path, basename)
+        # The remote path comes from the server: keep it inside out_dir_path.
+        local_path = rsgispy.tools.files.safe_join(
+            out_dir_path, dwn_file["rmt_path"], keep_subdirs=create_dir_struct
+        )
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
 
         dl_fn = download_curl_ftp_file if use_curl else download_ftp_file
         dwnlded = dl_fn(

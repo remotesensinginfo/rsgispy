@@ -26,6 +26,7 @@ import rasterio
 import rsgispy
 
 __all__ = [
+    "safe_join",
     "get_file_basename",
     "is_path_valid",
     "is_path_sibling_creatable",
@@ -67,6 +68,47 @@ _SIZE_UNITS = {
     "gb": 1024.0**3,
     "tb": 1024.0**4,
 }
+
+
+def safe_join(out_dir: str, name: str, keep_subdirs: bool = False) -> str:
+    """
+    Join a file name taken from an untrusted source (a remote path, a scene or
+    granule ID) onto ``out_dir`` so that the result cannot point outside
+    ``out_dir``.
+
+    Backslashes are treated as separators. With ``keep_subdirs=False``
+    (default) only the last path component is used; with
+    ``keep_subdirs=True`` the folders are kept (a leading ``/`` is dropped).
+    :class:`rsgispy.RSGISPyException` is raised for an empty name, ``.``,
+    ``..``, a ``..`` folder, or a path that resolves (following symbolic
+    links) outside ``out_dir``.
+
+    :param out_dir: Output directory.
+    :param name: File name or relative path to join.
+    :param keep_subdirs: Keep the folders of ``name`` (Default = ``False``).
+    :return: Path inside ``out_dir``.
+
+    .. code:: python
+
+        import rsgispy.tools.files
+
+        path = rsgispy.tools.files.safe_join("./downloads", "scene.zip")
+    """
+    parts = [p for p in str(name).replace("\\", "/").split("/") if p not in ("", ".")]
+    if not keep_subdirs:
+        last = str(name).replace("\\", "/").rstrip("/").split("/")[-1]
+        parts = [last] if last not in ("", ".") else []
+    if not parts or any(p == ".." for p in parts):
+        raise rsgispy.RSGISPyException(
+            f"Unsafe file name (empty, '.', or with '..'): {name!r}"
+        )
+    out_path = os.path.join(out_dir, *parts)
+    root = os.path.realpath(out_dir)
+    if os.path.commonpath([root, os.path.realpath(out_path)]) != root:
+        raise rsgispy.RSGISPyException(
+            f"File name {name!r} resolves outside the output folder {out_dir!r}."
+        )
+    return out_path
 
 
 def get_file_basename(
