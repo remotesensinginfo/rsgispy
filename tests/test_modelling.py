@@ -356,6 +356,27 @@ def test_diagnostics_plots_correlation_and_vif(tmp_path):
     assert (tmp_path / "corr.csv").is_file()
     assert (tmp_path / "corr.png").is_file()
 
+    # Default stays Pearson; rank-based methods are available via ``method``.
+    num_vars = ["VarOne", "VarTwo", "CatThree"]
+    np.testing.assert_allclose(
+        corr_df.to_numpy(),
+        comb_gdf[num_vars].corr(method="pearson").to_numpy(),
+    )
+    for corr_method in ("spearman", "kendall"):
+        rank_df = sdm.correlation_matrix(
+            env_vars, comb_gdf, out_corr_file=None, out_plt_file=None,
+            method=corr_method,
+        )
+        np.testing.assert_allclose(
+            rank_df.to_numpy(),
+            comb_gdf[num_vars].corr(method=corr_method).to_numpy(),
+        )
+    with pytest.raises(rsgispy.RSGISPyException, match="correlation method"):
+        sdm.correlation_matrix(
+            env_vars, comb_gdf, out_corr_file=None, out_plt_file=None,
+            method="cosine",
+        )
+
     vif_csv = str(tmp_path / "vif.csv")
     vif_series = sdm.calc_vif_multicollinearity(
         ["VarOne", "VarTwo", "CatThree"], comb_gdf, out_vif_file=vif_csv
