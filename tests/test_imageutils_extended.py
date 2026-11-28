@@ -1537,3 +1537,35 @@ def test_gdal_warp_per_band_nodata_alpha_covers_all_bands(tmp_path):
         alpha = ds.read(3)
     assert alpha[0, 1] == 0
     assert alpha[0, 0] > 0 and alpha[1, 1] > 0 and alpha[1, 0] > 0
+
+
+def test_point_sampling_reads_blocks_only(tmp_path, monkeypatch):
+    """Sampling reads only the blocks that hold points, with the same values."""
+    path = str(tmp_path / "tiled.tif")
+    arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
+    with rasterio.open(path, "w", driver="GTiff", width=64, height=64, count=1,
+                       dtype="float32", crs="EPSG:32630", tiled=True,
+                       blockxsize=16, blockysize=16,
+                       transform=from_origin(500000.0, 5200000.0, 10.0, 10.0)) as dst:
+        dst.write(arr, 1)
+    cols = np.array([0, 5, 17, 63, 40])
+    rows = np.array([0, 3, 2, 63, 33])
+    win_sizes = []
+    real_read = rasterio.io.DatasetReader.read
+
+    def _spy(self, *args, **kwargs):
+        win = kwargs.get("window")
+        win_sizes.append(None if win is None else (int(win.height), int(win.width)))
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(rasterio.io.DatasetReader, "read", _spy)
+    vals = iu_arr.get_img_pxl_values(path, 1, cols, rows)
+    np.testing.assert_array_equal(vals, arr[rows, cols])
+    assert win_sizes and all(w == (16, 16) for w in win_sizes)
+
+    win_sizes.clear()
+    x_coords = 500000.0 + (cols + 0.5) * 10.0
+    y_coords = 5200000.0 - (rows + 0.5) * 10.0
+    vals = iu_arr.get_img_coords_pxl_values(path, 1, x_coords, y_coords)
+    np.testing.assert_array_equal(vals, arr[rows, cols])
+    assert all(w == (16, 16) for w in win_sizes)
