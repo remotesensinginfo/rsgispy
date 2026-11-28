@@ -942,10 +942,12 @@ def resolve_vector_crs(
     vec_def_epsg: Optional[int] = None,
 ) -> pyproj.CRS:
     """
-    Resolve the CRS from ``vec_def_epsg`` or ``vec_gdf.crs``.
+    Resolve the CRS of ``vec_gdf``, falling back to ``vec_def_epsg`` only
+    when the layer's CRS is undefined.
 
     :param vec_gdf: Input GeoDataFrame.
-    :param vec_def_epsg: Optional fallback/override EPSG code.
+    :param vec_def_epsg: Optional EPSG code used when ``vec_gdf.crs`` is
+                         ``None``. A defined layer CRS is never overridden.
     :return: Resolved ``pyproj.CRS`` object.
 
     .. code:: python
@@ -954,14 +956,14 @@ def resolve_vector_crs(
 
         crs = rsgispy.vectorprocess.resolve_vector_crs(gdf)
     """
+    if vec_gdf.crs is not None:
+        return pyproj.CRS.from_user_input(vec_gdf.crs)
     if vec_def_epsg is not None:
         return pyproj.CRS.from_epsg(int(vec_def_epsg))
-    if vec_gdf.crs is None:
-        raise rsgispy.RSGISPyException(
-            "Could not retrieve a projection object from the vector layer - "
-            "projection might not be defined."
-        )
-    return pyproj.CRS.from_user_input(vec_gdf.crs)
+    raise rsgispy.RSGISPyException(
+        "Could not retrieve a projection object from the vector layer - "
+        "projection might not be defined."
+    )
 
 
 def get_gdf_geom_type(gdf: gpd.GeoDataFrame) -> int:

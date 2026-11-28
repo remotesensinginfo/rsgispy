@@ -909,3 +909,33 @@ def test_zonal_file_op_in_place_keeps_layer_name(tmp_path):
     assert rsgispy.vectorprocess.list_vec_layers(vec_path) == ["polys"]
     out_gdf = gpd.read_file(vec_path, layer="polys")
     assert "b1_mean" in out_gdf.columns
+
+
+def test_vec_def_epsg_only_applies_when_crs_undefined(tmp_path):
+    """vec_def_epsg is a fallback for an undefined CRS, not an override."""
+    gdf = gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[box(500000.0, 5199960.0, 500040.0, 5200000.0)],
+        crs="EPSG:32630",
+    )
+    resolve = rsgispy.vectorprocess.resolve_vector_crs
+    assert resolve(gdf, 4326).to_epsg() == 32630
+    assert resolve(gdf.set_crs(None, allow_override=True), 32630).to_epsg() == 32630
+    with pytest.raises(rsgispy.RSGISPyException):
+        resolve(gdf.set_crs(None, allow_override=True))
+
+    arr = np.arange(36, dtype=np.float32).reshape(6, 6)
+    tif_path = str(tmp_path / "vals.tif")
+    _write_test_raster(tif_path, arr)
+    out_gdf = zs_poly.calc_zonal_band_stats(
+        gdf,
+        tif_path,
+        img_band=1,
+        min_thres=-1.0,
+        max_thres=1000.0,
+        out_no_data_val=-1.0,
+        count_field="n",
+        vec_def_epsg=4326,
+        use_pbar=False,
+    )
+    assert out_gdf["n"].iloc[0] == 16
