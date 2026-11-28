@@ -3,7 +3,6 @@ Tests for rsgispy.elevation.roughness and rsgispy.imagecalc.calc_pt_win_smpls.
 """
 
 import glob
-from pathlib import Path
 
 import geopandas as gpd
 import matplotlib
@@ -11,12 +10,14 @@ import numpy as np
 import pytest
 import rasterio
 from rasterio.enums import Resampling
-from rasterio.transform import Affine, from_origin
+from rasterio.transform import from_origin
 from shapely.geometry import Point
 
 import rsgispy
 import rsgispy.elevation.roughness as rrough
 import rsgispy.imagecalc.calc_pt_win_smpls as rcptwin
+
+from conftest import write_raster
 
 matplotlib.use("Agg")
 
@@ -377,37 +378,12 @@ def test_roughness_and_pt_win_gdf_in_memory(tmp_path):
     assert "smith_hs" in chained_gdf.columns
 
 
-def _write_raster(
-    path: Path,
-    arr: np.ndarray,
-    *,
-    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
-    crs: object = "EPSG:32630",
-    nodata=None,
-) -> str:
-    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": int(data.shape[1]),
-        "width": int(data.shape[2]),
-        "count": int(data.shape[0]),
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": transform,
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return str(path)
-
-
 def test_extract_rotated_window_near_edge_pivots_on_point(tmp_path):
     arr = np.zeros((20, 20), dtype=np.float32)
     # Put a bright impulse exactly at pixel (row=2, col=3) -> x=35, y=175
     arr[2, 3] = 100.0
     tf = from_origin(0.0, 200.0, 10.0, 10.0)
-    in_img = _write_raster(tmp_path / "rot_pt.tif", arr, transform=tf)
+    in_img = write_raster(tmp_path / "rot_pt.tif", arr, transform=tf)
 
     with rasterio.open(in_img) as src:
         img_bbox = (

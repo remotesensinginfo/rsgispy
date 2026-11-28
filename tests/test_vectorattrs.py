@@ -24,6 +24,8 @@ import rsgispy.vector.stats as vs_metrics
 import rsgispy.vector.stats as vs_vario
 from rsgispy import vectorprocess as vp
 
+from conftest import write_vector
+
 
 def _can_import(mod_name: str) -> bool:
     try:
@@ -50,7 +52,7 @@ def _make_polys_gpkg(path: str, layer: str = "polys") -> None:
         ],
         crs="EPSG:32630",
     )
-    gdf.to_file(path, layer=layer, driver="GPKG")
+    write_vector(path, gdf, layer=layer, driver="GPKG")
 
 
 def _make_points_gpkg(path: str, layer: str = "pts") -> None:
@@ -68,7 +70,7 @@ def _make_points_gpkg(path: str, layer: str = "pts") -> None:
         ],
         crs="EPSG:32630",
     )
-    gdf.to_file(path, layer=layer, driver="GPKG")
+    write_vector(path, gdf, layer=layer, driver="GPKG")
 
 
 def test_io_read_write_drop_rename_sort_export(tmp_path):

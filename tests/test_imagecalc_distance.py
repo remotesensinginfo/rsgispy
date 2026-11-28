@@ -6,37 +6,10 @@ pixel value buffers.
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy.imagecalc.distance as ic_dist
 
-
-def _write_raster(
-    path,
-    data,
-    origin=(0.0, 100.0),
-    pixel_size=(10.0, 10.0),
-    crs="EPSG:32630",
-    dtype="float32",
-    nodata=None,
-):
-    """Write a 3D ``(bands, height, width)`` NumPy array to a GeoTIFF."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    count, height, width = data.shape
-    transform = from_origin(origin[0], origin[1], pixel_size[0], pixel_size[1])
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=dtype,
-        crs=crs,
-        transform=transform,
-        nodata=nodata,
-    ) as dst:
-        dst.write(data.astype(dtype))
+from conftest import write_raster
 
 
 def test_distance_and_buffer_functions(tmp_path):
@@ -50,7 +23,7 @@ def test_distance_and_buffer_functions(tmp_path):
     arr[0, 0, 0] = 1
     arr[0, 5, 5] = 2
     arr[0, 7, 7] = -1
-    _write_raster(in_p, arr, origin=(0.0, 80.0), pixel_size=(10.0, 10.0), dtype="int16", nodata=-1)
+    write_raster(in_p, arr, origin=(0.0, 80.0), pixel_size=(10.0, 10.0), dtype="int16", nodata=-1)
 
     ic_dist.calc_dist_to_img_vals(
         str(in_p),

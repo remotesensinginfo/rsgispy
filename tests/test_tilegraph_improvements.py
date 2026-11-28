@@ -34,21 +34,10 @@ from rsgispy.imageprocess import (
 )
 from rsgispy.imagefilter.stats import median_filter_node, stddev_filter_node
 
+from conftest import write_raster
+
 TRANSFORM = from_origin(500000.0, 5200000.0, 10.0, 10.0)
 H, W = 47, 61
-
-
-def _write(path, arr, nodata=None, dtype=None):
-    arr = np.asarray(arr)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis]
-    with rasterio.open(
-        path, "w", driver="GTiff", height=arr.shape[1], width=arr.shape[2],
-        count=arr.shape[0], dtype=dtype or arr.dtype, crs="EPSG:32630",
-        transform=TRANSFORM, nodata=nodata,
-    ) as dst:
-        dst.write(arr)
-    return str(path)
 
 
 @pytest.fixture(scope="module")
@@ -64,9 +53,9 @@ def scene(tmp_path_factory):
     labels[5, :] = 0
     dem = np.add.outer(np.arange(H) * 2.0, np.arange(W) * 1.5).astype(np.float32)
     return {
-        "img": _write(tmp / "img.tif", vals, nodata=-9999.0),
-        "labels": _write(tmp / "labels.tif", labels, nodata=0),
-        "dem": _write(tmp / "dem.tif", dem, nodata=-9999.0),
+        "img": write_raster(tmp / "img.tif", vals, nodata=-9999.0),
+        "labels": write_raster(tmp / "labels.tif", labels, nodata=0),
+        "dem": write_raster(tmp / "dem.tif", dem, nodata=-9999.0),
         "vals": vals,
         "labels_arr": labels,
     }

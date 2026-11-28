@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import Point
 
 import rsgispy
@@ -18,6 +17,8 @@ import rsgispy.imageregistration.shift as imreg_shift
 import rsgispy.imageregistration.tiepoints as imreg_tp
 import rsgispy.imageregistration.warping as imreg_warp
 from rsgispy.imageregistration._helpers import read_tie_points_file
+
+from conftest import write_raster
 
 
 def _make_textured_array(height: int = 128, width: int = 128, seed: int = 123) -> np.ndarray:
@@ -41,23 +42,11 @@ def _write_raster(
     res: float = 10.0,
     crs: str = "EPSG:32630",
     nodata: float = -9999.0,
-) -> None:
+) -> str:
     """Write a 2D or 3D NumPy array as a GeoTIFF."""
-    data = arr[None, :, :] if arr.ndim == 2 else arr
-    count, height, width = data.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=str(data.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(data)
+    return write_raster(
+        path, arr, nodata=nodata, crs=crs, origin=(origin_x, origin_y), pixel_size=res
+    )
 
 
 def test_find_image_offset_and_apply_offset(tmp_path):

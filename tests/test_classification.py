@@ -9,14 +9,14 @@ import json
 import geopandas as gpd
 import numpy as np
 import pytest
-import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import Point
 
 import rsgispy
 import rsgispy.classification as rcls
 import rsgispy.classification.classaccuracymetrics as rcam
 import rsgispy.classification.classrefpts as rcrp
+
+from conftest import write_raster
 
 
 def _write_raster(
@@ -29,27 +29,9 @@ def _write_raster(
     nodata: float = 0.0,
 ) -> None:
     """Write a 2D or 3D GeoTIFF classification raster for testing."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[None, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-        nodata=nodata,
-    ) as dst:
-        dst.write(write_arr)
+    write_raster(
+        path, arr, origin=(origin_x, origin_y), pixel_size=pxl_size, crs=crs, nodata=nodata
+    )
 
 
 def test_package_layout():

@@ -3,83 +3,28 @@ Tests for :mod:`rsgispy.imageutils.spatial`: pixel geometry rasters and
 gridding scattered points.
 """
 
-from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
 import pytest
 import rasterio
 import rasterio.crs
-from rasterio.transform import Affine, from_origin
+from rasterio.transform import from_origin
 from shapely.geometry import Point
 
 import rsgispy.imageutils.spatial as iu_spat
 
-
-def _write_test_tif(
-    path,
-    data,
-    tl_x=500000.0,
-    tl_y=5200000.0,
-    res=10.0,
-    crs="EPSG:32630",
-    nodata=None,
-):
-    """Write a 2D or 3D GeoTIFF test image."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    arr = np.asarray(data)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis, :, :]
-    count, height, width = arr.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(arr.dtype),
-        "crs": crs,
-        "transform": from_origin(tl_x, tl_y, res, res),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(str(path), "w", **profile) as dst:
-        dst.write(arr)
-
-
-def _write_raster(
-    path: Path,
-    arr: np.ndarray,
-    *,
-    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
-    crs: object = "EPSG:32630",
-    nodata=None,
-) -> str:
-    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": int(data.shape[1]),
-        "width": int(data.shape[2]),
-        "count": int(data.shape[0]),
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": transform,
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return str(path)
+from conftest import write_raster
 
 
 def test_spatial_pixel_geometry(tmp_path):
     """Test WGS84 pixel area/size and local/WGS84 pixel location rasters."""
     wgs_img = tmp_path / "wgs.tif"
-    _write_test_tif(
+    write_raster(
         wgs_img,
         np.zeros((4, 4), dtype=np.float32),
-        tl_x=0.0,
-        tl_y=52.0,
-        res=0.01,
+        origin=(0.0, 52.0),
+        pixel_size=0.01,
         crs="EPSG:4326",
     )
 
@@ -106,7 +51,7 @@ def test_spatial_pixel_geometry(tmp_path):
         assert l_src.read(2)[0, 0] == pytest.approx(51.995)
 
     utm_img = tmp_path / "utm.tif"
-    _write_test_tif(utm_img, np.zeros((4, 4), dtype=np.float32))
+    write_raster(utm_img, np.zeros((4, 4), dtype=np.float32))
     iu_spat.calc_wgs84_pixel_locations(
         str(utm_img), str(wgs_loc_img), gdalformat="GTIFF"
     )
@@ -119,7 +64,7 @@ def test_spatial_pixel_geometry(tmp_path):
 def test_grid_scattered_pts(tmp_path):
     """Test grid_scattered_pts with invdistnn, nearest, and linear."""
     utm_img = tmp_path / "utm_grid.tif"
-    _write_test_tif(utm_img, np.zeros((4, 4), dtype=np.float32))
+    write_raster(utm_img, np.zeros((4, 4), dtype=np.float32))
 
     vec_path = tmp_path / "pts.gpkg"
     gdf = gpd.GeoDataFrame(
@@ -177,7 +122,7 @@ def test_grid_scattered_pts(tmp_path):
 
 
 def test_grid_scattered_pts_vectorised_algorithms(tmp_path):
-    ref_img = _write_raster(
+    ref_img = write_raster(
         tmp_path / "grid_ref.tif",
         np.zeros((10, 10), dtype=np.float32),
         transform=from_origin(0.0, 100.0, 10.0, 10.0),

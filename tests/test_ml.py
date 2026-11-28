@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from scipy.spatial.distance import cdist
 from shapely.geometry import Point, box
 from sklearn.ensemble import (
@@ -42,35 +41,7 @@ from rsgispy.ml.tune import TuneResult, get_default_param_space, tune_estimator
 from rsgispy.modelling._helpers import EnvVarInfo
 from rsgispy.regression.regdata import RegressionConfig
 
-
-def _write_test_raster(
-    path: str,
-    data: np.ndarray,
-    nodata: float = -9999.0,
-    x_origin: float = 500000.0,
-    y_origin: float = 5800000.0,
-    px_size: float = 10.0,
-    epsg: int = 32630,
-) -> str:
-    """Create a multi-band float32 GeoTIFF for ML tests."""
-    if data.ndim == 2:
-        data = data[np.newaxis, :, :]
-    bands, height, width = data.shape
-    transform = from_origin(x_origin, y_origin, px_size, px_size)
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=bands,
-        dtype=str(data.dtype),
-        crs=f"EPSG:{epsg}",
-        transform=transform,
-        nodata=nodata,
-    ) as dst:
-        dst.write(data)
-    return path
+from conftest import write_raster
 
 
 @pytest.fixture
@@ -91,19 +62,23 @@ def synthetic_stack_files(tmp_path):
     b2[0, 1] = np.nan
     b3[h - 1, w - 1] = -9999.0
 
-    img1 = _write_test_raster(
-        str(tmp_path / "feat1.tif"), np.stack([b1, b2], axis=0), nodata=-9999.0
+    img1 = write_raster(
+        str(tmp_path / "feat1.tif"),
+        np.stack([b1, b2], axis=0),
+        origin=(500000.0, 5800000.0),
+        nodata=-9999.0,
     )
-    img2 = _write_test_raster(
-        str(tmp_path / "feat2.tif"), b3[np.newaxis, :, :], nodata=-9999.0
+    img2 = write_raster(
+        str(tmp_path / "feat2.tif"),
+        b3[np.newaxis, :, :],
+        origin=(500000.0, 5800000.0),
+        nodata=-9999.0,
     )
 
     # Create a mask raster (1 everywhere except bottom row)
     msk = np.ones((h, w), dtype=np.uint8)
     msk[h - 1, :] = 0
-    msk_img = _write_test_raster(
-        str(tmp_path / "mask.tif"), msk, nodata=0
-    )
+    msk_img = write_raster(str(tmp_path / "mask.tif"), msk, origin=(500000.0, 5800000.0), nodata=0)
 
     return {
         "img1": img1,
@@ -230,7 +205,7 @@ def test_feature_stack_mixed_dtype_vrt(synthetic_stack_files, tmp_path):
     h, w = synthetic_stack_files["shape"]
     refl = (np.arange(h * w, dtype=np.uint16).reshape(h, w) + 1).astype(np.uint16)
     refl[5, 5] = 0
-    refl_img = _write_test_raster(str(tmp_path / "refl.tif"), refl, nodata=0)
+    refl_img = write_raster(str(tmp_path / "refl.tif"), refl, origin=(500000.0, 5800000.0), nodata=0)
     vrt = str(tmp_path / "mixed.vrt")
     create_stack_images_vrt([refl_img, synthetic_stack_files["img2"]], vrt)
     names = ("refl", "elev")
@@ -769,52 +744,23 @@ def test_predict_proba_raster_class_img_nodata_not_a_class(
     assert 0 in np.unique(arr[valid])
 
 
-def _write_gtiff(
-    path: str,
-    arr: np.ndarray,
-    *,
-    origin_x: float = 500000.0,
-    origin_y: float = 5200000.0,
-    res: float = 10.0,
-    crs: str = "EPSG:32630",
-    nodata: float = -9999.0,
-) -> None:
-    """Write a 2D or 3D NumPy array to a GeoTIFF."""
-    data = arr[None, :, :] if arr.ndim == 2 else arr
-    count, height, width = data.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=str(data.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(data)
-
-
 def test_feature_stack_reprojects_non_compatible_grid(tmp_path):
     """Verify ImageFeatureStack handles non-compatible rasters via on-the-fly reprojection."""
     b1_path = str(tmp_path / "fine.tif")
     b2_path = str(tmp_path / "coarse.tif")
-    _write_gtiff(
+    write_raster(
         b1_path,
         np.full((12, 12), 10.0, dtype=np.float32),
-        origin_x=500000.0,
-        origin_y=5200000.0,
-        res=10.0,
+        origin=(500000.0, 5200000.0),
+        nodata=-9999.0,
     )
     # Different resolution (20m) and shifted extent covering the same footprint
-    _write_gtiff(
+    write_raster(
         b2_path,
         np.full((8, 8), 25.0, dtype=np.float32),
-        origin_x=499990.0,
-        origin_y=5200010.0,
-        res=20.0,
+        origin=(499990.0, 5200010.0),
+        pixel_size=20.0,
+        nodata=-9999.0,
     )
 
     stack = ImageFeatureStack(
@@ -887,8 +833,8 @@ def test_predict_raster_empty_first_tile_lut_promotion_and_gbr_quantile_guard(tm
 
     feat_path = str(tmp_path / "feat.tif")
     msk_path = str(tmp_path / "msk.tif")
-    _write_gtiff(feat_path, np.stack([b1, b2], axis=0), nodata=-9999.0)
-    _write_gtiff(msk_path, mask, nodata=0)
+    write_raster(feat_path, np.stack([b1, b2], axis=0), nodata=-9999.0)
+    write_raster(msk_path, mask, nodata=0)
 
     stack = ImageFeatureStack(
         [

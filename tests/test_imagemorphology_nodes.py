@@ -8,7 +8,6 @@ functions.
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imagemorphology as rm
@@ -19,25 +18,7 @@ from rsgispy.imageprocess import (
     TileGraph,
 )
 
-
-def _write(path, data, nodata=None, descriptions=None):
-    arr = data if data.ndim == 3 else data[np.newaxis]
-    profile = {
-        "driver": "GTiff",
-        "height": arr.shape[1],
-        "width": arr.shape[2],
-        "count": arr.shape[0],
-        "dtype": str(arr.dtype),
-        "crs": "EPSG:32630",
-        "transform": from_origin(500000.0, 6000000.0, 10.0, 10.0),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(arr)
-        for idx, desc in enumerate(descriptions or [], start=1):
-            dst.set_band_description(idx, desc)
-    return str(path)
+from conftest import write_raster
 
 
 def _read(path):
@@ -53,8 +34,10 @@ def fixture_inputs(tmp_path):
     f32 = rng.normal(10.0, 3.0, size=(41, 39)).astype(np.float32)
     f32[rng.random(f32.shape) < 0.05] = -9999.0
     return {
-        "u8": _write(tmp_path / "u8.tif", u8, nodata=0, descriptions=["b1", "b2"]),
-        "f32": _write(tmp_path / "f32.tif", f32, nodata=-9999.0),
+        "u8": write_raster(
+            tmp_path / "u8.tif", u8, nodata=0, band_names=["b1", "b2"], origin=(500000.0, 6000000.0)
+        ),
+        "f32": write_raster(tmp_path / "f32.tif", f32, nodata=-9999.0, origin=(500000.0, 6000000.0)),
         "dir": tmp_path,
     }
 

@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import Point
 from sklearn.ensemble import (
     GradientBoostingClassifier,
@@ -24,34 +23,9 @@ import rsgispy.modelling as modelling_pkg
 import rsgispy.modelling.species_distribution as sdm
 from rsgispy.modelling._helpers import resolve_analysis_vars
 
+from conftest import write_raster
+
 matplotlib.use("Agg")
-
-
-def _write_raster(
-    path: str,
-    arr: np.ndarray,
-    origin_x: float = 500000.0,
-    origin_y: float = 5200000.0,
-    res: float = 10.0,
-    crs: str = "EPSG:32630",
-    nodata: float = -9999.0,
-) -> None:
-    """Write a 2D or 3D NumPy array to a GeoTIFF."""
-    data = arr[None, :, :] if arr.ndim == 2 else arr
-    count, height, width = data.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=str(data.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(data)
 
 
 def _create_sdm_fixture(tmp_path):
@@ -76,9 +50,9 @@ def _create_sdm_fixture(tmp_path):
     var3_path = str(tmp_path / "var3.tif")
     msk_path = str(tmp_path / "roi_mask.tif")
 
-    _write_raster(cov_path, np.stack([var1, var2], axis=0), nodata=-9999.0)
-    _write_raster(var3_path, var3, nodata=-9999.0)
-    _write_raster(msk_path, mask, nodata=0.0)
+    write_raster(cov_path, np.stack([var1, var2], axis=0), nodata=-9999.0)
+    write_raster(var3_path, var3, nodata=-9999.0)
+    write_raster(msk_path, mask, nodata=0.0)
 
     env_vars = {
         "VarOne": sdm.EnvVarInfo(
@@ -912,34 +886,6 @@ def test_raster_predictions_single_class_ensemble(tmp_path, sdm_prediction_setup
         assert np.all((oec[vmask] >= 0.0) & (oec[vmask] <= 1.0))
 
 
-def _write_gtiff(
-    path: str,
-    arr: np.ndarray,
-    *,
-    origin_x: float = 500000.0,
-    origin_y: float = 5200000.0,
-    res: float = 10.0,
-    crs: str = "EPSG:32630",
-    nodata: float = -9999.0,
-) -> None:
-    """Write a 2D or 3D NumPy array to a GeoTIFF."""
-    data = arr[None, :, :] if arr.ndim == 2 else arr
-    count, height, width = data.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=str(data.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(data)
-
-
 @pytest.fixture
 def valid_range_scene(tmp_path):
     """Two-band covariate raster with out-of-valid-range values inside the ROI,
@@ -959,8 +905,8 @@ def valid_range_scene(tmp_path):
 
     cov_path = str(tmp_path / "cov.tif")
     msk_path = str(tmp_path / "msk.tif")
-    _write_gtiff(cov_path, np.stack([v1, v2], axis=0), nodata=-9999.0)
-    _write_gtiff(msk_path, mask, nodata=0)
+    write_raster(cov_path, np.stack([v1, v2], axis=0), nodata=-9999.0)
+    write_raster(msk_path, mask, nodata=0)
 
     # Dict keys deliberately differ from EnvVarInfo.name
     env_vars = {

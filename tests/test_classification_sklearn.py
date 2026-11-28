@@ -15,7 +15,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import Point, box
 from sklearn.ensemble import (
     AdaBoostClassifier,
@@ -40,44 +39,12 @@ import rsgispy.classification.classdata as rcd
 import rsgispy.classification.classsklearn as rcsk
 import rsgispy.imageutils.colourtable as rct
 
+from conftest import write_raster
+
 _HAS_PARQUET = (
     importlib.util.find_spec("pyarrow") is not None
     or importlib.util.find_spec("fastparquet") is not None
 )
-
-
-def _write_raster(
-    path: Path,
-    arr: np.ndarray,
-    origin_x: float = 500000.0,
-    origin_y: float = 5600000.0,
-    pxl_size: float = 10.0,
-    crs: str = "EPSG:32630",
-    nodata: float = -999.0,
-) -> str:
-    """Write a 2D or 3D GeoTIFF raster for testing."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[None, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-        nodata=nodata,
-    ) as dst:
-        dst.write(write_arr)
-    return str(path)
 
 
 def _create_cls_fixture(tmp_path: Path):
@@ -115,11 +82,25 @@ def _create_cls_fixture(tmp_path: Path):
     coarse[3:6, :] = 50.0
     coarse[6:9, :] = 95.0
 
-    s2_img = _write_raster(tmp_path / "s2.tif", np.stack([b1, b2]), nodata=-999.0)
-    coarse_img = _write_raster(
-        tmp_path / "coarse.tif", coarse, pxl_size=20.0, nodata=-999.0
+    s2_img = write_raster(
+        tmp_path / "s2.tif",
+        np.stack([b1, b2]),
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
     )
-    msk_img = _write_raster(tmp_path / "mask.tif", mask, nodata=0.0)
+    coarse_img = write_raster(
+        tmp_path / "coarse.tif",
+        coarse,
+        origin=(500000.0, 5600000.0),
+        pixel_size=20.0,
+        nodata=-999.0,
+    )
+    msk_img = write_raster(
+        tmp_path / "mask.tif",
+        mask,
+        origin=(500000.0, 5600000.0),
+        nodata=0.0,
+    )
 
     # Polygon and point training vectors covering each class zone.
     forest_vec = str(tmp_path / "forest.gpkg")
@@ -455,10 +436,20 @@ def test_apply_class_zero_and_xgboost_workflow(tmp_path):
     xgboost = pytest.importorskip("xgboost")
 
     b1 = np.tile(np.linspace(0.0, 100.0, 10, dtype=np.float32), (10, 1))
-    img_path = _write_raster(tmp_path / "grad.tif", b1, nodata=-999.0)
+    img_path = write_raster(
+        tmp_path / "grad.tif",
+        b1,
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
+    )
     msk_arr = np.ones((10, 10), dtype=np.uint8)
     msk_arr[0, 0] = 0
-    msk_path = _write_raster(tmp_path / "msk.tif", msk_arr, nodata=0.0)
+    msk_path = write_raster(
+        tmp_path / "msk.tif",
+        msk_arr,
+        origin=(500000.0, 5600000.0),
+        nodata=0.0,
+    )
 
     train_df = pd.DataFrame(
         {

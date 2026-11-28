@@ -10,49 +10,20 @@ import rasterio
 import rasterio.crs
 from rasterio.control import GroundControlPoint
 from rasterio.enums import ColorInterp, MaskFlags, Resampling
-from rasterio.transform import from_origin
 from rasterio.warp import transform_bounds
 from shapely.geometry import box
 
 import rsgispy
 import rsgispy.imageutils.warp as iu_warp
 
-
-def _write_test_tif(
-    path,
-    data,
-    tl_x=500000.0,
-    tl_y=5200000.0,
-    res=10.0,
-    crs="EPSG:32630",
-    nodata=None,
-):
-    """Write a 2D or 3D GeoTIFF test image."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    arr = np.asarray(data)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis, :, :]
-    count, height, width = arr.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(arr.dtype),
-        "crs": crs,
-        "transform": from_origin(tl_x, tl_y, res, res),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(str(path), "w", **profile) as dst:
-        dst.write(arr)
+from conftest import write_raster
 
 
 def test_gdal_translate_bands_and_windows(tmp_path):
     """Test gdal_translate band selection, srcwin, projwin, projwin_srs, epo/eco."""
     arr = np.arange(3 * 8 * 8, dtype=np.float32).reshape(3, 8, 8)
     in_p = tmp_path / "win_in.tif"
-    _write_test_tif(in_p, arr, tl_x=500000.0, tl_y=5200000.0, res=10.0)
+    write_raster(in_p, arr)
 
     b_out = tmp_path / "bands_out.tif"
     iu_warp.gdal_translate(
@@ -125,7 +96,7 @@ def test_gdal_translate_resize_resample_and_ovr(tmp_path):
     """Test out_size, target_res, resample_alg, and ovr options."""
     arr = np.arange(16 * 8, dtype=np.float32).reshape(1, 8, 16)
     in_p = tmp_path / "res_in.tif"
-    _write_test_tif(in_p, arr, res=10.0)
+    write_raster(in_p, arr)
     with rasterio.open(in_p, "r+") as ds:
         ds.build_overviews([2], Resampling.average)
 
@@ -176,7 +147,7 @@ def test_gdal_translate_scale_unscale_and_expand(tmp_path):
         dtype=np.uint8,
     )
     in_p = tmp_path / "scale_in.tif"
-    _write_test_tif(in_p, dn, nodata=255)
+    write_raster(in_p, dn, nodata=255)
     with rasterio.open(in_p, "r+") as ds:
         ds.scales = (0.1, 0.5)
         ds.offsets = (10.0, -1.0)
@@ -232,7 +203,7 @@ def test_gdal_translate_scale_unscale_and_expand(tmp_path):
 
     # strict overflow raises
     over_in = tmp_path / "over_in.tif"
-    _write_test_tif(over_in, np.array([[10.0, 300.0]], dtype=np.float32))
+    write_raster(over_in, np.array([[10.0, 300.0]], dtype=np.float32))
     with pytest.raises(rsgispy.RSGISPyException):
         iu_warp.gdal_translate(
             str(over_in),
@@ -244,7 +215,7 @@ def test_gdal_translate_scale_unscale_and_expand(tmp_path):
 
     # Colour table expansion (GTiff palette stores RGB and reads alpha=255)
     pal_in = tmp_path / "pal_in.tif"
-    _write_test_tif(pal_in, np.array([[0, 1]], dtype=np.uint8))
+    write_raster(pal_in, np.array([[0, 1]], dtype=np.uint8))
     with rasterio.open(pal_in, "r+") as ds:
         ds.write_colormap(1, {0: (255, 0, 0, 255), 1: (0, 128, 255, 255)})
 
@@ -279,7 +250,7 @@ def test_gdal_translate_metadata_spatial_mask_gcps_and_cli(tmp_path):
     """Test a_srs, ullr, geotransform, mask, gcps, metadata, stats, and CLI string."""
     arr = np.arange(3 * 4 * 4, dtype=np.float32).reshape(3, 4, 4) + 1.0
     in_p = tmp_path / "meta_in.tif"
-    _write_test_tif(in_p, arr, nodata=-1.0)
+    write_raster(in_p, arr, nodata=-1.0)
     with rasterio.open(in_p, "r+") as ds:
         ds.update_tags(SRC_TAG="old")
         ds.update_tags(1, BAND_TAG="b1")
@@ -321,7 +292,7 @@ def test_gdal_translate_metadata_spatial_mask_gcps_and_cli(tmp_path):
     mask_in = tmp_path / "mask_src.tif"
     m_data = np.ones((2, 4, 4), dtype=np.uint8) * 5
     m_data[1, 0, 0] = 0
-    _write_test_tif(mask_in, m_data)
+    write_raster(mask_in, m_data)
 
     mask_out = tmp_path / "mask_out.tif"
     iu_warp.gdal_translate(
@@ -386,7 +357,7 @@ def test_gdal_warp_srs_res_size_extent_tap(tmp_path):
     """Test gdal_warp CRS overrides, -tr, -ts, -te, -te_srs, and -tap."""
     arr = np.arange(16 * 8, dtype=np.uint8).reshape(1, 8, 16)
     in_p = tmp_path / "gw_in.tif"
-    _write_test_tif(in_p, arr, tl_x=500000.0, tl_y=5200000.0, res=10.0)
+    write_raster(in_p, arr)
 
     # -tr + -tap + same CRS (no out_epsg required)
     tr_out = tmp_path / "gw_tr_tap.tif"
@@ -444,9 +415,7 @@ def test_gdal_warp_nodata_bands_alpha_mosaic_and_overwrite(tmp_path):
     b2 = np.full((6, 6), 25.0, dtype=np.float32)
     b2[0, 1] = -999.0
     in_p = tmp_path / "nd_in.tif"
-    _write_test_tif(
-        in_p, np.stack([b1, b2], axis=0), tl_x=500000.0, tl_y=5200000.0, nodata=-999.0
-    )
+    write_raster(in_p, np.stack([b1, b2], axis=0), nodata=-999.0)
     with rasterio.open(in_p, "r+") as ds:
         ds.update_tags(COMMON="A", DIFF="V1")
 
@@ -474,7 +443,7 @@ def test_gdal_warp_nodata_bands_alpha_mosaic_and_overwrite(tmp_path):
     rgba_p = tmp_path / "rgba_in.tif"
     rgba_arr = np.full((2, 6, 6), 50, dtype=np.uint8)
     rgba_arr[1, 0, 0] = 0
-    _write_test_tif(rgba_p, rgba_arr)
+    write_raster(rgba_p, rgba_arr)
     with rasterio.open(rgba_p, "r+") as ds:
         ds.colorinterp = [ColorInterp.gray, ColorInterp.alpha]
 
@@ -486,11 +455,10 @@ def test_gdal_warp_nodata_bands_alpha_mosaic_and_overwrite(tmp_path):
 
     # Multi-input mosaic + meta_conflict_value + overwrite=False
     in_b = tmp_path / "in_b.tif"
-    _write_test_tif(
+    write_raster(
         in_b,
         np.stack([b1 * 2.0, b2 * 2.0], axis=0),
-        tl_x=500060.0,
-        tl_y=5200000.0,
+        origin=(500060.0, 5200000.0),
         nodata=-999.0,
     )
     with rasterio.open(in_b, "r+") as ds:
@@ -511,11 +479,10 @@ def test_gdal_warp_nodata_bands_alpha_mosaic_and_overwrite(tmp_path):
 
     # overwrite=False updates existing raster
     upd_src = tmp_path / "upd_src.tif"
-    _write_test_tif(
+    write_raster(
         upd_src,
         np.full((2, 2, 2), 99.0, dtype=np.float32),
-        tl_x=500020.0,
-        tl_y=5199980.0,
+        origin=(500020.0, 5199980.0),
         nodata=-999.0,
     )
     iu_warp.gdal_warp(str(upd_src), str(mosaic_out), overwrite=False)
@@ -528,7 +495,7 @@ def test_gdal_warp_cutline_crop_blend_gcps_and_cli(tmp_path):
     """Test cutline (vector/WKT), crop_to_cutline, cblend, GCPs, and CLI string."""
     arr = np.full((1, 10, 10), 100.0, dtype=np.float32)
     in_p = tmp_path / "cut_src.tif"
-    _write_test_tif(in_p, arr, tl_x=500000.0, tl_y=5200000.0, res=10.0)
+    write_raster(in_p, arr)
 
     vec_p = tmp_path / "cut.gpkg"
     gdf = gpd.GeoDataFrame(
@@ -622,10 +589,10 @@ def test_resample_img_to_match_uses_header_source_nodata(tmp_path):
     """H8: the source nodata comes from the input header, not no_data_val."""
     ref = str(tmp_path / "ref.tif")
     src = str(tmp_path / "src.tif")
-    _write_test_tif(ref, np.zeros((4, 4), dtype=np.float32))
+    write_raster(ref, np.zeros((4, 4), dtype=np.float32))
     arr = np.array([[5, 1, 2, 3], [4, 5, 6, 7], [8, 9, 5, 1], [2, 3, 4, 5]],
                    dtype=np.float32)
-    _write_test_tif(src, arr, nodata=5)
+    write_raster(src, arr, nodata=5)
     out = str(tmp_path / "out.tif")
     iu_warp.resample_img_to_match(ref, src, out, no_data_val=-1.0,
                                   calc_stats=False, use_pbar=False)
@@ -637,7 +604,7 @@ def test_resample_img_to_match_uses_header_source_nodata(tmp_path):
 def test_reproject_image_without_nodata_keeps_zeros(tmp_path, monkeypatch):
     """Without a header nodata or no_data_val, no source pixels are masked."""
     src = str(tmp_path / "src.tif")
-    _write_test_tif(src, np.zeros((4, 4), dtype=np.float32))
+    write_raster(src, np.zeros((4, 4), dtype=np.float32))
     seen = {}
     real = iu_warp.rio_reproject
 
@@ -658,7 +625,7 @@ def test_gdal_warp_src_nodata_none_keeps_alpha_and_zeros(tmp_path):
                     dtype=np.uint8)
     alpha = np.full((4, 4), 255, dtype=np.uint8)
     alpha[0, 3] = 0
-    _write_test_tif(src, np.stack([data, alpha]), nodata=0)
+    write_raster(src, np.stack([data, alpha]), nodata=0)
     out = str(tmp_path / "out.tif")
     iu_warp.gdal_warp(src, out, src_nodata="none", dst_nodata=99, src_alpha=True)
     with rasterio.open(out) as ds:
@@ -677,7 +644,7 @@ def test_gdal_warp_per_band_nodata_alpha_covers_all_bands(tmp_path):
     b2[1, 1] = -2  # band 2 nodata only
     b1[0, 1] = -1
     b2[0, 1] = -2  # both bands nodata
-    _write_test_tif(src, np.stack([b1, b2]))
+    write_raster(src, np.stack([b1, b2]))
     out = str(tmp_path / "out.tif")
     iu_warp.gdal_warp(src, out, src_nodata=[-1, -2], dst_nodata=[-1, -2],
                       dst_alpha=True)

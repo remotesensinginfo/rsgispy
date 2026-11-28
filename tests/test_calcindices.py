@@ -7,30 +7,18 @@ import math
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imagecalc.calcindices as ic_idx
 from rsgispy.imageprocess import reset_default_block_size, set_default_block_size
 from rsgispy.imageutils.metadata import get_band_names
 
+from conftest import write_raster
+
 
 def _write_multiband_raster(path, data, nodata=None):
     """Helper to write a multi-band rasterio GeoTIFF for tests."""
-    bands, height, width = data.shape
-    profile = {
-        "driver": "GTiff",
-        "width": width,
-        "height": height,
-        "count": bands,
-        "dtype": data.dtype.name,
-        "crs": "EPSG:32630",
-        "transform": from_origin(500000.0, 5600000.0, 10.0, 10.0),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
+    return write_raster(path, data, nodata=nodata, origin=(500000.0, 5600000.0))
 
 
 def _sample_reflectance_cube():

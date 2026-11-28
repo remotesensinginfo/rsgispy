@@ -10,7 +10,6 @@ import geopandas as gpd
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import LineString, Point
 
 import rsgispy
@@ -19,6 +18,8 @@ from rsgispy._numba import disable_numba
 from rsgispy.elevation import hydrology
 from rsgispy.elevation._hydro_kernels import _dinf_targets
 from rsgispy.imagecalc.maths import BandDefn, band_maths
+
+from conftest import write_raster
 
 # These tests use numba-compiled topological kernels for reference outputs
 # (topological ops raise without ``allow_pure_python=True`` when numba is
@@ -37,23 +38,9 @@ def _write_raster(
     origin_x=500000.0,
     origin_y=5200000.0,
 ):
-    data = np.asarray(arr)
-    if data.ndim == 2:
-        data = data[np.newaxis, :, :]
-    count, height, width = data.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": from_origin(origin_x, origin_y, res, res),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(str(path), "w", **profile) as dst:
-        dst.write(data)
+    return write_raster(
+        path, arr, nodata=nodata, crs=crs, origin=(origin_x, origin_y), pixel_size=res
+    )
 
 
 def _make_v_valley_with_dam(rows=25, cols=25, res=10.0, dam=True, nodata=-9999.0):
@@ -1029,25 +1016,6 @@ requires_tutorial_dem = pytest.mark.skipif(
 ND = -9999.0
 
 
-def _write(path, arr, res=10.0, nodata=ND, dtype="float32"):
-    arr = np.asarray(arr)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis]
-    with rasterio.open(
-        str(path),
-        "w",
-        driver="GTiff",
-        height=arr.shape[1],
-        width=arr.shape[2],
-        count=arr.shape[0],
-        dtype=dtype,
-        crs="EPSG:32630",
-        transform=from_origin(500000.0, 5200000.0, res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(arr.astype(dtype))
-
-
 def _read(path):
     with rasterio.open(str(path)) as src:
         return src.read(1)
@@ -1073,7 +1041,7 @@ def _dinf_terminal_total(tmp_path, name, dem, res=10.0, pure_python=False):
     fill_p = tmp_path / f"{name}_fill.tif"
     fdir_p = tmp_path / f"{name}_dinf.tif"
     acc_p = tmp_path / f"{name}_acc.tif"
-    _write(dem_p, dem, res=res)
+    write_raster(dem_p, dem, pixel_size=res, dtype="float32", nodata=ND)
     kw = {"allow_pure_python": True} if pure_python else {}
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
@@ -1112,7 +1080,7 @@ def tutorial_land_dem(tmp_path_factory):
 def _breach(tmp_path, name, dem, **kw):
     dem_p = tmp_path / f"{name}_dem.tif"
     out_p = tmp_path / f"{name}_breached.tif"
-    _write(dem_p, dem)
+    write_raster(dem_p, dem, dtype="float32", nodata=ND)
     hydrology.breach_depressions(str(dem_p), str(out_p), use_pbar=False, **kw)
     return _read(out_p).astype(np.float64), out_p
 
@@ -1208,15 +1176,15 @@ def test_flow_accumulation_warns_on_cycle(tmp_path, mode):
     # Row of 4 cells: 0 -> 1 <-> 2 (cycle), 3 drains into 2.
     if mode == "d8":
         fdir = np.array([[1, 1, 16, 16]], dtype=np.uint8)
-        _write(tmp_path / "f.tif", fdir, nodata=255, dtype="uint8")
+        write_raster(tmp_path / "f.tif", fdir, nodata=255, dtype="uint8")
     elif mode == "dinf":
         fdir = np.array([[0.0, 0.0, math.pi, math.pi]], dtype=np.float32)
-        _write(tmp_path / "f.tif", fdir)
+        write_raster(tmp_path / "f.tif", fdir, dtype="float32", nodata=ND)
     else:
         fdir = np.zeros((8, 1, 4), dtype=np.float32)
         fdir[0, 0, :2] = 1.0  # East
         fdir[4, 0, 2:] = 1.0  # West
-        _write(tmp_path / "f.tif", fdir)
+        write_raster(tmp_path / "f.tif", fdir, dtype="float32", nodata=ND)
     with pytest.warns(RuntimeWarning, match=r"cycle, so 2 cells"):
         hydrology.flow_accumulation(
             str(tmp_path / "f.tif"), str(tmp_path / "a.tif"), use_pbar=False

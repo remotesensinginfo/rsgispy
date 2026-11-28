@@ -4,12 +4,10 @@ Tests for rsgispy and rsgispy.imagecalc.maths.band_maths.
 
 import importlib
 import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.imagecalc._norm_helpers as norm_helpers
@@ -23,6 +21,8 @@ import rsgispy.imagecalc.stats as ic_stats
 import rsgispy.imageprocess
 import rsgispy.imageprocess as imgproc
 
+from conftest import write_raster
+
 
 def _create_test_raster(
     path,
@@ -33,21 +33,9 @@ def _create_test_raster(
     dtype="float32",
 ):
     """Helper to write a multi-band test GeoTIFF."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    count, height, width = bands_data.shape
-    transform = from_origin(origin[0], origin[1], pixel_size[0], pixel_size[1])
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=dtype,
-        crs=crs,
-        transform=transform,
-    ) as dst:
-        dst.write(bands_data.astype(dtype))
+    return write_raster(
+        path, bands_data, dtype=dtype, crs=crs, origin=origin, pixel_size=pixel_size
+    )
 
 
 def test_datatype_helpers():
@@ -984,37 +972,12 @@ def test_calc_band_percentile_block_by_block(tmp_path, monkeypatch):
                                   np.percentile(arr[1].astype(np.float64), 90.0)])
 
 
-def _write_raster(
-    path: Path,
-    arr: np.ndarray,
-    *,
-    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
-    crs: object = "EPSG:32630",
-    nodata=None,
-) -> str:
-    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": int(data.shape[1]),
-        "width": int(data.shape[2]),
-        "count": int(data.shape[0]),
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": transform,
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return str(path)
-
-
 def test_subsample_band_values_tiled_reservoir(tmp_path, monkeypatch):
     monkeypatch.setenv(imgproc.ENV_VAR_BLOCK_SIZE, "8")
     arr = np.arange(1, 20 * 20 + 1, dtype=np.float32).reshape(20, 20)
     arr[0, 0] = -999.0
     arr[1, 1] = np.nan
-    in_img = _write_raster(tmp_path / "res.tif", arr, nodata=-999.0)
+    in_img = write_raster(tmp_path / "res.tif", arr, nodata=-999.0, origin=(500000.0, 5800000.0))
 
     with rasterio.open(in_img) as src:
         s1 = norm_helpers.subsample_band_values(

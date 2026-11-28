@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.segmentation as rseg
@@ -19,26 +18,7 @@ import rsgispy.zonalstats.labels as zs_lbl
 import rsgispy.zonalstats.polygon as zs_poly
 from rsgispy.ml.stack import BandSpec
 
-
-def _write(path, arr, nodata=None, res=10.0, x0=500000.0):
-    arr = np.asarray(arr)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis]
-    count, height, width = arr.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=arr.dtype,
-        crs="EPSG:32630",
-        transform=from_origin(x0, 5200000.0, res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(arr)
-    return str(path)
+from conftest import write_raster
 
 
 def _blocky_labels(height, width, blk, dtype=np.uint32):
@@ -60,9 +40,9 @@ def fixture_scene(tmp_path):
     fvals[0, 36:42, 54:60] = -9999.0
     ivals = rng.integers(0, 12, (height, width)).astype(np.int16)
     return {
-        "lab": _write(tmp_path / "lab.tif", lab),
-        "fval": _write(tmp_path / "fval.tif", fvals, nodata=-9999.0),
-        "ival": _write(tmp_path / "ival.tif", ivals),
+        "lab": write_raster(tmp_path / "lab.tif", lab),
+        "fval": write_raster(tmp_path / "fval.tif", fvals, nodata=-9999.0),
+        "ival": write_raster(tmp_path / "ival.tif", ivals),
         "lab_arr": lab,
         "fvals": fvals,
         "ivals": ivals,
@@ -88,8 +68,8 @@ def test_hand_calculation(tmp_path):
         ],
         dtype=np.float32,
     )
-    lab_img = _write(tmp_path / "l.tif", lab)
-    val_img = _write(tmp_path / "v.tif", vals, nodata=-1.0)
+    lab_img = write_raster(tmp_path / "l.tif", lab)
+    val_img = write_raster(tmp_path / "v.tif", vals, nodata=-1.0)
     df = zs_lbl.calc_label_zonal_stats(
         lab_img,
         BandSpec(val_img, name="v", max_vld_val=50.0),
@@ -256,7 +236,7 @@ def test_sparse_large_uint64_ids(tmp_path, scene):
     big = np.where(lab == 0, 0, lab.astype(np.uint64) * np.uint64(2**40)).astype(
         np.uint64
     )
-    big_img = _write(tmp_path / "big.tif", big)
+    big_img = write_raster(tmp_path / "big.tif", big)
     spec = BandSpec(scene["fval"], name="f")
     df_small = zs_lbl.calc_label_zonal_stats(scene["lab"], spec, use_pbar=False)
     df_big = zs_lbl.calc_label_zonal_stats(big_img, spec, use_pbar=False)
@@ -290,7 +270,7 @@ def test_categorical_band(tmp_path, scene):
     cat = np.zeros_like(scene["lab_arr"], dtype=np.uint8)
     cat[:, 30:] = 2
     cat[20:, :] = 5
-    cat_img = _write(tmp_path / "cat.tif", cat)
+    cat_img = write_raster(tmp_path / "cat.tif", cat)
     spec = BandSpec(
         cat_img, name="lc", band_names=("lc",), data_type=rsgispy.VAR_TYPE_CATEGORICAL
     )
@@ -323,7 +303,7 @@ def test_categorical_band(tmp_path, scene):
 
 
 def test_grid_mismatch_and_validation(tmp_path, scene):
-    other = _write(tmp_path / "shift.tif", scene["fvals"], x0=500005.0)
+    other = write_raster(tmp_path / "shift.tif", scene["fvals"], origin=(500005.0, 5200000.0))
     with pytest.raises(rsgispy.RSGISPyException, match="same pixel grid"):
         zs_lbl.calc_label_zonal_stats(scene["lab"], other, use_pbar=False)
     with pytest.raises(rsgispy.RSGISPyException, match="Unsupported"):

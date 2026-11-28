@@ -4,15 +4,15 @@ multi-image band statistics, zonal summaries in reference pixels, masked
 probabilities, histograms and pixel counts.
 """
 
-from pathlib import Path
 
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.imagecalc.stats as ic_stats
+
+from conftest import write_raster
 
 
 def _write_raster(
@@ -25,47 +25,15 @@ def _write_raster(
     nodata=None,
 ):
     """Write a 3D ``(bands, height, width)`` NumPy array to a GeoTIFF."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    count, height, width = data.shape
-    transform = from_origin(origin[0], origin[1], pixel_size[0], pixel_size[1])
-    with rasterio.open(
+    return write_raster(
         path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
+        data,
         dtype=dtype,
-        crs=crs,
-        transform=transform,
         nodata=nodata,
-    ) as dst:
-        dst.write(data.astype(dtype))
-
-
-def _write_geotiff(
-    path: Path,
-    arr: np.ndarray,
-    *,
-    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
-    crs: object = "EPSG:32630",
-    nodata=None,
-) -> str:
-    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": int(data.shape[1]),
-        "width": int(data.shape[2]),
-        "count": int(data.shape[0]),
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": transform,
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return str(path)
+        crs=crs,
+        origin=origin,
+        pixel_size=pixel_size,
+    )
 
 
 def test_image_pixel_column_summary(tmp_path):
@@ -486,7 +454,7 @@ def test_stack_stats_write_nodata_where_no_input_is_valid(tmp_path):
 def test_count_pxls_of_val_single_band(tmp_path):
     b1 = np.array([[1, 1, 2], [2, 3, 3]], dtype=np.uint8)
     b2 = np.array([[3, 3, 3], [3, 1, 1]], dtype=np.uint8)
-    in_img = _write_geotiff(tmp_path / "cnt.tif", np.stack([b1, b2], axis=0))
+    in_img = write_raster(tmp_path / "cnt.tif", np.stack([b1, b2], axis=0), origin=(500000.0, 5800000.0))
 
     c1 = ic_stats.count_pxls_of_val(in_img, [1, 2, 3], img_band=1, use_pbar=False)
     c2 = ic_stats.count_pxls_of_val(in_img, [1, 2, 3], img_band=2, use_pbar=False)

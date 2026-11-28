@@ -11,8 +11,6 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
-import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import Point, box
 
 import rsgispy
@@ -20,44 +18,12 @@ import rsgispy.regression as rreg
 import rsgispy.regression.regdata as rrd
 from rsgispy.regression.regdata import split_reg_samples
 
+from conftest import write_raster
+
 _HAS_PARQUET = (
     importlib.util.find_spec("pyarrow") is not None
     or importlib.util.find_spec("fastparquet") is not None
 )
-
-
-def _write_raster(
-    path: Path,
-    arr: np.ndarray,
-    origin_x: float = 500000.0,
-    origin_y: float = 5600000.0,
-    pxl_size: float = 10.0,
-    crs: str = "EPSG:32630",
-    nodata: float = -999.0,
-) -> str:
-    """Write a 2D or 3D GeoTIFF raster for testing."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[None, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-        nodata=nodata,
-    ) as dst:
-        dst.write(write_arr)
-    return str(path)
 
 
 def _create_landsat_fixture(tmp_path: Path):
@@ -69,8 +35,11 @@ def _create_landsat_fixture(tmp_path: Path):
     b_swir = 0.25 - 0.01 * yy
     b_red[2, 2] = -999.0
 
-    lsat_img = _write_raster(
-        tmp_path / "landsat.tif", np.stack([b_red, b_nir, b_swir]), nodata=-999.0
+    lsat_img = write_raster(
+        tmp_path / "landsat.tif",
+        np.stack([b_red, b_nir, b_swir]),
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
     )
 
     pts = []

@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 import rasterio
 import rasterio.crs
-from rasterio.transform import from_origin
 from shapely.geometry import Point, box
 
 import rsgispy
@@ -18,48 +17,13 @@ import rsgispy.imageutils.rasterise as iu_ras
 import rsgispy.imageutils.spatial as iu_spat
 import rsgispy.imageutils.subsetting as iu_sub
 
-
-def _write_test_tif(
-    path,
-    data,
-    tl_x=500000.0,
-    tl_y=5200000.0,
-    res=10.0,
-    crs="EPSG:32630",
-    nodata=None,
-):
-    """Write a 2D or 3D GeoTIFF test image."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    arr = np.asarray(data)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis, :, :]
-    count, height, width = arr.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(arr.dtype),
-        "crs": crs,
-        "transform": from_origin(tl_x, tl_y, res, res),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(str(path), "w", **profile) as dst:
-        dst.write(arr)
+from conftest import write_raster
 
 
 def test_imageutils_rasterise(tmp_path):
     """Test rsgispy.imageutils.rasterise rasterisation, LUT score images, and distance zones."""
     ref_img = str(tmp_path / "ref.tif")
-    _write_test_tif(
-        ref_img,
-        np.zeros((20, 20), dtype=np.uint8),
-        tl_x=500000.0,
-        tl_y=5600200.0,
-        res=10.0,
-        crs="EPSG:32630",
-    )
+    write_raster(ref_img, np.zeros((20, 20), dtype=np.uint8), origin=(500000.0, 5600200.0))
 
     vec_file = str(tmp_path / "polys.gpkg")
     gpd.GeoDataFrame(
@@ -154,13 +118,7 @@ def test_imageutils_rasterise(tmp_path):
 def test_imageutils_gdf_in_memory(tmp_path):
     """Test grid_scattered_pts, subset, and rasterise with GeoDataFrame inputs."""
     ref_img = str(tmp_path / "ref.tif")
-    _write_test_tif(
-        ref_img,
-        np.ones((20, 20), dtype=np.float32),
-        tl_x=500000.0,
-        tl_y=5600200.0,
-        res=10.0,
-    )
+    write_raster(ref_img, np.ones((20, 20), dtype=np.float32), origin=(500000.0, 5600200.0))
 
     pts_gdf = gpd.GeoDataFrame(
         {"val": [10.0, 20.0, 30.0, 40.0]},

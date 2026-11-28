@@ -13,7 +13,6 @@ import geopandas as gpd
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import MultiPolygon, Point, box
 
 import rsgispy
@@ -43,6 +42,8 @@ import rsgispy.vectorprocess as vp
 import rsgispy.zonalstats.point as zs_pt
 import rsgispy.zonalstats.polygon as zs_poly
 
+from conftest import write_raster
+
 pq = pytest.importorskip("pyarrow.parquet")
 
 
@@ -58,35 +59,6 @@ def _parquet_codec(path: str) -> str:
     """Return the Arrow Parquet compression codec string for column 0."""
     meta = pq.read_metadata(path)
     return str(meta.row_group(0).column(0).compression)
-
-
-def _write_test_raster(
-    path: str,
-    arr: np.ndarray,
-    epsg: int = 32630,
-    tl_x: float = 500000.0,
-    tl_y: float = 5600100.0,
-    res: float = 10.0,
-    nodata=None,
-) -> str:
-    """Write a single-band GeoTIFF for GeoParquet integration tests."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    data = np.asarray(arr)
-    height, width = data.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=1,
-        dtype=data.dtype,
-        crs=f"EPSG:{epsg}",
-        transform=from_origin(tl_x, tl_y, res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(data, 1)
-    return path
 
 
 def _sample_polys(epsg: int = 32630) -> gpd.GeoDataFrame:
@@ -470,7 +442,7 @@ def test_vector_create_polygonise_and_grid_geoparquet(tmp_path):
     cls_tif = str(tmp_path / "cls.tif")
     arr = np.zeros((8, 8), dtype=np.uint8)
     arr[1:4, 1:4] = 1
-    _write_test_raster(cls_tif, arr, nodata=0)
+    write_raster(cls_tif, arr, nodata=0, origin=(500000.0, 5600100.0))
 
     poly_pq = str(tmp_path / "poly_ras.parquet")
     vg_create.polygonise_raster_to_vec_lyr(
@@ -635,7 +607,7 @@ def test_zonalstats_geoparquet_in_place_updates(tmp_path, attr_polys_pq):
     # zonalstats.polygon & point in-place GeoParquet updates with out_compress
     ras_tif = str(tmp_path / "zonal.tif")
     arr = np.arange(1, 65, dtype=np.float32).reshape(8, 8)
-    _write_test_raster(ras_tif, arr, tl_x=500000.0, tl_y=5600080.0, res=10.0)
+    write_raster(ras_tif, arr, origin=(500000.0, 5600080.0), pixel_size=10.0)
 
     zs_poly.calc_zonal_band_stats_file(
         polys_pq,
@@ -710,11 +682,11 @@ def tile_rasters(tmp_path):
     """Two adjacent 8 x 8 constant tiles (10 and 20) side by side."""
     t1 = str(tmp_path / "t1.tif")
     t2 = str(tmp_path / "t2.tif")
-    _write_test_raster(
-        t1, np.full((8, 8), 10.0, dtype=np.float32), tl_x=500000.0, tl_y=5600080.0
+    write_raster(
+        t1, np.full((8, 8), 10.0, dtype=np.float32), origin=(500000.0, 5600080.0)
     )
-    _write_test_raster(
-        t2, np.full((8, 8), 20.0, dtype=np.float32), tl_x=500080.0, tl_y=5600080.0
+    write_raster(
+        t2, np.full((8, 8), 20.0, dtype=np.float32), origin=(500080.0, 5600080.0)
     )
     return t1, t2
 
@@ -859,7 +831,7 @@ def test_pt_smpl_img_vals_and_roughness_geoparquet(tmp_path):
         100.0 + 0.5 * xx + 2.0 * np.sin(2.0 * np.pi * xx / 6.0)
     ).astype(np.float32)
     dem_tif = str(tmp_path / "dem.tif")
-    _write_test_raster(dem_tif, dem_arr, tl_x=500000.0, tl_y=5600320.0)
+    write_raster(dem_tif, dem_arr, origin=(500000.0, 5600320.0))
 
     dem_pts_pq = str(tmp_path / "dem_pts.parquet")
     vp.write_vec_gdf(

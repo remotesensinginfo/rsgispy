@@ -11,13 +11,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import Point
 from sklearn.ensemble import IsolationForest, RandomForestClassifier
 from sklearn.metrics import roc_auc_score, roc_curve
 
 import rsgispy
 import rsgispy.modelling.species_distribution as sdm
+
+from conftest import write_raster
 
 matplotlib.use("Agg")
 
@@ -209,17 +210,6 @@ def test_calc_single_class_predictions():
     assert pred[20:].sum() == 0
 
 
-def _write_raster(path, arr, nodata):
-    data = arr[None] if arr.ndim == 2 else arr
-    with rasterio.open(
-        path, "w", driver="GTiff", height=data.shape[1], width=data.shape[2],
-        count=data.shape[0], dtype=str(data.dtype), crs="EPSG:32630",
-        transform=from_origin(500000.0, 5200000.0, 10.0, 10.0), nodata=nodata,
-    ) as dst:
-        dst.write(data)
-    return str(path)
-
-
 @pytest.fixture(name="pred_scene")
 def fixture_pred_scene(tmp_path):
     """Two covariates (one with a no data pixel) and a study area mask."""
@@ -229,8 +219,8 @@ def fixture_pred_scene(tmp_path):
     var_a[5, 5] = -9999.0
     mask = np.zeros(rows.shape, dtype=np.uint8)
     mask[1:-1, 1:-1] = 1
-    cov_img = _write_raster(tmp_path / "cov.tif", np.stack([var_a, var_b]), -9999.0)
-    msk_img = _write_raster(tmp_path / "mask.tif", mask, 0)
+    cov_img = write_raster(tmp_path / "cov.tif", np.stack([var_a, var_b]), nodata=-9999.0)
+    msk_img = write_raster(tmp_path / "mask.tif", mask, nodata=0)
     env_vars = {
         "a": sdm.EnvVarInfo(name="a", file=cov_img, band=1,
                             data_type=rsgispy.VAR_TYPE_CONTINUOUS),

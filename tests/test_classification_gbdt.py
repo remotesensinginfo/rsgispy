@@ -13,7 +13,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.classification.classcatboost as rccb
@@ -21,6 +20,8 @@ import rsgispy.classification.classdata as rcd
 import rsgispy.classification.classlightgbm as rclgb
 import rsgispy.classification.classxgboost as rcxgb
 import rsgispy.imageutils.colourtable as rct
+
+from conftest import write_raster
 
 _HAS_OPTUNA = importlib.util.find_spec("optuna") is not None
 
@@ -36,40 +37,6 @@ def _skip_if_gbdt_unavailable(pkg: str):
     if not _HAVE_CLS_GBDT.get(pkg, False):
         pytest.skip(f"{pkg} is not available or failed to load")
     return pytest.importorskip(pkg)
-
-
-def _write_raster(
-    path: Path,
-    arr: np.ndarray,
-    origin_x: float = 500000.0,
-    origin_y: float = 5600000.0,
-    pxl_size: float = 10.0,
-    crs: str = "EPSG:32630",
-    nodata: float = -999.0,
-) -> str:
-    """Write a 2D or 3D GeoTIFF raster for testing."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[None, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-        nodata=nodata,
-    ) as dst:
-        dst.write(write_arr)
-    return str(path)
 
 
 def _create_binary_fixture(tmp_path: Path):
@@ -92,10 +59,18 @@ def _create_binary_fixture(tmp_path: Path):
     w_end = w - 1
     mask[1:h_end, 1:w_end] = 1
 
-    feat_img = _write_raster(
-        tmp_path / "bin_feat.tif", np.stack([b1, b2]), nodata=-999.0
+    feat_img = write_raster(
+        tmp_path / "bin_feat.tif",
+        np.stack([b1, b2]),
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
     )
-    msk_img = _write_raster(tmp_path / "bin_mask.tif", mask, nodata=0.0)
+    msk_img = write_raster(
+        tmp_path / "bin_mask.tif",
+        mask,
+        origin=(500000.0, 5600000.0),
+        nodata=0.0,
+    )
 
     img_band_info = [
         rcd.ImageBandInfo(feat_img, name="S2", bands=[1, 2], band_names=["B1", "B2"])
@@ -152,10 +127,18 @@ def _create_multiclass_fixture(tmp_path: Path):
     w_end = w - 1
     mask[1:h_end, 1:w_end] = 1
 
-    feat_img = _write_raster(
-        tmp_path / "mc_feat.tif", np.stack([b1, b2]), nodata=-999.0
+    feat_img = write_raster(
+        tmp_path / "mc_feat.tif",
+        np.stack([b1, b2]),
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
     )
-    msk_img = _write_raster(tmp_path / "mc_mask.tif", mask, nodata=0.0)
+    msk_img = write_raster(
+        tmp_path / "mc_mask.tif",
+        mask,
+        origin=(500000.0, 5600000.0),
+        nodata=0.0,
+    )
 
     img_band_info = [
         rcd.ImageBandInfo(feat_img, name="S2", bands=[1, 2], band_names=["B1", "B2"])

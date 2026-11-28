@@ -4,14 +4,12 @@ Tests for :mod:`rsgispy.changedetect.imgchngmthds`,
 :func:`rsgispy.tools.plotting.plot_histogram_threshold`.
 """
 
-from pathlib import Path
 
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.changedetect
@@ -20,6 +18,8 @@ import rsgispy.changedetect.pxloutlierchng as poc
 import rsgispy.imageprocess as imgproc
 import rsgispy.tools.plotting as rplot
 from rsgispy.imageutils.colourtable import is_img_thematic
+
+from conftest import write_raster
 
 matplotlib.use("Agg")
 
@@ -33,20 +33,7 @@ def _write_raster(
     nodata=None,
 ):
     """Write a 3D ``(bands, height, width)`` GeoTIFF raster."""
-    count, height, width = data.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=str(data.dtype),
-        crs=crs,
-        transform=from_origin(origin[0], origin[1], res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(data)
+    return write_raster(path, data, origin=origin, pixel_size=res, crs=crs, nodata=nodata)
 
 
 class _DummyPyODDetector:
@@ -850,31 +837,6 @@ def test_image_ratio_zero_denominator_is_no_data(tmp_path):
         np.testing.assert_allclose(src.read(1), [[-9999.0, 2.0]])
 
 
-def _write_geotiff(
-    path: Path,
-    arr: np.ndarray,
-    *,
-    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
-    crs: object = "EPSG:32630",
-    nodata=None,
-) -> str:
-    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": int(data.shape[1]),
-        "width": int(data.shape[2]),
-        "count": int(data.shape[0]),
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": transform,
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return str(path)
-
-
 def test_changedetect_streaming_and_binary_nodata_255(tmp_path, monkeypatch):
     monkeypatch.setenv(imgproc.ENV_VAR_BLOCK_SIZE, "8")
     rng = np.random.default_rng(19)
@@ -884,9 +846,15 @@ def test_changedetect_streaming_and_binary_nodata_255(tmp_path, monkeypatch):
     msk = np.ones((16, 16), dtype=np.uint8)
     msk[0:2, 0:2] = 0  # masked-out corner
 
-    base_img = _write_geotiff(tmp_path / "cd_base.tif", base)
-    chng_img = _write_geotiff(tmp_path / "cd_chng.tif", chng)
-    msk_img = _write_geotiff(tmp_path / "cd_msk.tif", msk)
+    base_img = write_raster(
+        tmp_path / "cd_base.tif", base, origin=(500000.0, 5800000.0)
+    )
+    chng_img = write_raster(
+        tmp_path / "cd_chng.tif", chng, origin=(500000.0, 5800000.0)
+    )
+    msk_img = write_raster(
+        tmp_path / "cd_msk.tif", msk, origin=(500000.0, 5800000.0)
+    )
 
     out_diff = str(tmp_path / "diff.tif")
     icm.image_difference(

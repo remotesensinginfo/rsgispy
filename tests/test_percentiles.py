@@ -7,17 +7,17 @@ no-data value, statistics and block-wise processing).
 
 import time
 import warnings
-from pathlib import Path
 
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.imagecalc.percentiles as img_pct
 import rsgispy.imageprocess
 import rsgispy.tools.stats as rstats
+
+from conftest import write_raster
 
 PCTS = [0.0, 100.0, 50.0, 10.0, 90.0, 2.5, 33.3, 66.7, 99.9, 12.345]
 
@@ -134,26 +134,6 @@ def test_compute_nanpercentiles_is_fast():
 # ---------------------------------------------------------------------------
 
 
-def _write_img(path, arr, dtype="float32", nodata=None, names=None):
-    count, height, width = arr.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=dtype,
-        crs="EPSG:32630",
-        transform=from_origin(500000.0, 5700000.0, 10.0, 10.0),
-        nodata=nodata,
-    ) as dst:
-        dst.write(arr.astype(dtype))
-        if names is not None:
-            dst.descriptions = tuple(names)
-    return str(path)
-
-
 def _make_dates(tmp_path, n_dates=5, n_bands=2, shape=(37, 41), dtype="float32", names=None):
     rng = np.random.default_rng(11)
     imgs = []
@@ -163,7 +143,16 @@ def _make_dates(tmp_path, n_dates=5, n_bands=2, shape=(37, 41), dtype="float32",
         arr[:, rng.random(shape) < 0.3] = 0.0  # cloud: no data in every band
         arr[:, :3, :3] = 0.0  # no data on every date
         arrs.append(arr)
-        imgs.append(_write_img(tmp_path / f"d{idx}.tif", arr, dtype=dtype, nodata=0, names=names))
+        imgs.append(
+            write_raster(
+                tmp_path / f"d{idx}.tif",
+                arr,
+                dtype=dtype,
+                origin=(500000.0, 5700000.0),
+                nodata=0,
+                band_names=names,
+            )
+        )
     return imgs, np.stack(arrs)  # (dates, bands, rows, cols)
 
 
@@ -243,7 +232,15 @@ def test_pxl_percentiles_float_no_data(tmp_path):
     for idx in range(4):
         arr = rng.uniform(-1, 1, size=(1, 9, 8))
         arr[0, :2, :2] = -999.0
-        imgs.append(_write_img(tmp_path / f"ndvi{idx}.tif", arr, nodata=-999))
+        imgs.append(
+            write_raster(
+                tmp_path / f"ndvi{idx}.tif",
+                arr,
+                dtype="float32",
+                origin=(500000.0, 5700000.0),
+                nodata=-999,
+            )
+        )
     out_img = str(tmp_path / "ndvi_pcts.tif")
     img_pct.calc_imgs_pxl_percentiles(imgs, out_img, [10, 90], no_data_val=-999, use_pbar=False)
     with rasterio.open(out_img) as src:
@@ -288,39 +285,14 @@ def test_pxl_percentiles_are_block_wise(tmp_path, small_blocks, monkeypatch):
     assert all(shp == (3,) + shp[1:] and shp[1] <= 16 and shp[2] <= 16 for shp in shapes)
 
 
-def _write_raster(
-    path: Path,
-    arr: np.ndarray,
-    *,
-    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
-    crs: object = "EPSG:32630",
-    nodata=None,
-) -> str:
-    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": int(data.shape[1]),
-        "width": int(data.shape[2]),
-        "count": int(data.shape[0]),
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": transform,
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return str(path)
-
-
 def test_calc_band_percentile_msk_filters_non_finite(tmp_path):
     arr = np.array(
         [[10.0, 20.0, np.nan, np.inf], [30.0, 40.0, -np.inf, 50.0]],
         dtype=np.float32,
     )
     msk = np.ones((2, 4), dtype=np.uint8)
-    in_img = _write_raster(tmp_path / "pct_in.tif", arr)
-    msk_img = _write_raster(tmp_path / "pct_msk.tif", msk)
+    in_img = write_raster(tmp_path / "pct_in.tif", arr, origin=(500000.0, 5800000.0))
+    msk_img = write_raster(tmp_path / "pct_msk.tif", msk, origin=(500000.0, 5800000.0))
 
     pcts = img_pct.calc_band_percentile_msk(
         input_img=in_img,

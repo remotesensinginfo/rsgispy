@@ -9,7 +9,6 @@ import inspect
 import json
 import math
 import os
-from pathlib import Path
 
 import geopandas as gpd
 import matplotlib
@@ -18,7 +17,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from rasterio.transform import Affine, from_origin
 from shapely.geometry import box
 
 import rsgispy
@@ -29,6 +27,8 @@ import rsgispy.imagespectral.indices as si
 import rsgispy.imagespectral.preprocessing as sp
 import rsgispy.imagespectral.transforms as st
 import rsgispy.imagespectral.unmixing as su
+
+from conftest import write_raster
 
 matplotlib.use("Agg")
 
@@ -46,27 +46,9 @@ def _write_raster(
     descriptions=None,
 ):
     """Write a 2D or 3D GeoTIFF raster."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    arr = np.asarray(data)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis, :, :]
-    count, height, width = arr.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=str(arr.dtype),
-        crs="EPSG:32630",
-        transform=from_origin(origin[0], origin[1], res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(arr)
-        if descriptions is not None:
-            for b_idx, desc in enumerate(descriptions, start=1):
-                dst.set_band_description(b_idx, desc)
+    return write_raster(
+        path, data, nodata=nodata, origin=origin, pixel_size=res, band_names=descriptions
+    )
 
 
 def _write_legacy_mtxt(path, em_arr):
@@ -1444,31 +1426,6 @@ def test_calc_area_under_curve_trapezoid_and_nodata(tmp_path):
                                  method="simpson", use_pbar=False)
 
 
-def _write_geotiff(
-    path: Path,
-    arr: np.ndarray,
-    *,
-    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
-    crs: object = "EPSG:32630",
-    nodata=None,
-) -> str:
-    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": int(data.shape[1]),
-        "width": int(data.shape[2]),
-        "count": int(data.shape[0]),
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": transform,
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return str(path)
-
-
 def test_calc_ppi_tiled_streaming_deterministic(tmp_path, monkeypatch):
     monkeypatch.setenv(img_proc.ENV_VAR_BLOCK_SIZE, "8")
     rng = np.random.default_rng(7)
@@ -1476,7 +1433,7 @@ def test_calc_ppi_tiled_streaming_deterministic(tmp_path, monkeypatch):
     # Plant extreme pure endmembers at opposite corners
     cube[:, 0, 0] = [1.0, 0.0, 0.0]
     cube[:, 15, 15] = [0.0, 1.0, 0.0]
-    in_img = _write_geotiff(tmp_path / "ppi_in.tif", cube)
+    in_img = write_raster(tmp_path / "ppi_in.tif", cube, origin=(500000.0, 5800000.0))
 
     out1 = str(tmp_path / "ppi1.tif")
     out2 = str(tmp_path / "ppi2.tif")
@@ -1509,8 +1466,8 @@ def test_whiten_image_filters_nan_and_nodata(tmp_path, monkeypatch):
     msk = np.ones((16, 16), dtype=np.uint8)
     msk[15, 15] = 0
 
-    in_img = _write_geotiff(tmp_path / "w_in.tif", cube, nodata=-9999.0)
-    msk_img = _write_geotiff(tmp_path / "w_msk.tif", msk)
+    in_img = write_raster(tmp_path / "w_in.tif", cube, nodata=-9999.0, origin=(500000.0, 5800000.0))
+    msk_img = write_raster(tmp_path / "w_msk.tif", msk, origin=(500000.0, 5800000.0))
     out_img = str(tmp_path / "w_out.tif")
 
     st.whiten_image(in_img, out_img, msk_img, 1, use_pbar=False)
@@ -1542,8 +1499,8 @@ def test_summarise_multi_endmember_unmixing_nodata_alignment(tmp_path):
     abund[0, :, :] = 0.6
     abund[1, :, :] = 0.4
 
-    orig_img = _write_geotiff(tmp_path / "orig.tif", orig)
-    abund_img = _write_geotiff(tmp_path / "abund1.tif", abund)
+    orig_img = write_raster(tmp_path / "orig.tif", orig, origin=(500000.0, 5800000.0))
+    abund_img = write_raster(tmp_path / "abund1.tif", abund, origin=(500000.0, 5800000.0))
     out_unmix = str(tmp_path / "sum_unmix.tif")
     out_ref = str(tmp_path / "sum_ref.tif")
 

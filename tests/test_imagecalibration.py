@@ -12,7 +12,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imagecalibration as imgcal
@@ -20,6 +19,8 @@ import rsgispy.imagecalibration.sensorlvl1data as l1
 import rsgispy.imagecalibration.sensorlvl2data as l2
 import rsgispy.imagecalibration.solarangles as solarangles
 import rsgispy.tools.sensors as sensors
+
+from conftest import write_raster
 
 
 def _write_gtiff(
@@ -34,27 +35,15 @@ def _write_gtiff(
     band_names=None,
 ) -> str:
     """Write a single- or multi-band GeoTIFF helper for tests."""
-    arr = np.asarray(data)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis, :, :]
-    count, height, width = arr.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(arr.dtype),
-        "crs": f"EPSG:{epsg}",
-        "transform": from_origin(x0, y0, res, res),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(arr)
-        if band_names is not None:
-            for bidx, name in enumerate(band_names, start=1):
-                dst.set_band_description(bidx, name)
-    return path
+    return write_raster(
+        path,
+        data,
+        nodata=nodata,
+        crs=f"EPSG:{epsg}",
+        origin=(x0, y0),
+        pixel_size=res,
+        band_names=band_names,
+    )
 
 
 def _build_synthetic_landsat_mtl(

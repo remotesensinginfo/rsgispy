@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import Point, box
 
 import rsgispy
@@ -17,45 +16,7 @@ import rsgispy.zonalstats.point as zs_pt
 import rsgispy.zonalstats.polygon as zs_poly
 from rsgispy import RSGISPyException
 
-
-def _write_test_raster(path: str, data: np.ndarray, epsg: int = 32630, nodata=None) -> None:
-    """Write a 2D array as a 1-band GeoTIFF with 10m pixels rooted at (500000, 5200000)."""
-    height, width = data.shape
-    transform = from_origin(500000.0, 5200000.0, 10.0, 10.0)
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=1,
-        dtype=data.dtype,
-        crs=f"EPSG:{epsg}",
-        transform=transform,
-        nodata=nodata,
-    ) as dst:
-        dst.write(data, 1)
-
-
-def _write_multiband_test_raster(
-    path: str, data: np.ndarray, epsg: int = 32630, nodata=None
-) -> None:
-    """Write a 3D (bands, H, W) array as a GeoTIFF rooted at (500000, 5200000)."""
-    count, height, width = data.shape
-    transform = from_origin(500000.0, 5200000.0, 10.0, 10.0)
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=data.dtype,
-        crs=f"EPSG:{epsg}",
-        transform=transform,
-        nodata=nodata,
-    ) as dst:
-        dst.write(data)
+from conftest import write_raster
 
 
 def test_calc_zonal_band_stats_and_file(tmp_path):
@@ -73,7 +34,7 @@ def test_calc_zonal_band_stats_and_file(tmp_path):
         dtype=np.float32,
     )
     tif_path = str(tmp_path / "vals.tif")
-    _write_test_raster(tif_path, arr, nodata=-9999.0)
+    write_raster(tif_path, arr, nodata=-9999.0)
 
     # Poly 1 covers top-left 4x4 (cols 0..3, rows 0..3) including row1 col3=999
     # (above max_thres=100) and row3 col0=-9999 (nodata)
@@ -161,7 +122,7 @@ def test_calc_zonal_poly_pts_and_test_poly_pts(tmp_path):
     """Test centroid-based stats and hybrid polygon/centroid fallback with percentiles."""
     arr = np.arange(1, 26, dtype=np.float32).reshape(5, 5)
     tif_path = str(tmp_path / "grid.tif")
-    _write_test_raster(tif_path, arr, nodata=0.0)
+    write_raster(tif_path, arr, nodata=0.0)
 
     # Poly covering 2x2 pixels (rows 0..1, cols 0..1 -> values 1, 2, 6, 7)
     big_poly = box(500000.0, 5199980.0, 500020.0, 5200000.0)
@@ -230,7 +191,7 @@ def test_calc_zonal_band_pxl_counts_and_ext_point_band_values(tmp_path):
         dtype=np.int16,
     )
     tif_path = str(tmp_path / "cat.tif")
-    _write_test_raster(tif_path, cat_arr, nodata=9)
+    write_raster(tif_path, cat_arr, nodata=9)
 
     poly = box(500000.0, 5199960.0, 500040.0, 5200000.0)
     poly_gpkg = str(tmp_path / "cats.gpkg")
@@ -321,7 +282,7 @@ def test_zonalstats_vector_input_gdf(tmp_path):
     """Test VectorInput GeoDataFrame input and optional in-memory output in zonalstats."""
     arr = np.arange(1, 17, dtype=np.float32).reshape(4, 4)
     tif_path = str(tmp_path / "grid4.tif")
-    _write_test_raster(tif_path, arr, nodata=0.0)
+    write_raster(tif_path, arr, nodata=0.0)
 
     poly_gdf = gpd.GeoDataFrame(
         {"id": [1]},
@@ -403,7 +364,7 @@ def test_ext_point_band_values_multiband(tmp_path):
     b2 = np.array([[100.0, 200.0], [300.0, 400.0]], dtype=np.float32)
     b3 = np.array([[1.5, 2.5], [999.0, 4.5]], dtype=np.float32)
     tif_path = str(tmp_path / "mb3.tif")
-    _write_multiband_test_raster(tif_path, np.stack([b1, b2, b3]), nodata=-9999.0)
+    write_raster(tif_path, np.stack([b1, b2, b3]), nodata=-9999.0)
 
     pts_gdf = gpd.GeoDataFrame(
         {"id": [1, 2, 3, 4]},
@@ -513,7 +474,7 @@ def poly_pxls_scene(tmp_path):
     b3 = b1 + 100.0
     b3[1, 1] = -9999.0
     tif_path = str(tmp_path / "poly_mb.tif")
-    _write_multiband_test_raster(tif_path, np.stack([b1, b2, b3]), nodata=-9999.0)
+    write_raster(tif_path, np.stack([b1, b2, b3]), nodata=-9999.0)
 
     polys_gdf = gpd.GeoDataFrame(
         {"cls": ["forest", "urban"]},
@@ -698,21 +659,21 @@ def _write_mixed_dtype_vrt(tmp_path):
     refl[:, 0, 0] = 0  # no data in both reflectance bands
     refl[1, 2, 3] = 0  # no data in reflectance band 2 only
     refl_img = str(tmp_path / "refl_u16.tif")
-    _write_multiband_test_raster(refl_img, refl, nodata=0)
+    write_raster(refl_img, refl, nodata=0)
 
     idx = (np.arange(6 * 6, dtype=np.float32).reshape(6, 6) / 7.0 - 2.0).astype(
         np.float32
     )
     idx[4, 4] = -9999.0
     idx_img = str(tmp_path / "idx_f32.tif")
-    _write_test_raster(idx_img, idx, nodata=-9999.0)
+    write_raster(idx_img, idx, nodata=-9999.0)
 
     # 0.1 is not exactly representable as float32: the comparison with the
     # band's no data value must be made in the band's own data type.
     nd01 = np.full((6, 6), 5.0, dtype=np.float32)
     nd01[3, 1] = np.float32(0.1)
     nd01_img = str(tmp_path / "nd01_f32.tif")
-    _write_test_raster(nd01_img, nd01, nodata=0.1)
+    write_raster(nd01_img, nd01, nodata=0.1)
 
     vrt = str(tmp_path / "mixed_stack.vrt")
     create_stack_images_vrt([refl_img, idx_img, nd01_img], vrt)
@@ -851,7 +812,7 @@ def test_zonalstats_constants_helpers_and_kwonly(tmp_path):
 
     arr = np.ones((2, 2), dtype=np.float32)
     tif_path = str(tmp_path / "kw.tif")
-    _write_test_raster(tif_path, arr, nodata=-9999.0)
+    write_raster(tif_path, arr, nodata=-9999.0)
     pts_gdf = gpd.GeoDataFrame(
         {"id": [1]}, geometry=[Point(500005.0, 5199995.0)], crs="EPSG:32630"
     )
@@ -911,7 +872,7 @@ def test_zonal_file_op_in_place_keeps_layer_name(tmp_path):
     """H7: in-place update with vec_lyr=None writes back to the real layer."""
     arr = np.arange(36, dtype=np.float32).reshape(6, 6)
     tif_path = str(tmp_path / "vals.tif")
-    _write_test_raster(tif_path, arr)
+    write_raster(tif_path, arr)
     vec_path = str(tmp_path / "zones.gpkg")
     gpd.GeoDataFrame(
         {"id": [1]},
@@ -950,7 +911,7 @@ def test_vec_def_epsg_only_applies_when_crs_undefined(tmp_path):
 
     arr = np.arange(36, dtype=np.float32).reshape(6, 6)
     tif_path = str(tmp_path / "vals.tif")
-    _write_test_raster(tif_path, arr)
+    write_raster(tif_path, arr)
     out_gdf = zs_poly.calc_zonal_band_stats(
         gdf,
         tif_path,
@@ -975,7 +936,7 @@ def test_test_poly_pts_fallback_samples_point_inside_concave_polygon(tmp_path):
     arr = np.ones((6, 6), dtype=np.float32)
     arr[1:5, 1:6] = 99.0
     tif_path = str(tmp_path / "vals.tif")
-    _write_test_raster(tif_path, arr)
+    write_raster(tif_path, arr)
     c_shape = unary_union(
         [
             box(500001.0, 5199941.0, 500003.0, 5199999.0),
@@ -1003,7 +964,7 @@ def test_calc_zonal_band_pxl_counts_total_includes_nodata(tmp_path):
     """The documented total is the polygon's pixel footprint, nodata included."""
     arr = np.array([[1, 1], [2, 0]], dtype=np.uint8)
     tif_path = str(tmp_path / "cls.tif")
-    _write_test_raster(tif_path, arr, nodata=0)
+    write_raster(tif_path, arr, nodata=0)
     gdf = gpd.GeoDataFrame(
         {"id": [1]},
         geometry=[box(500000.0, 5199980.0, 500020.0, 5200000.0)],
@@ -1025,7 +986,7 @@ def test_polygon_zonal_stats_reproj_vec_and_empty_layers(tmp_path):
     """Polygon stats take reproj_vec, and an empty layer gives an empty result."""
     arr = np.arange(36, dtype=np.float32).reshape(6, 6)
     tif_path = str(tmp_path / "vals.tif")
-    _write_test_raster(tif_path, arr)
+    write_raster(tif_path, arr)
     utm_gdf = gpd.GeoDataFrame(
         {"id": [1]},
         geometry=[box(500000.0, 5199960.0, 500040.0, 5200000.0)],
@@ -1063,43 +1024,6 @@ def test_polygon_zonal_stats_reproj_vec_and_empty_layers(tmp_path):
     assert len(out_c) == 0 and {"c1", "total"} <= set(out_c.columns)
 
 
-def _write_raster(
-    path: str,
-    arr: np.ndarray,
-    *,
-    origin=(500000.0, 5200000.0),
-    res=(10.0, 10.0),
-    crs: str = "EPSG:32630",
-    nodata=None,
-    tiled: bool = False,
-    blocksize: int | None = None,
-) -> str:
-    """Write a 2D or 3D NumPy array to a GeoTIFF."""
-    if arr.ndim == 2:
-        data = arr[np.newaxis, :, :]
-    else:
-        data = arr
-    count, height, width = data.shape
-    profile = {
-        "driver": "GTiff",
-        "width": width,
-        "height": height,
-        "count": count,
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": from_origin(origin[0], origin[1], res[0], res[1]),
-        "nodata": nodata,
-    }
-    if tiled:
-        profile["tiled"] = True
-        if blocksize is not None:
-            profile["blockxsize"] = blocksize
-            profile["blockysize"] = blocksize
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return path
-
-
 def test_polygon_empty_count_float64_custom_geom_and_direct_helpers(
     tmp_path
 ):
@@ -1108,9 +1032,7 @@ def test_polygon_empty_count_float64_custom_geom_and_direct_helpers(
     arr = np.full((4, 4), 1e7, dtype=np.float32)
     arr[0, 0] = 1e7 + 1.0
     arr[0, 1] = 1e7 + 3.0
-    tif = _write_raster(
-        str(tmp_path / "f32.tif"), arr, nodata=-9999.0
-    )
+    tif = write_raster(str(tmp_path / "f32.tif"), arr, nodata=-9999.0)
 
     poly_valid = box(500000.0, 5199980.0, 500020.0, 5200000.0)
     poly_outside = box(600000.0, 5199980.0, 600020.0, 5200000.0)
@@ -1154,7 +1076,7 @@ def test_polygon_empty_count_float64_custom_geom_and_direct_helpers(
         [[1, 1, 2, 2], [1, 2, 2, 3], [3, 3, 3, 3], [0, 0, 0, 0]],
         dtype=np.uint8,
     )
-    cat_tif = _write_raster(str(tmp_path / "cat.tif"), cat_arr, nodata=0)
+    cat_tif = write_raster(str(tmp_path / "cat.tif"), cat_arr, nodata=0)
     cnt_res = zs_poly.calc_zonal_band_pxl_counts(
         gdf.copy(),
         cat_tif,
@@ -1194,12 +1116,13 @@ def test_point_block_grouped_sampling_semantics(tmp_path):
     arr = np.arange(32 * 32, dtype=np.float32).reshape((32, 32))
     arr[0, 0] = -9999.0  # nodata
     arr[20, 20] = 5000.0  # above max_thres
-    tif = _write_raster(
+    tif = write_raster(
         str(tmp_path / "tiled.tif"),
         arr,
         nodata=-9999.0,
         tiled=True,
-        blocksize=16,
+        blockxsize=16,
+        blockysize=16,
     )
     pts = gpd.GeoDataFrame(
         {"pid": [0, 1, 2, 3, 4, 5]},

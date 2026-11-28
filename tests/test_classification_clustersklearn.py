@@ -8,7 +8,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 from sklearn.cluster import KMeans
 
 import rsgispy
@@ -21,39 +20,7 @@ from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
 from rsgispy.imageutils.masking import ImageBandInfo
 from rsgispy.ml.predict import predict_raster_node
 
-
-def _write_raster(
-    path: Path,
-    arr: np.ndarray,
-    origin_x: float = 500000.0,
-    origin_y: float = 5600000.0,
-    pxl_size: float = 10.0,
-    crs: str = "EPSG:32630",
-    nodata: float = -999.0,
-) -> str:
-    """Write a 2D or 3D GeoTIFF raster for unsupervised clustering tests."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[None, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-        nodata=nodata,
-    ) as dst:
-        dst.write(write_arr)
-    return str(path)
+from conftest import write_raster
 
 
 def _create_cluster_scene(tmp_path: Path):
@@ -92,13 +59,25 @@ def _create_cluster_scene(tmp_path: Path):
     coarse[4:8, :] = 50.0
     coarse[8:12, :] = 90.0
 
-    img_3b = _write_raster(
-        tmp_path / "scene_3b.tif", np.stack([b1, b2, b3]), nodata=-999.0
+    img_3b = write_raster(
+        tmp_path / "scene_3b.tif",
+        np.stack([b1, b2, b3]),
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
     )
-    img_coarse = _write_raster(
-        tmp_path / "coarse.tif", coarse, pxl_size=20.0, nodata=-999.0
+    img_coarse = write_raster(
+        tmp_path / "coarse.tif",
+        coarse,
+        origin=(500000.0, 5600000.0),
+        pixel_size=20.0,
+        nodata=-999.0,
     )
-    msk_img = _write_raster(tmp_path / "mask.tif", mask, nodata=0.0)
+    msk_img = write_raster(
+        tmp_path / "mask.tif",
+        mask,
+        origin=(500000.0, 5600000.0),
+        nodata=0.0,
+    )
 
     return {
         "img_3b": img_3b,
@@ -167,8 +146,11 @@ def test_img_pixel_cluster_whole_image_and_transductive(tmp_path):
     b2_noisy[8:16, :] = 80.0
     b1_noisy[4, 4] = 500.0
     b2_noisy[4, 4] = 500.0
-    noisy_img = _write_raster(
-        tmp_path / "noisy.tif", np.stack([b1_noisy, b2_noisy]), nodata=-999.0
+    noisy_img = write_raster(
+        tmp_path / "noisy.tif",
+        np.stack([b1_noisy, b2_noisy]),
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
     )
 
     out_dbscan = tmp_path / "cluster_dbscan.tif"
@@ -429,9 +411,10 @@ def test_clustersklearn_validation_errors(tmp_path):
         )
 
     # All-nodata image raises RSGISPyException.
-    all_nd = _write_raster(
+    all_nd = write_raster(
         tmp_path / "all_nd.tif",
         np.full((2, 6, 6), -999.0, dtype=np.float32),
+        origin=(500000.0, 5600000.0),
         nodata=-999.0,
     )
     with pytest.raises(rsgispy.RSGISPyException):
@@ -532,7 +515,12 @@ def test_apply_img_pixel_clusterer_other_image_and_model_file(tmp_path):
     # A second image: the zones in another order and a small shift in value.
     arr2 = np.concatenate([arr[:, 16:24], arr[:, 0:16]], axis=1) + np.float32(0.5)
     arr2[arr2 < -900] = -999.0
-    img2 = _write_raster(tmp_path / "scene_2.tif", arr2, nodata=-999.0)
+    img2 = write_raster(
+        tmp_path / "scene_2.tif",
+        arr2,
+        origin=(500000.0, 5600000.0),
+        nodata=-999.0,
+    )
 
     model_file = str(tmp_path / "kmeans.joblib")
     ref_tif = str(tmp_path / "ref.tif")
@@ -639,34 +627,6 @@ def test_apply_img_pixel_clusterer_errors(tmp_path):
         )
 
 
-def _write_gtiff(
-    path: str,
-    arr: np.ndarray,
-    *,
-    origin_x: float = 500000.0,
-    origin_y: float = 5200000.0,
-    res: float = 10.0,
-    crs: str = "EPSG:32630",
-    nodata: float = -9999.0,
-) -> None:
-    """Write a 2D or 3D NumPy array to a GeoTIFF."""
-    data = arr[None, :, :] if arr.ndim == 2 else arr
-    count, height, width = data.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=str(data.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(data)
-
-
 def test_multitile_clustering_preserves_pixel_positions(tmp_path):
     """Verify img_pixel_cluster maps labels back to exact pixel positions across tiles."""
     height, width = 20, 20
@@ -685,7 +645,7 @@ def test_multitile_clustering_preserves_pixel_positions(tmp_path):
     img_path = str(tmp_path / "quadrants.tif")
     out_single = str(tmp_path / "cluster_single.tif")
     out_multi = str(tmp_path / "cluster_multi.tif")
-    _write_gtiff(img_path, np.stack([b1, b2], axis=0), nodata=-9999.0)
+    write_raster(img_path, np.stack([b1, b2], axis=0), nodata=-9999.0)
     band_info = [ImageBandInfo(file_name=img_path, name="quad", bands=[1, 2])]
 
     img_pixel_cluster(

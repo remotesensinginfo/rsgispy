@@ -31,6 +31,8 @@ from rsgispy.imageprocess import (
     TileGraph,
 )
 
+from conftest import write_raster
+
 GOLDEN_NPZ = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "data", "golden", "terrain_golden.npz"
 )
@@ -60,20 +62,13 @@ _CASES = {case["id"]: case for case in _MANIFEST["cases"]}
 
 
 def _write(path, arr, crs, transform, nodata):
-    arr3 = arr[np.newaxis] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": arr3.shape[1],
-        "width": arr3.shape[2],
-        "count": arr3.shape[0],
-        "dtype": str(arr3.dtype),
-        "crs": crs,
-        "transform": Affine(*transform) if not isinstance(transform, Affine) else transform,
-        "nodata": nodata,
-    }
-    with rasterio.open(str(path), "w", **profile) as dst:
-        dst.write(arr3)
-    return str(path)
+    return write_raster(
+        path,
+        arr,
+        crs=crs,
+        transform=transform if isinstance(transform, Affine) else Affine(*transform),
+        nodata=nodata,
+    )
 
 
 def _input_path(tmp_path, name):

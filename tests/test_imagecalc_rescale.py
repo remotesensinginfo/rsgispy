@@ -6,10 +6,11 @@ values.
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imagecalc.rescale as ic_resc
+
+from conftest import write_raster
 
 
 def _write_raster(
@@ -22,22 +23,15 @@ def _write_raster(
     nodata=None,
 ):
     """Write a 3D ``(bands, height, width)`` NumPy array to a GeoTIFF."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    count, height, width = data.shape
-    transform = from_origin(origin[0], origin[1], pixel_size[0], pixel_size[1])
-    with rasterio.open(
+    return write_raster(
         path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
+        data,
         dtype=dtype,
-        crs=crs,
-        transform=transform,
         nodata=nodata,
-    ) as dst:
-        dst.write(data.astype(dtype))
+        crs=crs,
+        origin=origin,
+        pixel_size=pixel_size,
+    )
 
 
 def test_rescale_functions(tmp_path):

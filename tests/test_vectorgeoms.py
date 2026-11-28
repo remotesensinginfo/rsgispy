@@ -10,8 +10,6 @@ import os
 import geopandas as gpd
 import numpy as np
 import pytest
-import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import (
     LineString,
     MultiLineString,
@@ -32,6 +30,8 @@ import rsgispy.vector.io as vu_meta
 import rsgispy.vector.stats as vs_metrics
 from rsgispy import RSGISPyException
 from rsgispy.vector import selection as vec_sel
+
+from conftest import write_raster
 
 
 def _can_import(mod_name: str) -> bool:
@@ -512,34 +512,6 @@ def test_vectorgeoms_spatial_and_deduplication(tmp_path):
     ) is True
 
 
-def _write_test_raster(
-    path: str,
-    arr: np.ndarray,
-    epsg: int = 32630,
-    tl_x: float = 500000.0,
-    tl_y: float = 5600100.0,
-    res: float = 10.0,
-    nodata=None,
-) -> str:
-    """Helper to write a single-band GeoTIFF for vectorisation tests."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    height, width = arr.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=1,
-        dtype=arr.dtype,
-        crs=f"EPSG:{epsg}",
-        transform=from_origin(tl_x, tl_y, res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(arr, 1)
-    return path
-
-
 @pytest.fixture
 def cls_tif(tmp_path):
     """A 10 x 10 thematic raster with two 3 x 3 classes (1 and 2) and nodata 0."""
@@ -547,9 +519,7 @@ def cls_tif(tmp_path):
     arr = np.zeros((10, 10), dtype=np.uint8)
     arr[2:5, 2:5] = 1
     arr[6:9, 6:9] = 2
-    _write_test_raster(
-        cls_tif, arr, epsg=32630, tl_x=500000.0, tl_y=5600100.0, res=10.0, nodata=0
-    )
+    write_raster(cls_tif, arr, origin=(500000.0, 5600100.0), nodata=0)
     return cls_tif
 
 
@@ -941,9 +911,7 @@ def test_vectorgeoms_raster_to_gdf_in_memory(tmp_path):
     arr = np.zeros((10, 10), dtype=np.uint8)
     arr[2:5, 2:5] = 1
     arr[6:9, 6:9] = 2
-    _write_test_raster(
-        cls_tif, arr, epsg=32630, tl_x=500000.0, tl_y=5600100.0, res=10.0, nodata=0
-    )
+    write_raster(cls_tif, arr, origin=(500000.0, 5600100.0), nodata=0)
 
     poly_gdf = vg_create.polygonise_raster_to_vec_lyr(
         None, None, "GPKG", cls_tif, mask_img=cls_tif
@@ -1032,43 +1000,6 @@ def test_empty_results_write_empty_layer_with_warning(tmp_path):
         assert len(out_gdf) == 0, name
         assert out_gdf.crs == polys.crs, name
     assert "cls" in gpd.read_file(str(tmp_path / "rm_area.gpkg"), layer="lyr").columns
-
-
-def _write_raster(
-    path: str,
-    arr: np.ndarray,
-    *,
-    origin=(500000.0, 5200000.0),
-    res=(10.0, 10.0),
-    crs: str = "EPSG:32630",
-    nodata=None,
-    tiled: bool = False,
-    blocksize: int | None = None,
-) -> str:
-    """Write a 2D or 3D NumPy array to a GeoTIFF."""
-    if arr.ndim == 2:
-        data = arr[np.newaxis, :, :]
-    else:
-        data = arr
-    count, height, width = data.shape
-    profile = {
-        "driver": "GTiff",
-        "width": width,
-        "height": height,
-        "count": count,
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": from_origin(origin[0], origin[1], res[0], res[1]),
-        "nodata": nodata,
-    }
-    if tiled:
-        profile["tiled"] = True
-        if blocksize is not None:
-            profile["blockxsize"] = blocksize
-            profile["blockysize"] = blocksize
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return path
 
 
 def test_custom_geometry_column_name_across_vector_ops():
@@ -1189,7 +1120,7 @@ def test_create_polygonise_replace_grid_validation_and_bbox_layers(tmp_path):
     """Test polygonise replace_lyr, define_grid validation, create_bbox_vec_lyr,
     create_poly_vec_bboxs, and create_hex_grid_poly.
     """
-    tif = _write_raster(
+    tif = write_raster(
         str(tmp_path / "cls.tif"),
         np.array([[1, 1, 2, 2], [1, 1, 2, 2]], dtype=np.uint8),
     )

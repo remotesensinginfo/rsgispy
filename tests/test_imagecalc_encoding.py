@@ -3,68 +3,15 @@ Tests for :mod:`rsgispy.imagecalc.encoding`: integer raster recoding and
 one-hot category encoding.
 """
 
-from pathlib import Path
 
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.imagecalc.encoding as ic_enc
 
-
-def _write_raster(
-    path,
-    data,
-    origin=(0.0, 100.0),
-    pixel_size=(10.0, 10.0),
-    crs="EPSG:32630",
-    dtype="float32",
-    nodata=None,
-):
-    """Write a 3D ``(bands, height, width)`` NumPy array to a GeoTIFF."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    count, height, width = data.shape
-    transform = from_origin(origin[0], origin[1], pixel_size[0], pixel_size[1])
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=dtype,
-        crs=crs,
-        transform=transform,
-        nodata=nodata,
-    ) as dst:
-        dst.write(data.astype(dtype))
-
-
-def _write_geotiff(
-    path: Path,
-    arr: np.ndarray,
-    *,
-    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
-    crs: object = "EPSG:32630",
-    nodata=None,
-) -> str:
-    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": int(data.shape[1]),
-        "width": int(data.shape[2]),
-        "count": int(data.shape[0]),
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": transform,
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return str(path)
+from conftest import write_raster
 
 
 def test_recode_and_one_hot(tmp_path):
@@ -76,7 +23,7 @@ def test_recode_and_one_hot(tmp_path):
     oh_dict = tmp_path / "oh_dict.tif"
 
     cats = np.array([[[1, 2, 3], [2, 99, 1]]], dtype=np.int32)
-    _write_raster(in_p, cats, dtype="int32", nodata=99)
+    write_raster(in_p, cats, dtype="int32", nodata=99, origin=(0.0, 100.0))
 
     ic_enc.recode_int_raster(
         str(in_p),
@@ -134,7 +81,7 @@ def test_recode_and_one_hot(tmp_path):
 
 def test_recode_int_raster_remaps_and_validates_nodata(tmp_path):
     arr = np.array([[-9999, 1, 2], [3, -9999, 1]], dtype=np.int32)
-    in_img = _write_geotiff(tmp_path / "enc_in.tif", arr, nodata=-9999)
+    in_img = write_raster(tmp_path / "enc_in.tif", arr, nodata=-9999, origin=(500000.0, 5800000.0))
 
     # Case 1: nodata remapped via recode_dict into valid uint8 range
     out1 = str(tmp_path / "enc_out1.tif")

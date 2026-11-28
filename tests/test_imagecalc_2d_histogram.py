@@ -4,30 +4,16 @@ Tests for :func:`rsgispy.imagecalc.stats.get_img_2d_histogram`.
 
 import numpy as np
 import pytest
-import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.imagecalc.stats as ic_stats
 
+from conftest import write_raster
+
 
 def _write_raster(path, data, nodata=None, dtype="float32", origin=(0.0, 1000.0)):
     """Write a ``(bands, height, width)`` array to a GeoTIFF."""
-    count, height, width = data.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=dtype,
-        crs="EPSG:32630",
-        transform=from_origin(origin[0], origin[1], 10.0, 10.0),
-        nodata=nodata,
-    ) as dst:
-        dst.write(data.astype(dtype))
-    return str(path)
+    return write_raster(path, data, dtype=dtype, nodata=nodata, origin=origin)
 
 
 @pytest.fixture(name="hist_imgs")

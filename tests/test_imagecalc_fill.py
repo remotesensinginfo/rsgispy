@@ -3,15 +3,15 @@ Tests for :mod:`rsgispy.imagecalc.fill`: KNN region filling and region
 growing fill (global and tiled).
 """
 
-from pathlib import Path
 
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.imagecalc.fill as ic_fill
+
+from conftest import write_raster
 
 
 def _write_raster(
@@ -24,22 +24,15 @@ def _write_raster(
     nodata=None,
 ):
     """Write a 3D ``(bands, height, width)`` NumPy array to a GeoTIFF."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    count, height, width = data.shape
-    transform = from_origin(origin[0], origin[1], pixel_size[0], pixel_size[1])
-    with rasterio.open(
+    return write_raster(
         path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
+        data,
         dtype=dtype,
-        crs=crs,
-        transform=transform,
         nodata=nodata,
-    ) as dst:
-        dst.write(data.astype(dtype))
+        crs=crs,
+        origin=origin,
+        pixel_size=pixel_size,
+    )
 
 
 def _split_raster_into_tiles(
@@ -101,31 +94,6 @@ def _mosaic_tile_outputs(out_tiles, slices, shape, dtype):
         with rasterio.open(op) as src:
             mosaic[r0:r1, c0:c1] = src.read(1)
     return mosaic
-
-
-def _write_geotiff(
-    path: Path,
-    arr: np.ndarray,
-    *,
-    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
-    crs: object = "EPSG:32630",
-    nodata=None,
-) -> str:
-    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": int(data.shape[1]),
-        "width": int(data.shape[2]),
-        "count": int(data.shape[0]),
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": transform,
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return str(path)
 
 
 def test_calc_fill_regions_knn(tmp_path):
@@ -915,8 +883,8 @@ def test_calc_fill_regions_knn_nan_fill_val_and_int_clamp(tmp_path):
     mask_arr = np.ones((8, 8), dtype=np.float32)
     mask_arr[3:5, 3:5] = np.nan
 
-    ref_img = _write_geotiff(tmp_path / "knn_ref.tif", ref_arr, nodata=-1.0)
-    msk_img = _write_geotiff(tmp_path / "knn_msk.tif", mask_arr)
+    ref_img = write_raster(tmp_path / "knn_ref.tif", ref_arr, nodata=-1.0, origin=(500000.0, 5800000.0))
+    msk_img = write_raster(tmp_path / "knn_msk.tif", mask_arr, origin=(500000.0, 5800000.0))
     out_img = str(tmp_path / "knn_out.tif")
 
     ic_fill.calc_fill_regions_knn(

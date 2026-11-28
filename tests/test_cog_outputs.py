@@ -37,6 +37,8 @@ import rsgispy.imageutils.rasterise
 import rsgispy.imageutils.stats
 import rsgispy.imageutils.warp
 
+from conftest import write_raster
+
 try:
     from osgeo_utils.samples.validate_cloud_optimized_geotiff import (
         validate as _gdal_validate_cog,
@@ -88,22 +90,7 @@ def fixture_clean_crt_env(monkeypatch):
 
 
 def _write_raster(path, data, dtype="float32", nodata=None, x0=500000.0):
-    if data.ndim == 2:
-        data = data[np.newaxis]
-    count, height, width = data.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
-        dtype=dtype,
-        crs="EPSG:32630",
-        transform=from_origin(x0, 5200000.0, 10.0, 10.0),
-        nodata=nodata,
-    ) as dst:
-        dst.write(data.astype(dtype))
+    write_raster(path, data, dtype=dtype, nodata=nodata, origin=(x0, 5200000.0))
 
 
 def _ramp(n_bands=1, height=HEIGHT, width=WIDTH):

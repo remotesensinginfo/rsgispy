@@ -12,12 +12,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
-import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import Point, box
 
 import rsgispy
 import rsgispy.regression.regmetrics as rrm
+
+from conftest import write_raster
 
 matplotlib.use("Agg")
 
@@ -33,21 +33,13 @@ def _write_pred_raster(tmp_path: Path):
     b2[0, 0] = -9999.0
 
     pred_path = tmp_path / "pred_forest.tif"
-    with rasterio.open(
+    write_raster(
         pred_path,
-        "w",
-        driver="GTiff",
-        width=10,
-        height=10,
-        count=2,
-        dtype="float32",
-        crs="EPSG:32630",
-        transform=from_origin(500000.0, 5600000.0, 10.0, 10.0),
+        np.stack([b1, b2]),
         nodata=-9999.0,
-    ) as dst:
-        dst.write(np.stack([b1, b2]))
-        dst.set_band_description(1, "canopy_cover")
-        dst.set_band_description(2, "canopy_height")
+        origin=(500000.0, 5600000.0),
+        band_names=["canopy_cover", "canopy_height"],
+    )
     return pred_path
 
 

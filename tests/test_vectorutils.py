@@ -9,8 +9,6 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
-import rasterio
-from rasterio.transform import from_origin
 from shapely.geometry import LineString, MultiPolygon, Point, Polygon, box
 
 import rsgispy
@@ -23,32 +21,7 @@ import rsgispy.vectorprocess
 from rsgispy import RSGISPyException
 from rsgispy import vectorprocess as vp
 
-
-def _write_test_raster(
-    path: str,
-    arr: np.ndarray,
-    epsg: int = 32630,
-    tl_x: float = 500000.0,
-    tl_y: float = 5600100.0,
-    res: float = 10.0,
-    nodata=None,
-) -> str:
-    """Helper to write a single-band uint8/float32 GeoTIFF for tests."""
-    height, width = arr.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=1,
-        dtype=arr.dtype,
-        crs=f"EPSG:{epsg}",
-        transform=from_origin(tl_x, tl_y, res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(arr, 1)
-    return path
+from conftest import write_raster
 
 
 def test_vectorutils_metadata(tmp_path):
@@ -325,9 +298,7 @@ def test_vectorutils_selection_vmsk_img_intersect(tmp_path, roi_hit_gpkg):
     vmsk_tif = str(tmp_path / "vmsk.tif")
     arr = np.zeros((20, 20), dtype=np.uint8)
     arr[5:10, 5:10] = 1
-    _write_test_raster(
-        vmsk_tif, arr, epsg=32630, tl_x=500000.0, tl_y=5600200.0, res=10.0
-    )
+    write_raster(vmsk_tif, arr, origin=(500000.0, 5600200.0))
 
     assert vu_sel.does_vmsk_img_intersect(vmsk_tif, roi_hit_gpkg, "roi", use_pbar=False)
 
@@ -1020,43 +991,6 @@ def test_merge_utm_vecs_wgs84_keeps_zero_area_layers(tmp_path):
     assert merged.crs.to_epsg() == 4326
 
 
-def _write_raster(
-    path: str,
-    arr: np.ndarray,
-    *,
-    origin=(500000.0, 5200000.0),
-    res=(10.0, 10.0),
-    crs: str = "EPSG:32630",
-    nodata=None,
-    tiled: bool = False,
-    blocksize: int | None = None,
-) -> str:
-    """Write a 2D or 3D NumPy array to a GeoTIFF."""
-    if arr.ndim == 2:
-        data = arr[np.newaxis, :, :]
-    else:
-        data = arr
-    count, height, width = data.shape
-    profile = {
-        "driver": "GTiff",
-        "width": width,
-        "height": height,
-        "count": count,
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": from_origin(origin[0], origin[1], res[0], res[1]),
-        "nodata": nodata,
-    }
-    if tiled:
-        profile["tiled"] = True
-        if blocksize is not None:
-            profile["blockxsize"] = blocksize
-            profile["blockysize"] = blocksize
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return path
-
-
 def test_write_vec_gdf_replace_layer_preserves_siblings(tmp_path):
     """replace_layer=True replaces only the target GPKG layer."""
     gpkg = str(tmp_path / "multi.gpkg")
@@ -1270,10 +1204,7 @@ def test_selection_crs_alignment_ckdtree_iloc_na_regex_and_empty_roi(
     assert len(kept) == 2
 
     # does_vmsk_img_intersect with empty ROI
-    tif = _write_raster(
-        str(tmp_path / "img.tif"),
-        np.ones((4, 4), dtype=np.uint8),
-    )
+    tif = write_raster(str(tmp_path / "img.tif"), np.ones((4, 4), dtype=np.uint8))
     empty_roi = gpd.GeoDataFrame(
         {"id": []}, geometry=gpd.GeoSeries([], crs="EPSG:32630"), crs="EPSG:32630"
     )

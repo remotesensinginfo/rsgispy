@@ -4,17 +4,18 @@ Tests for rsgispy.segmentation.clump (clump and union_of_clumps).
 
 import os
 import time
-from pathlib import Path
 
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import Affine, from_origin
+from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.segmentation as rseg_pkg
 import rsgispy.segmentation._helpers as seg_helpers
 import rsgispy.segmentation.clump as rseg_clump
+
+from conftest import write_raster
 
 
 def _write_raster(
@@ -26,26 +27,7 @@ def _write_raster(
     crs: str = "EPSG:32630",
 ) -> None:
     """Helper to write a 2D or 3D GeoTIFF raster."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[None, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-    ) as dst:
-        dst.write(write_arr)
+    return write_raster(path, arr, crs=crs, origin=(origin_x, origin_y), pixel_size=pxl_size)
 
 
 def test_clump_4connectivity_nodata_and_no_pam(tmp_path):
@@ -402,35 +384,10 @@ def test_eliminate_small_segments_masks_reference_nodata(tmp_path):
     assert res[0, 2] == res[0, 0]
 
 
-def _write_geotiff(
-    path: Path,
-    arr: np.ndarray,
-    *,
-    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
-    crs: object = "EPSG:32630",
-    nodata=None,
-) -> str:
-    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": int(data.shape[1]),
-        "width": int(data.shape[2]),
-        "count": int(data.shape[0]),
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": transform,
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return str(path)
-
-
 def test_clump_id_overflow_raises(tmp_path):
     # 20x20 grid with unique pixel value per cell => 400 clumps (> uint8 max 255)
     vals = np.arange(1, 401, dtype=np.uint16).reshape(20, 20)
-    in_img = _write_geotiff(tmp_path / "clump_in.tif", vals, nodata=0)
+    in_img = write_raster(tmp_path / "clump_in.tif", vals, origin=(500000.0, 5800000.0), nodata=0)
 
     # In-memory overflow
     with pytest.raises(

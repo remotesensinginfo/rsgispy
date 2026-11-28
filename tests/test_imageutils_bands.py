@@ -3,71 +3,16 @@ Tests for :mod:`rsgispy.imageutils.bands`: stacking and selecting bands and
 sharpening low resolution bands.
 """
 
-from pathlib import Path
 
 import numpy as np
 import rasterio
 import rasterio.crs
-from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.imageutils.bands as iu_bands
 import rsgispy.imageutils.warp as iu_warp
 
-
-def _write_test_tif(
-    path,
-    data,
-    tl_x=500000.0,
-    tl_y=5200000.0,
-    res=10.0,
-    crs="EPSG:32630",
-    nodata=None,
-):
-    """Write a 2D or 3D GeoTIFF test image."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    arr = np.asarray(data)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis, :, :]
-    count, height, width = arr.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(arr.dtype),
-        "crs": crs,
-        "transform": from_origin(tl_x, tl_y, res, res),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(str(path), "w", **profile) as dst:
-        dst.write(arr)
-
-
-def _write_raster(
-    path: Path,
-    arr: np.ndarray,
-    *,
-    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
-    crs: object = "EPSG:32630",
-    nodata=None,
-) -> str:
-    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": int(data.shape[1]),
-        "width": int(data.shape[2]),
-        "count": int(data.shape[0]),
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": transform,
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return str(path)
+from conftest import write_raster
 
 
 def test_bands_stack_select_and_translate(tmp_path):
@@ -76,8 +21,8 @@ def test_bands_stack_select_and_translate(tmp_path):
     b2_p = tmp_path / "b2.tif"
     a1 = np.full((8, 8), 5.0, dtype=np.float32)
     a1[0, 0] = -99.0
-    _write_test_tif(b1_p, a1)
-    _write_test_tif(b2_p, np.full((8, 8), 10.0, dtype=np.float32))
+    write_raster(b1_p, a1)
+    write_raster(b2_p, np.full((8, 8), 10.0, dtype=np.float32))
 
     stk_p = tmp_path / "stacked.tif"
     iu_bands.stack_img_bands(
@@ -126,7 +71,7 @@ def test_sharpen_low_res_bands(tmp_path):
     ign = np.full((16, 16), 3.0, dtype=np.float32)
     sh_in = tmp_path / "sh_in.tif"
     sh_out = tmp_path / "sh_out.tif"
-    _write_test_tif(sh_in, np.stack([low, pan, ign], axis=0))
+    write_raster(sh_in, np.stack([low, pan, ign], axis=0))
     binfo = [
         iu_bands.SharpBandInfo(band=1, status=rsgispy.SHARP_RES_LOW, name="Low"),
         iu_bands.SharpBandInfo(
@@ -156,9 +101,13 @@ def test_stack_img_bands_common_dtype_and_inherited_metadata(tmp_path):
     """The output dtype holds every input; nodata and band names are inherited."""
     a_path = str(tmp_path / "a.tif")
     b_path = str(tmp_path / "b.tif")
-    _write_test_tif(a_path, np.full((2, 3), 7, dtype=np.uint8), nodata=0)
-    _write_test_tif(b_path, np.array([[1.5, -2.25, 1000.0], [0.0, 3.0, 4.0]],
-                                     dtype=np.float32), nodata=0)
+    write_raster(a_path, np.full((2, 3), 7, dtype=np.uint8), nodata=0)
+    write_raster(
+        b_path,
+        np.array([[1.5, -2.25, 1000.0], [0.0, 3.0, 4.0]],
+                                         dtype=np.float32),
+        nodata=0,
+    )
     with rasterio.open(a_path, "r+") as ds:
         ds.set_band_description(1, "alpha")
     with rasterio.open(b_path, "r+") as ds:
@@ -184,7 +133,7 @@ def test_stack_img_bands_common_dtype_and_inherited_metadata(tmp_path):
 
     # Inputs that disagree on nodata give no output nodata.
     c_path = str(tmp_path / "c.tif")
-    _write_test_tif(c_path, np.full((2, 3), 5, dtype=np.uint8), nodata=255)
+    write_raster(c_path, np.full((2, 3), 5, dtype=np.uint8), nodata=255)
     out_mixed = str(tmp_path / "stack_mixed.tif")
     iu_bands.stack_img_bands([a_path, c_path], out_mixed, calc_stats=False,
                              use_pbar=False)
@@ -202,9 +151,10 @@ def test_sharpen_low_res_bands_sets_nodata_and_multi_high(tmp_path):
     h1[0, 0] = -999.0
     h2[0, 0] = -999.0
 
-    in_img = _write_raster(
+    in_img = write_raster(
         tmp_path / "sharp_in.tif",
         np.stack([h1, h2, low], axis=0),
+        origin=(500000.0, 5800000.0),
         nodata=-999.0,
     )
     out_img = str(tmp_path / "sharp_out.tif")

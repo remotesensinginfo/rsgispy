@@ -2,35 +2,19 @@
 Tests for rsgispy.imagemorphology.
 """
 
-from pathlib import Path
 
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.imagemorphology as rimorph
 
+from conftest import write_raster
+
 
 def _write_raster(path, arr, dtype="uint8", nodata=None):
-    data = np.asarray(arr, dtype=dtype)
-    if data.ndim == 2:
-        data = data[np.newaxis, :, :]
-    count, height, width = data.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(data.dtype),
-        "crs": "EPSG:32630",
-        "transform": from_origin(500000.0, 5200000.0, 10.0, 10.0),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(str(path), "w", **profile) as dst:
-        dst.write(data)
+    return write_raster(path, arr, dtype=dtype, nodata=nodata)
 
 
 def test_create_circular_op_and_single_band_dilate_erode_gradient(tmp_path):
@@ -444,36 +428,11 @@ def test_morphology_border_mode_default_is_edge_and_bad_mode_raises(tmp_path):
         )
 
 
-def _write_geotiff(
-    path: Path,
-    arr: np.ndarray,
-    *,
-    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
-    crs: object = "EPSG:32630",
-    nodata=None,
-) -> str:
-    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": int(data.shape[1]),
-        "width": int(data.shape[2]),
-        "count": int(data.shape[0]),
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": transform,
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return str(path)
-
-
 def test_morphology_edge_padding_and_no_nodata_bleed(tmp_path):
     arr = np.full((12, 12), 50.0, dtype=np.float32)
     arr[5, 5] = -9999.0  # nodata hole
     arr[6, 6] = np.nan
-    in_img = _write_geotiff(tmp_path / "morph_in.tif", arr, nodata=-9999.0)
+    in_img = write_raster(tmp_path / "morph_in.tif", arr, nodata=-9999.0, origin=(500000.0, 5800000.0))
 
     op_file = str(tmp_path / "op3.gmtxt")
     rimorph.create_circular_op(op_file, 3)

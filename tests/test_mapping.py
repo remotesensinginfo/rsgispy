@@ -11,6 +11,8 @@ import geopandas as gpd
 import matplotlib
 import matplotlib.colors
 
+from conftest import write_raster
+
 matplotlib.use("Agg")
 import builtins
 import shutil
@@ -21,7 +23,6 @@ import pyproj
 import pytest  # noqa: E402
 import rasterio  # noqa: E402
 from matplotlib.collections import LineCollection  # noqa: E402
-from rasterio.transform import from_origin  # noqa: E402
 from shapely.geometry import LineString, Point, Polygon  # noqa: E402
 
 import rsgispy  # noqa: E402
@@ -35,66 +36,6 @@ import rsgispy.mapping.vector as map_vector  # noqa: E402
 import rsgispy.tools.plotting as plotting  # noqa: E402
 from rsgispy import RSGISPyException
 from rsgispy.mapping import _legend as map_legend_internal
-
-
-def _write_continuous_raster(
-    path,
-    data,
-    x_min=500000.0,
-    y_max=5200000.0,
-    res=10.0,
-    crs="EPSG:32630",
-    nodata=0.0,
-):
-    """Helper to write a 1-band or multi-band float32 GeoTIFF."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    if data.ndim == 2:
-        data_3d = data[np.newaxis, ...]
-    else:
-        data_3d = data
-    count, height, width = data_3d.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(data_3d.dtype),
-        crs=crs,
-        transform=from_origin(x_min, y_max, res, res),
-        nodata=nodata,
-    ) as dst:
-        dst.write(data_3d)
-
-
-def _write_thematic_raster(
-    path,
-    data,
-    clr_tab=None,
-    x_min=500000.0,
-    y_max=5200000.0,
-    res=10.0,
-    crs="EPSG:32630",
-):
-    """Helper to write a 1-band uint8 GeoTIFF with optional colour table."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    height, width = data.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=1,
-        dtype="uint8",
-        crs=crs,
-        transform=from_origin(x_min, y_max, res, res),
-        nodata=0,
-    ) as dst:
-        dst.write(data[np.newaxis, ...].astype(np.uint8))
-        if clr_tab is not None:
-            dst.write_colormap(1, clr_tab)
 
 
 def test_calc_y_fig_size_and_extent_and_ticks():
@@ -422,7 +363,7 @@ def test_plotting_imshow_and_stretches(tmp_path):
     arr = np.arange(1, 3 * 10 * 10 + 1, dtype=np.float32).reshape(3, 10, 10)
     arr[:, 0, 0] = 0.0  # nodata
     rgb_tif = tmp_path / "rgb.tif"
-    _write_continuous_raster(str(rgb_tif), arr, nodata=0.0)
+    write_raster(str(rgb_tif), arr, nodata=0.0)
 
     # Full image and subset
     full_data, full_ext = plotting.get_raster_mpl_imshow(str(rgb_tif), bands=[1, 2, 3])
@@ -515,7 +456,7 @@ def test_create_raster_cmap_img_map(tmp_path):
     """Test create_raster_cmap_img_map with linear and log normalisation."""
     arr = np.linspace(1.0, 100.0, 64, dtype=np.float32).reshape(8, 8)
     tif = tmp_path / "cmap.tif"
-    _write_continuous_raster(str(tif), arr, nodata=None)
+    write_raster(str(tif), arr)
 
     fig, ax = plt.subplots()
     img = map_raster.create_raster_cmap_img_map(
@@ -556,7 +497,7 @@ def test_thematic_raster_map(tmp_path):
         3: (0, 0, 255, 255),
     }
     thmt_tif = tmp_path / "thmt.tif"
-    _write_thematic_raster(str(thmt_tif), cls_arr, clr_tab=ctab)
+    write_raster(str(thmt_tif), cls_arr, dtype="uint8", nodata=0, colormap=ctab)
 
     img_rgba, ext, patches = plotting.get_thematic_raster_mpl_imshow(
         str(thmt_tif),
@@ -580,7 +521,7 @@ def test_thematic_raster_map(tmp_path):
 
     # Missing colour table raises RSGISPyException
     no_ct_tif = tmp_path / "no_ct.tif"
-    _write_thematic_raster(str(no_ct_tif), cls_arr, clr_tab=None)
+    write_raster(str(no_ct_tif), cls_arr, dtype="uint8", nodata=0)
     with pytest.raises(rsgispy.RSGISPyException):
         plotting.get_thematic_raster_mpl_imshow(str(no_ct_tif))
 
@@ -626,7 +567,7 @@ def test_optional_contextily_density_and_wmts(tmp_path):
     # Mock WMTS XML + GTiff creation via rasterio.shutil.copy
     sample_rgb = np.full((3, 8, 8), 128, dtype=np.uint8)
     sample_tif = tmp_path / "wmts_sample.tif"
-    _write_continuous_raster(str(sample_tif), sample_rgb, crs="EPSG:32630", nodata=None)
+    write_raster(str(sample_tif), sample_rgb)
 
     wmts_xml_template = (
         "<GDAL_WMTS>"
@@ -782,7 +723,7 @@ def test_north_arrow_styles_and_map_integration(tmp_path):
     # Verify integration on create_raster_img_map & create_vec_lyr_map
     arr = np.arange(1, 101, dtype=np.float32).reshape(1, 10, 10)
     tif = tmp_path / "map_int.tif"
-    _write_continuous_raster(str(tif), arr, res=100.0, nodata=0.0)
+    write_raster(str(tif), arr, pixel_size=100.0, nodata=0.0)
 
     # Default: scale bar enabled, north arrow NOT added
     fig, ax = plt.subplots()
@@ -843,7 +784,7 @@ def thematic_legend_img(tmp_path):
         3: (30, 144, 255, 255),
         4: (200, 50, 50, 255),  # Absent from image pixel array
     }
-    _write_thematic_raster(str(thm_img), data, clr_tab=clr_tab)
+    write_raster(str(thm_img), data, dtype="uint8", nodata=0, colormap=clr_tab)
     return thm_img
 
 
@@ -1054,7 +995,7 @@ def test_mapping_british_english_params(tmp_path):
 
     arr = np.array([[1.0, 2.0], [-99.0, 4.0]], dtype=np.float32)
     tif = tmp_path / "nd.tif"
-    _write_continuous_raster(str(tif), arr, nodata=None)
+    write_raster(str(tif), arr)
     fig2, ax2 = plt.subplots()
     map_raster.create_raster_img_map(
         ax2,
@@ -1066,43 +1007,6 @@ def test_mapping_british_english_params(tmp_path):
     )
     assert len(ax2.images) == 1
     plt.close(fig2)
-
-
-def _write_raster(
-    path: str,
-    arr: np.ndarray,
-    *,
-    origin=(500000.0, 5200000.0),
-    res=(10.0, 10.0),
-    crs: str = "EPSG:32630",
-    nodata=None,
-    tiled: bool = False,
-    blocksize: int | None = None,
-) -> str:
-    """Write a 2D or 3D NumPy array to a GeoTIFF."""
-    if arr.ndim == 2:
-        data = arr[np.newaxis, :, :]
-    else:
-        data = arr
-    count, height, width = data.shape
-    profile = {
-        "driver": "GTiff",
-        "width": width,
-        "height": height,
-        "count": count,
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": from_origin(origin[0], origin[1], res[0], res[1]),
-        "nodata": nodata,
-    }
-    if tiled:
-        profile["tiled"] = True
-        if blocksize is not None:
-            profile["blockxsize"] = blocksize
-            profile["blockysize"] = blocksize
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return path
 
 
 def test_elements_geodesic_scale_and_axis_label_trans_axes():
@@ -1160,9 +1064,7 @@ def test_legend_normalise_rgba_scan_present_and_resolve_loc(tmp_path):
     arr = np.zeros((32, 32), dtype=np.uint8)
     arr[0:16, 0:16] = 1
     arr[16:32, 16:32] = 2
-    tif = _write_raster(
-        str(tmp_path / "thm.tif"), arr, tiled=True, blocksize=16
-    )
+    tif = write_raster(str(tmp_path / "thm.tif"), arr, tiled=True, blockxsize=16, blockysize=16)
     # Top-left bbox sees only 1
     present_tl = map_legend_internal._scan_present_values(
         tif, band=1, bbox=(500000.0, 500160.0, 5199840.0, 5200000.0)
@@ -1202,7 +1104,7 @@ def test_raster_cmap_nodata_mask_and_vals_under_white(tmp_path):
     arr = np.array(
         [[-9999.0, 10.0], [20.0, 30.0]], dtype=np.float32
     )
-    tif = _write_raster(str(tmp_path / "cmap.tif"), arr, nodata=-9999.0)
+    tif = write_raster(str(tmp_path / "cmap.tif"), arr, nodata=-9999.0)
 
     fig, ax = plt.subplots()
     try:
@@ -1293,7 +1195,7 @@ def test_vector_subset_exact_and_optional_dep_guards(monkeypatch, tmp_path):
     assert "<ZoomLevel>12</ZoomLevel>" in xml_out
 
     # create_wmts_img_map handles a 1-band raster cleanly
-    tif1 = _write_raster(
+    tif1 = write_raster(
         str(tmp_path / "oneband.tif"),
         np.arange(16, dtype=np.uint8).reshape((4, 4)),
         crs="EPSG:3857",

@@ -10,10 +10,11 @@ import geopandas as gpd
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
 
 import rsgispy
 import rsgispy.segmentation as rseg
+
+from conftest import write_raster
 
 
 def _write_multiband_raster(
@@ -26,27 +27,9 @@ def _write_multiband_raster(
     crs: str = "EPSG:32630",
 ) -> None:
     """Helper to write a 2D or 3D GeoTIFF raster with optional nodata."""
-    if arr.ndim == 2:
-        count = 1
-        height, width = arr.shape
-        write_arr = arr[np.newaxis, :, :]
-    else:
-        count, height, width = arr.shape
-        write_arr = arr
-
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        width=width,
-        height=height,
-        count=count,
-        dtype=str(write_arr.dtype),
-        crs=crs,
-        transform=from_origin(origin_x, origin_y, pxl_size, pxl_size),
-        nodata=nodata,
-    ) as dst:
-        dst.write(write_arr)
+    return write_raster(
+        path, arr, nodata=nodata, crs=crs, origin=(origin_x, origin_y), pixel_size=pxl_size
+    )
 
 
 def _make_synthetic_scene(

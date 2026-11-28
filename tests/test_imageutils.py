@@ -4,7 +4,6 @@ thematic colour tables, overview pyramids, and integration with band_maths.
 """
 
 import json
-from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
@@ -39,24 +38,19 @@ import rsgispy.imageutils.vrt
 import rsgispy.imageutils.warp
 import rsgispy.imageutils.warp as img_warp
 
+from conftest import write_raster
+
 
 def _create_simple_raster(path, data, dtype="float32"):
     """Write a single-band or multi-band test GeoTIFF."""
-    if data.ndim == 2:
-        data = data[np.newaxis, :, :]
-    count, height, width = data.shape
-    with rasterio.open(
+    return write_raster(
         path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
+        data,
         dtype=dtype,
         crs="EPSG:4326",
-        transform=from_origin(0.0, float(height), 1.0, 1.0),
-    ) as dst:
-        dst.write(data.astype(dtype))
+        origin=(0.0, float(data.shape[-2])),
+        pixel_size=1.0,
+    )
 
 
 def test_env_vars_gtiff_and_cog_helpers(monkeypatch):
@@ -1121,25 +1115,16 @@ def _write_geo_raster(
     descriptions=None,
 ):
     """Helper to write a positioned rasterio GeoTIFF for tests."""
-    if data.ndim == 2:
-        data = data[np.newaxis, :, :]
-    count, height, width = data.shape
-    with rasterio.open(
+    return write_raster(
         path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=count,
+        data,
         dtype=dtype,
         crs=f"EPSG:{epsg}",
-        transform=from_origin(tl_x, tl_y, res, res),
+        origin=(tl_x, tl_y),
+        pixel_size=res,
         nodata=nodata,
-    ) as dst:
-        dst.write(data.astype(dtype))
-        if descriptions:
-            for bidx, desc in enumerate(descriptions, start=1):
-                dst.set_band_description(bidx, desc)
+        band_names=descriptions or None,
+    )
 
 
 def test_gdal_warp(tmp_path):
@@ -1854,35 +1839,10 @@ def test_interp_constants_match_rsgislib():
         assert getattr(rsgispy, name) == val, name
 
 
-def _write_raster(
-    path: Path,
-    arr: np.ndarray,
-    *,
-    transform: Affine = from_origin(500000.0, 5800000.0, 10.0, 10.0),
-    crs: object = "EPSG:32630",
-    nodata=None,
-) -> str:
-    data = arr[np.newaxis, :, :] if arr.ndim == 2 else arr
-    profile = {
-        "driver": "GTiff",
-        "height": int(data.shape[1]),
-        "width": int(data.shape[2]),
-        "count": int(data.shape[0]),
-        "dtype": str(data.dtype),
-        "crs": crs,
-        "transform": transform,
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(data)
-    return str(path)
-
-
 def test_reproject_image_preserves_src_nodata_and_bounds(tmp_path):
     arr = np.full((24, 24), 42.0, dtype=np.float32)
     arr[0:4, 0:4] = -9999.0
-    in_img = _write_raster(
+    in_img = write_raster(
         tmp_path / "utm.tif",
         arr,
         transform=from_origin(500000.0, 5800000.0, 100.0, 100.0),
@@ -1907,7 +1867,7 @@ def test_reproject_image_preserves_src_nodata_and_bounds(tmp_path):
 
 
 def test_rasterise_int64_na_and_deterministic_overlap(tmp_path):
-    ref_img = _write_raster(
+    ref_img = write_raster(
         tmp_path / "ref.tif",
         np.zeros((20, 20), dtype=np.int64),
         transform=from_origin(0.0, 200.0, 10.0, 10.0),
@@ -1949,7 +1909,7 @@ def test_mosaic_handles_nan_and_partial_overlap(tmp_path):
     t1 = np.full((10, 10), 5.0, dtype=np.float32)
     t1[2, 2] = np.nan
     t1[3, 3] = 0.0
-    img1 = _write_raster(
+    img1 = write_raster(
         tmp_path / "t1.tif",
         t1,
         transform=from_origin(0.0, 100.0, 10.0, 10.0),
@@ -1957,7 +1917,7 @@ def test_mosaic_handles_nan_and_partial_overlap(tmp_path):
     )
     t2 = np.full((10, 10), 9.0, dtype=np.float32)
     t2[2, 2] = 7.0
-    img2 = _write_raster(
+    img2 = write_raster(
         tmp_path / "t2.tif",
         t2,
         transform=from_origin(0.0, 100.0, 10.0, 10.0),
@@ -1989,7 +1949,7 @@ def test_blank_copy_and_buf_preserve_non_epsg_wkt_and_rotated_transform(tmp_path
         "+x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
     )
     rot_tf = Affine(8.0, 6.0, 1000.0, 6.0, -8.0, 2000.0)
-    ref_img = _write_raster(
+    ref_img = write_raster(
         tmp_path / "rot_ref.tif",
         np.ones((10, 12), dtype=np.float32),
         transform=rot_tf,
@@ -2017,41 +1977,11 @@ def test_blank_copy_and_buf_preserve_non_epsg_wkt_and_rotated_transform(tmp_path
         assert dst.transform == rot_tf @ Affine.translation(-2, -2)
 
 
-def _write_test_tif(
-    path,
-    data,
-    tl_x=500000.0,
-    tl_y=5200000.0,
-    res=10.0,
-    crs="EPSG:32630",
-    nodata=None,
-):
-    """Write a 2D or 3D GeoTIFF test image."""
-    # pylint: disable=too-many-arguments,too-many-positional-arguments
-    arr = np.asarray(data)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis, :, :]
-    count, height, width = arr.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(arr.dtype),
-        "crs": crs,
-        "transform": from_origin(tl_x, tl_y, res, res),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(str(path), "w", **profile) as dst:
-        dst.write(arr)
-
-
 def test_band_names_datatypes_formats_and_metadata(tmp_path):
     """Test band names, datatype queries, formats, layer rename/delete, and tags."""
     img = tmp_path / "meta.tif"
     arr = np.arange(2 * 4 * 5, dtype=np.float32).reshape(2, 4, 5)
-    _write_test_tif(img, arr)
+    write_raster(img, arr)
 
     iu_meta.set_band_names(str(img), ["Red", "NIR"], feedback=True)
     assert iu_meta.get_band_names(str(img)) == ["Red", "NIR"]
@@ -2117,12 +2047,10 @@ def test_image_checks_and_overlap(tmp_path):
     img4 = tmp_path / "d_wgs84.tif"
     z = np.zeros((10, 10), dtype=np.float32)
 
-    _write_test_tif(img1, z, tl_x=500000.0, tl_y=5200000.0, res=10.0)
-    _write_test_tif(img2, z, tl_x=500050.0, tl_y=5199950.0, res=10.0)
-    _write_test_tif(img3, z, tl_x=500000.0, tl_y=5200000.0, res=20.0)
-    _write_test_tif(
-        img4, z, tl_x=-3.05, tl_y=47.0, res=0.01, crs="EPSG:4326"
-    )
+    write_raster(img1, z)
+    write_raster(img2, z, origin=(500050.0, 5199950.0))
+    write_raster(img3, z, pixel_size=20.0)
+    write_raster(img4, z, origin=(-3.05, 47.0), pixel_size=0.01, crs="EPSG:4326")
 
     assert iu_chk.do_img_res_match(str(img1), str(img2))
     assert not iu_chk.do_img_res_match(str(img1), str(img3))
@@ -2221,7 +2149,7 @@ def test_sampling_functions(tmp_path):
     msk = np.zeros((10, 10), dtype=np.uint8)
     msk[1:5, 1:5] = 1
     msk[6:9, 6:9] = 2
-    _write_test_tif(msk_path, msk)
+    write_raster(msk_path, msk)
 
     sampled_msk = tmp_path / "sampled_msk.tif"
     iu_samp.perform_random_pxl_sample_in_mask(
@@ -2240,7 +2168,7 @@ def test_sampling_functions(tmp_path):
     img_path = tmp_path / "vals.tif"
     vals = np.arange(2 * 10 * 10, dtype=np.float32).reshape(2, 10, 10)
     vals[:, 0, 0] = -999.0
-    _write_test_tif(img_path, vals, nodata=-999.0)
+    write_raster(img_path, vals, nodata=-999.0)
 
     assert iu_samp.extract_img_pxl_sample(
         str(img_path), pxl_n_sample=10, no_data_val=-999.0

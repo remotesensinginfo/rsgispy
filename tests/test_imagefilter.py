@@ -12,29 +12,12 @@ import rsgispy
 import rsgispy.imagefilter as imf
 import rsgispy.imageprocess as img_proc
 
+from conftest import write_raster
+
 
 def _write_raster(path, data, nodata=None, descriptions=None):
     """Write a 2D or 3D GeoTIFF raster for filter testing."""
-    arr = np.asarray(data)
-    if arr.ndim == 2:
-        arr = arr[np.newaxis, :, :]
-    count, height, width = arr.shape
-    profile = {
-        "driver": "GTiff",
-        "height": height,
-        "width": width,
-        "count": count,
-        "dtype": str(arr.dtype),
-        "crs": "EPSG:32630",
-        "transform": from_origin(500000.0, 5200000.0, 10.0, 10.0),
-    }
-    if nodata is not None:
-        profile["nodata"] = nodata
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(arr)
-        if descriptions is not None:
-            for idx, desc in enumerate(descriptions, start=1):
-                dst.set_band_description(idx, desc)
+    return write_raster(path, data, nodata=nodata, band_names=descriptions)
 
 
 def test_window_stat_and_difference_filters(tmp_path):
