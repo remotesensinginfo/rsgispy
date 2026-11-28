@@ -172,8 +172,8 @@ Step 3 — Values at points
 :func:`~rsgispy.zonalstats.point.ext_point_band_values_file` reads the pixel
 under each point, for one band, a list of bands, or all bands
 (``img_band=None``). ``out_field`` gives one column name per band (or a
-prefix, giving ``<prefix>_<band>``). The column names are converted to lower
-case, so the columns here are ``blue``, ``green``, ``red`` and ``nir``.
+prefix, giving ``<prefix>_<band>``), written as given, so the columns here
+are ``Blue``, ``Green``, ``Red`` and ``NIR``.
 Points outside the image, or on a pixel outside ``[min_thres, max_thres]``,
 get ``out_no_data_val``.
 

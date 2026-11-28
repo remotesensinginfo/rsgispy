@@ -20,13 +20,9 @@ zonal statistics functions using ``rasterio`` and ``geopandas``.
   :class:`pandas.DataFrame` or tabular file (including compressed Parquet), use
   :func:`export_poly_pxls_to_df`.
 
-.. note::
-
-   The statistics functions lowercase the output column names they write,
-   as RSGISLib does: ``mean_field="B1_Mean"`` creates a column ``b1_mean``,
-   and the same applies to ``total_field`` and the ``vals_lut`` names in
-   :func:`calc_zonal_band_pxl_counts`. Use the lowercase names when reading
-   the results back.
+.. versionchanged:: 0.5.0
+   Output column names are written as given (e.g. ``mean_field="B1_Mean"``
+   creates ``B1_Mean``). They were lowercased, as in RSGISLib.
 """
 
 # pylint: disable=too-many-lines
@@ -287,7 +283,7 @@ def _calc_zonal_stats_core(
     for key, stat_vals in results.items():
         col_name = field_map[key]
         if col_name is not None:
-            vec_gdf[col_name.lower()] = stat_vals
+            vec_gdf[col_name] = stat_vals
 
     return vec_gdf
 
@@ -653,7 +649,7 @@ def calc_zonal_poly_pts_band_stats(
                     float(sampled) if sampled is not None else float("nan")
                 )
 
-    vec_gdf[out_field.lower()] = out_vals
+    vec_gdf[out_field] = out_vals
     return vec_gdf
 
 
@@ -1039,8 +1035,8 @@ def calc_zonal_band_pxl_counts(
         vec_gdf, input_img, img_band, vec_def_epsg=vec_def_epsg,
         reproj_vec=reproj_vec,
     ) as (src, img_nodata, geom_series):
-        total_col = total_field.lower()
-        lut_cols = {pxl_val: name.lower() for pxl_val, name in vals_lut.items()}
+        total_col = total_field
+        lut_cols = dict(vals_lut)
         totals: List[float] = []
         nodata_counts: List[float] = []
         counts_by_val: Dict[int, List[float]] = {
@@ -1070,7 +1066,7 @@ def calc_zonal_band_pxl_counts(
 
     vec_gdf[total_col] = totals
     if nodata_field is not None:
-        vec_gdf[nodata_field.lower()] = nodata_counts
+        vec_gdf[nodata_field] = nodata_counts
     for pxl_val, col_name in lut_cols.items():
         vec_gdf[col_name] = counts_by_val[pxl_val]
 

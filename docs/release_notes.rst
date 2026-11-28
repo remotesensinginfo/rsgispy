@@ -58,6 +58,8 @@ Grids, CRSs and vectors
   writes the number of no-data pixels to ``nodata_field``
   (``'nodata_count'``).
 * The polygon zonal statistics take ``reproj_vec``.
+* Zonal statistics and point extraction write column names as given; they
+  were lowercased (``mean_field="B1_Mean"`` gave ``b1_mean``).
 * ``merge_utm_vecs_wgs84`` splits features at WGS84 zone boundaries and keeps
   point and line layers.
 * UTM helpers handle longitude 180, the Norway and Svalbard exceptions and

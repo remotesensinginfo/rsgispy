@@ -67,18 +67,18 @@ def test_calc_zonal_band_stats_and_file(tmp_path):
 
     # Valid pixels in poly1: [1,2,2,4, 1,2,10, 3,3,4,5, 8,8,8] -> 14 pixels
     expected_vals = np.array([1, 2, 2, 4, 1, 2, 10, 3, 3, 4, 5, 8, 8, 8], dtype=float)
-    assert out_gdf.loc[0, "minval"] == pytest.approx(expected_vals.min())
-    assert out_gdf.loc[0, "maxval"] == pytest.approx(expected_vals.max())
-    assert out_gdf.loc[0, "meanval"] == pytest.approx(expected_vals.mean())
-    assert out_gdf.loc[0, "stdval"] == pytest.approx(expected_vals.std())
-    assert out_gdf.loc[0, "sumval"] == pytest.approx(expected_vals.sum())
-    assert out_gdf.loc[0, "countval"] == pytest.approx(14.0)
-    assert out_gdf.loc[0, "modeval"] == pytest.approx(2.0)
-    assert out_gdf.loc[0, "medval"] == pytest.approx(np.median(expected_vals))
+    assert out_gdf.loc[0, "MinVal"] == pytest.approx(expected_vals.min())
+    assert out_gdf.loc[0, "MaxVal"] == pytest.approx(expected_vals.max())
+    assert out_gdf.loc[0, "MeanVal"] == pytest.approx(expected_vals.mean())
+    assert out_gdf.loc[0, "StdVal"] == pytest.approx(expected_vals.std())
+    assert out_gdf.loc[0, "SumVal"] == pytest.approx(expected_vals.sum())
+    assert out_gdf.loc[0, "CountVal"] == pytest.approx(14.0)
+    assert out_gdf.loc[0, "ModeVal"] == pytest.approx(2.0)
+    assert out_gdf.loc[0, "MedVal"] == pytest.approx(np.median(expected_vals))
 
     # Poly 2 has only 999.0 which is > max_thres=100.0 -> out_no_data_val for stats, 0 for count
-    assert out_gdf.loc[1, "meanval"] == pytest.approx(-1.0)
-    assert out_gdf.loc[1, "countval"] == pytest.approx(0.0)
+    assert out_gdf.loc[1, "MeanVal"] == pytest.approx(-1.0)
+    assert out_gdf.loc[1, "CountVal"] == pytest.approx(0.0)
 
     # File-based GPKG test
     gpkg_path = str(tmp_path / "polys.gpkg")
@@ -140,8 +140,8 @@ def test_calc_zonal_poly_pts_and_test_poly_pts(tmp_path):
     )
     res_cent = gpd.read_file(gpkg_path, layer="zones")
     # Centroid of big_poly is (500010, 5199990) -> row 1, col 1 -> value 7.0
-    assert res_cent.loc[0, "centval"] == pytest.approx(7.0)
-    assert res_cent.loc[1, "centval"] == pytest.approx(14.0)
+    assert res_cent.loc[0, "CentVal"] == pytest.approx(7.0)
+    assert res_cent.loc[1, "CentVal"] == pytest.approx(14.0)
 
     zs_poly.calc_zonal_band_stats_test_poly_pts_file(
         gpkg_path,
@@ -158,15 +158,15 @@ def test_calc_zonal_poly_pts_and_test_poly_pts(tmp_path):
         count_field="CntV",
     )
     res_hybrid = gpd.read_file(gpkg_path, layer="zones")
-    assert res_hybrid.loc[0, "meanv"] == pytest.approx(np.mean([1.0, 2.0, 6.0, 7.0]))
-    assert res_hybrid.loc[0, "p50"] == pytest.approx(4.0)
-    assert res_hybrid.loc[0, "cntv"] == pytest.approx(4.0)
+    assert res_hybrid.loc[0, "MeanV"] == pytest.approx(np.mean([1.0, 2.0, 6.0, 7.0]))
+    assert res_hybrid.loc[0, "P50"] == pytest.approx(4.0)
+    assert res_hybrid.loc[0, "CntV"] == pytest.approx(4.0)
 
     # Tiny poly falls back to centroid -> val=14.0, std=0.0, count=1.0
-    assert res_hybrid.loc[1, "meanv"] == pytest.approx(14.0)
-    assert res_hybrid.loc[1, "stdv"] == pytest.approx(0.0)
-    assert res_hybrid.loc[1, "cntv"] == pytest.approx(1.0)
-    assert res_hybrid.loc[1, "p50"] == pytest.approx(14.0)
+    assert res_hybrid.loc[1, "MeanV"] == pytest.approx(14.0)
+    assert res_hybrid.loc[1, "StdV"] == pytest.approx(0.0)
+    assert res_hybrid.loc[1, "CntV"] == pytest.approx(1.0)
+    assert res_hybrid.loc[1, "P50"] == pytest.approx(14.0)
 
     # Percentile validation errors
     with pytest.raises(rsgispy.RSGISPyException):
@@ -208,11 +208,11 @@ def test_calc_zonal_band_pxl_counts_and_ext_point_band_values(tmp_path):
     )
     cat_res = gpd.read_file(poly_gpkg, layer="cats")
     # 16 pixels, one of them nodata (9): the total counts the 15 valid ones.
-    assert cat_res.loc[0, "totalpxls"] == pytest.approx(15.0)
+    assert cat_res.loc[0, "TotalPxls"] == pytest.approx(15.0)
     assert cat_res.loc[0, "nodata_count"] == pytest.approx(1.0)
-    assert cat_res.loc[0, "c1"] == pytest.approx(5.0)
-    assert cat_res.loc[0, "c2"] == pytest.approx(5.0)
-    assert cat_res.loc[0, "c3"] == pytest.approx(5.0)
+    assert cat_res.loc[0, "C1"] == pytest.approx(5.0)
+    assert cat_res.loc[0, "C2"] == pytest.approx(5.0)
+    assert cat_res.loc[0, "C3"] == pytest.approx(5.0)
 
     # Point extraction in same CRS + out-of-bounds + nodata/threshold
     pts_gdf = gpd.GeoDataFrame(
@@ -234,7 +234,7 @@ def test_calc_zonal_band_pxl_counts_and_ext_point_band_values(tmp_path):
         out_no_data_val=-1.0,
         out_field="SampleVal",
     )
-    assert list(pts_out["sampleval"]) == pytest.approx([1.0, -1.0, 1.0, -1.0])
+    assert list(pts_out["SampleVal"]) == pytest.approx([1.0, -1.0, 1.0, -1.0])
 
     # Point extraction from WGS84 file with reproj_vec=True
     pts_wgs_file = str(tmp_path / "pts_wgs84.geojson")
@@ -252,7 +252,7 @@ def test_calc_zonal_band_pxl_counts_and_ext_point_band_values(tmp_path):
     )
     pts_reproj_read = gpd.read_file(pts_wgs_file)
     assert str(pts_reproj_read.crs.to_epsg()) == "4326"
-    assert list(pts_reproj_read["valreproj"]) == pytest.approx([1.0, -1.0])
+    assert list(pts_reproj_read["ValReproj"]) == pytest.approx([1.0, -1.0])
 
     # Mismatched CRS without reproj_vec raises
     with pytest.raises(rsgispy.RSGISPyException):
@@ -389,8 +389,8 @@ def test_ext_point_band_values_multiband(tmp_path):
         out_no_data_val=-1.0,
         out_field=["B1", "B3"],
     )
-    assert list(res_list["b1"]) == pytest.approx([10.0, -1.0, 30.0, -1.0])
-    assert list(res_list["b3"]) == pytest.approx([1.5, 4.5, -1.0, -1.0])
+    assert list(res_list["B1"]) == pytest.approx([10.0, -1.0, 30.0, -1.0])
+    assert list(res_list["B3"]) == pytest.approx([1.5, 4.5, -1.0, -1.0])
 
     # List of bands with prefix string
     res_pref = zs_pt.ext_point_band_values(
@@ -402,9 +402,9 @@ def test_ext_point_band_values_multiband(tmp_path):
         out_no_data_val=-1.0,
         out_field="S2",
     )
-    assert list(res_pref["s2_1"]) == pytest.approx([10.0, -1.0, 30.0, -1.0])
-    assert list(res_pref["s2_2"]) == pytest.approx([100.0, 400.0, 300.0, -1.0])
-    assert list(res_pref["s2_3"]) == pytest.approx([1.5, 4.5, -1.0, -1.0])
+    assert list(res_pref["S2_1"]) == pytest.approx([10.0, -1.0, 30.0, -1.0])
+    assert list(res_pref["S2_2"]) == pytest.approx([100.0, 400.0, 300.0, -1.0])
+    assert list(res_pref["S2_3"]) == pytest.approx([1.5, 4.5, -1.0, -1.0])
 
     # All bands (img_band=None) with default band_<n> names
     res_all = zs_pt.ext_point_band_values(
@@ -451,7 +451,7 @@ def test_ext_point_band_values_multiband(tmp_path):
         )
     with pytest.raises(rsgispy.RSGISPyException):
         zs_pt.ext_point_band_values(
-            pts_gdf.copy(), tif_path, [1, 2], 0.0, 500.0, -1.0, out_field=["a", "A"]
+            pts_gdf.copy(), tif_path, [1, 2], 0.0, 500.0, -1.0, out_field=["a", "a"]
         )
 
 
@@ -983,7 +983,7 @@ def test_calc_zonal_band_pxl_counts_total_is_valid_pixels(tmp_path):
     named = zs_poly.calc_zonal_band_pxl_counts(
         gdf.copy(), tif_path, 1, {1: "c1"}, nodata_field="ND", use_pbar=False
     )
-    assert named["nd"].iloc[0] == 1
+    assert named["ND"].iloc[0] == 1
     skipped = zs_poly.calc_zonal_band_pxl_counts(
         gdf.copy(), tif_path, 1, {1: "c1"}, nodata_field=None, use_pbar=False
     )

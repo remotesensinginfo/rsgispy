@@ -2,11 +2,10 @@
 The zonalstats.point module provides point-in-pixel zonal extraction functions
 using ``rasterio`` and ``geopandas``.
 
-.. note::
-
-   Output column names are lowercased, as RSGISLib does: ``out_field="B1"``
-   creates ``b1`` (or ``b1_<band>`` for each band when several are read), and names in
-   an explicit field list are lowercased too.
+.. versionchanged:: 0.5.0
+   Output column names are written as given: ``out_field="B1"`` creates
+   ``B1`` (or ``B1_<band>`` for each band when several are read). They were
+   lowercased, as in RSGISLib.
 """
 
 import math
@@ -44,7 +43,7 @@ def _resolve_point_out_fields(
             raise rsgispy.RSGISPyException(
                 "Output field specified as empty, a name needs to be given."
             )
-        return [out_field.lower()]
+        return [out_field]
 
     if out_field is None:
         cols = [f"band_{b}" for b in bands]
@@ -53,7 +52,7 @@ def _resolve_point_out_fields(
             raise rsgispy.RSGISPyException(
                 "Output field specified as empty, a name needs to be given."
             )
-        cols = [f"{out_field.lower()}_{b}" for b in bands]
+        cols = [f"{out_field}_{b}" for b in bands]
     else:
         field_list = [str(f) for f in out_field]
         if not field_list or any(not f.strip() for f in field_list):
@@ -65,7 +64,7 @@ def _resolve_point_out_fields(
                 f"Number of out_field names ({len(field_list)}) must match "
                 f"number of bands ({len(bands)})."
             )
-        cols = [f.lower() for f in field_list]
+        cols = list(field_list)
 
     if len(set(cols)) != len(cols):
         raise rsgispy.RSGISPyException(

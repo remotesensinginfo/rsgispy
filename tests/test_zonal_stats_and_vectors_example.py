@@ -56,8 +56,8 @@ def test_worked_example_runs(tmp_path):
     assert fields["ndvi_count"].max() == FIELD_PX * FIELD_PX
 
     pts = gpd.read_file(out["plots_vals_vec"])
-    assert {"blue", "green", "red", "nir"} <= set(pts.columns)
-    assert (pts["nir"] > 0).all()
+    assert {"Blue", "Green", "Red", "NIR"} <= set(pts.columns)
+    assert (pts["NIR"] > 0).all()
 
     stats = out["stats_df"]
     assert {"field_id", "pxl_count", "NIR_mean", "ndvi_median"} <= set(stats.columns)
