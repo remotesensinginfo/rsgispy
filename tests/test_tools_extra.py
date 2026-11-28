@@ -2,14 +2,16 @@
 
 import io
 import os
+import stat
 import sys
 import types
+from unittest.mock import patch
 
 import numpy as np
+import pyproj
 import pytest
 import rasterio
 from PIL import Image
-import pyproj
 
 import rsgispy
 import rsgispy.tools.ftp as ftp
@@ -21,10 +23,6 @@ import rsgispy.tools.tilecache as tilecache
 import rsgispy.tools.utm as utm
 import rsgispy.tools.web as web
 import rsgispy.tools.wmts as wmts
-import rsgispy.tools.http as http_tools
-import stat
-import rsgispy.tools.ftp as ftp_tools
-from unittest.mock import patch
 
 
 def test_maths_round_to_nearest_val():
@@ -429,6 +427,7 @@ def test_optional_requests_missing_tools(tmp_path):
     """Verify web and http prevent executing optional-dep functions when missing."""
     import importlib
     from unittest.mock import patch
+
     import rsgispy.tools as rtools
 
     orig_web = web
@@ -516,6 +515,7 @@ def test_optional_pysondb_missing_tools():
     """Verify http and ftp expose pysondb functions and raise RSGISPyException."""
     import importlib
     from unittest.mock import patch
+
     import rsgispy.tools as rtools
 
     orig_http = http
@@ -571,6 +571,7 @@ def test_optional_imaging_missing():
     """Verify imaging exposes functions and raises RSGISPyException when deps missing."""
     import importlib
     from unittest.mock import patch
+
     import rsgispy.tools as rtools
 
     orig_imaging = imaging
@@ -879,15 +880,15 @@ def test_http_json_rejects_5xx_and_wget_security_options(tmp_path, monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setattr(http_tools, "HAVE_REQUESTS", True)
+    monkeypatch.setattr(http, "HAVE_REQUESTS", True)
     monkeypatch.setattr(
-        http_tools,
+        http,
         "requests",
         types.SimpleNamespace(post=lambda *args, **kwargs: _Resp500()),
         raising=False,
     )
     with pytest.raises(rsgispy.RSGISPyException, match="500"):
-        http_tools.send_http_json_request("https://example.com/api", {"a": 1})
+        http.send_http_json_request("https://example.com/api", {"a": 1})
 
     recorded_cmds = []
     recorded_cfg = {}
@@ -903,10 +904,10 @@ def test_http_json_rejects_5xx_and_wget_security_options(tmp_path, monkeypatch):
                     recorded_cfg["content"] = fp.read()
         return 0
 
-    monkeypatch.setattr(http_tools.subprocess, "call", _fake_call)
+    monkeypatch.setattr(http.subprocess, "call", _fake_call)
 
     out_path = str(tmp_path / "file.bin")
-    ok, _ = http_tools.wget_download_file(
+    ok, _ = http.wget_download_file(
         "https://example.com/file.bin",
         out_path,
         username="alice",
@@ -921,14 +922,14 @@ def test_http_json_rejects_5xx_and_wget_security_options(tmp_path, monkeypatch):
         assert recorded_cfg["mode"] == 0o600
     assert not os.path.exists(recorded_cfg["path"])
 
-    ok2, _ = http_tools.wget_download_file(
+    ok2, _ = http.wget_download_file(
         "https://example.com/file.bin", out_path, verify_ssl=False
     )
     assert ok2 is True
     assert "--no-check-certificate" in recorded_cmds[1]
 
     with pytest.raises(rsgispy.RSGISPyException, match="newline"):
-        http_tools.wget_download_file(
+        http.wget_download_file(
             "https://example.com/file.bin",
             out_path,
             username="alice\nbad",
@@ -939,12 +940,12 @@ def test_http_json_rejects_5xx_and_wget_security_options(tmp_path, monkeypatch):
 def test_ftp_list_parser_spaces_and_special_entries():
     """Preserve spaces in FTP LIST filenames and ignore total/. /.. entries."""
     # pylint: disable=protected-access
-    assert ftp_tools._parse_ftp_list_line("") is None
-    assert ftp_tools._parse_ftp_list_line("total 42") is None
-    assert ftp_tools._parse_ftp_list_line(
+    assert ftp._parse_ftp_list_line("") is None
+    assert ftp._parse_ftp_list_line("total 42") is None
+    assert ftp._parse_ftp_list_line(
         "-rw-r--r-- 1 user group 1024 Jun 01 12:00 my raster file.tif"
     ) == (False, "my raster file.tif")
-    assert ftp_tools._parse_ftp_list_line(
+    assert ftp._parse_ftp_list_line(
         "drwxr-xr-x 2 user group 4096 Jun 01 12:00 sub folder"
     ) == (True, "sub folder")
 
@@ -970,7 +971,7 @@ def test_ftp_list_parser_spaces_and_special_entries():
                 callback(ln)
 
     ftp_files = {}
-    non_dirs = ftp_tools._traverse_nlst_ftp_dirs(
+    non_dirs = ftp._traverse_nlst_ftp_dirs(
         _FakeFTP(), "/root", ftp_files, try_n_times=1
     )
     assert "/root/data dir" in ftp_files

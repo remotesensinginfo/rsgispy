@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 import rasterio
 from rasterio.transform import from_origin
+from sklearn.cluster import KMeans
 
 import rsgispy
 import rsgispy.classification as rcls
@@ -17,11 +18,10 @@ import rsgispy.classification.classdata as rcd
 import rsgispy.classification.classsklearn as rcsk
 import rsgispy.classification.clustersklearn as rclsk
 import rsgispy.imageutils.colourtable as rct
-from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
-from rsgispy.ml.predict import predict_raster_node
 from rsgispy.classification.clustersklearn import img_pixel_cluster
-from sklearn.cluster import KMeans
+from rsgispy.imageprocess import DiskSink, RasterSource, TileGraph
 from rsgispy.imageutils.masking import ImageBandInfo
+from rsgispy.ml.predict import predict_raster_node
 
 
 def _write_raster(

@@ -3,17 +3,15 @@ Tests for rsgispy.imagemorphology.
 """
 
 import inspect
+from pathlib import Path
 
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
+from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.imagemorphology as rimorph
-import rsgispy.imagemorphology as morph
-from rasterio.transform import Affine
-from pathlib import Path
 
 
 def _write_raster(path, arr, dtype="uint8", nodata=None):
@@ -516,10 +514,10 @@ def test_morphology_edge_padding_and_no_nodata_bleed(tmp_path):
     in_img = _write_geotiff(tmp_path / "morph_in.tif", arr, nodata=-9999.0)
 
     op_file = str(tmp_path / "op3.gmtxt")
-    morph.create_circular_op(op_file, 3)
+    rimorph.create_circular_op(op_file, 3)
 
     out_erode = str(tmp_path / "erode.tif")
-    morph.image_erode(
+    rimorph.image_erode(
         in_img,
         out_erode,
         op_file,
@@ -529,7 +527,7 @@ def test_morphology_edge_padding_and_no_nodata_bleed(tmp_path):
         use_pbar=False,
     )
     out_dilate = str(tmp_path / "dilate.tif")
-    morph.image_dilate(
+    rimorph.image_dilate(
         in_img,
         out_dilate,
         op_file,
@@ -539,7 +537,7 @@ def test_morphology_edge_padding_and_no_nodata_bleed(tmp_path):
         use_pbar=False,
     )
     out_open = str(tmp_path / "open.tif")
-    morph.image_opening(
+    rimorph.image_opening(
         in_img,
         out_open,
         op_file,

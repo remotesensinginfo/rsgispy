@@ -16,8 +16,8 @@ from shapely.geometry import LineString, Point
 
 import rsgispy
 from rsgispy import RSGISPyException
-from rsgispy.elevation import hydrology
 from rsgispy._numba import disable_numba
+from rsgispy.elevation import hydrology
 from rsgispy.elevation._hydro_kernels import _dinf_targets
 from rsgispy.imagecalc.maths import BandDefn, band_maths
 

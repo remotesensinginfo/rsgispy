@@ -3,19 +3,18 @@ Tests for rsgispy.elevation.
 """
 
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
+from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.elevation.filtering as elev_filt
 import rsgispy.elevation.fusion as elev_fus
 import rsgispy.elevation.illumination as elev_illum
 import rsgispy.elevation.terrain as elev_terr
-from rasterio.transform import Affine
-from pathlib import Path
 
 
 def _write_raster(path, arr, res=10.0, nodata=None, crs="EPSG:32630"):

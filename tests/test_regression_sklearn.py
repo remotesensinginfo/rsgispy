@@ -28,8 +28,7 @@ import rsgispy
 import rsgispy.imageutils.colourtable as rct
 import rsgispy.regression.regdata as rrd
 import rsgispy.regression.regsklearn as rsk
-from rsgispy.regression.regsklearn import load_sklearn_regressor
-from rsgispy.regression.regsklearn import save_sklearn_regressor
+from rsgispy.regression.regsklearn import load_sklearn_regressor, save_sklearn_regressor
 
 
 def _write_raster(

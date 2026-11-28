@@ -7,23 +7,21 @@ import os
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import pytest
 import rasterio
 from rasterio.transform import from_origin
 from shapely.geometry import LineString, MultiPolygon, Point, Polygon, box
 
 import rsgispy
-import rsgispy.vectorprocess
 import rsgispy.vector
 import rsgispy.vector.io as vu_io
 import rsgispy.vector.io as vu_meta
 import rsgispy.vector.selection as vu_sel
 import rsgispy.vector.stats as vs_metrics
-from rsgispy import vectorprocess as vp
+import rsgispy.vectorprocess
 from rsgispy import RSGISPyException
-from rsgispy.vector import io as vec_io
-from rsgispy.vector import selection as vec_sel
-import pandas as pd
+from rsgispy import vectorprocess as vp
 
 
 def _write_test_raster(
@@ -819,6 +817,7 @@ def test_convert_gpx_to_vec(tmp_path):
 def test_vector_consolidation_bbox_and_uniform_vector_input(tmp_path):
     """Verify rsgispy.vector consolidation, BBox returns, and uniform VectorInput parity."""
     import importlib
+
     from shapely.geometry import MultiPolygon
 
     # Legacy top-level packages must be removed (no backwards-compat aliases)
@@ -1088,15 +1087,15 @@ def test_vector_io_invalid_inputs_raise_rsgispy_exception(tmp_path):
         {"id": [1]}, geometry=[Point(0, 0)], crs="EPSG:4326"
     )
     out_json = str(tmp_path / "out.geojson")
-    lyr1 = vec_io.VecLayersInfoObj(gdf, None, "l1")
-    lyr2 = vec_io.VecLayersInfoObj(gdf, None, "l2")
+    lyr1 = vu_io.VecLayersInfoObj(gdf, None, "l1")
+    lyr2 = vu_io.VecLayersInfoObj(gdf, None, "l2")
     with pytest.raises(RSGISPyException):
-        vec_io.merge_to_multi_lyr_vec(
+        vu_io.merge_to_multi_lyr_vec(
             [lyr1, lyr2], out_json, out_format="GeoJSON"
         )
 
     with pytest.raises(RSGISPyException):
-        vec_io.merge_vec_lyrs([], out_vec_file=None)
+        vu_io.merge_vec_lyrs([], out_vec_file=None)
 
 
 def test_selection_crs_alignment_ckdtree_iloc_na_regex_and_empty_roi(
@@ -1114,10 +1113,10 @@ def test_selection_crs_alignment_ckdtree_iloc_na_regex_and_empty_roi(
         geometry=[box(0, 0, 5, 5), box(5, 5, 10, 10)],
         crs="EPSG:32630",
     )
-    assert vec_sel.get_att_lst_select_feats(
+    assert vu_sel.get_att_lst_select_feats(
         left_gdf, None, ["name"], right_gdf, None
     ) == [{"name": "poly_a"}]
-    assert vec_sel.get_att_lst_select_bbox_feats(
+    assert vu_sel.get_att_lst_select_bbox_feats(
         left_gdf, None, ["name"], (0.0, 10.0, 0.0, 10.0), bbox_epsg=32630
     ) == [{"name": "poly_a"}]
 
@@ -1132,7 +1131,7 @@ def test_selection_crs_alignment_ckdtree_iloc_na_regex_and_empty_roi(
         geometry=[Point(500005.0, 5200000.0), Point(505000.0, 5200000.0)],
         crs="EPSG:32630",
     ).to_crs("EPSG:4326")
-    matched = vec_sel.match_closest_vec_pts(
+    matched = vu_sel.match_closest_vec_pts(
         pts_utm,
         None,
         ref_wgs84,
@@ -1145,8 +1144,8 @@ def test_selection_crs_alignment_ckdtree_iloc_na_regex_and_empty_roi(
     assert matched["match_ref_id"].iloc[0] == "near"
     assert matched["dist_match"].iloc[0] == pytest.approx(5.0, abs=0.5)
 
-    monkeypatch.setattr(vec_sel, "HAVE_SCIPY", False)
-    matched_np = vec_sel.match_closest_vec_pts(
+    monkeypatch.setattr(vu_sel, "HAVE_SCIPY", False)
+    matched_np = vu_sel.match_closest_vec_pts(
         pts_utm,
         None,
         ref_wgs84,
@@ -1169,11 +1168,11 @@ def test_selection_crs_alignment_ckdtree_iloc_na_regex_and_empty_roi(
         index=[10, 20, 30, 40, 50, 60],
         crs="EPSG:32630",
     )
-    rem_gdf, sub_gdf = vec_sel.split_vec_lyr_random_subset(
+    rem_gdf, sub_gdf = vu_sel.split_vec_lyr_random_subset(
         idx_gdf, None, None, None, None, None, n_smpl=2, rnd_seed=42
     )
     assert len(sub_gdf) == 2 and len(rem_gdf) == 4
-    train_gdf, test_gdf = vec_sel.create_train_test_smpls(
+    train_gdf, test_gdf = vu_sel.create_train_test_smpls(
         idx_gdf, None, prop_test=0.34, rnd_seed=42
     )
     assert len(test_gdf) == 2 and len(train_gdf) == 4
@@ -1184,7 +1183,7 @@ def test_selection_crs_alignment_ckdtree_iloc_na_regex_and_empty_roi(
         geometry=[Point(i, 0) for i in range(4)],
         crs="EPSG:4326",
     )
-    sub_lit = vec_sel.subset_by_attribute(
+    sub_lit = vu_sel.subset_by_attribute(
         attr_gdf,
         None,
         sub_col="label",
@@ -1194,7 +1193,7 @@ def test_selection_crs_alignment_ckdtree_iloc_na_regex_and_empty_roi(
     )
     assert list(sub_lit["label"]) == ["a[1]x"]
     with pytest.raises(RSGISPyException):
-        vec_sel.subset_by_attribute(
+        vu_sel.subset_by_attribute(
             attr_gdf,
             None,
             sub_col="label",
@@ -1212,7 +1211,7 @@ def test_selection_crs_alignment_ckdtree_iloc_na_regex_and_empty_roi(
         geometry=[Point(0, 0), Point(1, 1), Point(2, 2)],
         crs="EPSG:4326",
     )
-    kept = vec_sel.drop_rows_by_multi_attributes(
+    kept = vu_sel.drop_rows_by_multi_attributes(
         na_gdf,
         None,
         drop_atts={"k": "drop", "v": 99},
@@ -1228,4 +1227,4 @@ def test_selection_crs_alignment_ckdtree_iloc_na_regex_and_empty_roi(
     empty_roi = gpd.GeoDataFrame(
         {"id": []}, geometry=gpd.GeoSeries([], crs="EPSG:32630"), crs="EPSG:32630"
     )
-    assert vec_sel.does_vmsk_img_intersect(tif, empty_roi, None) is False
+    assert vu_sel.does_vmsk_img_intersect(tif, empty_roi, None) is False

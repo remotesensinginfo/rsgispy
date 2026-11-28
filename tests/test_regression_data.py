@@ -9,6 +9,7 @@ from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import pytest
 import rasterio
 from rasterio.transform import from_origin
@@ -18,7 +19,6 @@ import rsgispy
 import rsgispy.regression as rreg
 import rsgispy.regression.regdata as rrd
 from rsgispy.regression.regdata import split_reg_samples
-import pandas as pd
 
 _HAS_PARQUET = (
     importlib.util.find_spec("pyarrow") is not None

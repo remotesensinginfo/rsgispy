@@ -12,7 +12,11 @@ import pytest
 import rasterio
 from rasterio.transform import from_origin
 from shapely.geometry import Point
-from sklearn.ensemble import GradientBoostingClassifier, IsolationForest, RandomForestClassifier
+from sklearn.ensemble import (
+    GradientBoostingClassifier,
+    IsolationForest,
+    RandomForestClassifier,
+)
 from sklearn.model_selection import GridSearchCV
 
 import rsgispy

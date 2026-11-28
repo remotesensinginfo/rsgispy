@@ -5,6 +5,8 @@ Tests for rsgispy.tools utility modules split from utils
 
 import datetime
 import json
+import os
+import stat
 
 import numpy as np
 import pytest
@@ -20,9 +22,6 @@ import rsgispy.tools.maths as rmaths
 import rsgispy.tools.strings as rstrings
 import rsgispy.tools.system as rsystem
 import rsgispy.tools.textio as rtextio
-import rsgispy.tools.credentials as credentials
-import os
-import stat
 
 
 class _CustomJsonObj:
@@ -255,7 +254,7 @@ def test_combinatorics_dates_dict_struct_and_encoding(tmp_path):
 def test_credentials_file_permissions_and_roundtrip(tmp_path):
     """Credential files are created with 0o600 permissions and roundtrip cleanly."""
     cred_file = str(tmp_path / "creds.txt")
-    credentials.create_username_password_file("alice", "s3cr3t!", cred_file)
+    rcreds.create_username_password_file("alice", "s3cr3t!", cred_file)
     if os.name != "nt":
         assert stat.S_IMODE(os.stat(cred_file).st_mode) == 0o600
-    assert credentials.get_username_password(cred_file) == ("alice", "s3cr3t!")
+    assert rcreds.get_username_password(cred_file) == ("alice", "s3cr3t!")

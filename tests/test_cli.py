@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
+import sys
+import warnings
+from types import SimpleNamespace
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
+import pyproj
 import pytest
 import rasterio
 from rasterio.transform import from_origin
-from shapely.geometry import Polygon
+from shapely.geometry import Point, Polygon
 
 from rsgispy import RSGISPyException
 from rsgispy.cli import (
@@ -34,13 +40,6 @@ from rsgispy.cli._common import (
 )
 from rsgispy.imageutils.metadata import get_band_names, set_band_names
 from rsgispy.tools.credentials import get_username_password
-import sys
-import datetime
-from shapely.geometry import Point
-import pandas as pd
-import pyproj
-from types import SimpleNamespace
-import warnings
 
 
 def _make_geotiff(

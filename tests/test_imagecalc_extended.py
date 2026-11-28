@@ -6,11 +6,12 @@ rescale, distance, and fill.
 import importlib
 import inspect
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
+from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.imagecalc.comparison as ic_cmp
@@ -19,11 +20,6 @@ import rsgispy.imagecalc.encoding as ic_enc
 import rsgispy.imagecalc.fill as ic_fill
 import rsgispy.imagecalc.rescale as ic_resc
 import rsgispy.imagecalc.stats as ic_stats
-import rsgispy.imagecalc.fill as img_fill
-from rasterio.transform import Affine
-from pathlib import Path
-import rsgispy.imagecalc.encoding as img_enc
-import rsgispy.imagecalc.stats as calc_stats
 
 
 def _write_raster(
@@ -1991,7 +1987,7 @@ def test_calc_fill_regions_knn_nan_fill_val_and_int_clamp(tmp_path):
     msk_img = _write_geotiff(tmp_path / "knn_msk.tif", mask_arr)
     out_img = str(tmp_path / "knn_out.tif")
 
-    img_fill.calc_fill_regions_knn(
+    ic_fill.calc_fill_regions_knn(
         in_ref_img=ref_img,
         in_fill_regions_img=msk_img,
         output_img=out_img,
@@ -2016,7 +2012,7 @@ def test_recode_int_raster_remaps_and_validates_nodata(tmp_path):
 
     # Case 1: nodata remapped via recode_dict into valid uint8 range
     out1 = str(tmp_path / "enc_out1.tif")
-    img_enc.recode_int_raster(
+    ic_enc.recode_int_raster(
         input_img=in_img,
         output_img=out1,
         recode_dict={-9999: 255, 1: 10, 2: 20},
@@ -2030,7 +2026,7 @@ def test_recode_int_raster_remaps_and_validates_nodata(tmp_path):
 
     # Case 2: nodata not in dict, keep_vals_not_in_dict=True, out of uint8 range
     out2 = str(tmp_path / "enc_out2.tif")
-    img_enc.recode_int_raster(
+    ic_enc.recode_int_raster(
         input_img=in_img,
         output_img=out2,
         recode_dict={1: 10, 2: 20},
@@ -2047,9 +2043,9 @@ def test_count_pxls_of_val_single_band(tmp_path):
     b2 = np.array([[3, 3, 3], [3, 1, 1]], dtype=np.uint8)
     in_img = _write_geotiff(tmp_path / "cnt.tif", np.stack([b1, b2], axis=0))
 
-    c1 = calc_stats.count_pxls_of_val(in_img, [1, 2, 3], img_band=1, use_pbar=False)
-    c2 = calc_stats.count_pxls_of_val(in_img, [1, 2, 3], img_band=2, use_pbar=False)
-    call = calc_stats.count_pxls_of_val(
+    c1 = ic_stats.count_pxls_of_val(in_img, [1, 2, 3], img_band=1, use_pbar=False)
+    c2 = ic_stats.count_pxls_of_val(in_img, [1, 2, 3], img_band=2, use_pbar=False)
+    call = ic_stats.count_pxls_of_val(
         in_img, [1, 2, 3], img_band=None, use_pbar=False
     )
     np.testing.assert_array_equal(c1, [2, 2, 2])

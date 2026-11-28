@@ -12,11 +12,15 @@ import matplotlib
 import matplotlib.colors
 
 matplotlib.use("Agg")
+import builtins
+import shutil
+
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.collections import LineCollection  # noqa: E402
 import numpy as np  # noqa: E402
+import pyproj
 import pytest  # noqa: E402
 import rasterio  # noqa: E402
+from matplotlib.collections import LineCollection  # noqa: E402
 from rasterio.transform import from_origin  # noqa: E402
 from shapely.geometry import LineString, Point, Polygon  # noqa: E402
 
@@ -29,11 +33,8 @@ import rsgispy.mapping.legend as map_legend  # noqa: E402
 import rsgispy.mapping.raster as map_raster  # noqa: E402
 import rsgispy.mapping.vector as map_vector  # noqa: E402
 import rsgispy.tools.plotting as plotting  # noqa: E402
-import pyproj
 from rsgispy import RSGISPyException
 from rsgispy.mapping import _legend as map_legend_internal
-import builtins
-import shutil
 
 
 def _write_continuous_raster(
@@ -834,8 +835,8 @@ def test_north_arrow_styles_and_map_integration(tmp_path):
 def test_categorical_map_legends(tmp_path):
     """Test categorical/classification legends: inputs, layouts, and placements."""
     from rsgispy.classification.classdata import (
-        ClassInfoObj,
         ClassificationConfig,
+        ClassInfoObj,
         ImageBandInfo,
     )
 

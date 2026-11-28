@@ -5,23 +5,22 @@ Tests for :mod:`rsgispy.changedetect.imgchngmthds`,
 """
 
 import inspect
+from pathlib import Path
 
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
+from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.changedetect
 import rsgispy.changedetect.imgchngmthds as icm
 import rsgispy.changedetect.pxloutlierchng as poc
+import rsgispy.imageprocess as imgproc
 import rsgispy.tools.plotting as rplot
 from rsgispy.imageutils.colourtable import is_img_thematic
-import rsgispy.imageprocess as imgproc
-from rasterio.transform import Affine
-from pathlib import Path
 
 matplotlib.use("Agg")
 

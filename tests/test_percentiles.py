@@ -7,18 +7,17 @@ no-data value, statistics and block-wise processing).
 
 import time
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
+from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.imagecalc.percentiles as img_pct
 import rsgispy.imageprocess
 import rsgispy.tools.stats as rstats
-from rasterio.transform import Affine
-from pathlib import Path
 
 PCTS = [0.0, 100.0, 50.0, 10.0, 90.0, 2.5, 33.3, 66.7, 99.9, 12.345]
 

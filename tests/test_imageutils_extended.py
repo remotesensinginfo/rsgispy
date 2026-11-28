@@ -4,6 +4,7 @@ checks, arrays, sampling, bands, gdal_translate, and spatial.
 """
 
 import math
+from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
@@ -12,7 +13,7 @@ import rasterio
 import rasterio.crs
 from rasterio.control import GroundControlPoint
 from rasterio.enums import ColorInterp, MaskFlags, Resampling
-from rasterio.transform import from_origin
+from rasterio.transform import Affine, from_origin
 from rasterio.warp import transform_bounds
 from shapely.geometry import Point, box
 
@@ -26,10 +27,6 @@ import rsgispy.imageutils.sampling as iu_samp
 import rsgispy.imageutils.spatial as iu_spat
 import rsgispy.imageutils.subsetting as iu_sub
 import rsgispy.imageutils.warp as iu_warp
-import rsgispy.imageutils.bands as img_bands
-from rasterio.transform import Affine
-from pathlib import Path
-import rsgispy.imageutils.spatial as img_spatial
 
 
 def _write_test_tif(
@@ -1657,17 +1654,17 @@ def test_sharpen_low_res_bands_sets_nodata_and_multi_high(tmp_path):
     )
     out_img = str(tmp_path / "sharp_out.tif")
     band_info = [
-        img_bands.SharpBandInfo(
+        iu_bands.SharpBandInfo(
             band=1, status=rsgispy.SHARP_RES_HIGH, name="H1"
         ),
-        img_bands.SharpBandInfo(
+        iu_bands.SharpBandInfo(
             band=2, status=rsgispy.SHARP_RES_HIGH, name="H2"
         ),
-        img_bands.SharpBandInfo(
+        iu_bands.SharpBandInfo(
             band=3, status=rsgispy.SHARP_RES_LOW, name="L1"
         ),
     ]
-    img_bands.sharpen_low_res_bands(
+    iu_bands.sharpen_low_res_bands(
         input_img=in_img,
         output_img=out_img,
         band_info=band_info,
@@ -1708,7 +1705,7 @@ def test_grid_scattered_pts_vectorised_algorithms(tmp_path):
         "count:radius1=60.0:radius2=60.0",
     ):
         out_img = str(tmp_path / f"grid_{alg.split(':')[0]}.tif")
-        img_spatial.grid_scattered_pts(
+        iu_spat.grid_scattered_pts(
             vec_file=gdf,
             vec_lyr=None,
             vec_col="z",

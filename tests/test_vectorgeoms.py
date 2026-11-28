@@ -14,6 +14,7 @@ import rasterio
 from rasterio.transform import from_origin
 from shapely.geometry import (
     LineString,
+    MultiLineString,
     MultiPolygon,
     Point,
     Polygon,
@@ -29,12 +30,8 @@ import rsgispy.vector.geoms as vg_polys
 import rsgispy.vector.geoms as vg_spatial
 import rsgispy.vector.io as vu_meta
 import rsgispy.vector.stats as vs_metrics
-from rsgispy.vector import geoms as vec_geoms
-from rsgispy.vector import io as vec_io
-from rsgispy.vector import selection as vec_sel
 from rsgispy import RSGISPyException
-from shapely.geometry import MultiLineString
-from rsgispy.vector import create as vec_create
+from rsgispy.vector import selection as vec_sel
 
 
 def _can_import(mod_name: str) -> bool:
@@ -1030,11 +1027,11 @@ def test_custom_geometry_column_name_across_vector_ops():
         crs="EPSG:32630",
     ).rename_geometry("geom")
 
-    buf = vec_geoms.buffer_vec_layer_gp(poly_gdf, None, 2.0, out_vec_file=None)
+    buf = vg_lines.buffer_vec_layer_gp(poly_gdf, None, 2.0, out_vec_file=None)
     assert buf.geometry.name == "geom"
     assert all(buf.geometry.area > 100.0)
 
-    parts = vec_io.split_by_attribute(poly_gdf, None, "grp")
+    parts = vu_meta.split_by_attribute(poly_gdf, None, "grp")
     assert set(parts.keys()) == {"a", "b"}
     assert parts["a"].geometry.name == "geom"
 
@@ -1069,7 +1066,7 @@ def test_thin_vector_geoms_existing_unq_id_and_border_dedup():
         crs="EPSG:32630",
     )
 
-    thinned = vec_geoms.thin_vector_geoms(
+    thinned = vg_lines.thin_vector_geoms(
         gdf, None, grid_gdf, None, out_vec_file=None
     )
     assert "index_right" not in thinned.columns
@@ -1089,11 +1086,11 @@ def test_lines_pt_step_validation_dist_and_future_coastline():
     ).rename_geometry("geom")
 
     with pytest.raises(RSGISPyException):
-        vec_geoms.create_orthg_lines(line_gdf, None, None, pt_step=0.0)
+        vg_lines.create_orthg_lines(line_gdf, None, None, pt_step=0.0)
     with pytest.raises(RSGISPyException):
-        vec_geoms.split_lines_to_reg_pts(line_gdf, None, None, pt_step=-5.0)
+        vg_lines.split_lines_to_reg_pts(line_gdf, None, None, pt_step=-5.0)
 
-    pts_gdf = vec_geoms.split_lines_to_reg_pts(
+    pts_gdf = vg_lines.split_lines_to_reg_pts(
         line_gdf, None, out_vec_file=None, pt_step=2.5
     )
     assert list(pts_gdf["dist"]) == pytest.approx([2.5, 5.0, 7.5])
@@ -1119,7 +1116,7 @@ def test_lines_pt_step_validation_dist_and_future_coastline():
         ],
         crs="EPSG:32630",
     )
-    fut = vec_geoms.estimate_future_coastline(
+    fut = vg_lines.estimate_future_coastline(
         coast_gdf,
         None,
         curr_vec_date=datetime.date(2020, 1, 1),
@@ -1145,17 +1142,17 @@ def test_create_polygonise_replace_grid_validation_and_bbox_layers(tmp_path):
         np.array([[1, 1, 2, 2], [1, 1, 2, 2]], dtype=np.uint8),
     )
     gpkg = str(tmp_path / "poly.gpkg")
-    vec_create.polygonise_raster_to_vec_lyr(
+    vg_create.polygonise_raster_to_vec_lyr(
         gpkg, "cls", "GPKG", tif, replace_file=True, replace_lyr=True
     )
     with pytest.raises(RSGISPyException):
-        vec_create.polygonise_raster_to_vec_lyr(
+        vg_create.polygonise_raster_to_vec_lyr(
             gpkg, "cls", "GPKG", tif, replace_file=False, replace_lyr=False
         )
 
     # define_grid multi-UTM rejects non-multi-layer format
     with pytest.raises(RSGISPyException):
-        vec_create.define_grid(
+        vg_create.define_grid(
             bbox=(-8.0, 2.0, 50.0, 52.0),
             x_size=100000.0,
             y_size=100000.0,
@@ -1171,19 +1168,19 @@ def test_create_polygonise_replace_grid_validation_and_bbox_layers(tmp_path):
         {"id": []}, geometry=gpd.GeoSeries([], crs="EPSG:4326"), crs="EPSG:4326"
     )
     with pytest.raises(RSGISPyException):
-        vec_create.create_bbox_vec_lyr(empty_gdf, None, out_vec_file=None)
+        vg_create.create_bbox_vec_lyr(empty_gdf, None, out_vec_file=None)
 
     pts_gdf = gpd.GeoDataFrame(
         {"id": [1, 2]},
         geometry=[Point(0, 0), Point(4, 2)],
         crs="EPSG:4326",
     )
-    bbox_gdf = vec_create.create_bbox_vec_lyr(pts_gdf, None, out_vec_file=None)
+    bbox_gdf = vg_create.create_bbox_vec_lyr(pts_gdf, None, out_vec_file=None)
     assert len(bbox_gdf) == 1
     assert bbox_gdf.total_bounds == pytest.approx([0.0, 0.0, 4.0, 2.0])
 
     # Direct test: create_poly_vec_bboxs
-    bboxes_gdf = vec_create.create_poly_vec_bboxs(
+    bboxes_gdf = vg_create.create_poly_vec_bboxs(
         vec_file=None,
         vec_lyr=None,
         out_format="GPKG",
@@ -1205,9 +1202,9 @@ def test_create_polygonise_replace_grid_validation_and_bbox_layers(tmp_path):
     except ImportError:
         has_h3 = False
     if has_h3:
-        hex_gdf = vec_create.create_hex_grid_poly(roi_poly, hex_scale=6)
+        hex_gdf = vg_create.create_hex_grid_poly(roi_poly, hex_scale=6)
         assert hex_gdf is not None and len(hex_gdf) > 0
         assert "hex_id" in hex_gdf.columns
     else:
         with pytest.raises(RSGISPyException):
-            vec_create.create_hex_grid_poly(roi_poly, hex_scale=6)
+            vg_create.create_hex_grid_poly(roi_poly, hex_scale=6)

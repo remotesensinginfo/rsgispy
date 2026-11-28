@@ -16,10 +16,6 @@ import rsgispy.tools.accuracy as raccuracy
 import rsgispy.tools.featureselection as rfeatsel
 import rsgispy.tools.stats as rstats
 import rsgispy.tools.thresholding as rthresh
-import rsgispy.tools.stats as stats
-import rsgispy.tools.thresholding as thresholding
-import rsgispy.tools.featureselection as featureselection
-import rsgispy.tools.accuracy as accuracy
 
 
 def test_cqv_threshold_handles_negative_features():
@@ -493,7 +489,7 @@ def test_semivariogram_skgstat_guard_and_normalise_constant_band():
     """calc_semivariogram guards missing skgstat; normalise_img_data avoids NaN."""
     with patch.dict(sys.modules, {"skgstat": None}):
         with pytest.raises(rsgispy.RSGISPyException, match="scikit-gstat"):
-            stats.calc_semivariogram(np.array([[0.0, 0.0]]), np.array([1.0]))
+            rstats.calc_semivariogram(np.array([[0.0, 0.0]]), np.array([1.0]))
 
     img = np.array(
         [
@@ -502,7 +498,7 @@ def test_semivariogram_skgstat_guard_and_normalise_constant_band():
         ],
         dtype=np.float64,
     )
-    norm = stats.normalise_img_data(img)
+    norm = rstats.normalise_img_data(img)
     assert norm.shape == img.shape
     assert np.all(np.isfinite(norm))
     np.testing.assert_allclose(norm[0], np.zeros((2, 2)))
@@ -514,22 +510,22 @@ def test_thresholding_cross_entropy_and_li_edge_cases():
     sample = np.array([1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 5.0])
     # Boundary thresholds where one side is empty must not raise IndexError/ZeroDivisionError
     for thres in (-10.0, 1.0, 5.0, 100.0):
-        val = thresholding.calc_hist_cross_entropy(sample, thres)
+        val = rthresh.calc_hist_cross_entropy(sample, thres)
         assert isinstance(val, float) and np.isfinite(val)
 
     # Constant / single-unique array returns the constant value cleanly
-    assert thresholding.calc_li_threshold(np.full(50, 7.5)) == 7.5
-    assert thresholding.calc_li_threshold(np.array([-3.0, -3.0, np.nan])) == -3.0
+    assert rthresh.calc_li_threshold(np.full(50, 7.5)) == 7.5
+    assert rthresh.calc_li_threshold(np.array([-3.0, -3.0, np.nan])) == -3.0
 
     with pytest.raises(rsgispy.RSGISPyException, match="tolerance"):
-        thresholding.calc_li_threshold(np.array([1.0, 2.0, 3.0]), tolerance=0.0)
+        rthresh.calc_li_threshold(np.array([1.0, 2.0, 3.0]), tolerance=0.0)
     with pytest.raises(rsgispy.RSGISPyException, match="max_iter"):
-        thresholding.calc_li_threshold(np.array([1.0, 2.0, 3.0]), max_iter=0)
+        rthresh.calc_li_threshold(np.array([1.0, 2.0, 3.0]), max_iter=0)
     with pytest.raises(rsgispy.RSGISPyException, match="finite"):
-        thresholding.calc_li_threshold(np.array([np.nan, np.inf]))
+        rthresh.calc_li_threshold(np.array([np.nan, np.inf]))
 
     bimodal = np.concatenate([np.full(40, 10.0), np.full(40, 100.0)])
-    t_val = thresholding.calc_li_threshold(bimodal, max_iter=5)
+    t_val = rthresh.calc_li_threshold(bimodal, max_iter=5)
     assert 10.0 < t_val < 100.0
 
 
@@ -542,7 +538,7 @@ def test_featureselection_degenerate_inputs():
             "valid": [1.0, 2.0, 4.0, 8.0],
         }
     )
-    selected = featureselection.cqv_threshold(
+    selected = rfeatsel.cqv_threshold(
         df_cqv, lowthreshold=0.1, highthreshold=0.9
     )
     assert selected == ["valid"]
@@ -561,7 +557,7 @@ def test_featureselection_degenerate_inputs():
             "x4": rng.normal(0, 1, n_rows),
         }
     )
-    sel_corr = featureselection.corr_feature_selection(
+    sel_corr = rfeatsel.corr_feature_selection(
         df_corr,
         dep_vars=["y"],
         ind_vars=["const_a", "const_b", "x1", "x2", "x3", "x4"],
@@ -576,7 +572,7 @@ def test_featureselection_degenerate_inputs():
         {"y": [1, 2, 3, 4], "c1": [1, 1, 1, 1], "c2": [2, 2, 2, 2]}
     )
     assert (
-        featureselection.corr_feature_selection(
+        rfeatsel.corr_feature_selection(
             df_all_const, ["y"], ["c1", "c2"], use_pbar=False
         )
         == []
@@ -585,7 +581,7 @@ def test_featureselection_degenerate_inputs():
     # Exact linear fit => constant residuals => ss_tot == 0 in breusch_pagan_test
     x_mat = np.array([[1.0, 2.0], [2.0, 1.0], [3.0, 4.0], [4.0, 3.0], [5.0, 6.0]])
     y_exact = 3.0 * x_mat[:, 0] - 2.0 * x_mat[:, 1] + 1.0
-    bp_stat, p_val, msg = featureselection.breusch_pagan_test(x_mat, y_exact)
+    bp_stat, p_val, msg = rfeatsel.breusch_pagan_test(x_mat, y_exact)
     assert bp_stat == 0.0
     assert p_val == 1.0
     assert "No significant" in msg
@@ -594,15 +590,15 @@ def test_featureselection_degenerate_inputs():
 def test_accuracy_binary_validation_and_constant_arrays():
     """Validate binary values before uint8 cast and accept constant 0/1 arrays."""
     with pytest.raises(rsgispy.RSGISPyException, match="binary"):
-        accuracy.accuracy_scores_binary(np.array([0, 256, 257]), np.array([0, 1, 1]))
+        raccuracy.accuracy_scores_binary(np.array([0, 256, 257]), np.array([0, 1, 1]))
     with pytest.raises(rsgispy.RSGISPyException, match="binary"):
-        accuracy.accuracy_scores_binary(np.array([0.0, 0.5, 1.0]), np.array([0, 1, 1]))
+        raccuracy.accuracy_scores_binary(np.array([0.0, 0.5, 1.0]), np.array([0, 1, 1]))
     with pytest.raises(rsgispy.RSGISPyException, match="binary"):
-        accuracy.bin_accuracy_scores_prob(
+        raccuracy.bin_accuracy_scores_prob(
             np.array([0, 257, 256]), np.array([0.1, 0.8, 0.2])
         )
 
-    metrics_z, vals_z = accuracy.accuracy_scores_binary(
+    metrics_z, vals_z = raccuracy.accuracy_scores_binary(
         np.array([0, 0, 0, 0]), np.array([0, 0, 0, 0])
     )
     scores_all_zero = dict(zip(metrics_z, vals_z))
@@ -610,7 +606,7 @@ def test_accuracy_binary_validation_and_constant_arrays():
     assert scores_all_zero["Specificity"] == 1.0
     assert np.all(np.isfinite(vals_z))
 
-    metrics_o, vals_o = accuracy.accuracy_scores_binary(
+    metrics_o, vals_o = raccuracy.accuracy_scores_binary(
         np.array([1, 1, 1, 1]), np.array([1, 1, 1, 1])
     )
     scores_all_one = dict(zip(metrics_o, vals_o))
@@ -620,10 +616,10 @@ def test_accuracy_binary_validation_and_constant_arrays():
 
     y_true = np.array([1.0, 2.0, 3.0, 4.0])
     y_pred = np.array([1.5, 1.5, 4.0, 3.0])
-    mse, bias_sq, var, noise = accuracy.decompose_bias_variance(y_true, y_pred)
+    mse, bias_sq, var, noise = raccuracy.decompose_bias_variance(y_true, y_pred)
     assert np.isclose(mse, bias_sq + var)
     assert np.isclose(noise, 0.0)
     with pytest.raises(rsgispy.RSGISPyException, match="dimensions"):
-        accuracy.decompose_bias_variance(np.zeros((2, 2)), np.zeros((4,)))
+        raccuracy.decompose_bias_variance(np.zeros((2, 2)), np.zeros((4,)))
     with pytest.raises(rsgispy.RSGISPyException, match="size"):
-        accuracy.decompose_bias_variance(np.zeros((2, 3)), np.zeros((3, 2)))
+        raccuracy.decompose_bias_variance(np.zeros((2, 3)), np.zeros((3, 2)))

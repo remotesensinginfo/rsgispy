@@ -3,22 +3,20 @@ Tests for rsgispy.elevation.roughness and rsgispy.imagecalc.calc_pt_win_smpls.
 """
 
 import glob
+from pathlib import Path
 
 import geopandas as gpd
 import matplotlib
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
+from rasterio.enums import Resampling
+from rasterio.transform import Affine, from_origin
 from shapely.geometry import Point
 
 import rsgispy
 import rsgispy.elevation.roughness as rrough
 import rsgispy.imagecalc.calc_pt_win_smpls as rcptwin
-import rsgispy.imagecalc.calc_pt_win_smpls as pt_win
-from rasterio.enums import Resampling
-from rasterio.transform import Affine
-from pathlib import Path
 
 matplotlib.use("Agg")
 
@@ -419,7 +417,7 @@ def test_extract_rotated_window_near_edge_pivots_on_point(tmp_path):
             float(src.bounds.top),
         )
         # Near top-left edge where sub_win gets clipped at row=0, col=0
-        roi, roi_tf, _, _ = pt_win._extract_rotated_window(  # pylint: disable=protected-access
+        roi, roi_tf, _, _ = rcptwin._extract_rotated_window(  # pylint: disable=protected-access
             src_ds=src,
             img_bbox=img_bbox,
             pt_xy=(35.0, 175.0),

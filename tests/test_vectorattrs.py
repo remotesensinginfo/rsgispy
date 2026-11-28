@@ -23,8 +23,6 @@ import rsgispy.vector.attrs as va_spatial
 import rsgispy.vector.stats as vs_metrics
 import rsgispy.vector.stats as vs_vario
 from rsgispy import vectorprocess as vp
-from rsgispy.vector import stats as vec_stats
-from rsgispy.vector import attrs as vec_attrs
 
 
 def _can_import(mod_name: str) -> bool:
@@ -972,12 +970,12 @@ def test_attrs_geometry_free_reads_columns_and_stats_metrics(tmp_path):
     vp.write_vec_gdf(gdf, gpkg, "pts", out_format="GPKG", overwrite=True)
     vp.write_vec_gdf(gdf, pq, "pts", out_format="Parquet", overwrite=True)
 
-    assert vec_attrs.read_vec_column(gpkg, "pts", "val") == [1, 2, 3]
-    assert vec_attrs.read_vec_column(pq, None, "val") == [1, 2, 3]
-    assert set(vec_attrs.get_unq_col_values(pq, None, "cls")) == {"a", "b"}
+    assert va_cols.read_vec_column(gpkg, "pts", "val") == [1, 2, 3]
+    assert va_cols.read_vec_column(pq, None, "val") == [1, 2, 3]
+    assert set(va_cols.get_unq_col_values(pq, None, "cls")) == {"a", "b"}
 
     csv_out = str(tmp_path / "attrs.csv")
-    vec_attrs.export_vec_attrs_to_csv(
+    va_cols.export_vec_attrs_to_csv(
         gdf.rename_geometry("geom"), None, csv_out
     )
     csv_df = pd.read_csv(csv_out, index_col=0)
@@ -989,7 +987,7 @@ def test_attrs_geometry_free_reads_columns_and_stats_metrics(tmp_path):
         geometry=[Point(i, 0) for i in range(4)],
         crs="EPSG:4326",
     )
-    num_gdf = vec_attrs.add_unq_numeric_col(
+    num_gdf = va_cols.add_unq_numeric_col(
         nan_gdf, None, unq_col="cat", out_col="cat_id", out_vec_file=None
     )
     assert num_gdf["cat_id"].iloc[1] == num_gdf["cat_id"].iloc[3]
@@ -1002,7 +1000,7 @@ def test_attrs_geometry_free_reads_columns_and_stats_metrics(tmp_path):
         geometry=[Point(i, 0) for i in range(3)],
         crs="EPSG:4326",
     )
-    sets_gdf = vec_attrs.create_angle_sets(
+    sets_gdf = va_cols.create_angle_sets(
         ang_gdf,
         None,
         angle_col="ang",
@@ -1020,14 +1018,14 @@ def test_attrs_geometry_free_reads_columns_and_stats_metrics(tmp_path):
         geometry=[Point(0.0, 0.0), None, Point(10.0, 0.0)],
         crs="EPSG:32630",
     )
-    npts = vec_stats.calc_npts_in_radius(
+    npts = vs_metrics.calc_npts_in_radius(
         pts_null, None, radius=15.0, out_col_name="cnt", out_vec_file=None
     )
     assert npts["cnt"].iloc[0] == 1
     assert npts["cnt"].iloc[1] == 0
     assert npts["cnt"].iloc[2] == 1
 
-    dist_ang = vec_stats.calc_vec_pt_dist_angle(
+    dist_ang = vs_metrics.calc_vec_pt_dist_angle(
         pts_null,
         None,
         out_vec_file=None,
@@ -1048,7 +1046,7 @@ def test_attrs_geometry_free_reads_columns_and_stats_metrics(tmp_path):
     ref_pts = gpd.GeoDataFrame(
         {"r": [1]}, geometry=[Point(3.0, 0.0)], crs="EPSG:32630"
     )
-    near_gdf = vec_stats.calc_near_dist_to_feats(
+    near_gdf = vs_metrics.calc_near_dist_to_feats(
         dup_idx_gdf,
         None,
         ref_pts,
@@ -1068,7 +1066,7 @@ def test_attrs_geometry_free_reads_columns_and_stats_metrics(tmp_path):
         geometry=[Point(2, 2), Point(5, 5)],
         crs="EPSG:32630",
     )
-    cnt_gdf = vec_stats.count_pt_intersects(
+    cnt_gdf = vs_metrics.count_pt_intersects(
         polys_c, None, pts_c, None, out_count_col="n_pts", out_vec_file=None
     )
     assert cnt_gdf["n_pts"].iloc[0] == 2

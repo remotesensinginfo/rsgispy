@@ -16,7 +16,6 @@ import rsgispy
 import rsgispy.zonalstats.point as zs_pt
 import rsgispy.zonalstats.polygon as zs_poly
 from rsgispy import RSGISPyException
-from rsgispy.zonalstats import point as zs_point
 
 
 def _write_test_raster(path: str, data: np.ndarray, epsg: int = 32630, nodata=None) -> None:
@@ -1194,7 +1193,7 @@ def test_point_block_grouped_sampling_semantics(tmp_path):
         ],
         crs="EPSG:32630",
     )
-    out = zs_point.ext_point_band_values(
+    out = zs_pt.ext_point_band_values(
         pts,
         tif,
         img_band=1,

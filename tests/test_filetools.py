@@ -4,6 +4,7 @@ Tests for rsgispy.tools.files, rsgispy.tools.hashing, and rsgispy.tools.archives
 
 import datetime
 import hashlib
+import io
 import os
 import stat
 import tarfile
@@ -20,7 +21,6 @@ import rsgispy
 import rsgispy.tools.archives as archives
 import rsgispy.tools.files as rfiles
 import rsgispy.tools.hashing as hashing
-import io
 
 
 def test_basename_and_path_helpers(tmp_path):

@@ -3,16 +3,15 @@ Tests for :mod:`rsgispy.imagecalc.leastcostpath`.
 """
 
 import inspect
+from pathlib import Path
 
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
+from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.imagecalc.leastcostpath as lcp
-from rasterio.transform import Affine
-from pathlib import Path
 
 
 def _write_cost_raster(path, arr, origin=(0.0, 100.0), res=10.0, crs="EPSG:32630"):

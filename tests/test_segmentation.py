@@ -5,19 +5,17 @@ Tests for rsgispy.segmentation.clump (clump and union_of_clumps).
 import inspect
 import os
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
+from rasterio.transform import Affine, from_origin
 
 import rsgispy
 import rsgispy.segmentation as rseg_pkg
-import rsgispy.segmentation.clump as rseg_clump
 import rsgispy.segmentation._helpers as seg_helpers
-from rasterio.transform import Affine
-from pathlib import Path
-import rsgispy.segmentation.clump as img_seg
+import rsgispy.segmentation.clump as rseg_clump
 
 
 def _write_raster(
@@ -452,7 +450,7 @@ def test_clump_id_overflow_raises(tmp_path):
     with pytest.raises(
         rsgispy.RSGISPyException, match="exceeds maximum representable value"
     ):
-        img_seg.clump(
+        rseg_clump.clump(
             input_img=in_img,
             output_img=str(tmp_path / "clump_mem.tif"),
             in_memory=True,
@@ -465,7 +463,7 @@ def test_clump_id_overflow_raises(tmp_path):
     with pytest.raises(
         rsgispy.RSGISPyException, match="exceeds maximum representable value"
     ):
-        img_seg.clump(
+        rseg_clump.clump(
             input_img=in_img,
             output_img=str(tmp_path / "clump_tiled.tif"),
             in_memory=False,

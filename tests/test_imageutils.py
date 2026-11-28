@@ -4,37 +4,35 @@ thematic colour tables, overview pyramids, and integration with band_maths.
 """
 
 import json
+from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import pytest
 import rasterio
+from rasterio.crs import CRS
 from rasterio.enums import ColorInterp, Compression
-from rasterio.transform import from_origin
-from shapely.geometry import MultiPolygon, Point, box
+from rasterio.transform import Affine, from_origin
+from shapely.geometry import MultiPolygon, Point, Polygon, box
 
 import rsgispy
 import rsgispy.imagecalc.maths
 import rsgispy.imageutils.blank
+import rsgispy.imageutils.blank as img_blank
 import rsgispy.imageutils.colourtable
 import rsgispy.imageutils.envopts
 import rsgispy.imageutils.masking
 import rsgispy.imageutils.metadata
 import rsgispy.imageutils.mosaic
+import rsgispy.imageutils.mosaic as img_mosaic
+import rsgispy.imageutils.rasterise as img_ras
 import rsgispy.imageutils.stats
 import rsgispy.imageutils.subsetting
 import rsgispy.imageutils.tiling
 import rsgispy.imageutils.vrt
 import rsgispy.imageutils.warp
 import rsgispy.imageutils.warp as img_warp
-from rasterio.transform import Affine
-from pathlib import Path
-import pandas as pd
-from shapely.geometry import Polygon
-import rsgispy.imageutils.rasterise as img_ras
-import rsgispy.imageutils.mosaic as img_mosaic
-import rsgispy.imageutils.blank as img_blank
-from rasterio.crs import CRS
 
 
 def _create_simple_raster(path, data, dtype="float32"):

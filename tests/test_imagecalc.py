@@ -2,20 +2,20 @@
 Tests for rsgispy and rsgispy.imagecalc.maths.band_maths.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
+from rasterio.transform import Affine, from_origin
 
 import rsgispy
+import rsgispy.imagecalc._norm_helpers as norm_helpers
 import rsgispy.imagecalc.maths
 import rsgispy.imagecalc.percentiles
 import rsgispy.imagecalc.stats
 import rsgispy.imageprocess
-import rsgispy.imagecalc._norm_helpers as norm_helpers
 import rsgispy.imageprocess as imgproc
-from rasterio.transform import Affine
-from pathlib import Path
 
 
 def _create_test_raster(

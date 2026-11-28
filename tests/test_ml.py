@@ -10,14 +10,19 @@ import rasterio
 from rasterio.transform import from_origin
 from scipy.spatial.distance import cdist
 from shapely.geometry import Point, box
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.linear_model import Ridge
+from sklearn.ensemble import (
+    GradientBoostingRegressor,
+    RandomForestClassifier,
+    RandomForestRegressor,
+)
+from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.model_selection import GroupKFold
 
 import rsgispy
 import rsgispy.ml as ml
 from rsgispy.classification.classdata import (
-    ClassInfoObj,
     ClassificationConfig,
+    ClassInfoObj,
     ImageBandInfo,
 )
 from rsgispy.ml.cv import (
@@ -37,9 +42,6 @@ from rsgispy.ml.stack import BandSpec, ImageFeatureStack
 from rsgispy.ml.tune import TuneResult, get_default_param_space, tune_estimator
 from rsgispy.modelling._helpers import EnvVarInfo
 from rsgispy.regression.regdata import RegressionConfig
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.model_selection import GroupKFold
 
 
 def _write_test_raster(

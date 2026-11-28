@@ -9,7 +9,6 @@ import pytest
 
 import rsgispy
 import rsgispy.tools.tables as tools_tables
-import rsgispy.tools.tables as tables
 
 
 def test_resolve_table_output_spec():
@@ -90,7 +89,7 @@ def test_read_dataframe_table_allow_pickle_guard(tmp_path):
     df.to_pickle(pkl_path)
 
     with pytest.raises(rsgispy.RSGISPyException, match="allow_pickle=False"):
-        tables.read_dataframe_table(pkl_path, allow_pickle=False)
+        tools_tables.read_dataframe_table(pkl_path, allow_pickle=False)
 
-    loaded = tables.read_dataframe_table(pkl_path, allow_pickle=True)
+    loaded = tools_tables.read_dataframe_table(pkl_path, allow_pickle=True)
     pd.testing.assert_frame_equal(loaded, df)

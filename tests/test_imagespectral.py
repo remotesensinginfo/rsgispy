@@ -9,6 +9,7 @@ import inspect
 import json
 import math
 import os
+from pathlib import Path
 
 import geopandas as gpd
 import matplotlib
@@ -17,7 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from rasterio.transform import from_origin
+from rasterio.transform import Affine, from_origin
 from shapely.geometry import box
 
 import rsgispy
@@ -28,12 +29,6 @@ import rsgispy.imagespectral.indices as si
 import rsgispy.imagespectral.preprocessing as sp
 import rsgispy.imagespectral.transforms as st
 import rsgispy.imagespectral.unmixing as su
-import rsgispy.imagespectral.endmembers as endm
-import rsgispy.imageprocess as imgproc
-from rasterio.transform import Affine
-from pathlib import Path
-import rsgispy.imagespectral.transforms as spec_tr
-import rsgispy.imagespectral.unmixing as unmix
 
 matplotlib.use("Agg")
 
@@ -1515,7 +1510,7 @@ def _write_geotiff(
 
 
 def test_calc_ppi_tiled_streaming_deterministic(tmp_path, monkeypatch):
-    monkeypatch.setenv(imgproc.ENV_VAR_BLOCK_SIZE, "8")
+    monkeypatch.setenv(img_proc.ENV_VAR_BLOCK_SIZE, "8")
     rng = np.random.default_rng(7)
     cube = rng.uniform(0.2, 0.8, size=(3, 16, 16)).astype(np.float32)
     # Plant extreme pure endmembers at opposite corners
@@ -1525,10 +1520,10 @@ def test_calc_ppi_tiled_streaming_deterministic(tmp_path, monkeypatch):
 
     out1 = str(tmp_path / "ppi1.tif")
     out2 = str(tmp_path / "ppi2.tif")
-    endm.calc_ppi(
+    em.calc_ppi(
         in_img, out1, niters=200, rnd_seed=99, calc_stats=False, use_pbar=False
     )
-    endm.calc_ppi(
+    em.calc_ppi(
         in_img, out2, niters=200, rnd_seed=99, calc_stats=False, use_pbar=False
     )
     with rasterio.open(out1) as d1, rasterio.open(out2) as d2:
@@ -1541,7 +1536,7 @@ def test_calc_ppi_tiled_streaming_deterministic(tmp_path, monkeypatch):
 
 
 def test_whiten_image_filters_nan_and_nodata(tmp_path, monkeypatch):
-    monkeypatch.setenv(imgproc.ENV_VAR_BLOCK_SIZE, "8")
+    monkeypatch.setenv(img_proc.ENV_VAR_BLOCK_SIZE, "8")
     rng = np.random.default_rng(11)
     n = 16 * 16
     base = rng.normal(size=(n, 3))
@@ -1558,7 +1553,7 @@ def test_whiten_image_filters_nan_and_nodata(tmp_path, monkeypatch):
     msk_img = _write_geotiff(tmp_path / "w_msk.tif", msk)
     out_img = str(tmp_path / "w_out.tif")
 
-    spec_tr.whiten_image(in_img, out_img, msk_img, 1, use_pbar=False)
+    st.whiten_image(in_img, out_img, msk_img, 1, use_pbar=False)
     with rasterio.open(out_img) as dst:
         out = dst.read()
         assert np.all(out[:, 0, 0] == 0.0)
@@ -1592,12 +1587,12 @@ def test_summarise_multi_endmember_unmixing_nodata_alignment(tmp_path):
     out_unmix = str(tmp_path / "sum_unmix.tif")
     out_ref = str(tmp_path / "sum_ref.tif")
 
-    ds_info = endm.ImageEndmemberInfo(
+    ds_info = em.ImageEndmemberInfo(
         in_unmix_img=abund_img,
         endmembers=em_df,
         endmember_names=["EM_A", "EM_B"],
     )
-    unmix.summarise_multi_endmember_linear_unmixing(
+    su.summarise_multi_endmember_linear_unmixing(
         input_img=orig_img,
         out_unmix_img=out_unmix,
         out_ref_img=out_ref,

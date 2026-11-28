@@ -1,6 +1,9 @@
 """Tests for rsgispy.dataaccess modules."""
 
+import asyncio
 import datetime
+import hashlib
+import os
 import types
 
 import geopandas as gpd
@@ -16,9 +19,6 @@ import rsgispy.dataaccess.usgs_m2m as usgs_m2m
 import rsgispy.tools.hashing
 import rsgispy.tools.http
 import rsgispy.tools.http as http_tools
-import hashlib
-import asyncio
-import os
 
 
 class _FakeHTTPResponse:
@@ -509,6 +509,7 @@ def test_optional_requests_missing_dataaccess(tmp_path):
     import importlib
     import sys
     from unittest.mock import patch
+
     import rsgispy.dataaccess as rdataaccess
 
     orig_odata = copernicus_odata
@@ -587,6 +588,7 @@ def test_optional_pysondb_missing_dataaccess():
     import importlib
     import sys
     from unittest.mock import patch
+
     import rsgispy.dataaccess as rdataaccess
 
     orig_cmr = nasa_cmr

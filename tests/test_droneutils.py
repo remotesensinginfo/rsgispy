@@ -6,14 +6,14 @@ import sys
 import types
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
-from PIL import Image
 import pytest
+from PIL import Image
 
 import rsgispy
 import rsgispy.droneutils
 import rsgispy.droneutils as droneutils
-import numpy as np
 
 
 def _create_test_jpeg(path, dt_str=None):

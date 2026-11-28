@@ -6,26 +6,16 @@ zero-intermediate-I/O multi-step workflows.
 
 import os
 import tempfile
+from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
 import pytest
 import rasterio
-from rasterio.transform import from_origin
+from rasterio.transform import Affine, from_origin
 from shapely.geometry import Point
 
 import rsgispy
-from rsgispy._io import (
-    ArraySource,
-    BandMathOp,
-    DiskSink,
-    HaloBorder,
-    MemorySink,
-    PointwiseOp,
-    TileGraph,
-    WindowOp,
-    run_tile_graph,
-)
 import rsgispy.classification.classpostprocess as classpost
 import rsgispy.elevation.filtering as elev_filt
 import rsgispy.imagefilter.chained as if_chained
@@ -34,9 +24,18 @@ import rsgispy.imagefilter.smooth as if_smooth
 import rsgispy.imagefilter.stats as if_stats
 import rsgispy.imagemorphology as morph
 import rsgispy.imageutils.rasterise as iu_rast
-from rasterio.transform import Affine
-from pathlib import Path
-from rsgispy._io import RasterSource
+from rsgispy._io import (
+    ArraySource,
+    BandMathOp,
+    DiskSink,
+    HaloBorder,
+    MemorySink,
+    PointwiseOp,
+    RasterSource,
+    TileGraph,
+    WindowOp,
+    run_tile_graph,
+)
 
 
 def _write_raster(path, arr, nodata=None, crs="EPSG:32630", res=10.0):
