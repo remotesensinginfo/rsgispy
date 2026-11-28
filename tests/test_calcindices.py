@@ -1044,3 +1044,25 @@ def test_calc_sar_indices_validation_errors(tmp_path):
             in_units="dB",
             use_pbar=False,
         )
+
+
+def test_dprvi_is_mandal_2020_index():
+    """DpRVI_VV, DpRVI_HH and RVI4S1 are 1 - m * beta (Mandal et al. 2020)."""
+    from rsgispy.imagecalc import _sar_indices as sar  # pylint: disable=import-outside-toplevel
+
+    co = np.array([0.20, 0.04, 0.10, 0.0])
+    cr = np.array([0.04, 0.20, 0.10, 0.05])
+    tot = co + cr
+    with np.errstate(invalid="ignore", divide="ignore"):
+        m_dop = np.abs(co - cr) / tot
+        beta = np.maximum(co, cr) / tot
+    expected = 1.0 - m_dop * beta
+    for key, bands in (("dprvi_vv", ("vv", "vh")), ("rvi4s1", ("vv", "vh")),
+                       ("dprvi_hh", ("hh", "hv"))):
+        spec = sar._SAR_INDEX_REGISTRY[key]  # pylint: disable=protected-access
+        out, valid = spec.calc_fn({bands[0]: co, bands[1]: cr}, {})
+        np.testing.assert_allclose(out[:3], expected[:3], rtol=1e-12)
+        assert valid.tolist() == [True, True, True, False]
+    # For VH <= VV it equals the q (q + 3) / (q + 1)^2 form.
+    q_vv = 0.04 / 0.20
+    assert expected[0] == pytest.approx(q_vv * (q_vv + 3.0) / (q_vv + 1.0) ** 2)

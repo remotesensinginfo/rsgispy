@@ -130,6 +130,37 @@ def _make_dprvic(
     return _calc
 
 
+def _make_dprvi(
+    co_pol: str, cross_pol: str
+) -> Callable[
+    [Dict[str, np.ndarray], Mapping[str, float]], Tuple[np.ndarray, np.ndarray]
+]:
+    """
+    Build the Dual-pol Radar Vegetation Index of Mandal et al. (2020),
+    ``DpRVI = 1 - m * beta``, from intensities. With GRD data the
+    off-diagonal covariance term is unknown (taken as 0), so the eigenvalues
+    of the 2x2 covariance matrix are the co- and cross-pol intensities:
+    ``m = |co - cr| / (co + cr)`` (degree of polarisation) and
+    ``beta = max(co, cr) / (co + cr)`` (dominant eigenvalue fraction).
+    For ``cr <= co`` this equals ``q (q + 3) / (q + 1)^2`` with ``q = cr / co``.
+    """
+
+    def _calc(
+        bands: Dict[str, np.ndarray], _params: Mapping[str, float]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        co = bands[co_pol]
+        cr = bands[cross_pol]
+        tot = co + cr
+        valid = (co > 0.0) & (cr >= 0.0) & (tot > 0.0)
+        safe_tot = np.where(valid, tot, 1.0)
+        m_dop = np.abs(co - cr) / safe_tot
+        beta = np.maximum(co, cr) / safe_tot
+        out = np.where(valid, 1.0 - m_dop * beta, 0.0)
+        return out, valid
+
+    return _calc
+
+
 def _calc_dpsvi_block(
     bands: Dict[str, np.ndarray], params: Mapping[str, float]
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -380,6 +411,8 @@ def _make_quad_span(
 _calc_rvi_vv_vh = _make_dual_rvi("vv", "vh")
 _calc_rvi_hh_hv = _make_dual_rvi("hh", "hv")
 _calc_dprvic_vv_vh = _make_dprvic("vv", "vh")
+_calc_dprvi_vv_vh = _make_dprvi("vv", "vh")
+_calc_dprvi_hh_hv = _make_dprvi("hh", "hv")
 _calc_dprvic_hh_hv = _make_dprvic("hh", "hv")
 _calc_vddpi = _make_ddpi("vv", "vh")
 _calc_hddpi = _make_ddpi("hh", "hv")
@@ -439,15 +472,15 @@ _SAR_INDEX_REGISTRY: Dict[str, _SARIndexSpec] = {
     "dprvi_vv": _SARIndexSpec(
         "DpRVI_VV",
         ("vv", "vh"),
-        "(4 * vh) / (vv + vh)",
-        _calc_rvi_vv_vh,
+        "1 - m * beta, m = |vv - vh| / (vv + vh), beta = max(vv, vh) / (vv + vh)",
+        _calc_dprvi_vv_vh,
         units="power",
     ),
     "rvi4s1": _SARIndexSpec(
         "RVI4S1",
         ("vv", "vh"),
-        "(4 * vh) / (vv + vh)",
-        _calc_rvi_vv_vh,
+        "1 - m * beta, m = |vv - vh| / (vv + vh), beta = max(vv, vh) / (vv + vh)",
+        _calc_dprvi_vv_vh,
         units="power",
     ),
     "rvi_hh_hv": _SARIndexSpec(
@@ -460,8 +493,8 @@ _SAR_INDEX_REGISTRY: Dict[str, _SARIndexSpec] = {
     "dprvi_hh": _SARIndexSpec(
         "DpRVI_HH",
         ("hh", "hv"),
-        "(4 * hv) / (hh + hv)",
-        _calc_rvi_hh_hv,
+        "1 - m * beta, m = |hh - hv| / (hh + hv), beta = max(hh, hv) / (hh + hv)",
+        _calc_dprvi_hh_hv,
         units="power",
     ),
     "dprvic": _SARIndexSpec(
