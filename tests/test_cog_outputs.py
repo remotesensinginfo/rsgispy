@@ -940,3 +940,21 @@ def test_cog_output_to_gdal_virtual_path(tmp_path, clean_crt_env):
         for path in (out_cog, direct_cog):
             if rasterio.shutil.exists(path):
                 rasterio.shutil.delete(path)
+
+
+def test_set_img_pxl_values_keeps_cog_layout(tmp_path, clean_crt_env):
+    """set_img_pxl_values on a COG rebuilds it instead of breaking the layout."""
+    import rsgispy.imageutils.arrays  # pylint: disable=import-outside-toplevel
+
+    src = tmp_path / "ramp.tif"
+    _write_raster(src, _ramp())
+    cog = str(tmp_path / "ramp_cog.tif")
+    rsgispy.imagecalc.maths.band_maths(
+        cog, "b1", [rsgispy.imagecalc.maths.BandDefn("b1", str(src), 1)],
+        gdalformat="COG", calc_stats=True, use_pbar=False,
+    )
+    rsgispy.imageutils.arrays.set_img_pxl_values(cog, 1, [3, 7], [2, 5], pxl_value=-5)
+    _assert_valid_cog(cog, stats=False)
+    with rasterio.open(cog) as ds:
+        arr = ds.read(1)
+    assert arr[2, 3] == -5 and arr[5, 7] == -5

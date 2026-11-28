@@ -1134,6 +1134,8 @@ def extract_segment_stats(
     segment_id_field: str = "seg_id",
     use_pbar: bool = True,
     out_compress: Optional[Union[str, bool]] = None,
+    *,
+    seg_no_data_val: int = 0,
 ) -> Optional[gpd.GeoDataFrame]:
     """
     Polygonise ``segments_img`` and extract per-object band summary statistics
@@ -1172,6 +1174,9 @@ def extract_segment_stats(
         Display progress bars (Default = ``True``).
     out_compress : str or bool or None, optional
         Optional GeoParquet compression setting.
+    seg_no_data_val : int, optional
+        Label value of ``segments_img`` that is background, not a segment
+        (Default = ``0``).
 
     Returns
     -------
@@ -1203,6 +1208,7 @@ def extract_segment_stats(
     gdf = polygonise_segments(
         segments_img,
         out_vec_file=None,
+        no_data_val=int(seg_no_data_val),
         segment_id_field=segment_id_field,
     )
     assert gdf is not None
@@ -1220,7 +1226,7 @@ def extract_segment_stats(
                 max_vld_val=max_thres,
             ),
             stats=["min", "max", "mean", "stddev", "count"],
-            label_no_data_val=0,
+            label_no_data_val=int(seg_no_data_val),
             out_no_data_val=out_no_data_val,
             id_col=segment_id_field,
             pxl_count_col=None,

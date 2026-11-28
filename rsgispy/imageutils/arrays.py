@@ -17,6 +17,8 @@ from rasterio.windows import Window
 
 import rsgispy
 from rsgispy.imageprocess import (
+    is_cog_layout,
+    update_cog,
     IntersectionGrid,
     ensure_file_exists,
     open_output_dataset,
@@ -383,6 +385,9 @@ def set_img_pxl_values(
     Set defined pixel coordinates ``(x_coords, y_coords)`` in ``img_band`` of
     ``input_img`` to ``pxl_value`` in place.
 
+    A Cloud Optimised GeoTIFF is not edited in place (which would break its
+    layout): it is rebuilt with :func:`rsgispy.imageprocess.update_cog`.
+
     :param input_img: Path to the input image file.
     :param img_band: 1-based band index.
     :param x_coords: Array or sequence of X pixel indices.
@@ -404,6 +409,15 @@ def set_img_pxl_values(
         raise rsgispy.RSGISPyException(
             "The X and Y image coordinates are not the same."
         )
+
+    if is_cog_layout(input_img):
+        update_cog(
+            input_img,
+            lambda tmp_img: set_img_pxl_values(
+                tmp_img, img_band, x_arr, y_arr, pxl_value=pxl_value
+            ),
+        )
+        return
 
     with rasterio.open(input_img, "r+") as dst:
         validate_band_index(img_band, dst.count, input_img)

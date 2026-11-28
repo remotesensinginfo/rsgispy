@@ -731,3 +731,27 @@ def test_tiled_segmentation_gives_connected_segments(func, kwargs):
     labels = func(data, tile_size=64, **kwargs)
     assert labels.max() > 1
     assert _n_disconnected_labels(labels) == 0
+
+
+def test_extract_segment_stats_configurable_segment_nodata(tmp_path):
+    """seg_no_data_val sets which label is background (Default = 0)."""
+    seg = np.array([[9, 9, 1, 1], [9, 9, 1, 1], [0, 0, 2, 2], [0, 0, 2, 2]],
+                   dtype=np.uint32)
+    feat = np.arange(16, dtype=np.float32).reshape(1, 4, 4)
+    seg_img = str(tmp_path / "segs.tif")
+    feat_img = str(tmp_path / "feat.tif")
+    _write_multiband_raster(seg_img, seg[np.newaxis].astype(np.float32))
+    with rasterio.open(seg_img) as ds:
+        prof = ds.profile
+    prof.update(dtype="uint32")
+    with rasterio.open(seg_img, "w", **prof) as ds:
+        ds.write(seg, 1)
+    _write_multiband_raster(feat_img, feat)
+
+    dflt = rseg.extract_segment_stats(seg_img, feat_img, use_pbar=False)
+    assert sorted(dflt["seg_id"].tolist()) == [1, 2, 9]
+    nine = rseg.extract_segment_stats(seg_img, feat_img, seg_no_data_val=9,
+                                      use_pbar=False)
+    assert sorted(nine["seg_id"].tolist()) == [0, 1, 2]
+    zero_row = nine[nine["seg_id"] == 0].iloc[0]
+    assert zero_row["b1_mean"] == pytest.approx(np.mean([8, 9, 12, 13]))
