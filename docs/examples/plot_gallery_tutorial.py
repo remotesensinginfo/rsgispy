@@ -102,7 +102,6 @@ def run(data_dir: str, out_dir: str, use_pbar: bool = True,
     em_df = spec_em.extract_avg_endmembers(
         hymap_img, os.path.join(data_dir, "hymap_ppi_endmembers.geojson"),
         endmember_names=em_names,
-        pxl_in_poly_method=1,  # pixel centre within polygon
     )
     d["endmembers"] = {"endmembers": em_df, "wavelengths": wvls, "gain": 100,
                        "y_label": "Reflectance (%)", "plot_title": "HyMap PPI endmembers"}

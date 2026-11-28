@@ -164,7 +164,7 @@ def test_convert_mtxt_to_df(tmp_path):
         em.convert_mtxt_to_df(mtxt_path, band_names=["B1", "B2"])
 
 
-def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
+def test_extract_avg_endmembers(tmp_path):
     """Verify extract_avg_endmembers returns a DataFrame with class columns."""
     img_path = tmp_path / "img.tif"
     vec_path = tmp_path / "rois.gpkg"
@@ -199,7 +199,6 @@ def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
         "rois",
         out_file=str(out_csv),
         class_col="landcover",
-        pxl_in_poly_method=1,
     )
 
     assert isinstance(em_df, pd.DataFrame)
@@ -215,9 +214,40 @@ def test_extract_avg_endmembers_and_zonalstats_constants(tmp_path):
         gdf,
         None,
         class_col="landcover",
-        pxl_in_poly_method=1,
     )
     assert em.are_endmembers_equal(em_df, em_df_gdf)
+
+    # The RSGISLib method codes were replaced by all_touched and
+    # small_poly_fallback.
+    with pytest.raises(TypeError):
+        em.extract_avg_endmembers(str(img_path), gdf, None, pxl_in_poly_method=1)
+
+    # A polygon covering no pixel centre: by default the pixels it touches
+    # are used; without the fallback it raises.
+    small = gpd.GeoDataFrame(
+        {"landcover": ["Soil"]}, geometry=[box(1.0, 31.0, 4.0, 34.0)], crs="EPSG:32630"
+    )
+    small_df = em.extract_avg_endmembers(str(img_path), small, None, class_col="landcover")
+    np.testing.assert_allclose(small_df["Soil"].to_numpy(), [0.2, 0.4, 0.8], atol=1e-6)
+    with pytest.raises(rsgispy.RSGISPyException, match="No valid pixels"):
+        em.extract_avg_endmembers(
+            str(img_path), small, None, class_col="landcover", small_poly_fallback=False
+        )
+
+    # all_touched=True takes every pixel the polygon touches: a box over the
+    # Soil/Veg corner touches the four pixels around it.
+    corner = gpd.GeoDataFrame(
+        {"landcover": ["Mix"]}, geometry=[box(18.0, 18.0, 22.0, 22.0)], crs="EPSG:32630"
+    )
+    touched = em.extract_avg_endmembers(
+        str(img_path), corner, None, class_col="landcover", all_touched=True
+    )
+    np.testing.assert_allclose(
+        touched["Mix"].to_numpy(),
+        (np.array([0.2, 0.4, 0.8]) + np.array([0.4, 0.6, 0.4])
+         + np.array([0.6, 0.2, 0.1]) + 0.0) / 4.0,
+        atol=1e-6,
+    )
 
 
 def test_exhcon_unmixing_and_downstream_metrics(tmp_path):

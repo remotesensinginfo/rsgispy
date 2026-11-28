@@ -93,7 +93,9 @@ API changes
   ``border_mode``.
 * ``DpRVI_VV``, ``DpRVI_HH`` and ``RVI4S1`` compute the published DpRVI
   (Mandal et al. 2020) instead of the simple dual-pol RVI.
-* The ``rsgispy.zonalstats.METHOD_*`` constants were removed.
+* The ``rsgispy.zonalstats.METHOD_*`` constants were removed, and
+  ``extract_avg_endmembers(pxl_in_poly_method=...)`` is replaced by
+  ``all_touched`` and ``small_poly_fallback``.
 * Otsu, Yen, ISODATA and the histogram cross-entropy use 256 histogram bins
   by default (``bins='fd'`` gives the previous Freedman-Diaconis rule), so
   thresholds can shift slightly.
