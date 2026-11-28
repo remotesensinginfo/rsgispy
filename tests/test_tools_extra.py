@@ -683,3 +683,23 @@ def test_split_wgs84_bbox_utm_zones_exceptions_and_antimeridian():
         [60, [178.0, 180.0, 10.0, 12.0]],
         [1, [-180.0, -178.0, 10.0, 12.0]],
     ]
+
+
+@pytest.mark.parametrize(
+    "func", ["calc_otsu_threshold", "calc_yen_threshold", "calc_isodata_threshold"]
+)
+def test_thresholds_ignore_nonfinite_and_flatten(func):
+    """Otsu, Yen and ISODATA skip NaN/inf and give the same result for 2-D input."""
+    import rsgispy.tools.thresholding as thr  # pylint: disable=import-outside-toplevel
+
+    rng = np.random.default_rng(3)
+    data = np.concatenate([rng.normal(2.0, 0.5, 300), rng.normal(6.0, 0.5, 300)])
+    thres_fn = getattr(thr, func)
+    ref = thres_fn(data)
+    assert 2.0 < ref < 6.0
+    with_nan = np.concatenate([data, [np.nan, np.inf, -np.inf]])
+    assert thres_fn(with_nan) == pytest.approx(ref)
+    assert thres_fn(data.reshape(20, 30)) == pytest.approx(ref)
+    with pytest.raises(rsgispy.RSGISPyException):
+        thres_fn(np.array([np.nan, np.nan]))
+    assert thr.get_nbins_histogram(data.reshape(20, 30)) == thr.get_nbins_histogram(data)
