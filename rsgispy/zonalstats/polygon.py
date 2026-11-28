@@ -19,6 +19,14 @@ zonal statistics functions using ``rasterio`` and ``geopandas``.
 * To export all individual pixels within polygons across selected bands to a
   :class:`pandas.DataFrame` or tabular file (including compressed Parquet), use
   :func:`export_poly_pxls_to_df`.
+
+.. note::
+
+   The statistics functions lowercase the output column names they write,
+   as RSGISLib does: ``mean_field="B1_Mean"`` creates a column ``b1_mean``,
+   and the same applies to ``total_field`` and the ``vals_lut`` names in
+   :func:`calc_zonal_band_pxl_counts`. Use the lowercase names when reading
+   the results back.
 """
 
 # pylint: disable=too-many-lines

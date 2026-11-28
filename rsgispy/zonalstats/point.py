@@ -1,6 +1,12 @@
 """
 The zonalstats.point module provides point-in-pixel zonal extraction functions
 using ``rasterio`` and ``geopandas``.
+
+.. note::
+
+   Output column names are lowercased, as RSGISLib does: ``out_field="B1"``
+   creates ``b1`` (or ``b1_<band>`` for each band when several are read), and names in
+   an explicit field list are lowercased too.
 """
 
 import math
