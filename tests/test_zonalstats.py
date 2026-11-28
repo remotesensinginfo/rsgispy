@@ -973,3 +973,25 @@ def test_test_poly_pts_fallback_samples_point_inside_concave_polygon(tmp_path):
         use_pbar=False,
     )
     assert out_gdf["b1_mean"].iloc[0] == pytest.approx(1.0)
+
+
+def test_calc_zonal_band_pxl_counts_total_includes_nodata(tmp_path):
+    """The documented total is the polygon's pixel footprint, nodata included."""
+    arr = np.array([[1, 1], [2, 0]], dtype=np.uint8)
+    tif_path = str(tmp_path / "cls.tif")
+    _write_test_raster(tif_path, arr, nodata=0)
+    gdf = gpd.GeoDataFrame(
+        {"id": [1]},
+        geometry=[box(500000.0, 5199980.0, 500020.0, 5200000.0)],
+        crs="EPSG:32630",
+    )
+    out_gdf = zs_poly.calc_zonal_band_pxl_counts(
+        gdf,
+        tif_path,
+        img_band=1,
+        vals_lut={0: "nodata_pxls", 1: "c1", 2: "c2"},
+        total_field="total",
+        use_pbar=False,
+    )
+    row = out_gdf.iloc[0]
+    assert (row["total"], row["c1"], row["c2"], row["nodata_pxls"]) == (4, 2, 1, 1)

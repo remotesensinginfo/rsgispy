@@ -870,7 +870,13 @@ def calc_zonal_band_pxl_counts_file(
     :param input_img: Path to the input integer/categorical raster image.
     :param img_band: 1-based band index within ``input_img``.
     :param vals_lut: Mapping ``{pixel_value: output_field_name}``.
-    :param total_field: Output column name for total pixels inside each polygon.
+    :param total_field: Output column name for the total number of pixels
+                        inside each polygon. The total includes nodata
+                        pixels (it is the polygon's pixel footprint, as in
+                        RSGISLib), so ``count / total`` is the share of the
+                        whole polygon, not of its valid pixels. Add a
+                        ``vals_lut`` entry for the nodata value to count
+                        nodata pixels separately.
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
@@ -942,7 +948,13 @@ def calc_zonal_band_pxl_counts(
     :param input_img: Path to the input integer/categorical raster image.
     :param img_band: 1-based band index within ``input_img``.
     :param vals_lut: Mapping ``{pixel_value: output_field_name}``.
-    :param total_field: Output column name for total pixels inside each polygon.
+    :param total_field: Output column name for the total number of pixels
+                        inside each polygon. The total includes nodata
+                        pixels (it is the polygon's pixel footprint, as in
+                        RSGISLib), so ``count / total`` is the share of the
+                        whole polygon, not of its valid pixels. Add a
+                        ``vals_lut`` entry for the nodata value to count
+                        nodata pixels separately.
     :param vec_def_epsg: Optional EPSG code overriding vector CRS if undefined.
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
                      (Default = ``True``).
