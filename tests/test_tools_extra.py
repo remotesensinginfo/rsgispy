@@ -710,6 +710,41 @@ def test_thresholds_ignore_nonfinite_and_flatten(func):
     assert thr.get_nbins_histogram(data.reshape(20, 30)) == thr.get_nbins_histogram(data)
 
 
+@pytest.mark.parametrize(
+    "func", ["calc_otsu_threshold", "calc_yen_threshold", "calc_isodata_threshold"]
+)
+def test_thresholds_default_to_256_bins(func):
+    """The histogram thresholds use 256 bins by default; ``bins='fd'`` keeps
+    the Freedman-Diaconis rule, and a single outlier no longer explodes the
+    number of bins."""
+    import rsgispy.tools.thresholding as thr  # pylint: disable=import-outside-toplevel
+
+    rng = np.random.default_rng(3)
+    data = np.concatenate([rng.normal(2.0, 0.5, 300), rng.normal(6.0, 0.5, 300)])
+    thres_fn = getattr(thr, func)
+    assert thres_fn(data) == pytest.approx(thres_fn(data, bins=256))
+    assert 2.0 < thres_fn(data, bins="fd") < 6.0
+    assert 2.0 < thres_fn(data, bins=64) < 6.0
+    # One extreme outlier: FD would need ~10^7 bins; 256 bins stay cheap.
+    with_outlier = np.concatenate([data, [1.0e8]])
+    assert np.isfinite(thres_fn(with_outlier))
+    for bad in (1, 0, -5, "auto", 2.5):
+        with pytest.raises(rsgispy.RSGISPyException):
+            thres_fn(data, bins=bad)
+
+
+def test_hist_cross_entropy_takes_bins():
+    """calc_hist_cross_entropy takes the same ``bins`` argument."""
+    import rsgispy.tools.thresholding as thr  # pylint: disable=import-outside-toplevel
+
+    rng = np.random.default_rng(4)
+    data = np.concatenate([rng.normal(2.0, 0.5, 300), rng.normal(6.0, 0.5, 300)])
+    assert thr.calc_hist_cross_entropy(data, 4.0) == pytest.approx(
+        thr.calc_hist_cross_entropy(data, 4.0, bins=256)
+    )
+    assert np.isfinite(thr.calc_hist_cross_entropy(data, 4.0, bins="fd"))
+
+
 def test_date_helpers_reject_bad_input():
     """Non-positive intervals and dates before the base date raise."""
     import datetime  # pylint: disable=import-outside-toplevel

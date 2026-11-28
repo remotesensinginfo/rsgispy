@@ -89,7 +89,7 @@ Covers `rsgispy.mapping.*`, `rsgispy.dataaccess.*`, `rsgispy.droneutils`, all 29
   - `wmts`: `get_wmts_layer_list`, `get_wmts_as_img`.
 - **`stats` / `thresholding` / `accuracy` / `featureselection`**:
   - `stats`: `mask_data_to_valid`, `calc_semivariogram`, `plot_semivariogram(vario_df, *, ..., axs=None, out_plot_file=None) -> (fig, axs)`, `standardise_img_data`, `normalise_img_data`, `validate_percentiles_0_100`, `compute_nanpercentiles`, `resolve_metric_type`, `calc_similarity_metric`, `phase_cross_correlation_2d` (integer peak, then re-correlation on the overlap with DFT-upsampled sub-pixel refinement; unbiased for windows ≥ 32 px with shifts below about a quarter of the window). `compute_nanpercentiles` is vectorised and matches `np.nanpercentile`.
-  - `thresholding`: `get_nbins_histogram`, `get_bin_centres`, `calc_{otsu,yen,isodata,li,kurt_skew}_threshold`, `calc_hist_cross_entropy`.
+  - `thresholding`: `get_nbins_histogram`, `get_bin_centres`, `calc_{otsu,yen,isodata,li,kurt_skew}_threshold`, `calc_hist_cross_entropy`. Otsu, Yen, ISODATA and cross-entropy take `bins=256` (int >= 2, or `"fd"` for Freedman-Diaconis).
   - `accuracy`: `bias_score`, `decompose_bias_variance`, `accuracy_scores_binary`, `bin_accuracy_scores_prob`.
   - `featureselection`: `cqv_threshold`, `calc_pandas_vif`, `lassolars_feature_selection`, `corr_feature_selection`, `breusch_pagan_test`.
 - **`plotting` / `imaging` / `maths` / `system`**:

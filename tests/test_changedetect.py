@@ -369,7 +369,8 @@ def test_pxloutlierchng_methods(tmp_path):
         plot_thres_file=str(plot_otsu),
         use_pbar=False,
     )
-    assert 0.25 < thres_otsu < 0.70
+    # The threshold separates the two clusters.
+    assert float(vals[0, 0:4, 0:4].max()) < thres_otsu < 0.60
     assert plot_otsu.exists()
     with rasterio.open(out_otsu) as src:
         o_arr = src.read(1)
