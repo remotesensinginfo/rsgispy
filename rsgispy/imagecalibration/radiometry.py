@@ -585,9 +585,10 @@ def perform_dos_calc(
         dst_nodata, fill_val = resolve_nodata_and_fill(eff_in_nd, out_np_dtype)
         n_bands = src.count
 
+    # dark_obj_percentile is a fraction; calc_band_percentile takes 0-100.
     percent_vals = calc_band_percentile(
         input_img=input_img,
-        percentile=dark_obj_percentile,
+        percentile=float(dark_obj_percentile) * 100.0,
         no_data_val=eff_in_nd,
     )
     if len(percent_vals) != n_bands:

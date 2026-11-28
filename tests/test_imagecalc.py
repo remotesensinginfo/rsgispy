@@ -437,17 +437,22 @@ def test_band_percentiles(tmp_path):
 
     # Band 1 without 0.0: [10, 20, 30, 40, 50] -> median 30.0
     # Band 2 without 0.0: [100, 200, 300, 400, 500] -> median 300.0
-    pcts = rsgispy.imagecalc.percentiles.calc_band_percentile(str(in_img), 0.5, no_data_val=0.0)
+    # Percentiles are in [0, 100] (as calc_band_percentile_msk and
+    # calc_imgs_pxl_percentiles), computed block by block.
+    pcts = rsgispy.imagecalc.percentiles.calc_band_percentile(str(in_img), 50.0, no_data_val=0.0)
     assert pcts == pytest.approx([30.0, 300.0])
 
     # All values without no_data_val
     pcts_all = rsgispy.imagecalc.percentiles.calc_band_percentile(
-        str(in_img), 0.5, no_data_val=None
+        str(in_img), 50.0, no_data_val=None
     )
     assert pcts_all == pytest.approx([25.0, 250.0])
 
     with pytest.raises(rsgispy.RSGISPyException):
-        rsgispy.imagecalc.percentiles.calc_band_percentile(str(in_img), 1.5, no_data_val=None)
+        rsgispy.imagecalc.percentiles.calc_band_percentile(str(in_img), 150.0, no_data_val=None)
+    # A value in (0, 1) now means a percentile below 1: warn about the units.
+    with pytest.warns(UserWarning, match="0-100"):
+        rsgispy.imagecalc.percentiles.calc_band_percentile(str(in_img), 0.5, no_data_val=None)
 
     # Masked pixels where msk == 1 and neither band == 0.0:
     # (0,1)->(10,200), (0,2)->(20,300), (1,1)->(40,500)
@@ -941,3 +946,29 @@ def test_band_maths_no_data_val_and_calc_stats(tmp_path):
             no_data_val=0.5,
             use_pbar=False,
         )
+
+
+def test_calc_band_percentile_block_by_block(tmp_path, monkeypatch):
+    """calc_band_percentile reads windows, with the same values as a full read."""
+    in_img = tmp_path / "big.tif"
+    rng = np.random.default_rng(4)
+    arr = rng.normal(100.0, 20.0, size=(2, 40, 37)).astype(np.float32)
+    arr[0, :3, :] = -1.0
+    _create_test_raster(in_img, arr)
+    monkeypatch.setenv("RSGISPY_BLOCK_SIZE", "8")
+    full_reads = []
+    real_read = rasterio.io.DatasetReader.read
+
+    def _spy(self, *args, **kwargs):
+        if kwargs.get("window") is None:
+            full_reads.append(args)
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(rasterio.io.DatasetReader, "read", _spy)
+    pcts = rsgispy.imagecalc.percentiles.calc_band_percentile(
+        str(in_img), 90.0, no_data_val=-1.0
+    )
+    assert not full_reads
+    b0 = arr[0][arr[0] != -1.0].astype(np.float64)
+    assert pcts == pytest.approx([np.percentile(b0, 90.0),
+                                  np.percentile(arr[1].astype(np.float64), 90.0)])
