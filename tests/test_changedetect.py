@@ -133,8 +133,13 @@ def test_image_difference_and_ratio_multiband(tmp_path):
     _write_raster(chng_path, chng_arr)
 
     icm.image_difference(str(base_path), str(chng_path), str(diff_path), use_pbar=False)
+    # Pixel (0, 1) has a no-data (0) band on the change date and pixel (1, 1)
+    # on both dates, so neither is compared (every band must be valid).
+    exp_diff = base_arr - chng_arr
+    exp_diff[:, 0, 1] = 0.0
+    exp_diff[:, 1, 1] = 0.0
     with rasterio.open(diff_path) as src:
-        np.testing.assert_allclose(src.read(), base_arr - chng_arr, atol=1e-6)
+        np.testing.assert_allclose(src.read(), exp_diff, atol=1e-6)
 
     icm.image_ratio(
         str(base_path),
@@ -148,7 +153,7 @@ def test_image_difference_and_ratio_multiband(tmp_path):
         r = src.read()
     assert np.isclose(r[0, 0, 0], 2.0)  # band 2: 4 / 2
     assert np.isclose(r[1, 0, 0], 2.0)  # band 1: 10 / 5
-    assert np.isclose(r[1, 0, 1], 0.0)  # zero divisor handled cleanly
+    assert np.isclose(r[1, 0, 1], 0.0)  # a no-data band: pixel not compared
 
 
 def test_change_vector_analysis(tmp_path):
@@ -249,7 +254,10 @@ def test_sfa_and_mad_change_detection(tmp_path):
 
 
 def _make_one_date_hole_pair(tmp_path):
-    """Two 3-band dates; date 2 has a no-data (0) hole that date 1 does not."""
+    """
+    Two 3-band dates; date 2 has a no-data (0) hole that date 1 does not, and
+    single bands are no data (date 1) or NaN (date 2) in two more holes.
+    """
     rng = np.random.default_rng(11)
     base_arr = rng.uniform(1000.0, 1500.0, size=(3, 12, 12)).astype(np.float32)
     chng_arr = (base_arr + rng.normal(0.0, 10.0, size=base_arr.shape)).astype(
@@ -257,12 +265,17 @@ def _make_one_date_hole_pair(tmp_path):
     )
     chng_arr[:, 0:4, 0:4] += 800.0  # real change
     chng_arr[:, 8:11, 8:11] = 0.0  # no data on date 2 only (e.g. cloud)
+    # H10: a pixel is valid only when every band is valid on both dates.
+    base_arr[0, 1:3, 8:11] = 0.0  # one band of date 1 is no data
+    chng_arr[1, 5:7, 0:2] = np.nan  # one band of date 2 is NaN
     base_path = tmp_path / "hole_base.tif"
     chng_path = tmp_path / "hole_chng.tif"
     _write_raster(base_path, base_arr)
     _write_raster(chng_path, chng_arr)
     hole = np.zeros((12, 12), dtype=bool)
     hole[8:11, 8:11] = True
+    hole[1:3, 8:11] = True
+    hole[5:7, 0:2] = True
     return str(base_path), str(chng_path), hole
 
 
@@ -862,3 +875,16 @@ def test_binary_change_output_class_names(tmp_path):
     icm.change_vector_analysis(base_img, chng_img, out_bin, str(tmp_path / "dist.tif"), use_pbar=False)
     names = {k: v[0] for k, v in get_thematic_classes(out_bin).items()}
     assert names[0] == "No change" and names[1] == "Change"
+
+
+def test_image_ratio_zero_denominator_is_no_data(tmp_path):
+    """A valid zero on the change date gives no data, not a ratio of 0."""
+    base_path = tmp_path / "b.tif"
+    chng_path = tmp_path / "c.tif"
+    _write_raster(base_path, np.array([[[10.0, 6.0]]], dtype=np.float32))
+    _write_raster(chng_path, np.array([[[0.0, 3.0]]], dtype=np.float32))
+    out = tmp_path / "ratio.tif"
+    icm.image_ratio(str(base_path), str(chng_path), str(out), no_data_val=-9999.0,
+                    base_img_no_data=-1, chng_img_no_data=-1, use_pbar=False)
+    with rasterio.open(out) as src:
+        np.testing.assert_allclose(src.read(1), [[-9999.0, 2.0]])

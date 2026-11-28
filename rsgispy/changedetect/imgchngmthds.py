@@ -213,14 +213,14 @@ def _both_dates_valid(
 ) -> np.ndarray:
     """
     Return the valid-pixel mask used when no ``vld_msk_img`` is given: a pixel
-    is valid only when **both** dates have data, i.e. at least one band of the
-    base image and at least one band of the change image are finite and not
-    equal to that image's no-data value. Arrays are ``(n_bands, ...)``.
+    is valid only when **every** band of **both** dates is finite and not
+    equal to that image's no-data value (a pixel with one missing band is
+    not compared). Arrays are ``(n_bands, ...)``.
     """
-    base_vld = np.any(
+    base_vld = np.all(
         (base_arr != base_img_no_data) & np.isfinite(base_arr), axis=0
     )
-    chng_vld = np.any(
+    chng_vld = np.all(
         (chng_arr != chng_img_no_data) & np.isfinite(chng_arr), axis=0
     )
     return base_vld & chng_vld
@@ -527,7 +527,8 @@ class _BandChangeNode(TileNode):
             else:
                 with np.errstate(divide="ignore", invalid="ignore"):
                     res = b_v / c_v
-                np.nan_to_num(res, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+                # A zero denominator has no ratio: write no data, not 0.
+                res = np.where(np.isfinite(res), res, self.fill_val)
             out_blk[:, vld_2d] = res
         return aligned[0].with_data(out_blk)
 
@@ -837,10 +838,11 @@ def image_difference(
     :param out_diff_img: Path to the output difference image file.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
                         If ``None`` (Default), a pixel is valid only where
-                        **both** images have data: at least one selected band
-                        of each image is finite and not equal to
+                        **both** images have data: every selected band of
+                        each image is finite and not equal to
                         ``base_img_no_data`` / ``chng_img_no_data``. Pixels
-                        with data on one date only are written as no data.
+                        with a missing band on either date are written as
+                        no data.
     :param vld_msk_val: Pixel value in ``vld_msk_img`` indicating valid pixels
                         (Default = ``1``).
     :param apply_std: If ``True``, standardise each band prior to differencing
@@ -915,10 +917,11 @@ def image_ratio(
     :param out_ratio_img: Path to the output ratio image file.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
                         If ``None`` (Default), a pixel is valid only where
-                        **both** images have data: at least one selected band
-                        of each image is finite and not equal to
+                        **both** images have data: every selected band of
+                        each image is finite and not equal to
                         ``base_img_no_data`` / ``chng_img_no_data``. Pixels
-                        with data on one date only are written as no data.
+                        with a missing band on either date are written as
+                        no data.
     :param vld_msk_val: Pixel value in ``vld_msk_img`` indicating valid pixels
                         (Default = ``1``).
     :param apply_std: If ``True``, standardise each band prior to ratioing
@@ -1009,10 +1012,11 @@ def change_vector_analysis(
                               itself.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
                         If ``None`` (Default), a pixel is valid only where
-                        **both** images have data: at least one selected band
-                        of each image is finite and not equal to
+                        **both** images have data: every selected band of
+                        each image is finite and not equal to
                         ``base_img_no_data`` / ``chng_img_no_data``. Pixels
-                        with data on one date only are written as no data.
+                        with a missing band on either date are written as
+                        no data.
     :param vld_msk_val: Pixel value in ``vld_msk_img`` indicating valid pixels
                         (Default = ``1``).
     :param apply_std: If ``True``, standardise each band prior to CVA
@@ -1190,10 +1194,11 @@ def slow_feature_analysis(
                               the chi-square distance itself.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
                         If ``None`` (Default), a pixel is valid only where
-                        **both** images have data: at least one selected band
-                        of each image is finite and not equal to
+                        **both** images have data: every selected band of
+                        each image is finite and not equal to
                         ``base_img_no_data`` / ``chng_img_no_data``. Pixels
-                        with data on one date only are written as no data.
+                        with a missing band on either date are written as
+                        no data.
     :param vld_msk_val: Pixel value in ``vld_msk_img`` indicating valid pixels
                         (Default = ``1``).
     :param apply_std: If ``True``, standardise each band prior to SFA
@@ -1497,10 +1502,11 @@ def multivariate_alteration_detection(
     :param out_chng_mads_img: Path to the output MAD variates multi-band image.
     :param vld_msk_img: Optional path to a valid-pixel mask image (band 1 used).
                         If ``None`` (Default), a pixel is valid only where
-                        **both** images have data: at least one selected band
-                        of each image is finite and not equal to
+                        **both** images have data: every selected band of
+                        each image is finite and not equal to
                         ``base_img_no_data`` / ``chng_img_no_data``. Pixels
-                        with data on one date only are written as no data.
+                        with a missing band on either date are written as
+                        no data.
     :param vld_msk_val: Pixel value in ``vld_msk_img`` indicating valid pixels
                         (Default = ``1``).
     :param apply_std: If ``True``, standardise each band prior to MAD
