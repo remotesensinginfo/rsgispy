@@ -253,7 +253,7 @@ def split_wgs84_bbox_utm_zones(
         }
     )
     out_bboxes: List[List] = []
-    for b_min, b_max in zip(breaks[:-1], breaks[1:]):
+    for b_min, b_max in zip(breaks[:-1], breaks[1:], strict=True):
         for zone, z_min, z_max in _utm_zone_intervals(b_min, b_max):
             lo = max(x_min, z_min)
             hi = min(x_max, z_max)

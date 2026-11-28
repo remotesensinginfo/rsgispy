@@ -311,7 +311,7 @@ def write_named_csvs(
     os.makedirs(out_dir, exist_ok=True)
     stems = file_stems(names, default=default_stem)
     for kind, per_name in tables.items():
-        for name, stem in zip(names, stems):
+        for name, stem in zip(names, stems, strict=True):
             if name not in per_name:
                 continue
             out_file = os.path.join(out_dir, f"{out_prefix}_{kind}_{stem}.csv")

@@ -343,11 +343,11 @@ def calc_class_area_accuracy_metrics(
     # total mapped area is in the '*_area_prop' keys.
     acc_metrics["commission"] = [
         _safe_divide_scalar(float(err), float(tot)) * 100.0
-        for err, tot in zip(commission_prop, map_total)
+        for err, tot in zip(commission_prop, map_total, strict=True)
     ]
     acc_metrics["omission"] = [
         _safe_divide_scalar(float(err), float(tot)) * 100.0
-        for err, tot in zip(omission_prop, ref_total)
+        for err, tot in zip(omission_prop, ref_total, strict=True)
     ]
     acc_metrics["commission_area_prop"] = [float(val) for val in commission_prop]
     acc_metrics["omission_area_prop"] = [float(val) for val in omission_prop]

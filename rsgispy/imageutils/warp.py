@@ -558,7 +558,7 @@ def _write_union_alpha(
     for _, win in dst.block_windows(1):
         alpha = dst.read(dst_alpha_band, window=win)
         valid = alpha > 0
-        for db, d_nd in zip(dst_data_bands, dst_nd_list):
+        for db, d_nd in zip(dst_data_bands, dst_nd_list, strict=True):
             if d_nd is None:
                 continue
             arr = dst.read(db, window=win)
