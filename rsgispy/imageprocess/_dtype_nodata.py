@@ -605,22 +605,6 @@ def parse_epsg_crs(epsg_code: Optional[int]) -> Optional[Any]:
         ) from err
 
 
-def warn_if_clamp_int_disabled(clamp_int: Optional[bool], where: str) -> None:
-    """
-    Issue a :class:`DeprecationWarning` when ``clamp_int=False`` is passed to
-    ``where``: integer outputs are now always rounded and clamped (see
-    :func:`round_clamp_to_dtype`), so the argument is ignored.
-    """
-    if clamp_int is False:
-        warnings.warn(
-            f"{where}(clamp_int=False) is deprecated and ignored: integer "
-            "outputs are always rounded to the nearest integer and clamped "
-            "to the data type range.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-
-
 def round_clamp_to_dtype(
     arr: Union[np.ndarray, float, int],
     out_np_dtype: Any,
@@ -687,7 +671,6 @@ def cast_result_block(
     win_h: int,
     win_w: int,
     out_np_dtype: np.dtype,
-    clamp_int: Optional[bool] = None,
     *,
     nodata: Optional[float] = None,
     valid_mask: Optional[np.ndarray] = None,
@@ -703,9 +686,6 @@ def cast_result_block(
     :param win_h: Height of the current window in pixels.
     :param win_w: Width of the current window in pixels.
     :param out_np_dtype: Target NumPy dtype for the output raster.
-    :param clamp_int: Deprecated and ignored: integer outputs are always
-                      rounded and clamped. Passing ``False`` issues a
-                      :class:`DeprecationWarning`.
     :param nodata: Optional output no-data value.
     :param valid_mask: Optional boolean mask of valid pixels; invalid pixels
                        are set to ``nodata``, and valid pixels never take the
@@ -723,7 +703,6 @@ def cast_result_block(
         )
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
-    warn_if_clamp_int_disabled(clamp_int, "cast_result_block")
     if np.ndim(res) == 0:
         res = np.full((win_h, win_w), res, dtype=np.float64)
     out_np_dtype = np.dtype(out_np_dtype)

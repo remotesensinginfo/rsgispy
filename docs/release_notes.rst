@@ -15,8 +15,8 @@ Integer outputs, clamping and no data
   integer raster now rounds to the nearest integer and clamps to the data
   type's range (previously values were truncated and could wrap around, e.g.
   ``400`` written as ``uint8`` became ``144``). Where a valid value would land
-  on the no-data value it is moved one step away. ``clamp_int=False`` is
-  deprecated and ignored. Outputs that previously truncated (e.g. slope or
+  on the no-data value it is moved one step away. The ``clamp_int``
+  argument was removed. Outputs that previously truncated (e.g. slope or
   filters written as integers) can differ by 1.
 * **One default output no-data value.** ``-9999`` for floating-point outputs,
   the type's minimum (signed) or maximum (unsigned) for integer outputs, and

@@ -1055,14 +1055,6 @@ class StackBands(TileNode):
         return " ".join(parts)
 
 
-def _warn_clamp_int(clamp_int: Any, where: str) -> None:
-    """Deprecation warning for ``clamp_int=False`` (integer casts always clamp)."""
-    # pylint: disable=import-outside-toplevel
-    from rsgispy.imageprocess import warn_if_clamp_int_disabled
-
-    warn_if_clamp_int_disabled(clamp_int, where)
-
-
 class Cast(TileNode):
     """
     Cast a node's blocks to another NumPy dtype. Integer casts replace
@@ -1078,8 +1070,6 @@ class Cast(TileNode):
 
     :param source: Upstream :class:`TileNode`.
     :param dtype: Target NumPy dtype.
-    :param clamp_int: Deprecated and ignored: integer casts always round and
-                      clamp (``False`` issues a :class:`DeprecationWarning`).
     :param name: Optional node identifier.
 
     .. code:: python
@@ -1095,13 +1085,10 @@ class Cast(TileNode):
         self,
         source: TileNode,
         dtype: Any,
-        clamp_int: bool = True,
         name: Optional[str] = None,
     ) -> None:
         super().__init__(inputs=(source,), name=name)
         self.dtype = np.dtype(dtype)
-        _warn_clamp_int(clamp_int, "Cast")
-        self.clamp_int = True
         self._in_nodata: Optional[float] = None
 
     def _resolve_nodata(self, in_nd: Optional[float]) -> Optional[float]:
@@ -1378,9 +1365,6 @@ class DiskSink(TileSink):
     :param datatype: ``rsgispy.TYPE_*`` constant (Default = ``None``: from the
                      input node's metadata).
     :param nodata: Optional output nodata value.
-    :param clamp_int: Deprecated and ignored: integer outputs are always
-                      rounded and clamped to the type's range (``False``
-                      issues a :class:`DeprecationWarning`).
     :param creation_opts: Optional GDAL/rasterio creation options mapping.
     :param band_names: Optional sequence of output band description strings.
     :param calc_stats: If ``True``, populate raster statistics and pyramids
@@ -1430,7 +1414,6 @@ class DiskSink(TileSink):
         gdalformat: str = "GTIFF",
         datatype: Optional[int] = None,
         nodata: Optional[float] = None,
-        clamp_int: bool = True,
         creation_opts: Optional[Mapping[str, Any]] = None,
         band_names: Optional[Sequence[str]] = None,
         calc_stats: Optional[bool] = None,
@@ -1454,8 +1437,6 @@ class DiskSink(TileSink):
         self.datatype: Optional[int] = None if datatype is None else int(datatype)
         self._resolved_datatype: Optional[int] = self.datatype
         self.nodata: Optional[float] = nodata
-        _warn_clamp_int(clamp_int, type(self).__name__)
-        self.clamp_int: bool = True
         self.creation_opts: Optional[Mapping[str, Any]] = creation_opts
         self.band_names: Optional[List[str]] = (
             list(band_names) if band_names is not None else None
@@ -1707,9 +1688,6 @@ class MemorySink(TileSink):
     :param source: Upstream :class:`TileNode` producing the output tiles.
     :param dtype: Optional output NumPy dtype (inferred from first tile when
                   ``None``).
-    :param clamp_int: Deprecated and ignored: integer outputs are always
-                      rounded and clamped to the type's range (``False``
-                      issues a :class:`DeprecationWarning`).
     :param name: Optional sink identifier (used as key in
                  :meth:`TileGraph.run` return dictionary).
     """
@@ -1721,13 +1699,10 @@ class MemorySink(TileSink):
         self,
         source: TileNode,
         dtype: Any = None,
-        clamp_int: bool = True,
         name: Optional[str] = None,
     ) -> None:
         super().__init__(source, name=name)
         self.dtype: Optional[np.dtype] = np.dtype(dtype) if dtype is not None else None
-        _warn_clamp_int(clamp_int, type(self).__name__)
-        self.clamp_int: bool = True
         self.result: Optional[np.ndarray] = None
         self._shape: Optional[Tuple[int, int]] = None
         self._array: Optional[np.ndarray] = None

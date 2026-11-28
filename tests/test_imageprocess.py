@@ -476,7 +476,7 @@ def test_iter_dataset_windows_block_width_and_pbar(monkeypatch):
 
 
 def test_read_window_with_halo_and_cast_clamp(tmp_path):
-    """Test read_window_with_halo edge padding and cast_result_block clamp_int."""
+    """Test read_window_with_halo edge padding and cast_result_block clamping."""
     in_img = tmp_path / "halo.tif"
     data = np.arange(1, 25, dtype=np.float32).reshape((2, 3, 4))
     _create_test_raster(in_img, data)
@@ -509,7 +509,7 @@ def test_read_window_with_halo_and_cast_clamp(tmp_path):
 
     raw = np.array([[-5.0, 128.0], [300.0, np.nan]], dtype=np.float64)
     clamped = rsgispy.imageprocess.cast_result_block(
-        raw, 2, 2, np.dtype(np.uint8), clamp_int=True
+        raw, 2, 2, np.dtype(np.uint8)
     )
     np.testing.assert_array_equal(
         clamped, np.array([[0, 128], [255, 0]], dtype=np.uint8)
@@ -794,8 +794,12 @@ def test_round_clamp_to_dtype_policy():
         rsgispy.imageprocess.round_clamp_to_dtype(arr, np.uint8, 255, valid),
         [200, 254, 0, 255, 0, 255],
     )
-    with pytest.warns(DeprecationWarning):
+    # clamp_int was removed: integer casts always round and clamp.
+    with pytest.raises(TypeError):
         rsgispy.imageprocess.cast_result_block(arr, 1, 6, np.uint8, clamp_int=False)
+    with pytest.raises(TypeError):
+        rsgispy.imageprocess.Cast(rsgispy.imageprocess.ArraySource(
+            np.zeros((1, 2, 2))), np.uint8, clamp_int=False)
 
 
 def test_compute_spatial_intersection_rejects_subpixel_misalignment(tmp_path):

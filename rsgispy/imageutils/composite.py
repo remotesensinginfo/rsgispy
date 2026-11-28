@@ -807,7 +807,7 @@ class CompositeNode(SelectBands):
         arr = out.data
         return out.with_data(
             cast_result_block(
-                arr, int(arr.shape[1]), int(arr.shape[2]), self.out_dtype, clamp_int=True
+                arr, int(arr.shape[1]), int(arr.shape[2]), self.out_dtype
             )
         )
 
@@ -1678,7 +1678,6 @@ def _continuous_sink(
         datatype=datatype,
         nodata=nodata,
         band_names=None if band_names is None else list(band_names),
-        clamp_int=True,
         calc_stats=calc_stats,
         creation_opts=normalise_creation_options(creation_opts),
     )
@@ -1729,7 +1728,6 @@ def _thematic_sink(
         datatype=datatype,
         nodata=0.0,
         band_names=[band_name],
-        clamp_int=True,
         calc_stats=False,
         thematic=True,
         close_actions=[_finish],

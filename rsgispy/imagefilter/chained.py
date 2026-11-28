@@ -434,7 +434,6 @@ def apply_filter_chain(
         gdalformat=gdalformat,
         datatype=eff_dtype,
         nodata=out_nd,
-        clamp_int=True,
         creation_opts=creation_opts,
         band_names=band_names,
         calc_stats=calc_stats,

@@ -31,7 +31,6 @@ from rsgispy.imageprocess._arrays import (
 )
 from rsgispy.imageprocess._dtype_nodata import (
     cast_result_block,
-    warn_if_clamp_int_disabled,
     get_default_block_size,
 )
 from rsgispy.imageprocess._io import create_output_from_dataset
@@ -358,7 +357,6 @@ def run_window_halo_blocks(
     pad_mode: str = "edge",
     fill_value: float = 0.0,
     out_no_data_val: Optional[float] = None,
-    clamp_int: bool = True,
     full_width_strips: bool = False,
     use_pbar: bool = True,
     creation_opts: Optional[Mapping[str, Any]] = None,
@@ -391,9 +389,6 @@ def run_window_halo_blocks(
     :param fill_value: Fill constant when ``pad_mode='constant'``
                        (Default = ``0.0``).
     :param out_no_data_val: Optional output no-data metadata value.
-    :param clamp_int: Deprecated and ignored: integer outputs are always
-                      rounded and clamped to the dtype range (passing
-                      ``False`` issues a :class:`DeprecationWarning`).
     :param full_width_strips: If ``True``, iterate in full-width horizontal strips
                               (Default = ``False``).
     :param use_pbar: If ``True``, display a tqdm progress bar during processing
@@ -415,7 +410,6 @@ def run_window_halo_blocks(
             per_band=True,
         )
     """
-    warn_if_clamp_int_disabled(clamp_int, "run_window_halo_blocks")
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ensure_file_exists(input_img)
     target_np_dtype = (

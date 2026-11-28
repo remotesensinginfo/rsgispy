@@ -503,7 +503,6 @@ def landsat_thermal_rad_to_brightness(
                     int(win.height),
                     int(win.width),
                     out_np_dtype,
-                    clamp_int=True,
                 ),
                 window=win,
             )

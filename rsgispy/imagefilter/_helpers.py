@@ -749,7 +749,6 @@ def run_filter_node(
         gdalformat=gdalformat,
         datatype=eff_dtype,
         nodata=out_nd,
-        clamp_int=True,
         band_names=names,
         calc_stats=calc_stats,
         inherit_meta=False,

@@ -340,7 +340,6 @@ def _run_sequential_local_minima(
         pad_mode="constant",
         fill_value=np.nan,
         out_no_data_val=out_nd,
-        clamp_int=True,
         full_width_strips=True,
         use_pbar=use_pbar,
     )
@@ -622,7 +621,6 @@ def run_morph_graph(
             gdalformat=gdalformat,
             datatype=eff_dtype,
             nodata=out_nd,
-            clamp_int=True,
             calc_stats=calc_stats,
             name="output",
             inherit_meta=False,
@@ -636,7 +634,6 @@ def run_morph_graph(
                 gdalformat=gdalformat,
                 datatype=eff_dtype,
                 nodata=out_nd,
-                clamp_int=True,
                 calc_stats=False,
                 name="tmp_mid",
                 inherit_meta=False,

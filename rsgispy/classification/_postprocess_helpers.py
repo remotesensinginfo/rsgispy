@@ -305,7 +305,6 @@ def run_majority_filter(
         gdalformat=gdalformat,
         datatype=rsgispy.get_rsgis_datatype(meta.out_rio_dtype),
         nodata=meta.out_nd,
-        clamp_int=True,
         creation_opts=normalise_creation_options(creation_opts),
         name="output",
         inherit_meta=False,
@@ -1438,7 +1437,6 @@ def run_postprocess_pipeline(
             gdalformat=gdalformat,
             datatype=out_rsgis_dt,
             nodata=meta.out_nd,
-            clamp_int=True,
             creation_opts=norm_opts,
             name="output",
             inherit_meta=False,
@@ -1458,7 +1456,6 @@ def run_postprocess_pipeline(
             mem_sink = MemorySink(
                 source=cur_node,
                 dtype=meta.out_np_dtype,
-                clamp_int=True,
                 name="maj_out",
             )
             TileGraph(mem_sink, block_size=blk_sz).run(use_pbar=use_pbar)
@@ -1494,7 +1491,6 @@ def run_postprocess_pipeline(
                     gdalformat="GTIFF",
                     datatype=out_rsgis_dt,
                     nodata=meta.out_nd,
-                    clamp_int=True,
                     name="tmp_maj",
                     inherit_meta=False,
                 )

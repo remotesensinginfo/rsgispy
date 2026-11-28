@@ -342,7 +342,7 @@ def exhcon_linear_spec_unmix(
             )
             dst.write(
                 cast_result_block(
-                    out_blk, win_h, win_w, out_np_dtype, clamp_int=False
+                    out_blk, win_h, win_w, out_np_dtype
                 ),
                 window=win,
             )

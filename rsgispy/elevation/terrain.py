@@ -482,7 +482,6 @@ def categorise_aspect(
             gdalformat=gdalformat,
             datatype=eff_dtype,
             nodata=None,
-            clamp_int=False,
             calc_stats=calc_stats,
             inherit_meta=False,
         ),

@@ -588,7 +588,6 @@ def _stream_linear_projection(
         gdalformat=gdalformat,
         datatype=datatype,
         nodata=eff_out_nd,
-        clamp_int=False,
         band_names=list(out_band_names) if out_band_names is not None else None,
         calc_stats=calc_stats,
     )
@@ -1655,7 +1654,7 @@ def histogram_matching(
                 out_blk = np.rint(out_blk)
             dst.write(
                 cast_result_block(
-                    out_blk, win_h, win_w, out_np_dtype, clamp_int=True
+                    out_blk, win_h, win_w, out_np_dtype
                 ),
                 window=dst_win,
             )

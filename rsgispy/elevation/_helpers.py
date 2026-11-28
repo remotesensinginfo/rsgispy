@@ -432,7 +432,6 @@ def run_terrain_node_to_file(
         output_img,
         gdalformat=gdalformat,
         datatype=out_datatype,
-        clamp_int=False,
         calc_stats=calc_stats,
         inherit_meta=False,
     )

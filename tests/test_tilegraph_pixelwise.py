@@ -227,7 +227,7 @@ def test_indices_then_mask_img_chain_matches_files(tmp_path):
     meta = _meta(masked)
     assert (meta.band_names, meta.nodata) == (("NDVI",), -9999.0)
     out = str(tmp_path / "chain.tif")
-    TileGraph(DiskSink(masked, out, clamp_int=False), block_size=23).run(use_pbar=False)
+    TileGraph(DiskSink(masked, out), block_size=23).run(use_pbar=False)
     np.testing.assert_array_equal(_read(out), _read(masked_file))
     with pytest.raises(rsgispy.RSGISPyException, match="at least one"):
         iu_msk.mask_img_node(idx, RasterSource(msk), 0, [])
@@ -301,7 +301,7 @@ def test_index_difference_chain_matches_files(tmp_path):
     meta = _meta(diff)
     assert (meta.n_bands, meta.dtype, meta.nodata) == (1, np.float64, -999)
     out = str(tmp_path / "chain.tif")
-    TileGraph(DiskSink(diff, out, clamp_int=False), block_size=23).run(use_pbar=False)
+    TileGraph(DiskSink(diff, out), block_size=23).run(use_pbar=False)
     np.testing.assert_array_equal(_read(out), _read(files["diff"]))
 
     ratio = icm.image_ratio_node(RasterSource(base, bands=[2, 3]),

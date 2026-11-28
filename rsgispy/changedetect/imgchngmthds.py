@@ -740,7 +740,6 @@ def _stream_band_change_op(
         gdalformat=gdalformat,
         datatype=out_dtype,
         nodata=no_data_val,
-        clamp_int=False,
         calc_stats=calc_stats,
     )
     run_wrapper_graph(sink, use_pbar=use_pbar)
